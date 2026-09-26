@@ -1,26 +1,33 @@
 //! Snapshot query execution for NGSI-LD clause 5.16.1.4.
 
+mod attempts;
 /// Where a snapshot capture reads the context it freezes.
 pub mod capture_sources;
+mod drain;
 mod execution;
 mod status;
 mod translation;
 
 use crate::{
     error::SnapshotError,
-    executor::capture_sources::SnapshotCaptureSources,
+    executor::{
+        attempts::{PreparationClaim, PreparationEnd, QueryCounts},
+        capture_sources::SnapshotCaptureSources,
+        drain::DrainWorker,
+    },
     status::validate_preparing_transition,
     store::{SnapshotPreparationJob, SnapshotStore},
 };
 use andromeda_context_commit::{committer::ContextCommitter, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::{ContextSpec, CoreContextPolicy};
-use andromeda_ngsi_ld_model::snapshot::{Snapshot, SnapshotStatus};
+use andromeda_ngsi_ld_model::snapshot::Snapshot;
 use chrono::Utc;
-use futures::{StreamExt, future::ready, stream};
+use futures::future::BoxFuture;
+use serde_json::Value;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::{Instant, MissedTickBehavior, interval_at};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Executes a snapshot's typed queries and persists their frozen results.
 pub struct SnapshotExecutor {
@@ -28,8 +35,6 @@ pub struct SnapshotExecutor {
     snapshot_repo: Arc<dyn SnapshotStore>,
     writes: Arc<dyn ContextCommitter>,
     capture_page_size: u32,
-    tenant_count_quota: Option<usize>,
-    tenant_byte_quota: Option<u64>,
 }
 
 impl SnapshotExecutor {
@@ -39,16 +44,12 @@ impl SnapshotExecutor {
         snapshot_repo: Arc<dyn SnapshotStore>,
         writes: Arc<dyn ContextCommitter>,
         capture_page_size: usize,
-        tenant_count_quota: Option<usize>,
-        tenant_byte_quota: Option<u64>,
     ) -> SnapshotExecutor {
         SnapshotExecutor {
             sources,
             snapshot_repo,
             writes,
             capture_page_size: u32::try_from(capture_page_size).unwrap_or(u32::MAX),
-            tenant_count_quota,
-            tenant_byte_quota,
         }
     }
 
@@ -58,10 +59,10 @@ impl SnapshotExecutor {
     ///
     /// Returns [`SnapshotError::Internal`] when the snapshot owns no durable
     /// staging context branch, [`SnapshotError::Validation`] when the aggregated
-    /// execution status is not a permitted transition out of `preparing`, and the
-    /// store's own failure when promoting the capture or enforcing the tenant
-    /// quotas does not complete.
-    pub async fn execute(&self, snapshot: Snapshot, query_context: serde_json::Value, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
+    /// execution status is not a permitted transition out of `preparing`, a
+    /// transient store failure a query or a staging write met, and the store's
+    /// own failure when promoting the capture does not complete.
+    pub async fn execute(&self, snapshot: &Snapshot, query_context: &Value, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
         info!(snapshot_id = %snapshot.id, "Starting snapshot query execution");
         let target = self
             .snapshot_repo
@@ -71,18 +72,21 @@ impl SnapshotExecutor {
             .ok_or_else(|| SnapshotError::internal(format!("Snapshot {} has no durable staging context target", snapshot.id)))?;
         let mut aggregate = status::ExecutionAggregate::default();
         let context = ContextSpec::none()
-            .with_body_context(Some(query_context))
+            // clone: a restarted preparation executes against the same persisted context again.
+            .with_body_context(Some(query_context.clone()))
             .with_core_policy(CoreContextPolicy::Omit);
 
         let mut materialized_entities = HashSet::new();
-        for (index, query) in snapshot.snapshot_queries.unwrap_or_default().into_iter().enumerate() {
+        for (index, query) in snapshot.snapshot_queries.iter().flatten().enumerate() {
             let detail = self
-                .run_entity_query(&target, &snapshot.id, query, index, &context, &mut materialized_entities)
-                .await;
+                // clone: a restarted preparation translates every stored query again.
+                .run_entity_query(&target, &snapshot.id, query.clone(), index, &context, &mut materialized_entities)
+                .await?;
             aggregate.push_entity(detail);
         }
-        for (index, query) in snapshot.snapshot_temporal_queries.unwrap_or_default().into_iter().enumerate() {
-            let detail = self.run_temporal_query(&target, &snapshot.id, query, index, &context).await;
+        for (index, query) in snapshot.snapshot_temporal_queries.iter().flatten().enumerate() {
+            // clone: a restarted preparation translates every stored query again.
+            let detail = self.run_temporal_query(&target, &snapshot.id, query.clone(), index, &context).await?;
             aggregate.push_temporal(detail);
         }
 
@@ -93,9 +97,7 @@ impl SnapshotExecutor {
         let (query_details, temporal_query_details) = aggregate.detail_slices();
         self.snapshot_repo
             .promote_capture(&snapshot.id, claimed_by, final_status, query_details, temporal_query_details)
-            .await?;
-        self.snapshot_repo.enforce_quotas(self.tenant_count_quota, self.tenant_byte_quota).await?;
-        Ok(())
+            .await
     }
 }
 
@@ -118,6 +120,8 @@ pub struct SnapshotPreparation {
     max_per_pass: usize,
     worker_id: LeaseHolder,
     lease_duration: Duration,
+    tenant_count_quota: Option<usize>,
+    tenant_byte_quota: Option<u64>,
 }
 
 /// Bounded execution and resource policies for Snapshot preparation.
@@ -149,48 +153,43 @@ impl SnapshotPreparation {
                 Arc::clone(&store), // clone: the preparation claims the jobs its executor promotes through the same store.
                 writes,
                 config.capture_page_size,
-                config.tenant_count_quota,
-                config.tenant_byte_quota,
             ),
             store,
             max_per_pass: config.max_per_pass.max(1),
             worker_id: LeaseHolder::mint(),
             lease_duration: config.lease_duration,
+            tenant_count_quota: config.tenant_count_quota,
+            tenant_byte_quota: config.tenant_byte_quota,
         }
     }
 
-    /// Execute one bounded group of pending preparations.
+    /// Execute every claimable preparation, in rounds of at most the
+    /// configured concurrency.
+    ///
+    /// Each claimed preparation ends in a terminal status within this pass: a
+    /// transient failure restarts it promptly under the same claim, and one
+    /// that persists records `failure` (clause 5.16.1.4). Only a preparation
+    /// whose terminal status cannot be recorded at all gives its claim up, so
+    /// the next pass of any worker takes it without waiting out the lease. A
+    /// clone whose source this pass ended is claimed in a later round of the
+    /// same pass (clause 5.16.2.4).
     ///
     /// # Errors
     ///
     /// Returns [`SnapshotError::Internal`] when the configured lease duration
     /// cannot be turned into a wall-clock deadline, and the store's own failure
-    /// when claiming the next preparing snapshot does not complete. A failure of
-    /// one individual preparation is logged and leaves that claim reclaimable
-    /// instead of aborting the pass.
+    /// when claiming a preparing snapshot does not complete before any
+    /// preparation was moved on.
     pub async fn execute(&self) -> Result<SnapshotPreparationOutcome, SnapshotError> {
-        let mut jobs = Vec::with_capacity(self.max_per_pass);
-        while jobs.len() < self.max_per_pass {
-            let Some(job) = self.store.next_preparing(self.worker_id, self.lease_deadline()?).await? else {
-                break;
-            };
-            jobs.push(job);
-        }
-        let count = stream::iter(jobs)
-            .map(|job| async move {
-                let identifier = job.snapshot.id.clone(); // clone: execution consumes the job while diagnostics retain its identifier.
-                // Boxed: one capture drives the whole query pipeline, so its future is far
-                // too large to hold inline for every buffered job of the pass.
-                if let Err(error) = Box::pin(self.execute_with_lease_renewal(job)).await {
-                    tracing::warn!(snapshot_id = %identifier, %error, "Snapshot preparation failed; its renewable claim remains reclaimable");
-                    return false;
-                }
-                true
-            })
-            .buffer_unordered(self.max_per_pass)
-            .filter(|completed| ready(*completed))
-            .count()
-            .await;
+        let worker = DrainWorker {
+            store: self.store.as_ref(),
+            worker: self.worker_id,
+            lease: self.lease_duration,
+            max_per_round: self.max_per_pass,
+        };
+        // Boxed: one capture drives the whole query pipeline, so its future is far
+        // too large to hold inline for every buffered job of a round.
+        let count = worker.drain(|job| Box::pin(self.prepare(job))).await?;
         if count == 0 {
             Ok(SnapshotPreparationOutcome::Idle)
         } else {
@@ -198,28 +197,42 @@ impl SnapshotPreparation {
         }
     }
 
-    /// Execute one capture while periodically extending this replica's durable claim.
-    async fn execute_with_lease_renewal(&self, job: SnapshotPreparationJob) -> Result<(), SnapshotError> {
-        let identifier = job.snapshot.id.clone(); // clone: lease renewal and execution need independent ownership.
-        let execution = async {
-            if let Some(source_id) = job.clone_source_id {
-                if let Err(error) = self.store.promote_clone(&source_id, &job.snapshot.id, self.worker_id).await {
-                    self.store
-                        .update_status(&job.snapshot.id, self.worker_id, SnapshotStatus::Failure, None, None)
-                        .await?;
-                    tracing::warn!(snapshot_id = %job.snapshot.id, %error, "Snapshot clone failed atomically");
-                    return Ok(());
+    /// Drive one claimed job to its end, then enforce the tenant quotas a
+    /// terminal status may have pushed past; `None` when its terminal status
+    /// could not be recorded and its claim was given back.
+    async fn prepare(&self, job: SnapshotPreparationJob) -> Option<PreparationEnd> {
+        let identifier = &job.snapshot.id;
+        match self.execute_with_lease_renewal(&job).await {
+            Ok(end @ (PreparationEnd::Completed | PreparationEnd::Failed)) => {
+                if let Err(error) = self.store.enforce_quotas(self.tenant_count_quota, self.tenant_byte_quota).await {
+                    warn!(snapshot_id = %identifier, %error, "Snapshot quota enforcement after preparation failed");
                 }
-                self.store
-                    .enforce_quotas(self.executor.tenant_count_quota, self.executor.tenant_byte_quota)
-                    .await?;
-                Ok(())
-            } else {
-                // Box the large execution future so it does not inflate the
-                // enclosing select's state machine (clippy::large_futures).
-                Box::pin(self.executor.execute(job.snapshot, job.query_context, self.worker_id)).await
+                Some(end)
             }
+            Ok(PreparationEnd::ClaimLost) => {
+                info!(snapshot_id = %identifier, "Snapshot preparation claim was taken over or the Snapshot is gone; leaving its outcome to its holder");
+                Some(PreparationEnd::ClaimLost)
+            }
+            Err(error) => {
+                warn!(snapshot_id = %identifier, %error, "Snapshot preparation could not record a terminal status; releasing its claim");
+                if let Err(error) = self.store.release_preparation(identifier, self.worker_id).await {
+                    warn!(snapshot_id = %identifier, %error, "Snapshot preparation claim could not be released; it is reclaimable once its lease expires");
+                }
+                None
+            }
+        }
+    }
+
+    /// Execute one capture while periodically extending this replica's durable claim.
+    async fn execute_with_lease_renewal(&self, job: &SnapshotPreparationJob) -> Result<PreparationEnd, SnapshotError> {
+        let claim = PreparationClaim {
+            store: self.store.as_ref(),
+            id: &job.snapshot.id,
+            worker: self.worker_id,
+            lease: self.lease_duration,
+            queries: QueryCounts::of(job),
         };
+        let execution = claim.run(|| self.attempt(job));
         tokio::pin!(execution);
         let renewal_period = self.lease_duration / 2;
         let mut renewals = interval_at(Instant::now() + renewal_period, renewal_period);
@@ -229,21 +242,31 @@ impl SnapshotPreparation {
                 biased;
                 result = &mut execution => return result,
                 _ = renewals.tick() => {
-                    let retained = self.store.renew_preparation_lease(&identifier, self.worker_id, self.lease_deadline()?).await?;
+                    let retained = self.store.renew_preparation_lease(&job.snapshot.id, self.worker_id, lease_deadline(self.lease_duration)?).await?;
                     if !retained {
-                        return Err(SnapshotError::internal(format!("Preparation lease ownership was lost for {identifier}")));
+                        return Ok(PreparationEnd::ClaimLost);
                     }
                 }
             }
         }
     }
 
-    /// Compute a checked wall-clock lease deadline.
-    fn lease_deadline(&self) -> Result<chrono::DateTime<Utc>, SnapshotError> {
-        let lease = chrono::Duration::from_std(self.lease_duration)
-            .map_err(|error| SnapshotError::internal(format!("Configured Snapshot preparation lease is invalid: {error}")))?;
-        Utc::now()
-            .checked_add_signed(lease)
-            .ok_or_else(|| SnapshotError::internal("Snapshot preparation lease deadline exceeds the supported timestamp range"))
+    /// One attempt at a claimed job: clone its source into it, or capture its
+    /// queries. Boxed: the capture drives the whole query pipeline, so its
+    /// future is far too large to hold inline in the retry loop.
+    fn attempt<'a>(&'a self, job: &'a SnapshotPreparationJob) -> BoxFuture<'a, Result<(), SnapshotError>> {
+        match &job.clone_source_id {
+            Some(source_id) => self.store.promote_clone(source_id, &job.snapshot.id, self.worker_id),
+            None => Box::pin(self.executor.execute(&job.snapshot, &job.query_context, self.worker_id)),
+        }
     }
+}
+
+/// A checked wall-clock deadline `lease` from now.
+fn lease_deadline(lease: Duration) -> Result<chrono::DateTime<Utc>, SnapshotError> {
+    let lease =
+        chrono::Duration::from_std(lease).map_err(|error| SnapshotError::internal(format!("Configured Snapshot preparation lease is invalid: {error}")))?;
+    Utc::now()
+        .checked_add_signed(lease)
+        .ok_or_else(|| SnapshotError::internal("Snapshot preparation lease deadline exceeds the supported timestamp range"))
 }

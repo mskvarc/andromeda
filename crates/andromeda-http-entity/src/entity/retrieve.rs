@@ -170,6 +170,7 @@ pub(crate) async fn get(
         .await
         .with_entity_instance(&uri)?;
     let narrowing = RetrievalNarrowing {
+        entity_type: params.entity_type.as_ref(),
         attrs: params.attrs.as_deref().unwrap_or_default(),
         sys_attrs,
         dataset_ids: params.dataset_id.as_deref().unwrap_or_default(),

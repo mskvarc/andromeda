@@ -64,8 +64,11 @@ pub fn fingerprint_of(request: FingerprintedRequest<'_>) -> Result<RequestFinger
     let (kind, record) = match request {
         FingerprintedRequest::QueryEntities(params) => (MapRequestKind::QueryEntities, filter_record(&QueryFilters::from(params))?),
         FingerprintedRequest::QueryTemporal(params) => (MapRequestKind::QueryTemporal, filter_record(&QueryFilters::from(params))?),
-        FingerprintedRequest::RetrieveEntity(params) => (MapRequestKind::RetrieveEntity, attrs_record(params.attrs.as_deref())),
-        FingerprintedRequest::RetrieveTemporal(params) => (MapRequestKind::RetrieveTemporal, attrs_record(params.attrs.as_deref())),
+        FingerprintedRequest::RetrieveEntity(params) => (
+            MapRequestKind::RetrieveEntity,
+            retrieval_record(params.entity_type.as_ref(), params.attrs.as_deref()),
+        ),
+        FingerprintedRequest::RetrieveTemporal(params) => (MapRequestKind::RetrieveTemporal, retrieval_record(None, params.attrs.as_deref())),
     };
     Ok(RequestFingerprint::new(kind, digest_record(&record)))
 }
@@ -151,11 +154,14 @@ fn filter_record(filters: &QueryFilters<'_>) -> Result<FilterRecord, EntityMapEr
     })
 }
 
-/// The canonical record of a retrieval, whose only filter is `attrs`.
-fn attrs_record(attrs: Option<&[AttributeName]>) -> FilterRecord {
+/// The canonical record of a retrieval, whose filters are the clause 5.7.1.3
+/// type selector and `attrs`: the type selector decides which registrations
+/// match the target entity, so a map created without it does not describe a
+/// retrieval that names one.
+fn retrieval_record(entity_type: Option<&TypeExprRaw>, attrs: Option<&[AttributeName]>) -> FilterRecord {
     FilterRecord {
         values: [
-            ("type", None),
+            ("type", entity_type.map(ToString::to_string)),
             ("idPattern", None),
             ("attrs", attrs.map(sorted_names)),
             ("q", None),
@@ -294,6 +300,16 @@ mod tests {
         pretty_assertions::assert_eq!(created.compare(&retrieve("")?), RequestComparison::DifferentOperation);
         pretty_assertions::assert_eq!(retrieve("attrs=speed")?.compare(&retrieve("attrs=speed")?), RequestComparison::Same);
         pretty_assertions::assert_eq!(retrieve("attrs=speed")?.compare(&retrieve("attrs=brand")?), RequestComparison::Changed);
+        Ok(())
+    }
+
+    /// Clause 5.7.1.3: the type selector narrows which registrations match the
+    /// target entity, so it is part of what a retrieval map was created for.
+    #[test]
+    fn a_retrieval_type_selector_is_part_of_the_fingerprint() -> Result<(), EntityMapError> {
+        pretty_assertions::assert_eq!(retrieve("type=Vehicle")?.compare(&retrieve("type=Vehicle")?), RequestComparison::Same);
+        pretty_assertions::assert_eq!(retrieve("type=Vehicle")?.compare(&retrieve("")?), RequestComparison::Changed);
+        pretty_assertions::assert_eq!(retrieve("type=Vehicle")?.compare(&retrieve("type=Building")?), RequestComparison::Changed);
         Ok(())
     }
 

@@ -2,12 +2,14 @@
 //! lease that spares an in-use runtime, and the orphan, excess and idle sweeps.
 
 use crate::{
+    administration::TenantAdministration,
     config::TenancyConfig,
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
     database_name::TenantDatabaseName,
     db_name_prefix::DbNamePrefix,
     error::TenancyError,
+    lifecycle::TenantLifecycle,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     runtime::TenantRuntimeManager,
     state_factory::{TenantRuntime, TenantStateFactory},
@@ -31,7 +33,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use tokio::{
-    sync::Notify,
+    sync::{Notify, Semaphore},
     time::{sleep, timeout},
 };
 
@@ -148,6 +150,7 @@ fn config(enabled: bool, max_cached: usize) -> TenancyConfig {
         runtime_max_cached: max_cached,
         janitor_interval: HumanDuration::from_secs(30),
         max_concurrent_builds: 8,
+        build_admission_timeout: HumanDuration::from_secs(20),
         eviction_concurrency: 8,
         min_dormancy: HumanDuration::from_secs(30),
         wake_residency: HumanDuration::from_secs(60),
@@ -207,6 +210,13 @@ impl FakeRegistry {
     fn suspend(&self, name: &str) {
         if let Ok(mut names) = self.suspended.lock() {
             names.push(name.to_string());
+        }
+    }
+
+    /// Return a suspended tenant to service.
+    fn resume(&self, name: &str) {
+        if let Ok(mut names) = self.suspended.lock() {
+            names.retain(|held| held != name);
         }
     }
 
@@ -280,6 +290,17 @@ impl TenantDatabase for FakeRegistry {
             names.push(name.as_str().to_string());
         }
         Ok(TenantDatabaseName::from(format!("db_{}", name.as_str())))
+    }
+}
+
+#[async_trait]
+impl TenantLifecycle for FakeRegistry {
+    async fn set_status(&self, name: &TenantName, status: TenantStatus) -> Result<(), TenancyError> {
+        match status {
+            TenantStatus::Suspended => self.suspend(name.as_str()),
+            TenantStatus::Active => self.resume(name.as_str()),
+        }
+        Ok(())
     }
 }
 
@@ -1521,4 +1542,294 @@ async fn the_eviction_probe_runs_after_shutdown_so_a_committed_obligation_is_see
         recorded.iter().any(|(tenant, wake_at)| tenant == "victim" && wake_at.is_some()),
         "the wake probe runs after shutdown, so a just-committed obligation is scheduled with a due wake, recorded {recorded:?}"
     );
+}
+
+/// A runtime whose teardown waits until the test closes a shared latch, so an
+/// evicted runtime stays alive for exactly as long as the test chooses.
+struct LatchedShutdownRuntime {
+    /// Closed by the test to let every teardown complete.
+    latch: Arc<Semaphore>,
+    /// How many runtimes are alive: built and not yet torn down.
+    alive: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl TenantRuntime for LatchedShutdownRuntime {
+    async fn shutdown(self) {
+        // The latch never carries a permit; closing it is what releases the
+        // waiting teardowns.
+        let _closed = self.latch.acquire().await;
+        self.alive.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A factory building [`LatchedShutdownRuntime`]s that share one latch and one
+/// count of live runtimes.
+struct LatchedShutdownFactory {
+    /// The latch every teardown waits on.
+    latch: Arc<Semaphore>,
+    /// How many runtimes are alive.
+    alive: Arc<AtomicUsize>,
+    /// How many runtimes it has built.
+    built: AtomicUsize,
+}
+
+#[async_trait]
+impl TenantStateFactory for LatchedShutdownFactory {
+    type State = String;
+    type Runtime = LatchedShutdownRuntime;
+
+    async fn build(&self, _tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, LatchedShutdownRuntime), TenancyError> {
+        self.built.fetch_add(1, Ordering::SeqCst);
+        self.alive.fetch_add(1, Ordering::SeqCst);
+        Ok((
+            Arc::new(database.as_str().to_owned()),
+            LatchedShutdownRuntime {
+                latch: Arc::clone(&self.latch),
+                alive: Arc::clone(&self.alive),
+            },
+        ))
+    }
+}
+
+/// A config whose admission deadline is short enough for a test to reach it.
+fn deadline_config(max_cached: usize, max_concurrent_builds: usize, eviction_concurrency: usize) -> TenancyConfig {
+    TenancyConfig {
+        build_admission_timeout: HumanDuration::from_millis(300),
+        ..bounded_config(max_cached, max_concurrent_builds, eviction_concurrency)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_runtimes_never_exceed_the_cache_plus_the_teardown_slots_while_teardowns_stall() {
+    // Evicted runtimes whose teardown stalls (a pool close queued behind a
+    // saturated pooler) must not pile up alive behind the teardown bound. With a
+    // cap of two and two teardown slots, the third and fourth cold builds each
+    // take a slot to evict the LRU; the fifth finds no slot free within the
+    // admission deadline and is refused as saturated instead of adding a fifth
+    // live runtime. Once the teardowns complete, the same build is admitted.
+    const CAP: usize = 2;
+    const SLOTS: usize = 2;
+
+    let registry = Arc::new(FakeRegistry::new(&["t0", "t1", "t2", "t3", "t4"]));
+    let latch = Arc::new(Semaphore::new(0));
+    let alive = Arc::new(AtomicUsize::new(0));
+    let factory = Arc::new(LatchedShutdownFactory {
+        latch: Arc::clone(&latch),
+        alive: Arc::clone(&alive),
+        built: AtomicUsize::new(0),
+    });
+    let manager = TenantRuntimeManager::new(
+        deadline_config(CAP, 8, SLOTS),
+        registry,
+        Arc::clone(&factory),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
+
+    for name in ["t0", "t1", "t2", "t3"] {
+        drop(
+            manager
+                .resolve_state(&TenantRef::Named(named(name)), TenantCreationPolicy::MustExist)
+                .await
+                .expect("resolves while a teardown slot is free"),
+        );
+        assert!(
+            alive.load(Ordering::SeqCst) <= CAP + SLOTS,
+            "live runtimes must stay within the cache plus the teardown slots, saw {}",
+            alive.load(Ordering::SeqCst)
+        );
+        // Space the resolves so the millisecond last-used stamps order the LRU.
+        sleep(Duration::from_millis(3)).await;
+    }
+    pretty_assertions::assert_eq!(alive.load(Ordering::SeqCst), CAP + SLOTS, "two cached, two stalled in teardown");
+    pretty_assertions::assert_eq!(manager.runtimes.len(), CAP);
+
+    let refused = manager.resolve_state(&TenantRef::Named(named("t4")), TenantCreationPolicy::MustExist).await;
+    assert!(
+        matches!(refused, Err(TenancyError::Saturated { .. })),
+        "a cold build that cannot free a slot in time is refused as saturated"
+    );
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 4, "the refused build never ran");
+    pretty_assertions::assert_eq!(alive.load(Ordering::SeqCst), CAP + SLOTS, "no runtime was added past the bound");
+
+    // Let the stalled teardowns finish: the same request is admitted now.
+    latch.close();
+    manager.await_evictions().await;
+    pretty_assertions::assert_eq!(alive.load(Ordering::SeqCst), CAP);
+    let admitted = manager.resolve_state(&TenantRef::Named(named("t4")), TenantCreationPolicy::MustExist).await;
+    assert!(admitted.is_ok(), "once a teardown slot frees, the cold build is admitted");
+    drop(admitted);
+    manager.await_evictions().await;
+    pretty_assertions::assert_eq!(alive.load(Ordering::SeqCst), CAP, "the cache is back inside its cap");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_request_waiting_on_another_requests_build_is_refused_at_the_admission_deadline() {
+    // A second request for a tenant whose runtime is still being built waits on
+    // the single-flight lock. The wait answers to the admission deadline: past
+    // it the request is refused as saturated (503 + Retry-After at the HTTP
+    // layer) rather than stalling into the request timeout.
+    let registry = Arc::new(FakeRegistry::new(&["acme"]));
+    let gate = Arc::new(Notify::new());
+    let factory = Arc::new(GatedFactory {
+        built: AtomicUsize::new(0),
+        shutdowns: Arc::new(AtomicUsize::new(0)),
+        gate: Arc::clone(&gate),
+    });
+    let manager = TenantRuntimeManager::new(
+        deadline_config(64, 8, 8),
+        registry,
+        Arc::clone(&factory),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
+    let tenant = TenantRef::Named(named("acme"));
+
+    let building = {
+        let manager = Arc::clone(&manager);
+        let tenant = tenant.clone(); // clone: the task owns its reference
+        tokio::spawn(async move { manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.map(|leased| leased.state) })
+    };
+    // Let the first request take the lock and enter its build.
+    sleep(Duration::from_millis(50)).await;
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 1);
+
+    let waiting = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await;
+    assert!(
+        matches!(waiting, Err(TenancyError::Saturated { .. })),
+        "a request still waiting on another's build at the deadline is refused as saturated"
+    );
+
+    gate.notify_waiters();
+    let built = building.await.expect("task joins");
+    assert!(built.is_ok(), "the build the refused request waited on still completes");
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 1, "the refused request never built");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_cold_build_waiting_for_a_build_permit_is_refused_at_the_admission_deadline() {
+    // With one build permit held by a slow build of another tenant, a cold build
+    // waits for the permit only until the admission deadline, then is refused as
+    // saturated without building.
+    let registry = Arc::new(FakeRegistry::new(&["slow", "queued"]));
+    let gate = Arc::new(Notify::new());
+    let factory = Arc::new(GatedFactory {
+        built: AtomicUsize::new(0),
+        shutdowns: Arc::new(AtomicUsize::new(0)),
+        gate: Arc::clone(&gate),
+    });
+    let manager = TenantRuntimeManager::new(
+        deadline_config(64, 1, 8),
+        registry,
+        Arc::clone(&factory),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
+
+    let slow = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move {
+            manager
+                .resolve_state(&TenantRef::Named(named("slow")), TenantCreationPolicy::MustExist)
+                .await
+                .map(|leased| leased.state)
+        })
+    };
+    sleep(Duration::from_millis(50)).await;
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 1);
+
+    let queued = manager.resolve_state(&TenantRef::Named(named("queued")), TenantCreationPolicy::MustExist).await;
+    assert!(
+        matches!(queued, Err(TenancyError::Saturated { .. })),
+        "a cold build still waiting for a permit at the deadline is refused as saturated"
+    );
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 1, "the refused cold build never ran");
+
+    gate.notify_waiters();
+    assert!(slow.await.expect("task joins").is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_tenant_suspended_mid_request_is_refused_then_released_when_the_request_ends() {
+    // Suspending a tenant whose runtime a request still holds cannot release it
+    // at once. The runtime is retired instead: admission refuses the tenant as
+    // nonexistent even though its runtime is still cached (clause 5.5.10), and
+    // when the request's lease drops the janitor releases it promptly rather
+    // than leaving a suspended tenant's runtime -- and its background work --
+    // running until it idles out (docs/tenant-management.md).
+    let Harness { manager, shutdowns, .. } = harness(&["acme"], true, 64);
+    let janitor = manager.spawn_janitor().expect("a multi-tenant broker runs a janitor");
+    let tenant = TenantRef::Named(named("acme"));
+    let in_flight = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("resolves");
+
+    let view = manager
+        .set_admin_status(&named("acme"), TenantStatus::Suspended)
+        .await
+        .expect("the suspend is applied");
+    assert!(view.is_some(), "the suspended tenant is still registered");
+    assert!(manager.runtimes.contains_key(&tenant), "the leased runtime cannot be released yet");
+    pretty_assertions::assert_eq!(shutdowns.load(Ordering::SeqCst), 0);
+
+    let refused = manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await;
+    assert!(
+        matches!(refused, Err(TenancyError::UnknownTenant { .. })),
+        "a retired runtime is never handed out, even from the cache"
+    );
+
+    drop(in_flight);
+    // The janitor's next tick is thirty seconds out, so a release inside this
+    // window can only be the lease's own release signal.
+    timeout(Duration::from_secs(2), async {
+        while manager.runtimes.contains_key(&tenant) {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the retired runtime is released as soon as its last lease drops");
+    manager.await_evictions().await;
+    pretty_assertions::assert_eq!(shutdowns.load(Ordering::SeqCst), 1, "the released runtime is torn down");
+    janitor.abort();
+}
+
+#[tokio::test]
+async fn a_tenant_resumed_while_its_retired_runtime_is_leased_is_served_again() {
+    // A resume that lands before the suspended tenant's last lease dropped
+    // returns the still-cached runtime to service rather than refusing a tenant
+    // that is active again.
+    let Harness { manager, factory, .. } = harness(&["acme"], true, 64);
+    let tenant = TenantRef::Named(named("acme"));
+    let in_flight = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("resolves");
+
+    manager
+        .set_admin_status(&named("acme"), TenantStatus::Suspended)
+        .await
+        .expect("the suspend is applied");
+    manager
+        .set_admin_status(&named("acme"), TenantStatus::Active)
+        .await
+        .expect("the resume is applied");
+
+    let served = manager
+        .resolve_state(&tenant, TenantCreationPolicy::MustExist)
+        .await
+        .expect("a resumed tenant is served");
+    assert!(Arc::ptr_eq(&served.state, &in_flight.state), "the reinstated runtime is reused");
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1, "no second runtime was built");
+}
+
+#[tokio::test]
+async fn suspending_an_unleased_tenant_releases_its_runtime_before_answering() {
+    // With no request holding it, a suspend tears the runtime down before it
+    // returns, so the caller's 204 means the tenant's pool is already closed.
+    let Harness { manager, shutdowns, .. } = harness(&["acme"], true, 64);
+    let tenant = TenantRef::Named(named("acme"));
+    drop(manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("resolves"));
+
+    manager
+        .set_admin_status(&named("acme"), TenantStatus::Suspended)
+        .await
+        .expect("the suspend is applied");
+    assert!(!manager.runtimes.contains_key(&tenant), "the runtime is released synchronously");
+    pretty_assertions::assert_eq!(shutdowns.load(Ordering::SeqCst), 1, "its teardown completed before the suspend returned");
 }

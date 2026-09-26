@@ -1,13 +1,22 @@
 //! Execution and persistence of individual snapshot queries.
+//!
+//! A query's own failure is recorded in its execution result (clause 5.2.42).
+//! A transient store failure -- a lost deadlock or serialization race, or a
+//! saturated pool -- is not the query's: it is returned as an error instead, so
+//! the whole preparation restarts rather than freezing a result the load of the
+//! moment decided.
 
-use crate::executor::{
-    SnapshotExecutor,
-    status::{failure_detail, success_detail},
-    translation::{entity_parameters, temporal_parameters},
+use crate::{
+    error::{Recurrence, SnapshotError, entity_recurrence, temporal_recurrence},
+    executor::{
+        SnapshotExecutor,
+        status::{failure_detail, success_detail},
+        translation::{entity_parameters, temporal_parameters},
+    },
 };
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, error::CommitError};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::EntityQueryService;
+use andromeda_entity::{error::EntityError, query::EntityQueryService};
 use andromeda_federation::{
     entity_result::collect_warnings,
     forwarded_query::client_query::ClientQuery,
@@ -18,6 +27,7 @@ use andromeda_federation::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
+use andromeda_temporal::error::TemporalError;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 use tracing::{error, warn};
@@ -31,13 +41,13 @@ impl SnapshotExecutor {
         index: usize,
         context: &ContextSpec,
         materialized_entities: &mut HashSet<Uri>,
-    ) -> ExecutionResultDetails {
+    ) -> Result<ExecutionResultDetails, SnapshotError> {
         let mut params = match entity_parameters(query) {
             Ok(params) => params,
-            Err(error) => return failure_detail(error.to_string()),
+            Err(error) => return Ok(failure_detail(error.to_string())),
         };
         if let Err(error) = params.validate() {
-            return failure_detail(format!("Snapshot query translation failed validation: {error}"));
+            return Ok(failure_detail(format!("Snapshot query translation failed validation: {error}")));
         }
 
         let mut offset = 0_u32;
@@ -50,7 +60,7 @@ impl SnapshotExecutor {
                 Ok(result) => result,
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot entity query failed");
-                    return failure_detail(error.to_string());
+                    return entity_query_failure(error);
                 }
             };
             let local_page_len = entities.len();
@@ -82,7 +92,9 @@ impl SnapshotExecutor {
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot CSR forwarding failed");
                     if local_page_len == 0 && captured.is_empty() {
-                        return failure_detail(format!("No valid entity result was available because distributed execution failed: {error}"));
+                        return Ok(failure_detail(format!(
+                            "No valid entity result was available because distributed execution failed: {error}"
+                        )));
                     }
                     Vec::new()
                 }
@@ -94,7 +106,9 @@ impl SnapshotExecutor {
             let remote_page_full = forwarded.iter().any(|result| result.entities.len() >= self.capture_page_size as usize);
             let remote_page_len = forwarded.iter().map(|result| result.entities.len()).sum::<usize>();
             if local_page_len == 0 && remote_page_len == 0 && captured.is_empty() && !forwarding_warnings.is_empty() {
-                return failure_detail("No valid entity result was available because every matching distributed source failed");
+                return Ok(failure_detail(
+                    "No valid entity result was available because every matching distributed source failed",
+                ));
             }
             if !forwarded.is_empty() {
                 entities = EntityQueryService::merge_with_forwarded(entities, forwarded, None);
@@ -104,18 +118,18 @@ impl SnapshotExecutor {
                 let identifier = entity.id.clone(); // clone: the atomic write and result accounting independently own the identifier.
                 let compact = match serde_json::to_value(entity) {
                     Ok(compact) => compact,
-                    Err(error) => return failure_detail(format!("Failed to serialize captured entity: {error}")),
+                    Err(error) => return Ok(failure_detail(format!("Failed to serialize captured entity: {error}"))),
                 };
                 let expanded = match self.sources.entity_query.engine().expand(compact, context).await {
                     Ok(expanded) => expanded,
-                    Err(error) => return failure_detail(format!("Failed to expand captured entity: {error}")),
+                    Err(error) => return Ok(failure_detail(format!("Failed to expand captured entity: {error}"))),
                 };
                 pairs.push((identifier, expanded));
             }
             let new_pairs = pairs.iter().filter(|(id, _)| !materialized_entities.contains(id)).cloned().collect::<Vec<_>>();
-            let detail = self.persist_current_results(target, snapshot_id, index, &new_pairs).await;
+            let detail = self.persist_current_results(target, snapshot_id, index, &new_pairs).await?;
             if detail.problem_details.is_some() {
-                return detail;
+                return Ok(detail);
             }
             captured.extend(pairs.iter().map(|(id, _)| id.clone()));
             materialized_entities.extend(new_pairs.into_iter().map(|(id, _)| id));
@@ -124,10 +138,10 @@ impl SnapshotExecutor {
             }
             offset = match offset.checked_add(self.capture_page_size) {
                 Some(offset) => offset,
-                None => return failure_detail("Snapshot entity pagination offset overflowed"),
+                None => return Ok(failure_detail("Snapshot entity pagination offset overflowed")),
             };
         }
-        success_detail(captured.len())
+        Ok(success_detail(captured.len()))
     }
 
     pub(crate) async fn run_temporal_query(
@@ -137,10 +151,10 @@ impl SnapshotExecutor {
         query: Query,
         index: usize,
         context: &ContextSpec,
-    ) -> ExecutionResultDetails {
+    ) -> Result<ExecutionResultDetails, SnapshotError> {
         let mut params = match temporal_parameters(query) {
             Ok(params) => params,
-            Err(error) => return failure_detail(error.to_string()),
+            Err(error) => return Ok(failure_detail(error.to_string())),
         };
         let mut offset = 0_u32;
         let mut captured = HashSet::new();
@@ -152,7 +166,7 @@ impl SnapshotExecutor {
                 Ok(result) => result,
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot temporal query failed");
-                    return failure_detail(error.to_string());
+                    return temporal_failure(error, "");
                 }
             };
             for warning in &result.warnings {
@@ -202,9 +216,9 @@ impl SnapshotExecutor {
                     }
                 })
                 .collect::<Vec<_>>();
-            let detail = self.persist_temporal_results(target, snapshot_id, index, &pairs).await;
+            let detail = self.persist_temporal_results(target, snapshot_id, index, &pairs).await?;
             if detail.problem_details.is_some() {
-                return detail;
+                return Ok(detail);
             }
             captured.extend(pairs.into_iter().map(|(id, _)| id));
             if local_page_len < self.capture_page_size as usize && !remote_page_full {
@@ -212,15 +226,21 @@ impl SnapshotExecutor {
             }
             offset = match offset.checked_add(self.capture_page_size) {
                 Some(offset) => offset,
-                None => return failure_detail("Snapshot temporal pagination offset overflowed"),
+                None => return Ok(failure_detail("Snapshot temporal pagination offset overflowed")),
             };
         }
-        success_detail(captured.len())
+        Ok(success_detail(captured.len()))
     }
 
-    async fn persist_current_results(&self, target: &ContextTarget, snapshot_id: &Uri, index: usize, pairs: &[(Uri, Value)]) -> ExecutionResultDetails {
+    async fn persist_current_results(
+        &self,
+        target: &ContextTarget,
+        snapshot_id: &Uri,
+        index: usize,
+        pairs: &[(Uri, Value)],
+    ) -> Result<ExecutionResultDetails, SnapshotError> {
         if pairs.is_empty() {
-            return success_detail(0);
+            return Ok(success_detail(0));
         }
         let writes = pairs
             .iter()
@@ -235,23 +255,62 @@ impl SnapshotExecutor {
             Ok(writes) => writes,
             Err(error) => {
                 error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to read captured Snapshot results");
-                return failure_detail(format!("Failed to read results: {error}"));
+                return Ok(failure_detail(format!("Failed to read results: {error}")));
             }
         };
         if let Err(error) = self.writes.commit(target, writes).await {
             error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize current Snapshot results");
-            return failure_detail(format!("Failed to store results: {error}"));
+            return branch_commit_failure(error);
         }
-        success_detail(pairs.len())
+        Ok(success_detail(pairs.len()))
     }
 
-    async fn persist_temporal_results(&self, target: &ContextTarget, snapshot_id: &Uri, index: usize, pairs: &[(Uri, Value)]) -> ExecutionResultDetails {
+    async fn persist_temporal_results(
+        &self,
+        target: &ContextTarget,
+        snapshot_id: &Uri,
+        index: usize,
+        pairs: &[(Uri, Value)],
+    ) -> Result<ExecutionResultDetails, SnapshotError> {
         for (_, data) in pairs {
             if let Err(error) = self.sources.temporal.create_or_update(target, data.clone(), &ContextSpec::core_only()).await {
                 error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize temporal Snapshot results");
-                return failure_detail(format!("Failed to store temporal results: {error}"));
+                return temporal_failure(error, "Failed to store temporal results: ");
             }
         }
-        success_detail(pairs.len())
+        Ok(success_detail(pairs.len()))
+    }
+}
+
+/// A failed local entity query: the query's own failure, or a transient store
+/// failure the preparation restarts on.
+fn entity_query_failure(error: EntityError) -> Result<ExecutionResultDetails, SnapshotError> {
+    match entity_recurrence(&error) {
+        Recurrence::Transient => Err(SnapshotError::from(error)),
+        Recurrence::Persistent => Ok(failure_detail(error.to_string())),
+    }
+}
+
+/// A failed temporal query or temporal write, `prefix` naming which: the
+/// query's own failure, or a transient store failure the preparation restarts
+/// on.
+fn temporal_failure(error: TemporalError, prefix: &str) -> Result<ExecutionResultDetails, SnapshotError> {
+    match temporal_recurrence(&error) {
+        Recurrence::Transient => Err(SnapshotError::from(error)),
+        Recurrence::Persistent => Ok(failure_detail(format!("{prefix}{error}"))),
+    }
+}
+
+/// A failed write of captured entities into the staging branch: a transient
+/// store failure the preparation restarts on, or the query's own failure.
+fn branch_commit_failure(error: CommitError) -> Result<ExecutionResultDetails, SnapshotError> {
+    match error {
+        CommitError::TransactionContended => Err(SnapshotError::Contended),
+        CommitError::StoreSaturated => Err(SnapshotError::StoreSaturated),
+        failure @ (CommitError::Submission { .. }
+        | CommitError::DuplicateEntity { .. }
+        | CommitError::Persistence { .. }
+        | CommitError::Invariant { .. }
+        | CommitError::UnexpectedOutcomeCount { .. }) => Ok(failure_detail(format!("Failed to store results: {failure}"))),
     }
 }

@@ -1,8 +1,11 @@
 //! Creating, upgrading, promoting and tearing down a Snapshot's branch schema.
 //!
-//! Each Snapshot owns its state in a dedicated PostgreSQL schema named after its
-//! surrogate key (`snap_<key>` for the published branch, `snap_<key>_stg` for
-//! the private preparation branch), holding the identical branch relation set.
+//! Each Snapshot owns its state in one dedicated PostgreSQL schema named after
+//! its surrogate key, holding the branch relation set: `snap_<key>_stg`, the
+//! private staging branch, while it prepares, renamed to `snap_<key>`, the
+//! published branch, when its preparation ends. A Snapshot never has both, so
+//! its creation runs the branch migrations once and its publication is a
+//! rename that locks nothing beyond the schema itself.
 //! A branch schema is created by the branch migration set -- the same files
 //! that create the live branch relations in `public` -- run with the schema
 //! first on the search path and recorded in the schema's own ledger, so every
@@ -126,7 +129,7 @@ pub(crate) async fn drop_branch_schema(conn: &mut PgConnection, key: SnapshotKey
 ///
 /// Truncating every branch relation in one statement is foreign-key safe (all
 /// of them are cleared together) and far cheaper than dropping and recreating
-/// the schema, which a fresh first claim would otherwise pay for.
+/// the schema, which every claim and restart would otherwise pay for.
 ///
 /// # Errors
 ///
@@ -137,18 +140,30 @@ pub(crate) async fn truncate_branch_schema(conn: &mut PgConnection, key: Snapsho
     exec_ddl(conn, format!("TRUNCATE {} RESTART IDENTITY CASCADE", qualified.join(", "))).await
 }
 
-/// Publish a Snapshot's captured branch: drop the empty published schema and
-/// rename the staging schema into its place, so the published branch keeps its
-/// derivable `snap_<key>` name.
+/// Publish a Snapshot's prepared branch by renaming its staging schema to the
+/// published name, so the published branch keeps its derivable `snap_<key>`
+/// name.
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError`] when either schema statement fails.
+/// Returns [`ContextStoreError`] when the rename fails.
 pub(crate) async fn promote_staging_schema(conn: &mut PgConnection, key: SnapshotKey) -> Result<(), ContextStoreError> {
     let published = snapshot_schema_name(key, SnapshotBranch::Published);
     let staging = snapshot_schema_name(key, SnapshotBranch::Staging);
-    exec_ddl(conn, format!("DROP SCHEMA IF EXISTS {published} CASCADE")).await?;
     exec_ddl(conn, format!("ALTER SCHEMA {staging} RENAME TO {published}")).await
+}
+
+/// Publish an empty branch for a Snapshot whose preparation failed: whatever
+/// its attempts staged is discarded, and the failed Snapshot stays addressable
+/// over an empty dataset (clause 5.16.1.4 ends it in `failure`, it does not
+/// remove it).
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError`] when the truncation or the rename fails.
+pub(crate) async fn publish_empty_branch(conn: &mut PgConnection, key: SnapshotKey) -> Result<(), ContextStoreError> {
+    truncate_branch_schema(conn, key, SnapshotBranch::Staging).await?;
+    promote_staging_schema(conn, key).await
 }
 
 #[cfg(test)]

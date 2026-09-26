@@ -2,9 +2,14 @@
 //!
 //! Provides the tenant-name generation, the uniform and Zipf tenant pickers
 //! (over a small deterministic PRNG so a run is reproducible), and the bounded
-//! concurrent runner that records per-request latency and status so a test can
+//! concurrent runner that records per-request latency and outcome so a test can
 //! assert on failure counts and report p50/p99.
+//!
+//! Every request resolves to a
+//! [`RequestOutcome`](crate::pooler_probe::request_outcome::RequestOutcome), so
+//! a load report says why a request failed, not merely that it did.
 
+use crate::pooler_probe::request_outcome::{RequestOutcome, TransportFailureKind};
 use futures::{
     future::join_all,
     stream::{self, StreamExt},
@@ -51,8 +56,9 @@ pub struct ProvisionReport {
     pub elapsed: Duration,
     /// Provisioning throughput in tenants per second.
     pub tenants_per_second: f64,
-    /// Every response status, transport failures recorded as 0.
-    pub statuses: Vec<u16>,
+    /// Every create that did not return 201, with its status and body or its
+    /// transport failure.
+    pub failures: Vec<RequestOutcome>,
 }
 
 /// Provision every tenant by creating one `Device` entity under it, at most
@@ -66,39 +72,42 @@ pub async fn provision_tenants(client: &Client, broker_base: &str, tenants: &[St
         let id = format!("urn:ngsi-ld:Device:provision:{tenant}");
         create_entity(client, broker_base, &tenant, &device_entity(&id, context)).await
     });
-    let statuses: Vec<u16> = stream::iter(requests).buffered(concurrency.max(1)).collect().await;
+    let outcomes: Vec<RequestOutcome> = stream::iter(requests).buffered(concurrency.max(1)).collect().await;
     let elapsed = started.elapsed();
-    let created = statuses.iter().filter(|status| **status == 201).count();
+    let total = outcomes.len();
+    let failures: Vec<RequestOutcome> = outcomes.into_iter().filter(|outcome| outcome.status() != Some(201)).collect();
     let seconds = elapsed.as_secs_f64();
     let tenants_per_second = if seconds > 0.0 { as_f64(tenants.len()) / seconds } else { 0.0 };
     ProvisionReport {
-        created,
-        failed: statuses.len() - created,
+        created: total - failures.len(),
+        failed: failures.len(),
         elapsed,
         tenants_per_second,
-        statuses,
+        failures,
     }
 }
 
-/// Create one entity under `tenant`, returning the status (0 on transport error).
-pub async fn create_entity(client: &Client, broker_base: &str, tenant: &str, entity: &Value) -> u16 {
-    client
-        .post(format!("{broker_base}entities"))
-        .header("NGSILD-Tenant", tenant)
-        .header("Content-Type", "application/ld+json")
-        .json(entity)
-        .send()
-        .await
-        .map_or(0, |response| response.status().as_u16())
+/// Create one entity under `tenant`.
+pub async fn create_entity(client: &Client, broker_base: &str, tenant: &str, entity: &Value) -> RequestOutcome {
+    RequestOutcome::of(
+        client
+            .post(format!("{broker_base}entities"))
+            .header("NGSILD-Tenant", tenant)
+            .header("Content-Type", "application/ld+json")
+            .json(entity),
+    )
+    .await
 }
+
+/// How many distinct transport-failure chains a [`LoadReport`] keeps verbatim.
+const TRANSPORT_SAMPLE_LIMIT: usize = 8;
 
 /// The outcome of a bounded load run.
 #[derive(Debug, Clone)]
 pub struct LoadReport {
     /// Total requests issued.
     pub total: usize,
-    /// Requests whose status was outside the 2xx range (transport errors, as
-    /// status 0, are included).
+    /// Requests that did not get a 2xx answer, transport failures included.
     pub non_2xx: usize,
     /// Requests that never got an HTTP response at all.
     pub transport_errors: usize,
@@ -108,8 +117,15 @@ pub struct LoadReport {
     pub p99: Duration,
     /// Slowest request latency.
     pub max: Duration,
-    /// Count of responses per status code (transport errors under 0).
+    /// Count of HTTP responses per status code.
     pub statuses: BTreeMap<u16, usize>,
+    /// Count of requests that got no response, per failure kind.
+    pub transport_failures: BTreeMap<TransportFailureKind, usize>,
+    /// Up to eight distinct transport-failure chains, each with the kind it was
+    /// classified as, in first-seen order.
+    pub transport_samples: Vec<(TransportFailureKind, String)>,
+    /// The first body seen for each non-2xx status.
+    pub error_details: BTreeMap<u16, String>,
 }
 
 impl LoadReport {
@@ -121,50 +137,82 @@ impl LoadReport {
 }
 
 /// Run `workload` on `concurrency` concurrent workers until `duration` elapses,
-/// recording every request's latency and status.
+/// recording every request's latency and outcome.
 ///
 /// Each worker loops, calling `workload` with a monotonically increasing
 /// request index it can use to pick a tenant or shape a request, until the
-/// deadline; the returned [`LoadReport`] aggregates latency percentiles and a
-/// per-status tally over every request all workers made.
+/// deadline; the returned [`LoadReport`] aggregates latency percentiles, a
+/// per-status tally, the transport failures by kind and a sample of the
+/// failure details over every request all workers made.
 pub async fn run_bounded<F, Fut>(concurrency: usize, duration: Duration, workload: F) -> LoadReport
 where
     F: Fn(u64) -> Fut + Sync,
-    Fut: Future<Output = u16> + Send,
+    Fut: Future<Output = RequestOutcome> + Send,
 {
     let deadline = Instant::now() + duration;
     let counter = AtomicU64::new(0);
     let workload = &workload;
     let counter = &counter;
     let per_worker = (0..concurrency).map(|_| async move {
-        let mut local: Vec<(Duration, u16)> = Vec::new();
+        let mut local: Vec<(Duration, RequestOutcome)> = Vec::new();
         while Instant::now() < deadline {
             let index = counter.fetch_add(1, Ordering::Relaxed);
             let started = Instant::now();
-            let status = workload(index).await;
-            local.push((started.elapsed(), status));
+            let outcome = workload(index).await;
+            local.push((started.elapsed(), outcome));
         }
         local
     });
-    let mut samples: Vec<(Duration, u16)> = join_all(per_worker).await.into_iter().flatten().collect();
+    let samples: Vec<(Duration, RequestOutcome)> = join_all(per_worker).await.into_iter().flatten().collect();
+    LoadReport::from_samples(samples)
+}
 
-    let total = samples.len();
-    let non_2xx = samples.iter().filter(|(_, status)| !(200..300).contains(status)).count();
-    let transport_errors = samples.iter().filter(|(_, status)| *status == 0).count();
-    let mut statuses: BTreeMap<u16, usize> = BTreeMap::new();
-    for (_, status) in &samples {
-        *statuses.entry(*status).or_insert(0) += 1;
-    }
-    samples.sort_by_key(|(latency, _)| *latency);
-    let latencies: Vec<Duration> = samples.into_iter().map(|(latency, _)| latency).collect();
-    LoadReport {
-        total,
-        non_2xx,
-        transport_errors,
-        p50: nth_percentile(&latencies, 50),
-        p99: nth_percentile(&latencies, 99),
-        max: latencies.last().copied().unwrap_or(Duration::ZERO),
-        statuses,
+impl LoadReport {
+    /// Aggregate every request's latency and outcome.
+    fn from_samples(samples: Vec<(Duration, RequestOutcome)>) -> LoadReport {
+        let total = samples.len();
+        let mut statuses: BTreeMap<u16, usize> = BTreeMap::new();
+        let mut transport_failures: BTreeMap<TransportFailureKind, usize> = BTreeMap::new();
+        let mut transport_samples: Vec<(TransportFailureKind, String)> = Vec::new();
+        let mut error_details: BTreeMap<u16, String> = BTreeMap::new();
+        let mut latencies: Vec<Duration> = Vec::with_capacity(total);
+        for (latency, outcome) in samples {
+            latencies.push(latency);
+            match outcome {
+                RequestOutcome::Responded { status, detail } => {
+                    *statuses.entry(status).or_insert(0) += 1;
+                    if let Some(detail) = detail {
+                        error_details.entry(status).or_insert(detail);
+                    }
+                }
+                RequestOutcome::TransportFailed(failure) => {
+                    *transport_failures.entry(failure.kind).or_insert(0) += 1;
+                    if transport_samples.len() < TRANSPORT_SAMPLE_LIMIT && !transport_samples.iter().any(|(_, chain)| *chain == failure.chain) {
+                        transport_samples.push((failure.kind, failure.chain));
+                    }
+                }
+            }
+        }
+        latencies.sort_unstable();
+        let transport_errors = transport_failures.values().sum();
+        let non_2xx = total
+            - statuses
+                .iter()
+                .filter(|(status, _)| (200..300).contains(*status))
+                .map(|(_, count)| count)
+                .sum::<usize>();
+        LoadReport {
+            total,
+            non_2xx,
+            transport_errors,
+            p50: nth_percentile(&latencies, 50),
+            p99: nth_percentile(&latencies, 99),
+            max: latencies.last().copied().unwrap_or(Duration::ZERO),
+            statuses,
+            transport_failures,
+            transport_samples,
+            error_details,
+        }
     }
 }
 
@@ -288,4 +336,57 @@ fn nth_percentile(sorted: &[Duration], pct: usize) -> Duration {
 /// lints; counts in this tier never approach `u32::MAX`.
 fn as_f64(value: usize) -> f64 {
     u32::try_from(value).map_or(f64::from(u32::MAX), f64::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::pooler_probe::{
+        request_outcome::{RequestOutcome, TransportFailure, TransportFailureKind},
+        tenant_load::LoadReport,
+    };
+    use std::time::Duration;
+
+    /// A response outcome with the given status, carrying a body when non-2xx.
+    fn responded(status: u16) -> RequestOutcome {
+        RequestOutcome::Responded {
+            status,
+            detail: (!(200..300).contains(&status)).then(|| format!("{{\"status\":{status}}}")),
+        }
+    }
+
+    /// A transport failure of the given kind and chain.
+    fn failed(kind: TransportFailureKind, chain: &str) -> RequestOutcome {
+        RequestOutcome::TransportFailed(TransportFailure { kind, chain: chain.to_owned() })
+    }
+
+    #[test]
+    fn a_report_tallies_statuses_and_transport_failures_apart() {
+        let report = LoadReport::from_samples(vec![
+            (Duration::from_millis(5), responded(200)),
+            (Duration::from_millis(7), responded(503)),
+            (Duration::from_millis(9), responded(503)),
+            (
+                Duration::from_millis(1),
+                failed(TransportFailureKind::Connect, "error sending request: connection refused"),
+            ),
+            (
+                Duration::from_millis(2),
+                failed(TransportFailureKind::Request, "error sending request: connection reset"),
+            ),
+            (
+                Duration::from_millis(3),
+                failed(TransportFailureKind::Connect, "error sending request: connection refused"),
+            ),
+        ]);
+        pretty_assertions::assert_eq!(report.total, 6);
+        pretty_assertions::assert_eq!(report.non_2xx, 5, "503s and transport failures are all non-2xx");
+        pretty_assertions::assert_eq!(report.transport_errors, 3);
+        pretty_assertions::assert_eq!(report.statuses.get(&503), Some(&2));
+        assert!(!report.statuses.contains_key(&0), "a transport failure is never tallied as a status");
+        pretty_assertions::assert_eq!(report.transport_failures.get(&TransportFailureKind::Connect), Some(&2));
+        pretty_assertions::assert_eq!(report.transport_failures.get(&TransportFailureKind::Request), Some(&1));
+        pretty_assertions::assert_eq!(report.transport_samples.len(), 2, "identical chains are sampled once");
+        pretty_assertions::assert_eq!(report.error_details.get(&503).map(String::as_str), Some("{\"status\":503}"));
+        pretty_assertions::assert_eq!(report.max, Duration::from_millis(9));
+    }
 }

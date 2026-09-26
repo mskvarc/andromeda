@@ -196,10 +196,28 @@ pub(super) fn supervise_tasks(
             receiver: snapshot_status_receiver,
         },
     )?;
-    register_spatial_workers(&task_supervisor, config, storage, entity)?;
+    register_spatial_workers(&task_supervisor, config, storage)?;
     Ok(TaskSupervision {
         handles,
         health_shutdown,
         task_supervisor,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use andromeda_context_commit::context_change_event::ContextChangeEvent;
+
+    /// `notifications.live_change_capacity` prices a slot of the live change
+    /// channel at under half a kilobyte, allocated up front for every slot of
+    /// every cached tenant runtime; an event that outgrows the price makes the
+    /// documented memory cost a lie.
+    #[test]
+    fn a_live_change_slot_stays_within_its_documented_price() {
+        assert!(
+            size_of::<ContextChangeEvent>() <= 448,
+            "a change event is {} bytes",
+            size_of::<ContextChangeEvent>()
+        );
+    }
 }

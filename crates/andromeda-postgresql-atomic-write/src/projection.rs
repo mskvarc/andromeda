@@ -14,7 +14,7 @@
 //! whose write did not land carries no key and contributes nothing here, and
 //! the dictionary keys were minted from those same intents in this transaction.
 
-use crate::commit_refusal::{persistence, unit_code};
+use crate::commit_refusal::{context_store, unit_code};
 use andromeda_context_commit::error::CommitError;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
@@ -73,8 +73,8 @@ pub(crate) async fn apply(
     // Removals run first so that a mutation which both ends one instance and
     // restates another leaves the second standing. No grain appears on both
     // sides: an instance the mutation gives a value to is not one it removed.
-    delete_instances_in_tx(tx, target, &work.removals).await.map_err(persistence)?;
-    upsert_projection_in_tx(tx, target, &work.upserts).await.map_err(persistence)?;
+    delete_instances_in_tx(tx, target, &work.removals).await.map_err(context_store)?;
+    upsert_projection_in_tx(tx, target, &work.upserts).await.map_err(context_store)?;
     Ok(())
 }
 

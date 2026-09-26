@@ -17,8 +17,9 @@ use andromeda_test_harness::pooler_probe::{
     backend_sampler::{self, BackendSampler},
     endpoints,
     metrics_scrape::Metrics,
+    request_outcome::RequestOutcome,
     tenant_cleanup,
-    tenant_load::{self, UniformPicker, ZipfPicker},
+    tenant_load::{self, LoadReport, UniformPicker, ZipfPicker},
 };
 use reqwest::Client;
 use serde_json::json;
@@ -39,6 +40,10 @@ fn load_duration() -> Duration {
     Duration::from_secs(env::var("PGBOUNCER_LOAD_SECS").ok().and_then(|value| value.parse().ok()).unwrap_or(60))
 }
 
+/// How many tenants the two-replica test spreads its load over: inside the
+/// runtime cache of 32 each pooled replica is configured with.
+const REPLICA_WORKING_SET: usize = 24;
+
 /// The two pooled replicas that share one pooler.
 const REPLICA_PAIR: &[&str] = &[endpoints::BROKER_APPLICATION_NAME, endpoints::BROKER_REPLICA_APPLICATION_NAME];
 
@@ -58,46 +63,74 @@ fn provision_id(tenant: &str) -> String {
     format!("urn:ngsi-ld:Device:provision:{tenant}")
 }
 
-/// GET the provisioned entity under `tenant`, returning the status (0 on error).
-async fn get_entity(client: &Client, broker: &str, tenant: &str) -> u16 {
+/// GET the provisioned entity under `tenant`.
+async fn get_entity(client: &Client, broker: &str, tenant: &str) -> RequestOutcome {
     let id = urlencoding::encode(&provision_id(tenant)).into_owned();
-    client
-        .get(format!("{broker}entities/{id}"))
-        .header("NGSILD-Tenant", tenant)
-        .header("Accept", "application/ld+json")
-        .header("Link", link_header())
-        .send()
-        .await
-        .map_or(0, |response| response.status().as_u16())
+    RequestOutcome::of(
+        client
+            .get(format!("{broker}entities/{id}"))
+            .header("NGSILD-Tenant", tenant)
+            .header("Accept", "application/ld+json")
+            .header("Link", link_header()),
+    )
+    .await
 }
 
 /// PATCH one attribute of the provisioned entity under `tenant`.
-async fn patch_attr(client: &Client, broker: &str, tenant: &str) -> u16 {
+async fn patch_attr(client: &Client, broker: &str, tenant: &str) -> RequestOutcome {
     let id = urlencoding::encode(&provision_id(tenant)).into_owned();
-    client
-        .patch(format!("{broker}entities/{id}/attrs"))
-        .header("NGSILD-Tenant", tenant)
-        .header("Content-Type", "application/ld+json")
-        .json(&json!({"value": {"type": "Property", "value": 2}, "@context": [CORE_CONTEXT]}))
-        .send()
-        .await
-        .map_or(0, |response| response.status().as_u16())
+    RequestOutcome::of(
+        client
+            .patch(format!("{broker}entities/{id}/attrs"))
+            .header("NGSILD-Tenant", tenant)
+            .header("Content-Type", "application/ld+json")
+            .json(&json!({"value": {"type": "Property", "value": 2}, "@context": [CORE_CONTEXT]})),
+    )
+    .await
 }
 
 /// Upsert a small batch of entities under `tenant` (COPY-staging path). The
 /// batch body is a bare NGSI-LD entity array, each element carrying the context.
-async fn batch_upsert(client: &Client, broker: &str, tenant: &str) -> u16 {
+async fn batch_upsert(client: &Client, broker: &str, tenant: &str) -> RequestOutcome {
     let entities: Vec<_> = (0..8)
         .map(|index| json!({"id": format!("urn:ngsi-ld:Device:batch:{tenant}:{index}"), "type": "Device", "value": {"type": "Property", "value": index}, "@context": [CORE_CONTEXT]}))
         .collect();
-    client
-        .post(format!("{broker}entityOperations/upsert"))
-        .header("NGSILD-Tenant", tenant)
-        .header("Content-Type", "application/ld+json")
-        .json(&entities)
-        .send()
+    RequestOutcome::of(
+        client
+            .post(format!("{broker}entityOperations/upsert"))
+            .header("NGSILD-Tenant", tenant)
+            .header("Content-Type", "application/ld+json")
+            .json(&entities),
+    )
+    .await
+}
+
+/// Scrape `broker`'s metrics, failing the test when the exposition cannot be
+/// read: an unreadable scrape must never pass as a zero reading.
+async fn scrape(client: &Client, broker: &str) -> Metrics {
+    Metrics::scrape(client, broker)
         .await
-        .map_or(0, |response| response.status().as_u16())
+        .map_err(|error| format!("the broker at {broker} must expose its metrics: {error}"))
+        .expect("an unreadable scrape must never pass as a zero")
+}
+
+/// The cold builds `broker` has run so far, over every outcome.
+async fn cold_builds(client: &Client, broker: &str) -> f64 {
+    let metrics = scrape(client, broker).await;
+    assert!(
+        metrics.has("andromeda_tenant_cold_builds_total"),
+        "the cold-build counter must be exposed once any tenant was built"
+    );
+    metrics.sum("andromeda_tenant_cold_builds_total")
+}
+
+/// A one-line account of how a load run's requests resolved: statuses, failed
+/// transports by kind, their sampled causes and the first body per error status.
+fn describe(report: &LoadReport) -> String {
+    format!(
+        "{} requests, {} non-2xx, statuses {:?}, transport failures {:?} (samples {:?}), error bodies {:?}",
+        report.total, report.non_2xx, report.statuses, report.transport_failures, report.transport_samples, report.error_details
+    )
 }
 
 /// The current client-backend count under `application_names`, over a fresh
@@ -164,10 +197,10 @@ async fn provisioning_burst_stays_within_the_direct_connection_budget() {
     let series = sampler.stop().await;
 
     println!(
-        "provisioning: {} created, {} failed, {:.1} tenants/s, peak {} backends",
-        report.created, report.failed, report.tenants_per_second, series.max
+        "provisioning: {} created, {} failed, {:.1} tenants/s, peak {} backends, failures {:?}",
+        report.created, report.failed, report.tenants_per_second, series.max, report.failures
     );
-    assert_eq!(report.failed, 0, "every first-touch create must provision without a 5xx");
+    assert_eq!(report.failed, 0, "every first-touch create must provision without a 5xx: {:?}", report.failures);
     assert!(
         series.max < 300,
         "provisioning must stay within the PostgreSQL connection budget, saw {}",
@@ -185,9 +218,7 @@ async fn a_working_set_three_times_the_cache_is_served_without_a_single_failure(
     let tenants = tenant_load::tenant_names("pgbwork", 96);
     tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
 
-    let before = Metrics::scrape(&client, &broker)
-        .await
-        .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
+    let before = cold_builds(&client, &broker).await;
     let sampler = BackendSampler::start(&endpoints::database_url(), &[endpoints::BROKER_APPLICATION_NAME])
         .await
         .expect("start sampler");
@@ -208,15 +239,11 @@ async fn a_working_set_three_times_the_cache_is_served_without_a_single_failure(
     })
     .await;
     let series = sampler.stop().await;
-    let after = Metrics::scrape(&client, &broker)
-        .await
-        .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
+    let after = cold_builds(&client, &broker).await;
 
     println!(
-        "working-set 3x: {} requests, {} non-2xx, statuses {:?}, p50 {:?}, p99 {:?}, peak {} backends, cold builds {}",
-        report.total,
-        report.non_2xx,
-        report.statuses,
+        "working-set 3x: {}, p50 {:?}, p99 {:?}, peak {} backends, cold builds {}",
+        describe(&report),
         report.p50,
         report.p99,
         series.max,
@@ -231,10 +258,17 @@ async fn a_working_set_three_times_the_cache_is_served_without_a_single_failure(
     // which a hard cap below peak demand cannot honour.
     let server_errors: usize = report.statuses.iter().filter(|(code, _)| **code >= 500 && **code != 503).map(|(_, n)| n).sum();
     let shed = report.statuses.get(&503).copied().unwrap_or(0);
-    assert_eq!(server_errors, 0, "a working set larger than the cache must never surface a 5xx other than 503");
     assert_eq!(
-        report.non_2xx, shed,
-        "every non-2xx under thrash must be a 503 backpressure response, not a hang or an internal error"
+        server_errors,
+        0,
+        "a working set larger than the cache must never surface a 5xx other than 503: {}",
+        describe(&report)
+    );
+    assert_eq!(
+        report.non_2xx,
+        shed,
+        "every non-2xx under thrash must be a 503 backpressure response, not a hang, a dropped connection or an internal error: {}",
+        describe(&report)
     );
     assert!(
         shed * 20 < report.total.max(1),
@@ -272,9 +306,7 @@ async fn a_zipf_working_set_keeps_hot_tenants_resident() {
 
     // Over a steady-state window that touches only the sixteen hottest tenants,
     // no cold build should occur: they must have stayed resident.
-    let before = Metrics::scrape(&client, &broker)
-        .await
-        .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
+    let before = cold_builds(&client, &broker).await;
     let hot_count = tenants.len().min(16);
     let hot = tenant_load::run_bounded(16, Duration::from_secs(10), |index| {
         let client = &client;
@@ -286,22 +318,16 @@ async fn a_zipf_working_set_keeps_hot_tenants_resident() {
         }
     })
     .await;
-    let after = Metrics::scrape(&client, &broker)
-        .await
-        .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
+    let after = cold_builds(&client, &broker).await;
 
     println!(
-        "zipf: warmup {} req {} non-2xx (statuses {:?}); hot window {} req {} non-2xx (statuses {:?}); cold builds in hot window {}",
-        warm.total,
-        warm.non_2xx,
-        warm.statuses,
-        hot.total,
-        hot.non_2xx,
-        hot.statuses,
+        "zipf: warmup {}; hot window {}; cold builds in hot window {}",
+        describe(&warm),
+        describe(&hot),
         after - before
     );
-    assert_eq!(warm.non_2xx, 0, "the Zipf working set must be served without a failure");
-    assert_eq!(hot.non_2xx, 0, "the hot-tenant window must be served without a failure");
+    assert_eq!(warm.non_2xx, 0, "the Zipf working set must be served without a failure: {}", describe(&warm));
+    assert_eq!(hot.non_2xx, 0, "the hot-tenant window must be served without a failure: {}", describe(&hot));
     // The hot set stays resident: its cold-build count over the steady-state
     // window is a negligible fraction of the tenant set, not the per-request
     // thrash an un-resident hot set would show. A stray build or two reflects
@@ -329,10 +355,7 @@ async fn an_idle_wide_cache_releases_its_backends() {
     }
     sleep(Duration::from_secs(30)).await;
 
-    let cached = Metrics::scrape(&client, &broker)
-        .await
-        .ok()
-        .and_then(|m| m.gauge("andromeda_tenant_runtimes_cached"));
+    let cached = scrape(&client, &broker).await.gauge("andromeda_tenant_runtimes_cached");
     // Per-tenant background tasks fire in loose waves rather than continuously, so
     // the server-wide backend count oscillates: it dips to the platform-pool
     // baseline between waves and rises while one is in flight. Releasing the
@@ -370,7 +393,7 @@ async fn the_global_pooler_cap_never_starves_a_new_tenant() {
     // hundreds of resident idle tenants and a hard global backend cap.
     let newcomer = tenant_load::tenant_names("pgbcapnew", 1);
     let started = Instant::now();
-    let status = tenant_load::create_entity(
+    let outcome = tenant_load::create_entity(
         &client,
         &broker,
         &newcomer[0],
@@ -379,8 +402,8 @@ async fn the_global_pooler_cap_never_starves_a_new_tenant() {
     .await;
     let elapsed = started.elapsed();
 
-    println!("new-tenant under global cap: status {status}, elapsed {elapsed:?}");
-    assert_eq!(status, 201, "a never-touched tenant must be created, not starved");
+    println!("new-tenant under global cap: {outcome:?}, elapsed {elapsed:?}");
+    assert_eq!(outcome.status(), Some(201), "a never-touched tenant must be created, not starved: {outcome:?}");
     assert!(
         elapsed < Duration::from_secs(5),
         "a new tenant must not be starved by resident idle tenants, took {elapsed:?}"
@@ -395,7 +418,12 @@ async fn two_replicas_share_one_pooler_without_doubling_backends() {
     reset(&client).await;
     let broker = endpoints::broker();
     let replica = endpoints::broker_replica();
-    let tenants = tenant_load::tenant_names("pgbrepl", 64);
+    // A working set inside each replica's runtime cache (32), so every request
+    // is served from a resident runtime and none may fail. Thrashing a working
+    // set larger than the cache sheds bounded 503 backpressure by contract; that
+    // contract is `a_working_set_three_times_the_cache_is_served_without_a_single_failure`'s,
+    // while this test isolates what a second replica costs in backends.
+    let tenants = tenant_load::tenant_names("pgbrepl", REPLICA_WORKING_SET);
     tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
 
     // Single-replica baseline: the working set through one broker.
@@ -437,23 +465,27 @@ async fn two_replicas_share_one_pooler_without_doubling_backends() {
     let write = tenant_load::create_entity(&client, &broker, tenant, &tenant_load::device_entity("urn:ngsi-ld:Device:ryow", CORE_CONTEXT)).await;
     let read = {
         let id = urlencoding::encode("urn:ngsi-ld:Device:ryow").into_owned();
-        client
-            .get(format!("{replica}entities/{id}"))
-            .header("NGSILD-Tenant", tenant.as_str())
-            .header("Accept", "application/ld+json")
-            .header("Link", link_header())
-            .send()
-            .await
-            .map_or(0, |response| response.status().as_u16())
+        RequestOutcome::of(
+            client
+                .get(format!("{replica}entities/{id}"))
+                .header("NGSILD-Tenant", tenant.as_str())
+                .header("Accept", "application/ld+json")
+                .header("Link", link_header()),
+        )
+        .await
     };
 
     println!(
-        "replicas: single peak {} backends ({} non-2xx, statuses {:?}), dual peak {} backends ({} non-2xx, statuses {:?}), ryow write {} read {}",
-        single.1, single.0.non_2xx, single.0.statuses, dual.1, dual.0.non_2xx, dual.0.statuses, write, read
+        "replicas: single peak {} backends ({}), dual peak {} backends ({}), ryow write {write:?} read {read:?}",
+        single.1,
+        describe(&single.0),
+        dual.1,
+        describe(&dual.0)
     );
-    assert_eq!(single.0.non_2xx, 0, "the single-replica run must have no failures");
-    assert_eq!(dual.0.non_2xx, 0, "the dual-replica run must have no failures");
-    assert!(read == 200 || read == 201, "a write on one replica must be visible on the other, got {read}");
+    assert_eq!(single.0.non_2xx, 0, "the single-replica run must have no failures: {}", describe(&single.0));
+    assert_eq!(dual.0.non_2xx, 0, "the dual-replica run must have no failures: {}", describe(&dual.0));
+    assert_eq!(write.status(), Some(201), "the read-your-writes create must succeed: {write:?}");
+    assert_eq!(read.status(), Some(200), "a write on one replica must be visible on the other: {read:?}");
     assert!(
         dual.1 <= single.1 * 5 / 4,
         "two replicas must not need more than 1.25x the single-replica backends (single {}, dual {})",

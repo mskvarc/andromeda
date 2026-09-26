@@ -19,9 +19,20 @@ use sqlx::{
     migrate::{Migration, MigrationType},
 };
 use std::{borrow::Cow, env};
+use tokio::time::timeout;
 
 /// The ledger every branch schema records its branch migrations in.
 const BRANCH_LEDGER: &str = "_andromeda_branch_migrations";
+
+/// The foreign keys from live branch relations into the tenant-global
+/// dictionaries, which the live-only tenant migration 0029 declares and no
+/// Snapshot branch carries.
+const LIVE_ONLY_DICTIONARY_REFERENCES: [&str; 4] = [
+    "fk_attribute_history_instance_claims_attribute_name",
+    "fk_current_attribute_values_attribute_name",
+    "fk_current_attribute_values_unit_code",
+    "fk_temporal_attribute_streams_attribute_name",
+];
 
 fn minimal(id: &str) -> Value {
     json!({"id": id, "type": "Snapshot", "snapshotQueries": []})
@@ -46,7 +57,8 @@ async fn prepared_snapshot(pool: &PgPool, id: &str) -> String {
 }
 
 /// One relation's shape in `schema`, with every mention of the schema itself
-/// removed so two schemas holding the same relation compare equal.
+/// removed so two schemas holding the same relation compare equal. The live
+/// dictionary references are left out: they are the one intended difference.
 async fn relation_shape(pool: &PgPool, schema: &str, table: &str) -> Vec<String> {
     let columns: Vec<(String, String, String, Option<String>, String, String)> = sqlx::query_as(
         "SELECT column_name::text, udt_name::text, is_nullable::text, column_default::text, is_identity::text, is_generated::text \
@@ -67,10 +79,11 @@ async fn relation_shape(pool: &PgPool, schema: &str, table: &str) -> Vec<String>
     let constraints: Vec<(String, String)> = sqlx::query_as(
         "SELECT c.conname::text, pg_get_constraintdef(c.oid) FROM pg_constraint AS c \
          JOIN pg_class AS r ON r.oid = c.conrelid JOIN pg_namespace AS n ON n.oid = r.relnamespace \
-         WHERE n.nspname = $1 AND r.relname = $2 ORDER BY c.conname",
+         WHERE n.nspname = $1 AND r.relname = $2 AND c.conname <> ALL($3) ORDER BY c.conname",
     )
     .bind(schema)
     .bind(table)
+    .bind(LIVE_ONLY_DICTIONARY_REFERENCES)
     .fetch_all(pool)
     .await
     .expect("constraint catalogue");
@@ -115,6 +128,103 @@ async fn snapshot_branch_schema_matches_the_live_branch_name_for_name() {
         delete_snapshot_raw(&client(), "urn:ngsi-ld:Snapshot:branch-shape").await.0,
         StatusCode::NO_CONTENT
     );
+}
+
+/// The `relation.constraint -> referenced relation` of every foreign key a
+/// relation in `schema` declares, the referenced relation schema-qualified.
+async fn foreign_keys(pool: &PgPool, schema: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT r.relname::text || '.' || c.conname::text || ' -> ' || c.confrelid::regclass::text FROM pg_constraint AS c \
+         JOIN pg_class AS r ON r.oid = c.conrelid JOIN pg_namespace AS n ON n.oid = r.relnamespace \
+         WHERE n.nspname = $1 AND c.contype = 'f' ORDER BY 1",
+    )
+    .bind(schema)
+    .fetch_all(pool)
+    .await
+    .expect("foreign key catalogue")
+}
+
+/// Clause 5.16.1.4 prepares a Snapshot in the background of the live context,
+/// and clause 5.6.1.4 leaves a create no failure an unrelated Snapshot could
+/// cause, so a Snapshot branch's DDL must never lock a tenant-global relation
+/// against live writes. A foreign key locks the relation it references each
+/// time its table is created or dropped; the branch therefore references only
+/// its own relations, and the dictionary references live on the live branch
+/// alone.
+#[tokio::test]
+#[serial(snapshot)]
+async fn snapshot_branch_schema_references_only_its_own_relations() {
+    let _serialized_environment = clean_database().await;
+    let pool = snapshot_database().await;
+    let schema = prepared_snapshot(&pool, "urn:ngsi-ld:Snapshot:branch-references").await;
+
+    let branch_keys = foreign_keys(&pool, &schema).await;
+    assert!(!branch_keys.is_empty(), "the branch schema {schema} declares its own foreign keys");
+    let escaping: Vec<&String> = branch_keys.iter().filter(|key| !key.contains(&format!(" -> {schema}."))).collect();
+    assert!(escaping.is_empty(), "{schema} references relations outside itself: {escaping:#?}");
+
+    let live_keys = foreign_keys(&pool, "public").await;
+    for (constraint, referenced) in LIVE_ONLY_DICTIONARY_REFERENCES
+        .iter()
+        .zip(["attribute_names", "attribute_names", "unit_codes", "attribute_names"])
+    {
+        assert!(
+            live_keys.iter().any(|key| key.contains(&format!(".{constraint} -> {referenced}"))),
+            "the live branch declares {constraint} onto {referenced}: {live_keys:#?}"
+        );
+    }
+    pretty_assertions::assert_eq!(
+        delete_snapshot_raw(&client(), "urn:ngsi-ld:Snapshot:branch-references").await.0,
+        StatusCode::NO_CONTENT
+    );
+}
+
+/// A session holding `ROW EXCLUSIVE` on both dictionaries -- the lock every
+/// live write that mints a name or reads a unit code is compatible with --
+/// conflicts with every lock a foreign key's creation or removal takes on the
+/// relation it references. Creating, preparing and deleting a Snapshot while
+/// it is held therefore proves that no step of a Snapshot's lifetime locks the
+/// dictionaries: with a branch key into either one, preparation stalls until
+/// the session ends and the deletion never returns.
+#[tokio::test]
+#[serial(snapshot)]
+async fn snapshot_lifecycle_completes_while_the_dictionaries_are_row_exclusive_locked() {
+    let _serialized_environment = clean_database().await;
+    let pool = snapshot_database().await;
+    let id = "urn:ngsi-ld:Snapshot:dictionaries-held";
+    let mut holder = pool.begin().await.expect("lock holder transaction");
+    sqlx::query("LOCK TABLE attribute_names, unit_codes IN ROW EXCLUSIVE MODE")
+        .execute(&mut *holder)
+        .await
+        .expect("hold the dictionaries");
+
+    // A live write interning a fresh type, a fresh attribute and a unit code
+    // is compatible with the held lock; the Snapshot then captures it.
+    let entity_type = "https://example.org/DictionaryHeldVehicle";
+    let entity = json!({
+        "id": "urn:ngsi-ld:DictionaryHeldVehicle:1",
+        "type": entity_type,
+        "https://example.org/dictionaryHeldSpeed": {"type": "Property", "value": 42, "unitCode": "KMH"},
+        "@context": "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"
+    });
+    let live_write = timeout(Duration::from_secs(5), create_entity(&client(), &entity))
+        .await
+        .expect("a live write never waits on the held lock");
+    pretty_assertions::assert_eq!(live_write, StatusCode::CREATED);
+
+    let body = json!({"id": id, "type": "Snapshot", "snapshotQueries": [{"type": "Query", "entities": [{"type": entity_type}]}]});
+    let created = timeout(Duration::from_secs(5), create_snapshot_raw(&client(), &body))
+        .await
+        .expect("the create never waits on the dictionaries");
+    pretty_assertions::assert_eq!(created.0, StatusCode::CREATED);
+    let prepared = wait_for_snapshot_terminal(&client(), id, Duration::from_secs(5)).await;
+    pretty_assertions::assert_eq!(prepared["snapshotStatus"], "success", "{prepared}");
+    let deleted = timeout(Duration::from_secs(5), delete_snapshot_raw(&client(), id))
+        .await
+        .expect("the deletion never waits on the dictionaries");
+    pretty_assertions::assert_eq!(deleted.0, StatusCode::NO_CONTENT);
+
+    holder.rollback().await.expect("release the dictionaries");
 }
 
 /// A branch migration a later release appends: one new column on a branch relation.

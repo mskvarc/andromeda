@@ -12,6 +12,7 @@ use crate::{
     port::{query::EntityQueryStore, reader::EntityReader},
     query::EntityQueryService,
     query_outcome::QueryOutcome,
+    spatial_acceleration::SpatialAcceleration,
     storage_profile::StorageProfile,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -19,7 +20,6 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
-use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -82,12 +82,17 @@ impl EntityQueryStore for UnusedStore {
 /// Remote context resolution is disabled, so a test context has to be an
 /// inline body context for its terms to expand.
 pub(crate) fn service() -> EntityQueryService {
+    service_narrowing_through(SpatialAcceleration::StoreVerified)
+}
+
+/// The [`service`] test double, narrowing geo queries through `spatial`.
+pub(crate) fn service_narrowing_through(spatial: SpatialAcceleration) -> EntityQueryService {
     let store = Arc::new(UnusedStore);
     EntityQueryService::new(
         store.clone() as Arc<dyn EntityReader>, // clone: the test double supplies both focused capabilities
         store as Arc<dyn EntityQueryStore>,
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-        Arc::new(SpatialEntityIndex::new()),
+        spatial,
         TenantRef::UnnamedDefault,
         None,
     )

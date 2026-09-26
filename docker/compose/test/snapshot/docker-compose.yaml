@@ -51,9 +51,13 @@ x-broker-base: &broker-base
     retries: 40
     start_period: 5s
 
+# snapshot-primary and snapshot-replica write one database, so the spatial
+# index runs in watermark mode, the one that stays exact across replicas
+# (docs/spatial-index-consistency.md).
 x-primary-env: &primary-env
   <<: *broker-env
   ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@snapshot-postgres-primary:5432/snapshot_primary"
+  ANDROMEDA__SPATIAL__CONSISTENCY: "watermark"
   ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-primary"
   ANDROMEDA__IDENTITY__SOURCE_ALIAS: "snapshot-primary"
 

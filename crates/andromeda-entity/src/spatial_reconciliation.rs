@@ -1,95 +1,136 @@
-//! Rebuilding the in-memory entity spatial index from typed store snapshots.
+//! Rebuilding the in-memory entity spatial index from a read of the store.
 
-use crate::{error::EntityError, port::spatial_snapshot::EntitySpatialSnapshotSource};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::UriView};
-use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use crate::{
+    error::EntityError,
+    port::spatial_snapshot::{ChangeHorizon, EntitySpatialSnapshotSource},
+    spatial_placement::LocationPlacement,
+};
 use andromeda_spatial_index::{
     entity::{entry::SpatialEntry, index::SpatialEntityIndex},
     key::SpatialKey,
 };
-use andromeda_tenancy::tenant_ref::TenantRef;
-use iri_rs::IriBuf;
-use std::{collections::HashMap, sync::Arc, time::Instant};
-use tracing::{debug, info, warn};
+use std::{collections::HashMap, time::Instant};
+use tracing::info;
 
-/// Result of a warm-up or rebuild pass.
+/// Result of a rebuild pass.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct WarmupStats {
-    /// Number of `(tenant, type, location)` partitions populated.
+pub struct RebuildOutcome {
+    /// Number of `(tenant, type, location)` partitions the store's read filled.
     pub partition_count: usize,
-    /// Total number of entries bulk-loaded across all partitions.
+    /// Total number of entries the store's read placed across all partitions.
     pub total_entries: usize,
+    /// The horizon the store's read was taken at.
+    pub horizon: ChangeHorizon,
 }
 
-/// Rebuild every default `location` partition from one typed snapshot source.
+/// Rebuild every `location` partition of one tenant's index from the store,
+/// and seed the scope so the index may narrow queries against it.
+///
+/// A write applied to the index while the store is being read keeps its state
+/// over the read's: the generation is captured before the read, and
+/// [`SpatialEntityIndex::rebuild`] keeps every entity mutated after it.
 ///
 /// # Errors
 ///
-/// Reports [`EntityError::Persistence`] when the snapshot source cannot be
-/// read, and [`EntityError::Internal`] when the core `location` term is not a
-/// well-formed attribute name.
-pub async fn reconcile_location(
-    index: &Arc<SpatialEntityIndex>,
+/// Reports [`EntityError::Persistence`] when the store cannot be read.
+pub async fn rebuild_location_index(
+    index: &SpatialEntityIndex,
     source: &dyn EntitySpatialSnapshotSource,
-    tenant: &TenantRef,
-) -> Result<WarmupStats, EntityError> {
+    placement: &LocationPlacement,
+) -> Result<RebuildOutcome, EntityError> {
     let started = Instant::now();
-    // A live write landing after the snapshot starts has a later generation and must survive the replacement.
     let snapshot_generation = index.current_generation();
-    let snapshots = source.location_snapshots().await?;
-    let location: AttributeName = expanded_properties::LOCATION
-        .as_str()
-        .parse()
-        .map_err(|error| EntityError::internal(format!("invalid default location attribute name: {error}")))?;
-    let mut per_type: HashMap<IriBuf, Vec<SpatialEntry>> = HashMap::new();
+    let read = source.locations().await?;
+    let mut partitions: HashMap<SpatialKey, Vec<SpatialEntry>> = HashMap::new();
+    for location in read.locations {
+        for (key, geometry) in placement.of(&location.entity_types, location.location.as_ref()) {
+            // clone: each partition's entry owns the identifier
+            partitions
+                .entry(key)
+                .or_default()
+                .extend(SpatialEntry::new(location.entity_id.clone(), geometry));
+        }
+    }
+    let partition_count = partitions.len();
+    let total_entries = partitions.values().map(Vec::len).sum();
+    index.rebuild(placement.tenant(), placement.geoproperty(), partitions, snapshot_generation);
+    info!(target: "spatial.rebuild", partition_count, total_entries, elapsed_ms = started.elapsed().as_millis(), "spatial index rebuilt the default location geoproperty");
+    Ok(RebuildOutcome {
+        partition_count,
+        total_entries,
+        horizon: read.horizon,
+    })
+}
 
-    for snapshot in snapshots {
-        let entity_urn = match snapshot.entity_id.view() {
-            UriView::Urn(entity_urn) => entity_urn,
-            UriView::Url(entity_url) => {
-                warn!(entity = %entity_url, "spatial warmup skipped a URL identifier unsupported by the current spatial index");
-                continue;
-            }
-            UriView::Iri(entity_iri) => {
-                warn!(entity = %entity_iri, "spatial warmup skipped an IRI identifier unsupported by the current spatial index");
-                continue;
-            }
-        };
-        for entity_type in snapshot.entity_types {
-            let type_iri = match IriBuf::new(entity_type.to_string()) {
-                Ok(type_iri) => type_iri,
-                Err(error) => {
-                    warn!(entity_type = %entity_type, %error, "spatial warmup skipped an unexpanded entity type");
-                    continue;
-                }
-            };
-            let Some(entry) = SpatialEntry::new(entity_urn.clone(), snapshot.geometry.clone()) else {
-                // clone: each entity type owns one independently indexed entry.
-                continue;
-            };
-            per_type.entry(type_iri).or_default().push(entry);
+#[cfg(test)]
+mod tests {
+    use crate::{
+        error::EntityError,
+        port::spatial_snapshot::{ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead},
+        spatial_placement::LocationPlacement,
+        spatial_reconciliation::rebuild_location_index,
+    };
+    use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::Geometry, position::Position};
+    use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
+    use andromeda_tenancy::tenant_ref::TenantRef;
+    use futures::future::BoxFuture;
+    use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
+    use std::collections::HashSet;
+
+    /// A store holding one located vehicle.
+    struct OneVehicle;
+
+    impl EntitySpatialSnapshotSource for OneVehicle {
+        fn locations<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async {
+                Ok(LocationRead {
+                    locations: vec![EntityLocation {
+                        entity_id: "urn:ngsi-ld:Vehicle:stored".parse().expect("a well-formed URI"),
+                        entity_types: vec!["https://example.org/Vehicle".parse().expect("a well-formed type")],
+                        location: Some(Geometry::new(GeometryForm::Point(Position::new(0.0, 0.0, None)))),
+                    }],
+                    horizon: ChangeHorizon::new(7),
+                })
+            })
+        }
+
+        fn locations_changed_since<'life0, 'async_trait>(&'life0 self, horizon: ChangeHorizon) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async move {
+                Ok(LocationRead {
+                    locations: Vec::new(),
+                    horizon,
+                })
+            })
         }
     }
 
-    let partition_count = per_type.len();
-    let total_entries = per_type.values().map(Vec::len).sum();
-    for (type_iri, entries) in per_type {
-        index.bulk_load(
-            SpatialKey::new(
-                tenant.clone(), // clone: each partition key owns its tenant identifier.
-                type_iri,
-                location.clone(), // clone: each partition key owns the default geoproperty name.
-            ),
-            entries,
-            snapshot_generation,
+    #[tokio::test]
+    async fn a_rebuild_seeds_the_scope_with_what_the_store_holds() {
+        let index = SpatialEntityIndex::new();
+        let placement = LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name");
+        let key = SpatialKey::new(
+            TenantRef::UnnamedDefault,
+            IriBuf::new("https://example.org/Vehicle".to_owned()).expect("a well-formed IRI"),
+            placement.geoproperty().clone(),
+        );
+        let reference = Geometry::new(GeometryForm::Point(Position::new(0.0, 0.0, None)));
+        assert!(index.query(&key, &GeoRel::Intersects, &reference).is_none());
+
+        let outcome = rebuild_location_index(&index, &OneVehicle, &placement).await.expect("the store is readable");
+
+        assert_eq!((outcome.partition_count, outcome.total_entries, outcome.horizon), (1, 1, ChangeHorizon::new(7)));
+        assert_eq!(
+            index.query(&key, &GeoRel::Intersects, &reference),
+            Some(HashSet::from(["urn:ngsi-ld:Vehicle:stored".parse().expect("a well-formed URI")]))
         );
     }
-
-    let elapsed = started.elapsed();
-    info!(target: "spatial.warmup", partition_count, total_entries, elapsed_ms = elapsed.as_millis(), "spatial warmup loaded the default location geoproperty");
-    debug!(?elapsed, "spatial warmup complete");
-    Ok(WarmupStats {
-        partition_count,
-        total_entries,
-    })
 }

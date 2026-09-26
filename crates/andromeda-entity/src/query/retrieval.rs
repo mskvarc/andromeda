@@ -2,6 +2,7 @@
 
 use crate::{
     compiled_cache::LimitCap,
+    entity_type_match::entity_satisfies,
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
     query::{
@@ -26,6 +27,7 @@ use andromeda_ngsi_ld_query::{
     pagination::CountPolicy,
     projection::compiled::Projection,
     term_expander::TermExpander,
+    type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{pagination_cursor::decode_cursor, query::entity::parameters::EntityQueryParameters};
@@ -35,12 +37,16 @@ use std::{collections::HashMap, sync::Arc};
 
 /// What a clause 5.6.3 retrieval narrows the retrieved entity down to.
 ///
-/// The four members are the request's selection parameters, applied in the
-/// order the clauses stack: `attrs` (clause 5.7.2) picks the attributes,
+/// The members are the request's selection parameters, applied in the order
+/// the clauses stack: `type` (clause 5.7.1.4) decides whether the stored entity
+/// is the target at all, `attrs` (clause 5.7.2) picks the attributes,
 /// `pick`/`omit` (clause 4.21) project what is left, `datasetId`
 /// (clause 4.5.5) narrows the surviving instances, and `sysAttrs`
 /// decides whether the clause 4.8 timestamps come along.
 pub struct RetrievalNarrowing<'a> {
+    /// The clause 4.17 selector the entity's types must satisfy, absent when
+    /// the request named no `type` (Table 6.5.3.1-1).
+    pub entity_type: Option<&'a TypeExprRaw>,
     /// The attributes the response is narrowed to; empty selects all.
     pub attrs: &'a [AttributeName],
     /// Whether the clause 4.8 system timestamps are included.
@@ -59,7 +65,8 @@ impl EntityQueryService {
     /// # Errors
     ///
     /// Returns [`EntityError::not_found`] when no entity with that identifier
-    /// exists, or when `attrs` selected none of the attributes it has, and
+    /// exists, when its types fall outside the requested type selector, or when
+    /// `attrs` selected none of the attributes it has, and
     /// otherwise whatever the store or the context expansion failed with.
     pub async fn get_inner(&self, target: &ContextTarget, id: &Uri, narrowing: &RetrievalNarrowing<'_>, context: &ContextSpec) -> Result<Entity, EntityError> {
         let timer = entity::start(EntityOperation::Retrieve);
@@ -67,6 +74,16 @@ impl EntityQueryService {
             let Some(expanded_entity) = self.reader.get(target, id).await? else {
                 return Err(EntityError::not_found(id));
             };
+            // Clause 5.7.1.4: the target is the entity "whose id (URI), and
+            // where specified type, is equivalent", so an entity outside the
+            // selector is not held locally for this retrieval.
+            if let Some(raw) = narrowing.entity_type {
+                let prepared = self.engine().prepare_term_context(context);
+                let selector = expand_type_expression(raw, &ContextualExpander::new(self.engine(), &prepared)).await?;
+                if !entity_satisfies(&expanded_entity, &selector) {
+                    return Err(EntityError::not_found(id));
+                }
+            }
 
             let mut entity = self
                 .compact_to_entity(expanded_entity, &self.engine().compactor(context), Some(id.as_str()), narrowing.sys_attrs)
@@ -173,7 +190,7 @@ impl EntityQueryService {
             // spatial index *applies* a geo relation rather than declining it, so a
             // store that cannot narrow `georel` is never asked to when the index
             // already answered it.
-            let narrowed = match self.spatial_prefilter(target, &compiled) {
+            let narrowed = match self.spatial_prefilter(target, &compiled).await {
                 SpatialNarrowing::Query(query) => query,
                 SpatialNarrowing::EmptyResult => {
                     // A warm index that matched nothing is an empty page: returning

@@ -17,7 +17,7 @@ use andromeda_postgresql_seaquery::{
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, Expr, ExprTrait, InsertStatement, JoinType, OnConflict, PostgresQueryBuilder, Query};
+use sea_query::{Alias, Expr, ExprTrait, InsertStatement, JoinType, LockType, OnConflict, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
@@ -44,7 +44,9 @@ use uuid::Uuid;
 /// out by the join the delivery insert makes against `subscriptions`, and
 /// therefore produces no delivery row. That is the same outcome its deletion
 /// would have produced a moment later through the cascade, and the event it
-/// leaves behind is reaped as an orphan.
+/// leaves behind is reaped as an orphan. The join key-share locks each row it
+/// keeps, so a deletion still in flight is waited out rather than raced: the
+/// write never fails on a subscription an unrelated request is deleting.
 ///
 /// # Errors
 ///
@@ -186,7 +188,17 @@ fn pair_source() -> (Alias, [UnnestColumn; 2]) {
 /// The pairs are joined against `subscriptions` on the surrogate key so a
 /// subscription that vanished between the match and this insert contributes no
 /// row (the delivery's foreign key would otherwise refuse the whole write); the
-/// event it leaves behind is later reaped as an orphan. Every delivery starts
+/// event it leaves behind is later reaped as an orphan.
+///
+/// The join alone does not close the race under READ COMMITTED: it reads the
+/// subscriptions as of the statement's snapshot, so a deletion committing after
+/// that snapshot but before the foreign-key check of the inserted row would
+/// still refuse the write. `FOR KEY SHARE OF s` takes the row lock that check
+/// takes, at the join: a deletion in flight is waited for, after which the
+/// re-checked row is gone and contributes nothing, and a deletion arriving
+/// later waits for this transaction and cascades onto the rows it wrote. The
+/// lock is the weakest row lock there is, so it blocks only deletions and key
+/// changes of the subscription, never its ordinary updates. Every delivery starts
 /// due at the write's own ingestion instant so the queue's ordering reflects
 /// the order changes were accepted in.
 fn insert_deliveries_statement(
@@ -209,8 +221,11 @@ fn insert_deliveries_statement(
             JoinType::InnerJoin,
             table_of(target, Subscriptions::Table),
             subscription.clone(),
-            Expr::col((subscription, Subscriptions::SubscriptionKey)).equals((pairs, NotificationDeliveries::SubscriptionKey)),
+            // clone: sea-query takes each alias occurrence by value, and the
+            // locking clause names the same alias again
+            Expr::col((subscription.clone(), Subscriptions::SubscriptionKey)).equals((pairs, NotificationDeliveries::SubscriptionKey)),
         )
+        .lock_with_tables(LockType::KeyShare, [subscription])
         .to_owned();
     let mut statement = Query::insert();
     statement
@@ -321,6 +336,14 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#"SELECT "p"."event_id", "s"."subscription_key""#), "{sql}");
+    }
+
+    #[test]
+    fn the_delivery_insert_key_share_locks_only_the_subscriptions_it_joins() {
+        let sql = insert_deliveries_statement(&target(), vec![42], vec![1], Utc::now())
+            .expect("a valid insert")
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.ends_with(r#"FOR KEY SHARE OF "s""#), "{sql}");
     }
 
     #[test]

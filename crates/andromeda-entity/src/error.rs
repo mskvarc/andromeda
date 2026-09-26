@@ -102,6 +102,15 @@ pub enum EntityError {
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
+    /// The datastore rolled the write back to break a deadlock or a
+    /// serialization conflict with a concurrent transaction, on every attempt
+    /// the committer made.
+    ///
+    /// Not a fault: nothing of the write persisted, so the identical request
+    /// can be sent again. It is answered 503 with `Retry-After`, never the 500
+    /// a broker malfunction earns.
+    #[error("the write was rolled back by a concurrent transaction; retry shortly")]
+    TransactionContended,
     /// An internal entity invariant could not be satisfied.
     #[error("entity invariant failed: {0}")]
     Internal(EntityDiagnostic),
@@ -122,6 +131,7 @@ impl From<CommitError> for EntityError {
             // own category rather than being folded into the internal-fault
             // `Commit` variant.
             CommitError::StoreSaturated => EntityError::StoreSaturated,
+            CommitError::TransactionContended => EntityError::TransactionContended,
             failure @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence { .. }
             | CommitError::Invariant { .. }

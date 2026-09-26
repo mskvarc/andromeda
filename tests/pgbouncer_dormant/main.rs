@@ -5,12 +5,14 @@
 //! serviced. Every test evicts the target by cache pressure -- touching more
 //! than the runtime cache holds -- then observes the dormant tenant.
 //!
-//! Drives the pooled `broker` (cache 32) on the `pgbouncer` stack.
+//! Drives the pooled `broker` (cache 32) on the `pgbouncer` stack; the suspend
+//! tests also drive the un-pooled `broker-direct`, whose connections are the
+//! PostgreSQL backends themselves.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::pooler_probe::{backend_sampler, endpoints, metrics_scrape::Metrics, tenant_cleanup, tenant_load};
+use andromeda_test_harness::pooler_probe::{backend_sampler, endpoints, metrics_scrape::Metrics, pooler_console::PoolerConsole, tenant_cleanup, tenant_load};
 use andromeda_test_mocks::{
     callback_path::CallbackPath,
     callback_server::{CallbackServer, MockResponse, RequestMatcher},
@@ -64,6 +66,15 @@ async fn evict_by_pressure(client: &Client, broker: &str) {
             .send()
             .await;
     }
+}
+
+/// Scrape the pooled broker's metrics, failing the test when the exposition
+/// cannot be read: an unreadable scrape must never pass as a zero reading.
+async fn scrape(client: &Client, broker: &str) -> Metrics {
+    Metrics::scrape(client, broker)
+        .await
+        .map_err(|error| format!("the broker at {broker} must expose its metrics: {error}"))
+        .expect("an unreadable scrape must never pass as a zero")
 }
 
 /// The single provisioned tenant database's name.
@@ -227,9 +238,7 @@ async fn an_entity_expires_on_a_dormant_tenant() {
         .send()
         .await;
     let database = only_tenant_database(&pool).await;
-    let cold_before = Metrics::scrape(&client, &broker)
-        .await
-        .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
+    let cold_before = scrape(&client, &broker).await.sum("andromeda_tenant_cold_builds_total");
 
     evict_by_pressure(&client, &broker).await;
     sleep(Duration::from_secs(60)).await;
@@ -237,9 +246,7 @@ async fn an_entity_expires_on_a_dormant_tenant() {
     // The entity is gone, and no request reloaded the tenant to make it so: the
     // cold-build counter did not advance for it (a dormant sweep did the work).
     let remaining = count_entities(&database).await;
-    let cold_after = Metrics::scrape(&client, &broker)
-        .await
-        .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
+    let cold_after = scrape(&client, &broker).await.sum("andromeda_tenant_cold_builds_total");
     println!(
         "dormant expiry: {remaining} entities remain in {database}, cold builds delta {}",
         cold_after - cold_before
@@ -287,17 +294,17 @@ async fn a_tenant_with_nothing_due_stays_dormant() {
     tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
     let database = only_tenant_database(&pool).await;
 
-    let loaded_before = Metrics::scrape(&client, &broker)
+    // A counter series appears only once its first increment is recorded, so an
+    // absent `loaded` series in a readable exposition is a genuine zero.
+    let loaded_before = scrape(&client, &broker)
         .await
-        .ok()
-        .and_then(|m| m.value("andromeda_tenant_wakes_total", &[("outcome", "loaded")]))
+        .value("andromeda_tenant_wakes_total", &[("outcome", "loaded")])
         .unwrap_or(0.0);
     evict_by_pressure(&client, &broker).await;
     sleep(Duration::from_secs(60)).await;
-    let loaded_after = Metrics::scrape(&client, &broker)
+    let loaded_after = scrape(&client, &broker)
         .await
-        .ok()
-        .and_then(|m| m.value("andromeda_tenant_wakes_total", &[("outcome", "loaded")]))
+        .value("andromeda_tenant_wakes_total", &[("outcome", "loaded")])
         .unwrap_or(0.0);
     let backends = backend_sampler::client_backends_for(&pool, &database).await.unwrap_or(-1);
 
@@ -381,43 +388,94 @@ async fn suspend(client: &Client, broker: &str, tenant: &str, is_active: bool) {
     assert_eq!(status, StatusCode::NO_CONTENT, "PATCH isActive must return 204, got {status}");
 }
 
+/// Provision one tenant on `broker`, touch it so its runtime and pool are
+/// resident, and return its name and database.
+async fn resident_tenant(client: &Client, pool: &PgPool, broker: &str, prefix: &str) -> (String, String) {
+    let tenant = tenant_load::tenant_names(prefix, 1).remove(0);
+    tenant_load::provision_tenants(client, broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+    let id = urlencoding::encode(&format!("urn:ngsi-ld:Device:provision:{tenant}")).into_owned();
+    let touched = client
+        .get(format!("{broker}entities/{id}"))
+        .header("NGSILD-Tenant", tenant.as_str())
+        .send()
+        .await
+        .expect("touch the tenant")
+        .status();
+    assert!(touched.is_success(), "the provisioned tenant answers, got {touched}");
+    let database = only_tenant_database(pool).await;
+    (tenant, database)
+}
+
+/// The pooled broker's client connections to `database` that `PgBouncer` holds,
+/// in any state -- idle, linked to a server or queued for one.
+///
+/// Attributed by `application_name`, because every broker on the tier shares the
+/// tenant registry and another broker's wake probe may reach the same database.
+async fn pooler_clients(console: &PoolerConsole, database: &str) -> usize {
+    console
+        .show_clients()
+        .await
+        .expect("read SHOW CLIENTS")
+        .iter()
+        .filter(|row| row.database == database && row.application_name == endpoints::BROKER_APPLICATION_NAME)
+        .count()
+}
+
 #[tokio::test]
 #[serial_test::serial]
-async fn suspending_a_tenant_closes_its_backends_synchronously() {
-    // The deterministic replacement for the retired orphan-eviction sweep: a
-    // suspend evicts the tenant's runtime at once, so its backends drop without
-    // waiting for a janitor tick. The janitor never touches it -- it is still
-    // registered (status suspended), so it is neither an orphan nor idle -- so a
-    // prompt drop to zero can only be the suspend's own synchronous eviction.
+async fn suspending_a_pooled_tenant_disconnects_its_pooler_clients_before_answering() {
+    // A suspend releases the tenant's runtime synchronously: the 204 is sent only
+    // after its pool closed (docs/tenant-management.md, "Suspend and resume").
+    // Behind the pooler the broker's connections are PgBouncer *client*
+    // connections, so that is what must be gone the moment the suspend answers.
+    // The PostgreSQL backends behind them belong to PgBouncer and linger until its
+    // server_idle_timeout, which says nothing about the broker, so they are not
+    // what this asserts.
     let client = client();
     let pool = control_pool().await;
     reset(&client, &pool).await;
     let broker = endpoints::broker();
-    let tenant = tenant_load::tenant_names("pgbsuspend", 1).remove(0);
-    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
-
-    // Touch the tenant so a runtime and its pool are resident.
-    let id = urlencoding::encode(&format!("urn:ngsi-ld:Device:provision:{tenant}")).into_owned();
-    let _ = client
-        .get(format!("{broker}entities/{id}"))
-        .header("NGSILD-Tenant", tenant.as_str())
-        .send()
-        .await;
-    let database = only_tenant_database(&pool).await;
-    let before = backend_sampler::client_backends_for(&pool, &database).await.unwrap_or(0);
-    assert!(before > 0, "an active tenant holds backends, saw {before}");
+    let console = PoolerConsole::new(endpoints::pgbouncer_admin_url());
+    let (tenant, database) = resident_tenant(&client, &pool, &broker, "pgbsuspend").await;
+    let before = pooler_clients(&console, &database).await;
+    assert!(before > 0, "a resident pooled tenant holds pooler client connections, saw {before}");
 
     suspend(&client, &broker, &tenant, false).await;
 
-    // Poll briefly for the detached pool close to settle -- well inside a janitor
-    // interval, and the janitor would not evict a suspended-but-registered tenant.
-    let mut after = backend_sampler::client_backends_for(&pool, &database).await.unwrap_or(0);
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let after = pooler_clients(&console, &database).await;
+    assert_eq!(after, 0, "a suspend disconnects the tenant's pooler clients before it answers, saw {after}");
+
+    reset(&client, &pool).await;
+    pool.close().await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn suspending_an_unpooled_tenant_closes_its_backends() {
+    // Without a pooler the broker's connections are the PostgreSQL backends
+    // themselves. The suspend closes them before it answers; a backend then exits
+    // on the server asynchronously to the client's close, so its row may linger
+    // in pg_stat_activity for the moment the server takes to reap it -- bounded
+    // here, and far inside any janitor interval, which would not evict a
+    // suspended-but-registered tenant anyway.
+    let client = client();
+    let pool = control_pool().await;
+    reset(&client, &pool).await;
+    let broker = endpoints::broker_direct();
+    let (tenant, database) = resident_tenant(&client, &pool, &broker, "pgbsuspdirect").await;
+    let direct = [endpoints::BROKER_DIRECT_APPLICATION_NAME];
+    let before = backend_sampler::client_backends_of(&pool, &database, &direct).await.expect("count backends");
+    assert!(before > 0, "a resident un-pooled tenant holds backends, saw {before}");
+
+    suspend(&client, &broker, &tenant, false).await;
+
+    let mut after = backend_sampler::client_backends_of(&pool, &database, &direct).await.expect("count backends");
+    let deadline = Instant::now() + Duration::from_secs(2);
     while after > 0 && Instant::now() < deadline {
-        sleep(Duration::from_millis(200)).await;
-        after = backend_sampler::client_backends_for(&pool, &database).await.unwrap_or(0);
+        sleep(Duration::from_millis(50)).await;
+        after = backend_sampler::client_backends_of(&pool, &database, &direct).await.expect("count backends");
     }
-    assert_eq!(after, 0, "a suspend closes the tenant's backends synchronously, saw {after}");
+    assert_eq!(after, 0, "a suspend closes the un-pooled tenant's backends, saw {after}");
 
     reset(&client, &pool).await;
     pool.close().await;

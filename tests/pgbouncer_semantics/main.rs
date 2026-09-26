@@ -11,7 +11,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::pooler_probe::{endpoints, metrics_scrape::Metrics, pooler_console::PoolerConsole, tenant_cleanup, tenant_load};
+use andromeda_test_harness::pooler_probe::{
+    endpoints,
+    metrics_scrape::Metrics,
+    pooler_console::PoolerConsole,
+    request_outcome::RequestOutcome,
+    tenant_cleanup,
+    tenant_load,
+};
 use andromeda_test_mocks::{notification_server::NotificationServer, server_config::MockServerConfig};
 use futures::future::join_all;
 use reqwest::Client;
@@ -72,18 +79,28 @@ async fn tenant_databases(pool: &PgPool) -> Vec<String> {
 /// Upsert `count` `Device` entities under `tenant` in one batch (COPY-staging
 /// path). The batch body is a bare NGSI-LD entity array, each element carrying
 /// the core context.
-async fn upsert_batch(client: &Client, broker: &str, tenant: &str, count: usize) -> u16 {
+async fn upsert_batch(client: &Client, broker: &str, tenant: &str, count: usize) -> RequestOutcome {
     let entities: Vec<Value> = (0..count)
         .map(|index| json!({"id": format!("urn:ngsi-ld:Device:atomic:{tenant}:{index}"), "type": "Device", "seq": {"type": "Property", "value": index}, "@context": [CORE_CONTEXT]}))
         .collect();
-    client
-        .post(format!("{broker}entityOperations/upsert"))
-        .header("NGSILD-Tenant", tenant)
-        .header("Content-Type", "application/ld+json")
-        .json(&entities)
-        .send()
+    RequestOutcome::of(
+        client
+            .post(format!("{broker}entityOperations/upsert"))
+            .header("NGSILD-Tenant", tenant)
+            .header("Content-Type", "application/ld+json")
+            .json(&entities),
+    )
+    .await
+}
+
+/// The maintenance decisions `broker` has taken so far, failing the test when
+/// its metrics cannot be read: an unreadable scrape must never pass as a zero.
+async fn maintenance_decisions(client: &Client, broker: &str) -> f64 {
+    Metrics::scrape(client, broker)
         .await
-        .map_or(0, |response| response.status().as_u16())
+        .map_err(|error| format!("the broker at {broker} must expose its metrics: {error}"))
+        .expect("an unreadable scrape must never pass as a zero")
+        .sum("andromeda_postgresql_maintenance_decisions_total")
 }
 
 #[tokio::test]
@@ -97,10 +114,10 @@ async fn copy_staged_batches_commit_atomically_across_concurrent_tenants() {
     tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 24).await;
 
     let writes = tenants.iter().map(|tenant| upsert_batch(&client, &broker, tenant, 500));
-    let statuses = join_all(writes).await;
+    let outcomes = join_all(writes).await;
     assert!(
-        statuses.iter().all(|status| (200..300).contains(status)),
-        "every concurrent batch must commit: {statuses:?}"
+        outcomes.iter().all(RequestOutcome::is_success),
+        "every concurrent batch must commit: {outcomes:?}"
     );
 
     // A sampled entity from each tenant is readable with its exact value.
@@ -153,25 +170,28 @@ async fn statement_cache_eviction_at_the_pooler_is_transparent() {
     // More distinct query shapes than max_prepared_statements (32), round-robined
     // across tenants and rounds, so the pooler evicts and re-prepares statements.
     let shapes = query_shapes();
-    let mut failures = 0;
+    let mut failures = Vec::new();
     for _round in 0..5 {
         for tenant in &tenants {
             for shape in &shapes {
-                let status = client
-                    .get(format!("{broker}entities{shape}"))
-                    .header("NGSILD-Tenant", tenant.as_str())
-                    .header("Accept", "application/ld+json")
-                    .header("Link", link_header())
-                    .send()
-                    .await
-                    .map_or(0, |response| response.status().as_u16());
-                if !(200..300).contains(&status) {
-                    failures += 1;
+                let outcome = RequestOutcome::of(
+                    client
+                        .get(format!("{broker}entities{shape}"))
+                        .header("NGSILD-Tenant", tenant.as_str())
+                        .header("Accept", "application/ld+json")
+                        .header("Link", link_header()),
+                )
+                .await;
+                if !outcome.is_success() {
+                    failures.push(outcome);
                 }
             }
         }
     }
-    assert_eq!(failures, 0, "statement-cache eviction at the pooler must be transparent to sqlx");
+    assert!(
+        failures.is_empty(),
+        "statement-cache eviction at the pooler must be transparent to sqlx: {failures:?}"
+    );
     reset(&client, &pool).await;
     pool.close().await;
 }
@@ -215,14 +235,14 @@ async fn snapshot_branch_clone_and_promote_run_through_the_pooler_under_load() {
         async move {
             let tenant = &load_tenants[picker.pick()];
             let id = urlencoding::encode(&format!("urn:ngsi-ld:Device:provision:{tenant}")).into_owned();
-            client
-                .get(format!("{broker}entities/{id}"))
-                .header("NGSILD-Tenant", tenant.as_str())
-                .header("Accept", "application/ld+json")
-                .header("Link", link_header())
-                .send()
-                .await
-                .map_or(0, |response| response.status().as_u16())
+            RequestOutcome::of(
+                client
+                    .get(format!("{broker}entities/{id}"))
+                    .header("NGSILD-Tenant", tenant.as_str())
+                    .header("Accept", "application/ld+json")
+                    .header("Link", link_header()),
+            )
+            .await
         }
     });
 
@@ -238,8 +258,14 @@ async fn snapshot_branch_clone_and_promote_run_through_the_pooler_under_load() {
     let (load_report, terminal) = tokio::join!(load, snapshots);
 
     println!(
-        "snapshot under load: {} snapshots terminal, {} load requests, {} non-2xx",
-        terminal, load_report.total, load_report.non_2xx
+        "snapshot under load: {} snapshots terminal, {} load requests, {} non-2xx, statuses {:?}, transport failures {:?} {:?}, error bodies {:?}",
+        terminal,
+        load_report.total,
+        load_report.non_2xx,
+        load_report.statuses,
+        load_report.transport_failures,
+        load_report.transport_samples,
+        load_report.error_details
     );
     assert_eq!(
         terminal,
@@ -413,18 +439,22 @@ async fn a_tenant_created_at_runtime_is_routed_with_no_pooler_reload() {
         &tenant_load::device_entity("urn:ngsi-ld:Device:routed", CORE_CONTEXT),
     )
     .await;
-    assert_eq!(create, 201, "runtime tenant creation must succeed");
+    assert_eq!(create.status(), Some(201), "runtime tenant creation must succeed: {create:?}");
     for base in [&broker, &replica] {
         let id = urlencoding::encode("urn:ngsi-ld:Device:routed").into_owned();
-        let status = client
-            .get(format!("{base}entities/{id}"))
-            .header("NGSILD-Tenant", tenant.as_str())
-            .header("Accept", "application/ld+json")
-            .header("Link", link_header())
-            .send()
-            .await
-            .map_or(0, |response| response.status().as_u16());
-        assert_eq!(status, 200, "the new tenant must be routed with no pooler reload on {base}");
+        let read = RequestOutcome::of(
+            client
+                .get(format!("{base}entities/{id}"))
+                .header("NGSILD-Tenant", tenant.as_str())
+                .header("Accept", "application/ld+json")
+                .header("Link", link_header()),
+        )
+        .await;
+        assert_eq!(
+            read.status(),
+            Some(200),
+            "the new tenant must be routed with no pooler reload on {base}: {read:?}"
+        );
     }
 
     // The console lists the tenant database as an auto-registered database.
@@ -448,18 +478,14 @@ async fn maintenance_holds_its_session_lock_on_a_direct_connection_while_request
     let tenants = tenant_load::tenant_names("pgbmaint", 4);
     tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 4).await;
 
-    let before = Metrics::scrape(&client, &broker)
-        .await
-        .map_or(0.0, |m| m.sum("andromeda_postgresql_maintenance_decisions_total"));
+    let before = maintenance_decisions(&client, &broker).await;
     // Drive some writes to give maintenance something to decide on, then wait a
     // couple of responsive-profile cadences.
     for tenant in &tenants {
         let _ = upsert_batch(&client, &broker, tenant, 100).await;
     }
     sleep(Duration::from_secs(15)).await;
-    let after = Metrics::scrape(&client, &broker)
-        .await
-        .map_or(0.0, |m| m.sum("andromeda_postgresql_maintenance_decisions_total"));
+    let after = maintenance_decisions(&client, &broker).await;
 
     let pooler_addr = pooler_client_addr().await;
     let pooler_held: i64 = sqlx::query_scalar(
@@ -500,32 +526,39 @@ async fn concurrent_writes_to_one_entity_serialise_correctly_on_two_backends() {
         let tenant = &tenant;
         let encoded = &encoded;
         async move {
-            client
-                .patch(format!("{broker}entities/{encoded}/attrs"))
-                .header("NGSILD-Tenant", tenant.as_str())
-                .header("Content-Type", "application/ld+json")
-                .json(&json!({"value": {"type": "Property", "value": value}, "@context": [CORE_CONTEXT]}))
-                .send()
-                .await
-                .map_or(0, |response| response.status().as_u16())
+            RequestOutcome::of(
+                client
+                    .patch(format!("{broker}entities/{encoded}/attrs"))
+                    .header("NGSILD-Tenant", tenant.as_str())
+                    .header("Content-Type", "application/ld+json")
+                    .json(&json!({"value": {"type": "Property", "value": value}, "@context": [CORE_CONTEXT]})),
+            )
+            .await
         }
     });
-    let statuses = join_all(patches).await;
-    let server_errors = statuses.iter().filter(|status| **status >= 500).count();
+    let outcomes = join_all(patches).await;
+    let failed: Vec<&RequestOutcome> = outcomes.iter().filter(|outcome| outcome.status().is_none_or(|status| status >= 500)).collect();
 
     // Final state is consistent and readable.
-    let final_status = client
-        .get(format!("{broker}entities/{encoded}"))
-        .header("NGSILD-Tenant", tenant.as_str())
-        .header("Accept", "application/ld+json")
-        .header("Link", link_header())
-        .send()
-        .await
-        .map_or(0, |response| response.status().as_u16());
+    let final_read = RequestOutcome::of(
+        client
+            .get(format!("{broker}entities/{encoded}"))
+            .header("NGSILD-Tenant", tenant.as_str())
+            .header("Accept", "application/ld+json")
+            .header("Link", link_header()),
+    )
+    .await;
 
-    println!("concurrent writes: {server_errors} 5xx of 32, final read {final_status}");
-    assert_eq!(server_errors, 0, "concurrent writes to one entity must not 5xx on a pool of two backends");
-    assert_eq!(final_status, 200, "the entity must be consistent and readable after concurrent writes");
+    println!("concurrent writes: {} of 32 failed ({failed:?}), final read {final_read:?}", failed.len());
+    assert!(
+        failed.is_empty(),
+        "concurrent writes to one entity must neither 5xx nor drop on a pool of two backends: {failed:?}"
+    );
+    assert_eq!(
+        final_read.status(),
+        Some(200),
+        "the entity must be consistent and readable after concurrent writes: {final_read:?}"
+    );
     let _ = pool_has_rows(&pool).await;
     reset(&client, &pool).await;
     pool.close().await;

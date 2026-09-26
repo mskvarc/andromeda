@@ -17,6 +17,7 @@ pub mod committer;
 /// PostgreSQL atomic-write execution configuration.
 pub mod config;
 mod consequences;
+mod contention_retry;
 mod deferred_history;
 mod entity_group;
 mod history;
@@ -36,6 +37,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-number",
         "andromeda-postgresql-branch",
         "andromeda-postgresql-name-dictionary",
+        "andromeda-postgresql-pool",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-query",
@@ -49,7 +51,9 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-model",
     ],
-    allow_production_dependencies: ["sea-query", "sea-query-sqlx", "sqlx"],
+    // `tokio` for the backoff between runs of a commit PostgreSQL rolled back
+    // as a deadlock or serialization victim (`contention_retry`).
+    allow_production_dependencies: ["sea-query", "sea-query-sqlx", "sqlx", "tokio"],
 }
 
 #[cfg(test)]

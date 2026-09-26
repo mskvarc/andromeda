@@ -140,7 +140,9 @@
 -- relations in `public` as part of the tenant migration set and creates and
 -- upgrades the same relations inside every Snapshot schema under the branch
 -- ledger. Dictionary, unit-code and function references resolve to `public`
--- through the search path; every other reference resolves to the branch.
+-- through the search path; every other reference resolves to the branch. A
+-- branch file declares no foreign key into `public`: the dictionary
+-- references of the live relations are added by the live-only 0029.
 -- ============================================================================
 
 CREATE TABLE notification_events (

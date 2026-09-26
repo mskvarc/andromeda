@@ -5,7 +5,7 @@ use andromeda_context_commit::write_id::WriteId;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_date_time::NgsiLdDateTimeError;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
-use andromeda_postgresql_pool::is_pool_saturated;
+use andromeda_postgresql_pool::{is_pool_saturated, is_transaction_rolled_back};
 use andromeda_postgresql_temporal_query::aggregation_group::MixedAggregationGroup;
 use andromeda_temporal::{error::TemporalError, temporal_not_found_reason::TemporalNotFoundReason, temporal_validation_reason::TemporalValidationReason};
 
@@ -87,6 +87,13 @@ impl From<TemporalStoreError> for TemporalError {
             && is_pool_saturated(inner)
         {
             return TemporalError::StoreSaturated;
+        }
+        // A deadlock or serialization victim was rolled back whole and can run
+        // again; it is contention, not a persistence fault.
+        if let TemporalStoreError::Database(inner) = &error
+            && is_transaction_rolled_back(inner)
+        {
+            return TemporalError::TransactionContended;
         }
         match error {
             TemporalStoreError::NotFound(detail) => TemporalError::NotFound(TemporalNotFoundReason::Store { detail }),

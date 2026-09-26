@@ -366,12 +366,12 @@ mod tests {
         port::{query::EntityQueryStore, reader::EntityReader},
         query::remote_linked::RemoteLinkedEntities,
         query_outcome::QueryOutcome,
+        spatial_acceleration::SpatialAcceleration,
         storage_profile::StorageProfile,
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
-    use andromeda_spatial_index::entity::index::SpatialEntityIndex;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use async_trait::async_trait;
     use serde_json::{Value, json};
@@ -577,7 +577,7 @@ mod tests {
             store.clone() as Arc<dyn EntityReader>, // clone: the test double supplies both focused capabilities
             store as Arc<dyn EntityQueryStore>,
             JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-            Arc::new(SpatialEntityIndex::new()),
+            SpatialAcceleration::StoreVerified,
             TenantRef::UnnamedDefault,
             remote_linked,
         )

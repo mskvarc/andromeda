@@ -58,7 +58,7 @@ async fn dist_http_default_tenant_response_omits_tenant_header() {
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
-            .client()
+            .default_tenant_client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
             .send()
@@ -70,7 +70,7 @@ async fn dist_http_default_tenant_response_omits_tenant_header() {
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
-        .client()
+        .default_tenant_client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
         .expect("default retrieve");

@@ -23,6 +23,7 @@ andromeda-postgresql-branch.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-name-dictionary.workspace = true
+andromeda-postgresql-pool.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
@@ -37,6 +38,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["time"] }
 toml = "1.1.6"
 toml-comment = "0.3.0"
 tracing = "0.1.44"
@@ -47,4 +49,5 @@ andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 pretty_assertions = "1.4.1"
+tokio = { version = "1.53.1", features = ["macros", "rt", "test-util", "time"] }
 uuid = { version = "1.26.1", features = ["v4"] }

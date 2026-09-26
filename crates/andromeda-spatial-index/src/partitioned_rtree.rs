@@ -8,17 +8,29 @@
 //! method; everything structural lives here so the two can never drift apart
 //! again.
 //!
-//! Concurrency invariant: no method ever holds a `buckets` guard and a
-//! `placements` guard at the same time. A thread therefore holds at most one of
-//! the two maps' shard locks at once, which is what rules out an AB-BA deadlock
-//! between them.
+//! Every mutation of one object is applied partition by partition, and within a
+//! partition the object's outgoing entries leave and its incoming entries arrive
+//! under one write lock. A reader of a partition therefore sees the object
+//! either as it was or as it now is, never absent in between.
+//!
+//! Concurrency invariants:
+//!
+//! - No method ever holds a `buckets` guard and a `placements` guard at the same
+//!   time, and no partition lock is taken while a `placements` guard is held. A
+//!   thread therefore holds at most one of the two maps' shard locks at once,
+//!   which is what rules out an AB-BA deadlock between them.
+//! - The mutations of one object are serialised by the caller. The back-index
+//!   of an object is read and rewritten around the tree changes, so two
+//!   concurrent mutations of the same object could each rewrite it from a
+//!   stale reading; every caller in the broker already applies one object's
+//!   changes in commit order, one at a time.
 
 use crate::key::SpatialKey;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use rstar::{RTree, RTreeObject};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
     mem,
@@ -42,26 +54,39 @@ pub trait Indexed {
     fn id(&self) -> &Self::Id;
 }
 
-/// One partition's R-tree, tagged with the generation at which it was last
-/// modified.
-///
-/// The generation is what lets a bulk rebuild refuse to overwrite a partition
-/// that a live write has touched since the rebuild's snapshot was taken: the
-/// index is only ever an optimisation, so it must never lose the newer of two
-/// writes to the tree.
-#[derive(Debug)]
-struct Partition<E: RTreeObject> {
-    /// The clock value at this partition's most recent mutation.
-    generation: u64,
-    /// The R-tree of this partition's geometries.
-    tree: RTree<E>,
+/// Whether live mutations are remembered for a later rebuild to respect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteTracking {
+    /// Every live mutation records, per partition it touches, the generation it
+    /// was applied at. A [`PartitionedRTree::rebuild`] from a snapshot read
+    /// before that generation keeps the live state of the object instead of
+    /// the snapshot's, and the rebuild forgets every record its snapshot
+    /// supersedes, so the records never outlive one rebuild interval.
+    Recorded,
+    /// Nothing is recorded. A tree built this way is never rebuilt from a
+    /// snapshot, so there is nothing a record would protect.
+    Unrecorded,
 }
 
-impl<E: RTreeObject> Default for Partition<E> {
+/// One partition's R-tree, and the generations of the live mutations applied to
+/// it since its last rebuild.
+#[derive(Debug)]
+struct Partition<E: RTreeObject + Indexed> {
+    /// The R-tree of this partition's geometries.
+    tree: RTree<E>,
+    /// The generation of the latest live mutation of each object in this
+    /// partition -- an insertion or a removal -- recorded only under
+    /// [`WriteTracking::Recorded`].
+    written: HashMap<<E as Indexed>::Id, u64>,
+}
+
+// Manual because deriving `Default` would demand `E: Default`, which no indexed
+// entry satisfies; an empty tree and an empty record are what is actually wanted.
+impl<E: RTreeObject + Indexed> Default for Partition<E> {
     fn default() -> Partition<E> {
         Partition {
-            generation: 0,
             tree: RTree::new(),
+            written: HashMap::new(),
         }
     }
 }
@@ -80,7 +105,7 @@ struct Placement<E> {
 }
 
 /// A thread-safe R-tree partitioned by [`SpatialKey`], with a back-index for
-/// scan-free removal and a per-partition generation for rebuild safety.
+/// scan-free removal and per-object generations for rebuild safety.
 #[derive(Debug)]
 pub struct PartitionedRTree<E>
 where
@@ -90,24 +115,11 @@ where
     buckets: DashMap<SpatialKey, Arc<RwLock<Partition<E>>>>,
     /// Which partitions each object currently appears in, and as which entry.
     placements: DashMap<<E as Indexed>::Id, Vec<Placement<E>>>,
-    /// Monotonic clock stamping every mutation, so a bulk rebuild can tell
-    /// whether a partition has changed since its snapshot was taken.
+    /// Monotonic clock stamping every mutation, so a rebuild can tell which
+    /// objects have changed since its snapshot was read.
     clock: AtomicU64,
-}
-
-// Manual because deriving `Default` would demand `E: Default`, which no indexed
-// entry satisfies; the map and clock defaults are what is actually wanted.
-impl<E> Default for PartitionedRTree<E>
-where
-    E: RTreeObject + Clone + PartialEq + Indexed,
-{
-    fn default() -> PartitionedRTree<E> {
-        PartitionedRTree {
-            buckets: DashMap::new(),
-            placements: DashMap::new(),
-            clock: AtomicU64::new(0),
-        }
-    }
+    /// Whether mutations are recorded for a rebuild to respect.
+    tracking: WriteTracking,
 }
 
 impl<E> PartitionedRTree<E>
@@ -116,13 +128,19 @@ where
 {
     /// An empty tree.
     #[must_use]
-    pub fn new() -> PartitionedRTree<E> {
-        PartitionedRTree::default()
+    pub fn new(tracking: WriteTracking) -> PartitionedRTree<E> {
+        PartitionedRTree {
+            buckets: DashMap::new(),
+            placements: DashMap::new(),
+            clock: AtomicU64::new(0),
+            tracking,
+        }
     }
 
     /// The current clock value, to be captured by a rebuild worker *before* it
-    /// reads its source snapshot so that any write landing during the read is
-    /// stamped with a later generation and cannot be clobbered by the rebuild.
+    /// reads its source snapshot: any mutation applied after the capture is
+    /// stamped with a later generation, and [`PartitionedRTree::rebuild`] keeps
+    /// it over the snapshot.
     pub fn current_generation(&self) -> u64 {
         self.clock.load(Ordering::SeqCst)
     }
@@ -134,169 +152,205 @@ where
 
     /// Replace one object's entries under one partition.
     ///
-    /// An object may occupy a partition several times — ETSI GS CIM 009 v1.9.1
-    /// clause 4.5.16.1 lets a `GeoProperty` carry one instance per `datasetId`,
-    /// and clause 4.10 counts an entity as matching when any one of them meets
-    /// the restriction, so every instance has to be reachable. Passing all of
-    /// them at once is what makes the replacement atomic with respect to the
-    /// back-index: a caller looping over a single-entry insert would have each
-    /// call drop the entries the previous one added.
-    ///
-    /// Only this partition's entries are replaced, not every partition the
-    /// object appears in: an object indexed under several keys keeps its other
-    /// entries, which is the invariant R2-13 restored.
+    /// An object may occupy a partition several times, so every entry it has
+    /// there is passed at once: a caller looping over a single-entry insert
+    /// would have each call drop the entries the previous one added. Only this
+    /// partition's entries are replaced; an object indexed under several keys
+    /// keeps its other entries.
     pub fn insert_all(&self, key: SpatialKey, id: <E as Indexed>::Id, entries: Vec<E>) {
-        self.remove_from_key(&id, &key);
-        if entries.is_empty() {
-            return;
-        }
+        let outgoing = self.take_placements(&id, |placement| placement.key == key);
+        let installed = self.transition(&id, outgoing, vec![(key, entries)]);
+        self.install_placements(id, installed);
+    }
 
-        let generation = self.next_generation();
-        {
-            let bucket = self.buckets.entry(key.clone()).or_default(); // clone: bucket key and placement key are separate
-            let mut partition = bucket.value().write();
-            for entry in &entries {
-                partition.tree.insert(entry.clone()); // clone: the tree and the placement each own a copy
-            }
-            partition.generation = generation;
-        }
+    /// Replace every entry of one object, across every partition, with
+    /// `incoming`.
+    ///
+    /// A partition the object leaves loses its entries, a partition it joins
+    /// gains them, and a partition it stays in swaps them under one lock, so no
+    /// reader of any partition ever finds the object missing from a partition
+    /// it belongs to both before and after the replacement.
+    pub fn replace(&self, id: <E as Indexed>::Id, incoming: Vec<(SpatialKey, Vec<E>)>) {
+        let outgoing = self.take_placements(&id, |_| true);
+        let installed = self.transition(&id, outgoing, incoming);
+        self.install_placements(id, installed);
+    }
 
-        let mut entries = entries.into_iter();
-        // The final instance takes ownership of the key, so the placements hold
-        // one clone fewer than there are instances.
-        let last = entries.next_back();
-        let mut placements = self.placements.entry(id).or_default();
-        for entry in entries {
-            placements.value_mut().push(Placement { key: key.clone(), entry }); // clone: one key per placement
-        }
-        if let Some(entry) = last {
-            placements.value_mut().push(Placement { key, entry });
-        }
+    /// Add entries for one object without removing any it already has.
+    ///
+    /// Used ahead of a change whose outcome is not yet known: while it is
+    /// pending the object is reachable under both its old and its new
+    /// geometries, which can only widen a candidate set, and the
+    /// [`PartitionedRTree::replace`] that settles the change removes whichever
+    /// no longer holds.
+    pub fn augment(&self, id: <E as Indexed>::Id, incoming: Vec<(SpatialKey, Vec<E>)>) {
+        let installed = self.transition(&id, Vec::new(), incoming);
+        self.install_placements(id, installed);
     }
 
     /// Remove every entry belonging to an object, across every partition.
     pub fn remove(&self, id: &<E as Indexed>::Id) {
-        let Some((_, placements)) = self.placements.remove(id) else {
-            return;
-        };
-        for placement in placements {
-            self.remove_from_partition(&placement.key, &placement.entry);
-        }
+        let outgoing = self.take_placements(id, |_| true);
+        self.transition(id, outgoing, Vec::new());
+        self.placements.remove_if(id, |_, placements| placements.is_empty());
     }
 
     /// Read one partition's tree under its lock, if the partition exists.
-    ///
-    /// `None` distinguishes a cold partition from an empty answer: the caller
-    /// falls through to the store rather than reporting that nothing matched.
     pub fn read_partition<R>(&self, key: &SpatialKey, read: impl FnOnce(&RTree<E>) -> R) -> Option<R> {
-        let bucket = self.buckets.get(key)?;
-        let partition = bucket.value().read();
+        let partition = self.existing(key)?;
+        let partition = partition.read();
         Some(read(&partition.tree))
     }
 
-    /// Replace one partition's contents wholesale, unless a newer write got
-    /// there first.
+    /// Replace the contents of every partition `in_scope` selects with a
+    /// snapshot of them, keeping whatever live mutation is newer than it.
     ///
     /// `snapshot_generation` is the clock value the rebuild worker captured
-    /// before reading its source (see [`current_generation`]). If the partition
-    /// has been mutated since — its generation exceeds the snapshot's — the
-    /// rebuild is stale for it and the swap is refused, so a live insert newer
-    /// than the snapshot is never lost. Otherwise the tree is bulk-loaded (a
-    /// far better layout than one-at-a-time inserts) under the existing lock, so
-    /// a reader sees either the old tree or the new one and never a partial
-    /// state, and any object that was in the partition but not in the new
-    /// snapshot is pruned from the back-index so its ownership record cannot
-    /// leak.
+    /// before reading its source (see [`PartitionedRTree::current_generation`]).
+    /// Per partition and under its lock, an object mutated live since then --
+    /// inserted, moved or removed -- keeps its live state, and every other
+    /// object takes the snapshot's: present if the snapshot holds it, absent
+    /// otherwise. A partition the snapshot does not mention is in scope all
+    /// the same and is emptied of every object the snapshot no longer holds. The
+    /// rebuilt tree is bulk-loaded, a far better layout than one-at-a-time
+    /// inserts, and swapped in whole, so a reader sees either the old tree or
+    /// the new one.
     ///
-    /// [`current_generation`]: PartitionedRTree::current_generation
-    pub fn bulk_load(&self, key: SpatialKey, entries: Vec<E>, snapshot_generation: u64) {
-        // clone: the ownership records outlive the entry list, which the tree consumes
-        let incoming: HashSet<<E as Indexed>::Id> = entries.iter().map(|entry| entry.id().clone()).collect();
-        // clone: the tree owns its copy; `entries` is kept to refresh the placements
-        let tree = RTree::bulk_load(entries.clone());
-
-        let departed: Vec<<E as Indexed>::Id> = {
-            let bucket = self.buckets.entry(key.clone()).or_default();
-            let mut partition = bucket.value().write();
-            if partition.generation > snapshot_generation {
-                // A write newer than the snapshot already changed this
-                // partition; keeping it is what makes the index only ever an
-                // optimisation rather than a source of stale answers.
-                return;
+    /// Only sound under [`WriteTracking::Recorded`]: without the records a live
+    /// mutation newer than the snapshot would be overwritten by it.
+    pub fn rebuild(&self, in_scope: impl Fn(&SpatialKey) -> bool, mut incoming: HashMap<SpatialKey, Vec<E>>, snapshot_generation: u64) {
+        let mut keys: HashSet<SpatialKey> = self
+            .buckets
+            .iter()
+            .filter(|bucket| in_scope(bucket.key()))
+            .map(|bucket| bucket.key().clone()) // clone: the key set outlives the shard guards it is read under
+            .collect();
+        keys.extend(incoming.keys().filter(|key| in_scope(key)).cloned()); // clone: the incoming map keeps its keys until each partition is taken
+        for key in keys {
+            let snapshot = incoming.remove(&key).unwrap_or_default();
+            let partition = self.bucket(&key);
+            let (installed, departed) = rebuild_partition(&mut partition.write(), snapshot, snapshot_generation);
+            for id in departed {
+                if let Some(mut placements) = self.placements.get_mut(&id) {
+                    placements.value_mut().retain(|placement| placement.key != key);
+                }
             }
-            // clone: the departed set outlives the tree borrow it is read from
-            let departed = partition
-                .tree
-                .iter()
-                .map(|entry| entry.id().clone())
-                .filter(|id| !incoming.contains(id))
-                .collect();
-            partition.tree = tree;
-            partition.generation = snapshot_generation;
-            departed
-        };
-
-        // The departed objects are by construction absent from `incoming`, so
-        // forgetting their records first cannot undo a placement the refresh
-        // below installs.
-        for id in departed {
-            if let Some(mut placements) = self.placements.get_mut(&id) {
+            let mut by_object: HashMap<<E as Indexed>::Id, Vec<Placement<E>>> = HashMap::new();
+            for entry in installed {
+                // clone: each placement owns its key, and the grouping owns the identifier the entry lends
+                by_object.entry(entry.id().clone()).or_default().push(Placement { key: key.clone(), entry });
+            }
+            for (id, snapshot_placements) in by_object {
+                let mut placements = self.placements.entry(id).or_default();
                 placements.value_mut().retain(|placement| placement.key != key);
+                placements.value_mut().extend(snapshot_placements);
             }
         }
-
-        let mut entries = entries.into_iter();
-        // The final entry takes ownership of the key, so the placements hold one
-        // clone fewer than there are entries.
-        let last = entries.next_back();
-        for entry in entries {
-            self.replace_placement(key.clone(), entry); // clone: one key per placement
-        }
-        if let Some(entry) = last {
-            self.replace_placement(key, entry);
-        }
     }
 
-    /// Point one object's placement record at this partition, replacing whatever
-    /// entry it previously held there.
-    fn replace_placement(&self, key: SpatialKey, entry: E) {
-        // clone: the placements map owns the identifier the entry only lends
-        let mut placements = self.placements.entry(entry.id().clone()).or_default();
-        placements.value_mut().retain(|placement| placement.key != key);
-        placements.value_mut().push(Placement { key, entry });
-    }
-
-    /// Drop an object from one partition, and forget that it was there.
-    fn remove_from_key(&self, id: &<E as Indexed>::Id, key: &SpatialKey) {
-        let removed: Vec<E> = {
-            let Some(mut placements) = self.placements.get_mut(id) else {
-                return;
-            };
-            let all = mem::take(placements.value_mut());
-            let (matching, kept): (Vec<Placement<E>>, Vec<Placement<E>>) = all.into_iter().partition(|placement| &placement.key == key);
-            *placements.value_mut() = kept;
-            matching.into_iter().map(|placement| placement.entry).collect()
+    /// Detach an object's back-index entries that `outgoing` selects.
+    fn take_placements(&self, id: &<E as Indexed>::Id, outgoing: impl Fn(&Placement<E>) -> bool) -> Vec<Placement<E>> {
+        let Some(mut placements) = self.placements.get_mut(id) else {
+            return Vec::new();
         };
-        for entry in &removed {
-            self.remove_from_partition(key, entry);
-        }
+        let all = mem::take(placements.value_mut());
+        let (taken, kept): (Vec<Placement<E>>, Vec<Placement<E>>) = all.into_iter().partition(outgoing);
+        *placements.value_mut() = kept;
+        taken
     }
 
-    /// Remove one entry from one partition's tree, advancing that partition's
-    /// generation when the entry was actually there.
-    ///
-    /// The entry comes from the back-index, so this is a direct `RTree::remove`
-    /// (O(log n)) rather than a scan of the whole partition for a matching
-    /// identifier, and the write lock is held only for the single delete.
-    fn remove_from_partition(&self, key: &SpatialKey, entry: &E) {
-        let Some(bucket) = self.buckets.get(key) else {
+    /// Record an object's new back-index entries, dropping its record when it
+    /// is left with none.
+    fn install_placements(&self, id: <E as Indexed>::Id, installed: Vec<Placement<E>>) {
+        if installed.is_empty() {
+            self.placements.remove_if(&id, |_, placements| placements.is_empty());
             return;
-        };
-        let mut partition = bucket.value().write();
-        if partition.tree.remove(entry).is_some() {
-            partition.generation = self.next_generation();
+        }
+        self.placements.entry(id).or_default().value_mut().extend(installed);
+    }
+
+    /// Move one object from `outgoing` to `incoming`, partition by partition,
+    /// each partition under one write lock, returning the placements the
+    /// incoming entries now occupy.
+    fn transition(&self, id: &<E as Indexed>::Id, outgoing: Vec<Placement<E>>, incoming: Vec<(SpatialKey, Vec<E>)>) -> Vec<Placement<E>> {
+        let generation = self.next_generation();
+        let mut changes: HashMap<SpatialKey, (Vec<E>, Vec<E>)> = HashMap::new();
+        for placement in outgoing {
+            changes.entry(placement.key).or_default().0.push(placement.entry);
+        }
+        for (key, entries) in incoming {
+            changes.entry(key).or_default().1.extend(entries);
+        }
+        let mut installed = Vec::new();
+        for (key, (leaving, arriving)) in changes {
+            let partition = if arriving.is_empty() {
+                let Some(partition) = self.existing(&key) else {
+                    continue;
+                };
+                partition
+            } else {
+                self.bucket(&key)
+            };
+            {
+                let mut partition = partition.write();
+                for entry in &leaving {
+                    partition.tree.remove(entry);
+                }
+                for entry in &arriving {
+                    partition.tree.insert(entry.clone()); // clone: the tree and the placement each own a copy
+                }
+                if self.tracking == WriteTracking::Recorded {
+                    partition.written.insert(id.clone(), generation); // clone: the record owns the identifier the caller lends
+                }
+            }
+            installed.extend(arriving.into_iter().map(|entry| Placement {
+                key: key.clone(), // clone: one key per placement
+                entry,
+            }));
+        }
+        installed
+    }
+
+    /// The partition a key names, created empty when it does not exist yet.
+    fn bucket(&self, key: &SpatialKey) -> Arc<RwLock<Partition<E>>> {
+        // clone: the map owns its key; the returned handle is a reference-count bump so the shard guard is released before the partition is locked
+        Arc::clone(self.buckets.entry(key.clone()).or_default().value())
+    }
+
+    /// The partition a key names, if it exists.
+    fn existing(&self, key: &SpatialKey) -> Option<Arc<RwLock<Partition<E>>>> {
+        // clone: a reference-count bump, so the shard guard is released before the partition is locked
+        self.buckets.get(key).map(|bucket| Arc::clone(bucket.value()))
+    }
+}
+
+/// Rebuild one locked partition from its snapshot, returning the snapshot
+/// entries it now holds and the objects it no longer holds at all.
+fn rebuild_partition<E>(partition: &mut Partition<E>, snapshot: Vec<E>, snapshot_generation: u64) -> (Vec<E>, Vec<<E as Indexed>::Id>)
+where
+    E: RTreeObject + Clone + PartialEq + Indexed,
+{
+    let live: HashSet<&<E as Indexed>::Id> = partition
+        .written
+        .iter()
+        .filter(|(_, generation)| **generation > snapshot_generation)
+        .map(|(id, _)| id)
+        .collect();
+    let installed: Vec<E> = snapshot.into_iter().filter(|entry| !live.contains(entry.id())).collect();
+    let installed_ids: HashSet<&<E as Indexed>::Id> = installed.iter().map(Indexed::id).collect();
+    let mut departed: HashSet<<E as Indexed>::Id> = HashSet::new();
+    let mut kept: Vec<E> = Vec::new();
+    for entry in &partition.tree {
+        if live.contains(entry.id()) {
+            kept.push(entry.clone()); // clone: the rebuilt tree owns the live entries the old tree still holds
+        } else if !installed_ids.contains(entry.id()) {
+            departed.insert(entry.id().clone()); // clone: the departed set outlives the tree it is read from
         }
     }
+    kept.extend(installed.iter().cloned()); // clone: the tree and the placements each own the snapshot entries
+    partition.tree = RTree::bulk_load(kept);
+    partition.written.retain(|_, generation| *generation > snapshot_generation);
+    (installed, departed.into_iter().collect())
 }
 
 #[cfg(test)]
@@ -304,20 +358,21 @@ mod tests {
     use crate::{
         entity::entry::SpatialEntry,
         key::SpatialKey,
-        partitioned_rtree::{Indexed, PartitionedRTree},
+        partitioned_rtree::{PartitionedRTree, WriteTracking},
     };
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
-    use urn_rs::Urn;
+    use std::collections::HashMap;
 
-    fn urn(raw: &str) -> Urn {
-        raw.parse().expect("a well-formed URN")
+    fn uri(raw: &str) -> Uri {
+        raw.parse().expect("a well-formed URI")
     }
 
     fn entry(id: &str, x: f64, y: f64) -> SpatialEntry {
         let geometry = Geometry::new(GeometryForm::Point(Position::new(x, y, None)));
-        SpatialEntry::new(urn(id), geometry).expect("a point has a bounding rectangle")
+        SpatialEntry::new(uri(id), geometry).expect("a point has a bounding rectangle")
     }
 
     fn key_a() -> SpatialKey {
@@ -340,40 +395,121 @@ mod tests {
         index.read_partition(key, rstar::RTree::size).unwrap_or(0)
     }
 
+    fn located(index: &PartitionedRTree<SpatialEntry>, key: &SpatialKey) -> Vec<(String, [f64; 2])> {
+        let mut located = index
+            .read_partition(key, |tree| {
+                tree.iter()
+                    .map(|entry| (entry.entity_id.to_string(), entry.envelope.lower()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        located.sort_by(|left, right| left.0.cmp(&right.0).then(left.1[0].total_cmp(&right.1[0])));
+        located
+    }
+
     #[test]
     fn inserting_an_object_under_one_key_leaves_another_key_untouched() {
-        // The R2-13 invariant, now enforced once: a per-key insert replaces only
-        // the partition it targets, so a two-key object survives under both.
-        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new();
-        index.insert_all(
-            key_a(),
-            entry("urn:ngsi-ld:X:1", 0.0, 0.0).id().clone(),
-            vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)],
-        );
-        index.insert_all(
-            key_b(),
-            entry("urn:ngsi-ld:X:1", 1.0, 1.0).id().clone(),
-            vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)],
-        );
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Unrecorded);
+        index.insert_all(key_a(), uri("urn:ngsi-ld:X:1"), vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)]);
+        index.insert_all(key_b(), uri("urn:ngsi-ld:X:1"), vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)]);
         pretty_assertions::assert_eq!(count(&index, &key_a()), 1);
         pretty_assertions::assert_eq!(count(&index, &key_b()), 1);
     }
 
     #[test]
     fn removing_one_object_from_a_partition_leaves_the_rest() {
-        // Direct removal touches only the removed entry, not the whole partition.
-        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new();
-        index.insert_all(
-            key_a(),
-            entry("urn:ngsi-ld:X:1", 0.0, 0.0).id().clone(),
-            vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)],
-        );
-        index.insert_all(
-            key_a(),
-            entry("urn:ngsi-ld:X:2", 5.0, 5.0).id().clone(),
-            vec![entry("urn:ngsi-ld:X:2", 5.0, 5.0)],
-        );
-        index.remove(&urn("urn:ngsi-ld:X:1"));
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Unrecorded);
+        index.insert_all(key_a(), uri("urn:ngsi-ld:X:1"), vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)]);
+        index.insert_all(key_a(), uri("urn:ngsi-ld:X:2"), vec![entry("urn:ngsi-ld:X:2", 5.0, 5.0)]);
+        index.remove(&uri("urn:ngsi-ld:X:1"));
         pretty_assertions::assert_eq!(count(&index, &key_a()), 1);
+    }
+
+    #[test]
+    fn replacing_an_object_moves_it_between_partitions() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        let id = uri("urn:ngsi-ld:X:1");
+        index.replace(id.clone(), vec![(key_a(), vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)])]);
+        index.replace(id, vec![(key_b(), vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)])]);
+        pretty_assertions::assert_eq!(count(&index, &key_a()), 0);
+        pretty_assertions::assert_eq!(located(&index, &key_b()), vec![("urn:ngsi-ld:X:1".to_owned(), [1.0, 1.0])]);
+    }
+
+    #[test]
+    fn augmenting_keeps_the_old_entry_until_a_replacement_settles_it() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        let id = uri("urn:ngsi-ld:X:1");
+        index.replace(id.clone(), vec![(key_a(), vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)])]);
+        index.augment(id.clone(), vec![(key_a(), vec![entry("urn:ngsi-ld:X:1", 3.0, 3.0)])]);
+        pretty_assertions::assert_eq!(
+            located(&index, &key_a()),
+            vec![("urn:ngsi-ld:X:1".to_owned(), [0.0, 0.0]), ("urn:ngsi-ld:X:1".to_owned(), [3.0, 3.0])]
+        );
+        index.replace(id, vec![(key_a(), vec![entry("urn:ngsi-ld:X:1", 3.0, 3.0)])]);
+        pretty_assertions::assert_eq!(located(&index, &key_a()), vec![("urn:ngsi-ld:X:1".to_owned(), [3.0, 3.0])]);
+    }
+
+    #[test]
+    fn a_rebuild_keeps_a_live_insert_newer_than_its_snapshot() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        let snapshot_generation = index.current_generation();
+        index.replace(uri("urn:ngsi-ld:X:new"), vec![(key_a(), vec![entry("urn:ngsi-ld:X:new", 0.0, 0.0)])]);
+        let snapshot = HashMap::from([(key_a(), vec![entry("urn:ngsi-ld:X:old", 9.0, 9.0)])]);
+        index.rebuild(|_| true, snapshot, snapshot_generation);
+        pretty_assertions::assert_eq!(
+            located(&index, &key_a()),
+            vec![("urn:ngsi-ld:X:new".to_owned(), [0.0, 0.0]), ("urn:ngsi-ld:X:old".to_owned(), [9.0, 9.0])]
+        );
+    }
+
+    #[test]
+    fn a_rebuild_keeps_a_live_move_newer_than_its_snapshot() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        let id = uri("urn:ngsi-ld:X:1");
+        index.replace(id.clone(), vec![(key_a(), vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)])]);
+        let snapshot_generation = index.current_generation();
+        index.replace(id, vec![(key_a(), vec![entry("urn:ngsi-ld:X:1", 4.0, 4.0)])]);
+        let snapshot = HashMap::from([(key_a(), vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)])]);
+        index.rebuild(|_| true, snapshot, snapshot_generation);
+        pretty_assertions::assert_eq!(located(&index, &key_a()), vec![("urn:ngsi-ld:X:1".to_owned(), [4.0, 4.0])]);
+    }
+
+    #[test]
+    fn a_rebuild_keeps_a_live_removal_newer_than_its_snapshot() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        let id = uri("urn:ngsi-ld:X:1");
+        index.replace(id.clone(), vec![(key_a(), vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)])]);
+        let snapshot_generation = index.current_generation();
+        index.remove(&id);
+        let snapshot = HashMap::from([(key_a(), vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)])]);
+        index.rebuild(|_| true, snapshot, snapshot_generation);
+        pretty_assertions::assert_eq!(count(&index, &key_a()), 0);
+    }
+
+    #[test]
+    fn a_rebuild_replaces_what_no_live_write_touched_since_its_snapshot() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        index.replace(uri("urn:ngsi-ld:X:gone"), vec![(key_a(), vec![entry("urn:ngsi-ld:X:gone", 0.0, 0.0)])]);
+        index.replace(uri("urn:ngsi-ld:X:moved"), vec![(key_b(), vec![entry("urn:ngsi-ld:X:moved", 0.0, 0.0)])]);
+        let snapshot_generation = index.current_generation();
+        let snapshot = HashMap::from([(key_a(), vec![entry("urn:ngsi-ld:X:moved", 7.0, 7.0)])]);
+        index.rebuild(|_| true, snapshot, snapshot_generation);
+        pretty_assertions::assert_eq!(located(&index, &key_a()), vec![("urn:ngsi-ld:X:moved".to_owned(), [7.0, 7.0])]);
+        pretty_assertions::assert_eq!(count(&index, &key_b()), 0);
+        // The departed object's back-index was pruned, so removing it is a
+        // no-op, and removing the moved one leaves nothing behind.
+        index.remove(&uri("urn:ngsi-ld:X:gone"));
+        index.remove(&uri("urn:ngsi-ld:X:moved"));
+        pretty_assertions::assert_eq!(count(&index, &key_a()), 0);
+    }
+
+    #[test]
+    fn a_rebuild_leaves_partitions_outside_its_scope_alone() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        index.replace(uri("urn:ngsi-ld:X:1"), vec![(key_b(), vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)])]);
+        let snapshot_generation = index.current_generation();
+        let key = key_a();
+        index.rebuild(|candidate| candidate == &key, HashMap::new(), snapshot_generation);
+        pretty_assertions::assert_eq!(count(&index, &key_b()), 1);
     }
 }

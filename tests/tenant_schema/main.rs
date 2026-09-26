@@ -8,7 +8,10 @@
 //! relations carry, the TOAST compression the wide columns declare, the
 //! explicit name every constraint carries, the octet bound every identifier
 //! column holds, the integrity the stored JSON-LD contexts enforce, and the
-//! storage policy the temporal hypertables declare and the broker reconciles.
+//! storage policy the temporal hypertables declare and the broker reconciles,
+//! and the two concurrency guarantees a live write keeps against unrelated
+//! transactions: a commit chosen as a deadlock victim is run again, and a
+//! delivery insert waits out a concurrent subscription deletion.
 //! Each is executed as a catalogue or constraint query with a pass/fail
 //! assertion rather than as a measurement a reader has to interpret.
 //!
@@ -17,8 +20,10 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod code_registry;
+mod commit_contention;
 mod concurrent_provisioning;
 mod constraint_names;
+mod delivery_subscription_race;
 mod hot_update_maintenance;
 mod identifier_bounds;
 mod jsonld_context_constraints;

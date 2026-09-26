@@ -1,6 +1,6 @@
 //! Deferred side-effect jobs committed with the entity mutation.
 
-use crate::{commit_refusal::persistence, consequences::ConsequenceWrite};
+use crate::{commit_refusal::context_store, consequences::ConsequenceWrite};
 use andromeda_context_commit::{atomic_write::AtomicWrite, error::CommitError, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_context_store::pending_side_effects::{
@@ -61,6 +61,6 @@ pub(crate) async fn apply(
     }
     PendingSideEffectsRepository::enqueue_in_tx(tx, target, record, consequence_base, &merged)
         .await
-        .map_err(persistence)?;
+        .map_err(context_store)?;
     Ok(ConsequenceWrite::Written)
 }

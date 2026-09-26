@@ -1,6 +1,6 @@
 //! Enqueueing temporal append intents inside the entity anchor transaction.
 
-use crate::intent_store::{PostgresTemporalIntentStore, persistence};
+use crate::intent_store::PostgresTemporalIntentStore;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
@@ -9,6 +9,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
+use andromeda_postgresql_temporal_store::error::TemporalStoreError;
 use andromeda_temporal::{append_intent::TemporalAppendIntent, error::TemporalError};
 use sea_query::{Alias, Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
@@ -114,7 +115,9 @@ impl PostgresTemporalIntentStore {
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .execute(&mut **tx)
             .await
-            .map_err(persistence)?;
+            // Classified like every other temporal-store statement, so a
+            // saturated pool or a rolled-back transaction keeps its category.
+            .map_err(|error| TemporalError::from(TemporalStoreError::from(error)))?;
         Ok(())
     }
 }

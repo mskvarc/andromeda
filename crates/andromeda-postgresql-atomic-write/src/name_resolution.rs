@@ -10,7 +10,7 @@
 //! same transaction, so a key exists exactly when the row that references it
 //! does — and vanishes with it on rollback.
 
-use crate::commit_refusal::persistence;
+use crate::commit_refusal::name_lookup;
 use andromeda_context_commit::{atomic_write::AtomicWrite, error::CommitError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
@@ -65,12 +65,12 @@ pub(crate) async fn resolve_write_names(
     let types = if types.is_empty() {
         HashMap::new()
     } else {
-        entity_type_names.resolve_or_create(tx, &types).await.map_err(persistence)?
+        entity_type_names.resolve_or_create(tx, &types).await.map_err(name_lookup)?
     };
     let attributes = if attributes.is_empty() {
         HashMap::new()
     } else {
-        attribute_names.resolve_or_create(tx, &attributes).await.map_err(persistence)?
+        attribute_names.resolve_or_create(tx, &attributes).await.map_err(name_lookup)?
     };
     Ok(ResolvedWriteNames { types, attributes })
 }
@@ -107,5 +107,5 @@ pub(crate) async fn resolve_attribute_names(
     if names.is_empty() {
         return Ok(HashMap::new());
     }
-    attribute_names.resolve_or_create(tx, &names).await.map_err(persistence)
+    attribute_names.resolve_or_create(tx, &names).await.map_err(name_lookup)
 }

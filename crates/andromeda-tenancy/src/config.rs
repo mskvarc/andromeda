@@ -37,6 +37,9 @@ pub enum TenancyConfigError {
     /// The per-pass wake bound was configured as zero.
     #[error("tenancy.waker_max_wakes_per_pass must be at least 1")]
     ZeroWakerMaxWakesPerPass,
+    /// The cold-build admission deadline was configured as zero.
+    #[error("tenancy.build_admission_timeout must be greater than zero")]
+    ZeroBuildAdmissionTimeout,
 }
 
 /// Multi-tenancy configuration.
@@ -94,16 +97,32 @@ pub struct TenancyConfig {
     /// absent, runs the migrator over a direct connection. Without a bound a
     /// burst of first requests for distinct tenants would open that many pools
     /// and migrator connections at once and exhaust the server. Requests past
-    /// the bound wait for a build permit rather than being refused; the wait is
-    /// reported as `andromeda_tenant_build_admission_wait_seconds`.
+    /// the bound wait for a build permit for at most `build_admission_timeout`;
+    /// the wait is reported as `andromeda_tenant_build_admission_wait_seconds`.
     pub max_concurrent_builds: usize,
+
+    /// How long a request may wait to be admitted to a cold build before it is
+    /// refused as saturated, in human-readable form (`"20s"`).
+    ///
+    /// Covers every wait ahead of the build itself: another request's in-flight
+    /// build of the same tenant, a build permit under `max_concurrent_builds`,
+    /// and a teardown slot under `eviction_concurrency` when the cache is full
+    /// and a runtime must be released first. A request that cannot be admitted
+    /// within it is answered `503` with `Retry-After` rather than stalling until
+    /// the HTTP request timeout, which it must therefore stay below.
+    #[toml_comment(inline)]
+    pub build_admission_timeout: HumanDuration,
 
     /// How many tenant runtimes may be torn down at once.
     ///
-    /// Eviction closes a runtime's connection pool and stops its workers, which
-    /// is I/O the request that triggered a cache trim must not serialise behind.
-    /// Teardowns run concurrently up to this bound, off the request path, so a
-    /// cold insert never waits on another tenant's shutdown.
+    /// Eviction closes a runtime's connection pool and stops its workers. Every
+    /// eviction path takes a teardown slot before it removes a runtime from the
+    /// cache, so a runtime is either cached or in one of these slots and the
+    /// runtimes alive at once stay within `runtime_max_cached` plus this bound,
+    /// beyond the transient overshoot of runtimes leased by in-flight requests
+    /// (see `runtime_max_cached`) or still being built. A cold build
+    /// that must make room while every slot is busy waits for one within
+    /// `build_admission_timeout`.
     pub eviction_concurrency: usize,
 
     /// The shortest delay before a just-evicted dormant tenant is woken again.
@@ -145,6 +164,7 @@ impl Default for TenancyConfig {
             runtime_max_cached: 64,
             janitor_interval: HumanDuration::from_secs(30),
             max_concurrent_builds: 8,
+            build_admission_timeout: HumanDuration::from_secs(20),
             eviction_concurrency: 8,
             min_dormancy: HumanDuration::from_secs(30),
             wake_residency: HumanDuration::from_secs(60),
@@ -161,8 +181,9 @@ impl TenancyConfig {
     /// Returns the [`TenancyConfigError`] naming the first setting configured
     /// as zero: the per-tenant pool size, the runtime idle retention, the
     /// runtime cache capacity, the janitor cadence, the concurrent cold-build
-    /// bound, the concurrent-eviction bound, the dormant re-wake floor, the
-    /// woken-runtime residency or the per-pass wake bound.
+    /// bound, the cold-build admission deadline, the concurrent-eviction bound,
+    /// the dormant re-wake floor, the woken-runtime residency or the per-pass
+    /// wake bound.
     pub const fn validate(&self) -> Result<(), TenancyConfigError> {
         if self.tenant_max_connections == 0 {
             return Err(TenancyConfigError::ZeroTenantMaxConnections);
@@ -178,6 +199,9 @@ impl TenancyConfig {
         }
         if self.max_concurrent_builds == 0 {
             return Err(TenancyConfigError::ZeroMaxConcurrentBuilds);
+        }
+        if self.build_admission_timeout.is_zero() {
+            return Err(TenancyConfigError::ZeroBuildAdmissionTimeout);
         }
         if self.eviction_concurrency == 0 {
             return Err(TenancyConfigError::ZeroEvictionConcurrency);
@@ -212,6 +236,7 @@ mod config_tests {
             runtime_max_cached: 0,
             janitor_interval: HumanDuration::from_secs(30),
             max_concurrent_builds: 8,
+            build_admission_timeout: HumanDuration::from_secs(20),
             eviction_concurrency: 8,
             min_dormancy: HumanDuration::from_secs(30),
             wake_residency: HumanDuration::from_secs(60),
@@ -227,6 +252,15 @@ mod config_tests {
             ..TenancyConfig::default()
         };
         assert_eq!(config.validate(), Err(TenancyConfigError::ZeroMaxConcurrentBuilds));
+    }
+
+    #[test]
+    fn a_zero_build_admission_timeout_is_rejected() {
+        let config = TenancyConfig {
+            build_admission_timeout: HumanDuration::from_secs(0),
+            ..TenancyConfig::default()
+        };
+        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroBuildAdmissionTimeout));
     }
 
     #[test]

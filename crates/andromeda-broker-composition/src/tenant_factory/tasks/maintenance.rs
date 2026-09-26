@@ -2,20 +2,24 @@
 
 use crate::{
     event::entity_change_sink::BroadcastEntityChangeSink,
-    tenant_factory::{TenantFactoryConfig, error::TenantAssemblyError, storage::TenantStorage, tasks::retention::retention_duration},
+    tenant_factory::{
+        TenantFactoryConfig,
+        error::TenantAssemblyError,
+        spatial::location_placement,
+        storage::TenantStorage,
+        tasks::retention::retention_duration,
+    },
 };
 use andromeda_context_commit::{committer::ContextCommitter, context_change_event::ContextChangeEvent, lease_holder::LeaseHolder};
 use andromeda_entity::{
     change_sink::EntityChangeSink,
     error::EntityError,
-    port::spatial_snapshot::EntitySpatialSnapshotSource,
     side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
-    spatial_reconciliation::reconcile_location,
-    spatial_synchronization::SpatialSynchronizer,
+    spatial_acceleration::SpatialAcceleration,
+    spatial_reconciliation::{RebuildOutcome, rebuild_location_index},
 };
 use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
 use andromeda_registration::error::RegistrationError;
-use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::error::SubscriptionError;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -23,7 +27,6 @@ use andromeda_task_runtime::{
     failure::TaskFailure,
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule},
     registration::TaskRegistration,
-    resident_task::ResidentTask,
     restart_policy::RestartPolicy,
     scheduled_task::ScheduledTask,
     shutdown_policy::ShutdownPolicy,
@@ -31,9 +34,8 @@ use andromeda_task_runtime::{
     task_name::TaskName,
     wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver},
 };
-use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{DateTime, Utc};
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 
 /// Compose the tenant's durable side-effect drain and register the workers
@@ -90,32 +92,41 @@ pub(super) fn register_entity_side_effects(
     Ok(())
 }
 
-/// Register the spatial index workers: the resident synchronizer that applies
-/// entity changes and the periodic reconciliation that repairs any drift.
+/// Register the periodic rebuild of the tenant's spatial index from the store,
+/// under the consistency mode the index was composed for.
+///
+/// No worker applies entity changes to the index: under `commit-synchronous`
+/// the commit path already has, and under `watermark` the query path catches
+/// the index up from the store itself. The rebuild is what drops the entries
+/// of entities deleted since, and under `commit-synchronous` what brings in the
+/// writes of another broker process sharing the store.
 ///
 /// # Errors
 ///
 /// Returns [`TenantAssemblyError`] when the configured rebuild cadence is
-/// rejected or when the supervisor refuses either registration.
-pub(super) fn register_spatial_workers(
-    supervisor: &TaskSupervisor,
-    config: &TenantFactoryConfig,
-    storage: &TenantStorage,
-    changes: broadcast::Sender<ContextChangeEvent>,
-) -> Result<(), TenantAssemblyError> {
-    let synchronizer = Arc::new(SpatialSynchronizer::new(
-        Arc::clone(&storage.spatial_index), // clone: synchronization and reconciliation share one index.
-        Arc::clone(&storage.entity_ports.reader),
-        storage.tenant.clone(), // clone: the synchronizer owns its tenant partition.
-    ));
-    register_spatial_synchronization(supervisor, changes, synchronizer)?;
-    register_spatial_reconciliation(
-        supervisor,
-        Arc::clone(&storage.spatial_index), // clone: synchronization and reconciliation share one index.
-        Arc::clone(&storage.entity_ports.spatial_snapshots),
-        storage.tenant.clone(), // clone: the reconciliation pass owns its tenant partition.
-        config.spatial.rebuild_interval.duration(),
-    )
+/// rejected or when the supervisor refuses the registration.
+pub(super) fn register_spatial_workers(supervisor: &TaskSupervisor, config: &TenantFactoryConfig, storage: &TenantStorage) -> Result<(), TenantAssemblyError> {
+    let cadence = config.spatial.rebuild_interval.duration();
+    match &storage.spatial {
+        SpatialAcceleration::StoreVerified => Ok(()),
+        SpatialAcceleration::CommitSynchronous(index) => {
+            let index = Arc::clone(index); // clone: the rebuild and the commit path share one index.
+            let source = Arc::clone(&storage.entity_ports.spatial_snapshots); // clone: the rebuild reads the store the other ports share.
+            let placement = Arc::new(location_placement(&storage.tenant)?);
+            register_spatial_rebuild(supervisor, cadence, move || {
+                // clone: each bounded pass owns the index, source and placement handles while running.
+                let (index, source, placement) = (Arc::clone(&index), Arc::clone(&source), Arc::clone(&placement));
+                async move { rebuild_location_index(&index, source.as_ref(), &placement).await }
+            })
+        }
+        SpatialAcceleration::Watermark(watermark) => {
+            let watermark = Arc::clone(watermark); // clone: the rebuild and the query path share one watermark.
+            register_spatial_rebuild(supervisor, cadence, move || {
+                let watermark = Arc::clone(&watermark); // clone: each bounded pass owns the watermark while running.
+                async move { watermark.rebuild().await }
+            })
+        }
+    }
 }
 
 fn register_entity_side_effect_drain(
@@ -189,57 +200,15 @@ fn register_entity_side_effect_reap(
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 
-fn register_spatial_synchronization(
-    supervisor: &TaskSupervisor,
-    changes: broadcast::Sender<ContextChangeEvent>,
-    synchronizer: Arc<SpatialSynchronizer>,
-) -> Result<(), TenantAssemblyError> {
-    let restart_delay = Duration::from_secs(1);
-    let name = TaskName::try_from("spatial-synchronization").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, restart_delay, restart_delay),
-        ShutdownPolicy::new(restart_delay),
-    );
-    let task = ResidentTask::new(registration, move |execution| {
-        let mut receiver = changes.subscribe();
-        let synchronizer = Arc::clone(&synchronizer); // clone: one resident attempt owns the operation while running.
-        async move {
-            execution.mark_running();
-            loop {
-                tokio::select! {
-                    () = execution.cancellation().cancelled() => return Ok(()),
-                    delivery = receiver.recv() => {
-                        match delivery {
-                            Ok(event) => synchronizer.apply(event).await,
-                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                                tracing::warn!(skipped, "spatial synchronization lagged; reconciliation will repair drift");
-                            }
-                            Err(broadcast::error::RecvError::Closed) => {
-                                return Err(TaskFailure::invariant_violation("entity change channel closed while spatial synchronization was active"));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    });
-    supervisor
-        .register_resident(task)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
-}
-
-fn register_spatial_reconciliation(
-    supervisor: &TaskSupervisor,
-    index: Arc<SpatialEntityIndex>,
-    source: Arc<dyn EntitySpatialSnapshotSource>,
-    tenant: TenantRef,
-    cadence: Duration,
-) -> Result<(), TenantAssemblyError> {
+/// Register one periodic spatial rebuild pass at `cadence`.
+fn register_spatial_rebuild<Rebuild, Pass>(supervisor: &TaskSupervisor, cadence: Duration, rebuild: Rebuild) -> Result<(), TenantAssemblyError>
+where
+    Rebuild: Fn() -> Pass + Send + Sync + 'static,
+    Pass: Future<Output = Result<RebuildOutcome, EntityError>> + Send + 'static,
+{
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("spatial-reconciliation").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from("spatial-rebuild").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -247,17 +216,13 @@ fn register_spatial_reconciliation(
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let index = Arc::clone(&index); // clone: each bounded pass owns index and source handles while running.
-        let source = Arc::clone(&source);
-        let tenant = tenant.clone();
+        let pass = rebuild();
         async move {
-            let outcome = reconcile_location(&index, source.as_ref(), &tenant)
-                .await
-                .map_err(|error| classify_entity_expiry_failure(&error))?;
+            let outcome = pass.await.map_err(|error| classify_entity_expiry_failure(&error))?;
             tracing::info!(
                 partitions = outcome.partition_count,
                 entries = outcome.total_entries,
-                "spatial reconciliation completed"
+                "spatial rebuild completed"
             );
             Ok(())
         }
@@ -303,9 +268,11 @@ pub(super) fn classify_registration_expiry_failure(error: &RegistrationError) ->
 pub(super) fn classify_entity_expiry_failure(error: &EntityError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        EntityError::Commit(_) | EntityError::Persistence(_) | EntityError::StoreSaturated | EntityError::Contention { identifier: _, attempts: _ } => {
-            TaskFailure::transient(summary)
-        }
+        EntityError::Commit(_)
+        | EntityError::Persistence(_)
+        | EntityError::StoreSaturated
+        | EntityError::TransactionContended
+        | EntityError::Contention { identifier: _, attempts: _ } => TaskFailure::transient(summary),
         EntityError::Internal(_) => TaskFailure::invariant_violation(summary),
         EntityError::Validation(_)
         | EntityError::NotFound { identifier: _ }

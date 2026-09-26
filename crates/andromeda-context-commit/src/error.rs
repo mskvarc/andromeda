@@ -40,6 +40,16 @@ pub enum CommitError {
     /// 503 with `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
+    /// The datastore rolled the commit transaction back to break a deadlock or
+    /// a serialization conflict with a concurrent transaction.
+    ///
+    /// Not a fault of the write: the whole transaction was undone, so the
+    /// identical write can run again unchanged. A committer re-runs it within a
+    /// small budget of its own; a write that loses every attempt surfaces here
+    /// and is answered 503 with `Retry-After`, never the 500 a broker
+    /// malfunction earns.
+    #[error("the commit was rolled back by a concurrent transaction; retry shortly")]
+    TransactionContended,
     /// An implementation violated the commit protocol's invariants.
     #[error("atomic context commit invariant failed: {detail}")]
     Invariant {

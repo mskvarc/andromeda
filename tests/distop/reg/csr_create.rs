@@ -284,7 +284,7 @@ async fn reg_tenant_scopes_registration() {
     let under_default = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
-        .client()
+        .default_tenant_client()
         .retrieve_registration(&id, None)
         .await
         .expect("default retrieve");
@@ -293,13 +293,13 @@ async fn reg_tenant_scopes_registration() {
     let created_default = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
-        .client()
+        .default_tenant_client()
         .create_registration(&body)
         .await
         .expect("default create");
     assert_status(&created_default, 201);
 
-    // Clean the tenant-scoped copy explicitly: prefix cleanup runs on the default tenant only.
+    // Clean the tenant-scoped copy explicitly: prefix cleanup runs on the leased and the default tenant only.
     let deleted = tenant_client.delete_registration(&id).await.expect("tenant delete");
     assert_status(&deleted, 204);
     topology.finish().await.expect("topology cleanup");

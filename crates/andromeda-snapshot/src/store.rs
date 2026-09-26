@@ -131,6 +131,36 @@ pub trait SnapshotStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
+    /// Restart a preparation still claimed by `claimed_by` from an empty
+    /// staging branch, extending its lease; false when the claim was lost or
+    /// the Snapshot is no longer preparing.
+    ///
+    /// A re-attempted capture writes every result again, so whatever an earlier
+    /// attempt staged is discarded first.
+    fn restart_preparation<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Uri,
+        claimed_by: LeaseHolder,
+        lease_until: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
+
+    /// Give up a preparation claim held by `claimed_by`, leaving the Snapshot
+    /// preparing and immediately claimable by any worker rather than only once
+    /// the lease has run out.
+    fn release_preparation<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Uri,
+        claimed_by: LeaseHolder,
+    ) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
+
     /// Apply mutable Snapshot metadata and expiry. Returns rows affected.
     fn update_metadata<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
@@ -153,6 +183,8 @@ pub trait SnapshotStore: Send + Sync + 'static {
     /// The transition itself is validated by the policy layer; this is
     /// unconditional apart from the guard on the stored status still being
     /// `preparing`, which is what makes a concurrent second executor a no-op.
+    /// A `failure` publishes an empty branch, so the failed Snapshot stays
+    /// addressable.
     fn update_status<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         id: &'life1 Uri,

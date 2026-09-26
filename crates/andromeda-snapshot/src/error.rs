@@ -92,6 +92,16 @@ pub enum SnapshotError {
     },
 }
 
+/// Whether a fresh attempt at a failed operation could succeed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Recurrence {
+    /// A fresh attempt can succeed: the failure came from contention,
+    /// backpressure or the store connection, not from what was asked.
+    Transient,
+    /// Every fresh attempt fails the same way.
+    Persistent,
+}
+
 /// Box the embedded entity policy error, keeping `?` ergonomic while snapshot
 /// `Result`s stay small.
 impl From<EntityError> for SnapshotError {
@@ -162,5 +172,85 @@ impl SnapshotError {
     /// Construct an invariant failure.
     pub fn internal(detail: impl Into<String>) -> SnapshotError {
         SnapshotError::Internal { detail: detail.into() }
+    }
+
+    /// Whether a fresh attempt at the operation that failed could succeed.
+    ///
+    /// A lost deadlock or serialization race, a saturated pool and a store
+    /// failure (a dropped connection among them) are transient, whether the
+    /// snapshot store or an embedded entity or temporal operation met them.
+    /// Everything else is decided by the request or by the stored state, so
+    /// repeating it repeats the failure.
+    #[must_use]
+    pub const fn recurrence(&self) -> Recurrence {
+        match self {
+            SnapshotError::Contended | SnapshotError::StoreSaturated | SnapshotError::Persistence { .. } => Recurrence::Transient,
+            SnapshotError::Entity(error) => entity_recurrence(error),
+            SnapshotError::Temporal(error) => temporal_recurrence(error),
+            SnapshotError::Validation { .. }
+            | SnapshotError::NotFound { .. }
+            | SnapshotError::AlreadyExists { .. }
+            | SnapshotError::PreparationTimeout { .. }
+            | SnapshotError::Quarantined { .. }
+            | SnapshotError::Federation(_)
+            | SnapshotError::Request(_)
+            | SnapshotError::Representation(_)
+            | SnapshotError::Internal { .. } => Recurrence::Persistent,
+        }
+    }
+}
+
+/// Whether a fresh attempt at an entity operation could succeed: only a lost
+/// race or a saturated pool clears on its own.
+pub(crate) const fn entity_recurrence(error: &EntityError) -> Recurrence {
+    if matches!(error, EntityError::TransactionContended | EntityError::StoreSaturated) {
+        Recurrence::Transient
+    } else {
+        Recurrence::Persistent
+    }
+}
+
+/// Whether a fresh attempt at a temporal operation could succeed: only a lost
+/// race or a saturated pool clears on its own.
+pub(crate) const fn temporal_recurrence(error: &TemporalError) -> Recurrence {
+    if matches!(error, TemporalError::TransactionContended | TemporalError::StoreSaturated) {
+        Recurrence::Transient
+    } else {
+        Recurrence::Persistent
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::{Recurrence, SnapshotError};
+    use andromeda_entity::error::EntityError;
+    use andromeda_temporal::error::TemporalError;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn contention_saturation_and_store_failures_are_transient() {
+        for error in [
+            SnapshotError::Contended,
+            SnapshotError::StoreSaturated,
+            SnapshotError::persistence("connection reset"),
+            SnapshotError::from(EntityError::TransactionContended),
+            SnapshotError::from(EntityError::StoreSaturated),
+            SnapshotError::from(TemporalError::TransactionContended),
+            SnapshotError::from(TemporalError::StoreSaturated),
+        ] {
+            assert_eq!(error.recurrence(), Recurrence::Transient, "{error}");
+        }
+    }
+
+    #[test]
+    fn invalid_transitions_and_broken_invariants_are_persistent() {
+        for error in [
+            SnapshotError::validation("Invalid status transition"),
+            SnapshotError::internal("no staging branch"),
+            SnapshotError::from(EntityError::internal("broken invariant")),
+            SnapshotError::from(TemporalError::internal("broken invariant")),
+        ] {
+            assert_eq!(error.recurrence(), Recurrence::Persistent, "{error}");
+        }
     }
 }

@@ -11,7 +11,10 @@
 //! event no delivery references would be storing a notification payload nobody
 //! is waiting for, and reaping it later is work the write can simply not create.
 
-use crate::{commit_refusal::persistence, consequences::ConsequenceWrite};
+use crate::{
+    commit_refusal::{context_store, name_lookup},
+    consequences::ConsequenceWrite,
+};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     error::CommitError,
@@ -75,7 +78,7 @@ pub(crate) async fn apply(
         .enumerate()
         .map(|(position, group)| event(base, position, group, &dictionary))
         .collect::<Result<Vec<NewNotificationEvent<'_>>, CommitError>>()?;
-    insert_events_in_tx(tx, target, record, &events).await.map_err(persistence)?;
+    insert_events_in_tx(tx, target, record, &events).await.map_err(context_store)?;
     let advance = u32::try_from(events.len()).map_err(|error| CommitError::Invariant {
         detail: format!("commit produced more notification events than an ordinal can number: {error}"),
     })?;
@@ -140,7 +143,7 @@ async fn resolve_dictionary(
     names.sort_unstable();
     names.dedup();
     let names = names;
-    attribute_names.resolve_or_create(tx, &names).await.map_err(persistence)
+    attribute_names.resolve_or_create(tx, &names).await.map_err(name_lookup)
 }
 
 /// Turn one group into the event row it is written as.

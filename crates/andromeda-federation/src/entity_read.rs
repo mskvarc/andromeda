@@ -2,7 +2,7 @@
 
 use crate::{
     FederationService,
-    batch_query_body::{QuerySelector, build_batch_query_body, selectors_from_query},
+    batch_query_body::{build_batch_query_body, selectors_from_query},
     cache::Cacheability,
     config::SplitEntities,
     entity_result::parse_forwarded_entities,
@@ -10,22 +10,21 @@ use crate::{
     forwarded_parameter::ForwardedParameter,
     forwarded_query::ForwardedQuery,
     forwarding_url::{build_batch_query_url, build_query_url, build_retrieve_url},
+    operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedEntities, ForwardedResponse, MatchedSources},
     read_binding::{ReadBinding, ReadIntent, read_binding_for},
-    read_fan_out::{ForwardedGetConditions, ForwardedRead, ReadSelection, ReadServing, expand_registration_targets, read_outcome, registered_type_of},
+    read_fan_out::{ForwardedGetConditions, ForwardedRead, ReadSelection, ReadServing, expand_registration_targets, read_outcome},
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_telemetry::federation_ops::{self, FederationOperation};
 use chrono::Utc;
 use serde_json::Value;
 use std::slice::from_ref;
 use tracing::warn;
-use url::{Url, form_urlencoded};
 
 /// Whether a registration's mode is admitted by a forwarding phase.
 pub(crate) fn mode_admitted(registration: &ContextSourceRegistration, mode_filter: CsrModeFilter) -> bool {
@@ -173,7 +172,7 @@ impl FederationService {
                         exclude_registration: None,
                         csf: csf_expr,
                         scope_q: client_query.scope_q(),
-                        serving: ReadServing::CurrentEntity(intent),
+                        serving: ReadServing::EntityQuery(intent),
                         mode_filter,
                         entity_map,
                     },
@@ -256,12 +255,16 @@ impl FederationService {
                 .select_read_registrations(
                     context,
                     ReadSelection {
-                        entity_type: None,
+                        entity_type: client_query.entity_type(),
                         entity_ids: Some(from_ref(entity_id)),
                         exclude_registration,
                         csf: None,
                         scope_q: None,
-                        serving: ReadServing::CurrentEntity(ReadIntent::RetrieveById),
+                        // Clause 5.7.1.4: a retrieval is forwarded only to the
+                        // registrations that "match and support the
+                        // retrieveEntity operation" (Table 4.20-1); one
+                        // advertising only a query operation does not apply.
+                        serving: ReadServing::Operation(ForwardingOperation::RetrieveEntity),
                         mode_filter,
                         entity_map,
                     },
@@ -269,30 +272,15 @@ impl FederationService {
                 .await?;
             // A retrieval knows no split entities (clause 5.7.1.4), so every
             // parameter that is not narrowed travels with the request. Clause
-            // 4.3.6.1: a registration advertising only queryEntity or only
-            // queryBatch is reached through that operation instead of a
-            // retrieve-by-id it never registered. Clause 4.3.6.3: each of its
-            // blocks covering the entity contributes its own attribute
-            // constraint.
+            // 4.3.6.3: each of its blocks covering the entity contributes its
+            // own attribute constraint.
             let mut targets = Vec::with_capacity(registrations.len());
             let resolver = TermResolver::new(&self.engine, context);
             for registration in registrations {
-                let Some(binding) = read_binding_for(ReadIntent::RetrieveById, &registration) else {
-                    continue;
-                };
-                let queries = ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete, &resolver).await?;
-                if queries.is_empty() {
-                    continue;
-                }
-                // The registered type a retrieve-to-query downgrade names is the
-                // same for every block, so it is compacted once (clause 4.3.6.1).
-                let compact_type = match binding {
-                    ReadBinding::Retrieve => None,
-                    ReadBinding::Query | ReadBinding::BatchQuery => registration_compact_type(&registration, entity_id, &resolver).await,
-                };
-                let reads = queries
+                let reads = ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete, &resolver)
+                    .await?
                     .iter()
-                    .map(|query| retrieve_read(registration.access.endpoint.url(), entity_id, query, binding, compact_type.as_deref()))
+                    .map(|query| ForwardedRead::Get(build_retrieve_url(registration.access.endpoint.url(), entity_id, &query.to_query_string())))
                     .collect::<Vec<_>>();
                 expand_registration_targets(registration, reads, &mut targets);
             }
@@ -320,46 +308,13 @@ impl FederationService {
     }
 }
 
-/// The compact type a registration covers `entity_id` under, for a forwarded
-/// query or batch query that names the entity by id (clause 4.3.6.1). Stored
-/// registration types are expanded IRIs, so the covered type is compacted
-/// against the request context to the term a source recognises.
-async fn registration_compact_type(registration: &ContextSourceRegistration, entity_id: &Uri, resolver: &TermResolver<'_>) -> Option<String> {
-    let registered = registered_type_of(from_ref(registration), entity_id)?;
-    Some(resolver.compact_type(registered.as_ref()).await)
-}
-
-/// The forwarded read one registration receives for a retrieve-by-id, from the
-/// operation it advertises (clause 4.3.6.1): a direct retrieve, a GET query
-/// naming the entity by id and its registered type, or a POST batch query with
-/// the same selector. The registered type is compacted once by the caller and
-/// passed in, since it is the same for every block of the registration.
-fn retrieve_read(endpoint: &Url, entity_id: &Uri, query: &ForwardedQuery, binding: ReadBinding, compact_type: Option<&str>) -> ForwardedRead {
-    match binding {
-        ReadBinding::Retrieve => ForwardedRead::Get(build_retrieve_url(endpoint, entity_id, &query.to_query_string())),
-        ReadBinding::Query => ForwardedRead::Get(build_query_url(endpoint, &retrieve_query_string(entity_id, compact_type, query))),
-        ReadBinding::BatchQuery => {
-            let selectors = [QuerySelector {
-                entity_type: compact_type.map(str::to_string),
-                id: Some(entity_id.as_str().to_string()),
-            }];
-            let body = build_batch_query_body(&selectors, query.value_of(ForwardedParameter::Attrs));
-            ForwardedRead::PostQuery {
-                url: build_batch_query_url(endpoint),
-                body,
-            }
-        }
-    }
-}
-
-/// The forwarded read one registration receives for a query, from the operation
-/// it advertises (clause 4.3.6.1): a GET query, or a POST batch query when it
-/// advertises only queryBatch. A query is never bound to a retrieve, so that
-/// case degrades to the GET query it would otherwise be.
+/// The forwarded read one registration receives for a query, through the
+/// binding it advertises (clauses 4.3.6.1, 6.23.1): a GET query, or a POST
+/// batch query.
 fn query_read(registration: &ContextSourceRegistration, query: &ForwardedQuery, binding: ReadBinding) -> ForwardedRead {
     let endpoint = registration.access.endpoint.url();
     match binding {
-        ReadBinding::Query | ReadBinding::Retrieve => ForwardedRead::Get(build_query_url(endpoint, &query.to_query_string())),
+        ReadBinding::Query => ForwardedRead::Get(build_query_url(endpoint, &query.to_query_string())),
         ReadBinding::BatchQuery => {
             let selectors = selectors_from_query(query);
             let body = build_batch_query_body(&selectors, query.value_of(ForwardedParameter::Attrs));
@@ -369,18 +324,4 @@ fn query_read(registration: &ContextSourceRegistration, query: &ForwardedQuery, 
             }
         }
     }
-}
-
-/// The GET query string a retrieve-by-id is downgraded to (clause 4.3.6.1): the
-/// entity named by id and its registered type, followed by the parameters the
-/// retrieval narrowing left (attributes, `datasetId`, language).
-fn retrieve_query_string(entity_id: &Uri, compact_type: Option<&str>, query: &ForwardedQuery) -> String {
-    let mut serializer = form_urlencoded::Serializer::new(String::new());
-    serializer.append_pair("id", entity_id.as_str());
-    if let Some(entity_type) = compact_type {
-        serializer.append_pair("type", entity_type);
-    }
-    let selection = serializer.finish();
-    let narrowed = query.to_query_string();
-    if narrowed.is_empty() { selection } else { format!("{selection}&{narrowed}") }
 }

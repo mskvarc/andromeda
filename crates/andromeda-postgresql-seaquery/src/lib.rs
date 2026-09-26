@@ -40,6 +40,7 @@ pub mod setting;
 pub mod spherical_distance;
 pub mod timescale;
 pub mod transaction;
+pub mod transaction_id;
 pub mod unnest;
 
 #[cfg(test)]

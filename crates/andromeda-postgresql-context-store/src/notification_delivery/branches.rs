@@ -2,9 +2,12 @@
 //!
 //! Deliveries live in the queue of the branch whose subscription matched the
 //! change: `public` for the live branch and `snap_<snapshot_key>` for each
-//! Snapshot branch. A drain therefore visits the live branch and every Snapshot
-//! branch in turn; a branch reaped between this enumeration and the claim shows
-//! up as a missing schema, which the caller skips rather than fails on. A
+//! published Snapshot branch. A drain therefore visits the live branch and every
+//! published Snapshot branch in turn. A Snapshot still preparing has no
+//! published branch yet, only its private staging branch, which holds no
+//! subscription a client created, so it is not visited. A branch reaped between
+//! this enumeration and the claim shows up as a missing schema, which the
+//! caller skips rather than fails on. A
 //! quarantined Snapshot branch -- one whose schema is behind this binary -- is
 //! not visited at all: its queue relations may not have the shape the claim
 //! expects, and its deliveries wait until its upgrade succeeds.
@@ -12,7 +15,7 @@
 use crate::{
     error::ContextStoreError,
     migration_set::branch::{BranchSchemaVersion, current_branch_version},
-    snapshot::branch_version::branch_is_current,
+    snapshot::{branch_version::branch_is_current, record::status_is_preparing},
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 use andromeda_ngsi_ld_lexicon::uri::UriParseError;
@@ -48,7 +51,7 @@ pub(super) async fn drainable_targets(pool: &PgPool) -> Result<Vec<ContextTarget
     Ok(targets)
 }
 
-/// Every Snapshot whose branch schemas are current, with its URI.
+/// Every published Snapshot whose branch schema is current, with its URI.
 fn drainable_snapshots_statement(current: BranchSchemaVersion) -> SelectStatement {
     Query::select()
         .columns([(Snapshots::Table, Snapshots::SnapshotKey), (Snapshots::Table, Snapshots::Id)])
@@ -59,6 +62,7 @@ fn drainable_snapshots_statement(current: BranchSchemaVersion) -> SelectStatemen
             Expr::col((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)).equals((Snapshots::Table, Snapshots::SnapshotKey)),
         )
         .and_where(branch_is_current(current))
+        .and_where(status_is_preparing().not())
         .to_owned()
 }
 
@@ -87,5 +91,12 @@ mod tests {
         let sql = drainable_snapshots_statement(current).to_string(PostgresQueryBuilder);
         assert!(sql.contains("JOIN \"snapshot_preparation\""), "{sql}");
         assert!(sql.contains("\"snapshot_preparation\".\"branch_schema_version\" >= 21"), "{sql}");
+    }
+
+    #[test]
+    fn a_snapshot_still_preparing_has_no_published_branch_to_drain() {
+        let current = BranchSchemaVersion::try_from(21_i64).expect("a positive version");
+        let sql = drainable_snapshots_statement(current).to_string(PostgresQueryBuilder);
+        assert!(sql.contains("NOT \"snapshot_preparation\".\"status\" = 1"), "{sql}");
     }
 }

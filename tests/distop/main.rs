@@ -26,11 +26,15 @@
 //! cargo test --test distop -- --ignored --test-threads=1  # tracked gap tests (ratchet)
 //! ```
 //!
-//! Runs in parallel. Each test derives a per-test entity type from its topology
-//! prefix (`topology.id("Vehicle")`) and scopes every entity id, registration,
-//! subscription selector, and `type=` query to it, so no test can see, hijack,
-//! or purge another's data on the shared (broker, tenant) registration surface;
-//! the broker database is reset once per process rather than per test (see
+//! Runs in parallel. Each topology runs under a tenant leased to it alone
+//! (`andromeda_test_harness::tenant_lease`): clause 5.12 matches a type-only or
+//! entity-less registration against every request of its tenant, so a shared
+//! tenant would let one test's retrieval or query reach another test's context
+//! sources however its identifiers were scoped. Inside that tenant each test
+//! also derives a per-test entity type from its topology prefix
+//! (`topology.id("Vehicle")`) and scopes every entity id, registration,
+//! subscription selector, and `type=` query to it, and the tenant's database is
+//! reset once per process rather than per test (see
 //! `andromeda_test_harness::multi_broker`). The few tests that must use the
 //! literal compact type `Vehicle` -- short-hand context expansion and the
 //! forwarded-request compaction assertions -- carry

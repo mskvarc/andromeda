@@ -30,6 +30,9 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
         EntityError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
+        // Nothing of the write persisted and it can be sent again unchanged:
+        // a conflict with concurrent transactions is not a broker fault.
+        EntityError::TransactionContended => ClassifiedReport::transaction_contended(error.to_string()),
         EntityError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to commit the entity write")),
         EntityError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the entity store is unavailable")),
         EntityError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal entity error")),

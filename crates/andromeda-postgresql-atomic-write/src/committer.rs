@@ -4,6 +4,7 @@ use crate::{
     columns::{columns_for, expectations},
     commit_refusal::{context_store, database, temporal},
     consequences::{ConsequenceWrite, notification_events, side_effects},
+    contention_retry::rerun_while_contended,
     deferred_history,
     entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
     history,
@@ -284,23 +285,29 @@ impl PostgresAtomicCommitter {
     /// first attempt would have produced, so the replay's rows collide with the
     /// first attempt's on their row-level `ON CONFLICT ... DO NOTHING`
     /// constraints instead of duplicating them.
+    ///
+    /// One call is one transaction. A transaction the datastore rolls back as
+    /// a deadlock or serialization victim ends in
+    /// [`CommitError::TransactionContended`] having left nothing behind, which
+    /// is what lets [`rerun_while_contended`] run the identical call again
+    /// under the same record and base.
     async fn commit_under(
         &self,
         target: &ContextTarget,
         record: WriteRecord,
         base: WriteOrdinal,
-        writes: Vec<AtomicWrite>,
+        writes: &[AtomicWrite],
     ) -> Result<Vec<WriteOutcome>, CommitError> {
         if writes.is_empty() {
             return Ok(Vec::new());
         }
-        validate_submission(&writes)?;
+        validate_submission(writes)?;
         let mut tx = self.pool.begin().await.map_err(database)?;
         // Every fallible phase below borrows this owned transaction. SQLx
         // rolls it back when an early `?` drops it, so no entity mutation
         // can survive a failed history, projection, notification or side-effect
         // write.
-        let EntityMutations { outcomes, keys } = self.apply_entities(&mut tx, target, &writes).await?;
+        let EntityMutations { outcomes, keys } = self.apply_entities(&mut tx, target, writes).await?;
         let landed: Vec<&AtomicWrite> = writes
             .iter()
             .zip(&outcomes)
@@ -344,12 +351,15 @@ impl PostgresAtomicCommitter {
 impl ContextCommitter for PostgresAtomicCommitter {
     fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
-        Box::pin(async move { self.commit_under(&target, WriteRecord::mint(Utc::now()), WriteOrdinal::at(0), writes).await })
+        Box::pin(async move {
+            let record = WriteRecord::mint(Utc::now());
+            rerun_while_contended(|| self.commit_under(&target, record, WriteOrdinal::at(0), &writes)).await
+        })
     }
 
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
-        Box::pin(async move { self.commit_under(&target, replay.record, replay.consequence_base, writes).await })
+        Box::pin(async move { rerun_while_contended(|| self.commit_under(&target, replay.record, replay.consequence_base, &writes)).await })
     }
 }
 

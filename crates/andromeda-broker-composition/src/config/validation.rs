@@ -26,6 +26,7 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), Configuratio
     config.management.validate().map_err(owner_configuration_error)?;
     config.extensions.validate().map_err(owner_configuration_error)?;
     validate_acquire_timeout_below_request_timeout(config)?;
+    validate_build_admission_timeout_below_request_timeout(config)?;
     validate_management_port_distinct_from_server(config)?;
     Ok(())
 }
@@ -63,6 +64,24 @@ fn validate_acquire_timeout_below_request_timeout(config: &RuntimeConfig) -> Res
     Ok(())
 }
 
+/// The tenant cold-build admission deadline must be strictly below the HTTP
+/// request timeout.
+///
+/// A cross-section invariant spanning `tenancy` and `http`. The admission
+/// deadline exists so a request that cannot be admitted to a tenant's cold build
+/// is shed as a 503 with `Retry-After`; at or past the request deadline it would
+/// race the request timeout and never get the chance.
+fn validate_build_admission_timeout_below_request_timeout(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
+    let admission = config.tenancy.build_admission_timeout.duration();
+    let request = config.http.request_timeout.duration();
+    if admission >= request {
+        return Err(ConfigurationError::invalid(format!(
+            "tenancy.build_admission_timeout ({admission:?}) must be below http.request_timeout ({request:?}) so a request that cannot be admitted to a cold build answers 503 before the request deadline"
+        )));
+    }
+    Ok(())
+}
+
 fn owner_configuration_error(error: impl Display) -> ConfigurationError {
     ConfigurationError::invalid(error.to_string())
 }
@@ -79,7 +98,11 @@ mod tests {
     use crate::config::{
         management::ManagementMode,
         runtime::RuntimeConfig,
-        validation::{validate_acquire_timeout_below_request_timeout, validate_management_port_distinct_from_server},
+        validation::{
+            validate_acquire_timeout_below_request_timeout,
+            validate_build_admission_timeout_below_request_timeout,
+            validate_management_port_distinct_from_server,
+        },
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
 
@@ -130,6 +153,28 @@ mod tests {
         assert!(
             validate_acquire_timeout_below_request_timeout(&config).is_err(),
             "an acquire above the request timeout is rejected"
+        );
+    }
+
+    #[test]
+    fn build_admission_timeout_must_be_below_the_request_timeout() {
+        let mut config = RuntimeConfig::default();
+        assert!(
+            validate_build_admission_timeout_below_request_timeout(&config).is_ok(),
+            "the default admission deadline sits below the default request timeout"
+        );
+        config.http.request_timeout = HumanDuration::from_secs(10);
+
+        config.tenancy.build_admission_timeout = HumanDuration::from_millis(9_999);
+        assert!(
+            validate_build_admission_timeout_below_request_timeout(&config).is_ok(),
+            "an admission deadline below the request timeout is accepted"
+        );
+
+        config.tenancy.build_admission_timeout = HumanDuration::from_secs(10);
+        assert!(
+            validate_build_admission_timeout_below_request_timeout(&config).is_err(),
+            "an admission deadline equal to the request timeout is rejected"
         );
     }
 }

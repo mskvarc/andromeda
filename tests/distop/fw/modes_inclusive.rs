@@ -13,6 +13,7 @@ use crate::{
 use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
+use url::form_urlencoded;
 use urlencoding::encode;
 
 /// The path a broker appends to a registration `endpoint` for an entity query.
@@ -180,16 +181,28 @@ async fn distop_entity_inclusive_multiple_sources_equal_priority() {
     let body = json_body(&response);
     assert!(find_entity(&body, &first_id).is_some(), "the first source contributes its entity: {body}");
     assert!(find_entity(&body, &second_id).is_some(), "the second source contributes its entity: {body}");
-    assert_eq!(
-        first_mock.get_count(Method::GET, FORWARDED_ENTITIES),
-        1,
-        "the first source is queried exactly once"
-    );
-    assert_eq!(
-        second_mock.get_count(Method::GET, FORWARDED_ENTITIES),
-        1,
-        "the second source is queried exactly once"
-    );
+    // Each source received exactly one request, and it is the query this test
+    // issued: a forwarded query names the client's type (clause 5.7.2.4), so a
+    // request any other operation sent to the source would be told apart here
+    // rather than merely counted.
+    for (mock, source) in [(&first_mock, "first"), (&second_mock, "second")] {
+        let forwarded = mock.drain_requests().await;
+        let queried_types = forwarded
+            .iter()
+            .map(|request| {
+                assert_eq!(request.method, Method::GET, "the {source} source is only queried");
+                assert_eq!(request.uri.path(), FORWARDED_ENTITIES, "the {source} source is only queried");
+                form_urlencoded::parse(request.uri.query().unwrap_or_default().as_bytes())
+                    .find(|(name, _)| name == "type")
+                    .map(|(_, value)| value.into_owned())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            queried_types.iter().map(Option::as_deref).collect::<Vec<_>>(),
+            vec![Some(vtype.as_str())],
+            "the {source} source is queried exactly once, for this test's type"
+        );
+    }
 
     first_mock.shutdown().await;
     second_mock.shutdown().await;

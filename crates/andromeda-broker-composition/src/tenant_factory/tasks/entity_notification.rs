@@ -68,9 +68,9 @@ pub(super) fn compose_notification_processor(
     let notification_query = Arc::new(EntityQueryService::new(
         Arc::clone(&storage.entity_ports.reader),
         Arc::clone(&storage.entity_ports.query),
-        storage.engine.clone(), // clone: the notification query owns its engine handle.
-        Arc::clone(&storage.spatial_index),
-        storage.tenant.clone(), // clone: the query service owns its tenant partition.
+        storage.engine.clone(),  // clone: the notification query owns its engine handle.
+        storage.spatial.clone(), // clone: the notification query narrows through the tenant's one index.
+        storage.tenant.clone(),  // clone: the query service owns its tenant partition.
         // A notification's join resolves Linked Entities exactly as a request's
         // does, including the ones clause 4.5.23.1 places outside this broker.
         Some(Arc::new(ForwardedLinkedEntitySource::new(

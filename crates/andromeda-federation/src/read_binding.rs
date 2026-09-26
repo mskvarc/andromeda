@@ -1,20 +1,25 @@
-//! Choosing how a forwarded current-entity read reaches one registration, from
-//! the operations that registration advertises (clause 4.3.6.1, Table 4.20-2).
+//! Choosing how a forwarded entity query reaches one registration, from the
+//! query operations that registration advertises (clauses 4.3.6.1, 4.20, 6.23.1).
 //!
 //! Clause 4.3.6.1: "registered Context Sources may indicate that they are only
 //! willing to respond to a limited subset of API operations. Context Brokers
-//! shall respect this". A registration advertising only `queryEntity` (not
-//! `retrieveEntity`), or only `queryBatch` (neither), must still be contacted for
-//! a read the client made, through an operation it does allow: a GET query, or a
-//! POST batch query. The alternative -- forwarding the client's own operation
-//! regardless -- reaches a source that never registered it, so the source is
-//! never contacted and its data is lost.
+//! shall respect this". Query Entities has two bindings of the same operation
+//! (clause 6.23.1), which Table 4.20-1 names `queryEntity` (the GET binding) and
+//! `queryBatch` (the POST binding), so a query is forwarded through whichever of
+//! the two the registration advertises.
+//!
+//! A Retrieve Entity is not a query and is never bound here. Table 4.20-1 names
+//! it `retrieveEntity`, an operation of its own, and clause 5.7.1.4 forwards it
+//! only to the registrations that "match and support the retrieveEntity
+//! operation"; unlike Upsert (clause 5.6.8.4) it spells out no fallback to
+//! another operation, so a registration advertising only `queryEntity` or
+//! `queryBatch` is not contacted for it.
 
 use crate::operation::ForwardingOperation;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 
-/// The shape of the client's current-entity read, which fixes the preference
-/// order of the operations a registration may be contacted through.
+/// The binding the client's entity query arrived on, which fixes the preference
+/// order of the query operations a registration may be contacted through.
 ///
 /// A query prefers to be forwarded through the same operation the client used
 /// (clause 6.23.1: the GET and POST bindings are the same operation), falling
@@ -22,8 +27,6 @@ use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 /// it; so a GET query prefers `queryEntity` and a POST query prefers `queryBatch`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReadIntent {
-    /// Retrieve one entity by id (clause 5.7.1).
-    RetrieveById,
     /// Query entities via GET (clause 5.7.2), which prefers `queryEntity`.
     Query,
     /// Query entities via POST `/entityOperations/query` (clause 6.23), which
@@ -31,57 +34,38 @@ pub(crate) enum ReadIntent {
     QueryBatch,
 }
 
-/// How one registration is contacted for a forwarded current-entity read.
+/// How one registration is contacted for a forwarded entity query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReadBinding {
-    /// GET `/entities/{id}` -- retrieveEntity.
-    Retrieve,
     /// GET `/entities` -- queryEntity.
     Query,
     /// POST `/entityOperations/query` -- queryBatch.
     BatchQuery,
 }
 
-/// The binding a forwarded read uses for `csr`, chosen from the operations it
-/// advertises, or `None` when it advertises no read operation and so is not
-/// contacted.
+/// The binding a forwarded query uses for `csr`, chosen from the query
+/// operations it advertises, or `None` when it advertises neither and so is
+/// not contacted.
 ///
-/// Table 4.20-2: a retrieve-by-id prefers `retrieveEntity`, then falls back to a
-/// GET `queryEntity` and then a POST `queryBatch`. A query prefers the operation
-/// the client used (clause 6.23.1) -- a GET query prefers `queryEntity`, a POST
-/// query prefers `queryBatch` -- and falls back to the other. `redirectionOps`
-/// and `retrieveOps` advertise `queryEntity` but not `queryBatch`, so a client
-/// `queryBatch` to such a registration is downgraded to a GET `queryEntity`.
+/// A query prefers the operation the client used (clause 6.23.1) -- a GET query
+/// prefers `queryEntity`, a POST query prefers `queryBatch` -- and falls back to
+/// the other. `redirectionOps` and `retrieveOps` advertise `queryEntity` but not
+/// `queryBatch` (Table 4.20-2), so a client `queryBatch` to such a registration
+/// is sent as a GET `queryEntity`.
 pub(crate) fn read_binding_for(intent: ReadIntent, csr: &ContextSourceRegistration) -> Option<ReadBinding> {
-    let advertises = |operation: ForwardingOperation| operation.matches(csr);
-    let query = || {
-        if advertises(ForwardingOperation::QueryEntity) {
-            Some(ReadBinding::Query)
-        } else if advertises(ForwardingOperation::QueryBatch) {
-            Some(ReadBinding::BatchQuery)
-        } else {
-            None
-        }
+    let (preferred, fallback) = match intent {
+        ReadIntent::Query => (
+            (ForwardingOperation::QueryEntity, ReadBinding::Query),
+            (ForwardingOperation::QueryBatch, ReadBinding::BatchQuery),
+        ),
+        ReadIntent::QueryBatch => (
+            (ForwardingOperation::QueryBatch, ReadBinding::BatchQuery),
+            (ForwardingOperation::QueryEntity, ReadBinding::Query),
+        ),
     };
-    match intent {
-        ReadIntent::RetrieveById => {
-            if advertises(ForwardingOperation::RetrieveEntity) {
-                Some(ReadBinding::Retrieve)
-            } else {
-                query()
-            }
-        }
-        ReadIntent::Query => query(),
-        ReadIntent::QueryBatch => {
-            if advertises(ForwardingOperation::QueryBatch) {
-                Some(ReadBinding::BatchQuery)
-            } else if advertises(ForwardingOperation::QueryEntity) {
-                Some(ReadBinding::Query)
-            } else {
-                None
-            }
-        }
-    }
+    [preferred, fallback]
+        .into_iter()
+        .find_map(|(operation, binding)| operation.matches(csr).then_some(binding))
 }
 
 #[cfg(test)]
@@ -104,36 +88,6 @@ mod tests {
         .expect("valid registration")
     }
 
-    /// Clause 4.3.6.1 + Table 4.20-2: a read is bound to the most direct
-    /// operation the registration advertises, falling back to a query and then a
-    /// batch query.
-    #[test]
-    fn a_retrieve_prefers_retrieve_then_query_then_batch() {
-        assert_eq!(
-            read_binding_for(ReadIntent::RetrieveById, &registration(&["retrieveEntity"])),
-            Some(ReadBinding::Retrieve)
-        );
-        assert_eq!(
-            read_binding_for(ReadIntent::RetrieveById, &registration(&["queryEntity"])),
-            Some(ReadBinding::Query)
-        );
-        assert_eq!(
-            read_binding_for(ReadIntent::RetrieveById, &registration(&["queryBatch"])),
-            Some(ReadBinding::BatchQuery)
-        );
-        // redirectionOps advertises retrieveEntity, so a retrieve stays a retrieve.
-        assert_eq!(
-            read_binding_for(ReadIntent::RetrieveById, &registration(&["redirectionOps"])),
-            Some(ReadBinding::Retrieve)
-        );
-        // federationOps advertises all three read operations.
-        assert_eq!(
-            read_binding_for(ReadIntent::RetrieveById, &registration(&["federationOps"])),
-            Some(ReadBinding::Retrieve)
-        );
-        assert_eq!(read_binding_for(ReadIntent::RetrieveById, &registration(&["updateOps"])), None);
-    }
-
     #[test]
     fn a_get_query_prefers_query_then_batch() {
         assert_eq!(read_binding_for(ReadIntent::Query, &registration(&["queryEntity"])), Some(ReadBinding::Query));
@@ -154,7 +108,7 @@ mod tests {
     }
 
     /// Clause 6.23.1: a POST query is the same operation on the batch binding, so
-    /// it prefers `queryBatch` and downgrades to a GET `queryEntity` only when the
+    /// it prefers `queryBatch` and is sent as a GET `queryEntity` only when the
     /// registration does not advertise `queryBatch` (e.g. redirectionOps).
     #[test]
     fn a_post_query_prefers_batch_then_query() {
@@ -168,7 +122,7 @@ mod tests {
             Some(ReadBinding::BatchQuery)
         );
         // redirectionOps has queryEntity but not queryBatch, so a POST query is
-        // downgraded to a GET queryEntity.
+        // sent as a GET queryEntity.
         assert_eq!(
             read_binding_for(ReadIntent::QueryBatch, &registration(&["redirectionOps"])),
             Some(ReadBinding::Query)
@@ -177,6 +131,7 @@ mod tests {
             read_binding_for(ReadIntent::QueryBatch, &registration(&["queryEntity"])),
             Some(ReadBinding::Query)
         );
+        assert_eq!(read_binding_for(ReadIntent::QueryBatch, &registration(&["retrieveEntity"])), None);
         assert_eq!(read_binding_for(ReadIntent::QueryBatch, &registration(&["updateOps"])), None);
     }
 }

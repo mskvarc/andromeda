@@ -11,6 +11,7 @@ use crate::{
         error::TenantAssemblyError,
         runtime::BrokerTenantRuntime,
         services::{TenantServiceCollaborators, construct_services},
+        spatial::indexed_commits,
         storage::initialize_storage,
         tasks::{TenantSignals, TenantTaskChannels, snapshot_delivery_signal, supervise_tasks},
         temporal_history::compose_temporal_history,
@@ -55,6 +56,7 @@ mod error;
 /// Runtime ownership and ordered shutdown.
 pub mod runtime;
 mod services;
+mod spatial;
 mod storage;
 mod subscription_services;
 mod tasks;
@@ -209,7 +211,14 @@ async fn build_tenant_state(
     task_supervisor: TaskSupervisor,
     subscription_router: &Arc<dyn ForwardedSubscriptionRouter>,
 ) -> Result<(AndromedaState, BrokerTenantRuntime), TenantAssemblyError> {
-    let signals = TenantSignals::new(config.spatial.change_channel_capacity);
+    // Only live delivery reads committed entity changes from the channel; a
+    // durable tenant still publishes into it and needs no more than one slot.
+    let entity_change_capacity = if config.notifications.delivery.is_durable() {
+        1
+    } else {
+        config.notifications.live_change_capacity
+    };
+    let signals = TenantSignals::new(entity_change_capacity);
     let storage = initialize_storage(config, serving_url, migration_url, tenant).await?;
     let temporal = compose_temporal_history(&storage.pool, &storage.temporal_repo, &config.temporal, &task_supervisor, &storage.live_target)?;
     // Every write path reaches the `current_attribute_values` projection
@@ -249,6 +258,7 @@ async fn build_tenant_state(
         Arc::clone(&storage.entity_type_names), // clone: the same dictionary, for entity types.
         consequence_publisher,
     ));
+    let writes = indexed_commits(writes, &storage.spatial, tenant)?;
     let transports = construct_transports(config.notifications.delivery.request_timeout())?;
     let services = construct_services(
         config,

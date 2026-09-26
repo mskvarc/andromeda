@@ -4,11 +4,16 @@ use andromeda_test_client::{
     broker_endpoint::{BrokerDnsOverride, BrokerEndpoint},
     header::jsonld_link_header,
     response::TestResponse,
+    tenant_name::TenantName,
     test_client::TestClient,
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::{
-    multi_broker::{BrokerEnvironmentKey, BrokerHandle, BrokerNodeDefaults, BrokerNodeSpec, MultiBrokerTopology},
+    multi_broker::{
+        MultiBrokerTopology,
+        broker_handle::BrokerHandle,
+        node_spec::{BrokerEnvironmentKey, BrokerNodeDefaults, BrokerNodeSpec},
+    },
     readiness::ReadinessPolicy,
 };
 use pretty_assertions::assert_eq;
@@ -294,12 +299,14 @@ pub fn registration_for_entity(id: &str, endpoint: &str, entity_id: &str, entity
     body
 }
 
-/// Build a direct client from an unchanged discovered endpoint.
-pub fn discovered_client(endpoint: &str, port: u16) -> TestClient {
+/// Build a direct client from an unchanged discovered endpoint, running under
+/// the tenant the discovery ran under (clause 4.3.6.4: each tenant is federated
+/// separately, so the discovered source holds the data under that tenant).
+pub fn discovered_client(endpoint: &str, port: u16, tenant: Option<&TenantName>) -> TestClient {
     let endpoint = BrokerEndpoint::parse(endpoint).expect("discovered endpoint is a valid broker endpoint");
     let host = endpoint.url().host_str().expect("discovered endpoint has a hostname");
     let dns = BrokerDnsOverride::new(host, SocketAddr::from(([127, 0, 0, 1], port)));
-    TestClient::new_with_dns_overrides(endpoint, None, &[dns])
+    TestClient::new_with_dns_overrides(endpoint, tenant.cloned(), &[dns]) // clone: the client owns the tenant it runs under
         .expect("DNS override client builds")
         .with_default_context(jsonld_link_header(COMPOUND_CONTEXT.as_str()).expect("compound context link"))
 }

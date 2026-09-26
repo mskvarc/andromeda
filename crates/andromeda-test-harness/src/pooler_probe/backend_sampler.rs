@@ -115,3 +115,21 @@ pub async fn client_backends_for(pool: &sqlx::PgPool, datname: &str) -> Result<i
         .fetch_one(pool)
         .await
 }
+
+/// The number of client backends bound to database `datname` and connected
+/// under any of `application_names`, over `pool`.
+///
+/// Attributes a tenant database's backends to the brokers that opened them:
+/// every broker on the tier shares the registry, so another broker's wake probe
+/// or its pooler's server connections may touch the same database.
+///
+/// # Errors
+///
+/// Returns the [`sqlx::Error`] the count query reported.
+pub async fn client_backends_of(pool: &sqlx::PgPool, datname: &str, application_names: &[&str]) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND datname = $1 AND application_name = ANY($2)")
+        .bind(datname)
+        .bind(application_names)
+        .fetch_one(pool)
+        .await
+}

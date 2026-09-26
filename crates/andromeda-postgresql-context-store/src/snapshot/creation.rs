@@ -1,5 +1,5 @@
-//! Creating a Snapshot: its control record, its preparation row and its two
-//! branch schemas, in one transaction.
+//! Creating a Snapshot: its control record, its preparation row and its staging
+//! branch schema, in one transaction.
 
 use crate::snapshot::{branch_schema::create_branch_schema, branch_version::current_version, persistence_error, status_code::stored_status};
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
@@ -62,8 +62,9 @@ fn preparation_insert_sql() -> Result<String, SnapshotError> {
     Ok(insert.to_string(PostgresQueryBuilder))
 }
 
-/// Write one Snapshot: the control record, its preparation row, and its two
-/// (empty) branch schemas, all in one transaction.
+/// Write one Snapshot: the control record, its preparation row, and its empty
+/// staging branch schema, all in one transaction. The published branch comes
+/// into being only when the preparation renames the staging schema.
 pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<'_>) -> Result<(), SnapshotError> {
     let branch_version = current_version()?;
     let mut tx = pool.begin().await.map_err(persistence_error)?;
@@ -94,9 +95,6 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
         .bind(params.temporal_queries_details_json)
         .bind(branch_version.get())
         .execute(&mut *tx)
-        .await
-        .map_err(persistence_error)?;
-    create_branch_schema(&mut tx, snapshot_key, SnapshotBranch::Published)
         .await
         .map_err(persistence_error)?;
     create_branch_schema(&mut tx, snapshot_key, SnapshotBranch::Staging)

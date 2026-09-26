@@ -35,6 +35,8 @@ mod entity_identity_admission;
 pub mod entity_operation_unsupported;
 /// Versioned entity snapshots used by optimistic writes.
 pub mod entity_snapshot;
+/// Whether a stored entity is the one a clause 4.17 type selector names.
+mod entity_type_match;
 /// The concrete reasons an entity payload or operation is rejected as invalid.
 pub mod entity_validation_reason;
 /// Entity policy failures.
@@ -97,10 +99,21 @@ pub mod side_effect;
 pub mod side_effect_drain;
 /// The durable side-effect queue port.
 pub mod side_effect_queue;
-/// Entity spatial-index synchronization configuration.
+/// Which spatial index, if any, a geo query may be narrowed through.
+pub mod spatial_acceleration;
+/// Entity spatial-index consistency configuration.
 pub mod spatial_config;
+/// Keeping the entity spatial index in step with every live commit.
+pub mod spatial_indexing_committer;
+/// Where one entity's location belongs in the entity spatial index.
+pub mod spatial_placement;
+/// Rebuilding the entity spatial index from a read of the store.
 pub mod spatial_reconciliation;
-pub mod spatial_synchronization;
+/// Catching the entity spatial index up from the store before it narrows a query.
+pub mod spatial_watermark;
+/// Every write a broker process commits is visible to its next geo query.
+#[cfg(test)]
+mod spatial_write_visibility;
 /// Query capabilities of one entity store.
 pub mod storage_profile;
 /// Injecting clause 4.8 system attributes into an expanded entity.

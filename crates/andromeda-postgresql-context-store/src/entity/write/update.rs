@@ -16,7 +16,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
-use andromeda_postgresql_seaquery::{clock::now, pg_operator::PgBinaryOperator, unnest::apply_column_alias};
+use andromeda_postgresql_seaquery::{clock::now, pg_operator::PgBinaryOperator, transaction_id::current_transaction_id, unnest::apply_column_alias};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{CommonTableExpression, Cond, Expr, ExprTrait, Func, PostgresQueryBuilder, Query, SimpleExpr, WithClause};
@@ -34,7 +34,7 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 ///               WHERE entities.id = proj.id AND entity_documents.entity_key = entities.entity_key
 ///                 AND (proj.expected_modified_at IS NULL OR entity_documents.modified_at = proj.expected_modified_at)
 ///               RETURNING entity_documents.entity_key, entities.id),
-///      srch AS (UPDATE entity_search SET type_ids = proj.type_ids, … FROM docs, proj
+///      srch AS (UPDATE entity_search SET type_ids = proj.type_ids, …, written_xid = pg_current_xact_id() FROM docs, proj
 ///               WHERE proj.id = docs.id AND entity_search.entity_key = docs.entity_key
 ///                 AND (entity_search.type_ids IS DISTINCT FROM proj.type_ids OR … )),
 ///      ents AS (UPDATE entities SET expires_at = COALESCE(proj.expires_at, entities.expires_at),
@@ -87,6 +87,9 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> String {
     for column in SEARCH_COLUMNS {
         search.value(column, projected(column));
     }
+    // A rewritten search row is a changed type, attribute name, scope or
+    // geometry, which a spatial index catching up from the store must find.
+    search.value(EntitySearch::WrittenXid, current_transaction_id());
     search.from(Docs).from(Proj).cond_where(
         Cond::all()
             .add(Expr::col((Proj, Entities::Id)).equals((Docs, Entities::Id)))
@@ -258,6 +261,17 @@ mod tests {
             );
         }
         assert!(sql.contains(r#""entity_search"."entity_key" = "docs"."entity_key""#), "{sql}");
+    }
+
+    /// A spatial index catching up from the store reads the search rows written
+    /// since its last read, so every rewrite of one must stamp the writing
+    /// transaction; the stamp itself is not guarded, or it would rewrite rows
+    /// no projected column changed.
+    #[test]
+    fn a_rewritten_search_row_is_stamped_with_the_writing_transaction() {
+        let sql = entity_update_sql(&ContextTarget::Live);
+        assert!(sql.contains(r#""written_xid" = pg_current_xact_id() FROM "docs", "proj""#), "{sql}");
+        assert!(!sql.contains(r#""written_xid" IS DISTINCT FROM"#), "{sql}");
     }
 
     #[test]

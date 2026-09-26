@@ -40,10 +40,13 @@ x-broker-base: &broker-base
     retries: 40
     start_period: 5s
 
-# broker-a2 replicates broker-a: same identity, same database.
+# broker-a2 replicates broker-a: same identity, same database. Two processes
+# write one database, so the spatial index runs in watermark mode, the one that
+# stays exact across replicas (docs/spatial-index-consistency.md).
 x-broker-a-env: &broker-a-env
   <<: *broker-env
   ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-a:5432/broker_a"
+  ANDROMEDA__SPATIAL__CONSISTENCY: "watermark"
   ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-a"
   ANDROMEDA__IDENTITY__SOURCE_ALIAS: "broker-a"
 

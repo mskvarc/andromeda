@@ -6,14 +6,23 @@ x-broker-env: &broker-env
   # Provisioning, migration and maintenance bypass the pooler.
   ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
   ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
-  ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "4"
   ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL: "120s"
   ANDROMEDA__TENANCY__JANITOR_INTERVAL: "5s"
   # Re-wake must be observable within a test.
   ANDROMEDA__TENANCY__MIN_DORMANCY: "3s"
   ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT: "enabled"
-  ANDROMEDA__OBSERVABILITY__METRICS: "prometheus"
+  # Suites scrape GET /metrics on the published data-plane port.
+  ANDROMEDA__MANAGEMENT__MODE: "merged"
+  ANDROMEDA__MANAGEMENT__METRICS: "prometheus"
   ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
+  # Every broker here writes the same tenant databases, so the spatial index
+  # runs in watermark mode (docs/spatial-index-consistency.md).
+  ANDROMEDA__SPATIAL__CONSISTENCY: "watermark"
+
+# Pooled tenant pools size from the pooler section, not tenancy.
+x-pooled-env: &pooled-env
+  ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
+  ANDROMEDA__DATABASE__POOLER__TENANT_MAX_CONNECTIONS: "2"
 
 x-broker-features: &broker-features
   ANDROMEDA__ATOMIC_WRITE__BULK_MODE: "copy-staging"
@@ -83,10 +92,9 @@ services:
       pgbouncer:
         condition: service_healthy
     environment:
-      <<: [*broker-env, *broker-features]
+      <<: [*broker-env, *broker-features, *pooled-env]
       ANDROMEDA__SERVER__PORT: "1067"
       PGAPPNAME: "broker"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
       ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "32"
     ports:
       - "1067:1067"
@@ -110,10 +118,9 @@ services:
       pgbouncer:
         condition: service_healthy
     environment:
-      <<: [*broker-env, *broker-features]
+      <<: [*broker-env, *broker-features, *pooled-env]
       ANDROMEDA__SERVER__PORT: "1068"
       PGAPPNAME: "broker-replica"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
       ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "32"
     ports:
       - "1068:1068"
@@ -137,10 +144,9 @@ services:
       pgbouncer:
         condition: service_healthy
     environment:
-      <<: *broker-env
+      <<: [*broker-env, *pooled-env]
       ANDROMEDA__SERVER__PORT: "1069"
       PGAPPNAME: "broker-wide"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
       ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "1000"
     ports:
       - "1069:1069"
@@ -165,6 +171,8 @@ services:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1070"
       PGAPPNAME: "broker-direct"
+      # Un-pooled, each tenant pool is a real backend pool.
+      ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "4"
       ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "32"
     ports:
       - "1070:1070"

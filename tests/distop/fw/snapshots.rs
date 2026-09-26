@@ -339,7 +339,7 @@ async fn distop_entity_snapshot_orthogonal_to_tenant_requires_both() {
     let under_default = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
-        .client()
+        .default_tenant_client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("NGSILD-Snapshot", snapshot_id.as_str())
         .header("accept", "application/ld+json")

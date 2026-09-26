@@ -131,6 +131,11 @@ impl MergeParams {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GetEntityParams {
+    /// The clause 4.17 selector the target entity's types must satisfy
+    /// (Table 6.5.3.1-1 `type`): clause 5.7.1.4 knows the target only as an
+    /// entity "whose id (URI), and where specified type, is equivalent".
+    #[serde(rename = "type")]
+    pub entity_type: Option<TypeExprRaw>,
     /// Attributes the response is narrowed to, comma-separated (`attrs`).
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub attrs: Option<Vec<AttributeName>>,
@@ -262,8 +267,20 @@ mod tests {
         assert!(bare.entity_map.is_none() && bare.entity_map_lifetime.is_none());
     }
 
+    /// Table 6.5.3.1-1: `type` is a Retrieve Entity parameter carrying a
+    /// clause 4.17 selector, and a malformed selector is a client error.
+    #[test]
+    fn a_retrieve_accepts_a_clause_4_17_type_selector() {
+        let params: GetEntityParams = serde_urlencoded::from_str("type=Vehicle%7CBuilding").expect("a valid type selector");
+        pretty_assertions::assert_eq!(params.entity_type.map(|selector| selector.to_string()), Some("Vehicle,Building".to_string()));
+        let bare: GetEntityParams = serde_urlencoded::from_str("").expect("parses");
+        assert!(bare.entity_type.is_none());
+        assert!(serde_urlencoded::from_str::<GetEntityParams>("type=Vehicle%7C").is_err());
+    }
+
     fn default_params() -> GetEntityParams {
         GetEntityParams {
+            entity_type: None,
             attrs: None,
             options: None,
             format: None,

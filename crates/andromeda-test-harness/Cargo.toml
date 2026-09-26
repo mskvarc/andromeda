@@ -10,6 +10,8 @@ workspace = true
 
 [dependencies]
 andromeda-test-client.workspace = true
+andromeda-test-fixtures.workspace = true
+dashmap = { version = "6.2.1", features = ["inline"] }
 futures = "0.3.34"
 http = "1.5.0"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }

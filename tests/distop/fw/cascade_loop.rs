@@ -363,7 +363,7 @@ async fn distop_entity_via_multi_tenant_each_tenant_considered_separately() {
         "the second tenant's query carries its own NGSILD-Tenant"
     );
 
-    // Tenant-scoped registrations are reclaimed explicitly: prefix cleanup runs on the default tenant only.
+    // Tenant-scoped registrations are reclaimed explicitly: prefix cleanup runs on the leased and the default tenant only.
     let first_id = topology.id("registration:tenant-federation");
     assert_status(&first_client.delete_registration(&first_id).await.expect("first tenant cleanup"), 204);
     assert_status(&second_client.delete_registration(&first_id).await.expect("second tenant cleanup"), 204);

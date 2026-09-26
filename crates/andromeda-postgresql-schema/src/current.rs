@@ -57,6 +57,8 @@ pub enum EntitySearch {
     Table,
     /// Foreign key to `entities`, cascading on entity deletion; also the primary key
     EntityKey,
+    /// The `xid8` of the transaction that last wrote the row
+    WrittenXid,
     /// Latest `expiresAt` among the payload's `location` instances, NULL when
     /// any instance carries none (clause 4.22)
     LocationExpiresAt,
@@ -166,6 +168,7 @@ mod tests {
     fn entity_search_names() {
         assert_eq!(EntitySearch::Table.to_string(), "entity_search");
         assert_eq!(EntitySearch::EntityKey.to_string(), "entity_key");
+        assert_eq!(EntitySearch::WrittenXid.to_string(), "written_xid");
         assert_eq!(EntitySearch::LocationExpiresAt.to_string(), "location_expires_at");
         assert_eq!(EntitySearch::TypeIds.to_string(), "type_ids");
         assert_eq!(EntitySearch::AttributeNameIds.to_string(), "attribute_name_ids");

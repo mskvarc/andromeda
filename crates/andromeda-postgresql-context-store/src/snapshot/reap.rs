@@ -110,7 +110,8 @@ async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> 
 }
 
 /// Drop both possible branch schemas of one Snapshot; `IF EXISTS` covers the
-/// staging schema a promoted Snapshot no longer has.
+/// one it does not have -- the published schema while it prepares, the staging
+/// schema once published.
 pub(crate) async fn reap_branch(transaction: &mut Transaction<'_, Postgres>, snapshot_key: SnapshotKey) -> Result<(), SnapshotError> {
     drop_branch_schema(transaction, snapshot_key, SnapshotBranch::Published)
         .await

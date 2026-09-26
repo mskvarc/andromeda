@@ -7,7 +7,7 @@
 //! to name the branch schema and to key the preparation row.
 
 use crate::snapshot::{
-    branch_schema::drop_branch_schema,
+    branch_schema::{promote_staging_schema, publish_empty_branch},
     mapper::row_to_snapshot,
     metadata_change::MetadataChange,
     persistence_error,
@@ -15,7 +15,7 @@ use crate::snapshot::{
     status_outbox::enqueue_terminal_notification,
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
-use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
@@ -205,7 +205,8 @@ fn snapshot_key_subquery(id: &Uri) -> SelectStatement {
 }
 
 /// Move one preparing snapshot to its final status, recording the per-query
-/// details; a failure discards the private staging branch.
+/// details and publishing its staging branch -- emptied first on a failure, so
+/// the failed Snapshot stays addressable over an empty dataset.
 pub(crate) async fn update_status(
     pool: &PgPool,
     id: &Uri,
@@ -245,11 +246,12 @@ pub(crate) async fn update_status(
         .map_err(persistence_error)?;
     if result.rows_affected() == 1 {
         enqueue_terminal_notification(&mut transaction, id).await?;
-        if status == SnapshotStatus::Failure {
-            drop_branch_schema(&mut transaction, snapshot_key, SnapshotBranch::Staging)
-                .await
-                .map_err(persistence_error)?;
-        }
+        let published = if status == SnapshotStatus::Failure {
+            publish_empty_branch(&mut transaction, snapshot_key).await
+        } else {
+            promote_staging_schema(&mut transaction, snapshot_key).await
+        };
+        published.map_err(persistence_error)?;
     }
     transaction.commit().await.map_err(persistence_error)?;
     Ok(result.rows_affected())

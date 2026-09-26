@@ -14,6 +14,14 @@ use std::{fmt::Display, time::Duration};
 /// long enough to matter and short enough not to strand a client.
 const STORE_SATURATED_RETRY_AFTER: Duration = Duration::from_secs(1);
 
+/// The `Retry-After` delay attached to a 503 for a transaction the datastore
+/// kept rolling back.
+///
+/// The broker has already re-run the transaction within its own budget, so the
+/// conflict outlived several attempts; a one-second hint separates the retry
+/// from the contenders it collided with.
+const TRANSACTION_CONTENDED_RETRY_AFTER: Duration = Duration::from_secs(1);
+
 /// A classified, client-safe failure without request-boundary state.
 ///
 /// Route bindings construct public reports from deliberate detail or use [`ClassifiedReport::internal`] to log a typed source exactly once and replace its disclosure with a coarse, client-safe operation summary.
@@ -57,6 +65,19 @@ impl ClassifiedReport {
     /// classification handling applies.
     pub fn store_saturated(detail: impl Into<String>) -> ClassifiedReport {
         ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, detail).with_retry_after(STORE_SATURATED_RETRY_AFTER)
+    }
+
+    /// Report a transaction the datastore rolled back on every attempt as a 503
+    /// Service Unavailable with a `Retry-After`.
+    ///
+    /// For a write that lost a deadlock or serialization conflict to concurrent
+    /// transactions each time the broker ran it. Nothing of it persisted and the
+    /// request is well-formed, so it can be sent again unchanged: answered 503,
+    /// never the 500 an internal fault earns, with its detail disclosed. Clause
+    /// 6.3.2 defines no `ProblemDetails` type for 503, so the existing
+    /// `ServiceUnavailable` classification handling applies.
+    pub fn transaction_contended(detail: impl Into<String>) -> ClassifiedReport {
+        ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, detail).with_retry_after(TRANSACTION_CONTENDED_RETRY_AFTER)
     }
 
     /// Mask an internal failure with a vetted operation summary after logging its typed source at the disclosure boundary.

@@ -254,85 +254,52 @@ async fn distop_entity_retrieve_inclusive_with_retrieve_entity_op() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A retrieve-by-id reaches a source that advertises only `queryEntity` through a
-/// forwarded GET query, not a retrieve it never registered (clause 4.3.6.1: "Context
-/// Brokers shall respect" the operation subset a source advertises; ETSI conformance
-/// `D010_03_inc_02`). The source is queried at `/entities` and its data is returned.
-#[tokio::test]
-async fn distop_entity_retrieve_with_only_query_entity_forwards_as_query() {
+/// Clause 5.7.1.4: a retrieval is forwarded only to the registrations that "match
+/// and support the retrieveEntity operation", and Table 4.20-1 names
+/// `retrieveEntity`, `queryEntity` and `queryBatch` as separate operations. A
+/// registration advertising only `queryEntity` or only `queryBatch` therefore
+/// does not apply: its source is never contacted -- neither through a
+/// retrieve-by-id nor through a query standing in for one -- and with nothing
+/// held locally the retrieval is `ResourceNotFound`. (ETSI conformance
+/// `D010_03_inc_02` and `D010_03_inc_03` expect the opposite and are corrected.)
+async fn assert_retrieve_skips_registration_advertising_only(operation: &str, label: &str) {
     let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = scope.id("Vehicle:retrieve-inc-op2");
-    let reg_id = scope.id("Registration:retrieve-inc-op2");
+    let entity_id = scope.id(&format!("Vehicle:{label}"));
+    let reg_id = scope.id(&format!("Registration:{label}"));
 
-    // A registration advertising only queryEntity: the retrieve is downgraded to a
-    // GET query so the source is still reached (clause 4.3.6.1).
-    let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["queryEntity"]);
+    let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &[operation]);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
+    // Stubs a downgraded retrieval would hit, so a forward would answer 200
+    // rather than fail unnoticed.
     let mock_array = Value::Array(vec![vehicle_entity(&entity_id)]);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+    mock.set_stub_with_body(Method::POST, "/ngsi-ld/v1/entityOperations/query", 200, &mock_array)
+        .await;
 
-    let (status, _, body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
-    pretty_assertions::assert_eq!(status, StatusCode::OK);
-    assert!(
-        body.as_object().is_some_and(|entity| entity.contains_key("brandName")),
-        "the forwarded query's data is returned: {body}"
-    );
-    assert!(
-        mock.get_count(Method::GET, "/ngsi-ld/v1/entities") > 0,
-        "the retrieve is forwarded as a GET query"
-    );
-    // The source's retrieve endpoint is never contacted, since it did not advertise retrieveEntity.
-    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")), 0);
+    let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    // The retrieval answered only after every forwarded request settled, so a
+    // source that was contacted has already recorded it.
+    pretty_assertions::assert_eq!(mock.get_total_count(), 0, "a {operation}-only source is never contacted for a retrieval");
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A retrieve-by-id reaches a source that advertises only `queryBatch` through a
-/// forwarded POST batch query, not a retrieve it never registered (clause 4.3.6.1;
-/// ETSI conformance `D010_03_inc_03`). The source is queried at
-/// `/entityOperations/query` and its data is returned.
 #[tokio::test]
-async fn distop_entity_retrieve_with_only_query_batch_forwards_as_batch() {
-    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
-    let c = client();
-    let mock = MockServer::start().await;
+async fn distop_entity_retrieve_with_only_query_entity_is_not_forwarded() {
+    assert_retrieve_skips_registration_advertising_only("queryEntity", "retrieve-inc-op2").await;
+}
 
-    let entity_id = scope.id("Vehicle:retrieve-inc-op3");
-    let reg_id = scope.id("Registration:retrieve-inc-op3");
-
-    // A registration advertising only queryBatch: the retrieve is downgraded to a
-    // POST batch query so the source is still reached (clause 4.3.6.1).
-    let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["queryBatch"]);
-    let (status, _) = create_registration(&c, &reg).await;
-    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
-
-    let mock_array = Value::Array(vec![vehicle_entity(&entity_id)]);
-    mock.set_stub_with_body(Method::POST, "/ngsi-ld/v1/entityOperations/query", 200, &mock_array)
-        .await;
-
-    let (status, _, body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
-    pretty_assertions::assert_eq!(status, StatusCode::OK);
-    assert!(
-        body.as_object().is_some_and(|entity| entity.contains_key("brandName")),
-        "the forwarded batch query's data is returned: {body}"
-    );
-    assert!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/query") > 0,
-        "the retrieve is forwarded as a POST batch query"
-    );
-    // The source's retrieve endpoint is never contacted, since it did not advertise retrieveEntity.
-    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")), 0);
-
-    delete_registration(&c, &reg_id).await;
-    mock.shutdown().await;
-    scope.finish().await.expect("cleanup failed");
+#[tokio::test]
+async fn distop_entity_retrieve_with_only_query_batch_is_not_forwarded() {
+    assert_retrieve_skips_registration_advertising_only("queryBatch", "retrieve-inc-op3").await;
 }
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 /// Validated integration-test suite name used inside generated URNs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TestSuiteName(String);
 
 impl TestSuiteName {

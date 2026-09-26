@@ -24,7 +24,7 @@ mod quota;
 /// Reaping Snapshots by deletion, expiry and quota eviction.
 mod reap;
 /// Reading and advancing a Snapshot's control record and preparation state.
-mod record;
+pub(crate) mod record;
 /// The snapshot repository struct.
 pub mod repo;
 /// The number a Snapshot status is stored as.

@@ -1,75 +1,146 @@
 //! The entity half of the spatial index: which entities a `georel` matches.
 
-use crate::{entity::entry::SpatialEntry, key::SpatialKey, partitioned_rtree::PartitionedRTree};
+use crate::{
+    entity::entry::SpatialEntry,
+    key::SpatialKey,
+    partitioned_rtree::{PartitionedRTree, WriteTracking},
+};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_tenancy::tenant_ref::TenantRef;
+use dashmap::DashSet;
 use rstar::{AABB, RTree};
-use std::collections::HashSet;
-use urn_rs::Urn;
+use std::collections::{HashMap, HashSet};
+
+/// The set of partitions one rebuild covers: every entity type of one tenant
+/// under one `GeoProperty`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SeedScope {
+    /// The tenant the partitions belong to.
+    tenant: TenantRef,
+    /// The `GeoProperty` the partitions index.
+    geoproperty: AttributeName,
+}
 
 /// Thread-safe R-tree cache of entity geometries.
 ///
 /// A thin reading over the shared [`PartitionedRTree`]: the storage,
-/// back-index, and rebuild machinery all live there, and this type adds only
-/// the one thing that is entity-specific — evaluating a caller-supplied
-/// `georel` against a partition.
-#[derive(Debug, Default)]
+/// back-index, and rebuild machinery all live there, and this type adds the two
+/// things that are entity-specific -- evaluating a caller-supplied `georel`
+/// against a partition, and knowing which partitions are complete enough to
+/// answer one.
+///
+/// A partition answers only once a [`SpatialEntityIndex::rebuild`] has seeded
+/// its `(tenant, geoproperty)` scope from the store. Live mutations keep a
+/// seeded scope current, but live mutations alone never make a scope complete:
+/// an entity stored before the broker started, or written by another broker
+/// sharing the store, reaches the index only through a rebuild. Until then
+/// [`SpatialEntityIndex::query`] declines, and the store evaluates the relation.
+#[derive(Debug)]
 pub struct SpatialEntityIndex {
     /// Entity geometries, partitioned by `(tenant, type, geoproperty)`.
     tree: PartitionedRTree<SpatialEntry>,
+    /// The `(tenant, geoproperty)` scopes a rebuild has seeded.
+    seeded: DashSet<SeedScope>,
+}
+
+// Manual because the partitioned tree must be told to record live mutations for
+// a rebuild to respect, which no derived default could choose.
+impl Default for SpatialEntityIndex {
+    fn default() -> SpatialEntityIndex {
+        SpatialEntityIndex::new()
+    }
 }
 
 impl SpatialEntityIndex {
-    /// An empty index.
+    /// An empty index with no seeded scope.
     #[must_use]
     pub fn new() -> SpatialEntityIndex {
-        SpatialEntityIndex::default()
+        SpatialEntityIndex {
+            tree: PartitionedRTree::new(WriteTracking::Recorded),
+            seeded: DashSet::new(),
+        }
     }
 
     /// The current clock value, to be captured by a rebuild worker *before* it
-    /// reads its source snapshot so that any write landing during the read is
-    /// stamped with a later generation and cannot be clobbered by the rebuild.
+    /// reads its source snapshot so that any write applied during the read is
+    /// stamped with a later generation and survives the rebuild.
     pub fn current_generation(&self) -> u64 {
         self.tree.current_generation()
     }
 
     /// Evaluate a `georel` filter against one partition.
     ///
-    /// `None` means the partition is cold, which is not the same answer as an
-    /// empty set: the caller falls through to the store rather than reporting
-    /// that nothing matched.
-    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &Geometry) -> Option<HashSet<Urn>> {
-        self.tree.read_partition(key, |tree| evaluate(tree, georel, reference))
+    /// `None` means the partition's scope has not been seeded, which is not the
+    /// same answer as an empty set: the caller falls through to the store
+    /// rather than reporting that nothing matched. A seeded scope with no
+    /// partition for the key answers with the empty set, because its rebuild
+    /// found no entity of that type conveying the `GeoProperty`.
+    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &Geometry) -> Option<HashSet<Uri>> {
+        let scope = SeedScope {
+            tenant: key.tenant.clone(),           // clone: the seed lookup owns its tenant
+            geoproperty: key.geoproperty.clone(), // clone: the seed lookup owns its geoproperty
+        };
+        if !self.seeded.contains(&scope) {
+            return None;
+        }
+        Some(self.tree.read_partition(key, |tree| evaluate(tree, georel, reference)).unwrap_or_default())
     }
 
-    /// Replace one entity's geometries under one partition.
+    /// Replace every entry of one entity with the geometries it now conveys,
+    /// one per partition it now belongs to.
     ///
-    /// ETSI GS CIM 009 v1.9.1 clause 4.10 counts an entity as matching when any
-    /// one instance of the target `GeoProperty` meets the restriction, so every
-    /// `datasetId` instance is indexed and the partition may hold the entity
-    /// several times. [`SpatialEntityIndex::query`] answers with a set, so an
-    /// entity two of whose instances match is still reported once.
+    /// The entity leaves the partitions it no longer belongs to and swaps its
+    /// entry in the ones it stays in under that partition's lock, so a reader
+    /// never finds it missing from a partition it belongs to throughout. A
+    /// geometry with no bounding rectangle cannot be indexed and is dropped.
+    pub fn replace_entity(&self, entity_id: Uri, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) {
+        let entries = entries_of(&entity_id, placements);
+        self.tree.replace(entity_id, entries);
+    }
+
+    /// Add geometries an entity may be about to convey, keeping every entry it
+    /// already has.
     ///
-    /// A geometry with no bounding rectangle cannot be indexed and is dropped;
-    /// an entity left with no entry at all is simply absent from the partition.
-    pub fn insert_all(&self, key: SpatialKey, entity_id: Urn, geometries: impl IntoIterator<Item = Geometry>) {
-        let entries: Vec<SpatialEntry> = geometries
-            .into_iter()
-            // clone: each entry owns the identifier the back-index is keyed by
-            .filter_map(|geometry| SpatialEntry::new(entity_id.clone(), geometry))
-            .collect();
-        self.tree.insert_all(key, entity_id, entries);
+    /// The entity stays reachable under its current geometries and becomes
+    /// reachable under the new ones, so a query that runs while the change is
+    /// pending sees it wherever the change may leave it. A later
+    /// [`SpatialEntityIndex::replace_entity`] or [`SpatialEntityIndex::remove`]
+    /// settles it.
+    pub fn anticipate_entity(&self, entity_id: Uri, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) {
+        let entries = entries_of(&entity_id, placements);
+        self.tree.augment(entity_id, entries);
     }
 
     /// Remove every entry belonging to an entity, across every partition.
-    pub fn remove(&self, entity_id: &Urn) {
+    pub fn remove(&self, entity_id: &Uri) {
         self.tree.remove(entity_id);
     }
 
-    /// Replace one partition's contents wholesale, unless a newer write got
-    /// there first. See [`PartitionedRTree::bulk_load`].
-    pub fn bulk_load(&self, key: SpatialKey, entries: Vec<SpatialEntry>, snapshot_generation: u64) {
-        self.tree.bulk_load(key, entries, snapshot_generation);
+    /// Rebuild every partition of one `(tenant, geoproperty)` scope from a
+    /// snapshot of the store, and mark the scope seeded.
+    ///
+    /// `entries` holds the snapshot's entries by partition; a partition of the
+    /// scope it does not mention is emptied. A live mutation applied after
+    /// `snapshot_generation` was captured is kept over the snapshot. See
+    /// [`PartitionedRTree::rebuild`].
+    pub fn rebuild(&self, tenant: &TenantRef, geoproperty: &AttributeName, entries: HashMap<SpatialKey, Vec<SpatialEntry>>, snapshot_generation: u64) {
+        self.tree
+            .rebuild(|key| &key.tenant == tenant && &key.geoproperty == geoproperty, entries, snapshot_generation);
+        self.seeded.insert(SeedScope {
+            tenant: tenant.clone(),           // clone: the seeded set owns its tenant
+            geoproperty: geoproperty.clone(), // clone: the seeded set owns its geoproperty
+        });
     }
+}
+
+/// The tree entries of one entity's placements, grouped by partition.
+fn entries_of(entity_id: &Uri, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) -> Vec<(SpatialKey, Vec<SpatialEntry>)> {
+    placements
+        .into_iter()
+        // clone: each entry owns the identifier the back-index is keyed by
+        .filter_map(|(key, geometry)| SpatialEntry::new(entity_id.clone(), geometry).map(|entry| (key, vec![entry])))
+        .collect()
 }
 
 /// Which entries of a partition a relation has to be evaluated against.
@@ -123,7 +194,7 @@ const fn refinement_for(georel: &GeoRel) -> Refinement {
 }
 
 /// Run the clause 4.10 predicate over whichever candidates the relation admits.
-fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry) -> HashSet<Urn> {
+fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry) -> HashSet<Uri> {
     let candidates: Vec<&SpatialEntry> = match candidates_for(georel) {
         Candidates::WholePartition => tree.iter().collect(),
         Candidates::EnvelopeIntersecting => tree.locate_in_envelope_intersecting(geometry_envelope(reference)).collect(),
@@ -163,21 +234,25 @@ mod tests {
         position::Position,
         positive_distance::PositiveDistance,
     };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
-    use std::{collections::HashSet, str::FromStr};
-    use urn_rs::Urn;
+    use pretty_assertions::assert_eq;
+    use std::{
+        collections::{HashMap, HashSet},
+        str::FromStr,
+    };
 
-    fn key() -> SpatialKey {
-        SpatialKey::new(
-            TenantRef::UnnamedDefault,
-            IriBuf::from(iri!("https://example.org/Vehicle")),
-            "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
-        )
+    fn location() -> AttributeName {
+        "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name")
     }
 
-    fn urn(raw: &str) -> Urn {
-        raw.parse().expect("a well-formed URN")
+    fn key() -> SpatialKey {
+        SpatialKey::new(TenantRef::UnnamedDefault, IriBuf::from(iri!("https://example.org/Vehicle")), location())
+    }
+
+    fn uri(raw: &str) -> Uri {
+        raw.parse().expect("a well-formed URI")
     }
 
     fn point(x: f64, y: f64) -> Geometry {
@@ -194,27 +269,65 @@ mod tests {
         ]])))
     }
 
+    /// An index whose `location` scope a rebuild over an empty store seeded.
+    fn seeded() -> SpatialEntityIndex {
+        let index = SpatialEntityIndex::new();
+        index.rebuild(&TenantRef::UnnamedDefault, &location(), HashMap::new(), index.current_generation());
+        index
+    }
+
+    #[test]
+    fn an_unseeded_scope_declines_to_answer_even_with_live_entries() {
+        let index = SpatialEntityIndex::new();
+        index.replace_entity(uri("urn:ngsi-ld:Vehicle:A"), [(key(), point(0.0, 0.0))]);
+        assert!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 1.0)).is_none());
+    }
+
+    #[test]
+    fn a_seeded_scope_answers_empty_for_a_type_it_holds_nothing_of() {
+        assert_eq!(seeded().query(&key(), &GeoRel::Intersects, &point(0.0, 0.0)), Some(HashSet::new()));
+    }
+
+    #[test]
+    fn a_seed_covers_only_its_own_geoproperty() {
+        let index = seeded();
+        let other = SpatialKey::new(
+            TenantRef::UnnamedDefault,
+            IriBuf::from(iri!("https://example.org/Vehicle")),
+            "https://example.org/area".parse().expect("valid attribute name"),
+        );
+        assert!(index.query(&other, &GeoRel::Intersects, &point(0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn an_entity_identified_by_an_http_iri_is_indexed() {
+        let index = seeded();
+        let id = uri("https://example.org/vehicles/1");
+        index.replace_entity(id.clone(), [(key(), point(0.0, 0.0))]);
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id])));
+    }
+
     #[test]
     fn an_entity_inside_the_reference_matches_within() {
-        let index = SpatialEntityIndex::new();
-        let id = urn("urn:ngsi-ld:Vehicle:A");
-        index.insert_all(key(), id.clone(), [point(0.0, 0.0)]);
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id])));
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Vehicle:A");
+        index.replace_entity(id.clone(), [(key(), point(0.0, 0.0))]);
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id])));
     }
 
     #[test]
     fn an_entity_overlapping_the_reference_does_not_match_disjoint() {
-        let index = SpatialEntityIndex::new();
-        index.insert_all(key(), urn("urn:ngsi-ld:Vehicle:A"), [square(0.0, 0.0, 2.0)]);
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Disjoint, &square(0.0, 0.0, 1.0)), Some(HashSet::new()));
+        let index = seeded();
+        index.replace_entity(uri("urn:ngsi-ld:Vehicle:A"), [(key(), square(0.0, 0.0, 2.0))]);
+        assert_eq!(index.query(&key(), &GeoRel::Disjoint, &square(0.0, 0.0, 1.0)), Some(HashSet::new()));
     }
 
     #[test]
     fn near_respects_the_maximum_distance() {
-        let index = SpatialEntityIndex::new();
-        let id = urn("urn:ngsi-ld:Vehicle:A");
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Vehicle:A");
         // 2 km east at the equator is ~0.01797 degrees of longitude.
-        index.insert_all(key(), id.clone(), [point(0.01797, 0.0)]);
+        index.replace_entity(id.clone(), [(key(), point(0.01797, 0.0))]);
 
         let tight = GeoRel::Near {
             max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
@@ -225,129 +338,103 @@ mod tests {
             min_distance: None,
         };
 
-        pretty_assertions::assert_eq!(index.query(&key(), &tight, &point(0.0, 0.0)), Some(HashSet::new()));
-        pretty_assertions::assert_eq!(index.query(&key(), &loose, &point(0.0, 0.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &tight, &point(0.0, 0.0)), Some(HashSet::new()));
+        assert_eq!(index.query(&key(), &loose, &point(0.0, 0.0)), Some(HashSet::from([id])));
     }
 
     #[test]
     fn near_matches_only_inside_the_band_the_two_distances_describe() {
-        let index = SpatialEntityIndex::new();
-        let inside = urn("urn:ngsi-ld:Vehicle:500m");
+        let index = seeded();
+        let inside = uri("urn:ngsi-ld:Vehicle:500m");
         // ~0.001 degrees is ~111 m at the equator.
-        index.insert_all(key(), urn("urn:ngsi-ld:Vehicle:100m"), [point(0.0009, 0.0)]);
-        index.insert_all(key(), inside.clone(), [point(0.0045, 0.0)]);
-        index.insert_all(key(), urn("urn:ngsi-ld:Vehicle:2000m"), [point(0.018, 0.0)]);
+        index.replace_entity(uri("urn:ngsi-ld:Vehicle:100m"), [(key(), point(0.0009, 0.0))]);
+        index.replace_entity(inside.clone(), [(key(), point(0.0045, 0.0))]);
+        index.replace_entity(uri("urn:ngsi-ld:Vehicle:2000m"), [(key(), point(0.018, 0.0))]);
 
         let georel = GeoRel::Near {
             max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
             min_distance: Some(PositiveDistance::from_str("300").expect("positive distance")),
         };
-        pretty_assertions::assert_eq!(index.query(&key(), &georel, &point(0.0, 0.0)), Some(HashSet::from([inside])));
+        assert_eq!(index.query(&key(), &georel, &point(0.0, 0.0)), Some(HashSet::from([inside])));
     }
 
     #[test]
     fn a_removed_entity_stops_matching() {
-        let index = SpatialEntityIndex::new();
-        let id = urn("urn:ngsi-ld:Vehicle:A");
-        index.insert_all(key(), id.clone(), [point(0.0, 0.0)]);
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Vehicle:A");
+        index.replace_entity(id.clone(), [(key(), point(0.0, 0.0))]);
         index.remove(&id);
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(-10.0, -10.0, 20.0)), Some(HashSet::new()));
+        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(-10.0, -10.0, 20.0)), Some(HashSet::new()));
     }
 
     #[test]
-    fn a_cold_partition_answers_nothing_rather_than_answering_empty() {
-        let index = SpatialEntityIndex::new();
-        assert!(index.query(&key(), &GeoRel::Intersects, &point(0.0, 0.0)).is_none());
-    }
-
-    #[test]
-    fn a_bulk_loaded_partition_answers_the_same_as_one_built_by_inserts() {
-        let inserted = SpatialEntityIndex::new();
-        let loaded = SpatialEntityIndex::new();
+    fn a_rebuilt_scope_answers_the_same_as_one_built_by_replacements() {
+        let replaced = seeded();
+        let rebuilt = SpatialEntityIndex::new();
         let mut entries = Vec::new();
         for step in 0..50 {
-            let id = urn(&format!("urn:ngsi-ld:V:{step}"));
+            let id = uri(&format!("urn:ngsi-ld:V:{step}"));
             let geometry = point(f64::from(step) * 0.001, 0.0);
-            inserted.insert_all(key(), id.clone(), [geometry.clone()]);
-            if let Some(entry) = SpatialEntry::new(id, geometry) {
-                entries.push(entry);
-            }
+            replaced.replace_entity(id.clone(), [(key(), geometry.clone())]);
+            entries.extend(SpatialEntry::new(id, geometry));
         }
-        loaded.bulk_load(key(), entries, loaded.current_generation());
+        rebuilt.rebuild(
+            &TenantRef::UnnamedDefault,
+            &location(),
+            HashMap::from([(key(), entries)]),
+            rebuilt.current_generation(),
+        );
 
         let reference = square(0.01, 0.0, 0.005);
-        pretty_assertions::assert_eq!(
-            inserted.query(&key(), &GeoRel::Intersects, &reference).unwrap_or_default(),
-            loaded.query(&key(), &GeoRel::Intersects, &reference).unwrap_or_default()
+        assert_eq!(
+            replaced.query(&key(), &GeoRel::Intersects, &reference),
+            rebuilt.query(&key(), &GeoRel::Intersects, &reference)
         );
     }
 
     #[test]
-    fn a_stale_rebuild_snapshot_does_not_clobber_a_newer_insert() {
-        // The rebuild captures its snapshot generation, then a live insert lands
-        // before the (empty) bulk-load is applied. The bulk-load must refuse to
-        // overwrite the newer state, or the insert is lost.
+    fn a_stale_rebuild_snapshot_does_not_clobber_a_newer_replacement() {
+        // The rebuild captures its snapshot generation, then a live write lands
+        // before the (empty) snapshot is applied. The rebuild must keep the
+        // newer state, or the write is lost.
         let index = SpatialEntityIndex::new();
         let snapshot = index.current_generation();
-        let id = urn("urn:ngsi-ld:Vehicle:new");
-        index.insert_all(key(), id.clone(), [point(0.0, 0.0)]);
+        let id = uri("urn:ngsi-ld:Vehicle:new");
+        index.replace_entity(id.clone(), [(key(), point(0.0, 0.0))]);
 
-        index.bulk_load(key(), Vec::new(), snapshot);
+        index.rebuild(&TenantRef::UnnamedDefault, &location(), HashMap::new(), snapshot);
 
-        pretty_assertions::assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)).unwrap_or_default(),
-            HashSet::from([id])
-        );
+        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)), Some(HashSet::from([id])));
     }
 
     #[test]
-    fn a_rebuild_that_supersedes_the_snapshot_replaces_the_partition() {
-        // When no newer write intervenes, the bulk-load applies normally: the
-        // snapshot is at or ahead of the partition's generation.
-        let index = SpatialEntityIndex::new();
-        index.insert_all(key(), urn("urn:ngsi-ld:Vehicle:old"), [point(0.0, 0.0)]);
-        let snapshot = index.current_generation();
-        let fresh = urn("urn:ngsi-ld:Vehicle:fresh");
-        let entry = SpatialEntry::new(fresh.clone(), point(5.0, 5.0)).expect("an entry");
+    fn an_anticipated_geometry_widens_the_candidates_until_the_change_settles() {
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Vehicle:A");
+        index.replace_entity(id.clone(), [(key(), point(0.0, 0.0))]);
+        index.anticipate_entity(id.clone(), [(key(), point(10.0, 10.0))]);
 
-        index.bulk_load(key(), vec![entry], snapshot);
-
-        assert!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)).unwrap_or_default().is_empty());
-        pretty_assertions::assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(5.0, 5.0, 0.5)).unwrap_or_default(),
-            HashSet::from([fresh])
+        // clone: each assertion owns the identifier it compares against
+        assert_eq!(
+            index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)),
+            Some(HashSet::from([id.clone()]))
         );
-    }
-
-    #[test]
-    fn a_rebuild_prunes_departed_entities_from_the_ownership_record() {
-        // An entity present before the rebuild but absent from its snapshot must
-        // be forgotten in `by_entity`, or its stale partition record leaks and a
-        // later removal cannot find it.
-        let index = SpatialEntityIndex::new();
-        let gone = urn("urn:ngsi-ld:Vehicle:gone");
-        index.insert_all(key(), gone.clone(), [point(0.0, 0.0)]);
-        let snapshot = index.current_generation();
-        let kept = urn("urn:ngsi-ld:Vehicle:kept");
-        let entry = SpatialEntry::new(kept.clone(), point(5.0, 5.0)).expect("an entry");
-
-        index.bulk_load(key(), vec![entry], snapshot);
-
-        assert!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)).unwrap_or_default().is_empty());
-        // Removing the departed entity is a no-op that leaves the kept one alone.
-        index.remove(&gone);
-        pretty_assertions::assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(5.0, 5.0, 0.5)).unwrap_or_default(),
-            HashSet::from([kept])
+        assert_eq!(
+            index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5)),
+            Some(HashSet::from([id.clone()]))
         );
+
+        index.replace_entity(id.clone(), [(key(), point(10.0, 10.0))]);
+        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)), Some(HashSet::new()));
+        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5)), Some(HashSet::from([id])));
     }
 
     #[test]
     fn a_polygon_entity_contains_a_point_reference() {
-        let index = SpatialEntityIndex::new();
-        let id = urn("urn:ngsi-ld:Building:Hall");
-        index.insert_all(key(), id.clone(), [square(0.0, 0.0, 1.0)]);
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Contains, &point(0.5, 0.5)), Some(HashSet::from([id])));
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Building:Hall");
+        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0))]);
+        assert_eq!(index.query(&key(), &GeoRel::Contains, &point(0.5, 0.5)), Some(HashSet::from([id])));
     }
 
     /// `equals` is answered by the envelope test alone.
@@ -360,65 +447,50 @@ mod tests {
     /// an optimisation may not do.
     #[test]
     fn equals_admits_every_envelope_intersecting_candidate_and_leaves_the_decision_to_the_store() {
-        let index = SpatialEntityIndex::new();
-        let id = urn("urn:ngsi-ld:Region:A");
-        index.insert_all(key(), id.clone(), [square(0.0, 0.0, 1.0)]);
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Region:A");
+        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0))]);
 
         // clone: each assertion owns the identifier it compares against
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id.clone()])));
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 2.0)), Some(HashSet::from([id])));
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Equals, &square(50.0, 50.0, 1.0)), Some(HashSet::new()));
+        assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id.clone()])));
+        assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 2.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Equals, &square(50.0, 50.0, 1.0)), Some(HashSet::new()));
     }
 
     /// Clause 4.10: an entity matches when any instance of the target
-    /// `GeoProperty` meets the restriction, so a partition holds one entry per
-    /// `datasetId` instance and reports the entity once however many match.
+    /// `GeoProperty` meets the restriction, so a partition may hold one entry
+    /// per instance and reports the entity once however many match.
     #[test]
-    fn every_instance_of_a_multi_dataset_geoproperty_is_indexed_and_reported_once() {
-        let index = SpatialEntityIndex::new();
-        let id = urn("urn:ngsi-ld:Region:A");
-        index.insert_all(key(), id.clone(), [square(0.0, 0.0, 1.0), square(40.0, 40.0, 1.0)]);
+    fn every_placement_of_an_entity_in_one_partition_is_indexed_and_reported_once() {
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Region:A");
+        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0)), (key(), square(40.0, 40.0, 1.0))]);
 
         // clone: each assertion owns the identifier it compares against
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(HashSet::from([id.clone()])));
-        pretty_assertions::assert_eq!(
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(HashSet::from([id.clone()])));
+        assert_eq!(
             index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0)),
             Some(HashSet::from([id.clone()]))
         );
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 100.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 100.0)), Some(HashSet::from([id])));
     }
 
-    /// Replacing an entity's entries drops the instances it no longer carries.
     #[test]
-    fn replacing_an_entitys_instances_drops_the_ones_it_no_longer_carries() {
-        let index = SpatialEntityIndex::new();
-        let id = urn("urn:ngsi-ld:Region:A");
-        index.insert_all(key(), id.clone(), [square(0.0, 0.0, 1.0), square(40.0, 40.0, 1.0)]);
-        index.insert_all(key(), id.clone(), [square(0.0, 0.0, 1.0)]);
+    fn replacing_an_entity_drops_the_placements_it_no_longer_has() {
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Region:A");
+        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0)), (key(), square(40.0, 40.0, 1.0))]);
+        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0))]);
 
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0)), Some(HashSet::new()));
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0)), Some(HashSet::new()));
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(HashSet::from([id])));
     }
 
     #[test]
     fn overlaps_matches_a_partial_intersection() {
-        let index = SpatialEntityIndex::new();
-        let id = urn("urn:ngsi-ld:Region:A");
-        index.insert_all(key(), id.clone(), [square(0.0, 0.0, 1.0)]);
-        pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Overlaps, &square(0.5, 0.5, 1.0)), Some(HashSet::from([id])));
-    }
-
-    #[test]
-    fn inserting_an_entity_twice_leaves_only_its_latest_geometry() {
-        let index = SpatialEntityIndex::new();
-        let id = urn("urn:ngsi-ld:Vehicle:A");
-        index.insert_all(key(), id.clone(), [point(0.0, 0.0)]);
-        index.insert_all(key(), id.clone(), [point(10.0, 10.0)]);
-
-        assert!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)).unwrap_or_default().is_empty());
-        pretty_assertions::assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5)).unwrap_or_default(),
-            HashSet::from([id])
-        );
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Region:A");
+        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0))]);
+        assert_eq!(index.query(&key(), &GeoRel::Overlaps, &square(0.5, 0.5, 1.0)), Some(HashSet::from([id])));
     }
 }

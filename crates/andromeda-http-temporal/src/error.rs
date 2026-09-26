@@ -44,6 +44,7 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::Query(source) => classify_query_error(source),
         TemporalError::Request(source) => classify_parameter_error(source),
         TemporalError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
+        TemporalError::TransactionContended => ClassifiedReport::transaction_contended(error.to_string()),
         TemporalError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to persist temporal history")),
         TemporalError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the temporal store is unavailable")),
         TemporalError::Rendering(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to render the temporal representation")),

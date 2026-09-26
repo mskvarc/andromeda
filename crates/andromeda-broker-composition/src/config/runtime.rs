@@ -328,6 +328,7 @@ pub fn generate_default_reported(output: Option<PathBuf>) -> ProcessExitOutcome 
 mod tests {
     use super::*;
     use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use andromeda_entity::spatial_config::SpatialConsistency;
     use andromeda_http_stack::config::{compression::CompressionQuality, cors::CorsMode};
     use serial_test::serial;
     use std::{
@@ -583,28 +584,29 @@ port = 1600
     }
 
     #[test]
-    fn validate_rejects_zero_spatial_change_channel_capacity() {
+    fn validate_rejects_zero_live_change_capacity() {
         let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
-        config.spatial.change_channel_capacity = 0;
-
-        assert!(validate_config(&config).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_zero_spatial_lag_log_interval() {
-        let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
-        config.spatial.lag_log_interval = HumanDuration::from_secs(0);
+        config.notifications.live_change_capacity = 0;
 
         assert!(validate_config(&config).is_err());
     }
 
     #[test]
     #[serial]
-    fn env_overrides_spatial_change_channel_capacity() {
-        unsafe { env::set_var("ANDROMEDA__SPATIAL__CHANGE_CHANNEL_CAPACITY", "12345") };
+    fn env_overrides_notifications_live_change_capacity() {
+        unsafe { env::set_var("ANDROMEDA__NOTIFICATIONS__LIVE_CHANGE_CAPACITY", "12345") };
         let config = load_env_only();
-        unsafe { env::remove_var("ANDROMEDA__SPATIAL__CHANGE_CHANNEL_CAPACITY") };
-        pretty_assertions::assert_eq!(config.spatial.change_channel_capacity, 12345);
+        unsafe { env::remove_var("ANDROMEDA__NOTIFICATIONS__LIVE_CHANGE_CAPACITY") };
+        pretty_assertions::assert_eq!(config.notifications.live_change_capacity, 12345);
+    }
+
+    #[test]
+    #[serial]
+    fn env_selects_the_spatial_consistency_mode_in_kebab_case() {
+        unsafe { env::set_var("ANDROMEDA__SPATIAL__CONSISTENCY", "watermark") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__SPATIAL__CONSISTENCY") };
+        pretty_assertions::assert_eq!(config.spatial.consistency, SpatialConsistency::Watermark);
     }
 
     #[test]

@@ -1,15 +1,16 @@
 //! Publishing a prepared Snapshot branch: promoting a staged capture, and
 //! cloning one Snapshot's published branch into another before promoting it.
 //!
-//! Both paths end the same way -- the staging schema becomes the published
+//! Both paths end the same way -- the staging schema is renamed to the published
 //! schema and the preparation row leaves `preparing` -- and both run in a single
-//! transaction so the schema swap and the control-row update commit together.
+//! transaction so the rename and the control-row update commit together.
 
 use crate::snapshot::{
-    branch_schema::{drop_branch_schema, promote_staging_schema},
+    branch_schema::{promote_staging_schema, publish_empty_branch},
     branch_version::{condition_of, current_version},
     clone::clone_branch,
     persistence_error,
+    preparation_claim::lock_claimed_preparation,
     record::status_is_preparing,
     status_code::stored_status,
     status_outbox::enqueue_terminal_notification,
@@ -22,12 +23,13 @@ use andromeda_postgresql_branch::snapshot_schema_name;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::clock::now;
 use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError};
-use sea_query::{Expr, ExprTrait, JoinType, Keyword, LockType, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query::{Expr, ExprTrait, JoinType, Keyword, PostgresQueryBuilder, Query, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Transaction};
 
-/// Publish one query capture: swap the staging branch in on success, discard it
-/// on failure, and record the terminal status, all in one transaction.
+/// Publish one query capture -- what it staged on success, an empty branch on
+/// failure, so a failed Snapshot stays addressable -- and record the terminal
+/// status, all in one transaction.
 pub(crate) async fn promote_staged_capture(
     pool: &PgPool,
     id: &Uri,
@@ -39,9 +41,7 @@ pub(crate) async fn promote_staged_capture(
     let mut transaction = pool.begin().await.map_err(persistence_error)?;
     let snapshot_key = lock_preparing_key(&mut transaction, id, claimed_by).await?;
     if status == SnapshotStatus::Failure {
-        drop_branch_schema(&mut transaction, snapshot_key, SnapshotBranch::Staging)
-            .await
-            .map_err(persistence_error)?;
+        publish_empty_branch(&mut transaction, snapshot_key).await.map_err(persistence_error)?;
     } else {
         promote_staging_schema(&mut transaction, snapshot_key).await.map_err(persistence_error)?;
     }
@@ -68,28 +68,11 @@ pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Uri, target
 }
 
 /// Resolve, and row-lock, the preparing preparation row of one Snapshot claimed
-/// by this replica.
+/// by this replica, refusing a claim that is no longer held.
 async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Uri, claimed_by: LeaseHolder) -> Result<SnapshotKey, SnapshotError> {
-    let select = Query::select()
-        .column((Snapshots::Table, Snapshots::SnapshotKey))
-        .from(Snapshots::Table)
-        .join(
-            JoinType::Join,
-            SnapshotPreparation::Table,
-            Expr::col((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)).equals((Snapshots::Table, Snapshots::SnapshotKey)),
-        )
-        .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(id.as_str()))
-        .and_where(Expr::col((SnapshotPreparation::Table, SnapshotPreparation::ClaimedBy)).eq(claimed_by.as_uuid()))
-        .and_where(status_is_preparing())
-        .lock(LockType::Update)
-        .to_owned();
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    let raw = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_optional(&mut **transaction)
-        .await
-        .map_err(persistence_error)?
-        .ok_or_else(|| SnapshotError::internal(format!("Snapshot {id} is no longer preparing under this claim")))?;
-    SnapshotKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string()))
+    lock_claimed_preparation(transaction, id, claimed_by)
+        .await?
+        .ok_or_else(|| SnapshotError::internal(format!("Snapshot {id} is no longer preparing under this claim")))
 }
 
 /// Resolve a clone source's surrogate key by URI, refusing a quarantined source:

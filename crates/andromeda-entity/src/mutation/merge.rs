@@ -3,6 +3,7 @@
 use crate::{
     EntityService,
     admitted_write::AdmittedEntity,
+    entity_type_match::entity_satisfies,
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     expanded_member::written_entity_types,
@@ -30,22 +31,12 @@ use andromeda_ngsi_ld_model::{
         written_observation::AddressedInstances,
     },
 };
-use andromeda_ngsi_ld_query::type_selection::{expansion::expand_type_expression, grammar::TypeExpr};
+use andromeda_ngsi_ld_query::type_selection::expansion::expand_type_expression;
 use andromeda_ngsi_ld_representation::entity_members::ENTITY_MEMBERS;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
-
-/// Whether an expanded entity's types satisfy a clause 4.17 selector.
-fn entity_satisfies(expanded: &Value, selector: &TypeExpr) -> bool {
-    let types = expanded_object_ref(expanded)
-        .and_then(|object| object.get("@type"))
-        .and_then(Value::as_array)
-        .map(|types| types.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-        .unwrap_or_default();
-    selector.matches(&types)
-}
 
 /// What one clause 5.6.17 merge produced, beyond the write itself.
 ///

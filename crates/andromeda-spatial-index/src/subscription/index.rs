@@ -3,7 +3,7 @@
 
 use crate::{
     key::SpatialKey,
-    partitioned_rtree::{Indexed, PartitionedRTree},
+    partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking},
     subscription::entry::SubEntry,
 };
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
@@ -18,18 +18,31 @@ use rstar::{AABB, Envelope, RTree};
 /// adds only the candidate evaluation, which is where the two indexes differ:
 /// each entry carries its own `georel`, so the match is applied per entry
 /// rather than against one caller-supplied relation.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SpatialSubscriptionIndex {
     /// Subscription reference geometries, partitioned by
     /// `(tenant, type, geoproperty)`.
     tree: PartitionedRTree<SubEntry>,
 }
 
+// Manual because the partitioned tree must be told not to record live
+// mutations, which no derived default could choose.
+impl Default for SpatialSubscriptionIndex {
+    fn default() -> SpatialSubscriptionIndex {
+        SpatialSubscriptionIndex::new()
+    }
+}
+
 impl SpatialSubscriptionIndex {
     /// An empty index.
     #[must_use]
     pub fn new() -> SpatialSubscriptionIndex {
-        SpatialSubscriptionIndex::default()
+        // The subscription cache mirrors the subscription store change by
+        // change and is reloaded wholesale rather than rebuilt from a snapshot,
+        // so nothing is recorded for a rebuild to respect.
+        SpatialSubscriptionIndex {
+            tree: PartitionedRTree::new(WriteTracking::Unrecorded),
+        }
     }
 
     /// Every subscription in one partition whose geo filter the given entity

@@ -66,6 +66,18 @@
 -- instance has expired (clause 4.22) by reading this column rather than
 -- walking the payload.
 --
+-- `written_xid` is the `xid8` of the transaction that last wrote the row: the
+-- insert takes it from the column default and every update of the row sets it,
+-- which, by the rule above, is every write that changed a type, an attribute
+-- name, a scope or a geometry and no other. A broker process that keeps an
+-- in-memory spatial index reads the rows written at or above the `xmin` of its
+-- previous read's snapshot to catch the index up with every such change,
+-- whichever process committed it: an `xid8` never wraps, and a transaction
+-- below a snapshot's `xmin` had finished before the snapshot was taken.
+-- `idx_entity_search_written_xid` makes that read a range scan over the recent
+-- rows. It adds nothing to a value-only write, which never reaches this
+-- relation.
+--
 -- Geometry columns are typmod-free `geometry` with explicit SRID and Zm-flag
 -- checks rather than `GEOMETRY(Geometry, 4326)`: no typmod spelling accepts XY
 -- and XYZ in one column, which RFC 7946 clause 3.1.1 altitudes require.
@@ -85,7 +97,9 @@
 -- relations in `public` as part of the tenant migration set and creates and
 -- upgrades the same relations inside every Snapshot schema under the branch
 -- ledger. Dictionary, unit-code and function references resolve to `public`
--- through the search path; every other reference resolves to the branch.
+-- through the search path; every other reference resolves to the branch. A
+-- branch file declares no foreign key into `public`: the dictionary
+-- references of the live relations are added by the live-only 0029.
 -- ============================================================================
 
 CREATE TABLE entities (
@@ -134,6 +148,7 @@ CREATE TABLE entity_documents (
 
 CREATE TABLE entity_search (
     entity_key BIGINT NOT NULL,
+    written_xid XID8 NOT NULL DEFAULT pg_current_xact_id(),
     location_expires_at TIMESTAMPTZ,
     type_ids INTEGER[] NOT NULL,
     attribute_name_ids INTEGER[] NOT NULL,
@@ -190,5 +205,7 @@ CREATE INDEX idx_entity_search_observation_space ON entity_search USING GIST (ob
 
 CREATE INDEX idx_entity_search_operation_space ON entity_search USING GIST (operation_space)
     WHERE operation_space IS NOT NULL;
+
+CREATE INDEX idx_entity_search_written_xid ON entity_search (written_xid);
 
 ALTER TABLE entity_search ALTER COLUMN type_ids SET STATISTICS 1000;

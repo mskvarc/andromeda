@@ -201,7 +201,11 @@ async fn covered_attrs(
 /// they select rather than restrict it. Each leaf is expanded to its IRI and
 /// kept when a block selector admits that IRI, matching the registration
 /// selection exactly.
-async fn covered_type(entity_type: &TypeExprRaw, block: &RegistrationInfo, resolver: &TermResolver<'_>) -> Result<Option<TypeExprRaw>, FederationError> {
+pub(super) async fn covered_type(
+    entity_type: &TypeExprRaw,
+    block: &RegistrationInfo,
+    resolver: &TermResolver<'_>,
+) -> Result<Option<TypeExprRaw>, FederationError> {
     let Some(selectors) = block.entities.as_deref().filter(|selectors| !selectors.is_empty()) else {
         return Ok(Some(entity_type.clone())); // clone: an unrestricted block forwards the client's selector as written
     };

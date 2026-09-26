@@ -235,9 +235,9 @@ fn compose_entity_query_service(storage: &TenantStorage, forwarding: &Arc<Federa
     Arc::new(EntityQueryService::new(
         Arc::clone(&storage.entity_ports.reader),
         Arc::clone(&storage.entity_ports.query),
-        storage.engine.clone(), // clone: the query service owns its engine handle.
-        Arc::clone(&storage.spatial_index),
-        storage.tenant.clone(), // clone: the query service owns its tenant partition.
+        storage.engine.clone(),  // clone: the query service owns its engine handle.
+        storage.spatial.clone(), // clone: request reads narrow through the tenant's one index.
+        storage.tenant.clone(),  // clone: the query service owns its tenant partition.
         // Clause 4.5.23.1: an `objectType`-annotated Linked Entity this broker
         // does not store is fetched from the context sources registered for it.
         Some(Arc::new(ForwardedLinkedEntitySource::new(

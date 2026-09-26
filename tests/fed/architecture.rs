@@ -475,7 +475,7 @@ async fn fed_direct_discovery_contacts_exact_domain_endpoint() {
         .and_then(|items| items.first())
         .and_then(|value| value["endpoint"].as_str())
         .expect("discovered endpoint");
-    let direct = discovered_client(endpoint, 1072)
+    let direct = discovered_client(endpoint, 1072, hub.client().tenant())
         .raw(reqwest::Method::GET, &format!("/ngsi-ld/v1/entities?type={}", encode(&btype)))
         .send()
         .await

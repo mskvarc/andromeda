@@ -51,9 +51,9 @@ use crate::{
     error::EntityError,
     port::{query::EntityQueryStore, reader::EntityReader},
     query::remote_linked::RemoteLinkedEntitySource,
+    spatial_acceleration::SpatialAcceleration,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, scoped_context_admission::reject_scoped_user_contexts};
-use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
 
@@ -63,7 +63,8 @@ pub struct EntityQueryService {
     query_store: Arc<dyn EntityQueryStore>,
     engine: JsonLdEngine,
     compiled_cache: CompiledQueryCache,
-    spatial: Arc<SpatialEntityIndex>,
+    /// Which spatial index, if any, a geo query may be narrowed through.
+    spatial: SpatialAcceleration,
     tenant: TenantRef,
     /// Where a Linked Entity the local store does not hold is fetched from
     /// (clause 4.5.23.1). Absent in a composition that resolves links purely
@@ -81,7 +82,7 @@ impl EntityQueryService {
         reader: Arc<dyn EntityReader>,
         query_store: Arc<dyn EntityQueryStore>,
         engine: JsonLdEngine,
-        spatial: Arc<SpatialEntityIndex>,
+        spatial: SpatialAcceleration,
         tenant: TenantRef,
         remote_linked: Option<Arc<dyn RemoteLinkedEntitySource>>,
     ) -> EntityQueryService {

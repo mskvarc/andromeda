@@ -5,12 +5,12 @@
 //! Clause 4.3.6.1: "registered Context Sources may indicate that they are only
 //! willing to respond to a limited subset of API operations ... Context Brokers
 //! shall respect this", and "all constraints specified in the registration shall
-//! be respected". A registration advertising only `queryEntity` (not
-//! `retrieveEntity`), or only `queryBatch` (neither), must still be contacted for
-//! a read the client made, through an operation it does allow. These tests
-//! capture the forwarded request with the mock and assert its resource path and
-//! body/query byte-for-byte, rather than merely counting that the source was
-//! reached: the redesign's behaviour is the *shape* of the downgraded request.
+//! be respected". Query Entities has two bindings of one operation (clause
+//! 6.23.1), so a query reaches a registration advertising only one of them
+//! through that one. A retrieval is not a query: clause 5.7.1.4 forwards it only
+//! to registrations that support `retrieveEntity`. These tests capture the
+//! forwarded request with the mock and assert its resource path and body/query
+//! byte-for-byte, rather than merely counting that the source was reached.
 //!
 //! The distributed client carries the compound test `@context` as its default,
 //! so the covered type `Vehicle` is expanded against it at the broker and
@@ -49,95 +49,47 @@ fn type_query(entity_type: &str, id_pattern: &str) -> Value {
     })
 }
 
-/// Clause 4.3.6.1 / 6.23.1: a retrieve-by-id sent to a registration advertising
-/// only `queryEntity` is downgraded to a GET query naming the entity's id and its
-/// compacted registered type, not a retrieve-by-id the source never registered.
-// The forwarded-request compaction assertions require the literal shared type
-// `Vehicle`, so this test cannot derive a per-test type; it is serialised with
-// the other literal-type tests instead of run concurrently with them.
-#[serial_test::serial(distop_shared_type)]
-#[tokio::test]
-async fn forward_retrieve_downgrades_to_query_naming_id_and_type() {
+/// Clause 5.7.1.4: a retrieval is forwarded only to the registrations that
+/// "match and support the retrieveEntity operation", and Table 4.20-1 names
+/// `retrieveEntity`, `queryEntity` and `queryBatch` as separate operations. A
+/// registration advertising only `queryEntity` or only `queryBatch` does not
+/// apply: its source is never contacted -- neither through a retrieve-by-id nor
+/// through a query standing in for one -- and with no other holder the entity is
+/// not found.
+async fn assert_retrieve_is_not_forwarded_to(operation: &str) {
     let topology = topology::single().await.expect("single-broker topology");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
+    mock.set_stub_with_body(Method::POST, FORWARDED_BATCH_QUERY, 200, &json!([])).await;
 
-    let entity_id = topology.id("Vehicle:bind-retrieve-query");
-    let registration = CsrBuilder::new(&topology.id("registration:bind-retrieve-query"), &mock.url(""))
+    let entity_id = topology.id(&format!("Vehicle:bind-retrieve-{operation}"));
+    let registration = CsrBuilder::new(&topology.id(&format!("registration:bind-retrieve-{operation}")), &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
-        .entity_type("Vehicle")
-        .operations(&["queryEntity"])
+        .entity_type(&topology.id("Vehicle"))
+        .operations(&[operation])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
 
-    // A retrieve-by-id whose only matching registration advertises queryEntity is
-    // reached through a GET query, so no retrieve-by-id path is contacted.
-    let _ = front.client().get_entity(&entity_id, "", "application/ld+json", None).await.expect("retrieve");
-
-    let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
-    assert_eq!(
-        forwarded.uri.path(),
-        FORWARDED_ENTITIES,
-        "the retrieve is downgraded to a GET query, not a retrieve-by-id"
-    );
-    let forwarded_query = forwarded.uri.query().unwrap_or_default();
-    assert!(
-        forwarded_query.contains("id="),
-        "the downgraded query names the entity by id: {forwarded_query}"
-    );
-    assert!(
-        forwarded_query.contains("bind-retrieve-query"),
-        "the downgraded query carries the retrieved id: {forwarded_query}"
-    );
-    assert!(
-        forwarded_query.contains("type=Vehicle"),
-        "the downgraded query names the compacted registered type: {forwarded_query}"
-    );
-    assert_eq!(
-        mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")),
-        0,
-        "no retrieve-by-id request is forwarded to a queryEntity-only source"
-    );
+    let retrieved = front.client().get_entity(&entity_id, "", "application/ld+json", None).await.expect("retrieve");
+    assert_status(&retrieved, 404);
+    // The retrieval answered only after every forwarded request settled, so a
+    // source that was contacted has already recorded it.
+    assert_eq!(mock.get_total_count(), 0, "a {operation}-only source is never contacted for a retrieval");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 4.3.6.1 / 6.23: a retrieve-by-id sent to a registration advertising
-/// only `queryBatch` is downgraded to a POST `entityOperations/query` whose
-/// clause-5.2.23 `Query` body names the entity by its compacted type and id.
-#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
-async fn forward_retrieve_downgrades_to_batch_query_body() {
-    let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A).expect("topology broker A");
-    let mock = ContextSourceAdapter::start().await;
-    mock.set_stub_with_body(Method::POST, FORWARDED_BATCH_QUERY, 200, &json!([])).await;
+async fn a_retrieve_is_not_forwarded_to_a_query_entity_only_registration() {
+    assert_retrieve_is_not_forwarded_to("queryEntity").await;
+}
 
-    let entity_id = topology.id("Vehicle:bind-retrieve-batch");
-    let registration = CsrBuilder::new(&topology.id("registration:bind-retrieve-batch"), &mock.url(""))
-        .mode("exclusive")
-        .entity_id(&entity_id)
-        .property_names(&["speed"])
-        .operations(&["queryBatch"])
-        .build();
-    assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
-
-    let _ = front.client().get_entity(&entity_id, "", "application/ld+json", None).await.expect("retrieve");
-
-    let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
-    assert_eq!(forwarded.uri.path(), FORWARDED_BATCH_QUERY, "the retrieve is downgraded to a batch query");
-    let body = forwarded.json::<Value>().expect("the forwarded batch query carries a JSON body");
-    assert_eq!(body["type"], "Query", "the batch body is a clause-5.2.23 Query: {body}");
-    let selectors = body["entities"].as_array().expect("the Query names its entity selectors");
-    assert_eq!(selectors.len(), 1, "one selector names the retrieved entity: {body}");
-    assert_eq!(selectors[0]["type"], "Vehicle", "the selector names the compacted registered type: {body}");
-    assert_eq!(selectors[0]["id"], json!(entity_id), "the selector names the retrieved id: {body}");
-
-    mock.shutdown().await;
-    topology.finish().await.expect("topology cleanup");
+#[tokio::test]
+async fn a_retrieve_is_not_forwarded_to_a_query_batch_only_registration() {
+    assert_retrieve_is_not_forwarded_to("queryBatch").await;
 }
 
 /// Clause 4.3.6.1 / 6.23: a GET query sent to a registration advertising only

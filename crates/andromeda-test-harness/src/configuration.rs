@@ -60,6 +60,15 @@ impl DatabaseEndpoint {
         &self.url
     }
 
+    /// The endpoint of another database on the same server, reached with the
+    /// same credentials.
+    #[must_use]
+    pub fn with_database(&self, database: &str) -> DatabaseEndpoint {
+        let mut url = self.url.clone(); // clone: the sibling endpoint owns its URL while this one keeps naming its own database
+        url.set_path(&format!("/{database}"));
+        DatabaseEndpoint { url }
+    }
+
     fn redacted(&self) -> Url {
         let mut redacted = self.url.clone(); // clone: diagnostics redact an owned copy without changing the connection endpoint.
         if redacted.password().is_some() {
@@ -194,5 +203,17 @@ mod tests {
 
         assert!(!summary.contains("secret"));
         assert!(summary.contains("REDACTED"));
+    }
+
+    #[test]
+    fn a_sibling_database_keeps_the_server_and_credentials() {
+        let platform = DatabaseEndpoint::parse("postgres://postgres:postgres@127.0.0.1:5442/broker_a?sslmode=disable")
+            .unwrap_or_else(|error| panic!("static database URL is valid: {error}"));
+        let tenant = platform.with_database("andromeda_tenant_distoplease0_0badc0de");
+        pretty_assertions::assert_eq!(
+            tenant.url().as_str(),
+            "postgres://postgres:postgres@127.0.0.1:5442/andromeda_tenant_distoplease0_0badc0de?sslmode=disable"
+        );
+        pretty_assertions::assert_eq!(platform.url().path(), "/broker_a");
     }
 }

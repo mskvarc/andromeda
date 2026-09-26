@@ -1,7 +1,57 @@
 //! A hold that keeps a cached tenant runtime resident for the life of a
 //! request.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio::sync::Notify;
+
+/// What every lease on one cached runtime shares: the strong count the eviction
+/// paths read, and whether the runtime has been retired while leased.
+///
+/// A runtime is retired when its tenant is suspended while a request still holds
+/// it. Eviction spares a leased runtime, so the suspend cannot release it at
+/// once; retiring it instead makes admission refuse it and makes the last lease
+/// to drop wake the janitor, which then releases it. Without that, a suspended
+/// tenant's runtime would stay cached -- and keep running its background work --
+/// until it next idled out, contradicting the promise in
+/// `docs/tenant-management.md` that the runtime drops when the request's hold
+/// releases.
+pub(super) struct LeaseOrigin {
+    /// Set once the runtime's tenant is suspended while the runtime is leased.
+    retired: AtomicBool,
+    /// Woken when a lease on a retired runtime is released, so the janitor
+    /// evicts it without waiting for its next tick.
+    release_signal: Arc<Notify>,
+}
+
+impl LeaseOrigin {
+    /// A fresh, serving origin whose retired releases wake `release_signal`.
+    pub(super) fn new(release_signal: Arc<Notify>) -> Arc<LeaseOrigin> {
+        Arc::new(LeaseOrigin {
+            retired: AtomicBool::new(false),
+            release_signal,
+        })
+    }
+
+    /// Whether the runtime has been retired and must no longer be handed out.
+    pub(super) fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::Acquire)
+    }
+
+    /// Retire the runtime: admission refuses it from now on and the last lease
+    /// to drop wakes the janitor to release it.
+    pub(super) fn retire(&self) {
+        self.retired.store(true, Ordering::Release);
+    }
+
+    /// Return a retired runtime to service, for a tenant resumed before the
+    /// runtime's last lease dropped.
+    pub(super) fn reinstate(&self) {
+        self.retired.store(false, Ordering::Release);
+    }
+}
 
 /// A hold on a cached tenant runtime that spares it from eviction.
 ///
@@ -15,15 +65,16 @@ use std::sync::Arc;
 ///
 /// Cloning a lease adds another hold; the runtime becomes evictable only once
 /// every clone has dropped and the origin's strong count falls back to one.
+/// Dropping a lease on a retired runtime wakes the janitor, so the runtime of a
+/// tenant suspended mid-request is released as soon as its last hold goes.
 #[derive(Clone)]
 pub struct RuntimeLease {
     /// The cloned eviction origin whose strong count keeps the runtime resident.
     ///
-    /// Held purely for its ownership: nothing reads it, and it is the
-    /// [`CachedRuntime`](super::cached_runtime::CachedRuntime)'s own clone of the
-    /// same origin whose strong count the eviction paths inspect. Dropping this
-    /// lets that count fall and the runtime become evictable.
-    _hold: Arc<()>,
+    /// Always `Some` while the lease is alive; taken only by `Drop`, so the hold
+    /// is released before the janitor is woken and the janitor never observes a
+    /// strong count this lease still inflates.
+    hold: Option<Arc<LeaseOrigin>>,
 }
 
 impl RuntimeLease {
@@ -32,18 +83,35 @@ impl RuntimeLease {
     /// Used on the cold-build path, where the origin was cloned as the runtime
     /// entered the cache so the runtime is leased before any concurrent trim
     /// can observe it.
-    pub(super) const fn hold(origin: Arc<()>) -> RuntimeLease {
-        RuntimeLease { _hold: origin }
+    pub(super) const fn hold(origin: Arc<LeaseOrigin>) -> RuntimeLease {
+        RuntimeLease { hold: Some(origin) }
     }
 
     /// Clone a lease from a cached runtime's eviction origin.
     ///
     /// Used on the cache-hit path, under the shard guard that also reads the
     /// state, so the strong count eviction observes already reflects this hold.
-    pub(super) fn clone_from(origin: &Arc<()>) -> RuntimeLease {
+    pub(super) fn clone_from(origin: &Arc<LeaseOrigin>) -> RuntimeLease {
         // clone: a lease is by definition an additional owner of the origin; its
         // whole purpose is to raise the strong count the eviction paths read.
-        RuntimeLease { _hold: Arc::clone(origin) }
+        RuntimeLease {
+            hold: Some(Arc::clone(origin)),
+        }
+    }
+}
+
+impl Drop for RuntimeLease {
+    fn drop(&mut self) {
+        let Some(origin) = self.hold.take() else {
+            return;
+        };
+        if origin.is_retired() {
+            // clone: the signal must outlive the hold, which is released first so
+            // the woken janitor reads the lowered strong count.
+            let signal = Arc::clone(&origin.release_signal);
+            drop(origin);
+            signal.notify_one();
+        }
     }
 }
 

@@ -2,7 +2,7 @@
 
 use crate::{
     context_hit_flush::ContextHitFlushWorker,
-    tenant_factory::{TenantFactoryConfig, error::TenantAssemblyError},
+    tenant_factory::{TenantFactoryConfig, error::TenantAssemblyError, spatial::initialize_spatial},
 };
 use andromeda_context_registry::{cached_context_invalidation::CachedContextInvalidation, hit_store::ContextHitStore};
 use andromeda_context_space::context_target::ContextTarget;
@@ -15,7 +15,7 @@ use andromeda_entity::{
         registry_types::RegistryTypeSource,
         spatial_snapshot::EntitySpatialSnapshotSource,
     },
-    spatial_reconciliation::reconcile_location,
+    spatial_acceleration::SpatialAcceleration,
 };
 use andromeda_entity_map::store::EntityMapStore;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
@@ -46,7 +46,6 @@ use andromeda_postgresql_temporal_store::{
 };
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
-use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_temporal::config::TemporalConfig;
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -73,7 +72,9 @@ pub(super) struct TenantStorage {
     pub(super) entity_map_store: Arc<dyn EntityMapStore>,
     pub(super) snapshot_store: Arc<dyn SnapshotStore>,
     pub(super) subscription_cache: Arc<SubscriptionCache>,
-    pub(super) spatial_index: Arc<SpatialEntityIndex>,
+    /// Which spatial index, if any, the tenant's geo queries are narrowed
+    /// through, seeded from the store.
+    pub(super) spatial: SpatialAcceleration,
 }
 
 /// The background workers one tenant runs over its stored `@contexts`.
@@ -242,10 +243,7 @@ pub(super) async fn initialize_storage(
     {
         tracing::error!(%error, "failed to load subscription cache");
     }
-    let spatial_index = Arc::new(SpatialEntityIndex::new());
-    if let Err(error) = reconcile_location(&spatial_index, entity_ports.spatial_snapshots.as_ref(), tenant).await {
-        tracing::warn!(%error, "spatial warmup failed");
-    }
+    let spatial = initialize_spatial(config.spatial.consistency, &entity_ports.spatial_snapshots, tenant).await?;
     Ok(TenantStorage {
         tenant: tenant.clone(), // clone: the storage graph names the tenant it was opened for.
         pool,
@@ -262,7 +260,7 @@ pub(super) async fn initialize_storage(
         entity_map_store,
         snapshot_store,
         subscription_cache,
-        spatial_index,
+        spatial,
     })
 }
 

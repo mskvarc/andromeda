@@ -7,6 +7,15 @@
 //! subscriptions a claim reads are all in that one branch -- there is no
 //! cross-branch join to recover which Snapshot a delivery belongs to, because
 //! the branch being drained already names it.
+//!
+//! A Snapshot branch is claimed only while its control record is key-share
+//! locked. Deleting, expiring or evicting a Snapshot locks that record `FOR
+//! UPDATE` before `DROP SCHEMA ... CASCADE` takes each branch relation in its
+//! own order; a claim that reached the branch relations without the record
+//! would hold some of them while the drop held others, a cycle PostgreSQL
+//! breaks by aborting one side. Taking the record first orders the two
+//! instead: a claim waits out a drop in flight and then finds the record gone,
+//! and a drop waits out a claim in flight.
 
 use crate::{
     error::ContextStoreError,
@@ -16,12 +25,13 @@ use crate::{
     },
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
-use andromeda_context_space::context_target::ContextTarget;
+use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
 use andromeda_notification::delivery_lease::LeaseTerm;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     notification::{NotificationDeliveries, NotificationEvents},
+    snapshot::Snapshots,
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{
@@ -50,7 +60,7 @@ use sea_query::{
     UpdateStatement,
 };
 use sea_query_sqlx::SqlxBinder;
-use sqlx::postgres::PgPool;
+use sqlx::{Postgres, Transaction, postgres::PgPool};
 
 /// The statement name the delivery claim is observed under.
 const DELIVERY_CLAIM: StatementName = StatementName("notification-delivery-claim");
@@ -103,6 +113,12 @@ async fn claim_branch(
     batch_size: i32,
 ) -> Result<Vec<Result<ClaimedDelivery, ClaimedDeliveryError>>, ContextStoreError> {
     let mut tx = pool.begin().await?;
+    if let Some(snapshot) = target.snapshot()
+        && hold_snapshot_record(&mut tx, snapshot).await? == SnapshotRecord::Reaped
+    {
+        tx.commit().await?;
+        return Ok(Vec::new());
+    }
 
     let (sql, values) = claim_statement(target, worker_id, batch_size, f64::from(lease.seconds())).build_sqlx(PostgresQueryBuilder);
     let claim = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx);
@@ -119,6 +135,41 @@ async fn claim_branch(
 
     tx.commit().await?;
     Ok(rows.into_iter().map(|row| ClaimedDelivery::from_row(row, target.clone())).collect())
+}
+
+/// Whether a Snapshot's control record still existed when a claim locked it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnapshotRecord {
+    /// The record exists and is key-share locked until the claim commits, so
+    /// its branch cannot be dropped under the claim.
+    Held,
+    /// The Snapshot was deleted, expired or evicted; its branch is gone or
+    /// about to be, and its deliveries are moot.
+    Reaped,
+}
+
+/// Key-share lock the control record of `snapshot` inside the claim's
+/// transaction, before any relation of its branch is touched.
+///
+/// `FOR KEY SHARE` conflicts with the `FOR UPDATE` every reaping path takes on
+/// the record, and with nothing else: status transitions update non-key
+/// columns and proceed alongside a claim.
+async fn hold_snapshot_record(tx: &mut Transaction<'_, Postgres>, snapshot: &SnapshotTarget) -> Result<SnapshotRecord, ContextStoreError> {
+    let (sql, values) = snapshot_record_lock_statement(snapshot).build_sqlx(PostgresQueryBuilder);
+    let held: Option<i64> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_optional(&mut **tx)
+        .await?;
+    Ok(if held.is_some() { SnapshotRecord::Held } else { SnapshotRecord::Reaped })
+}
+
+/// `SELECT snapshot_key FROM snapshots WHERE snapshot_key = $1 FOR KEY SHARE`.
+fn snapshot_record_lock_statement(snapshot: &SnapshotTarget) -> SelectStatement {
+    Query::select()
+        .column(Snapshots::SnapshotKey)
+        .from(Snapshots::Table)
+        .and_where(Expr::col(Snapshots::SnapshotKey).eq(snapshot.key().as_i64()))
+        .lock(LockType::KeyShare)
+        .to_owned()
 }
 
 /// The `UNNEST … WITH ORDINALITY AS k(name_id, position)` names that
@@ -253,7 +304,7 @@ fn bigint_array(ids: &[i64]) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_delivery::claim::{claim_statement, claimed_projection_statement, ordinality_alias};
+    use crate::notification_delivery::claim::{claim_statement, claimed_projection_statement, ordinality_alias, snapshot_record_lock_statement};
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_postgresql_seaquery::unnest::apply_with_ordinality;
@@ -264,6 +315,17 @@ mod tests {
         let sql = claimed_projection_statement(target, &[1, 2]).to_string(PostgresQueryBuilder);
         let (alias, columns, ordinality) = ordinality_alias();
         apply_with_ordinality(sql, &alias, &columns, &ordinality)
+    }
+
+    /// The claim orders itself against a reaping drop through the Snapshot's
+    /// control record, so the lock must be the one that conflicts with the
+    /// reaper's `FOR UPDATE` and with nothing a status transition takes.
+    #[test]
+    fn a_snapshot_branch_claim_key_share_locks_the_control_record_first() {
+        let target = snapshot();
+        let snapshot = target.snapshot().expect("a Snapshot target");
+        let sql = snapshot_record_lock_statement(snapshot).to_string(PostgresQueryBuilder);
+        pretty_assertions::assert_eq!(sql, r#"SELECT "snapshot_key" FROM "snapshots" WHERE "snapshot_key" = 5 FOR KEY SHARE"#);
     }
 
     fn snapshot() -> ContextTarget {

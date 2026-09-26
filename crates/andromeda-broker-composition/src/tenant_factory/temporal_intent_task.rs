@@ -124,7 +124,9 @@ pub(super) fn register_temporal_intent_drain(
 fn classify_temporal_drain_failure(error: &TemporalError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::StoreSaturated => TaskFailure::transient(summary),
+        TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::StoreSaturated | TemporalError::TransactionContended => {
+            TaskFailure::transient(summary)
+        }
         TemporalError::Internal(_) => TaskFailure::invariant_violation(summary),
         TemporalError::Validation(_)
         | TemporalError::NotFound(_)

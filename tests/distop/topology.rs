@@ -6,7 +6,11 @@
 use andromeda_test_client::header::jsonld_link_header;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::{
-    multi_broker::{BrokerEnvironmentKey, BrokerNodeDefaults, BrokerNodeSpec, MultiBrokerError, MultiBrokerTopology},
+    multi_broker::{
+        MultiBrokerError,
+        MultiBrokerTopology,
+        node_spec::{BrokerEnvironmentKey, BrokerNodeDefaults, BrokerNodeSpec},
+    },
     readiness::ReadinessPolicy,
 };
 use std::time::Duration;

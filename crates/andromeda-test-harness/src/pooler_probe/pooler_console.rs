@@ -32,6 +32,17 @@ pub struct PoolRow {
     pub cl_waiting: i64,
 }
 
+/// One row of `SHOW CLIENTS`: a client connection logged in to `PgBouncer`.
+#[derive(Debug, Clone)]
+pub struct ClientRow {
+    /// The database the client logged in to.
+    pub database: String,
+    /// The client's `application_name` startup parameter.
+    pub application_name: String,
+    /// The client's state (`active`, `waiting`, ...).
+    pub state: String,
+}
+
 impl PoolRow {
     /// Every server connection this pool holds against `PostgreSQL`.
     #[must_use]
@@ -124,6 +135,18 @@ impl PoolerConsole {
         Ok(rows?.iter().map(pool_row).collect())
     }
 
+    /// Read `SHOW CLIENTS`, one [`ClientRow`] per client connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`sqlx::Error`] from connecting or reading.
+    pub async fn show_clients(&self) -> Result<Vec<ClientRow>, sqlx::Error> {
+        let mut connection = self.connect().await?;
+        let rows = sqlx::raw_sql("SHOW CLIENTS").fetch_all(&mut connection).await;
+        let _ = connection.close().await;
+        Ok(rows?.iter().map(client_row).collect())
+    }
+
     /// The total server connections `PgBouncer` holds against `PostgreSQL` across
     /// every pool except its own admin database.
     ///
@@ -151,6 +174,16 @@ fn pool_row(row: &PgRow) -> PoolRow {
         sv_used: integer_column(row, "sv_used"),
         cl_active: integer_column(row, "cl_active"),
         cl_waiting: integer_column(row, "cl_waiting"),
+    }
+}
+
+/// Decode one `SHOW CLIENTS` row, defaulting any column `PgBouncer`'s build does
+/// not send as text rather than failing the whole read.
+fn client_row(row: &PgRow) -> ClientRow {
+    ClientRow {
+        database: row.try_get::<String, _>("database").unwrap_or_default(),
+        application_name: row.try_get::<String, _>("application_name").unwrap_or_default(),
+        state: row.try_get::<String, _>("state").unwrap_or_default(),
     }
 }
 

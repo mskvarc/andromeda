@@ -1,7 +1,7 @@
 //! One tenant's live runtime, when it was last reached for, and the hold a
 //! request takes against its eviction.
 
-use crate::database_name::TenantDatabaseName;
+use crate::{database_name::TenantDatabaseName, runtime::lease::LeaseOrigin};
 use std::{
     sync::{
         Arc,
@@ -44,17 +44,16 @@ pub(super) struct CachedRuntime<S, R> {
     /// raises the strong count above one; every eviction path treats a count
     /// above one as "in use" and spares the runtime, so a request holding this
     /// runtime's state is never handed a pool eviction closed underneath it.
-    pub(super) origin: Arc<()>,
+    pub(super) origin: Arc<LeaseOrigin>,
 }
 
 impl<S, R> CachedRuntime<S, R> {
     /// Build a freshly leased runtime and the lease held against it.
     ///
-    /// The origin is created here so the caller's lease and this runtime's
-    /// field are the first two owners: the runtime is leased from the instant
-    /// it enters the cache, before any concurrent trim can observe it.
-    pub(super) fn newly_leased(state: Arc<S>, runtime: R, database: TenantDatabaseName) -> (CachedRuntime<S, R>, Arc<()>) {
-        let origin = Arc::new(());
+    /// `origin` is fresh, so the caller's lease and this runtime's field are its
+    /// first two owners: the runtime is leased from the instant it enters the
+    /// cache, before any concurrent trim can observe it.
+    pub(super) fn newly_leased(state: Arc<S>, runtime: R, database: TenantDatabaseName, origin: Arc<LeaseOrigin>) -> (CachedRuntime<S, R>, Arc<LeaseOrigin>) {
         // clone: the lease is a second owner of the origin by construction; the
         // cache field and the returned handle are the two owners that make the
         // strong count read two while a request holds it.
@@ -77,13 +76,13 @@ impl<S, R> CachedRuntime<S, R> {
     /// Unleased from the start, so a sweep may evict it once it has idled past
     /// its residency; the waker backdates its last use so it is the first idle
     /// victim and never displaces a request-touched runtime.
-    pub(super) fn unleased(state: Arc<S>, runtime: R, database: TenantDatabaseName) -> CachedRuntime<S, R> {
+    pub(super) fn unleased(state: Arc<S>, runtime: R, database: TenantDatabaseName, origin: Arc<LeaseOrigin>) -> CachedRuntime<S, R> {
         CachedRuntime {
             state,
             runtime,
             database,
             last_used: AtomicU64::new(now_millis()),
-            origin: Arc::new(()),
+            origin,
         }
     }
 
@@ -118,5 +117,11 @@ impl<S, R> CachedRuntime<S, R> {
     /// request that resolved this runtime.
     pub(super) fn is_leased(&self) -> bool {
         Arc::strong_count(&self.origin) > 1
+    }
+
+    /// Whether this runtime was retired by a suspend while leased, and must no
+    /// longer be handed to a request.
+    pub(super) fn is_retired(&self) -> bool {
+        self.origin.is_retired()
     }
 }

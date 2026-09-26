@@ -18,6 +18,9 @@ pub mod status;
 /// Port for waking durable Snapshot status-notification delivery.
 pub mod status_delivery_signal;
 pub mod store;
+/// An in-memory store double for the policy tests.
+#[cfg(test)]
+mod store_double;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

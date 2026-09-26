@@ -19,7 +19,7 @@ use crate::{
     error::FederationError,
     forwarded_parameter::ForwardedParameter,
     forwarded_query::{
-        block_footprint::{AttrCoverage, BlockSelection, block_attrs, block_covers_id},
+        block_footprint::{AttrCoverage, BlockSelection, block_attrs, block_covers_id, covered_type},
         client_query::ClientQuery,
     },
     request::SourcePage,
@@ -154,6 +154,16 @@ impl ForwardedQuery {
                 // its attribute constraint, and only when it covers the entity.
                 if !block_covers_id(block, id) {
                     return Ok(None);
+                }
+                // Clause 5.7.1.4: where the client specified a type, the target
+                // is the entity whose id "and, where specified type, is
+                // equivalent", so a block covering none of the selected types
+                // does not hold it, and the source is told the part it covers.
+                if let Some(entity_type) = params.entity_type.as_ref() {
+                    let Some(covered) = covered_type(entity_type, block, resolver).await? else {
+                        return Ok(None);
+                    };
+                    query.push(ForwardedParameter::Type, covered.to_string());
                 }
                 if !query.push_block_attrs(block_attrs(block, params.attrs.as_deref(), resolver).await?) {
                     return Ok(None);
@@ -719,6 +729,29 @@ mod tests {
         let block = registration(&json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:Other", "type": VEHICLE}], "propertyNames": [SPEED]}]));
         let id = uri(VEHICLE_X);
         let params = GetEntityParams::default();
+        let forwarded = narrow(ClientQuery::EntityRetrieve { id: &id, params: &params }, &block, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), Vec::<String>::new());
+    }
+
+    /// Clauses 5.7.1.3 and 5.7.1.4: a retrieval naming a type reaches a block
+    /// only when the block covers the entity under one of the selected types,
+    /// and the source is told the type so it applies the same selection.
+    #[tokio::test]
+    async fn a_typed_retrieval_forwards_the_type_the_block_covers() {
+        let block = registration(&json!([{"entities": [{"id": VEHICLE_X, "type": VEHICLE}]}]));
+        let id = uri(VEHICLE_X);
+        let params: GetEntityParams = serde_urlencoded::from_str("type=Vehicle").expect("valid retrieve parameters");
+        let forwarded = narrow(ClientQuery::EntityRetrieve { id: &id, params: &params }, &block, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle".to_string()]);
+    }
+
+    /// Clause 5.7.1.4: a block registering the entity under a type outside the
+    /// selector does not hold the target, so it forwards nothing.
+    #[tokio::test]
+    async fn a_typed_retrieval_skips_a_block_registering_another_type() {
+        let block = registration(&json!([{"entities": [{"id": VEHICLE_X, "type": "https://example.org/Car"}]}]));
+        let id = uri(VEHICLE_X);
+        let params: GetEntityParams = serde_urlencoded::from_str("type=Vehicle").expect("valid retrieve parameters");
         let forwarded = narrow(ClientQuery::EntityRetrieve { id: &id, params: &params }, &block, SplitEntities::Complete).await;
         pretty_assertions::assert_eq!(strings(&forwarded), Vec::<String>::new());
     }

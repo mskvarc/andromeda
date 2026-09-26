@@ -39,7 +39,7 @@ impl ClientQuery<'_> {
         match self {
             ClientQuery::EntityQuery(params) => params.entity_type.as_ref(),
             ClientQuery::Temporal(params) => params.entity_type.as_ref(),
-            ClientQuery::EntityRetrieve { .. } => None,
+            ClientQuery::EntityRetrieve { params, .. } => params.entity_type.as_ref(),
         }
     }
 

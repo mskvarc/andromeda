@@ -58,7 +58,9 @@
 -- relations in `public` as part of the tenant migration set and creates and
 -- upgrades the same relations inside every Snapshot schema under the branch
 -- ledger. Dictionary, unit-code and function references resolve to `public`
--- through the search path; every other reference resolves to the branch.
+-- through the search path; every other reference resolves to the branch. A
+-- branch file declares no foreign key into `public`: the dictionary
+-- references of the live relations are added by the live-only 0029.
 -- ============================================================================
 
 CREATE TABLE temporal_entities (
@@ -88,8 +90,5 @@ CREATE TABLE temporal_attribute_streams (
     CONSTRAINT fk_temporal_attribute_streams_entity
         FOREIGN KEY (temporal_entity_key)
         REFERENCES temporal_entities(entity_key) ON DELETE CASCADE,
-    CONSTRAINT fk_temporal_attribute_streams_attribute_name
-        FOREIGN KEY (attribute_name_id)
-        REFERENCES attribute_names(id),
     CONSTRAINT chk_temporal_attribute_streams_dataset_id_length CHECK (octet_length(dataset_id) <= 1024)
 );

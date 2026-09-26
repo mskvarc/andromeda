@@ -67,6 +67,7 @@ impl SubscriptionForwardingService {
     /// other holder (clause 5.8.6 split entities).
     async fn reassemble_entity(&self, received: Entity, sender: &Uri, context: &ContextSpec) -> Result<Entity, SubscriptionForwardingError> {
         let narrowing = RetrievalNarrowing {
+            entity_type: None,
             attrs: &[],
             sys_attrs: SysAttrsInclusion::Strip,
             dataset_ids: &[],

@@ -67,6 +67,14 @@ pub enum TemporalError {
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
+    /// The datastore rolled the transaction back to break a deadlock or a
+    /// serialization conflict with a concurrent transaction.
+    ///
+    /// Not a fault: the whole transaction was undone, so the well-formed
+    /// request can be retried unchanged. It is answered 503 with
+    /// `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the operation was rolled back by a concurrent transaction; retry shortly")]
+    TransactionContended,
     /// Temporal representation construction failed.
     #[error("temporal rendering failed: {0}")]
     Rendering(TemporalDiagnostic),
@@ -90,6 +98,7 @@ impl From<CommitError> for TemporalError {
             // own category rather than being folded into the internal-fault
             // `Commit` variant.
             CommitError::StoreSaturated => TemporalError::StoreSaturated,
+            CommitError::TransactionContended => TemporalError::TransactionContended,
             failure @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence { .. }
             | CommitError::Invariant { .. }

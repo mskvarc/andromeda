@@ -8,9 +8,16 @@
 //! retry a request that can never succeed is the failure this module exists to
 //! prevent. The store types already carry the distinction, so it is translated
 //! here once rather than re-derived — or lost — in each phase.
+//!
+//! Two failures are neither: a saturated pool, and a transaction PostgreSQL
+//! rolled back to break a deadlock or a serialization conflict. Both leave
+//! nothing behind and the identical write can run again, so each keeps a
+//! category of its own; the second is what the committer re-runs.
 
 use andromeda_context_commit::error::CommitError;
 use andromeda_postgresql_context_store::error::ContextStoreError;
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
+use andromeda_postgresql_pool::is_transaction_rolled_back;
 use andromeda_postgresql_temporal_store::{error::TemporalStoreError, unit_code_metadata::UnitCodeMetadataError};
 use andromeda_temporal::error::TemporalError;
 use std::fmt::Display;
@@ -39,6 +46,9 @@ pub(crate) fn database(error: sqlx::Error) -> CommitError {
 /// least one Entity type, and an Entity that carries none is a body the client
 /// wrote, not a fault of the store that refused it.
 pub(crate) fn context_store(error: ContextStoreError) -> CommitError {
+    if error.is_transaction_rolled_back() {
+        return CommitError::TransactionContended;
+    }
     match error {
         ContextStoreError::EntityTypes(detail) => CommitError::Submission { detail: detail.to_string() },
         // Pool saturation is backpressure the client can retry, not a fault.
@@ -71,6 +81,7 @@ pub(crate) fn temporal(error: TemporalError) -> CommitError {
         TemporalError::Validation(reason) => CommitError::Submission { detail: reason.to_string() },
         // Pool saturation is backpressure the client can retry, not a fault.
         TemporalError::StoreSaturated => CommitError::StoreSaturated,
+        TemporalError::TransactionContended => CommitError::TransactionContended,
         TemporalError::NotFound(_)
         | TemporalError::OperationNotSupported(_)
         | TemporalError::TooManyResults { .. }
@@ -92,6 +103,23 @@ pub(crate) fn temporal_store(error: TemporalStoreError) -> CommitError {
     temporal(TemporalError::from(error))
 }
 
+/// Classify a name-dictionary failure raised while minting the keys a write
+/// binds.
+///
+/// Minting inserts into a tenant-global dictionary, so it is where two
+/// concurrent writers of overlapping new names meet; a transaction rolled back
+/// there is contention like anywhere else in the commit.
+pub(crate) fn name_lookup(error: NameLookupError) -> CommitError {
+    match &error {
+        NameLookupError::Statement(inner) if is_transaction_rolled_back(inner) => CommitError::TransactionContended,
+        NameLookupError::Statement(_)
+        | NameLookupError::StatementBuild(_)
+        | NameLookupError::StoredAttributeName { .. }
+        | NameLookupError::StoredEntityTypeName { .. }
+        | NameLookupError::Growth(_) => persistence(error),
+    }
+}
+
 /// Classify a `unitCode` failure raised while projecting current state.
 ///
 /// A code the client wrote is the client's to correct; an identity already in a
@@ -105,10 +133,11 @@ pub(crate) fn unit_code(error: UnitCodeMetadataError) -> CommitError {
 
 #[cfg(test)]
 mod tests {
-    use crate::commit_refusal::{context_store, persistence, temporal, temporal_store, unit_code};
+    use crate::commit_refusal::{context_store, name_lookup, persistence, temporal, temporal_store, unit_code};
     use andromeda_context_commit::error::CommitError;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_postgresql_context_store::{entity::types_present::EntityTypesMissing, error::ContextStoreError};
+    use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
     use andromeda_postgresql_temporal_store::{error::TemporalStoreError, unit_code_metadata::UnitCodeMetadataError};
     use andromeda_temporal::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
 
@@ -179,5 +208,25 @@ mod tests {
         use crate::commit_refusal::database;
         assert!(matches!(database(sqlx::Error::PoolTimedOut), CommitError::StoreSaturated));
         assert!(matches!(database(sqlx::Error::RowNotFound), CommitError::Persistence { .. }));
+    }
+
+    /// A transaction the datastore rolled back is re-run by the committer, so
+    /// it must reach the commit boundary as contention from every phase that
+    /// can raise it. The 40P01/40001 recognition itself is exercised in
+    /// andromeda-postgresql-pool, whose fake database error can carry a
+    /// SQLSTATE a bare `sqlx::Error` cannot; here, the typed contention of a
+    /// lower layer is carried through and nothing else is mistaken for it.
+    #[test]
+    fn contention_from_a_lower_layer_stays_contention_and_nothing_else_becomes_it() {
+        assert!(matches!(temporal(TemporalError::TransactionContended), CommitError::TransactionContended));
+        assert!(matches!(temporal(TemporalError::StoreSaturated), CommitError::StoreSaturated));
+        assert!(matches!(
+            context_store(ContextStoreError::Database(sqlx::Error::RowNotFound)),
+            CommitError::Persistence { .. }
+        ));
+        assert!(matches!(
+            name_lookup(NameLookupError::Statement(sqlx::Error::RowNotFound)),
+            CommitError::Persistence { .. }
+        ));
     }
 }

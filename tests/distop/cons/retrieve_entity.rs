@@ -178,11 +178,16 @@ async fn distop_retrieve_entity_forwards_only_retrieveentity_capable_csrs() {
         mock.get_count(Method::GET, &format!("/s3/ngsi-ld/v1/entities/{entity_id}")) > 0,
         "combined-capability source is forwarded"
     );
-    assert_eq!(
-        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/entities/{entity_id}")),
-        0,
-        "queryEntity-only source is not forwarded"
-    );
+    // Neither a retrieve-by-id nor a query standing in for one reaches the
+    // queryEntity-only source (clause 5.7.1.4, Table 4.20-1).
+    let reached_query_only = mock
+        .drain_requests()
+        .await
+        .into_iter()
+        .filter(|request| request.uri.path().starts_with("/s2/"))
+        .map(|request| request.uri.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(reached_query_only, Vec::<String>::new(), "queryEntity-only source is not forwarded");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

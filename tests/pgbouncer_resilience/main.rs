@@ -9,7 +9,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::pooler_probe::{endpoints, pooler_console::PoolerConsole, tenant_cleanup, tenant_load, tenant_load::UniformPicker};
+use andromeda_test_harness::pooler_probe::{
+    endpoints,
+    pooler_console::PoolerConsole,
+    request_outcome::{RequestOutcome, TransportFailure},
+    tenant_cleanup,
+    tenant_load,
+    tenant_load::UniformPicker,
+};
 use reqwest::Client;
 use sqlx::PgPool;
 use std::{future::Future, slice, time::Duration};
@@ -44,17 +51,17 @@ async fn reset(client: &Client, pool: &PgPool) {
     let _ = tenant_cleanup::reset(client, &refs, pool).await;
 }
 
-/// GET the provisioned entity under `tenant`, returning the status (0 on error).
-async fn get_provisioned(client: &Client, broker: &str, tenant: &str) -> u16 {
+/// GET the provisioned entity under `tenant`.
+async fn get_provisioned(client: &Client, broker: &str, tenant: &str) -> RequestOutcome {
     let id = urlencoding::encode(&format!("urn:ngsi-ld:Device:provision:{tenant}")).into_owned();
-    client
-        .get(format!("{broker}entities/{id}"))
-        .header("NGSILD-Tenant", tenant)
-        .header("Accept", "application/ld+json")
-        .header("Link", link_header())
-        .send()
-        .await
-        .map_or(0, |response| response.status().as_u16())
+    RequestOutcome::of(
+        client
+            .get(format!("{broker}entities/{id}"))
+            .header("NGSILD-Tenant", tenant)
+            .header("Accept", "application/ld+json")
+            .header("Link", link_header()),
+    )
+    .await
 }
 
 /// Drive a uniform read workload while `disruption` runs concurrently, returning
@@ -92,8 +99,11 @@ async fn reconnect_under_load_loses_no_request() {
     })
     .await;
 
-    println!("reconnect under load: {} requests, {} non-2xx", report.total, report.non_2xx);
-    assert_eq!(report.non_2xx, 0, "a reconnect under load must lose no request");
+    println!(
+        "reconnect under load: {} requests, {} non-2xx, statuses {:?}, transport failures {:?} {:?}",
+        report.total, report.non_2xx, report.statuses, report.transport_failures, report.transport_samples
+    );
+    assert_eq!(report.non_2xx, 0, "a reconnect under load must lose no request: {:?}", report.error_details);
     reset(&client, &pool).await;
     pool.close().await;
 }
@@ -109,19 +119,25 @@ async fn a_paused_pooler_stalls_then_resumes_requests() {
     tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 16).await;
     let console = PoolerConsole::new(endpoints::pgbouncer_admin_url());
 
+    // The pause stays well inside the pooler's four-second query_wait_timeout,
+    // so every stalled transaction resumes rather than being shed.
     let report = load_with(&client, &broker, &tenants, 12, async {
         sleep(Duration::from_secs(2)).await;
         let _ = console.pause().await;
-        sleep(Duration::from_secs(3)).await;
+        sleep(Duration::from_secs(2)).await;
         let _ = console.resume().await;
     })
     .await;
 
     println!(
-        "paused pooler: {} requests, {} non-2xx, max latency {:?}",
-        report.total, report.non_2xx, report.max
+        "paused pooler: {} requests, {} non-2xx, statuses {:?}, transport failures {:?} {:?}, max latency {:?}",
+        report.total, report.non_2xx, report.statuses, report.transport_failures, report.transport_samples, report.max
     );
-    assert_eq!(report.non_2xx, 0, "a pause then resume must complete every in-flight request");
+    assert_eq!(
+        report.non_2xx, 0,
+        "a pause then resume must complete every in-flight request: {:?}",
+        report.error_details
+    );
     assert!(
         report.max < Duration::from_secs(8),
         "max latency must stay within the pause plus a margin, saw {:?}",
@@ -159,7 +175,7 @@ async fn terminated_server_backends_are_replaced() {
     // After the disruption, every tenant answers again.
     let mut recovered = 0;
     for tenant in &tenants {
-        if (200..300).contains(&get_provisioned(&client, &broker, tenant).await) {
+        if get_provisioned(&client, &broker, tenant).await.is_success() {
             recovered += 1;
         }
     }
@@ -213,6 +229,7 @@ async fn pool_saturation_is_a_503_with_retry_after_never_a_500() {
     // 503 carrying Retry-After -- never a 500 and never a hang past the client
     // timeout.
     let mut statuses = Vec::new();
+    let mut transport_failures = Vec::new();
     let mut retry_after_ok = true;
     for _ in 0..64 {
         match client
@@ -233,7 +250,7 @@ async fn pool_saturation_is_a_503_with_retry_after_never_a_500() {
                 }
                 statuses.push(code);
             }
-            Err(_) => statuses.push(0),
+            Err(error) => transport_failures.push(TransportFailure::from_error(&error)),
         }
     }
     // The bystander tenant is unaffected.
@@ -245,14 +262,16 @@ async fn pool_saturation_is_a_503_with_retry_after_never_a_500() {
     hog.close().await;
 
     let server_errors = statuses.iter().filter(|code| **code >= 500 && **code != 503).count();
-    let transport = statuses.iter().filter(|code| **code == 0).count();
-    println!("saturation: statuses {statuses:?}, 5xx-not-503 {server_errors}, transport {transport}, bystander {bystander_status}");
+    println!("saturation: statuses {statuses:?}, 5xx-not-503 {server_errors}, transport failures {transport_failures:?}, bystander {bystander_status:?}");
     assert_eq!(server_errors, 0, "pool saturation must never surface a 500");
-    assert_eq!(transport, 0, "pool saturation must not hang the request past the client timeout");
+    assert!(
+        transport_failures.is_empty(),
+        "pool saturation must not hang or drop the request: {transport_failures:?}"
+    );
     assert!(retry_after_ok, "every 503 must carry a Retry-After header");
     assert!(
-        (200..300).contains(&bystander_status),
-        "a bystander tenant must be unaffected by another tenant's saturation"
+        bystander_status.is_success(),
+        "a bystander tenant must be unaffected by another tenant's saturation: {bystander_status:?}"
     );
     reset(&client, &pool).await;
     pool.close().await;
@@ -282,22 +301,21 @@ async fn a_killed_database_pool_recovers() {
     // is "serves again", not "serves instantly": poll until a 2xx within a bound,
     // never a 5xx-other-than-503 and never a hang.
     let deadline = Instant::now() + Duration::from_secs(15);
-    let mut status = 0;
-    while Instant::now() < deadline {
-        status = get_provisioned(&client, &broker, &tenant).await;
-        if (200..300).contains(&status) {
-            break;
-        }
+    let mut outcome = get_provisioned(&client, &broker, &tenant).await;
+    while !outcome.is_success() && Instant::now() < deadline {
+        // A request in flight when the pool was killed may lose its connection;
+        // any answer must still be 503 backpressure, never another 5xx.
         assert!(
-            status == 503 || status == 0,
-            "a killed pool must recover through 503 backpressure, never another 5xx, saw {status}"
+            matches!(outcome.status(), Some(503) | None),
+            "a killed pool must recover through 503 backpressure, never another 5xx, saw {outcome:?}"
         );
         sleep(Duration::from_millis(500)).await;
+        outcome = get_provisioned(&client, &broker, &tenant).await;
     }
-    println!("killed database pool: post-recovery status {status}");
+    println!("killed database pool: post-recovery outcome {outcome:?}");
     assert!(
-        (200..300).contains(&status),
-        "a tenant must serve again after its pool is killed and resumed, saw {status}"
+        outcome.is_success(),
+        "a tenant must serve again after its pool is killed and resumed, saw {outcome:?}"
     );
     reset(&client, &pool).await;
     pool.close().await;

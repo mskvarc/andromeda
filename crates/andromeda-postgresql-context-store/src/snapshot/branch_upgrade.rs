@@ -102,8 +102,8 @@ pub async fn upgrade_snapshot_branches(pool: &PgPool, set: &BranchMigrationSet) 
     Ok(report)
 }
 
-/// Run the branch migrator in every branch schema one Snapshot still has; the
-/// staging schema is gone once a Snapshot is published.
+/// Run the branch migrator in the one branch schema a Snapshot has: its staging
+/// schema while it prepares, its published schema once its preparation ended.
 async fn upgrade_snapshot(connection: &mut PgConnection, set: &BranchMigrationSet, key: SnapshotKey) -> Result<(), ContextStoreError> {
     for branch in [SnapshotBranch::Published, SnapshotBranch::Staging] {
         let schema = snapshot_schema_name(key, branch);

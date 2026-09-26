@@ -19,6 +19,9 @@ pub enum NotificationsConfigError {
     /// The interval-notification idle sleep ceiling was configured as zero.
     #[error("notifications.interval_max_sleep must be greater than zero")]
     ZeroIntervalMaxSleep,
+    /// The live change buffer was configured to hold no change.
+    #[error("notifications.live_change_capacity must be at least 1")]
+    ZeroLiveChangeCapacity,
 }
 
 /// Durable-delivery and streaming notification configuration.
@@ -41,6 +44,17 @@ pub struct NotificationsConfig {
     /// Human-readable form (`"30s"`).
     #[toml_comment(inline)]
     pub interval_max_sleep: HumanDuration,
+    /// Committed entity changes each tenant buffers for live notification
+    /// evaluation.
+    ///
+    /// Only `live` delivery reads the buffer; `durable` delivery records every
+    /// notification in the commit that raised it and allocates a one-change
+    /// buffer. Every slot is allocated when the tenant runtime starts, for
+    /// every cached runtime: at under half a kilobyte a slot the default costs
+    /// under 4 MB per runtime. Live delivery is not durable: a burst larger
+    /// than the buffer, arriving faster than the evaluator reads it, loses the
+    /// notifications of its oldest changes.
+    pub live_change_capacity: usize,
 }
 
 impl Default for NotificationsConfig {
@@ -49,6 +63,7 @@ impl Default for NotificationsConfig {
             delivery: DeliveryConfig::default(),
             streaming: NotificationConfig::default(),
             interval_max_sleep: HumanDuration::from_secs(30),
+            live_change_capacity: 8192,
         }
     }
 }
@@ -61,12 +76,16 @@ impl NotificationsConfig {
     /// Returns [`NotificationsConfigError`] wrapping the delivery or streaming
     /// error its owner reported for whichever sub-configuration is invalid, or
     /// [`NotificationsConfigError::ZeroIntervalMaxSleep`] when the interval idle
-    /// ceiling is zero.
+    /// ceiling is zero, or [`NotificationsConfigError::ZeroLiveChangeCapacity`]
+    /// when the live change buffer holds no change.
     pub fn validate(&self) -> Result<(), NotificationsConfigError> {
         self.delivery.validate()?;
         self.streaming.validate()?;
         if self.interval_max_sleep.is_zero() {
             return Err(NotificationsConfigError::ZeroIntervalMaxSleep);
+        }
+        if self.live_change_capacity == 0 {
+            return Err(NotificationsConfigError::ZeroLiveChangeCapacity);
         }
         Ok(())
     }

@@ -2,15 +2,21 @@
 //!
 //! Several tier assertions are about broker-internal counters -- cold builds,
 //! cached-runtime gauges, dormant-tenant wakes -- that are only observable
-//! through the metrics endpoint. This scrapes `GET /ngsi-ld/v1/metrics` and
-//! parses the named series so a test can read one out.
+//! through the metrics endpoint. The tier's brokers mount their management
+//! plane on the data-plane port (`management.mode = "merged"`), so this scrapes
+//! `GET /metrics` at the root of the broker's origin and parses the named series
+//! so a test can read one out.
 
 use reqwest::Client;
 use thiserror::Error;
+use url::Url;
 
 /// Why a metrics scrape could not be read or parsed.
 #[derive(Debug, Error)]
 pub enum MetricsScrapeError {
+    /// The broker base URL could not be resolved to its metrics endpoint.
+    #[error("broker base URL cannot locate the metrics endpoint: {0}")]
+    BaseUrl(#[from] url::ParseError),
     /// The HTTP request to the metrics endpoint failed.
     #[error("metrics request failed: {0}")]
     Request(#[from] reqwest::Error),
@@ -38,18 +44,21 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    /// Scrape and parse the exposition served under `broker_base`.
+    /// Scrape and parse the exposition of the broker serving `broker_base`.
     ///
     /// `broker_base` is the NGSI-LD API base with a trailing slash, e.g.
-    /// `http://127.0.0.1:1067/ngsi-ld/v1/`; the metrics route sits beside the
-    /// API families at `metrics`.
+    /// `http://127.0.0.1:1067/ngsi-ld/v1/`; the merged management plane serves
+    /// the exposition at `/metrics` on the same origin, outside the API base.
     ///
     /// # Errors
     ///
-    /// Returns [`MetricsScrapeError::Request`] if the HTTP call fails and
-    /// [`MetricsScrapeError::Status`] if the endpoint answers non-2xx.
+    /// Returns [`MetricsScrapeError::BaseUrl`] if `broker_base` is not a URL,
+    /// [`MetricsScrapeError::Request`] if the HTTP call fails and
+    /// [`MetricsScrapeError::Status`] if the endpoint answers non-2xx -- as it
+    /// does when the broker was started without `management.metrics`.
     pub async fn scrape(client: &Client, broker_base: &str) -> Result<Metrics, MetricsScrapeError> {
-        let response = client.get(format!("{broker_base}metrics")).send().await?;
+        let endpoint = metrics_endpoint(broker_base)?;
+        let response = client.get(endpoint).send().await?;
         let status = response.status();
         if !status.is_success() {
             return Err(MetricsScrapeError::Status(status.as_u16()));
@@ -95,6 +104,11 @@ impl Metrics {
     pub fn has(&self, name: &str) -> bool {
         self.samples.iter().any(|sample| sample.name == name)
     }
+}
+
+/// The metrics endpoint on the origin serving the NGSI-LD API base `broker_base`.
+fn metrics_endpoint(broker_base: &str) -> Result<Url, url::ParseError> {
+    Url::parse(broker_base)?.join("/metrics")
 }
 
 /// Whether `actual` carries every `(key, value)` in `expected`.
@@ -143,4 +157,42 @@ fn parse_labels(text: &str) -> Vec<(String, String)> {
             Some((key.trim().to_owned(), value.trim().trim_matches('"').to_owned()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::pooler_probe::metrics_scrape::{Metrics, metrics_endpoint};
+
+    #[test]
+    fn the_metrics_endpoint_sits_at_the_root_of_the_broker_origin() {
+        let endpoint = metrics_endpoint("http://127.0.0.1:1067/ngsi-ld/v1/").expect("a valid base");
+        pretty_assertions::assert_eq!(endpoint.as_str(), "http://127.0.0.1:1067/metrics");
+    }
+
+    #[test]
+    fn a_base_that_is_not_a_url_cannot_locate_the_metrics_endpoint() {
+        assert!(metrics_endpoint("not a url").is_err());
+    }
+
+    #[test]
+    fn labelled_counters_sum_and_unlabelled_gauges_read_back() {
+        let metrics = Metrics::parse(
+            "# TYPE andromeda_tenant_cold_builds_total counter\n\
+             andromeda_tenant_cold_builds_total{outcome=\"succeeded\"} 3\n\
+             andromeda_tenant_cold_builds_total{outcome=\"failed\"} 1\n\
+             andromeda_tenant_runtimes_cached 32\n",
+        );
+        assert!((metrics.sum("andromeda_tenant_cold_builds_total") - 4.0).abs() < f64::EPSILON);
+        assert!(
+            metrics
+                .value("andromeda_tenant_cold_builds_total", &[("outcome", "failed")])
+                .is_some_and(|failed| (failed - 1.0).abs() < f64::EPSILON)
+        );
+        assert!(
+            metrics
+                .gauge("andromeda_tenant_runtimes_cached")
+                .is_some_and(|cached| (cached - 32.0).abs() < f64::EPSILON)
+        );
+        assert!(!metrics.has("andromeda_absent_total"));
+    }
 }

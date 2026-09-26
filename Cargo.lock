@@ -1310,6 +1310,7 @@ dependencies = [
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-name-dictionary",
+ "andromeda-postgresql-pool",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
@@ -1325,6 +1326,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "strum",
+ "tokio",
  "toml",
  "toml-comment",
  "tracing",
@@ -1702,7 +1704,6 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "rstar 0.13.0",
- "urn-rs",
 ]
 
 [[package]]
@@ -1908,6 +1909,8 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-test-client",
+ "andromeda-test-fixtures",
+ "dashmap",
  "futures",
  "http",
  "iri-rs",

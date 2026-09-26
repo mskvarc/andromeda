@@ -15,15 +15,12 @@ use crate::{
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, MatchedSources},
     read_binding::{ReadIntent, read_binding_for},
-    registration_selection::{information_matches_entity, registration_scope_admits},
+    registration_selection::registration_scope_admits,
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    entity_info::EntityTypeSelection,
-    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
-};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate as eval_q_expr, expression::Expr},
     scope::query::ScopeQuery,
@@ -60,17 +57,19 @@ pub(crate) struct ReadSelection<'a> {
 
 /// What a registration must be able to serve to be contacted for a read.
 ///
-/// A temporal read is bound to one fixed operation. A current-entity read
-/// (clauses 5.7.1, 5.7.2) is bound per registration to whichever read operation
-/// it advertises (clause 4.3.6.1), so it admits any registration that has a
-/// binding for the client's read intent.
+/// A retrieval (clauses 5.7.1.4, 5.7.3.4) and a temporal query are each bound
+/// to one fixed operation. An entity query (clause 5.7.2) is bound per
+/// registration to whichever of its two bindings the registration advertises
+/// (clauses 4.3.6.1, 6.23.1), so it admits any registration that has a binding
+/// for the client's query.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ReadServing {
-    /// The registration must advertise this exact operation (temporal reads).
+    /// The registration must advertise this exact operation, or an operation
+    /// group containing it (Table 4.20-2).
     Operation(ForwardingOperation),
-    /// The registration must advertise some operation that serves this
-    /// current-entity read intent (clause 4.3.6.1, Table 4.20-2).
-    CurrentEntity(ReadIntent),
+    /// The registration must advertise one of the two Query Entities bindings
+    /// (clause 6.23.1, Table 4.20-1).
+    EntityQuery(ReadIntent),
 }
 
 impl ReadServing {
@@ -78,7 +77,7 @@ impl ReadServing {
     fn admits(self, csr: &ContextSourceRegistration) -> bool {
         match self {
             ReadServing::Operation(operation) => operation.matches(csr),
-            ReadServing::CurrentEntity(intent) => read_binding_for(intent, csr).is_some(),
+            ReadServing::EntityQuery(intent) => read_binding_for(intent, csr).is_some(),
         }
     }
 }
@@ -309,48 +308,31 @@ pub(crate) fn read_outcome<T>(answers: Vec<SourceAnswer<T>>, matched: usize) -> 
     }
 }
 
-/// The type the matched registrations register `entity_id` under, when every
-/// selector naming the entity agrees on exactly one type (clause 5.2.10).
-pub(crate) fn registered_type_of(registrations: &[ContextSourceRegistration], entity_id: &Uri) -> Option<EntityTypeName> {
-    let mut types = registrations
-        .iter()
-        .flat_map(|registration| registration.coverage.information.iter())
-        .filter(|information| information_matches_entity(information, &[], Some(entity_id)))
-        .flat_map(|information| information.entities.iter().flatten())
-        .filter(|selector| selector.covers_id(entity_id))
-        .filter_map(|selector| match &selector.type_ {
-            EntityTypeSelection::Single(name) => Some(name),
-            EntityTypeSelection::Several(_) => None,
-        })
-        .collect::<Vec<_>>();
-    types.sort();
-    types.dedup();
-    match types.as_slice() {
-        [only] => Some((*only).clone()), // clone: the outcome owns the type it answers with
-        [] | [_, _, ..] => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
+        operation::ForwardingOperation,
         outcome::ForwardedEntities,
-        read_fan_out::{SourceAnswer, read_outcome, registered_type_of},
+        read_binding::ReadIntent,
+        read_fan_out::{ReadServing, SourceAnswer, read_outcome},
     };
     use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
-    use serde_json::{Value, json};
+    use serde_json::json;
 
-    fn registration(information: &Value) -> ContextSourceRegistration {
-        serde_json::from_value(json!({
+    fn registration(operations: Option<&[&str]>) -> ContextSourceRegistration {
+        let mut document = json!({
             "id": "urn:ngsi-ld:csr:1",
             "type": "ContextSourceRegistration",
             "endpoint": "https://peer.example.org",
-            "information": information,
+            "information": [{"entities": [{"type": "https://example.org/Vehicle"}]}],
             "status": "ok",
             "createdAt": "2024-01-01T00:00:00Z",
             "modifiedAt": "2024-01-01T00:00:00Z"
-        }))
-        .expect("valid registration")
+        });
+        if let Some(operations) = operations {
+            document["operations"] = json!(operations);
+        }
+        serde_json::from_value(document).expect("valid registration")
     }
 
     fn answer(mode: ForwardingMode, error_status: Option<u16>) -> SourceAnswer<ForwardedEntities> {
@@ -380,22 +362,35 @@ mod tests {
         pretty_assertions::assert_eq!(several.sources.registrations, 2);
     }
 
+    /// Clause 5.7.1.4: a retrieval is forwarded only to registrations that
+    /// "match and support the retrieveEntity operation" -- `retrieveEntity`
+    /// itself, a Table 4.20-2 group containing it, or no `operations` at all,
+    /// which clause 5.2.9 makes `federationOps`. One advertising only a query
+    /// operation is never contacted for it, while an entity query still
+    /// reaches it (clause 6.23.1).
     #[test]
-    fn the_registered_type_is_the_one_every_selector_naming_the_entity_agrees_on() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse().expect("valid URI");
-        let by_id = registration(&json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}]}]));
-        pretty_assertions::assert_eq!(
-            registered_type_of(&[by_id], &entity_id).map(|name| name.as_ref().to_string()),
-            Some("Vehicle".to_string())
-        );
+    fn a_retrieval_admits_only_registrations_supporting_retrieve_entity() {
+        let retrieval = ReadServing::Operation(ForwardingOperation::RetrieveEntity);
+        for supporting in [
+            &["retrieveEntity"][..],
+            &["federationOps"],
+            &["associationOps"],
+            &["retrieveOps"],
+            &["redirectionOps"],
+        ] {
+            assert!(retrieval.admits(&registration(Some(supporting))), "{supporting:?} supports retrieveEntity");
+        }
+        assert!(retrieval.admits(&registration(None)), "an absent operations member is federationOps");
+        for unsupporting in [&["queryEntity"][..], &["queryBatch"], &["queryEntity", "queryBatch"], &["updateOps"]] {
+            assert!(
+                !retrieval.admits(&registration(Some(unsupporting))),
+                "{unsupporting:?} does not support retrieveEntity"
+            );
+        }
 
-        let other_id = registration(&json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:2", "type": "Car"}]}]));
-        assert!(registered_type_of(&[other_id], &entity_id).is_none());
-
-        let disagreeing = [
-            registration(&json!([{"entities": [{"idPattern": "urn:ngsi-ld:Vehicle:.*", "type": "Vehicle"}]}])),
-            registration(&json!([{"entities": [{"type": "Car"}]}])),
-        ];
-        assert!(registered_type_of(&disagreeing, &entity_id).is_none());
+        let query = ReadServing::EntityQuery(ReadIntent::Query);
+        assert!(query.admits(&registration(Some(&["queryEntity"]))));
+        assert!(query.admits(&registration(Some(&["queryBatch"]))));
+        assert!(!query.admits(&registration(Some(&["retrieveEntity"]))));
     }
 }

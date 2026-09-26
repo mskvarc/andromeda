@@ -1,5 +1,5 @@
-//! Choosing which tenant runtimes to let go of: the orphan, excess and idle
-//! sweeps and the janitor loop that drives them.
+//! Choosing which tenant runtimes to let go of: the orphan, excess, idle and
+//! retired sweeps and the janitor loop that drives them.
 
 use crate::{
     database::TenantDatabase,
@@ -19,13 +19,25 @@ use tokio::time::interval as tokio_interval;
 use tracing::info;
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
-    /// Sweep for orphaned, excess and idle runtimes until the process ends.
+    /// Sweep for orphaned, excess and idle runtimes until the process ends,
+    /// and release a suspended tenant's retired runtime the moment its last
+    /// lease drops.
     pub(super) async fn run_janitor(self: Arc<TenantRuntimeManager<D, F>>) {
         let interval = self.config.janitor_interval.duration().max(Duration::from_secs(1));
         let ttl = self.config.runtime_idle_ttl.duration().max(Duration::from_secs(1));
         let mut ticker = tokio_interval(interval);
         loop {
-            ticker.tick().await;
+            tokio::select! {
+                _ = ticker.tick() => {}
+                () = self.release_signal.notified() => {
+                    self.evict_retired_runtimes().await;
+                    continue;
+                }
+            }
+
+            // A retired runtime whose release signal raced a sweep is picked up
+            // on the tick instead.
+            self.evict_retired_runtimes().await;
 
             // Reap teardowns and wake probes the request path detached, so the
             // eviction set does not accumulate finished tasks between shutdowns.
@@ -75,12 +87,10 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 continue;
             }
 
-            let removed = self
-                .runtimes
-                .remove_if(&tenant, |_, cached| cached.last_used_instant() == chosen_at && !cached.is_leased());
-            if let Some((_, cached)) = removed {
+            let permit = self.teardown_slot().await;
+            if let Some(cached) = self.remove_unleased(&tenant, chosen_at) {
                 record_eviction(EvictionReason::Dormant);
-                self.detach_shutdown(cached.runtime).await;
+                self.detach_shutdown(permit, cached.runtime).await;
                 if let TenantRef::Named(name) = &tenant {
                     let wake_at = next_wake_at(&self.waker, &probe, now);
                     self.record_schedule(name, now, wake_at).await;
@@ -121,6 +131,26 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             .collect();
 
         self.evict_all(orphans, EvictionReason::Orphaned).await
+    }
+
+    /// Evict every retired runtime -- one whose tenant was suspended while a
+    /// request held it -- that no request holds any longer, returning how many
+    /// were evicted.
+    ///
+    /// Like the suspend itself, never schedules a wake: a suspended tenant must
+    /// not be woken.
+    pub(super) async fn evict_retired_runtimes(&self) -> usize {
+        let retired: Vec<(TenantRef, Instant)> = self
+            .runtimes
+            .iter()
+            .filter(|entry| entry.value().is_retired() && !entry.value().is_leased())
+            // clone: the eviction list outlives the iteration.
+            .map(|entry| (entry.key().clone(), entry.value().last_used_instant()))
+            .collect();
+        if retired.is_empty() {
+            return 0;
+        }
+        self.evict_all(retired, EvictionReason::Suspended).await
     }
 
     /// Tenants to drop so the cache fits inside `runtime_max_cached`, each with
@@ -166,16 +196,18 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         self.evict_all(excess, EvictionReason::Excess).await
     }
 
-    /// The least-recently-used named runtime no request currently holds, with
-    /// the last-used instant it was chosen at, or `None` when every named runtime
-    /// is leased (or the cache holds only the never-evicted unnamed default).
+    /// The least-recently-used named runtime other than `exclude` that no
+    /// request currently holds, with the last-used instant it was chosen at, or
+    /// `None` when every such runtime is leased (or the cache holds only the
+    /// never-evicted unnamed default).
     ///
-    /// Used to free one slot for a woken tenant whose work is due now: the coldest
-    /// unleased runtime yields to the tenant that has work to run.
-    fn lru_unleased_named(&self) -> Option<(TenantRef, Instant)> {
+    /// Used to free one slot for a tenant about to be loaded -- a woken tenant
+    /// whose work is due now, or a cold build -- so the coldest unleased runtime
+    /// yields to it. `exclude` is that tenant, which is never its own victim.
+    pub(super) fn lru_unleased_named(&self, exclude: &TenantRef) -> Option<(TenantRef, Instant)> {
         self.runtimes
             .iter()
-            .filter(|entry| !entry.key().is_unnamed_default() && !entry.value().is_leased())
+            .filter(|entry| !entry.key().is_unnamed_default() && entry.key() != exclude && !entry.value().is_leased())
             .map(|entry| (entry.key().clone(), entry.value().last_used_instant())) // clone: the choice outlives the iteration
             .min_by_key(|(_, touched)| *touched)
     }
@@ -188,8 +220,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// trim uses, so nothing it still owes is lost. Returns `false` when there is
     /// no unleased victim to take -- every runtime is held by an in-flight request
     /// -- so the caller defers rather than exceeding the connection budget.
-    pub(super) async fn evict_one_for_wake(&self) -> bool {
-        match self.lru_unleased_named() {
+    pub(super) async fn evict_one_for_wake(&self, woken: &TenantRef) -> bool {
+        match self.lru_unleased_named(woken) {
             Some(victim) => self.evict_all(vec![victim], EvictionReason::Excess).await > 0,
             None => false,
         }
@@ -202,10 +234,10 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// the suspend path: a suspend must close the tenant's pool deterministically
     /// rather than wait for the next janitor tick. It funnels through the
     /// lease-aware [`evict_all`](Self::evict_all), so a runtime a request still
-    /// holds is spared and drops only when its lease releases; the tenant's now
-    /// `Suspended` administrative state keeps admission from re-loading it in the
-    /// meantime. No wake is scheduled -- a suspended tenant must never be woken,
-    /// which the non-`Excess` reason guarantees.
+    /// holds is spared; the suspend retires it first, so admission refuses it and
+    /// its last lease to drop wakes the janitor to release it. No wake is
+    /// scheduled -- a suspended tenant must never be woken, which the
+    /// non-`Excess` reason guarantees.
     pub(super) async fn evict_named(&self, tenant: &TenantRef) -> bool {
         // Snapshot the last-used stamp under the shard guard, then drop it before
         // awaiting; a request that touches the runtime after this snapshot bumps

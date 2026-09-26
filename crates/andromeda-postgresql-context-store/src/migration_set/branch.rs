@@ -3,7 +3,10 @@
 //! A branch file is run twice over its lifetime in two different places: once
 //! in `public` as part of the tenant set, creating the live branch, and once
 //! per Snapshot schema, creating or upgrading that branch. It therefore
-//! qualifies nothing with `public.`, calls no TimescaleDB function (the live
+//! qualifies nothing with `public.`, declares no foreign key to a relation
+//! outside the branch (a key into a tenant-global dictionary would make every
+//! Snapshot's DDL lock that dictionary against live writes; the live keys are
+//! a tenant-only migration's), calls no TimescaleDB function (the live
 //! history tables are hypertables, a Snapshot's are plain tables), and runs in
 //! a transaction -- the branch migrator runs inside the Snapshot's creation
 //! transaction, where a `-- no-transaction` migration could not.
@@ -185,6 +188,47 @@ mod tests {
                 "branch migration {} ({}) names `public.`",
                 migration.version,
                 migration.description
+            );
+        }
+    }
+
+    /// The whitespace- and parenthesis-separated tokens of every branch
+    /// migration, `--` comments removed.
+    fn branch_sql_tokens() -> Vec<&'static str> {
+        branch_migrations()
+            .iter()
+            .flat_map(|migration| migration.sql.as_str().lines())
+            .map(|line| line.split_once("--").map_or(line, |(code, _)| code))
+            .flat_map(|code| code.split(|character: char| character.is_whitespace() || matches!(character, '(' | ')' | ',' | ';')))
+            .filter(|token| !token.is_empty())
+            .collect()
+    }
+
+    /// A foreign key locks the relation it references whenever its own table
+    /// is created or dropped, and a Snapshot schema is created and dropped
+    /// while live writes run. A key from a branch relation into a
+    /// tenant-global one would make that DDL lock the shared relation against
+    /// every live write, so a branch file may reference only relations the
+    /// branch set itself creates.
+    #[test]
+    fn no_branch_migration_references_a_relation_outside_the_branch() {
+        let tokens = branch_sql_tokens();
+        let created: Vec<&str> = tokens
+            .windows(2)
+            .filter(|pair| pair[0].eq_ignore_ascii_case("TABLE"))
+            .map(|pair| pair[1])
+            .collect();
+        let referenced: Vec<&str> = tokens
+            .windows(2)
+            .filter(|pair| pair[0].eq_ignore_ascii_case("REFERENCES"))
+            .map(|pair| pair[1])
+            .collect();
+        assert!(created.contains(&"entities"), "the token scan finds the branch relations: {created:?}");
+        assert!(!referenced.is_empty(), "the token scan finds the branch foreign keys");
+        for relation in referenced {
+            assert!(
+                created.contains(&relation),
+                "a branch migration references `{relation}`, which the branch set does not create"
             );
         }
     }
