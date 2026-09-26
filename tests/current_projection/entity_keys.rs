@@ -2,12 +2,18 @@
 //!
 //! `entities.entity_key` is the internal identity every owned child row
 //! carries, while `entities.id` remains the external NGSI-LD URI clause 5.6.5
-//! addresses. Long identifiers must survive round-tripping byte for byte, every
+//! addresses. Identifiers up to the identifier bound must survive
+//! round-tripping byte for byte, one past it must be refused as bad input, every
 //! projection row must reference its own parent, current deletion must not
 //! touch the independent temporal parent, and the surrogate must actually be
 //! narrower than the identifier it replaced.
 
-use crate::projection_rows::{entity_key, rows_for_key, temporal_entity_exists};
+use crate::{
+    bad_request::assert_bad_request_data,
+    bounded_identifier::high_entropy_identifier,
+    projection_rows::{entity_key, rows_for_key, temporal_entity_exists},
+};
+use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
@@ -15,10 +21,11 @@ use reqwest::StatusCode;
 use serde_json::{Map, Value, json};
 
 /// Identifier lengths the surrogate has to carry: a short URN, a long one, and
-/// one past the 2 KiB TOAST threshold. The short case is 128 rather than the
-/// proposal's 64 bytes because the harness prefix that makes a test's rows
-/// discoverable for cleanup is itself longer than 64 bytes.
-const IDENTIFIER_LENGTHS: [usize; 3] = [128, 512, 4096];
+/// one at the identifier bound itself, the longest an Entity id may be. The
+/// short case is 128 rather than the proposal's 64 bytes because the harness
+/// prefix that makes a test's rows discoverable for cleanup is itself longer
+/// than 64 bytes.
+const IDENTIFIER_LENGTHS: [usize; 3] = [128, 512, IDENTIFIER_BYTE_LIMIT];
 
 /// Attribute counts paired with those lengths.
 const ATTRIBUTE_COUNTS: [usize; 3] = [1, 10, 100];
@@ -148,6 +155,59 @@ async fn narrow_entity_keys_cost_fewer_bytes_than_the_identifier_they_replace() 
         surrogate_bytes * 8 < identifier_bytes,
         "one hundred surrogate references ({surrogate_bytes} bytes) must be far cheaper than repeating the identifier ({identifier_bytes} bytes)"
     );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+#[tokio::test]
+async fn narrow_entity_keys_store_a_high_entropy_identifier_at_the_limit() {
+    let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = high_entropy_identifier(&scope.id("Building:entropy:"), IDENTIFIER_BYTE_LIMIT, 1);
+
+    let created = client
+        .post_entity(&building_with_attributes(&id, 1))
+        .send()
+        .await
+        .expect("create entity failed");
+    assert_eq!(
+        created.status,
+        StatusCode::CREATED,
+        "an identifier at the bound must be admitted: {:?}",
+        created.body
+    );
+
+    // An incompressible identifier at the bound is the widest key every
+    // identifier-keyed index has to hold; each parent must carry it verbatim.
+    let key = entity_key(scope.database_pool(), &id)
+        .await
+        .expect("the Entity must be stored under its full identifier");
+    assert!(
+        temporal_entity_exists(scope.database_pool(), &id).await,
+        "the temporal parent must be stored under the same full identifier"
+    );
+    assert_eq!(
+        rows_for_key(scope.database_pool(), key).await,
+        1,
+        "the attribute must be projected under the Entity's surrogate"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+#[tokio::test]
+async fn narrow_entity_keys_refuse_an_identifier_one_byte_past_the_limit() {
+    let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = high_entropy_identifier(&scope.id("Building:entropy-past:"), IDENTIFIER_BYTE_LIMIT + 1, 2);
+
+    let refused = client
+        .post_entity(&building_with_attributes(&id, 1))
+        .send()
+        .await
+        .expect("create entity request failed");
+    assert_bad_request_data(&refused, "creating an Entity whose id is one octet past the bound");
+    assert_eq!(entity_key(scope.database_pool(), &id).await, None, "the refused Entity must not be stored");
 
     scope.finish().await.expect("cleanup failed");
 }

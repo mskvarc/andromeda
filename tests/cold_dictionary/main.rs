@@ -5,7 +5,7 @@
 //! populating the dictionary with an overlapping set of never-seen attribute
 //! names all commit, and every committed `temporal_attribute_streams` row
 //! references a committed `attribute_names` row -- no
-//! `temporal_attribute_streams_attribute_name_id_fkey`. The second is that the
+//! `fk_temporal_attribute_streams_attribute_name`. The second is that the
 //! foreign-key 500 seen in the benchmark was an operational artifact: a stale
 //! in-memory `NameCache` surviving an out-of-band tenant schema drop and
 //! recreate, which the schema-epoch check now detects and repairs.

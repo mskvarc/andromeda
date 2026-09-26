@@ -56,7 +56,10 @@ impl EntityService {
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
             if seen.insert(entity.id.clone()) {
-                writes.push(self.chunk_insert(target, entity, Precondition::MustNotExist, now));
+                match self.chunk_insert(target, entity, Precondition::MustNotExist, now) {
+                    Ok(write) => writes.push(write),
+                    Err(failure) => errors.push(*failure),
+                }
             } else {
                 errors.push((entity.id.clone(), EntityError::already_exists(&entity.id))); // clone: error result owns the entity ID
             }

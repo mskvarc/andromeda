@@ -4,7 +4,7 @@ use crate::{
     EntityService,
     attrs::attribute_write::payload_write,
     error::EntityError,
-    expanded_member::unwrap_expanded_ref,
+    expanded_member::{unwrap_expanded_ref, written_attribute_names, written_entity_types},
     notification_plan::attribute_change_groups,
     write_admission::{EntityWrite, admit_expanded_entity},
 };
@@ -14,8 +14,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
-    entity_member::{extract_attribute_names, extract_types},
-    mutation::entity::update_entity_attrs,
+    mutation::{entity::update_entity_attrs, error::ExpandedEntityError},
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use chrono::Utc;
@@ -69,7 +68,7 @@ impl EntityService {
         admit_expanded_entity(&expanded, EntityWrite::UpdateAttributes.null_sentinel_admission())?;
         // Clause 5.6.2.5 reports the attributes this request asked for, so the
         // set is read from the fragment before the write merges it away.
-        let requested = extract_attribute_names(unwrap_expanded_ref(&expanded));
+        let requested = written_attribute_names(unwrap_expanded_ref(&expanded))?;
         let (events, not_updated): (Vec<ChangeEvent>, Vec<AttributeName>) = self
             .commit_computed_write(target, &entity_uri, |previous| {
                 let now = Utc::now();
@@ -80,19 +79,19 @@ impl EntityService {
 
                 // its createdAt across the read-modify-write.
 
-                stamp_attribute_instants(&mut existing, previous, now);
+                stamp_attribute_instants(&mut existing, previous, now).map_err(ExpandedEntityError::from)?;
 
                 let merged = Arc::new(existing);
-                let types = extract_types(&merged);
+                let types = written_entity_types(&merged)?;
 
                 // The durable matches and the in-process events are planned
                 // together from one partition, so the two channels always agree
                 // on the per-attribute triggers (clause 5.2.12).
-                let groups = attribute_change_groups(previous, &merged);
+                let groups = attribute_change_groups(previous, &merged)?;
                 let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
-                let history = mutation_history(&expanded, previous, &merged);
-                let write = payload_write(&entity_uri, &merged, history, plan.matches);
+                let history = mutation_history(&expanded, previous, &merged)?;
+                let write = payload_write(&entity_uri, &merged, history, plan.matches)?;
                 Ok((write, (plan.events, not_updated)))
             })
             .await?;

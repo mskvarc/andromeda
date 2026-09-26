@@ -4,7 +4,10 @@
 //! write is visible to every later reader with no barrier, and a projection
 //! failure takes the Entity row down with it.
 
-use crate::projection_rows::{ProjectionRow, rows_for_attribute};
+use crate::{
+    bypass_writes::{insert_attribute_name, insert_typed_entity},
+    projection_rows::{ProjectionRow, rows_for_attribute},
+};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
@@ -73,33 +76,12 @@ async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
     let id = scope.id("Building:atomicity-rollback");
 
     let mut transaction = scope.database_pool().begin().await.expect("transaction must start");
-    let payload = json!([{ "@id": id, "@type": [BUILDING_TYPE] }]);
-    let type_id: i32 =
-        sqlx::query_scalar("INSERT INTO entity_type_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id")
-            .bind(BUILDING_TYPE)
-            .fetch_one(&mut *transaction)
-            .await
-            .expect("type dictionary insert must succeed");
-    let entity_key: i64 = sqlx::query_scalar(
-        "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key), \
-              doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, $3 FROM ins) \
-         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids) SELECT entity_key, ARRAY[$2], ARRAY[]::integer[] FROM ins RETURNING entity_key",
-    )
-    .bind(&id)
-    .bind(type_id)
-    .bind(&payload)
-    .fetch_one(&mut *transaction)
-    .await
-    .expect("entity insert must succeed");
+    let entity_key = insert_typed_entity(&mut transaction, &id, BUILDING_TYPE).await;
 
     // A projection row whose declared value kind does not match its populated
     // column: exactly the corruption
     // `chk_current_attribute_values_value_kind_column` exists to refuse.
-    let name_id: i32 = sqlx::query_scalar("INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id")
-        .bind("https://example.test/current-projection/rollback")
-        .fetch_one(&mut *transaction)
-        .await
-        .expect("dictionary insert must succeed");
+    let name_id = insert_attribute_name(&mut transaction, "https://example.test/current-projection/rollback").await;
     let failure = sqlx::query(
         "INSERT INTO current_attribute_values \
          (entity_key, attribute_name_id, attribute_kind, value_kind, value_string) \
@@ -247,5 +229,39 @@ async fn current_projection_rejects_an_out_of_range_number_without_mutation() {
         "the rejected number must not reach the projection"
     );
 
+    scope.finish().await.expect("cleanup failed");
+}
+
+#[tokio::test]
+async fn a_short_string_in_the_overflow_column_is_refused() {
+    let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
+    let id = scope.id("Building:atomicity-short-overflow");
+
+    let mut transaction = scope.database_pool().begin().await.expect("transaction must start");
+    let entity_key = insert_typed_entity(&mut transaction, &id, BUILDING_TYPE).await;
+    let name_id = insert_attribute_name(&mut transaction, "https://example.test/current-projection/short-overflow").await;
+
+    // A String that fits the indexed column has exactly one place it may sit,
+    // so a writer parking it in the overflow column would leave the B-tree
+    // blind to it; `chk_current_attribute_values_value_long_text_length`
+    // refuses that placement.
+    let failure = sqlx::query(
+        "INSERT INTO current_attribute_values \
+         (entity_key, attribute_name_id, attribute_kind, value_kind, value_long_text) \
+         VALUES ($1, $2, 1, 2, '0123456789')",
+    )
+    .bind(entity_key)
+    .bind(name_id)
+    .execute(&mut *transaction)
+    .await
+    .expect_err("a short string in the overflow column must be refused");
+    let database_error = failure.as_database_error().expect("the refusal must come from the database");
+    assert_eq!(
+        (database_error.code().as_deref(), database_error.constraint()),
+        (Some("23514"), Some("chk_current_attribute_values_value_long_text_length")),
+        "the refusal must be the overflow length check: {database_error}"
+    );
+
+    transaction.rollback().await.expect("rollback must succeed");
     scope.finish().await.expect("cleanup failed");
 }

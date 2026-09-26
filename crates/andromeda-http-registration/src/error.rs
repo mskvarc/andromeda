@@ -75,8 +75,8 @@ pub(crate) fn internal_problem(detail: impl Display, summary: InternalFailureSum
 
 #[cfg(test)]
 mod tests {
-    use super::RegistrationHttpClassify;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use crate::error::RegistrationHttpClassify;
+    use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_registration::{
         error::RegistrationError,
@@ -90,7 +90,9 @@ mod tests {
         let identifier = "urn:ngsi-ld:ContextSourceRegistration:1".parse::<Uri>()?;
         for (error, expected) in [
             (
-                RegistrationError::Validation(RegistrationValidationReason::IdNotUri),
+                RegistrationError::Validation(RegistrationValidationReason::IdNotUri {
+                    source: UriParseError::Malformed,
+                }),
                 NgsiLdErrorType::BadRequestData,
             ),
             (

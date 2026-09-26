@@ -5,11 +5,10 @@
 -- `entity_key`, and the split follows the write pattern rather than the data
 -- model. Every attribute write rewrites the payload; almost none of them
 -- changes the entity's types, scopes or geometries; and the identity of the
--- row never changes at all. Keeping the three in one relation made every
--- payload write a non-HOT update -- a modified column appearing in any index
--- key or expression disqualifies a heap-only-tuple update, and the payload was
--- indexed -- and made every such write rewrite the type, scope and geometry
--- index entries of an entity whose types, scopes and geometries had not moved.
+-- row never changes at all. A modified column appearing in any index key or
+-- expression disqualifies a heap-only-tuple update, so the payload lives apart
+-- from every indexed member: a payload write stays HOT-eligible and leaves the
+-- type, scope and geometry index entries of the entity untouched.
 --
 -- `entities` is identity and lifecycle: the surrogate key, the URI, when the
 -- row was created, and the two expiry instants the sweeper reads. `id` is the
@@ -18,7 +17,10 @@
 -- "C"`: byte-wise comparison gives anchored `idPattern` prefixes (clause 4.9) a
 -- plain B-tree range scan without a pattern-operator index, and gives sorts
 -- abbreviated keys. `idx_entities_id_trgm` covers the patterns that carry no
--- usable anchor. The identity declares `CACHE 32`: entity creation is batched
+-- usable anchor. `id` is bounded at 1024 UTF-8 octets, the identifier bound
+-- (`IDENTIFIER_BYTE_LIMIT` in `andromeda-ngsi-ld-lexicon`) every entity id is
+-- parsed under, which keeps `uq_entities_id` well inside the 2704 bytes a
+-- btree entry may take. The identity declares `CACHE 32`: entity creation is batched
 -- and concurrent, an uncached identity takes the sequence's lock once per row,
 -- and the gaps a cached sequence leaves after a restart are meaningless for a
 -- surrogate that is never rendered.
@@ -87,12 +89,14 @@
 -- ============================================================================
 
 CREATE TABLE entities (
-    entity_key BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 32) PRIMARY KEY,
+    entity_key BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 32),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ,
     min_attribute_expires_at TIMESTAMPTZ,
     id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT uq_entities_id UNIQUE (id)
+    CONSTRAINT pk_entities PRIMARY KEY (entity_key),
+    CONSTRAINT uq_entities_id UNIQUE (id),
+    CONSTRAINT chk_entities_id_length CHECK (octet_length(id) <= 1024)
 ) WITH (
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,

@@ -48,6 +48,7 @@ use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::cache::SubscriptionCache;
+use andromeda_temporal::config::TemporalConfig;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
@@ -207,8 +208,8 @@ pub(super) async fn initialize_storage(
     let entity_type_names = Arc::clone(&entity_type_names) as Arc<dyn NameLookup<EntityTypeName>>; // clone: the cache outlives each port that holds it.
     // Probe the edition once: the TSL build converts aged chunks to the hypercore
     // columnstore, the Apache-2.0 core runs the hypertables uncompressed. The
-    // reconciler below gates its columnstore statements on this so an Apache
-    // tenant never calls a procedure its edition does not ship.
+    // reconciler below enables the columnstore only where this finds one, so an
+    // Apache tenant never calls a procedure its edition does not ship.
     let columnstore = ColumnstoreSupport::detect(&pool).await?;
     let temporal_repo = Arc::new(TemporalRepository::new(
         &pool,
@@ -217,13 +218,7 @@ pub(super) async fn initialize_storage(
         Arc::clone(&entity_type_names),
         columnstore,
     ));
-    // The migrations declare the default chunk interval and columnstore lag;
-    // an operator override is applied here, after migration and before any
-    // history is written through this tenant's repository.
-    let storage_policy = temporal_repo.reconcile_storage_policy(&config.temporal.storage_policy()).await?;
-    if !storage_policy.is_unchanged() {
-        tracing::info!(outcome = ?storage_policy, event = "temporal_storage_policy_reconciled");
-    }
+    reconcile_temporal_storage(&temporal_repo, &config.temporal).await?;
     let entity_repository = Arc::new(EntityRepository::new(&pool, Arc::clone(&attribute_names), Arc::clone(&entity_type_names)));
     let entity_ports = EntityStoragePorts {
         reader: Arc::clone(&entity_repository) as Arc<dyn EntityReader>, // clone: every focused port shares one repository and pool.
@@ -269,4 +264,24 @@ pub(super) async fn initialize_storage(
         subscription_cache,
         spatial_index,
     })
+}
+
+/// Bring the temporal hypertables to the storage policy `temporal` describes.
+///
+/// The migrations declare the default chunk interval and nothing about the
+/// columnstore; the columnstore, its lag and an operator's chunk override are
+/// applied here, after migration and before any history is written through the
+/// tenant's repository.
+///
+/// # Errors
+///
+/// Returns [`TenantAssemblyError`] when the configuration names no valid
+/// policy or the reconciliation fails.
+async fn reconcile_temporal_storage(temporal_repo: &TemporalRepository, temporal: &TemporalConfig) -> Result<(), TenantAssemblyError> {
+    let policy = temporal.storage_policy().map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let outcome = temporal_repo.reconcile_storage_policy(&policy).await?;
+    if !outcome.is_unchanged() {
+        tracing::info!(outcome = ?outcome, event = "temporal_storage_policy_reconciled");
+    }
+    Ok(())
 }

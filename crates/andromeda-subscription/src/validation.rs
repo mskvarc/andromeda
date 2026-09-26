@@ -169,6 +169,18 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::WatchedAttributesEmpty));
     }
 
+    // Table 5.2.12-1 gives `notificationTrigger` cardinality 0..1 and a
+    // default for the absent member; an empty array is neither -- it selects no
+    // trigger, so the subscription could never fire -- and is not syntactically
+    // correct per the data type definition (clause 5.5.4). This covers create,
+    // update and both kinds of subscription, which all validate here.
+    if let Some(triggers) = payload.get("notificationTrigger")
+        && let Some(arr) = triggers.as_array()
+        && arr.is_empty()
+    {
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationTriggerEmpty));
+    }
+
     // Table 5.2.12-1, `entities` row: "Empty array (0 length) is not allowed."
     // An empty array would otherwise satisfy both clause 5.2.12 presence rules
     // while selecting nothing.
@@ -315,6 +327,19 @@ mod tests {
         validation::{validate_common_fields, validate_create_payload},
     };
     use serde_json::json;
+
+    #[test]
+    fn an_empty_notification_trigger_is_refused() {
+        let result = validate_common_fields(&json!({"notificationTrigger": []}));
+        assert!(
+            matches!(
+                &result,
+                Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationTriggerEmpty))
+            ),
+            "got {result:?}"
+        );
+        assert!(validate_common_fields(&json!({"notificationTrigger": ["entityCreated"]})).is_ok());
+    }
 
     #[test]
     fn create_requires_notification_configuration() {

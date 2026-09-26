@@ -7,7 +7,7 @@
 //! ([`delete_attr`]). Whole-attribute purging stays in [`crate::purge`]; this
 //! module is reached only for a `datasetId` selector.
 
-use crate::purge::PurgedEntity;
+use crate::{error::EntityError, purge::PurgedEntity};
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::HistoryRecord};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::expanded::{
@@ -23,6 +23,11 @@ use std::sync::Arc;
 /// The write that removes the selector's `datasetId` instances of the targeted
 /// attributes from one entity, or `None` when nothing matched.
 ///
+/// # Errors
+///
+/// Reports [`EntityError::Internal`] when the stored payload's members cannot
+/// be read back into the write's record or tombstones.
+///
 /// For `drop`, the targeted attributes are the listed ones; for `keep`, they are
 /// every attribute the entity carries except the listed ones. Only the named
 /// instances of each are removed, and the tombstones are computed from the
@@ -33,11 +38,13 @@ pub(crate) fn build_dataset_purge_write(
     mode: &PurgeMode,
     attr_iris: &[IriBuf],
     selector: &DatasetSelector,
-) -> Option<(AtomicWrite, PurgedEntity)> {
+) -> Result<Option<(AtomicWrite, PurgedEntity)>, EntityError> {
     let mut purged = previous.clone(); // clone: the "before" side stays intact for the removal diff
-    let targets = target_attributes(&mut purged, mode, attr_iris)?;
+    let Some(targets) = target_attributes(&mut purged, mode, attr_iris) else {
+        return Ok(None);
+    };
     if targets.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     let selection = selection_of(selector);
@@ -62,24 +69,27 @@ pub(crate) fn build_dataset_purge_write(
                 | ExpandedEntityError::AttributesNotObject
                 | ExpandedEntityError::InvalidAttributeName { .. }
                 | ExpandedEntityError::InvalidAttributeType
+                | ExpandedEntityError::InvalidDatasetId(_)
                 | ExpandedEntityError::AttributeTypeMismatch { .. },
-            ) => return None,
+            ) => return Ok(None),
         }
     }
 
-    let removed = removed_attribute_instances(previous, &purged);
+    // Every stored payload was admitted when it was written, so a `datasetId`
+    // the diff cannot read is a broker fault rather than a routine miss.
+    let removed = removed_attribute_instances(previous, &purged).map_err(EntityError::internal)?;
     if removed.is_empty() {
-        return None;
+        return Ok(None);
     }
     let history: Vec<HistoryRecord> = removed.into_iter().map(HistoryRecord::Tombstone).collect();
 
     let merged = Arc::new(purged);
     let write = AtomicWrite::builder()
         .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
-        .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&merged)))) // clone: Arc ref-count bump; the payload is also the notification's
+        .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&merged))?)) // clone: Arc ref-count bump; the payload is also the notification's
         .history(history)
         .build();
-    Some((write, PurgedEntity { merged, events: Vec::new() }))
+    Ok(Some((write, PurgedEntity { merged, events: Vec::new() })))
 }
 
 /// The attribute IRIs one entity's dataset purge targets.

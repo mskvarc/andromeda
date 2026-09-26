@@ -1,7 +1,7 @@
 //! Merging expanded JSON-LD fragments into a stored payload.
 
 use crate::expanded::{
-    dataset_id::get_instance_dataset_id,
+    dataset_id::{InstanceDatasetIdError, get_instance_dataset_id, instance_dataset_ids, position_of_dataset},
     json_literal_merge::merge_json_literal,
     null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel},
 };
@@ -38,21 +38,32 @@ pub enum InstancePatchDepth {
 /// changed attribute `@type` always replaces the whole instance regardless of
 /// depth, because the members of one attribute family have no meaning under
 /// another (clause 5.2).
-pub fn deep_merge_attribute(entity_obj: &mut Map<String, Value>, key: &str, patch_instances: &[Value], depth: InstancePatchDepth) {
+///
+/// # Errors
+///
+/// Returns [`InstanceDatasetIdError`] when a patch instance, or a stored
+/// instance consulted before its match, carries a `datasetId` that is not an
+/// identifier: matching it to no instance would append a second one, and
+/// reading it as absent would patch the default instance (clause 4.5.5).
+pub fn deep_merge_attribute(
+    entity_obj: &mut Map<String, Value>,
+    key: &str,
+    patch_instances: &[Value],
+    depth: InstancePatchDepth,
+) -> Result<(), InstanceDatasetIdError> {
     let existing = entity_obj.get_mut(key);
     let Some(existing) = existing else {
         entity_obj.insert(key.to_string(), Value::Array(patch_instances.to_vec()));
-        return;
+        return Ok(());
     };
     let Some(existing_arr) = existing.as_array_mut() else {
         entity_obj.insert(key.to_string(), Value::Array(patch_instances.to_vec()));
-        return;
+        return Ok(());
     };
 
     for patch_inst in patch_instances {
-        let patch_ds_id = get_instance_dataset_id(patch_inst);
-
-        let matched = existing_arr.iter_mut().find(|inst| get_instance_dataset_id(inst) == patch_ds_id);
+        let patch_ds_id = get_instance_dataset_id(patch_inst)?;
+        let matched = position_of_dataset(existing_arr, patch_ds_id.as_ref())?.and_then(|position| existing_arr.get_mut(position));
 
         if let Some(existing_inst) = matched {
             if instance_type_changed(existing_inst, patch_inst) {
@@ -70,6 +81,7 @@ pub fn deep_merge_attribute(entity_obj: &mut Map<String, Value>, key: &str, patc
             existing_arr.push(patch_inst.clone());
         }
     }
+    Ok(())
 }
 
 /// Whether the patch instance carries a different attribute `@type` than the
@@ -234,29 +246,31 @@ fn member_is_null(member: &Value) -> bool {
 /// from the instances array for an attribute key. Removes the key entirely if
 /// no instances remain.
 ///
-/// Returns whether at least one instance was actually removed.
-pub(crate) fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, key: &str, dataset_id: Option<&Uri>) -> bool {
+/// Returns whether at least one instance was actually removed. The default
+/// instance is the one carrying no `datasetId` at all.
+///
+/// # Errors
+///
+/// Returns [`InstanceDatasetIdError`], and removes nothing, when any instance
+/// of the attribute carries a `datasetId` that is not an identifier: which
+/// instance it names cannot be told.
+pub(crate) fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, key: &str, dataset_id: Option<&Uri>) -> Result<bool, InstanceDatasetIdError> {
     let Some(Value::Array(instances)) = entity_obj.get_mut(key) else {
-        return false;
+        return Ok(false);
     };
 
     let before = instances.len();
-    match dataset_id {
-        Some(ds_id) => {
-            instances.retain(|inst| get_instance_dataset_id(inst).as_ref() != Some(ds_id));
-        }
-        None => {
-            // The default instance is the one carrying no datasetId at all.
-            instances.retain(|inst| get_instance_dataset_id(inst).is_some());
-        }
-    }
+    // `retain` visits every element exactly once in order, so the identifiers
+    // read up front line up with the instances they were read from.
+    let mut datasets = instance_dataset_ids(instances)?.into_iter();
+    instances.retain(|_| datasets.next().is_some_and(|candidate| candidate.as_ref() != dataset_id));
     let removed = instances.len() < before;
 
     if instances.is_empty() {
         entity_obj.remove(key);
     }
 
-    removed
+    Ok(removed)
 }
 
 #[cfg(test)]
@@ -284,7 +298,7 @@ mod tests {
     #[test]
     fn deep_merging_an_absent_attribute_inserts_the_patch_instances() {
         let mut object = Map::new();
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[instance(10, None)], InstancePatchDepth::DeepMerge);
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[instance(10, None)], InstancePatchDepth::DeepMerge).expect("readable datasetIds");
         pretty_assertions::assert_eq!(object["https://example.com/speed"], json!([instance(10, None)]));
     }
 
@@ -292,7 +306,7 @@ mod tests {
     fn deep_merging_over_a_non_array_member_replaces_it() {
         let mut object = Map::new();
         object.insert("https://example.com/speed".to_string(), json!("not an instance array"));
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[instance(10, None)], InstancePatchDepth::DeepMerge);
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[instance(10, None)], InstancePatchDepth::DeepMerge).expect("readable datasetIds");
         pretty_assertions::assert_eq!(object["https://example.com/speed"], json!([instance(10, None)]));
     }
 
@@ -301,7 +315,7 @@ mod tests {
         let mut object = entity_with(vec![instance(10, Some("urn:ngsi-ld:Dataset:A"))]);
         let mut patch = instance(20, Some("urn:ngsi-ld:Dataset:A"));
         patch["https://uri.etsi.org/ngsi-ld/unitCode"] = json!([{"@value": "KMH"}]);
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge);
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge).expect("readable datasetIds");
 
         let instances = object["https://example.com/speed"].as_array().expect("instances");
         pretty_assertions::assert_eq!(instances.len(), 1);
@@ -318,7 +332,7 @@ mod tests {
 
         let mut patch = json!({"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Vehicle:2"}]});
         patch["@type"] = json!(["https://uri.etsi.org/ngsi-ld/Relationship"]);
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch.clone()], InstancePatchDepth::DeepMerge); // clone: the patch is compared below
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch.clone()], InstancePatchDepth::DeepMerge).expect("readable datasetIds"); // clone: the patch is compared below
 
         pretty_assertions::assert_eq!(object["https://example.com/speed"], json!([patch]));
     }
@@ -331,7 +345,8 @@ mod tests {
             "https://example.com/speed",
             &[instance(20, Some("urn:ngsi-ld:Dataset:B"))],
             InstancePatchDepth::DeepMerge,
-        );
+        )
+        .expect("readable datasetIds");
         pretty_assertions::assert_eq!(object["https://example.com/speed"].as_array().expect("instances").len(), 2);
     }
 
@@ -355,7 +370,7 @@ mod tests {
                 "https://example.com/country": [{"@value": "urn:ngsi-ld:null"}]
             }]
         });
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge);
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge).expect("readable datasetIds");
 
         let value = &object["https://example.com/speed"][0]["https://uri.etsi.org/ngsi-ld/hasValue"][0];
         pretty_assertions::assert_eq!(value["https://example.com/street"], json!([{"@value": "new"}]));
@@ -378,7 +393,7 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 20}],
             "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:null"}]
         });
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge);
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge).expect("readable datasetIds");
 
         let instances = object["https://example.com/speed"].as_array().expect("instances");
         pretty_assertions::assert_eq!(instances.len(), 1);
@@ -405,7 +420,7 @@ mod tests {
             "@type": ["https://uri.etsi.org/ngsi-ld/LanguageProperty"],
             "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [{"@language": "de", "@value": "guten tag"}]
         });
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge);
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge).expect("readable datasetIds");
 
         let map = object["https://example.com/speed"][0]["https://uri.etsi.org/ngsi-ld/hasLanguageMap"]
             .as_array()
@@ -432,7 +447,7 @@ mod tests {
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 100}]
         });
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::ReplaceInstance);
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::ReplaceInstance).expect("readable datasetIds");
 
         let instance = &object["https://example.com/speed"][0];
         pretty_assertions::assert_eq!(instance["https://uri.etsi.org/ngsi-ld/hasValue"], json!([{"@value": 100}]));
@@ -452,7 +467,7 @@ mod tests {
             instance(30, None),
         ]);
         let dataset_id = "urn:ngsi-ld:Dataset:A".parse::<Uri>().ok();
-        assert!(remove_instances_by_dataset(&mut object, "https://example.com/speed", dataset_id.as_ref()));
+        assert!(remove_instances_by_dataset(&mut object, "https://example.com/speed", dataset_id.as_ref()).expect("readable datasetIds"));
         let instances = object["https://example.com/speed"].as_array().expect("instances");
         pretty_assertions::assert_eq!(instances.len(), 2);
         assert!(
@@ -465,7 +480,7 @@ mod tests {
     #[test]
     fn removing_the_default_instance_drops_the_one_carrying_no_dataset_id() {
         let mut object = entity_with(vec![instance(10, Some("urn:ngsi-ld:Dataset:A")), instance(30, None)]);
-        assert!(remove_instances_by_dataset(&mut object, "https://example.com/speed", None));
+        assert!(remove_instances_by_dataset(&mut object, "https://example.com/speed", None).expect("readable datasetIds"));
         let instances = object["https://example.com/speed"].as_array().expect("instances");
         pretty_assertions::assert_eq!(instances.len(), 1);
         pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/hasValue"], json!([{"@value": 10}]));
@@ -475,7 +490,7 @@ mod tests {
     fn removing_an_unmatched_dataset_id_reports_that_nothing_was_removed() {
         let mut object = entity_with(vec![instance(10, Some("urn:ngsi-ld:Dataset:A"))]);
         let dataset_id = "urn:ngsi-ld:Dataset:Z".parse::<Uri>().ok();
-        assert!(!remove_instances_by_dataset(&mut object, "https://example.com/speed", dataset_id.as_ref()));
+        assert!(!remove_instances_by_dataset(&mut object, "https://example.com/speed", dataset_id.as_ref()).expect("readable datasetIds"));
         pretty_assertions::assert_eq!(object["https://example.com/speed"].as_array().expect("instances").len(), 1);
     }
 
@@ -483,13 +498,13 @@ mod tests {
     fn removing_the_last_instance_drops_the_attribute_member_itself() {
         let mut object = entity_with(vec![instance(10, Some("urn:ngsi-ld:Dataset:A"))]);
         let dataset_id = "urn:ngsi-ld:Dataset:A".parse::<Uri>().ok();
-        assert!(remove_instances_by_dataset(&mut object, "https://example.com/speed", dataset_id.as_ref()));
+        assert!(remove_instances_by_dataset(&mut object, "https://example.com/speed", dataset_id.as_ref()).expect("readable datasetIds"));
         assert!(object.get("https://example.com/speed").is_none());
     }
 
     #[test]
     fn removing_from_an_absent_attribute_reports_that_nothing_was_removed() {
         let mut object = Map::new();
-        assert!(!remove_instances_by_dataset(&mut object, "https://example.com/speed", None));
+        assert!(!remove_instances_by_dataset(&mut object, "https://example.com/speed", None).expect("readable datasetIds"));
     }
 }

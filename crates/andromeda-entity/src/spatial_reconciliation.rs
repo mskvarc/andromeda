@@ -1,7 +1,7 @@
 //! Rebuilding the in-memory entity spatial index from typed store snapshots.
 
 use crate::{error::EntityError, port::spatial_snapshot::EntitySpatialSnapshotSource};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::UriView};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_spatial_index::{
     entity::{entry::SpatialEntry, index::SpatialEntityIndex},
@@ -44,13 +44,13 @@ pub async fn reconcile_location(
     let mut per_type: HashMap<IriBuf, Vec<SpatialEntry>> = HashMap::new();
 
     for snapshot in snapshots {
-        let entity_urn = match snapshot.entity_id {
-            Uri::Urn(entity_urn) => entity_urn,
-            Uri::Url(entity_url) => {
+        let entity_urn = match snapshot.entity_id.view() {
+            UriView::Urn(entity_urn) => entity_urn,
+            UriView::Url(entity_url) => {
                 warn!(entity = %entity_url, "spatial warmup skipped a URL identifier unsupported by the current spatial index");
                 continue;
             }
-            Uri::Iri(entity_iri) => {
+            UriView::Iri(entity_iri) => {
                 warn!(entity = %entity_iri, "spatial warmup skipped an IRI identifier unsupported by the current spatial index");
                 continue;
             }

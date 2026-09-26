@@ -14,7 +14,7 @@
 //! measurement asked for it rather than by accident.
 
 use crate::{
-    seeded_corpus::{SEED_PREFIX, explain},
+    seeded_corpus::{PlannerPaths, SEED_PREFIX, explain, explain_rolled_back},
     seeded_history::seed,
 };
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
@@ -231,11 +231,6 @@ async fn a_broad_modified_window_can_be_answered_from_the_modified_at_summary() 
     let pool = scope.database_pool();
     seed(pool, SEED_PREFIX).await;
 
-    let mut transaction = pool.begin().await.expect("the plan transaction must open");
-    sqlx::query("SET LOCAL enable_seqscan = off")
-        .execute(&mut *transaction)
-        .await
-        .expect("the planner setting must apply");
     // The window names no stream on purpose: a stream-led join would hand the
     // planner the stream B-tree and the summary would never be consulted.
     let statement = format!(
@@ -243,12 +238,7 @@ async fn a_broad_modified_window_can_be_answered_from_the_modified_at_summary() 
          WHERE ah.modified_at >= {ORIGIN} + INTERVAL '1 day' \
            AND ah.modified_at < {ORIGIN} + INTERVAL '1 day 6 hours'"
     );
-    let lines: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN (ANALYZE, BUFFERS) {statement}")))
-        .fetch_all(&mut *transaction)
-        .await
-        .expect("the plan must be readable");
-    let plan = lines.join("\n");
-    transaction.rollback().await.expect("the plan transaction must roll back");
+    let plan = explain_rolled_back(pool, PlannerPaths::WithoutSequentialScans, &statement).await;
     assert!(
         plan.contains("idx_attribute_history_modified_at_brin"),
         "a broad modified window must be answerable from the modified_at summary: {plan}"

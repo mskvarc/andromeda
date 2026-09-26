@@ -5,6 +5,7 @@
 //! share is what the merge produced for the notification, which is why there are
 //! two result types rather than one bag of optional fields.
 
+use crate::error::EntityError;
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
@@ -29,13 +30,23 @@ use std::sync::Arc;
 /// describes the change the store accepted rather than one an earlier attempt
 /// computed and lost. They are empty when notification recording is not
 /// configured.
-pub(super) fn payload_write(id: &Uri, merged: &Arc<Value>, history: Vec<HistoryRecord>, subscription_matches: Vec<SubscriptionMatch>) -> AtomicWrite {
-    AtomicWrite::builder()
+///
+/// # Errors
+///
+/// Reports the [`EntityError`] of a merged payload whose search projection
+/// cannot be extracted.
+pub(super) fn payload_write(
+    id: &Uri,
+    merged: &Arc<Value>,
+    history: Vec<HistoryRecord>,
+    subscription_matches: Vec<SubscriptionMatch>,
+) -> Result<AtomicWrite, EntityError> {
+    Ok(AtomicWrite::builder()
         .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
-        .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(merged)))) // clone: Arc ref-count bump; the payload is also the change event's
+        .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(merged))?)) // clone: Arc ref-count bump; the payload is also the change event's
         .history(history)
         .subscription_matches(subscription_matches)
-        .build()
+        .build())
 }
 
 /// What one single-attribute mutation produced, beyond the write itself.

@@ -5,7 +5,7 @@ use crate::executor::{
     status::{failure_detail, success_detail},
     translation::{entity_parameters, temporal_parameters},
 };
-use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord};
+use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, error::CommitError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
@@ -225,12 +225,19 @@ impl SnapshotExecutor {
         let writes = pairs
             .iter()
             .map(|(entity_id, data)| {
-                AtomicWrite::builder()
+                Ok(AtomicWrite::builder()
                     .entity_id(Arc::new(entity_id.clone())) // clone: the write owns its validated entity identity.
-                    .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::new(data.clone())))) // clone: captured state is owned by the branch write.
-                    .build()
+                    .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::new(data.clone()))?)) // clone: captured state is owned by the branch write.
+                    .build())
             })
-            .collect();
+            .collect::<Result<Vec<AtomicWrite>, CommitError>>();
+        let writes = match writes {
+            Ok(writes) => writes,
+            Err(error) => {
+                error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to read captured Snapshot results");
+                return failure_detail(format!("Failed to read results: {error}"));
+            }
+        };
         if let Err(error) = self.writes.commit(target, writes).await {
             error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize current Snapshot results");
             return failure_detail(format!("Failed to store results: {error}"));

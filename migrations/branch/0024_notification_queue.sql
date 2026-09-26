@@ -1,14 +1,13 @@
 -- ============================================================================
 -- 0024: Notification queue -- events and deliveries
 -- ============================================================================
--- `notification_outbox` stored one row per (matched Subscription, changed
--- Entity), and each of those rows carried a full copy of the Entity snapshot
--- and, under `showChanges` (clause 5.5.12), of the previous one as well. An
--- Entity watched by twenty Subscriptions therefore wrote twenty copies of the
--- same two JSONB documents per change, updated one of them per delivery
--- attempt, and rewrote the whole wide tuple -- payload included -- on every
--- claim, failure and acknowledgement. The payload is a property of the change;
--- only the queue state is a property of the delivery.
+-- The durable notification queue is two relations, because the payload is a
+-- property of the change and only the queue state is a property of the
+-- delivery. An Entity watched by twenty Subscriptions produces one change and
+-- twenty deliveries; the Entity snapshot and, under `showChanges` (clause
+-- 5.5.12), the previous one are written once per change, and every claim,
+-- failure and acknowledgement rewrites a narrow delivery row rather than the
+-- wide payload.
 --
 -- `notification_events` holds the change, once. It is written inside the
 -- Entity's own transaction and never updated afterwards: a claim, a retry and
@@ -25,7 +24,7 @@
 -- references; the reap below is for events whose deliveries have since been
 -- removed, not for events that never owed one.
 --
--- What the columns say, and why they are not what the outbox held:
+-- What the columns say:
 --
 --   * `write_id` and `event_ordinal` are the write identity `write_records` names,
 --     carried here so a notification can be correlated with the history rows
@@ -57,7 +56,9 @@
 --     There is deliberately no foreign key: clause 5.6.6 deletion emits a
 --     notification about an Entity that no longer exists, and a referential
 --     edge would either forbid that row or cascade away the announcement of the
---     deletion itself.
+--     deletion itself. It and `changed_dataset_id` are bounded at 1024 UTF-8
+--     octets, the identifier bound (`IDENTIFIER_BYTE_LIMIT` in
+--     `andromeda-ngsi-ld-lexicon`) both are parsed under.
 --
 -- Column order is this schema's alignment order -- not-null fixed-width by
 -- descending alignment, then nullable fixed-width, then varlena, LZ4 on each
@@ -70,15 +71,15 @@
 -- `exhausted_at` when the worker gave up on it -- either because the transport
 -- reported a failure no retry can fix, or because the configured attempt
 -- ceiling was reached. The ceiling is a delivery-policy setting the worker
--- owns; the schema does not repeat it. An earlier shape wrote the literal 5
--- into a check constraint and into the claim index predicate, which coupled a
--- runtime knob to a migration: raising the setting silently made the index
--- unusable. `exhausted_at` records the decision instead of re-deriving it from
--- `attempt_count`, so the claim predicate no longer needs to know the ceiling,
--- and the dead-letter reap has a timestamp of its own to age rows by instead
--- of borrowing the event's `created_at`. `chk_notification_deliveries_exhausted_state`
--- pins what exhaustion means: an exhausted row was never delivered and holds
--- no claim.
+-- owns; the schema does not repeat it, so neither a check constraint nor the
+-- claim index predicate couples a runtime knob to a migration. `exhausted_at`
+-- records the decision rather than re-deriving it from `attempt_count`, so the
+-- claim predicate needs no ceiling, and the dead-letter reap ages a row by when
+-- it was dead-lettered rather than by the event's `created_at`: that instant
+-- is the retention clock. `chk_notification_deliveries_exhausted_state` pins
+-- what exhaustion means: an exhausted row was never delivered and holds no
+-- claim. `last_error` is bounded at 2048 characters, the failure-summary bound
+-- every claimable queue in this schema shares.
 --
 -- Index set, one named consumer each:
 --
@@ -128,7 +129,8 @@
 --
 -- Every relation here is created empty, so the indexes are built in this
 -- migration's transaction rather than concurrently: there is nothing to lock
--- out and no scan to keep short.--
+-- out and no scan to keep short.
+--
 -- `claimed_by` is the schema-wide lease holder: a UUID naming one worker
 -- instance, the same type on every claimable relation (`notification_deliveries`,
 -- `pending_side_effects`, `temporal_append_intents`,
@@ -142,7 +144,7 @@
 -- ============================================================================
 
 CREATE TABLE notification_events (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
     created_at TIMESTAMPTZ NOT NULL,
     event_ordinal INTEGER NOT NULL,
     trigger SMALLINT NOT NULL,
@@ -152,9 +154,12 @@ CREATE TABLE notification_events (
     changed_dataset_id TEXT COMPRESSION lz4 COLLATE "C",
     entity_snapshot JSONB COMPRESSION lz4,
     previous_snapshot JSONB COMPRESSION lz4,
+    CONSTRAINT pk_notification_events PRIMARY KEY (id),
     CONSTRAINT uq_notification_events_write_identity UNIQUE (write_id, event_ordinal),
     CONSTRAINT chk_notification_events_event_ordinal CHECK (event_ordinal >= 0),
-    CONSTRAINT chk_notification_events_trigger CHECK (trigger BETWEEN 1 AND 6)
+    CONSTRAINT chk_notification_events_trigger CHECK (trigger BETWEEN 1 AND 6),
+    CONSTRAINT chk_notification_events_entity_id_length CHECK (octet_length(entity_id) <= 1024),
+    CONSTRAINT chk_notification_events_changed_dataset_id_length CHECK (octet_length(changed_dataset_id) <= 1024)
 ) WITH (
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,
@@ -164,7 +169,7 @@ CREATE TABLE notification_events (
 );
 
 CREATE TABLE notification_deliveries (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
     event_id BIGINT NOT NULL,
     subscription_key BIGINT NOT NULL,
     next_attempt_at TIMESTAMPTZ NOT NULL,
@@ -175,6 +180,7 @@ CREATE TABLE notification_deliveries (
     exhausted_at TIMESTAMPTZ,
     claimed_by UUID,
     last_error TEXT COMPRESSION lz4,
+    CONSTRAINT pk_notification_deliveries PRIMARY KEY (id),
     CONSTRAINT fk_notification_deliveries_event
         FOREIGN KEY (event_id)
         REFERENCES notification_events(id) ON DELETE CASCADE,

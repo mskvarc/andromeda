@@ -4,7 +4,7 @@ use crate::{
     EntityService,
     attrs::attribute_write::{MutatedEntity, payload_write},
     error::EntityError,
-    expanded_member::attr_name_of,
+    expanded_member::{attr_name_of, written_entity_types},
     notification_plan::attribute_change_groups,
 };
 use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
@@ -12,9 +12,8 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
-    entity_member::extract_types,
     instance_key::attribute_instance_family,
-    mutation::{attribute::delete_attr, selection::DatasetSelection},
+    mutation::{attribute::delete_attr, error::ExpandedEntityError, selection::DatasetSelection},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use std::sync::Arc;
@@ -89,18 +88,20 @@ impl EntityService {
                             // its family prescribes (clauses 4.5.7 and 4.5.8). A target
                             // the catalogue knows and the payload does not is a Property
                             // by clause 4.5.2.
-                            let attribute_type = attribute_instance_family(previous, &expanded_attr_name, target.as_ref()).unwrap_or(AttributeType::Property);
-                            tombstone(&expanded_attr_name, target.as_ref(), attribute_type)
+                            let attribute_type = attribute_instance_family(previous, &expanded_attr_name, target.as_ref())
+                                .map_err(ExpandedEntityError::from)?
+                                .unwrap_or(AttributeType::Property);
+                            Ok(tombstone(&expanded_attr_name, target.as_ref(), attribute_type))
                         })
-                        .collect()
+                        .collect::<Result<Vec<HistoryRecord>, EntityError>>()?
                 };
 
                 let merged = Arc::new(existing);
-                let types = extract_types(&merged);
-                let groups = attribute_change_groups(previous, &merged);
+                let types = written_entity_types(&merged)?;
+                let groups = attribute_change_groups(previous, &merged)?;
                 let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
-                let write = payload_write(&entity_uri, &merged, history, plan.matches);
+                let write = payload_write(&entity_uri, &merged, history, plan.matches)?;
                 Ok((write, MutatedEntity { events: plan.events }))
             })
             .await?;

@@ -217,3 +217,53 @@ async fn durable_queue_the_dead_letter_reap_removes_only_dead_jobs_older_than_th
     assert_eq!(remaining, 1, "the live job survives the dead-letter reap whatever its age");
     pool.close().await;
 }
+
+/// The dead-letter retention runs from the instant a job gave up, not from
+/// when it was enqueued: a job that retried for a month and was dead-lettered
+/// an hour ago is still inside a week's retention, while one dead-lettered
+/// eight days ago is past it.
+#[tokio::test]
+#[serial(durable_queue)]
+async fn durable_queue_a_job_exhausted_after_the_retention_window_survives_the_reap() {
+    let pool = queue_database().await;
+    let now = Utc::now();
+    let recently_exhausted = SideEffectJobId::mint();
+    let long_exhausted = SideEffectJobId::mint();
+    for (job, created_at, exhausted_at) in [
+        (&recently_exhausted, now - RetentionDuration::days(30), now - RetentionDuration::hours(1)),
+        (&long_exhausted, now - RetentionDuration::days(30), now - RetentionDuration::days(8)),
+    ] {
+        sqlx::query(
+            "INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload, created_at, exhausted_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(job.as_uuid())
+        .bind(WriteId::mint().as_uuid())
+        .bind(created_at)
+        .bind(0_i32)
+        .bind(json!({"unreadable": true}))
+        .bind(created_at)
+        .bind(exhausted_at)
+        .execute(&pool)
+        .await
+        .expect("seed a dead-lettered job");
+    }
+
+    let repository = PendingSideEffectsRepository::new(&pool);
+    let reaped = repository
+        .purge_dead_before(now - RetentionDuration::days(7))
+        .await
+        .expect("reap with a week's retention");
+    assert_eq!(reaped, 1, "only the job dead-lettered before the cutoff is removed");
+
+    let survivors: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM pending_side_effects")
+        .fetch_all(&pool)
+        .await
+        .expect("surviving jobs");
+    assert_eq!(
+        survivors,
+        vec![recently_exhausted.as_uuid()],
+        "the recently dead-lettered job is kept whatever its age"
+    );
+    pool.close().await;
+}

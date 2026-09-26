@@ -44,12 +44,11 @@
 //!     entity_id              TEXT COLLATE "C" NOT NULL,     -- '' = any
 //!     entity_id_pattern      TEXT,
 //!     property_name_ids      INTEGER[] NOT NULL,            -- {0} = any, {} = none
-//!     relationship_name_ids  INTEGER[] NOT NULL,            -- {0} = any, {} = none
-//!     operations             SMALLINT[]
+//!     relationship_name_ids  INTEGER[] NOT NULL             -- {0} = any, {} = none
 //! );
 //! ```
 //!
-//! Migration `0016_registration_information` declares it, with the storage
+//! Migration `0013_registration_information` declares it, with the storage
 //! parameters, the well-formedness check on the sentinels and the index set that
 //! belong to the schema rather than to this module; nothing here may name a
 //! column that file does not. This module derives the rows;
@@ -67,14 +66,9 @@
 //! start at 1, which is what frees `0` to be the sentinel. Entity identifiers
 //! and identifier patterns stay text at the persistence boundary: an identifier
 //! is matched for equality and a pattern is compiled by PostgreSQL, and neither
-//! is a closed vocabulary worth a dictionary. Operations are stored as the
-//! `SMALLINT[]` of their migration-owned registry numbers rather than as a
-//! bitmask: discovery asks whether a registration declares an operation *or one
-//! of the clause 4.20 groups covering it*, which is an array overlap (`&&`) a
-//! GIN index serves directly, and an array keeps admitting members past the
-//! sixty-four a bitmask word would cap the registry at. They are a
-//! registration-wide member (clause 5.2.9), replicated onto every row of that
-//! registration so one indexed row carries every dimension a preselect tests.
+//! is a closed vocabulary worth a dictionary. The registration's operations are
+//! not projected: operation matching reads the registration's own column, and
+//! no preselect filters on them.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity_info::EntityInfo, registration::info::RegistrationInfo};

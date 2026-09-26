@@ -84,3 +84,42 @@ macro_rules! validated_ngsi_name {
         }
     };
 }
+
+/// Emit the three length-bound tests every validated name type shares.
+///
+/// Expands, inside the invoking test module, to one test that a name of exactly
+/// [`IDENTIFIER_BYTE_LIMIT`](crate::identifier_length::IDENTIFIER_BYTE_LIMIT)
+/// octets parses, one that an expanded IRI one octet longer is refused although
+/// the IRI grammar alone admits it, and one that a short-name term one octet
+/// longer is refused. The expansion names `IDENTIFIER_BYTE_LIMIT`, `IriBuf`
+/// and `NgsiLdReferenceError` by their short names, so the invoking module
+/// imports them.
+#[cfg(test)]
+macro_rules! name_length_tests {
+    ($name:ty) => {
+        #[test]
+        fn a_name_of_exactly_the_limit_is_accepted() {
+            let prefix = "https://example.com/";
+            let raw = format!("{prefix}{}", "a".repeat(IDENTIFIER_BYTE_LIMIT - prefix.len()));
+            let parsed: $name = raw.parse().expect("a name at the limit");
+            pretty_assertions::assert_eq!(parsed.as_str(), raw);
+        }
+
+        #[test]
+        fn an_iri_name_past_the_limit_is_too_long_even_though_the_iri_grammar_admits_it() {
+            let prefix = "https://example.com/";
+            let raw = format!("{prefix}{}", "a".repeat(IDENTIFIER_BYTE_LIMIT + 1 - prefix.len()));
+            assert!(raw.parse::<IriBuf>().is_ok(), "the IRI grammar has no length bound");
+            let refused = raw.parse::<$name>().expect_err("an over-long IRI name");
+            assert!(matches!(refused, NgsiLdReferenceError::TooLong(_)), "{refused:?}");
+            assert!(refused.to_string().contains("1025 bytes"), "{refused}");
+        }
+
+        #[test]
+        fn a_short_name_term_past_the_limit_is_too_long() {
+            let raw = "a".repeat(IDENTIFIER_BYTE_LIMIT + 1);
+            let refused = raw.parse::<$name>().expect_err("an over-long term");
+            assert!(matches!(refused, NgsiLdReferenceError::TooLong(_)), "{refused:?}");
+        }
+    };
+}

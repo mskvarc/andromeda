@@ -35,7 +35,7 @@ impl SubscriptionRepository {
         let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4()))
             .build()
             .map_err(|e| ContextStoreError::Internal(format!("failed to build subscription URN: {e}")))?;
-        Ok(Uri::from(urn))
+        Uri::try_from(urn).map_err(|e| ContextStoreError::Internal(format!("generated subscription URN is out of bounds: {e}")))
     }
 
     /// Creates a new repository backed by the given connection pool and the

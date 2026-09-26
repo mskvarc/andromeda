@@ -81,7 +81,7 @@ impl SubscriptionForwardingService {
         let carriage = FilterCarriage::for_split(self.federation.split_entities(subscription.delivery.split_entities));
         match decision {
             ForwardDecision::Create => {
-                let minted = mint_subscription_id().map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
+                let minted = mint_subscription_id()?;
                 let copy = ReducedSubscription::reduce(subscription, registration, &self.receiver, &minted, carriage);
                 let body = serde_json::to_vec(&copy.document)?;
                 let forwarded = self

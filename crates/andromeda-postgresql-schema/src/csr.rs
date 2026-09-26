@@ -118,9 +118,6 @@ pub enum RegistrationInformation {
     /// when it declares no name on either axis, `{}` when it declares names on
     /// the property axis only.
     RelationshipNameIds,
-    /// The registration-wide clause 4.20 operation codes, replicated onto every
-    /// row, or `NULL` when the registration declares none.
-    Operations,
 }
 
 #[cfg(test)]
@@ -158,6 +155,5 @@ mod tests {
         assert_eq!(RegistrationInformation::Table.to_string(), "registration_information");
         assert_eq!(RegistrationInformation::EntityTypes.to_string(), "entity_types");
         assert_eq!(RegistrationInformation::PropertyNameIds.to_string(), "property_name_ids");
-        assert_eq!(RegistrationInformation::Operations.to_string(), "operations");
     }
 }

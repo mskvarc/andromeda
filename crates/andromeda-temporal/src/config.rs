@@ -15,10 +15,9 @@ use toml_comment::TomlComment;
 /// against the default of the other.
 pub const DEFAULT_CHUNK_INTERVAL: HumanDuration = HumanDuration::from_days(7);
 
-/// The columnstore lag the tenant schema declares when no override is set.
-///
-/// Mirrors the `add_columnstore_policy` lag in the attribute-history and
-/// scope-history migrations.
+/// The columnstore lag the broker enables the columnstore under when no other
+/// is configured: the thirty-day horizon within which history is expected to be
+/// mutated in place.
 pub const DEFAULT_COLUMNSTORE_AFTER: HumanDuration = HumanDuration::from_days(30);
 
 /// The number of seconds in one day, the grain the history-partition day fields
@@ -154,14 +153,14 @@ pub struct TemporalConfig {
     /// day-grained, so the value must resolve to whole days.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunk_interval: Option<HumanDuration>,
-    /// Override of the age past which a history partition is converted to the
-    /// columnstore, as a whole number of days in human-readable form
-    /// (`"30days"`).
+    /// The age past which a history partition is converted to the columnstore,
+    /// as a whole number of days in human-readable form (`"30days"`).
     ///
-    /// Absent, the schema's own default stands. Must not fall below the chunk
+    /// Enabled and reconciled when a tenant is opened on an edition that has a
+    /// columnstore; ignored on one that does not. Must not fall below the chunk
     /// interval, or a partition still receiving rows would be converted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub columnstore_after: Option<HumanDuration>,
+    #[toml_comment(inline)]
+    pub columnstore_after: HumanDuration,
     /// Operator retention horizon as a whole number of days in human-readable
     /// form (`"365days"`), absent while retention is off.
     ///
@@ -190,7 +189,7 @@ impl Default for TemporalConfig {
             intent_retry_max: HumanDuration::from_secs(300),
             intent_stuck_after_attempts: 10,
             chunk_interval: None,
-            columnstore_after: None,
+            columnstore_after: DEFAULT_COLUMNSTORE_AFTER,
             retention_horizon: None,
             retention_sweep_interval: HumanDuration::from_secs(3600),
         }
@@ -259,20 +258,14 @@ impl TemporalConfig {
         {
             return Err(TemporalConfigError::ChunkIntervalNotWholeDays);
         }
-        if let Some(columnstore_after) = self.columnstore_after
-            && !is_positive_whole_days(columnstore_after)
-        {
+        if !is_positive_whole_days(self.columnstore_after) {
             return Err(TemporalConfigError::ColumnstoreAfterNotWholeDays);
         }
         let chunk_interval = match self.chunk_interval {
             Some(chunk_interval) => chunk_interval,
             None => DEFAULT_CHUNK_INTERVAL,
         };
-        let columnstore_after = match self.columnstore_after {
-            Some(columnstore_after) => columnstore_after,
-            None => DEFAULT_COLUMNSTORE_AFTER,
-        };
-        if columnstore_after.duration().as_secs() < chunk_interval.duration().as_secs() {
+        if self.columnstore_after.duration().as_secs() < chunk_interval.duration().as_secs() {
             return Err(TemporalConfigError::ColumnstoreLagBelowChunkInterval);
         }
         if let Some(retention_horizon) = self.retention_horizon
@@ -286,23 +279,33 @@ impl TemporalConfig {
         Ok(())
     }
 
-    /// The storage policy the overrides describe, for the backend to reconcile.
+    /// The storage policy the configuration describes, for the backend to
+    /// reconcile.
     ///
-    /// Only meaningful on a validated configuration: a zero override is
-    /// refused by [`TemporalConfig::validate`] and treated as absent here.
-    #[must_use]
-    pub fn storage_policy(&self) -> TemporalStoragePolicy {
-        TemporalStoragePolicy {
-            chunk_interval_days: self.chunk_interval.and_then(whole_days),
-            columnstore_after_days: self.columnstore_after.and_then(whole_days),
-        }
+    /// # Errors
+    ///
+    /// Returns [`TemporalConfigError::ChunkIntervalNotWholeDays`] or
+    /// [`TemporalConfigError::ColumnstoreAfterNotWholeDays`] for a value that is
+    /// not a positive whole number of days, which [`TemporalConfig::validate`]
+    /// refuses first on every configuration the broker starts with.
+    pub fn storage_policy(&self) -> Result<TemporalStoragePolicy, TemporalConfigError> {
+        let chunk_interval_days = match self.chunk_interval {
+            Some(chunk_interval) => Some(whole_days(chunk_interval).ok_or(TemporalConfigError::ChunkIntervalNotWholeDays)?),
+            None => None,
+        };
+        Ok(TemporalStoragePolicy {
+            chunk_interval_days,
+            columnstore_after_days: whole_days(self.columnstore_after).ok_or(TemporalConfigError::ColumnstoreAfterNotWholeDays)?,
+        })
     }
 }
 
 #[cfg(test)]
 mod config_tests {
-    use super::{TemporalAppendMode, TemporalConfig, TemporalConfigError};
-    use crate::storage_policy::TemporalStoragePolicy;
+    use crate::{
+        config::{DEFAULT_COLUMNSTORE_AFTER, TemporalAppendMode, TemporalConfig, TemporalConfigError},
+        storage_policy::TemporalStoragePolicy,
+    };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
     use pretty_assertions::assert_eq;
     use std::{num::NonZeroU32, time::Duration};
@@ -320,7 +323,7 @@ mod config_tests {
             intent_retry_max: HumanDuration::from_secs(300),
             intent_stuck_after_attempts: 10,
             chunk_interval: None,
-            columnstore_after: None,
+            columnstore_after: DEFAULT_COLUMNSTORE_AFTER,
             retention_horizon: None,
             retention_sweep_interval: HumanDuration::from_secs(3600),
         }
@@ -365,7 +368,7 @@ mod config_tests {
         };
         assert_eq!(chunk.validate(), Err(TemporalConfigError::ChunkIntervalNotWholeDays));
         let lag = TemporalConfig {
-            columnstore_after: Some(HumanDuration::from_days(0)),
+            columnstore_after: HumanDuration::from_days(0),
             ..valid()
         };
         assert_eq!(lag.validate(), Err(TemporalConfigError::ColumnstoreAfterNotWholeDays));
@@ -390,7 +393,7 @@ mod config_tests {
     #[test]
     fn a_columnstore_lag_shorter_than_the_chunk_interval_is_rejected_against_either_default() {
         let short_lag = TemporalConfig {
-            columnstore_after: Some(HumanDuration::from_days(3)),
+            columnstore_after: HumanDuration::from_days(3),
             ..valid()
         };
         assert_eq!(short_lag.validate(), Err(TemporalConfigError::ColumnstoreLagBelowChunkInterval));
@@ -401,32 +404,32 @@ mod config_tests {
         assert_eq!(long_chunk.validate(), Err(TemporalConfigError::ColumnstoreLagBelowChunkInterval));
         let both = TemporalConfig {
             chunk_interval: Some(HumanDuration::from_days(1)),
-            columnstore_after: Some(HumanDuration::from_days(3)),
+            columnstore_after: HumanDuration::from_days(3),
             ..valid()
         };
         assert_eq!(both.validate(), Ok(()));
     }
 
     #[test]
-    fn the_storage_policy_carries_exactly_the_overrides_set() {
+    fn the_storage_policy_carries_the_chunk_override_and_the_columnstore_lag() {
         assert_eq!(
             valid().storage_policy(),
-            TemporalStoragePolicy {
+            Ok(TemporalStoragePolicy {
                 chunk_interval_days: None,
-                columnstore_after_days: None,
-            }
+                columnstore_after_days: NonZeroU32::new(30).expect("thirty days"),
+            })
         );
         let overridden = TemporalConfig {
             chunk_interval: Some(HumanDuration::from_days(1)),
-            columnstore_after: Some(HumanDuration::from_days(3)),
+            columnstore_after: HumanDuration::from_days(3),
             ..valid()
         };
         assert_eq!(
             overridden.storage_policy(),
-            TemporalStoragePolicy {
+            Ok(TemporalStoragePolicy {
                 chunk_interval_days: NonZeroU32::new(1),
-                columnstore_after_days: NonZeroU32::new(3),
-            }
+                columnstore_after_days: NonZeroU32::new(3).expect("three days"),
+            })
         );
     }
 

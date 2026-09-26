@@ -106,11 +106,22 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
     Ok(())
 }
 
+/// The unique constraint migration 0014 names on `snapshots.id`.
+const UQ_SNAPSHOTS_ID: &str = "uq_snapshots_id";
+
+/// The SQLSTATE a unique violation carries.
+const UNIQUE_VIOLATION: &str = "23505";
+
+/// Whether a database failure is the unique violation of a Snapshot identifier
+/// already in use.
+fn is_duplicate_snapshot_id(code: Option<&str>, constraint: Option<&str>) -> bool {
+    code == Some(UNIQUE_VIOLATION) && constraint == Some(UQ_SNAPSHOTS_ID)
+}
+
 /// Preserve the protocol-visible duplicate-id classification from PostgreSQL.
 fn snapshot_create_error(error: sqlx::Error, id: &Uri) -> SnapshotError {
     if let sqlx::Error::Database(database_error) = &error
-        && database_error.code().as_deref() == Some("23505")
-        && database_error.constraint() == Some("snapshots_id_key")
+        && is_duplicate_snapshot_id(database_error.code().as_deref(), database_error.constraint())
     {
         return SnapshotError::already_exists(id);
     }
@@ -119,7 +130,17 @@ fn snapshot_create_error(error: sqlx::Error, id: &Uri) -> SnapshotError {
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::creation::{control_insert_sql, preparation_insert_sql};
+    use crate::snapshot::creation::{control_insert_sql, is_duplicate_snapshot_id, preparation_insert_sql};
+
+    /// Migration 0014 names every constraint, so the duplicate-identity
+    /// refusal matches the declared name rather than one PostgreSQL generated.
+    #[test]
+    fn the_duplicate_id_branch_matches_uq_snapshots_id() {
+        assert!(is_duplicate_snapshot_id(Some("23505"), Some("uq_snapshots_id")));
+        assert!(!is_duplicate_snapshot_id(Some("23505"), Some("snapshots_id_key")));
+        assert!(!is_duplicate_snapshot_id(Some("23505"), Some("pk_snapshots")));
+        assert!(!is_duplicate_snapshot_id(Some("23514"), Some("uq_snapshots_id")));
+    }
 
     #[test]
     fn the_control_insert_binds_eleven_values_and_returns_the_surrogate_key() {

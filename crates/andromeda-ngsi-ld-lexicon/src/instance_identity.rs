@@ -89,9 +89,7 @@ pub enum RenderedInstanceId<'a> {
 
 /// The UUID a generated identifier carries, when the template reproduces it exactly.
 fn generated_uuid_of(identifier: &Uri, family: InstanceFamily) -> Option<Uuid> {
-    let Uri::Urn(urn) = identifier else {
-        return None;
-    };
+    let urn = identifier.as_urn()?;
     if urn.nid() != NGSI_LD_URN_NID {
         return None;
     }

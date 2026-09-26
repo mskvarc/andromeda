@@ -68,7 +68,13 @@
 --     the surrogate names both the schema and the child rows. The URI stays the
 --     API identity (`id`, unique).
 --   * `id` and `clone_source_id` are identifiers, compared for equality and
---     prefix only, so they are `COLLATE "C"`.
+--     prefix only, so they are `COLLATE "C"`. Both are bounded at 1024 UTF-8
+--     octets, the identifier bound (`IDENTIFIER_BYTE_LIMIT` in
+--     `andromeda-ngsi-ld-lexicon`) a Snapshot URI is parsed under, well inside
+--     the 2704 bytes the unique btree on `id` admits. The duplicate-identity
+--     refusal matches `uq_snapshots_id` by name.
+--   * `last_error` on the status outbox is bounded at 2048 characters, the
+--     failure-summary bound every claimable queue in this schema shares.
 --   * Every JSONB column is `COMPRESSION lz4`: a snapshot document is written
 --     once and read a few times, and lz4 decompresses far faster than pglz.
 --   * Not-null fixed-width columns lead, in descending alignment, then the
@@ -77,7 +83,7 @@
 
 CREATE TABLE snapshots (
     -- Surrogate the branch schema and child rows are named from; never rendered.
-    snapshot_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    snapshot_key BIGINT GENERATED ALWAYS AS IDENTITY,
 
     -- When this snapshot was created.
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -86,13 +92,13 @@ CREATE TABLE snapshots (
     expires_at TIMESTAMPTZ NOT NULL,
 
     -- Priority hint (1-10, default 5) for snapshot scheduling.
-    snapshot_priority SMALLINT NOT NULL DEFAULT 5 CHECK (snapshot_priority BETWEEN 1 AND 10),
+    snapshot_priority SMALLINT NOT NULL DEFAULT 5,
 
     -- Source URI for an asynchronous clone job; NULL for query capture.
     clone_source_id TEXT COMPRESSION lz4 COLLATE "C",
 
     -- Snapshot URI, e.g. "urn:ngsi-ld:Snapshot:abc123".
-    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE,
+    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
 
     -- ISO 8601 duration for how long the snapshot remains valid.
     snapshot_lifetime TEXT,
@@ -112,7 +118,13 @@ CREATE TABLE snapshots (
     query_context JSONB COMPRESSION lz4 NOT NULL,
 
     -- Optional receiver info for the notification endpoint.
-    receiver_info JSONB COMPRESSION lz4
+    receiver_info JSONB COMPRESSION lz4,
+
+    CONSTRAINT pk_snapshots PRIMARY KEY (snapshot_key),
+    CONSTRAINT uq_snapshots_id UNIQUE (id),
+    CONSTRAINT chk_snapshots_priority CHECK (snapshot_priority BETWEEN 1 AND 10),
+    CONSTRAINT chk_snapshots_id_length CHECK (octet_length(id) <= 1024),
+    CONSTRAINT chk_snapshots_clone_source_id_length CHECK (octet_length(clone_source_id) <= 1024)
 );
 
 -- Efficient periodic cleanup of expired snapshots.
@@ -120,7 +132,7 @@ CREATE INDEX idx_snapshots_expires_at ON snapshots (expires_at);
 
 CREATE TABLE snapshot_preparation (
     -- Shares the control record's surrogate key and is reaped with it.
-    snapshot_key BIGINT PRIMARY KEY REFERENCES snapshots (snapshot_key) ON DELETE CASCADE,
+    snapshot_key BIGINT NOT NULL,
 
     -- Modification instant, bumped on every lifecycle transition.
     modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -152,6 +164,9 @@ CREATE TABLE snapshot_preparation (
     -- Per-query result details for temporal queries.
     temporal_queries_details JSONB COMPRESSION lz4,
 
+    CONSTRAINT pk_snapshot_preparation PRIMARY KEY (snapshot_key),
+    CONSTRAINT fk_snapshot_preparation_snapshot FOREIGN KEY (snapshot_key)
+        REFERENCES snapshots (snapshot_key) ON DELETE CASCADE,
     CONSTRAINT chk_snapshot_preparation_claim_coherent
         CHECK (num_nonnulls(claimed_by, claimed_at, lease_until) IN (0, 3)),
     CONSTRAINT chk_snapshot_preparation_status CHECK (status BETWEEN 1 AND 5),
@@ -187,20 +202,26 @@ CREATE INDEX idx_snapshot_preparation_claim
 -- `last_error` the latest failure, `delivered_at` the acknowledged door and
 -- `exhausted_at` the dead-letter door.
 CREATE TABLE snapshot_notification_outbox (
-    id UUID PRIMARY KEY,
-    snapshot_key BIGINT NOT NULL REFERENCES snapshots(snapshot_key) ON DELETE CASCADE,
+    id UUID NOT NULL,
+    snapshot_key BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     claimed_at TIMESTAMPTZ,
     lease_until TIMESTAMPTZ,
     claimed_by UUID,
-    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    attempt_count INTEGER NOT NULL DEFAULT 0,
     delivered_at TIMESTAMPTZ,
     exhausted_at TIMESTAMPTZ,
     endpoint TEXT NOT NULL,
     receiver_info JSONB COMPRESSION lz4,
     payload JSONB COMPRESSION lz4 NOT NULL,
     last_error TEXT COMPRESSION lz4,
+    CONSTRAINT pk_snapshot_notification_outbox PRIMARY KEY (id),
+    CONSTRAINT fk_snapshot_notification_outbox_snapshot FOREIGN KEY (snapshot_key)
+        REFERENCES snapshots (snapshot_key) ON DELETE CASCADE,
+    CONSTRAINT chk_snapshot_notification_attempt_count_non_negative CHECK (attempt_count >= 0),
+    CONSTRAINT chk_snapshot_notification_last_error_bound
+        CHECK (last_error IS NULL OR char_length(last_error) <= 2048),
     CONSTRAINT chk_snapshot_notification_claim_coherent
         CHECK (num_nonnulls(claimed_at, lease_until, claimed_by) IN (0, 3)),
     CONSTRAINT chk_snapshot_notification_terminal_coherent

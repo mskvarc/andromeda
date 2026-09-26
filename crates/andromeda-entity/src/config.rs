@@ -102,11 +102,12 @@ pub struct EntityConfig {
     /// Base retry backoff for side-effect jobs, in human-readable form (`"2s"`).
     #[toml_comment(inline)]
     pub pending_side_effects_base_backoff: HumanDuration,
-    /// Age after which a dead-lettered side-effect job is removed, in
+    /// How long a side-effect job is kept once it is dead-lettered, in
     /// human-readable form (`"7days"`).
     ///
     /// A dead job is evidence of a batch whose deferred side effects never
-    /// landed, so it is kept for a week by default before the reap removes it.
+    /// landed, so it is kept for a week by default after it gives up before the
+    /// reap removes it.
     #[toml_comment(inline)]
     pub pending_side_effects_dead_letter_after: HumanDuration,
     /// Cadence of the dead-lettered side-effect reap, in human-readable form

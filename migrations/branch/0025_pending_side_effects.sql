@@ -15,9 +15,11 @@
 -- The lease and dead-letter columns are the schema-wide claimable-queue
 -- contract shared with the other durable queues: `claimed_at`, `claimed_by`
 -- (the schema-wide UUID lease holder), `lease_until` are the renewable claim, `attempt_count` the attempt counter,
--- `next_attempt_at` the next-due instant, `last_error` the latest failure, and
--- `exhausted_at` the dead-letter door. Only the claim ordering and its index
--- differ between queues, on the measured grounds below.
+-- `next_attempt_at` the next-due instant, `last_error` the latest failure --
+-- bounded at 2048 characters, the failure-summary bound every claimable queue
+-- in this schema shares -- and `exhausted_at` the dead-letter door. Only the
+-- claim ordering and its index differ between queues, on the measured grounds
+-- below.
 --
 -- `id` carries no default: it is minted by the broker as a version-7 UUID
 -- (`andromeda-context-commit` `SideEffectJobId`), so the enqueueing code
@@ -46,10 +48,14 @@
 --   * an exhausted row holds no lease (dead-lettering clears the claim first)
 --
 -- An exhausted row is kept as evidence of a batch whose deferred side effects
--- never landed, not forever: the drain's reaper removes exhausted rows older
--- than the configured dead-letter retention
--- (`entity.pending_side_effects_dead_letter_after_secs`), and `idx_pse_exhausted`
--- is the range scan that reap runs -- partial, so live rows cost it nothing.
+-- never landed, not forever: the drain's reaper removes rows exhausted longer
+-- ago than the configured dead-letter retention
+-- (`entity.pending_side_effects_dead_letter_after`). The retention clock is
+-- `exhausted_at`, the instant the job was dead-lettered, not `created_at`: a
+-- job that retried for longer than the retention window must still be kept
+-- for that window once it gives up, exactly as the notification queue ages
+-- its dead letters. `idx_pse_exhausted` on `exhausted_at` is the range scan
+-- that reap runs -- partial, so live rows cost it nothing.
 --
 -- Storage parameters. This relation is queue-shaped: high insert rate, every
 -- row updated once or twice, every row eventually deleted. Default
@@ -85,7 +91,7 @@
 -- ============================================================================
 
 CREATE TABLE pending_side_effects (
-    id UUID PRIMARY KEY,
+    id UUID NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     recorded_at TIMESTAMPTZ NOT NULL,
     write_id UUID NOT NULL,
@@ -98,10 +104,12 @@ CREATE TABLE pending_side_effects (
     exhausted_at TIMESTAMPTZ,
     last_error TEXT COMPRESSION lz4,
     payload JSONB COMPRESSION lz4 NOT NULL,
+    CONSTRAINT pk_pending_side_effects PRIMARY KEY (id),
     CONSTRAINT chk_pse_consequence_base_non_negative CHECK (consequence_base >= 0),
     CONSTRAINT chk_pse_attempt_count_non_negative CHECK (attempt_count >= 0),
     CONSTRAINT chk_pse_claim_coherent CHECK (num_nonnulls(claimed_at, lease_until, claimed_by) IN (0, 3)),
     CONSTRAINT chk_pse_exhausted_state CHECK (exhausted_at IS NULL OR num_nonnulls(claimed_at, lease_until, claimed_by) = 0),
+    CONSTRAINT chk_pse_last_error_bound CHECK (last_error IS NULL OR char_length(last_error) <= 2048),
     CONSTRAINT uq_pse_write_identity UNIQUE (write_id)
 ) WITH (
     fillfactor = 50,
@@ -117,5 +125,5 @@ CREATE INDEX idx_pse_claim_candidates
     WHERE exhausted_at IS NULL;
 
 CREATE INDEX idx_pse_exhausted
-    ON pending_side_effects (created_at)
+    ON pending_side_effects (exhausted_at)
     WHERE exhausted_at IS NOT NULL;

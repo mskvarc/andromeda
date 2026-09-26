@@ -225,13 +225,24 @@ fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(
 /// instances sharing an identity name one instance twice, and a store that
 /// accepts them keeps only the last while the payload keeps both — so `q`,
 /// which reads the projection, would disagree with the representation.
-fn validate_instance_identities(attr_name: &AttributeName, instances: &[Value]) -> Result<(), EntityError> {
+///
+/// Each identity must also be readable: a `datasetId` that is not an
+/// identifier is refused rather than read as the default instance (clause
+/// 4.5.5), and so is an `instanceId` that is not one (clause 4.5.7), before
+/// either reaches the store.
+pub(crate) fn validate_instance_identities(attr_name: &AttributeName, instances: &[Value]) -> Result<(), EntityError> {
     let mut seen: HashSet<Option<Uri>> = HashSet::with_capacity(instances.len());
     for instance in instances {
         if !instance.is_object() {
             continue;
         }
-        let dataset_id = get_instance_dataset_id(instance);
+        validate_instance_id(attr_name, instance)?;
+        let dataset_id = get_instance_dataset_id(instance).map_err(|source| {
+            EntityError::Validation(EntityValidationReason::ExpandedDatasetId {
+                attribute: attr_name.clone(),
+                source,
+            })
+        })?;
         if !seen.insert(dataset_id.clone()) {
             // clone: the reported identity outlives the set that detected it.
             return Err(match dataset_id {
@@ -244,6 +255,27 @@ fn validate_instance_identities(attr_name: &AttributeName, instances: &[Value]) 
         }
     }
     Ok(())
+}
+
+/// Refuse an instance whose `instanceId` is present but is not an identifier
+/// (clause 4.5.7).
+fn validate_instance_id(attr_name: &AttributeName, instance: &Value) -> Result<(), EntityError> {
+    let Some(raw) = instance
+        .get(expanded_properties::INSTANCE_ID.as_str())
+        .and_then(Value::as_array)
+        .and_then(|nodes| nodes.first())
+        .and_then(|node| node.get("@id"))
+        .and_then(Value::as_str)
+    else {
+        return Ok(());
+    };
+    raw.parse::<Uri>().map(drop).map_err(|source| {
+        EntityError::Validation(EntityValidationReason::ExpandedInstanceId {
+            attribute: attr_name.clone(),
+            raw: raw.to_owned(),
+            source,
+        })
+    })
 }
 
 #[cfg(test)]

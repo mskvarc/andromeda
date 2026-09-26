@@ -30,6 +30,8 @@ pub mod entity_mutation;
 pub mod entity_record;
 /// Failures reported by the atomic commit boundary.
 pub mod error;
+/// The bound every claimable queue holds a recorded failure to.
+pub mod failure_summary;
 /// Temporal-history consequences carried by a write.
 pub mod history_record;
 /// Whether a lease-guarded acknowledgement reached the row it targeted.

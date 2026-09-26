@@ -38,7 +38,11 @@ pub struct ProjectedAttributeKey {
 ///
 /// Each member names exactly one typed column, which the table's own check
 /// constraint re-states: a row whose declared shape disagrees with the column
-/// holding its value is unrepresentable on both sides of the boundary.
+/// holding its value is unrepresentable on both sides of the boundary. A
+/// [`String`](ProjectedAttributeValue::String) is the one member whose column
+/// its length decides: `value_string` or, past the B-tree bound,
+/// `value_long_text`, both under the String value kind, as
+/// `andromeda-postgresql-schema`'s `ProjectedStringColumn::of` places it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProjectedAttributeValue {
     /// An arbitrary-precision number.

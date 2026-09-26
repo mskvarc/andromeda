@@ -25,6 +25,7 @@ impl From<ExpandedEntityError> for EntityError {
             | ExpandedEntityError::AttributesNotObject
             | ExpandedEntityError::InvalidAttributeName { .. }
             | ExpandedEntityError::InvalidAttributeType
+            | ExpandedEntityError::InvalidDatasetId(_)
             | ExpandedEntityError::AttributeTypeMismatch { .. }) => EntityError::Validation(EntityValidationReason::Expanded(malformed)),
             missing @ (ExpandedEntityError::AttributeNotFound { .. }
             | ExpandedEntityError::AttributeHasNoInstances { .. }

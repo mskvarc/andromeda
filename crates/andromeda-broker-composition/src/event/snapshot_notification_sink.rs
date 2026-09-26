@@ -9,7 +9,7 @@ use andromeda_delivery::{
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-use andromeda_notification::{delivery_backoff::backoff_seconds, delivery_config::DeliveryConfig};
+use andromeda_notification::{delivery_backoff::backoff_seconds, delivery_config::DeliveryConfig, delivery_error_bound::DeliveryErrorBound};
 use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery, SnapshotStatusOutbox};
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Duration, Utc};
@@ -31,7 +31,7 @@ pub struct SnapshotStatusDeliveryDrain {
     base_backoff_secs: i64,
     batch_size: i32,
     concurrency: usize,
-    error_max_chars: usize,
+    error_bound: DeliveryErrorBound,
     delivered_retention: Duration,
     dead_retention: Duration,
 }
@@ -53,7 +53,9 @@ impl SnapshotStatusDeliveryDrain {
                 .map_err(|error| SnapshotError::internal(format!("Snapshot notification backoff is out of range: {error}")))?,
             batch_size: config.batch_size.max(1),
             concurrency: usize::try_from(config.concurrency).unwrap_or(usize::MAX).max(1),
-            error_max_chars: usize::try_from(config.error_max_chars).unwrap_or(usize::MAX),
+            error_bound: config
+                .error_bound()
+                .map_err(|error| SnapshotError::internal(format!("Snapshot notification error bound is invalid: {error}")))?,
             delivered_retention: Duration::seconds(i64::try_from(config.cleanup_after.duration().as_secs()).unwrap_or(i64::MAX)),
             dead_retention: Duration::seconds(i64::try_from(config.dead_letter_after.duration().as_secs()).unwrap_or(i64::MAX)),
         })
@@ -122,7 +124,7 @@ impl SnapshotStatusDeliveryDrain {
                 } else {
                     "Snapshot notification delivery failed terminally"
                 };
-                let detail = detail.chars().take(self.error_max_chars).collect::<String>();
+                let detail = self.error_bound.truncate(detail);
                 self.outbox.fail(entry.id, self.worker, failure, self.max_attempts, retry_at, &detail).await?;
             }
         }

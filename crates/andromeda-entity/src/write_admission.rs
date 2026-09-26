@@ -34,8 +34,9 @@
 
 use crate::{
     EntityService,
-    attribute_envelope::validate_attribute_envelopes,
+    attribute_envelope::{validate_attribute_envelopes, validate_instance_identities},
     batch::UpsertPolicy,
+    entity_identity_admission::validate_entity_identity,
     error::EntityError,
     geo_property_geometry::validate_geo_property_geometries,
     null_sentinel_admission::{NullSentinelAdmission, reject_null_placements_in_attribute, reject_null_placements_in_entity},
@@ -43,6 +44,7 @@ use crate::{
 };
 use andromeda_jsonld::{attribute_fragment::expand_attribute_fragment, context_spec::ContextSpec, scoped_context_admission::reject_scoped_user_contexts};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_model::expanded::node::expanded_nodes;
 use andromeda_ngsi_ld_representation::normalization::{normalize_attribute_node, normalize_entity_attributes, normalize_merge_fragment};
 use serde_json::Value;
 
@@ -152,10 +154,13 @@ impl BatchWrite {
 /// # Errors
 ///
 /// Reports [`EntityError::Validation`], which the HTTP binding answers with the
-/// `BadRequestData` of clause 5.5.4, for an attribute instance that is not one
-/// its family admits, an NGSI-LD Null the operation does not admit, a `scope`
-/// member outside clause 4.18, and a malformed `GeoProperty` geometry.
+/// `BadRequestData` of clause 5.5.4, for an `@id` or `@type` that is not an
+/// identifier or a type name, an attribute instance that is not one its family
+/// admits or whose `datasetId` or `instanceId` is not an identifier, an
+/// NGSI-LD Null the operation does not admit, a `scope` member outside clause
+/// 4.18, and a malformed `GeoProperty` geometry.
 pub(crate) fn admit_expanded_entity(expanded: &Value, admission: NullSentinelAdmission) -> Result<(), EntityError> {
+    validate_entity_identity(expanded)?;
     validate_attribute_envelopes(expanded)?;
     reject_null_placements_in_entity(expanded, admission)?;
     validate_scope_member(expanded, admission)?;
@@ -175,6 +180,9 @@ pub(crate) fn admit_expanded_entity(expanded: &Value, admission: NullSentinelAdm
 /// [`admit_expanded_entity`].
 pub(crate) fn admit_expanded_attribute(expanded: &Value, attribute: &AttributeName, admission: NullSentinelAdmission) -> Result<(), EntityError> {
     validate_attribute_envelopes(expanded)?;
+    // The fragment is the attribute's instances themselves, so the entity walk
+    // above never reaches their identities as it does an entity's attributes.
+    validate_instance_identities(attribute, expanded_nodes(expanded))?;
     reject_null_placements_in_attribute(expanded, attribute, admission)?;
     validate_geo_property_geometries(expanded)
 }
@@ -254,11 +262,26 @@ impl EntityService {
 mod tests {
     use crate::{
         batch::UpsertPolicy,
+        error::EntityError,
         null_sentinel_admission::NullSentinelAdmission,
         write_admission::{AttributeWrite, BatchWrite, EntityWrite, admit_expanded_attribute, admit_expanded_entity},
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
     use serde_json::{Value, json};
+
+    /// An identifier one octet past the identifier bound.
+    fn identifier_past_the_limit() -> String {
+        let prefix = "urn:ngsi-ld:Thing:";
+        format!("{prefix}{}", "a".repeat(IDENTIFIER_BYTE_LIMIT + 1 - prefix.len()))
+    }
+
+    /// Assert the admission refused the payload as `BadRequestData` naming the
+    /// refused length (clause 5.5.4).
+    fn assert_refused_past_the_limit(result: Result<(), EntityError>) {
+        let error = result.expect_err("the admission refuses an identifier past the bound");
+        assert!(matches!(error, EntityError::Validation(_)), "{error:?}");
+        assert!(error.to_string().contains("1025 bytes"), "{error}");
+    }
 
     /// One expanded entity carrying a single Property whose value is `value`.
     fn entity_with(value: &Value) -> Value {
@@ -358,5 +381,57 @@ mod tests {
         assert!(error.to_string().contains("urn:ngsi-ld:null"), "{error}");
         admit_expanded_attribute(&fragment, &attribute(), AttributeWrite::PartialUpdate.null_sentinel_admission())
             .expect("clause 5.6.4 supports NGSI-LD Nulls");
+    }
+
+    #[test]
+    fn the_entity_admission_refuses_an_expanded_type_past_the_identifier_limit() {
+        let payload = json!([{"@id": "urn:ngsi-ld:Device:1", "@type": [identifier_past_the_limit()]}]);
+        assert_refused_past_the_limit(admit_expanded_entity(&payload, EntityWrite::Create.null_sentinel_admission()));
+    }
+
+    #[test]
+    fn the_entity_admission_refuses_an_expanded_entity_id_past_the_identifier_limit() {
+        let payload = json!([{"@id": identifier_past_the_limit(), "@type": ["https://example.org/Device"]}]);
+        assert_refused_past_the_limit(admit_expanded_entity(&payload, EntityWrite::Create.null_sentinel_admission()));
+    }
+
+    #[test]
+    fn the_entity_admission_refuses_an_expanded_dataset_id_past_the_identifier_limit() {
+        let payload = json!([{
+            "@id": "urn:ngsi-ld:Device:1",
+            "https://example.org/member": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": identifier_past_the_limit()}]
+            }]
+        }]);
+        assert_refused_past_the_limit(admit_expanded_entity(&payload, EntityWrite::AppendAttributes.null_sentinel_admission()));
+    }
+
+    #[test]
+    fn the_entity_admission_refuses_an_expanded_instance_id_past_the_identifier_limit() {
+        let payload = json!([{
+            "@id": "urn:ngsi-ld:Device:1",
+            "https://example.org/member": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+                "https://uri.etsi.org/ngsi-ld/instanceId": [{"@id": identifier_past_the_limit()}]
+            }]
+        }]);
+        assert_refused_past_the_limit(admit_expanded_entity(&payload, EntityWrite::Create.null_sentinel_admission()));
+    }
+
+    #[test]
+    fn the_attribute_admission_refuses_a_dataset_id_past_the_identifier_limit() {
+        let fragment = json!([{
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+            "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": identifier_past_the_limit()}]
+        }]);
+        assert_refused_past_the_limit(admit_expanded_attribute(
+            &fragment,
+            &attribute(),
+            AttributeWrite::PartialUpdate.null_sentinel_admission(),
+        ));
     }
 }

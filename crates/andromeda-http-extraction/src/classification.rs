@@ -126,11 +126,11 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::IcuCollation(_)
         | QueryError::TemporalOrderingMember(_)
         | QueryError::TemporalOrderingDirection(_)
-        | QueryError::ParamIdInvalid(_)
+        | QueryError::ParamIdInvalid { .. }
         | QueryError::ParamIdListEmpty
         | QueryError::ParamTimerelTimeatPair
         | QueryError::ParamAggrPeriodDurationInvalid(_)
-        | QueryError::ParamDatasetIdInvalid(_)
+        | QueryError::ParamDatasetIdInvalid { .. }
         | QueryError::ParamEndTimeAtRequired
         | QueryError::ProjectionKeywordWithLinkedTerm { .. }
         // A term that does not expand to an absolute IRI names nothing the

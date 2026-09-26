@@ -5,7 +5,7 @@
 //! rows whose value column is null, and the two relations a value-only write
 //! must never touch an index of carry no index but their key.
 
-use crate::seeded_corpus::{SEED_PREFIX, SEEDED_ENTITIES, explain, seed};
+use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, SEEDED_ENTITIES, explain, explain_rolled_back, seed, seed_essays};
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
@@ -196,12 +196,81 @@ async fn typed_value_indexes_exclude_rows_whose_value_column_is_null() {
         ("idx_cav_attr_bool", "value_bool"),
         ("idx_cav_attr_datetime", "value_datetime"),
         ("idx_cav_attr_uri", "value_uri"),
+        ("idx_cav_attr_long_text", "value_long_text"),
+        ("idx_cav_attr_long_text_trgm", "value_long_text"),
         ("idx_cav_attr_geo", "value_geo"),
         ("idx_cav_attr_entity_geo", "value_geo"),
     ] {
         let predicate = index_predicate(pool, index).await;
         assert_eq!(predicate, Some(format!("({column} IS NOT NULL)")), "{index} must be partial on {column}");
     }
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A String past the 2048-octet bound is held in `value_long_text`, which no
+/// B-tree can key, so the overflow column has its own pair of indexes: the
+/// attribute-aware trigram GIN serves the clause 4.9 patterns, and the partial
+/// B-tree on the attribute alone serves an ordering, whose value is then
+/// filtered on the heap. The compiled pattern tests both string columns as one
+/// disjunction, and each arm must reach its own trigram index.
+///
+/// The lone pattern names no attribute on purpose. The partial B-tree's
+/// predicate and an attribute equality select the same rows, but the planner
+/// multiplies their selectivities as if they were independent, so an
+/// attribute-qualified pattern over one column underestimates the B-tree path
+/// and filters every overflow row of the attribute on the heap instead. The
+/// attribute-qualified disjunction, which is the shape the compiler emits,
+/// reaches both trigram indexes at this population all the same.
+#[tokio::test]
+async fn long_string_access_paths_use_the_overflow_indexes() {
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let pool = scope.database_pool();
+    let corpus = seed(pool, SEED_PREFIX).await;
+    let essays = seed_essays(pool, &corpus).await;
+    let attribute = essays.attribute();
+    let probe = essays.probe();
+
+    let pattern = explain(
+        pool,
+        &format!("SELECT c.entity_key FROM current_attribute_values AS c WHERE c.value_long_text ~ '{probe}'"),
+    )
+    .await;
+    assert!(
+        pattern.contains("idx_cav_attr_long_text_trgm"),
+        "an unanchored pattern over long strings must use the overflow trigram index: {pattern}"
+    );
+
+    let disjunction = explain(
+        pool,
+        &format!(
+            "SELECT c.entity_key FROM current_attribute_values AS c \
+             WHERE c.attribute_name_id = {attribute} \
+               AND (c.value_string ~ '{probe}' OR c.value_long_text ~ '{probe}')"
+        ),
+    )
+    .await;
+    assert!(
+        disjunction.contains("BitmapOr") && disjunction.contains("idx_cav_attr_string_trgm") && disjunction.contains("idx_cav_attr_long_text_trgm"),
+        "the compiled pattern must OR one bitmap per string column's trigram index: {disjunction}"
+    );
+
+    // The trailing space is the gap before the cost estimate, so the trigram
+    // index, whose name extends this one, cannot satisfy the assertion.
+    let ordering = explain_rolled_back(
+        pool,
+        PlannerPaths::WithoutSequentialScans,
+        &format!(
+            "SELECT c.entity_key FROM current_attribute_values AS c \
+             WHERE c.attribute_name_id = {attribute} \
+               AND (c.value_string > 'a' OR c.value_long_text > 'a')"
+        ),
+    )
+    .await;
+    assert!(
+        ordering.contains("idx_cav_attr_long_text "),
+        "an ordering over long strings must be driven from the overflow B-tree: {ordering}"
+    );
 
     scope.finish().await.expect("cleanup failed");
 }

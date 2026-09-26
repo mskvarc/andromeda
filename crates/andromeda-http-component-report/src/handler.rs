@@ -25,9 +25,10 @@ pub async fn get(State(state): State<ComponentReportState>, OriginalUri(uri): Or
     let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("ComponentReportList:{}", Uuid::new_v4()))
         .build()
         .map_err(ComponentReportError::from)
+        .and_then(|urn| Uri::try_from(urn).map_err(ComponentReportError::from))
         .map_err(|error| classify(&error).with_instance(uri))?;
     Ok(Json(ComponentReportResponse {
-        id: Uri::Urn(id),
+        id,
         type_: ComponentReportListType,
         components: state.components(),
     })

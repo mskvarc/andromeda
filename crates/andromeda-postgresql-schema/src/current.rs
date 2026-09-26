@@ -81,10 +81,12 @@ pub enum EntitySearch {
 /// instance of an entity.
 ///
 /// The grain is the clause 4.5.5 dataset grain: an entity, an attribute name
-/// and an optional `datasetId`. Exactly one of the seven typed value columns is
+/// and an optional `datasetId`. Exactly one of the eight typed value columns is
 /// populated on any row, and which one is pinned to `value_kind`, so a
-/// predicate that knows the value shape it is comparing knows the single column
-/// it has to read.
+/// predicate that knows the value shape it is comparing knows the column it has
+/// to read. A String is the one shape with two columns, and its byte length
+/// alone picks between them
+/// ([`ProjectedStringColumn`](crate::projected_string_column::ProjectedStringColumn)).
 ///
 /// A deleted attribute is an absent row rather than a stored marker: the
 /// tombstone value kind belongs to history and never appears here, which is why
@@ -119,6 +121,9 @@ pub enum CurrentAttributeValues {
     ValueObject,
     /// URI value, when `value_kind` selects it
     ValueUri,
+    /// String value too long for `value_string`'s B-tree, when `value_kind`
+    /// selects String
+    ValueLongText,
 }
 
 /// Alias `e` for the entities table.
@@ -195,6 +200,7 @@ mod tests {
         assert_eq!(CurrentAttributeValues::ValueObject.to_string(), "value_object");
         assert_eq!(CurrentAttributeValues::ValueDatetime.to_string(), "value_datetime");
         assert_eq!(CurrentAttributeValues::ValueUri.to_string(), "value_uri");
+        assert_eq!(CurrentAttributeValues::ValueLongText.to_string(), "value_long_text");
     }
 
     #[test]

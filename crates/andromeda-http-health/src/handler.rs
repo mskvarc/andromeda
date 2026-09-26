@@ -45,6 +45,7 @@ pub async fn check(State(state): State<HealthRouteState>, OriginalUri(uri): Orig
     let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("HealthCheck:{}", Uuid::new_v4()))
         .build()
         .map_err(HealthHttpError::from)
+        .and_then(|urn| Uri::try_from(urn).map_err(HealthHttpError::from))
         .map_err(|error| classify(&error).with_instance(uri))?;
     let health_check = state.health().check_all().await;
     let status = match health_check.status {
@@ -54,7 +55,7 @@ pub async fn check(State(state): State<HealthRouteState>, OriginalUri(uri): Orig
     Ok((
         status,
         Json(HealthCheckResponse {
-            id: Uri::Urn(id),
+            id,
             type_: HealthCheckType,
             health_check,
         }),

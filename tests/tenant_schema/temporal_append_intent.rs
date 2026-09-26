@@ -52,7 +52,7 @@ async fn temporal_append_intents_exposes_write_identity_and_preserves_its_dedupl
 
     let bounded_error: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pg_constraint \
-         WHERE conrelid = 'temporal_append_intents'::regclass AND conname = 'chk_temporal_append_intents_last_error_length'",
+         WHERE conrelid = 'temporal_append_intents'::regclass AND conname = 'chk_temporal_append_intents_last_error_bound'",
     )
     .fetch_one(pool)
     .await

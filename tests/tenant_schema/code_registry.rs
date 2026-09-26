@@ -66,14 +66,14 @@ async fn every_stored_code_decodes_through_the_registry_that_owns_its_column() {
         );
     }
 
-    let operations: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT unnest(operations) FROM registration_information WHERE operations IS NOT NULL")
+    let operations: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT unnest(operations) FROM context_source_registrations WHERE operations IS NOT NULL")
         .fetch_all(pool)
         .await
-        .expect("projected operations must be readable");
+        .expect("registered operations must be readable");
     for stored in operations {
         assert!(
             CsrOperationCode::try_from(stored).is_ok(),
-            "the routing projection holds operation {stored}, which no release assigned"
+            "a registration holds operation {stored}, which no release assigned"
         );
     }
 
@@ -103,11 +103,11 @@ async fn the_tombstone_code_stays_zero_and_names_rows_carrying_no_typed_value() 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The routing projection pins the operation registry's range in a check
-/// constraint, so a number outside it -- which could only come from a release
-/// knowing an operation this schema does not -- is refused by the database.
+/// A registration pins the operation registry's range in a check constraint,
+/// so a number outside it -- which could only come from a release knowing an
+/// operation this schema does not -- is refused by the database.
 #[tokio::test]
-async fn the_routing_projection_refuses_an_operation_number_no_release_assigned() {
+async fn a_registration_refuses_an_operation_number_no_release_assigned() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
     let registration_id = scope.id("ContextSourceRegistration:code-registry");
@@ -124,7 +124,7 @@ async fn the_routing_projection_refuses_an_operation_number_no_release_assigned(
 
     let highest = CsrOperationCode::ALL.last().expect("the operation registry is not empty").code();
     let unassigned = highest + 1;
-    let refused = sqlx::query("INSERT INTO registration_information (registration_id, entity_types, entity_id, property_name_ids, relationship_name_ids, operations) VALUES ($1, ARRAY['https://example.test/Device'], '', ARRAY[0], ARRAY[0], ARRAY[$2::SMALLINT])")
+    let refused = sqlx::query("UPDATE context_source_registrations SET operations = ARRAY[$2::SMALLINT] WHERE id = $1")
         .bind(&registration_id)
         .bind(unassigned)
         .execute(scope.database_pool())
@@ -135,7 +135,7 @@ async fn the_routing_projection_refuses_an_operation_number_no_release_assigned(
 
     // The highest number the registry does assign is accepted, so the check
     // pins the registry's range rather than an arbitrary smaller one.
-    let accepted = sqlx::query("INSERT INTO registration_information (registration_id, entity_types, entity_id, property_name_ids, relationship_name_ids, operations) VALUES ($1, ARRAY['https://example.test/Device'], '', ARRAY[0], ARRAY[0], ARRAY[$2::SMALLINT])")
+    let accepted = sqlx::query("UPDATE context_source_registrations SET operations = ARRAY[$2::SMALLINT] WHERE id = $1")
         .bind(&registration_id)
         .bind(highest)
         .execute(scope.database_pool())

@@ -27,12 +27,14 @@
 -- libc or ICU collation change invalidating the index across an
 -- operating-system upgrade.
 --
--- The length bound caps what a single hostile name can cost the heap and the
--- unique index; capping the *rate* of new names is an API-layer concern and
--- is not attempted here. 2048 is migration-owned and must equal the bound the
--- request layer enforces before a name reaches either table, so an over-long
--- name is refused with an NGSI-LD error rather than a constraint violation
--- surfacing as a persistence failure.
+-- `name` is bounded at 1024 UTF-8 octets, the identifier bound
+-- (`IDENTIFIER_BYTE_LIMIT` in `andromeda-ngsi-ld-lexicon`) every attribute
+-- name and entity type name is parsed under, compact and expanded alike. The
+-- unique btree refuses an entry past 2704 bytes (SQLSTATE 54000), so the name
+-- types refuse an over-long name as `BadRequestData` before it reaches either
+-- table, and the check states the same bound here; a unit test in
+-- `migration_set` pins the literal to the Rust constant. Capping the *rate* of
+-- new names is an API-layer concern and is not attempted here.
 --
 -- Both dictionaries stay append-only and therefore open to inflation: any
 -- client can mint unbounded distinct IRIs. Rate limiting new-name creation
@@ -50,15 +52,17 @@
 -- ============================================================================
 
 CREATE TABLE attribute_names (
-    id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    id INTEGER GENERATED ALWAYS AS IDENTITY,
     name TEXT COLLATE "C" NOT NULL,
+    CONSTRAINT pk_attribute_names PRIMARY KEY (id),
     CONSTRAINT uq_attribute_names_name UNIQUE (name),
-    CONSTRAINT chk_attribute_names_name_length CHECK (char_length(name) BETWEEN 1 AND 2048)
+    CONSTRAINT chk_attribute_names_name_length CHECK (char_length(name) >= 1 AND octet_length(name) <= 1024)
 );
 
 CREATE TABLE entity_type_names (
-    id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    id INTEGER GENERATED ALWAYS AS IDENTITY,
     name TEXT COLLATE "C" NOT NULL,
+    CONSTRAINT pk_entity_type_names PRIMARY KEY (id),
     CONSTRAINT uq_entity_type_names_name UNIQUE (name),
-    CONSTRAINT chk_entity_type_names_name_length CHECK (char_length(name) BETWEEN 1 AND 2048)
+    CONSTRAINT chk_entity_type_names_name_length CHECK (char_length(name) >= 1 AND octet_length(name) <= 1024)
 );

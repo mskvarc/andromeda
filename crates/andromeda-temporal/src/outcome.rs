@@ -82,18 +82,24 @@ impl TemporalEntityIdOutcome {
     ///
     /// Returns whatever [`TemporalEntityIdOutcome::validate`] refuses: an
     /// outcome that paginated ahead of a residual predicate, or one whose
-    /// candidates cannot be evaluated against the predicate that remains.
+    /// candidates cannot be evaluated against the predicate that remains; and
+    /// [`InvalidTemporalOutcome::UnreadableCandidate`] for a candidate whose
+    /// identity the residual predicate cannot read.
     pub fn complete(self, pagination: Pagination) -> Result<(Vec<Uri>, Option<i64>), InvalidTemporalOutcome> {
         self.validate()?;
         let mut candidates = self.candidates;
         if !self.residual.is_empty() {
             let residual = ResidualFilter::over(self.residual.0);
-            candidates.retain(|candidate| {
-                candidate
-                    .selection_value
-                    .as_ref()
-                    .is_some_and(|selection_value| residual_filter::matches(&residual, selection_value))
-            });
+            let mut admitted = Vec::with_capacity(candidates.len());
+            for candidate in candidates {
+                let Some(selection_value) = candidate.selection_value.as_ref() else {
+                    continue;
+                };
+                if residual_filter::matches(&residual, selection_value).map_err(|_| InvalidTemporalOutcome::UnreadableCandidate)? {
+                    admitted.push(candidate);
+                }
+            }
+            candidates = admitted;
         }
         let identifiers = candidates.into_iter().map(|candidate| candidate.entity_id).collect();
         match self.pagination {
@@ -121,6 +127,10 @@ pub enum InvalidTemporalOutcome {
     /// Residual evaluation requires a neutral expanded selection value for every candidate.
     #[error("temporal reader returned a residual predicate without a selection value")]
     ResidualWithoutSelectionValue,
+    /// A candidate's selection value carries an `@id` or `@type` the residual
+    /// predicate cannot read.
+    #[error("temporal reader returned a candidate whose identity the residual predicate cannot read")]
+    UnreadableCandidate,
 }
 
 /// Apply a deferred page after policy finishes residual evaluation.
@@ -180,7 +190,7 @@ mod tests {
         let pushed = ResidualFilter::over(pushed.clone());
         values
             .iter()
-            .filter(|(_, value)| residual_filter::matches(&pushed, value))
+            .filter(|(_, value)| residual_filter::matches(&pushed, value).expect("the fixtures carry readable identities"))
             .map(|(entity_id, value)| TemporalEntityCandidate {
                 entity_id: entity_id.clone(),
                 selection_value: Some(value.clone()),

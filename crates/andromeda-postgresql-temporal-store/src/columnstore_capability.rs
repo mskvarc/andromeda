@@ -2,12 +2,10 @@
 //!
 //! Hypercore -- `ALTER TABLE ... SET (timescaledb.enable_columnstore, ...)` and
 //! `add_columnstore_policy` -- is a TSL-licensed capability. The Apache-2.0 core
-//! ships neither the DDL nor the procedure, so a migration and the runtime
-//! reconciler both gate every columnstore statement on this probe and run the
-//! temporal hypertables as plain hypertables where it is absent. The migrations
-//! probe the same `pg_proc` presence in a `DO $$ ... $$` block; this is the
-//! runtime read of the same fact, so the reconciler never issues a statement the
-//! edition cannot answer.
+//! ships neither the DDL nor the procedure, so the runtime reconciler gates
+//! every columnstore statement on this probe and runs the temporal hypertables
+//! as plain hypertables where it is absent: it never issues a statement the
+//! edition cannot answer. No migration touches the columnstore at all.
 //!
 //! This is a different question from the license marker
 //! `andromeda-postgresql-context-store` reports for the info endpoint: that reads

@@ -14,8 +14,12 @@
 --   * ltree              -- hierarchical label tree type for NGSI-LD Scopes
 --                           (clause 4.18), supporting lquery/ltxtquery operators
 --                           for scope path matching
---   * pg_trgm            -- trigram similarity indexes for text pattern
---                           matching (available but not indexed by default)
+--   * pg_trgm            -- trigram GIN indexes for unanchored clause 4.9
+--                           patterns: `idx_entities_id_trgm` and
+--                           `idx_temporal_entities_id_trgm` serve an
+--                           `idPattern`, `idx_cav_attr_string_trgm` and
+--                           `idx_cav_attr_long_text_trgm` a `~=` over string
+--                           values
 --   * btree_gist         -- enables GIST indexes on scalar types (e.g. SMALLINT)
 --                           alongside geometry columns, used for composite
 --                           (attribute_name_id, value_geo) indexes

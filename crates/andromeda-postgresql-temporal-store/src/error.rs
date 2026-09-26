@@ -1,6 +1,7 @@
 //! Error types for the temporal store crate.
 
-use crate::{duplicate_instance_claim::DuplicateInstanceClaimError, unit_code_metadata::UnitCodeMetadataError};
+use crate::{duplicate_instance_claim::DuplicateInstanceClaimError, schema_ddl::timescale_policy::HypertableName, unit_code_metadata::UnitCodeMetadataError};
+use andromeda_context_commit::write_id::WriteId;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_date_time::NgsiLdDateTimeError;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
@@ -55,6 +56,25 @@ pub enum TemporalStoreError {
     /// of the same attribute at once.
     #[error("temporal store instance claim: {0}")]
     DuplicateInstanceClaim(#[from] DuplicateInstanceClaimError),
+    /// An append intent carries a write record other than the one its commit
+    /// persists, so its history rows would be stamped with an instant the
+    /// write record does not hold.
+    #[error("temporal store write record: an intent of write {write_id} carries a different write record than the one persisted for its commit")]
+    WriteRecordMismatch {
+        /// The write the mismatched intent names.
+        write_id: WriteId,
+    },
+    /// A temporal hypertable already carries the columnstore under segment or
+    /// order columns other than the ones the broker enables it with.
+    #[error("temporal store columnstore: {hypertable} is segmented by [{}] and ordered by [{}], not the settings the broker enables", segment_by.join(", "), order_by.join(", "))]
+    ColumnstoreSettingsDrift {
+        /// The hypertable whose settings differ.
+        hypertable: HypertableName,
+        /// The segment-by columns it carries.
+        segment_by: Vec<String>,
+        /// The order-by columns it carries.
+        order_by: Vec<String>,
+    },
 }
 
 impl From<TemporalStoreError> for TemporalError {
@@ -106,7 +126,9 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::Encoding(_)
             | TemporalStoreError::CopyField(_)
             | TemporalStoreError::Collation(CollationProvisioningError::Statement { .. })
-            | TemporalStoreError::NameLookup(_) => TemporalError::persistence(error.to_string()),
+            | TemporalStoreError::NameLookup(_)
+            | TemporalStoreError::WriteRecordMismatch { .. }
+            | TemporalStoreError::ColumnstoreSettingsDrift { .. } => TemporalError::persistence(error.to_string()),
         }
     }
 }

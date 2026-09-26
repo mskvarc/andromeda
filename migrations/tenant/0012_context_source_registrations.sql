@@ -45,8 +45,7 @@
 --   operations (`CsrOperationCode`, clause 4.20): 1 `createEntity` through
 --     48 `redirectionOps`, the five Table 4.20-2 group tokens included as
 --     members in their own right. NULL is the absent member, which the broker
---     reads as the clause 5.2.9 default `federationOps`. The same registry and
---     the same check as `registration_information.operations` (0013).
+--     reads as the clause 5.2.9 default `federationOps`.
 --   csr_delivery_state.status (`CsrStatusCode`, clause 5.2.9 `status`):
 --     1 ok, 2 failed
 --
@@ -58,6 +57,11 @@
 -- Physical shape:
 --   * `id` is an identifier, compared for equality and prefix only, so it is
 --     `COLLATE "C"`: byte-wise comparison keeps the btree free of any locale.
+--     It and `csr_delivery_state.registration_id` are bounded at 1024 UTF-8
+--     octets, the identifier bound (`IDENTIFIER_BYTE_LIMIT` in
+--     `andromeda-ngsi-ld-lexicon`) a registration id is parsed under, which
+--     keeps every btree entry that carries one well inside the 2704 bytes a
+--     btree admits.
 --   * The JSONB documents and the free-text columns are `COMPRESSION lz4`; a
 --     registration is written rarely and read on every distributed operation,
 --     and lz4 decompresses far faster than pglz for the same width.
@@ -91,7 +95,7 @@ CREATE TABLE context_source_registrations (
     mode SMALLINT NOT NULL,
 
     -- CSR URI, e.g. "urn:ngsi-ld:ContextSourceRegistration:csr001"
-    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL PRIMARY KEY,
+    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
 
     -- Optional human-readable name
     registration_name TEXT COMPRESSION lz4,
@@ -160,6 +164,8 @@ CREATE TABLE context_source_registrations (
     -- Optional human-readable alias for the context source
     context_source_alias TEXT COMPRESSION lz4,
 
+    CONSTRAINT pk_context_source_registrations PRIMARY KEY (id),
+    CONSTRAINT chk_context_source_registrations_id_length CHECK (octet_length(id) <= 1024),
     CONSTRAINT chk_csr_mode CHECK (mode BETWEEN 1 AND 4),
     CONSTRAINT chk_csr_operations_registered CHECK (
         operations IS NULL
@@ -215,8 +221,11 @@ CREATE TABLE csr_delivery_state (
     times_failed INTEGER NOT NULL DEFAULT 0,
     -- Health status (`CsrStatusCode`)
     status SMALLINT NOT NULL,
-    registration_id TEXT COLLATE "C" PRIMARY KEY
+    registration_id TEXT COLLATE "C" NOT NULL,
+    CONSTRAINT pk_csr_delivery_state PRIMARY KEY (registration_id),
+    CONSTRAINT fk_csr_delivery_state_registration FOREIGN KEY (registration_id)
         REFERENCES context_source_registrations(id) ON DELETE CASCADE,
+    CONSTRAINT chk_csr_delivery_state_registration_id_length CHECK (octet_length(registration_id) <= 1024),
     -- The floor is zero for the same reason as `subscription_delivery_state`:
     -- a counter that has not moved is rendered as an absent member, but the
     -- column has to hold something before it is first advanced.

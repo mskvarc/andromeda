@@ -1,6 +1,9 @@
 //! Attribute instances a write drops from an entity, with the family each held.
 
-use crate::expanded::instance_key::{AttributeInstanceKey, attribute_instance_families};
+use crate::expanded::{
+    dataset_id::InstanceDatasetIdError,
+    instance_key::{AttributeInstanceKey, attribute_instance_families},
+};
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use serde_json::Value;
 
@@ -28,14 +31,18 @@ pub struct RemovedAttributeInstance {
 /// Identity is the attribute name and `datasetId` pair alone (clause 5.2.5), so
 /// an instance whose family changed is an update rather than a removal; the
 /// family reported here is the one the removed instance held.
-#[must_use]
-pub fn removed_attribute_instances(previous: &Value, replacement: &Value) -> Vec<RemovedAttributeInstance> {
-    let retained = attribute_instance_families(replacement);
-    attribute_instance_families(previous)
+///
+/// # Errors
+///
+/// Returns [`InstanceDatasetIdError`] when either payload carries an instance
+/// whose `datasetId` is not an identifier.
+pub fn removed_attribute_instances(previous: &Value, replacement: &Value) -> Result<Vec<RemovedAttributeInstance>, InstanceDatasetIdError> {
+    let retained = attribute_instance_families(replacement)?;
+    Ok(attribute_instance_families(previous)?
         .into_iter()
         .filter(|(key, _)| !retained.contains_key(key))
         .map(|(key, attribute_type)| RemovedAttributeInstance { key, attribute_type })
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]
@@ -70,7 +77,7 @@ mod tests {
             "@id": "urn:ngsi-ld:Vehicle:1",
             "https://example.com/a": [property(1)],
         }]);
-        let removed = removed_attribute_instances(&previous, &replacement);
+        let removed = removed_attribute_instances(&previous, &replacement).expect("readable datasetIds");
         pretty_assertions::assert_eq!(removed.len(), 1);
         pretty_assertions::assert_eq!(removed[0].key.attr.as_str(), "https://example.com/b");
         assert!(removed[0].key.dataset_id.is_none());
@@ -82,7 +89,7 @@ mod tests {
             "@id": "urn:ngsi-ld:Vehicle:1",
             "https://example.com/a": [property(1)],
         }]);
-        pretty_assertions::assert_eq!(removed_attribute_instances(&payload, &payload), Vec::<RemovedAttributeInstance>::new());
+        pretty_assertions::assert_eq!(removed_attribute_instances(&payload, &payload), Ok(Vec::<RemovedAttributeInstance>::new()));
     }
 
     #[test]
@@ -100,7 +107,7 @@ mod tests {
             "@id": "urn:ngsi-ld:Vehicle:1",
             "https://example.com/speed": [property_in_dataset(1, "urn:ngsi-ld:Dataset:a")],
         }]);
-        let removed = removed_attribute_instances(&previous, &replacement);
+        let removed = removed_attribute_instances(&previous, &replacement).expect("readable datasetIds");
         pretty_assertions::assert_eq!(removed.len(), 1);
         pretty_assertions::assert_eq!(removed[0].key.dataset_id.as_ref().map(Uri::as_str), Some("urn:ngsi-ld:Dataset:b"));
     }
@@ -113,7 +120,7 @@ mod tests {
             "https://example.com/speed": [property_in_dataset(1, "http://example.org/d1")],
         }]);
         let replacement = json!([{"@id": "urn:ngsi-ld:Vehicle:1"}]);
-        let removed = removed_attribute_instances(&previous, &replacement);
+        let removed = removed_attribute_instances(&previous, &replacement).expect("readable datasetIds");
         pretty_assertions::assert_eq!(removed.len(), 1);
         pretty_assertions::assert_eq!(removed[0].key.dataset_id.as_ref().map(Uri::as_str), Some("http://example.org/d1"));
     }
@@ -129,7 +136,7 @@ mod tests {
             "https://example.com/label": [{"@type": ["https://uri.etsi.org/ngsi-ld/LanguageProperty"]}],
         }]);
         let replacement = json!([{"@id": "urn:ngsi-ld:Vehicle:1"}]);
-        let removed = removed_attribute_instances(&previous, &replacement);
+        let removed = removed_attribute_instances(&previous, &replacement).expect("readable datasetIds");
         let family = |name: &str| {
             removed
                 .iter()

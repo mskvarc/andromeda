@@ -265,7 +265,7 @@ impl<N: DictionaryRelation> NameCache<N> {
     /// with fresh `IDENTITY` sequences, so every name->key mapping this cache
     /// published against the previous generation now points at a dictionary row
     /// that does not exist -- a write that trusts one raises
-    /// `temporal_attribute_streams_attribute_name_id_fkey`. The broker performs
+    /// `fk_temporal_attribute_streams_attribute_name`. The broker performs
     /// no such drop itself and nothing evicts a runtime whose registry row still
     /// stands, so only operator surgery opens this window; the check closes it
     /// by clearing the cache the moment the schema stamp it was warmed against

@@ -39,11 +39,22 @@ pub const REQUIRED_POSTGIS_VERSION: ExtensionVersion = ExtensionVersion::new(3, 
 /// floor covers both.
 ///
 /// The floor is a version floor only, never a license floor. The Apache-2.0
-/// core is fully supported: its migrations skip the columnstore DDL behind a
-/// `pg_proc` capability probe and its hypertables run uncompressed, so no
-/// edition is refused here. The columnstore is a TSL benefit that rides along
-/// where present, not a requirement.
+/// core is fully supported: the storage-policy reconciler enables the
+/// columnstore only behind a `pg_proc` capability probe, and on the core the
+/// hypertables run uncompressed, so no edition is refused here. The columnstore
+/// is a TSL benefit that rides along where present, not a requirement.
 pub const REQUIRED_TIMESCALEDB_VERSION: ExtensionVersion = ExtensionVersion::new(2, 18);
+
+/// The `server_encoding` the tenant schema requires.
+///
+/// Every byte bound the migrations state -- the identifier bound on each
+/// identifier column, the String overflow bound on `current_attribute_values`
+/// -- is an `octet_length` in the server encoding, and the broker measures the
+/// same values as UTF-8 octets before it writes them. The two measures agree
+/// only when the server encoding is UTF-8; under another encoding a value the
+/// broker admitted could violate a check, or land in a column its placement
+/// did not choose.
+const REQUIRED_SERVER_ENCODING: &str = "UTF8";
 
 /// PostgreSQL's `server_version_num`: `major * 10000 + minor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
@@ -153,8 +164,9 @@ pub enum ExtensionVersionError {
 ///
 /// Returns [`SchemaContractError::Database`] when the introspection query
 /// fails, [`SchemaContractError::ExtensionVersionValue`] when a reported
-/// extension version cannot be read, and
-/// [`SchemaContractError::PostgresBelowMinimum`],
+/// extension version cannot be read,
+/// [`SchemaContractError::ServerEncodingNotUtf8`] when the server encoding is
+/// not UTF-8, and [`SchemaContractError::PostgresBelowMinimum`],
 /// [`SchemaContractError::PostGisBelowMinimum`] or
 /// [`SchemaContractError::TimescaleDbBelowMinimum`] when the server or one of
 /// the two versioned extensions is below the floor the schema depends on.
@@ -163,6 +175,7 @@ pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContr
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
 
     check_postgres(PostgresVersion::new(row.get("server_version_num")))?;
+    check_server_encoding(row.get("server_encoding"))?;
     check_extension(
         REQUIRED_POSTGIS_VERSION,
         ExtensionPresence::try_from(row.get::<Option<String>, _>("postgis_version"))?,
@@ -175,8 +188,8 @@ pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContr
     )
 }
 
-/// Read the server's `server_version_num` and the `PostGIS` and `TimescaleDB`
-/// extension versions.
+/// Read the server's `server_version_num` and `server_encoding` and the
+/// `PostGIS` and `TimescaleDB` extension versions.
 ///
 /// Every column is a system-function call or a `pg_extension` lookup, so the
 /// statement names no application relation and binds the setting and extension
@@ -187,6 +200,7 @@ fn server_requirements_statement() -> SelectStatement {
             cast(current_setting("server_version_num"), PostgresType::Integer),
             Alias::new("server_version_num"),
         )
+        .expr_as(current_setting("server_encoding"), Alias::new("server_encoding"))
         .expr_as(extension_version("postgis"), Alias::new("postgis_version"))
         .expr_as(extension_version("timescaledb"), Alias::new("timescaledb_version"))
         .to_owned()
@@ -201,6 +215,14 @@ fn check_postgres(found: PostgresVersion) -> Result<(), SchemaContractError> {
         });
     }
     Ok(())
+}
+
+/// Refuse a server whose encoding is not UTF-8.
+fn check_server_encoding(found: String) -> Result<(), SchemaContractError> {
+    if found == REQUIRED_SERVER_ENCODING {
+        return Ok(());
+    }
+    Err(SchemaContractError::ServerEncodingNotUtf8 { found })
 }
 
 /// Compare one extension against its floor, refusing an absent one the same way
@@ -230,6 +252,7 @@ mod tests {
             REQUIRED_TIMESCALEDB_VERSION,
             check_extension,
             check_postgres,
+            check_server_encoding,
             server_requirements_statement,
         },
     };
@@ -242,6 +265,7 @@ mod tests {
             sql.contains(r#"current_setting('server_version_num')::integer AS "server_version_num""#),
             "{sql}"
         );
+        assert!(sql.contains(r#"current_setting('server_encoding') AS "server_encoding""#), "{sql}");
         assert!(sql.contains(r#""pg_extension""#), "{sql}");
         assert!(sql.contains(r#"AS "postgis_version""#) && sql.contains(r#"AS "timescaledb_version""#), "{sql}");
     }
@@ -256,6 +280,18 @@ mod tests {
             }
             Err(other) => panic!("unexpected refusal: {other}"),
             Ok(()) => panic!("PostgreSQL 14.12 is below the floor"),
+        }
+    }
+
+    /// Every byte bound the migrations state is an `octet_length` the broker
+    /// measures in UTF-8 octets, which only a UTF-8 server agrees with.
+    #[test]
+    fn a_server_whose_encoding_is_not_utf8_is_refused_naming_it() {
+        assert!(check_server_encoding("UTF8".to_owned()).is_ok());
+        match check_server_encoding("LATIN1".to_owned()) {
+            Err(SchemaContractError::ServerEncodingNotUtf8 { found }) => pretty_assertions::assert_eq!(found, "LATIN1"),
+            Err(other) => panic!("unexpected refusal: {other}"),
+            Ok(()) => panic!("a LATIN1 server measures octets differently"),
         }
     }
 

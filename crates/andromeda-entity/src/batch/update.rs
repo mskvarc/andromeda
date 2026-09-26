@@ -140,9 +140,15 @@ impl EntityService {
 
             // Batch update mirrors the single attribute update (clause 5.6.9):
             // the per-attribute triggers, partitioned from the before/after diff.
-            let groups = attribute_change_groups(previous, &existing);
+            let groups = match attribute_change_groups(previous, &existing) {
+                Ok(groups) => groups,
+                Err(error) => {
+                    errors.push((id, error));
+                    continue;
+                }
+            };
 
-            writes.push(self.chunk_update(
+            match self.chunk_update(
                 target,
                 id,
                 UpdatedPayloads {
@@ -153,7 +159,10 @@ impl EntityService {
                 &groups,
                 Precondition::MustExist,
                 now,
-            ));
+            ) {
+                Ok(write) => writes.push(write),
+                Err(failure) => errors.push(*failure),
+            }
         }
 
         let outcome = self.commit_chunk(target, writes, mode).await?.settled();

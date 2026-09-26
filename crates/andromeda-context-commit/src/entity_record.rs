@@ -1,6 +1,7 @@
 //! The current-state row an atomic write stores for one entity, in NGSI-LD
 //! terms rather than backend columns.
 
+use crate::error::CommitError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::expanded::{
@@ -43,17 +44,23 @@ pub struct SearchProjection {
 
 impl SearchProjection {
     /// Extract the projection of an expanded entity payload.
-    #[must_use]
-    pub fn from_expanded(payload: &Value) -> SearchProjection {
-        SearchProjection {
-            types: extract_types(payload),
-            attribute_names: extract_attribute_names(payload),
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommitError::Invariant`] when a type or an attribute name of
+    /// the payload cannot be read: every write path admits a payload's members
+    /// before it builds a record, so an unreadable one is a broker fault rather
+    /// than something to index under less than the payload says.
+    pub fn from_expanded(payload: &Value) -> Result<SearchProjection, CommitError> {
+        Ok(SearchProjection {
+            types: extract_types(payload).map_err(CommitError::invariant)?,
+            attribute_names: extract_attribute_names(payload).map_err(CommitError::invariant)?,
             scopes: extract_scopes(payload),
             location: extract_location_geometry(payload),
             observation_space: extract_observation_space_geometry(payload),
             operation_space: extract_operation_space_geometry(payload),
             location_expires_at: extract_location_expiry(payload),
-        }
+        })
     }
 }
 
@@ -75,14 +82,18 @@ pub struct EntityRecord {
 impl EntityRecord {
     /// Extract the backend-neutral state required to persist an expanded
     /// entity payload.
-    #[must_use]
-    pub fn from_expanded(payload: Arc<Value>) -> EntityRecord {
-        EntityRecord {
-            projection: SearchProjection::from_expanded(&payload),
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`CommitError::Invariant`] of
+    /// [`SearchProjection::from_expanded`].
+    pub fn from_expanded(payload: Arc<Value>) -> Result<EntityRecord, CommitError> {
+        Ok(EntityRecord {
+            projection: SearchProjection::from_expanded(&payload)?,
             expires_at: extract_expires_at(&payload),
             min_attribute_expires_at: min_attribute_expires_at(&payload),
             payload,
-        }
+        })
     }
 
     /// Assemble a record from members a preparation pass already extracted,
@@ -122,7 +133,7 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@value": "2030-01-01T00:00:00Z"}]
             }]
         }]));
-        let record = EntityRecord::from_expanded(Arc::clone(&payload));
+        let record = EntityRecord::from_expanded(Arc::clone(&payload)).expect("readable members");
         assert!(Arc::ptr_eq(&payload, &record.payload));
         pretty_assertions::assert_eq!(record.projection.types.len(), 1);
         pretty_assertions::assert_eq!(record.projection.scopes.len(), 1);

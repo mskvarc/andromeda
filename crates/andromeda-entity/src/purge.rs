@@ -6,7 +6,13 @@
 //! outside that write, so the write states the `modifiedAt` it assumed and is
 //! recomputed against a fresh read if a concurrent writer got in first.
 
-use crate::{EntityService, error::EntityError, notification_plan::attribute_change_groups, purge_dataset::build_dataset_purge_write};
+use crate::{
+    EntityService,
+    error::EntityError,
+    expanded_member::stored_entity_types,
+    notification_plan::attribute_change_groups,
+    purge_dataset::build_dataset_purge_write,
+};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
@@ -17,7 +23,7 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, removed_instance::removed_attribute_instances};
+use andromeda_ngsi_ld_model::expanded::removed_instance::removed_attribute_instances;
 use andromeda_ngsi_ld_query::projection::purge::{DatasetPurgeScope, PurgeMode};
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -63,14 +69,14 @@ impl EntityService {
             let mut purged: Option<PurgedEntity> = None;
             let outcome = self
                 .commit_read_modify_write(target, entity_id, |previous| {
-                    let Some((mut write, mut removed)) = build_scoped_purge_write(entity_id, previous, mode, &attr_iris) else {
+                    let Some((mut write, mut removed)) = build_scoped_purge_write(entity_id, previous, mode, &attr_iris)? else {
                         return Ok(None);
                     };
-                    let groups = attribute_change_groups(previous, &removed.merged);
+                    let groups = attribute_change_groups(previous, &removed.merged)?;
                     let plan = self.plan_notifications(
                         target,
                         entity_id,
-                        &extract_types(&removed.merged),
+                        &stored_entity_types(&removed.merged)?,
                         &groups,
                         Some(&removed.merged),
                         Some(previous),
@@ -112,10 +118,20 @@ pub(crate) struct PurgedEntity {
 /// explicit `deleteAll`, which both remove every instance — takes the payload
 /// key-removal path. A `datasetId` selector removes only the named instances of
 /// each targeted attribute, reusing the single-entity clause 5.6.5 mutation.
-fn build_scoped_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_iris: &[IriBuf]) -> Option<(AtomicWrite, PurgedEntity)> {
+///
+/// # Errors
+///
+/// Reports [`EntityError::Internal`] when the stored payload's members cannot
+/// be read back into the write's record or tombstones.
+fn build_scoped_purge_write(
+    entity_id: &Uri,
+    previous: &Value,
+    mode: &PurgeMode,
+    attr_iris: &[IriBuf],
+) -> Result<Option<(AtomicWrite, PurgedEntity)>, EntityError> {
     match mode.dataset_scope() {
         // Whole-entity deletion never reaches attribute purging.
-        None => None,
+        None => Ok(None),
         // `deleteAll` removes every instance, which is the whole attribute, so
         // it reduces to the standard key-removal path rather than a per-instance
         // one; only a `datasetId` selector needs the instance-level mutation.
@@ -126,7 +142,12 @@ fn build_scoped_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode,
 
 /// The write that purges `previous` of the whole attributes `mode` selects,
 /// together with what it removed, or `None` when the entity holds none of them.
-fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_iris: &[IriBuf]) -> Option<(AtomicWrite, PurgedEntity)> {
+///
+/// # Errors
+///
+/// Reports [`EntityError::Internal`] when the stored payload's members cannot
+/// be read back into the write's record or tombstones.
+fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_iris: &[IriBuf]) -> Result<Option<(AtomicWrite, PurgedEntity)>, EntityError> {
     let mut purged = previous.clone(); // clone: the "before" side stays intact for the removal diff
     let obj = match &mut purged {
         Value::Array(arr) => arr.first_mut().and_then(|v| v.as_object_mut()),
@@ -134,7 +155,9 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
     };
 
-    let obj = obj?;
+    let Some(obj) = obj else {
+        return Ok(None);
+    };
 
     let keys_to_remove: Vec<String> = match mode {
         PurgeMode::Drop { .. } => attr_iris
@@ -154,14 +177,14 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
     };
 
     if keys_to_remove.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     for key in &keys_to_remove {
         obj.remove(key);
     }
 
-    let removed = removed_attribute_instances(previous, &purged);
+    let removed = removed_attribute_instances(previous, &purged).map_err(EntityError::internal)?;
     let mut history = Vec::with_capacity(removed.len());
     for instance in removed {
         history.push(HistoryRecord::Tombstone(instance));
@@ -170,9 +193,9 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
     let merged = Arc::new(purged);
     let write = AtomicWrite::builder()
         .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
-        .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&merged)))) // clone: Arc ref-count bump; the payload is also the notification's
+        .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&merged))?)) // clone: Arc ref-count bump; the payload is also the notification's
         .history(history)
         .build();
 
-    Some((write, PurgedEntity { merged, events: Vec::new() }))
+    Ok(Some((write, PurgedEntity { merged, events: Vec::new() })))
 }

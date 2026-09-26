@@ -4,7 +4,7 @@ use crate::{
     EntityService,
     attrs::attribute_write::payload_write,
     error::EntityError,
-    expanded_member::unwrap_expanded_ref,
+    expanded_member::{unwrap_expanded_ref, written_attribute_names, written_entity_types},
     notification_plan::attribute_change_groups,
     write_admission::{EntityWrite, admit_expanded_entity},
 };
@@ -14,8 +14,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
-    entity_member::{extract_attribute_names, extract_types},
-    mutation::{entity::append_entity_attrs, selection::OverwritePolicy},
+    mutation::{entity::append_entity_attrs, error::ExpandedEntityError, selection::OverwritePolicy},
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use chrono::Utc;
@@ -66,7 +65,7 @@ impl EntityService {
         // the reported set starts from the fragment's own attributes. Reading it
         // from the merged entity instead would report every attribute the entity
         // already held as if this request had appended it.
-        let requested = extract_attribute_names(unwrap_expanded_ref(&expanded));
+        let requested = written_attribute_names(unwrap_expanded_ref(&expanded))?;
         let (not_appended, events) = self
             .commit_computed_write(target, &entity_uri, |previous| {
                 let now = Utc::now();
@@ -74,7 +73,7 @@ impl EntityService {
                 let not_appended = append_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded), overwrite)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.
-                stamp_attribute_instants(&mut existing, previous, now);
+                stamp_attribute_instants(&mut existing, previous, now).map_err(ExpandedEntityError::from)?;
                 let merged = Arc::new(existing);
 
                 // The attributes actually appended are those the fragment
@@ -82,11 +81,11 @@ impl EntityService {
                 // set the change describes to `watchedAttributes` matching and to
                 // the notification's `changedAttributes`; the entity's other
                 // attributes did not change.
-                let types = extract_types(&merged);
-                let groups = attribute_change_groups(previous, &merged);
+                let types = written_entity_types(&merged)?;
+                let groups = attribute_change_groups(previous, &merged)?;
                 let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
-                let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))], plan.matches); // clone: Arc ref-count bump
+                let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))], plan.matches)?; // clone: Arc ref-count bump
                 Ok((write, (not_appended, plan.events)))
             })
             .await?;

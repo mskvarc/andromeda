@@ -15,7 +15,7 @@
 //! non-`sysAttrs` read strips.
 
 use crate::expanded::{
-    dataset_id::get_instance_dataset_id,
+    dataset_id::{InstanceDatasetIdError, get_instance_dataset_id, position_of_dataset},
     node::{expanded_object_mut, expanded_object_ref},
     reserved_member::is_reserved_member,
 };
@@ -76,12 +76,18 @@ fn without_system_times(instance: &Value) -> Value {
 /// Keeping the predecessor's `createdAt` is what lets it survive a
 /// read-modify-write even when the operation replaces the whole instance
 /// (clauses 5.6.2, 5.6.19), which drops the member the previous write stamped.
-pub fn stamp_attribute_instants(entity: &mut Value, previous: &Value, now: DateTime<Utc>) {
+///
+/// # Errors
+///
+/// Returns [`InstanceDatasetIdError`] when an instance, or a predecessor
+/// consulted before its match, carries a `datasetId` that is not an identifier:
+/// its predecessor cannot be told, so neither can its `createdAt`.
+pub fn stamp_attribute_instants(entity: &mut Value, previous: &Value, now: DateTime<Utc>) -> Result<(), InstanceDatasetIdError> {
     // The predecessor is read before the target is borrowed mutably, so it is
     // captured as an owned map rather than held as a borrow across the write.
     let previous_obj = expanded_object_ref(previous).cloned();
     let Some(object) = expanded_object_mut(entity) else {
-        return;
+        return Ok(());
     };
 
     let keys: Vec<String> = object.keys().filter(|key| attribute_name(key).is_some()).cloned().collect(); // clone: the write below mutates the map the keys index
@@ -92,8 +98,11 @@ pub fn stamp_attribute_instants(entity: &mut Value, previous: &Value, now: DateT
         };
 
         for instance in instances.iter_mut() {
-            let dataset = get_instance_dataset_id(instance);
-            let predecessor = previous_instances.and_then(|previous| previous.iter().find(|candidate| get_instance_dataset_id(candidate) == dataset));
+            let dataset = get_instance_dataset_id(instance)?;
+            let predecessor = match previous_instances {
+                Some(previous) => position_of_dataset(previous, dataset.as_ref())?.and_then(|position| previous.get(position)),
+                None => None,
+            };
 
             // The predecessor's stamps are copied verbatim rather than parsed and
             // re-rendered, so a `createdAt` stays byte-for-byte stable across every
@@ -117,6 +126,7 @@ pub fn stamp_attribute_instants(entity: &mut Value, previous: &Value, now: DateT
             instance.insert(properties::MODIFIED_AT.as_str().to_string(), modified);
         }
     }
+    Ok(())
 }
 
 /// Remove clause 4.8 `createdAt`/`modifiedAt` from every attribute instance of
@@ -181,7 +191,7 @@ mod tests {
         let now = at("2024-02-03T04:05:06Z");
         let mut entity = entity(&json!([property(10, None)]));
 
-        stamp_attribute_instants(&mut entity, &Value::Null, now);
+        stamp_attribute_instants(&mut entity, &Value::Null, now).expect("readable datasetIds");
 
         pretty_assertions::assert_eq!(
             member(&entity, 0, properties::CREATED_AT.as_str()).as_deref(),
@@ -204,7 +214,7 @@ mod tests {
         let mut entity = entity(&json!([property(20, None)]));
         let now = at("2024-02-03T04:05:06Z");
 
-        stamp_attribute_instants(&mut entity, &previous, now);
+        stamp_attribute_instants(&mut entity, &previous, now).expect("readable datasetIds");
 
         pretty_assertions::assert_eq!(member(&entity, 0, properties::CREATED_AT.as_str()).as_deref(), Some("2020-01-01T00:00:00Z"));
         pretty_assertions::assert_eq!(
@@ -224,7 +234,7 @@ mod tests {
         let mut entity = entity(&json!([property(10, None)]));
         let now = at("2024-02-03T04:05:06Z");
 
-        stamp_attribute_instants(&mut entity, &previous, now);
+        stamp_attribute_instants(&mut entity, &previous, now).expect("readable datasetIds");
 
         pretty_assertions::assert_eq!(member(&entity, 0, properties::CREATED_AT.as_str()).as_deref(), Some("2020-01-01T00:00:00Z"));
         pretty_assertions::assert_eq!(
@@ -252,7 +262,7 @@ mod tests {
         ]));
         let now = at("2024-02-03T04:05:06Z");
 
-        stamp_attribute_instants(&mut entity, &previous, now);
+        stamp_attribute_instants(&mut entity, &previous, now).expect("readable datasetIds");
 
         pretty_assertions::assert_eq!(member(&entity, 0, properties::CREATED_AT.as_str()).as_deref(), Some("2020-01-01T00:00:00Z"));
         pretty_assertions::assert_eq!(
@@ -265,7 +275,7 @@ mod tests {
     fn a_strip_removes_every_instance_system_time() {
         let now = at("2024-02-03T04:05:06Z");
         let mut entity = entity(&json!([property(10, None)]));
-        stamp_attribute_instants(&mut entity, &Value::Null, now);
+        stamp_attribute_instants(&mut entity, &Value::Null, now).expect("readable datasetIds");
 
         strip_attribute_instants(&mut entity);
 

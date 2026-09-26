@@ -12,12 +12,22 @@
 -- included, and is cascade-deleted with the tenant so a removed tenant leaves
 -- no route pointing at a database that no longer exists.
 -- `idx_forwarded_subscription_routes_tenant` backs that cascade.
+--
+-- `minted_subscription_id` is bounded at 1024 UTF-8 octets, the identifier
+-- bound (`IDENTIFIER_BYTE_LIMIT` in `andromeda-ngsi-ld-lexicon`) a
+-- subscription id is parsed under, well inside the 2704 bytes its primary-key
+-- btree admits.
 -- ============================================================================
 
 CREATE TABLE forwarded_subscription_routes (
-    tenant_id BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    tenant_id BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    minted_subscription_id TEXT COLLATE "C" NOT NULL PRIMARY KEY
+    minted_subscription_id TEXT COLLATE "C" NOT NULL,
+    CONSTRAINT pk_forwarded_subscription_routes PRIMARY KEY (minted_subscription_id),
+    CONSTRAINT fk_forwarded_subscription_routes_tenant FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id) ON DELETE CASCADE,
+    CONSTRAINT chk_forwarded_subscription_routes_minted_id_length
+        CHECK (octet_length(minted_subscription_id) <= 1024)
 );
 
 CREATE INDEX idx_forwarded_subscription_routes_tenant

@@ -43,7 +43,7 @@ use uuid::Uuid;
 
 fn generate_id() -> Result<Uri, SubscriptionError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4())).build()?;
-    Ok(Uri::from(urn))
+    Uri::try_from(urn).map_err(SubscriptionError::internal)
 }
 
 /// Generic subscription service providing CRUD operations shared by entity and CSR subscriptions.

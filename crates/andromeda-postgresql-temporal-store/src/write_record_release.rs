@@ -75,41 +75,102 @@ fn base_release() -> DeleteStatement {
 
 /// The three effects a write record outlives nothing without: no attribute
 /// history row, no scope history row and no queued append intent references it.
+///
+/// A history protection correlates on the write's instant as well as its
+/// identity. Every history row of a write carries the `recorded_at` of its
+/// `write_records` row -- the committer mints one record per commit, every
+/// intent of that commit is refused unless it carries it, and neither replay
+/// nor instance modification rewrites it -- so the extra equality selects no
+/// fewer rows. What it buys is the access path: the only index on either
+/// hypertable that carries `write_id` is `uq_*_write (recorded_at, write_id,
+/// write_ordinal)`, which a probe on `write_id` alone cannot seek into, so every
+/// clause 5.6.16 deletion and every retention sweep probed every chunk. Leading
+/// with `recorded_at` seeks that index and lets the planner exclude every other
+/// chunk. An append intent's protection needs no instant:
+/// `uq_temporal_append_intents_write` already leads with `write_id`.
 fn unprotected() -> Cond {
     Cond::all()
-        .add(no_reference_from(AttributeHistory::Table, AttributeHistory::WriteId, Ah))
-        .add(no_reference_from(ScopeHistory::Table, ScopeHistory::WriteId, Sh))
-        .add(no_reference_from(TemporalAppendIntents::Table, TemporalAppendIntents::WriteId, Ti))
+        .add(no_history_reference(
+            AttributeHistory::Table,
+            AttributeHistory::WriteId,
+            AttributeHistory::RecordedAt,
+            Ah,
+        ))
+        .add(no_history_reference(ScopeHistory::Table, ScopeHistory::WriteId, ScopeHistory::RecordedAt, Sh))
+        .add(no_intent_reference(TemporalAppendIntents::Table, TemporalAppendIntents::WriteId, Ti))
 }
 
-/// `NOT EXISTS` protection correlating an effect's identity column to the
-/// canonical `write_records.write_id`.
-fn no_reference_from(table: impl IntoTableRef, identity: impl IntoIden + Copy + 'static, alias: impl IntoIden + Copy + 'static) -> SimpleExpr {
+/// `NOT EXISTS` protection correlating a history row's write instant and
+/// identity to the canonical `write_records.recorded_at` and `write_id`.
+fn no_history_reference(
+    table: impl IntoTableRef,
+    write_id: impl IntoIden + Copy + 'static,
+    recorded_at: impl IntoIden + Copy + 'static,
+    alias: impl IntoIden + Copy + 'static,
+) -> SimpleExpr {
     let subquery = Query::select()
         .expr(Expr::val(1))
         .from_as(table, alias)
-        .and_where(Expr::col((alias, identity)).equals((WriteRecords::Table, WriteRecords::WriteId)))
+        .and_where(Expr::col((alias, recorded_at)).equals((WriteRecords::Table, WriteRecords::RecordedAt)))
+        .and_where(Expr::col((alias, write_id)).equals((WriteRecords::Table, WriteRecords::WriteId)))
+        .to_owned();
+    Expr::exists(subquery).not()
+}
+
+/// `NOT EXISTS` protection correlating a queued intent's write identity to the
+/// canonical `write_records.write_id`.
+fn no_intent_reference(table: impl IntoTableRef, write_id: impl IntoIden + Copy + 'static, alias: impl IntoIden + Copy + 'static) -> SimpleExpr {
+    let subquery = Query::select()
+        .expr(Expr::val(1))
+        .from_as(table, alias)
+        .and_where(Expr::col((alias, write_id)).equals((WriteRecords::Table, WriteRecords::WriteId)))
         .to_owned();
     Expr::exists(subquery).not()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::write_record_release::{Ah, base_release, no_reference_from};
-    use andromeda_postgresql_schema::temporal::AttributeHistory;
+    use crate::write_record_release::{Ah, Sh, Ti, base_release, no_history_reference, no_intent_reference};
+    use andromeda_postgresql_schema::{
+        queue::TemporalAppendIntents,
+        temporal::{AttributeHistory, ScopeHistory},
+    };
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
+
+    fn render(protection: SimpleExpr) -> String {
+        Query::select().expr(protection).to_owned().to_string(PostgresQueryBuilder)
+    }
 
     #[test]
-    fn a_protection_is_a_correlated_non_existence_over_the_write_identity() {
-        let sql = Query::select()
-            .expr(no_reference_from(AttributeHistory::Table, AttributeHistory::WriteId, Ah))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
+    fn a_history_protection_correlates_on_the_write_instant_and_identity() {
+        let attribute = render(no_history_reference(
+            AttributeHistory::Table,
+            AttributeHistory::WriteId,
+            AttributeHistory::RecordedAt,
+            Ah,
+        ));
         assert!(
-            sql.contains(r#"NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."write_id" = "write_records"."write_id")"#),
+            attribute.contains(
+                r#"NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."recorded_at" = "write_records"."recorded_at" AND "ah"."write_id" = "write_records"."write_id")"#
+            ),
+            "{attribute}"
+        );
+        let scope = render(no_history_reference(ScopeHistory::Table, ScopeHistory::WriteId, ScopeHistory::RecordedAt, Sh));
+        assert!(
+            scope.contains(r#""sh"."recorded_at" = "write_records"."recorded_at" AND "sh"."write_id" = "write_records"."write_id""#),
+            "{scope}"
+        );
+    }
+
+    #[test]
+    fn an_intent_protection_correlates_on_the_write_identity_alone() {
+        let sql = render(no_intent_reference(TemporalAppendIntents::Table, TemporalAppendIntents::WriteId, Ti));
+        assert!(
+            sql.contains(r#"NOT EXISTS(SELECT 1 FROM "temporal_append_intents" AS "ti" WHERE "ti"."write_id" = "write_records"."write_id")"#),
             "{sql}"
         );
+        assert!(!sql.contains("recorded_at"), "{sql}");
     }
 
     #[test]
@@ -120,5 +181,7 @@ mod tests {
             assert!(sql.contains(relation), "missing {relation}: {sql}");
         }
         assert!(sql.contains(r#""ti"."write_id" = "write_records"."write_id""#), "{sql}");
+        assert!(sql.contains(r#""ah"."recorded_at" = "write_records"."recorded_at""#), "{sql}");
+        assert!(sql.contains(r#""sh"."recorded_at" = "write_records"."recorded_at""#), "{sql}");
     }
 }

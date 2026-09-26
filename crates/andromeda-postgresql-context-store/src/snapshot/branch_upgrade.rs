@@ -14,6 +14,7 @@ use crate::{
     migration_set::branch::{BranchMigrationSet, BranchSchemaVersion, current_branch_version},
     snapshot::branch_schema::{branch_search_path, steer_search_path},
 };
+use andromeda_context_commit::failure_summary::{FAILURE_SUMMARY_LIMIT, bounded_failure_summary};
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_postgresql_branch::snapshot_schema_name;
 use andromeda_postgresql_schema::snapshot::SnapshotPreparation;
@@ -21,9 +22,6 @@ use andromeda_postgresql_seaquery::{introspection::schema_exists, setting::Setti
 use sea_query::{Expr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{Connection, PgConnection, PgPool};
-
-/// The longest upgrade failure recorded; the column's check pins the same bound.
-const UPGRADE_ERROR_MAX_CHARS: usize = 2048;
 
 /// Whether any Snapshot's branch schemas are behind the binary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -142,11 +140,16 @@ fn upgraded_statement(key: SnapshotKey, current: BranchSchemaVersion) -> UpdateS
 }
 
 /// Record a failed upgrade, leaving the version behind.
+///
+/// The failure is cut to the bound `chk_snapshot_preparation_branch_upgrade_error_bound`
+/// states, so the quarantine never fails on its own diagnostic.
 fn quarantined_statement(key: SnapshotKey, error: &str) -> UpdateStatement {
-    let bounded: String = error.chars().take(UPGRADE_ERROR_MAX_CHARS).collect();
     Query::update()
         .table(SnapshotPreparation::Table)
-        .value(SnapshotPreparation::BranchUpgradeError, bounded)
+        .value(
+            SnapshotPreparation::BranchUpgradeError,
+            bounded_failure_summary(error, FAILURE_SUMMARY_LIMIT).into_owned(),
+        )
         .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(key.as_i64()))
         .to_owned()
 }
@@ -162,7 +165,7 @@ async fn record(pool: &PgPool, statement: UpdateStatement) -> Result<(), Context
 mod tests {
     use crate::{
         migration_set::branch::BranchSchemaVersion,
-        snapshot::branch_upgrade::{UPGRADE_ERROR_MAX_CHARS, behind_statement, quarantined_statement, upgraded_statement},
+        snapshot::branch_upgrade::{behind_statement, quarantined_statement, upgraded_statement},
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use pretty_assertions::assert_eq;
@@ -195,14 +198,11 @@ mod tests {
 
     #[test]
     fn a_failed_upgrade_records_a_bounded_error_and_leaves_the_version_behind() {
-        let long = "x".repeat(UPGRADE_ERROR_MAX_CHARS + 10);
+        let long = "x".repeat(2048 + 10);
         let (sql, values) = quarantined_statement(key(), &long).build(PostgresQueryBuilder);
         assert!(!sql.contains("branch_schema_version"), "{sql}");
         let bound = format!("{:?}", values.0[0]);
-        assert!(
-            bound.contains(&"x".repeat(UPGRADE_ERROR_MAX_CHARS)),
-            "the bound error keeps the first 2048 characters"
-        );
-        assert!(!bound.contains(&"x".repeat(UPGRADE_ERROR_MAX_CHARS + 1)), "and no more");
+        assert!(bound.contains(&"x".repeat(2048)), "the bound error keeps the first 2048 characters");
+        assert!(!bound.contains(&"x".repeat(2048 + 1)), "and no more");
     }
 }

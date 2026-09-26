@@ -4,7 +4,7 @@ use crate::port::reader::EntityReader;
 use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
     expanded::geo_property::{geo_property_instance_geometries, geo_property_iris},
     notification::NotificationTrigger,
@@ -35,22 +35,19 @@ impl SpatialSynchronizer {
             return;
         }
         let ContextChangeEvent { target, event } = change;
-        let urn = match event.entity_id.to_string().parse::<Urn>() {
-            Ok(urn) => urn,
-            Err(error) => {
-                debug!(entity_id = %event.entity_id, %error, "spatial synchronization skipped a non-URN entity");
-                return;
-            }
+        let Some(urn) = event.entity_id.as_urn() else {
+            debug!(entity_id = %event.entity_id, "spatial synchronization skipped a non-URN entity");
+            return;
         };
         match event.trigger_reason {
-            NotificationTrigger::EntityDeleted => self.index.remove(&urn),
+            NotificationTrigger::EntityDeleted => self.index.remove(urn),
             NotificationTrigger::EntityCreated
             | NotificationTrigger::EntityUpdated
             | NotificationTrigger::AttributeCreated
-            | NotificationTrigger::AttributeUpdated => self.synchronize_entity(&target, &urn, &event).await,
+            | NotificationTrigger::AttributeUpdated => self.synchronize_entity(&target, urn, &event).await,
             NotificationTrigger::AttributeDeleted => {
-                self.index.remove(&urn);
-                self.synchronize_entity(&target, &urn, &event).await;
+                self.index.remove(urn);
+                self.synchronize_entity(&target, urn, &event).await;
             }
         }
     }
@@ -59,8 +56,8 @@ impl SpatialSynchronizer {
         let payload = if let Some(payload) = &event.current_payload {
             Arc::clone(payload)
         } else {
-            let identifier = Uri::from(urn.clone()); // clone: the fallback read owns a URI while the index retains the URN.
-            match self.reader.get(target, &identifier).await {
+            let identifier = &event.entity_id;
+            match self.reader.get(target, identifier).await {
                 Ok(Some(payload)) => Arc::new(payload),
                 Ok(None) => {
                     self.index.remove(urn);

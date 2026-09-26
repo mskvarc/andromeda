@@ -1,4 +1,4 @@
-//! The columnstore-policy procedures of the temporal hypertables.
+//! The columnstore DDL and policy procedures of the temporal hypertables.
 
 use std::num::NonZeroU32;
 use strum::{Display, EnumIter, IntoStaticStr};
@@ -15,6 +15,67 @@ pub enum HypertableName {
     AttributeHistory,
     /// `scope_history`, segmented by temporal entity.
     ScopeHistory,
+}
+
+/// The order-by columns of every temporal hypertable's columnstore, and
+/// whether each sorts descending: the write-deduplication key of the
+/// hypertable's `uq_*_write` constraint, newest first.
+pub const COLUMNSTORE_ORDER_BY: [(&str, SortDirection); 3] = [
+    ("recorded_at", SortDirection::Descending),
+    ("write_id", SortDirection::Ascending),
+    ("write_ordinal", SortDirection::Ascending),
+];
+
+/// The span converted chunks are merged into, in days.
+///
+/// A whole multiple of the seven-day chunk interval, which `TimescaleDB`
+/// requires of the merge span.
+pub const COLUMNSTORE_MERGE_DAYS: u32 = 28;
+
+/// The direction one columnstore order-by column sorts in.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SortDirection {
+    /// Ascending, the default.
+    Ascending,
+    /// Descending.
+    Descending,
+}
+
+impl HypertableName {
+    /// The column the hypertable's columnstore segments by.
+    ///
+    /// `attribute_history` is segmented by stream: a temporal query names
+    /// streams, so a segment holds exactly the rows one stream contributed to a
+    /// chunk. `scope_history` has no stream, so its segment is the temporal
+    /// entity, whose scope rows are what a scope query reads.
+    #[must_use]
+    pub const fn segment_by(self) -> &'static str {
+        match self {
+            HypertableName::AttributeHistory => "stream_key",
+            HypertableName::ScopeHistory => "temporal_entity_key",
+        }
+    }
+}
+
+/// `ALTER TABLE hypertable SET (timescaledb.enable_columnstore, segmentby, orderby, compress_chunk_time_interval)`.
+///
+/// Every value is fixed per hypertable -- [`HypertableName::segment_by`],
+/// [`COLUMNSTORE_ORDER_BY`] and [`COLUMNSTORE_MERGE_DAYS`] -- so nothing is
+/// interpolated from outside the crate.
+#[must_use]
+pub fn enable_columnstore(hypertable: HypertableName) -> String {
+    let order_by = COLUMNSTORE_ORDER_BY
+        .iter()
+        .map(|(column, direction)| match direction {
+            SortDirection::Ascending => (*column).to_owned(),
+            SortDirection::Descending => format!("{column} DESC"),
+        })
+        .collect::<Vec<String>>()
+        .join(", ");
+    format!(
+        "ALTER TABLE {hypertable} SET (timescaledb.enable_columnstore, timescaledb.segmentby = '{segment_by}', timescaledb.orderby = '{order_by}', timescaledb.compress_chunk_time_interval = '{COLUMNSTORE_MERGE_DAYS} days')",
+        segment_by = hypertable.segment_by(),
+    )
 }
 
 /// `CALL add_columnstore_policy(hypertable, after => INTERVAL 'n days', if_not_exists => true)`.
@@ -35,7 +96,7 @@ pub fn remove_columnstore_policy(hypertable: HypertableName) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema_ddl::timescale_policy::{HypertableName, add_columnstore_policy, remove_columnstore_policy};
+    use crate::schema_ddl::timescale_policy::{HypertableName, add_columnstore_policy, enable_columnstore, remove_columnstore_policy};
     use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
 
@@ -50,6 +111,18 @@ mod tests {
         assert_eq!(
             add_columnstore_policy(HypertableName::AttributeHistory, NonZeroU32::new(3).expect("positive")),
             "CALL add_columnstore_policy('attribute_history', after => INTERVAL '3 days', if_not_exists => true)"
+        );
+    }
+
+    #[test]
+    fn enabling_the_columnstore_names_the_segment_and_order_of_each_hypertable() {
+        assert_eq!(
+            enable_columnstore(HypertableName::AttributeHistory),
+            "ALTER TABLE attribute_history SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'stream_key', timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal', timescaledb.compress_chunk_time_interval = '28 days')"
+        );
+        assert_eq!(
+            enable_columnstore(HypertableName::ScopeHistory),
+            "ALTER TABLE scope_history SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'temporal_entity_key', timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal', timescaledb.compress_chunk_time_interval = '28 days')"
         );
     }
 

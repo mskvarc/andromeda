@@ -28,7 +28,7 @@ impl NotificationDeliveryTransport for NotificationProcessor {
     fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, Result<DeliveryDisposition, NotificationError>> {
         Box::pin(async move {
             let stored = &entry.event;
-            let survival = stored_entity_survival(stored);
+            let survival = stored_entity_survival(stored)?;
             let snapshot = stored.entity_snapshot.clone(); // clone: the change event owns the durable payload while the leased delivery remains available for acknowledgement.
             // The deleted row is gone, so its system attributes are read back
             // from the snapshot the delete write embedded them into, restoring
@@ -96,14 +96,21 @@ impl NotificationDeliveryTransport for NotificationProcessor {
 /// notified without the very attribute whose deletion triggered it -- the
 /// `urn:ngsi-ld:null` that clause 5.5.4 bullet 2 expressly admits "in
 /// notifications and the temporal evolution" never reaches the subscriber.
-fn stored_entity_survival(stored: &NotificationEvent) -> EntitySurvival {
+///
+/// # Errors
+///
+/// Returns [`NotificationError::Invariant`] when the stored snapshot carries a
+/// `datasetId` that cannot be read: the write that queued the delivery admitted
+/// every one, so the instance the delivery names can only be sought in a
+/// snapshot the broker itself corrupted.
+fn stored_entity_survival(stored: &NotificationEvent) -> Result<EntitySurvival, NotificationError> {
     match stored.trigger {
-        NotificationTrigger::EntityDeleted => EntitySurvival::Deleted,
+        NotificationTrigger::EntityDeleted => Ok(EntitySurvival::Deleted),
         NotificationTrigger::AttributeDeleted => attribute_deletion_survival(stored),
         NotificationTrigger::EntityCreated
         | NotificationTrigger::EntityUpdated
         | NotificationTrigger::AttributeCreated
-        | NotificationTrigger::AttributeUpdated => EntitySurvival::Survived,
+        | NotificationTrigger::AttributeUpdated => Ok(EntitySurvival::Survived),
     }
 }
 
@@ -123,24 +130,28 @@ fn stored_entity_survival(stored: &NotificationEvent) -> EntitySurvival {
 /// surviving Entity so the notification path reads the Entity from the store
 /// and drops the notification if it is genuinely gone -- the same reading
 /// `crate::processor::payload::entity_survival` gives that shape in process.
-fn attribute_deletion_survival(stored: &NotificationEvent) -> EntitySurvival {
+fn attribute_deletion_survival(stored: &NotificationEvent) -> Result<EntitySurvival, NotificationError> {
     let Some(snapshot) = stored.entity_snapshot.as_ref() else {
-        return EntitySurvival::Survived;
+        return Ok(EntitySurvival::Survived);
     };
-    if snapshot_carries_deleted_instance(snapshot, stored) {
-        EntitySurvival::Deleted
+    if snapshot_carries_deleted_instance(snapshot, stored)? {
+        Ok(EntitySurvival::Deleted)
     } else {
-        EntitySurvival::Survived
+        Ok(EntitySurvival::Survived)
     }
 }
 
 /// Whether `snapshot` still holds one of the Attribute instances the delivery
 /// reports as deleted.
-fn snapshot_carries_deleted_instance(snapshot: &Value, stored: &NotificationEvent) -> bool {
-    stored
-        .changed_attributes
-        .iter()
-        .any(|attribute| attribute_instance_family(snapshot, attribute, stored.changed_dataset_id.as_ref()).is_some())
+fn snapshot_carries_deleted_instance(snapshot: &Value, stored: &NotificationEvent) -> Result<bool, NotificationError> {
+    for attribute in &stored.changed_attributes {
+        let family = attribute_instance_family(snapshot, attribute, stored.changed_dataset_id.as_ref())
+            .map_err(|error| NotificationError::invariant(format!("queued deletion snapshot: {error}")))?;
+        if family.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Reconstruct the clause-4.8 system attributes from a persisted deletion
@@ -265,7 +276,7 @@ mod tests {
     #[test]
     fn a_queued_attribute_deletion_that_left_the_entity_behind_is_not_an_entity_deletion() {
         let stored = queued(NotificationTrigger::AttributeDeleted, Some(entity_without_name()));
-        pretty_assertions::assert_eq!(stored_entity_survival(&stored), EntitySurvival::Survived);
+        pretty_assertions::assert_eq!(stored_entity_survival(&stored).expect("a readable snapshot"), EntitySurvival::Survived);
     }
 
     /// Clause 5.6.6 deletes the Entity and raises one `attributeDeleted`
@@ -275,14 +286,14 @@ mod tests {
     #[test]
     fn a_queued_attribute_deletion_that_went_with_its_entity_is_an_entity_deletion() {
         let stored = queued(NotificationTrigger::AttributeDeleted, Some(entity_with_name()));
-        pretty_assertions::assert_eq!(stored_entity_survival(&stored), EntitySurvival::Deleted);
+        pretty_assertions::assert_eq!(stored_entity_survival(&stored).expect("a readable snapshot"), EntitySurvival::Deleted);
     }
 
     /// An `entityDeleted` delivery says so outright, whatever it stored.
     #[test]
     fn a_queued_entity_deletion_is_always_an_entity_deletion() {
         let stored = queued(NotificationTrigger::EntityDeleted, Some(entity_with_name()));
-        pretty_assertions::assert_eq!(stored_entity_survival(&stored), EntitySurvival::Deleted);
+        pretty_assertions::assert_eq!(stored_entity_survival(&stored).expect("a readable snapshot"), EntitySurvival::Deleted);
     }
 
     /// A delivery with no snapshot cannot be placed, so the Entity is read from
@@ -290,7 +301,7 @@ mod tests {
     #[test]
     fn a_queued_attribute_deletion_without_a_snapshot_leaves_the_entity_to_be_read() {
         let stored = queued(NotificationTrigger::AttributeDeleted, None);
-        pretty_assertions::assert_eq!(stored_entity_survival(&stored), EntitySurvival::Survived);
+        pretty_assertions::assert_eq!(stored_entity_survival(&stored).expect("a readable snapshot"), EntitySurvival::Survived);
     }
 
     /// Every trigger that is not a deletion leaves the Entity behind.
@@ -303,7 +314,11 @@ mod tests {
             NotificationTrigger::AttributeUpdated,
         ] {
             let stored = queued(trigger, Some(entity_with_name()));
-            pretty_assertions::assert_eq!(stored_entity_survival(&stored), EntitySurvival::Survived, "{trigger}");
+            pretty_assertions::assert_eq!(
+                stored_entity_survival(&stored).expect("a readable snapshot"),
+                EntitySurvival::Survived,
+                "{trigger}"
+            );
         }
     }
 

@@ -42,12 +42,19 @@ pub fn parse_id_list(raw: &[String]) -> Result<Vec<Uri>, QueryError> {
 ///
 /// Returns [`QueryError::ParamIdInvalid`] when `raw` is not a clause 4.6.2 URI.
 pub fn parse_id(raw: &str) -> Result<Uri, QueryError> {
-    raw.parse::<Uri>().map_err(|_| QueryError::ParamIdInvalid(raw.to_string()))
+    raw.parse::<Uri>().map_err(|source| QueryError::ParamIdInvalid { raw: raw.to_string(), source })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        error::QueryError,
+        identifier::{parse_id, parse_id_list},
+    };
+    use andromeda_ngsi_ld_lexicon::{
+        identifier_length::IDENTIFIER_BYTE_LIMIT,
+        uri::{Uri, UriParseError},
+    };
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -65,7 +72,7 @@ mod tests {
     #[test]
     fn a_value_that_is_not_a_uri_is_rejected() {
         let error = parse_id_list(&["not a uri".to_string()]).expect_err("must reject");
-        assert!(matches!(error, QueryError::ParamIdInvalid(_)), "got {error:?}");
+        assert!(matches!(error, QueryError::ParamIdInvalid { .. }), "got {error:?}");
     }
 
     #[test]
@@ -74,7 +81,26 @@ mod tests {
         // The fault carries the identifier itself, not a parser's message, so a
         // caller that reads a single id gets the same error as the list parser.
         let error = parse_id("not a uri").expect_err("must reject");
-        assert!(matches!(&error, QueryError::ParamIdInvalid(value) if value == "not a uri"), "got {error:?}");
+        assert!(matches!(&error, QueryError::ParamIdInvalid { raw, .. } if raw == "not a uri"), "got {error:?}");
+    }
+
+    /// An `id` too long to be an identifier is invalid, and the error says why
+    /// rather than calling it no URI at all.
+    #[test]
+    fn an_over_long_id_parameter_is_invalid_with_its_reason() {
+        let raw = format!("urn:ngsi-ld:Vehicle:{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
+        let error = parse_id(&raw).expect_err("must reject");
+        assert!(
+            matches!(
+                &error,
+                QueryError::ParamIdInvalid {
+                    source: UriParseError::TooLong(_),
+                    ..
+                }
+            ),
+            "got {error:?}"
+        );
+        assert!(error.to_string().contains("bytes"), "{error}");
     }
 
     #[test]

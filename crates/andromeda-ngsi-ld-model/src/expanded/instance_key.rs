@@ -1,6 +1,9 @@
 //! Identity of a single attribute instance inside an expanded entity payload.
 
-use crate::expanded::{dataset_id::get_instance_dataset_id, node::expanded_object_ref};
+use crate::expanded::{
+    dataset_id::{InstanceDatasetIdError, get_instance_dataset_id, position_of_dataset},
+    node::expanded_object_ref,
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
@@ -54,11 +57,15 @@ pub struct AttributeInstanceKey {
 /// an attribute — clause 4.5.4). Attribute names that are not valid IRIs are
 /// skipped too: they cannot correspond to a temporal catalogue row, whose
 /// `attribute_name` is IRI-validated on read.
-#[must_use]
-pub fn attribute_instance_families(expanded: &Value) -> HashMap<AttributeInstanceKey, AttributeType> {
+///
+/// # Errors
+///
+/// Returns [`InstanceDatasetIdError`] when an instance carries a `datasetId`
+/// that is not an identifier, since its identity cannot be told.
+pub fn attribute_instance_families(expanded: &Value) -> Result<HashMap<AttributeInstanceKey, AttributeType>, InstanceDatasetIdError> {
     let mut instances_by_key = HashMap::new();
     let Some(obj) = expanded_object_ref(expanded) else {
-        return instances_by_key;
+        return Ok(instances_by_key);
     };
 
     for (attr_name, attr_value) in obj {
@@ -75,7 +82,7 @@ pub fn attribute_instance_families(expanded: &Value) -> HashMap<AttributeInstanc
             continue;
         }
         for instance in instances {
-            let dataset_id = get_instance_dataset_id(instance);
+            let dataset_id = get_instance_dataset_id(instance)?;
             instances_by_key.insert(
                 AttributeInstanceKey {
                     attr: attr.clone(), // clone: one key per instance, each owning its IRI
@@ -86,20 +93,25 @@ pub fn attribute_instance_families(expanded: &Value) -> HashMap<AttributeInstanc
         }
     }
 
-    instances_by_key
+    Ok(instances_by_key)
 }
 
 /// The family one named attribute instance declares in an expanded payload.
 ///
 /// Answers `None` when the payload holds no such instance, which is the case a
 /// deletion computed from a catalogue rather than from the payload can reach.
-pub fn attribute_instance_family(expanded: &Value, attr: &AttributeName, dataset_id: Option<&Uri>) -> Option<AttributeType> {
-    expanded_object_ref(expanded)?
-        .get(attr.as_str())?
-        .as_array()?
-        .iter()
-        .find(|instance| get_instance_dataset_id(instance).as_ref() == dataset_id)
-        .map(declared_attribute_type)
+///
+/// # Errors
+///
+/// Returns [`InstanceDatasetIdError`] when an instance consulted before the
+/// match carries a `datasetId` that is not an identifier.
+pub fn attribute_instance_family(expanded: &Value, attr: &AttributeName, dataset_id: Option<&Uri>) -> Result<Option<AttributeType>, InstanceDatasetIdError> {
+    let Some(instances) = expanded_object_ref(expanded).and_then(|obj| obj.get(attr.as_str())).and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    Ok(position_of_dataset(instances, dataset_id)?
+        .and_then(|position| instances.get(position))
+        .map(declared_attribute_type))
 }
 
 /// The attribute family one expanded instance declares.
@@ -135,7 +147,7 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]
             }],
         }]);
-        let indexed = attribute_instance_families(&payload);
+        let indexed = attribute_instance_families(&payload).expect("readable datasetIds");
         pretty_assertions::assert_eq!(indexed.len(), 1);
         assert!(indexed.keys().all(|key| key.attr.as_str() == "https://example.com/a"));
     }
@@ -152,7 +164,7 @@ mod tests {
             "https://example.com/vocab": [{"@type": ["https://uri.etsi.org/ngsi-ld/VocabProperty"]}],
             "https://example.com/doc": [{"@type": ["https://uri.etsi.org/ngsi-ld/JsonProperty"]}],
         }]);
-        let indexed = attribute_instance_families(&payload);
+        let indexed = attribute_instance_families(&payload).expect("readable datasetIds");
         let family = |name: &str| {
             indexed
                 .iter()
@@ -173,7 +185,7 @@ mod tests {
             "@id": "urn:ngsi-ld:Vehicle:1",
             "https://example.com/a": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}],
         }]);
-        let indexed = attribute_instance_families(&payload);
+        let indexed = attribute_instance_families(&payload).expect("readable datasetIds");
         pretty_assertions::assert_eq!(indexed.values().copied().collect::<Vec<AttributeType>>(), vec![AttributeType::Property]);
     }
 }

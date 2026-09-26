@@ -49,9 +49,12 @@
 use crate::{
     compilation::compile_projection,
     error::TemporalError,
-    linked::candidates::{RemoteEligibility, TemporalLinkedCandidate, collect_candidates, identifier_of},
+    linked::{
+        candidates::{RemoteEligibility, TemporalLinkedCandidate, collect_candidates, identifier_of},
+        level_merge::{expandable, fetch_remote_candidate, merge_candidates},
+    },
     read::rendered_entity::HistoryPresence,
-    remote_linked::{RemoteTemporalLinkedSource, TemporalLinkedWindow},
+    remote_linked::TemporalLinkedWindow,
     service::TemporalService,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -59,7 +62,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpa
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::entity_member::extract_types;
 use andromeda_ngsi_ld_query::{projection::compiled::Projection, temporal::compiled::CompiledTemporalQuery};
-use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
+use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use indexmap::{IndexMap, IndexSet};
 use serde_json::Value;
@@ -322,7 +325,12 @@ impl TemporalService {
             .get_batch(target, &ids)
             .await
             .map_err(|error| TemporalError::persistence(error.to_string()))?;
-        let types: HashMap<&Uri, Vec<EntityTypeName>> = payloads.iter().map(|(id, payload)| (id, extract_types(payload))).collect();
+        // Every stored payload was admitted when it was written, so a type it
+        // cannot be read back with is a broker fault, not a missing link.
+        let types: HashMap<&Uri, Vec<EntityTypeName>> = payloads
+            .iter()
+            .map(|(id, payload)| Ok((id, extract_types(payload).map_err(TemporalError::internal)?)))
+            .collect::<Result<_, TemporalError>>()?;
 
         let mut level = IndexMap::with_capacity(candidates.len());
         let mut named: Vec<TemporalLinkedCandidate> = Vec::new();
@@ -348,101 +356,11 @@ impl TemporalService {
     }
 }
 
-/// Fold two candidate lists into one, keeping first-encounter order, dropping
-/// anything already walked, and letting one annotated sighting make an
-/// identifier remotely eligible (clause 4.5.23.1).
-fn merge_candidates(first: &[TemporalLinkedCandidate], second: Vec<TemporalLinkedCandidate>, visited: &IndexSet<Uri>) -> Vec<TemporalLinkedCandidate> {
-    let mut seen: IndexSet<Uri> = IndexSet::new();
-    let mut merged: Vec<TemporalLinkedCandidate> = Vec::new();
-    for candidate in first.iter().cloned().chain(second) {
-        // clone: the merged list owns its candidates, and `first` is borrowed
-        if visited.contains(&candidate.id) {
-            continue;
-        }
-        if let Some(index) = seen.get_index_of(&candidate.id) {
-            if candidate.eligibility == RemoteEligibility::Eligible
-                && let Some(existing) = merged.get_mut(index)
-            {
-                existing.eligibility = RemoteEligibility::Eligible;
-            }
-        } else {
-            seen.insert(candidate.id.clone()); // clone: the duplicate guard owns the ids it records
-            merged.push(candidate);
-        }
-    }
-    merged
-}
-
-/// The level's entities whose own Relationships the next level walks.
-///
-/// A candidate this level resolved — locally, or by being fetched from a remote
-/// broker — is a next-level root like any other. The extra entities that came
-/// back around a fetched candidate are not: they are the remote broker's
-/// already-resolved sub-tree, walked with the depth budget it was given, and
-/// walking them again here would spend levels twice and reach further than the
-/// client's `joinLevel` allows.
-fn expandable<'a>(candidates: &'a [TemporalLinkedCandidate], level: &'a ResolvedTemporalLevel) -> impl Iterator<Item = &'a Value> {
-    candidates.iter().filter_map(|candidate| level.entities.get(&candidate.id))
-}
-
-/// Ask the remainder of the system for one candidate and fold what it answers
-/// into the level it belongs to.
-///
-/// A source that cannot answer degrades the join rather than the request
-/// (clause 4.5.23): the candidate stays unresolved, leaving the Relationship
-/// that named it a plain URI, and the level carries a description of what is
-/// missing back to the caller.
-async fn fetch_remote_candidate(
-    source: &dyn RemoteTemporalLinkedSource,
-    candidate: &TemporalLinkedCandidate,
-    depth: NonZeroU32,
-    visited: &IndexSet<Uri>,
-    linked_read: LinkedTemporalRead<'_>,
-    level: &mut ResolvedTemporalLevel,
-) {
-    // The candidate itself is already in the guard; the remainder of the system
-    // is told about everything except the entity it is being asked for.
-    let held: Vec<Uri> = visited.iter().filter(|id| **id != candidate.id).cloned().collect(); // clone: the port takes the ids as an owned slice
-    match source
-        .fetch_linked_temporal(&candidate.id, depth, &held, linked_read.window, linked_read.context)
-        .await
-    {
-        Ok(fetched) => {
-            for entity in fetched.entities {
-                let Some(id) = identifier_of(&entity) else {
-                    continue;
-                };
-                // The remote broker resolved the deeper levels in the same
-                // round trip. Whatever it returns that the requester already
-                // holds is dropped: clause 4.5.23 `containedBy` keeps those out
-                // of the result.
-                if id != candidate.id && visited.contains(&id) {
-                    continue;
-                }
-                level.entities.entry(id).or_insert(entity);
-            }
-            for failure in &fetched.failures {
-                tracing::warn!("Linked entity {} was not fully resolved: {} ({})", failure.id, failure.detail, failure.kind);
-            }
-            level.failures.extend(fetched.failures);
-        }
-        Err(error) => {
-            tracing::warn!(
-                "Failed to resolve the temporal evolution of linked entity {} outside this broker: {}",
-                candidate.id,
-                error
-            );
-            level.failures.push(LinkedResolutionFailure {
-                id: candidate.id.clone(), // clone: the failure outlives this level's candidates
-                kind: LinkedResolutionFailureKind::Unreachable,
-                detail: error.to_string(),
-            });
-        }
-    }
-}
-
 /// Which Linked Entities a rendered temporal representation names.
 pub mod candidates;
+
+/// Folding one level of the traversal together.
+mod level_merge;
 
 /// Applying the root request's clause 4.21 nested projection to resolved
 /// Linked Entities.

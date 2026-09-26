@@ -4,6 +4,7 @@ use crate::pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::Pe
 use andromeda_context_commit::{
     batch_side_effect_job::BatchSideEffectJob,
     change_event::ChangeEvent,
+    failure_summary::{FAILURE_SUMMARY_LIMIT, bounded_failure_summary},
     lease_acknowledgement::LeaseAcknowledgement,
     lease_holder::LeaseHolder,
     side_effect_job_id::SideEffectJobId,
@@ -224,6 +225,9 @@ fn ack_statement(id: Uuid, owner: LeaseHolder) -> DeleteStatement {
 
 /// Count the attempt, record its diagnostic, and release the lease for a retry.
 ///
+/// The diagnostic is cut to the bound `chk_pse_last_error_bound` states, so the
+/// retry never fails on its own bookkeeping.
+///
 /// All three claim columns are released together: `chk_pse_claim_coherent`
 /// rejects a row that holds some but not all of `claimed_at`, `lease_until` and
 /// `claimed_by`.
@@ -231,7 +235,10 @@ fn nack_statement(id: Uuid, owner: LeaseHolder, error: &str, next_attempt_at: Da
     Query::update()
         .table(PendingSideEffects::Table)
         .value(PendingSideEffects::AttemptCount, Expr::col(PendingSideEffects::AttemptCount).add(1))
-        .value(PendingSideEffects::LastError, error)
+        .value(
+            PendingSideEffects::LastError,
+            bounded_failure_summary(error, FAILURE_SUMMARY_LIMIT).into_owned(),
+        )
         .value(PendingSideEffects::NextAttemptAt, next_attempt_at)
         .value(PendingSideEffects::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(PendingSideEffects::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
@@ -244,13 +251,17 @@ fn nack_statement(id: Uuid, owner: LeaseHolder, error: &str, next_attempt_at: Da
 ///
 /// An exhausted row holds no lease: `chk_pse_exhausted_state` rejects a row that
 /// carries `exhausted_at` together with any claim column, so the lease is
-/// released here rather than in a later statement.
+/// released here rather than in a later statement. The diagnostic is cut to the
+/// bound `chk_pse_last_error_bound` states.
 fn mark_dead_statement(id: Uuid, owner: LeaseHolder, error: &str) -> UpdateStatement {
     Query::update()
         .table(PendingSideEffects::Table)
         .value(PendingSideEffects::AttemptCount, Expr::col(PendingSideEffects::AttemptCount).add(1))
         .value(PendingSideEffects::ExhaustedAt, Expr::current_timestamp())
-        .value(PendingSideEffects::LastError, error)
+        .value(
+            PendingSideEffects::LastError,
+            bounded_failure_summary(error, FAILURE_SUMMARY_LIMIT).into_owned(),
+        )
         .value(PendingSideEffects::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(PendingSideEffects::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .value(PendingSideEffects::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
@@ -258,17 +269,19 @@ fn mark_dead_statement(id: Uuid, owner: LeaseHolder, error: &str) -> UpdateState
         .to_owned()
 }
 
-/// Remove dead-lettered jobs created before `cutoff`.
+/// Remove jobs dead-lettered before `cutoff`.
 ///
-/// `idx_pse_exhausted` is the partial index on `created_at WHERE exhausted_at IS
-/// NOT NULL` this range scan runs on; an exhausted row holds no lease
-/// (`chk_pse_exhausted_state`), so no worker can be mid-flight on a row this
-/// removes.
+/// The retention clock is `exhausted_at`, the instant the job was dead-lettered:
+/// a job that retried for longer than the retention window is still kept for
+/// that window once it gives up. `idx_pse_exhausted` is the partial index on
+/// `exhausted_at WHERE exhausted_at IS NOT NULL` this range scan runs on; an
+/// exhausted row holds no lease (`chk_pse_exhausted_state`), so no worker can be
+/// mid-flight on a row this removes.
 fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
     Query::delete()
         .from_table(PendingSideEffects::Table)
         .and_where(Expr::col(PendingSideEffects::ExhaustedAt).is_not_null())
-        .and_where(Expr::col(PendingSideEffects::CreatedAt).lt(cutoff))
+        .and_where(Expr::col(PendingSideEffects::ExhaustedAt).lt(cutoff))
         .to_owned()
 }
 
@@ -326,7 +339,7 @@ mod tests {
     use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
     use andromeda_entity::side_effect_queue::SideEffectQueue;
     use chrono::Utc;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::{PostgresQueryBuilder, Value};
     use uuid::Uuid;
 
     fn assert_side_effect_queue<T: SideEffectQueue>() {}
@@ -369,12 +382,35 @@ mod tests {
     }
 
     #[test]
-    fn the_dead_letter_reap_removes_only_exhausted_rows_older_than_the_cutoff() {
+    fn the_dead_letter_reap_removes_only_rows_exhausted_before_the_cutoff() {
         let sql = purge_dead_statement(Utc::now()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"DELETE FROM "pending_side_effects""#), "{sql}");
         assert!(sql.contains(r#""exhausted_at" IS NOT NULL"#), "{sql}");
-        assert!(sql.contains(r#""created_at" <"#), "{sql}");
+        assert!(sql.contains(r#""exhausted_at" <"#), "{sql}");
+        assert!(!sql.contains(r#""created_at" <"#), "the reap ages a row by when it was dead-lettered: {sql}");
         assert!(!sql.contains("claimed_by"), "the reap must not be lease-guarded: {sql}");
+    }
+
+    #[test]
+    fn a_failure_detail_past_the_bound_is_truncated_before_it_is_written() {
+        let detail = "\u{e9}".repeat(3000);
+        for statement in [
+            nack_statement(Uuid::nil(), LeaseHolder::from(Uuid::nil()), &detail, Utc::now()),
+            mark_dead_statement(Uuid::nil(), LeaseHolder::from(Uuid::nil()), &detail),
+        ] {
+            let (_, values) = statement.build(PostgresQueryBuilder);
+            let written = values
+                .iter()
+                .find_map(|value| {
+                    if let Value::String(Some(text)) = value {
+                        Some(text.chars().count())
+                    } else {
+                        None
+                    }
+                })
+                .expect("the statement binds the diagnostic");
+            pretty_assertions::assert_eq!(written, 2048, "the diagnostic is cut to the column's bound");
+        }
     }
 
     #[test]

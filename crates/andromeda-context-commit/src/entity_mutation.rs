@@ -35,7 +35,11 @@ mod tests {
 
     #[test]
     fn only_insert_and_update_mutations_carry_entity_records() {
-        assert!(EntityMutation::Insert(EntityRecord::from_expanded(Arc::new(json!([{}])))).record().is_some());
+        assert!(
+            EntityMutation::Insert(EntityRecord::from_expanded(Arc::new(json!([{}]))).expect("readable members"))
+                .record()
+                .is_some()
+        );
         assert!(EntityMutation::Delete.record().is_none());
         assert!(EntityMutation::None.record().is_none());
     }

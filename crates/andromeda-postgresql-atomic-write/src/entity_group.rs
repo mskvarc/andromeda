@@ -91,7 +91,7 @@ mod tests {
     use std::sync::Arc;
 
     fn record() -> EntityRecord {
-        EntityRecord::from_expanded(Arc::new(json!([{"@id": "urn:ngsi-ld:A"}])))
+        EntityRecord::from_expanded(Arc::new(json!([{"@id": "urn:ngsi-ld:A"}]))).expect("readable members")
     }
 
     fn write(id: &str, entity: EntityMutation) -> AtomicWrite {

@@ -1,6 +1,13 @@
 //! Applying clause 4.22 expiry through the ordinary atomic mutation boundary.
 
-use crate::{EntityService, entity_snapshot::EntitySnapshot, error::EntityError, notification_plan::attribute_change_groups, port::expiry::EntityExpirySource};
+use crate::{
+    EntityService,
+    entity_snapshot::EntitySnapshot,
+    error::EntityError,
+    expanded_member::stored_entity_types,
+    notification_plan::attribute_change_groups,
+    port::expiry::EntityExpirySource,
+};
 #[cfg(test)]
 use andromeda_context_commit::write_outcome::WriteOutcome;
 use andromeda_context_commit::{
@@ -13,11 +20,7 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 #[cfg(test)]
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::expanded::{
-    entity_member::extract_types,
-    mutation::expiry::remove_expired_attribute_instances,
-    removed_instance::removed_attribute_instances,
-};
+use andromeda_ngsi_ld_model::expanded::{mutation::expiry::remove_expired_attribute_instances, removed_instance::removed_attribute_instances};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{num::NonZeroU32, sync::Arc};
@@ -155,17 +158,17 @@ impl EntityService {
         let mut writes = Vec::new();
         let mut pending = Vec::new();
         for (identifier, snapshot) in candidates {
-            let Some(purged) = purged_state(snapshot, cutoff) else {
+            let Some(purged) = purged_state(snapshot, cutoff)? else {
                 warn!(entity = %identifier, "attribute-expiry candidate held no past-due instance");
                 continue;
             };
-            let types = extract_types(&purged.current);
-            let groups = attribute_change_groups(&purged.previous, &purged.current);
+            let types = stored_entity_types(&purged.current)?;
+            let groups = attribute_change_groups(&purged.previous, &purged.current)?;
             let plan = self.plan_notifications(target, &identifier, &types, &groups, Some(&purged.current), Some(&purged.previous));
             writes.push(
                 AtomicWrite::builder()
                     .entity_id(Arc::new(identifier.clone()))
-                    .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&purged.current))))
+                    .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&purged.current))?))
                     .history(purged.history)
                     .subscription_matches(plan.matches)
                     .precondition(Precondition::UnchangedSince(purged.modified_at))
@@ -208,34 +211,42 @@ struct PurgedState {
     history: Vec<HistoryRecord>,
 }
 
-fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<PurgedState> {
+/// The entity `snapshot` becomes once every instance past `cutoff` is gone, or
+/// `None` when it held no such instance.
+///
+/// # Errors
+///
+/// Reports [`EntityError::Internal`] when the stored payload carries a
+/// `datasetId` the tombstones cannot name.
+fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Result<Option<PurgedState>, EntityError> {
     let EntitySnapshot {
         payload: previous,
         modified_at,
     } = snapshot;
     let mut purged = previous.clone(); // clone: history diffing requires both the before and after payloads.
     if !remove_expired_attribute_instances(&mut purged, cutoff) {
-        return None;
+        return Ok(None);
     }
     let history = removed_attribute_instances(&previous, &purged)
+        .map_err(EntityError::internal)?
         .into_iter()
         .map(HistoryRecord::Tombstone)
         .collect();
-    Some(PurgedState {
+    Ok(Some(PurgedState {
         previous,
         current: Arc::new(purged),
         modified_at,
         history,
-    })
+    }))
 }
 
 #[cfg(test)]
 fn purge_write(identifier: &Uri, snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<AtomicWrite> {
-    let purged = purged_state(snapshot, cutoff)?;
+    let purged = purged_state(snapshot, cutoff).expect("readable datasetIds")?;
     Some(
         AtomicWrite::builder()
             .entity_id(Arc::new(identifier.clone())) // clone: the atomic write owns a shared validated identifier.
-            .entity(EntityMutation::Update(EntityRecord::from_expanded(purged.current)))
+            .entity(EntityMutation::Update(EntityRecord::from_expanded(purged.current).expect("readable members")))
             .history(purged.history)
             .precondition(Precondition::UnchangedSince(purged.modified_at))
             .build(),

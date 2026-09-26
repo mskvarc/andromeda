@@ -99,6 +99,9 @@ pub enum SubscriptionValidationReason {
     /// `watchedAttributes` was present but empty.
     #[error("watchedAttributes must not be empty")]
     WatchedAttributesEmpty,
+    /// `notificationTrigger` was present but empty (Table 5.2.12-1).
+    #[error("notificationTrigger must not be empty")]
+    NotificationTriggerEmpty,
     /// `entities` was present but empty.
     #[error("entities must not be empty")]
     EntitiesEmpty,

@@ -12,6 +12,7 @@ workspace = true
 chrono = { version = "0.4.45", features = ["serde"] }
 dashmap = { version = "6.2.1", features = ["inline"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
+rand = { version = "0.10.3", default-features = false, features = ["std", "std_rng"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 thiserror = "2.0.21"
 typed-builder = "0.23.2"

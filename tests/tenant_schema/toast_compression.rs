@@ -31,6 +31,7 @@ const LZ4_COLUMNS: &[(&str, &str)] = &[
     ("attribute_history", "metadata"),
     ("current_attribute_values", "value_string"),
     ("current_attribute_values", "value_object"),
+    ("current_attribute_values", "value_long_text"),
     ("subscriptions", "entities"),
     ("subscriptions", "notification"),
     ("subscriptions", "geo_q"),

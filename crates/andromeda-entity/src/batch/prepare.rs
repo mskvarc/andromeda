@@ -166,7 +166,7 @@ impl EntityService {
         // clause 5.6.7's multi-status answer reports it without failing its
         // siblings.
         admit_expanded_entity(&expanded, admission).map_err(|error| Box::new((id.clone(), error)))?; // clone: the success path retains the identifier
-        let projection = SearchProjection::from_expanded(&expanded);
+        let projection = SearchProjection::from_expanded(&expanded).map_err(|error| Box::new((id.clone(), EntityError::from(error))))?; // clone: the success path retains the identifier
         // The names the request changed are the names the payload carries: a
         // batch create or replace writes the whole payload.
         let changed_attributes = projection.attribute_names.clone(); // clone: the projection keeps the names for the row, the change event for its subscribers

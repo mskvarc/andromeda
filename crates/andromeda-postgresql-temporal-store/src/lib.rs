@@ -33,6 +33,8 @@ pub mod attribute_value;
 pub mod bulk_write_mode;
 /// Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
 pub mod columnstore_capability;
+/// Enabling the hypercore columnstore on the temporal hypertables.
+mod columnstore_enablement;
 /// Binary COPY path for bulk attribute-history inserts.
 pub(crate) mod copy;
 /// The invariant that one client-supplied `instanceId` names one attribute

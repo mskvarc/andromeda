@@ -12,6 +12,7 @@
 
 use crate::{
     EntityService,
+    error::EntityError,
     notification_fanout::{ChangedEntity, MutationSnapshots},
 };
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
@@ -67,11 +68,18 @@ pub(crate) struct NotificationPlan {
 
 /// Classify a before/after Entity pair into precise attribute-instance changes
 /// under clause 5.2.12.
-pub(crate) fn attribute_change_groups(previous: &Value, current: &Value) -> Vec<NotificationGroup> {
-    classify_attribute_changes(previous, current)
+///
+/// # Errors
+///
+/// Reports [`EntityError::Internal`] when either state carries an instance
+/// whose `datasetId` cannot be read: the stored state was admitted when it was
+/// written, and the new state when its request was.
+pub(crate) fn attribute_change_groups(previous: &Value, current: &Value) -> Result<Vec<NotificationGroup>, EntityError> {
+    Ok(classify_attribute_changes(previous, current)
+        .map_err(EntityError::internal)?
         .into_iter()
         .map(NotificationGroup::attribute)
-        .collect()
+        .collect())
 }
 
 impl EntityService {
@@ -135,7 +143,7 @@ mod tests {
         let before =
             json!({"https://example.com/a": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]});
         let after = json!({"https://example.com/a": before["https://example.com/a"], "https://example.com/b": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 2}]}]});
-        let groups = attribute_change_groups(&before, &after);
+        let groups = attribute_change_groups(&before, &after).expect("readable datasetIds");
         pretty_assertions::assert_eq!(groups.len(), 1);
         pretty_assertions::assert_eq!(groups[0].trigger, NotificationTrigger::AttributeCreated);
         pretty_assertions::assert_eq!(groups[0].attributes[0].as_str(), "https://example.com/b");
@@ -147,7 +155,7 @@ mod tests {
             json!({"https://example.com/a": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]});
         let after =
             json!({"https://example.com/a": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 2}]}]});
-        let groups = attribute_change_groups(&before, &after);
+        let groups = attribute_change_groups(&before, &after).expect("readable datasetIds");
         pretty_assertions::assert_eq!(groups.len(), 1);
         pretty_assertions::assert_eq!(groups[0].trigger, NotificationTrigger::AttributeUpdated);
     }
@@ -156,7 +164,7 @@ mod tests {
     fn a_removed_attribute_raises_one_attribute_deleted_each() {
         let before = json!({"https://example.com/a": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}], "https://example.com/b": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}], "https://example.com/c": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}]});
         let after = json!({"https://example.com/a": before["https://example.com/a"]});
-        let groups = attribute_change_groups(&before, &after);
+        let groups = attribute_change_groups(&before, &after).expect("readable datasetIds");
         pretty_assertions::assert_eq!(groups.len(), 2);
         assert!(groups.iter().all(|group| group.trigger == NotificationTrigger::AttributeDeleted));
         assert!(groups.iter().all(|group| group.attributes.len() == 1));
@@ -166,7 +174,7 @@ mod tests {
     fn a_mixed_change_raises_one_precise_event_for_each_transition() {
         let before = json!({"https://example.com/keep": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}], "https://example.com/drop": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}]});
         let after = json!({"https://example.com/keep": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 2}]}], "https://example.com/new": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}]});
-        let groups = attribute_change_groups(&before, &after);
+        let groups = attribute_change_groups(&before, &after).expect("readable datasetIds");
         pretty_assertions::assert_eq!(groups.len(), 3);
         pretty_assertions::assert_eq!(groups[0].trigger, NotificationTrigger::AttributeDeleted);
         pretty_assertions::assert_eq!(groups[0].attributes[0].as_str(), "https://example.com/drop");

@@ -81,7 +81,7 @@ mod tests {
         );
 
         HealthCheckResponse {
-            id: Uri::Urn(id_urn),
+            id: Uri::try_from(id_urn).expect("a minted identifier is within the bound"),
             type_: HealthCheckType,
             health_check: HealthCheckDetails {
                 status: HealthStatus::Up,

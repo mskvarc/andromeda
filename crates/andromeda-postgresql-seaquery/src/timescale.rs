@@ -12,7 +12,7 @@ use crate::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Expr, ExprTrait, Func, Iden, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Expr, ExprTrait, Func, Iden, JoinType, Query, SelectStatement, SimpleExpr};
 
 /// The `time_bucket(width, ts, origin)` bucketing function.
 #[derive(Iden, Clone, Copy)]
@@ -79,6 +79,54 @@ enum Jobs {
     Config,
 }
 
+/// The `timescaledb_information.hypertables` view.
+#[derive(Iden, Clone, Copy)]
+enum Hypertables {
+    /// View name: `hypertables`
+    #[iden = "hypertables"]
+    Table,
+    /// The hypertable's relation name
+    HypertableName,
+    /// Whether the columnstore is enabled on the hypertable
+    CompressionEnabled,
+}
+
+/// The `_timescaledb_catalog` schema.
+#[derive(Iden, Clone, Copy)]
+#[iden = "_timescaledb_catalog"]
+struct TimescaleCatalog;
+
+/// The `_timescaledb_catalog.compression_settings` table.
+///
+/// Read rather than the `hypertable_columnstore_settings` information view
+/// because it holds the segment and order columns as arrays of names with the
+/// sort direction beside them, which compare exactly; the view renders them as
+/// free text whose spacing and defaulted `NULLS` clauses vary by release.
+#[derive(Iden, Clone, Copy)]
+enum CompressionSettings {
+    /// Table name: `compression_settings`
+    #[iden = "compression_settings"]
+    Table,
+    /// The relation the settings belong to
+    Relid,
+    /// The segment-by column names
+    Segmentby,
+    /// The order-by column names
+    Orderby,
+    /// Whether each order-by column sorts descending
+    OrderbyDesc,
+}
+
+/// Alias `ht` for the hypertables view.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ht"]
+struct Ht;
+
+/// Alias `cs` for the compression settings table.
+#[derive(Iden, Clone, Copy)]
+#[iden = "cs"]
+struct Cs;
+
 /// The procedure name a columnstore policy job runs under.
 const COLUMNSTORE_POLICY_PROC: &str = "policy_compression";
 
@@ -119,6 +167,39 @@ pub fn columnstore_policy_statement(hypertable: &str) -> SelectStatement {
         .to_owned()
 }
 
+/// Whether the columnstore is enabled on `hypertable`, and with which segment
+/// and order columns.
+///
+/// Projects `compression_enabled` from `timescaledb_information.hypertables`
+/// and, left-joined, the `segmentby` and `orderby` column-name arrays (as
+/// `text[]`) and the `orderby_desc` flags of the hypertable's own
+/// `_timescaledb_catalog.compression_settings` row, which is absent until the
+/// columnstore has been enabled. No row means `hypertable` is not a hypertable.
+/// The hypertable name is a fixed catalogue name bound as a value.
+#[must_use]
+pub fn columnstore_settings_statement(hypertable: &str) -> SelectStatement {
+    Query::select()
+        .expr_as(Expr::col((Ht, Hypertables::CompressionEnabled)), Alias::new("compression_enabled"))
+        .expr_as(
+            cast(Expr::col((Cs, CompressionSettings::Segmentby)), PostgresType::TextArray),
+            Alias::new("segmentby"),
+        )
+        .expr_as(
+            cast(Expr::col((Cs, CompressionSettings::Orderby)), PostgresType::TextArray),
+            Alias::new("orderby"),
+        )
+        .expr_as(Expr::col((Cs, CompressionSettings::OrderbyDesc)), Alias::new("orderby_desc"))
+        .from_as((TimescaleInformation, Hypertables::Table), Ht)
+        .join_as(
+            JoinType::LeftJoin,
+            (TimescaleCatalog, CompressionSettings::Table),
+            Cs,
+            Expr::col((Cs, CompressionSettings::Relid)).eq(cast(Expr::val(hypertable), PostgresType::Regclass)),
+        )
+        .and_where(Expr::col((Ht, Hypertables::HypertableName)).eq(hypertable))
+        .to_owned()
+}
+
 /// `TimescaleDB`: `set_chunk_time_interval(hypertable, make_interval(days => n))`
 /// - the interval every chunk created from now on spans.
 ///
@@ -131,7 +212,7 @@ pub fn set_chunk_time_interval(hypertable: &str, days: SimpleExpr) -> SimpleExpr
 
 #[cfg(test)]
 mod tests {
-    use crate::timescale::{chunk_interval_statement, columnstore_policy_statement, drop_chunks, set_chunk_time_interval};
+    use crate::timescale::{chunk_interval_statement, columnstore_policy_statement, columnstore_settings_statement, drop_chunks, set_chunk_time_interval};
     use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder, Query};
 
@@ -153,6 +234,22 @@ mod tests {
             r#"SELECT ("config" ->> $1)::interval FROM "timescaledb_information"."jobs" WHERE "hypertable_name" = $2 AND "proc_name" = $3"#
         );
         assert_eq!(values.0.len(), 3, "{sql}");
+    }
+
+    #[test]
+    fn the_columnstore_settings_are_read_from_the_view_and_the_catalogue_arrays() {
+        let (sql, values) = columnstore_settings_statement("attribute_history").build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            concat!(
+                r#"SELECT "ht"."compression_enabled" AS "compression_enabled", "cs"."segmentby"::text[] AS "segmentby", "#,
+                r#""cs"."orderby"::text[] AS "orderby", "cs"."orderby_desc" AS "orderby_desc" "#,
+                r#"FROM "timescaledb_information"."hypertables" AS "ht" "#,
+                r#"LEFT JOIN "_timescaledb_catalog"."compression_settings" AS "cs" ON "cs"."relid" = ($1::regclass) "#,
+                r#"WHERE "ht"."hypertable_name" = $2"#
+            )
+        );
+        assert_eq!(values.0.len(), 2, "{sql}");
     }
 
     #[test]

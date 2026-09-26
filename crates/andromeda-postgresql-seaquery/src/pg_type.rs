@@ -60,6 +60,9 @@ pub enum PostgresType {
     /// `uuid`, the identity type write and lease identifiers carry.
     #[iden = "uuid"]
     Uuid,
+    /// `regclass`, the relation-identity type a catalogue row keys a table by.
+    #[iden = "regclass"]
+    Regclass,
     /// `integer[]`.
     #[iden = "integer[]"]
     IntegerArray,

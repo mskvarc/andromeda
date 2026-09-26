@@ -8,9 +8,11 @@
 //! it belongs to.
 //!
 //! There is no NGSI-LD here and no dialect vocabulary — only `sea_query::Iden`
-//! definitions. A backend that is not PostgreSQL replaces the statement crates
-//! above; the identifiers a physical schema is made of live here so a rename
-//! moves every reference with it.
+//! definitions, and the column placement a relation's constraints dictate
+//! ([`projected_string_column`]), which the writer and the reader of that
+//! relation must agree on. A backend that is not PostgreSQL replaces the
+//! statement crates above; the identifiers a physical schema is made of live
+//! here so a rename moves every reference with it.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -22,6 +24,7 @@ pub mod jsonld;
 pub mod maintenance;
 pub mod name_dictionary;
 pub mod notification;
+pub mod projected_string_column;
 pub mod queue;
 pub mod snapshot;
 pub mod subscription_forwarding;

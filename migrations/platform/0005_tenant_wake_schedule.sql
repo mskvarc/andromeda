@@ -24,9 +24,12 @@
 -- ============================================================================
 
 CREATE TABLE tenant_wake_schedule (
-    tenant_id BIGINT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+    tenant_id BIGINT NOT NULL,
     wake_at TIMESTAMPTZ,
-    probed_at TIMESTAMPTZ NOT NULL
+    probed_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT pk_tenant_wake_schedule PRIMARY KEY (tenant_id),
+    CONSTRAINT fk_tenant_wake_schedule_tenant FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_tenant_wake_schedule_wake_at

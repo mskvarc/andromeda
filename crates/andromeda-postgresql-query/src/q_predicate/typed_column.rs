@@ -8,14 +8,16 @@
 //! * booleans in `value_bool`,
 //! * date-times in `value_datetime`,
 //! * strings in `value_string` for Properties and single-term
-//!   `VocabProperties`, and — under the equality operators only — in `value_uri`
-//!   for Relationship objects, which is what [`relationship_object_is_comparable`]
-//!   decides,
+//!   `VocabProperties` -- or, past the B-tree bound, in `value_long_text`, which
+//!   [`ProjectedStringColumn::of`] decides from the byte length alone -- and,
+//!   under the equality operators only, in `value_uri` for Relationship objects,
+//!   which is what [`relationship_object_is_comparable`] decides,
 //! * plain dates and times in `value_string`, because only full
 //!   `DateTime`-typed values are projected to `value_datetime`. Both are stored
 //!   in the one canonical, fixed-width form their clause 4.6.3 types define, so
 //!   byte-wise order over the column is chronological order and an ordering
-//!   comparison against the bound canonical text is a temporal comparison.
+//!   comparison against the bound canonical text is a temporal comparison. Their
+//!   canonical text is always short, so they never read `value_long_text`.
 //!
 //! Every value whose family is not a single scalar lives in `value_object`
 //! instead; [`crate::q_predicate::structured_target`] compares those.
@@ -23,7 +25,7 @@
 use crate::{operator::compare, q_predicate::projection_probe::probe_column};
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
-use andromeda_postgresql_schema::current::CurrentAttributeValues;
+use andromeda_postgresql_schema::{current::CurrentAttributeValues, projected_string_column::ProjectedStringColumn};
 use andromeda_postgresql_seaquery::literal::false_literal;
 use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 
@@ -57,7 +59,7 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
         Scalar::Number(number) => compare(probe_column(CurrentAttributeValues::ValueNumber), op, SeaExpr::val(number.decimal().clone())),
         Scalar::Bool(value) => compare(probe_column(CurrentAttributeValues::ValueBool), op, SeaExpr::val(*value)),
         Scalar::Str(value) => {
-            let string_test = compare(probe_column(CurrentAttributeValues::ValueString), op, SeaExpr::val(value.as_str()));
+            let string_test = string_condition(value.as_str(), op);
             match relationship_object_is_comparable(op) {
                 RelationshipObjects::Comparable => {
                     let uri_test = compare(probe_column(CurrentAttributeValues::ValueUri), op, SeaExpr::val(value.as_str()));
@@ -82,6 +84,23 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
             // have stored, so nothing can compare equal to it.
             Err(_) => false_literal(),
         },
+    }
+}
+
+/// Compare a String operand against the two string columns (clause 4.9).
+///
+/// Equality is byte identity under `COLLATE "C"`: a stored value equal to the
+/// operand has the operand's length, so it sits in the one column the operand
+/// itself would be placed in, and only that column is read. A short `==`
+/// therefore compiles exactly as it would with no overflow column at all. An
+/// ordering reads both columns, because a stored value of any length may order
+/// on either side of the operand; a row whose value is in the other column
+/// yields NULL for that arm, which the disjunction absorbs.
+fn string_condition(value: &str, op: CmpOp) -> SimpleExpr {
+    match op {
+        CmpOp::Equal | CmpOp::Unequal => compare(probe_column(ProjectedStringColumn::of(value).column()), op, SeaExpr::val(value)),
+        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => compare(probe_column(CurrentAttributeValues::ValueString), op, SeaExpr::val(value))
+            .or(compare(probe_column(CurrentAttributeValues::ValueLongText), op, SeaExpr::val(value))),
     }
 }
 
@@ -122,8 +141,9 @@ mod tests {
     use crate::q_predicate::typed_column::typed_column_condition;
     use andromeda_ngsi_ld_query::filter::{
         predicate::CmpOp,
-        scalar::{Scalar, parse_time},
+        scalar::{Scalar, parse_date, parse_time},
     };
+    use andromeda_postgresql_schema::projected_string_column::INDEXED_STRING_BYTE_LIMIT;
     use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
 
     fn render(expr: SimpleExpr) -> String {
@@ -153,6 +173,44 @@ mod tests {
         }
         for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
             assert!(!render(typed_column_condition(&scalar, op)).contains("value_uri"), "{op:?}");
+        }
+    }
+
+    #[test]
+    fn a_short_string_equality_reads_only_the_indexed_column() {
+        let sql = render(typed_column_condition(&Scalar::Str("red".to_owned()), CmpOp::Equal));
+        assert!(sql.contains(r#""cav"."value_string" = "#), "{sql}");
+        assert!(!sql.contains("value_long_text"), "{sql}");
+    }
+
+    #[test]
+    fn a_string_equality_past_the_limit_reads_only_the_overflow_column() {
+        let long = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
+        let sql = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal));
+        assert!(sql.contains(r#""cav"."value_long_text" = "#), "{sql}");
+        assert!(!sql.contains("value_string"), "{sql}");
+    }
+
+    #[test]
+    fn string_ordering_reads_both_string_columns_and_never_relationship_objects() {
+        for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
+            let sql = render(typed_column_condition(&Scalar::Str("m".to_owned()), op));
+            assert!(sql.contains(r#""cav"."value_string" "#), "{op:?}: {sql}");
+            assert!(sql.contains(r#""cav"."value_long_text" "#), "{op:?}: {sql}");
+            assert!(!sql.contains("value_uri"), "{op:?}: {sql}");
+        }
+    }
+
+    #[test]
+    fn date_and_time_operands_never_read_the_overflow_column() {
+        let date = parse_date("2024-01-15").expect("a date");
+        let time = parse_time("12:00:00Z").expect("a time");
+        for scalar in [Scalar::Date(date), Scalar::Time(time)] {
+            for op in [CmpOp::Equal, CmpOp::Greater, CmpOp::Less] {
+                let sql = render(typed_column_condition(&scalar, op));
+                assert!(sql.contains("value_string"), "{scalar:?} {op:?}: {sql}");
+                assert!(!sql.contains("value_long_text"), "{scalar:?} {op:?}: {sql}");
+            }
         }
     }
 

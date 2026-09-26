@@ -1,12 +1,15 @@
 //! The physical storage policy of the temporal hypertables.
 //!
-//! Migrations 0028 and 0029 declare seven-day chunks, a columnstore segmented
-//! by stream (attribute history) or temporal entity (scope history) and ordered
-//! by the write-deduplication key, and a conversion policy that lags thirty
-//! days. Both intervals are operator tunables the broker reconciles when a
-//! tenant is opened, so a fresh tenant must carry the declared defaults, an
-//! override must move both hypertables, and a second reconciliation of the same
-//! override must write nothing.
+//! Migration 0028 declares seven-day chunks and nothing about the columnstore.
+//! The broker's storage-policy reconciler enables the columnstore when a tenant
+//! is opened -- segmented by stream (attribute history) or temporal entity
+//! (scope history) and ordered by the write-deduplication key -- with a
+//! conversion policy that lags thirty days. Both intervals are operator
+//! tunables the broker reconciles on the same open, so a fresh tenant must
+//! carry the defaults, an override must move both hypertables, a second
+//! reconciliation of the same override must write nothing, and a hypertable
+//! that lost its columnstore must regain it on the next open. These run against
+//! the TSL edition of the image, which is the one with a columnstore.
 
 use crate::SUITE;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
@@ -74,21 +77,31 @@ async fn repository(pool: &PgPool) -> TemporalRepository {
 const fn policy(chunk_interval_days: u32, columnstore_after_days: u32) -> TemporalStoragePolicy {
     TemporalStoragePolicy {
         chunk_interval_days: NonZeroU32::new(chunk_interval_days),
-        columnstore_after_days: NonZeroU32::new(columnstore_after_days),
+        columnstore_after_days: NonZeroU32::new(columnstore_after_days).expect("a positive columnstore lag"),
     }
 }
 
-/// A fresh tenant carries the migrations' seven-day chunks and thirty-day
-/// conversion lag on both hypertables, and its columnstore settings segment
-/// and order rows the way the migration headers state.
+/// Whether the columnstore is enabled on `hypertable`.
+async fn columnstore_enabled(pool: &PgPool, hypertable: &str) -> bool {
+    sqlx::query_scalar("SELECT compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_name = $1")
+        .bind(hypertable)
+        .fetch_one(pool)
+        .await
+        .expect("the hypertables view must list the hypertable")
+}
+
+/// A fresh tenant carries the migration's seven-day chunks, and the columnstore
+/// the reconciler enabled when the broker opened it: both hypertables segment
+/// and order rows the way `columnstore_enablement` states, under a thirty-day
+/// conversion lag.
 #[tokio::test]
 #[serial(temporal_storage_policy)]
-async fn a_fresh_tenant_carries_the_declared_chunk_interval_columnstore_settings_and_policy_lag() {
+async fn tenant_schema_the_columnstore_is_enabled_by_the_reconciler_on_a_fresh_tenant() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let pool = scope.database_pool();
 
     // The broker that opened this tenant reconciled against a configuration
-    // without overrides, so whatever is stored is what the migrations declared;
+    // without overrides, so whatever is stored is the default policy;
     // restating the defaults through the reconciler must therefore write
     // nothing and leaves the assertions below meaningful even after another
     // test of this suite has moved the policy and moved it back.
@@ -100,6 +113,7 @@ async fn a_fresh_tenant_carries_the_declared_chunk_interval_columnstore_settings
     assert!(outcome.is_unchanged(), "a fresh tenant already carries the defaults: {outcome:?}");
 
     for (hypertable, segmentby) in HYPERTABLES {
+        assert!(columnstore_enabled(pool, hypertable).await, "{hypertable} carries the columnstore");
         assert_days(
             chunk_interval_days(pool, hypertable).await,
             7.0,
@@ -187,6 +201,73 @@ async fn an_override_moves_both_hypertables_once_and_the_defaults_move_them_back
             &format!("{hypertable} converts after thirty days again"),
         );
     }
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A tenant whose hypertables lost the columnstore -- one migrated on the
+/// Apache-2.0 core and now opened on the TSL edition looks exactly like this --
+/// regains it, with its settings and conversion policy, the next time the
+/// broker opens it.
+#[tokio::test]
+#[serial(temporal_storage_policy)]
+async fn tenant_schema_a_hypertable_without_the_columnstore_is_enabled_on_the_next_open() {
+    let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
+    let pool = scope.database_pool();
+
+    for (hypertable, _) in HYPERTABLES {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CALL remove_columnstore_policy('{hypertable}', if_exists => true)"
+        )))
+        .execute(pool)
+        .await
+        .expect("the conversion policy is removed");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "ALTER TABLE {hypertable} SET (timescaledb.enable_columnstore = false)"
+        )))
+        .execute(pool)
+        .await
+        .expect("the columnstore is disabled");
+        assert!(
+            !columnstore_enabled(pool, hypertable).await,
+            "{hypertable} is a plain hypertable before the open"
+        );
+    }
+
+    let reopened = repository(pool)
+        .await
+        .reconcile_storage_policy(&policy(7, 30))
+        .await
+        .expect("the reconciliation runs");
+    for reconciliation in &reopened.hypertables {
+        assert_eq!(
+            reconciliation.columnstore_enabled,
+            PolicyReconciliation::Adjusted,
+            "{:?}",
+            reconciliation.hypertable
+        );
+        assert_eq!(
+            reconciliation.columnstore_after,
+            PolicyReconciliation::Adjusted,
+            "{:?}",
+            reconciliation.hypertable
+        );
+    }
+    for (hypertable, _) in HYPERTABLES {
+        assert!(columnstore_enabled(pool, hypertable).await, "{hypertable} carries the columnstore again");
+        assert_days(
+            columnstore_after_days(pool, hypertable).await,
+            30.0,
+            &format!("{hypertable} converts after thirty days again"),
+        );
+    }
+
+    let settled = repository(pool)
+        .await
+        .reconcile_storage_policy(&policy(7, 30))
+        .await
+        .expect("the reconciliation runs");
+    assert!(settled.is_unchanged(), "a second open writes nothing: {settled:?}");
 
     scope.finish().await.expect("cleanup failed");
 }

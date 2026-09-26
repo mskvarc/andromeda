@@ -203,6 +203,18 @@ mod tests {
         pretty_assertions::assert_eq!(work.upserts[0].key.attribute_name_id, AttributeNameId::from(7));
     }
 
+    /// A String past the B-tree bound is still one upsert under the String
+    /// value kind; which of the two string columns holds it is the writer's
+    /// placement, not a different kind.
+    #[test]
+    fn a_long_string_observation_is_one_upsert_under_the_string_kind() {
+        let mut work = ProjectionWork::default();
+        let intent = intent(vec![observation(TemporalValue::String("x".repeat(6000)))]);
+        collect(&mut work, &intent, entity_key(), &dictionary()).expect("a projectable observation");
+        pretty_assertions::assert_eq!(work.upserts.len(), 1);
+        pretty_assertions::assert_eq!(work.upserts[0].value.kind(), ValueKind::String);
+    }
+
     #[test]
     fn an_observation_that_ends_the_instance_removes_its_row_instead_of_marking_it() {
         let deleted_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");

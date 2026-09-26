@@ -31,3 +31,7 @@ pub mod branch;
 pub mod platform;
 /// The tenant migration set: `tenant/` together with `branch/`.
 pub mod tenant;
+
+/// The byte bounds the migrations state, tied to the Rust constants.
+#[cfg(test)]
+mod storage_bound_tests;

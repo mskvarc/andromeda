@@ -41,7 +41,7 @@ impl DatasetSelector {
         }
         raw.parse::<Uri>()
             .map(DatasetSelector::Id)
-            .map_err(|_| QueryError::ParamDatasetIdInvalid(raw.to_string()))
+            .map_err(|source| QueryError::ParamDatasetIdInvalid { raw: raw.to_string(), source })
     }
 }
 
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn a_dataset_id_that_is_not_a_uri_is_rejected() {
         let error = DatasetSelector::parse("not a uri").expect_err("must reject");
-        assert!(matches!(error, QueryError::ParamDatasetIdInvalid(_)), "got {error:?}");
+        assert!(matches!(error, QueryError::ParamDatasetIdInvalid { .. }), "got {error:?}");
     }
 
     #[test]

@@ -491,7 +491,7 @@ async fn the_delivery_claim_index_is_the_claimable_expression_so_vacuum_cadence_
 /// The side-effect claim writes `claimed_at`, `lease_until` and `claimed_by`
 /// together (the coherence constraint admits all three or none), and none of
 /// them is carried by any index of `pending_side_effects` (`idx_pse_claim_candidates`
-/// is led by `next_attempt_at`, `idx_pse_exhausted` by `created_at`), so with the
+/// is led by `next_attempt_at`, `idx_pse_exhausted` by `exhausted_at`), so with the
 /// fillfactor of 50 the migration declares the claim must stay heap-only.
 #[tokio::test]
 async fn sustained_side_effect_claims_stay_heap_only() {

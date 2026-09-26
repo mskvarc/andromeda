@@ -24,6 +24,8 @@ pub mod config;
 pub mod discovery;
 /// A masked, operator-facing diagnostic for entity failures a client cannot act on.
 pub mod entity_diagnostic;
+/// Screening the identity members of an expanded entity payload.
+mod entity_identity_admission;
 /// The concrete reasons an entity operation is unsupported by the storage backend.
 pub mod entity_operation_unsupported;
 /// Versioned entity snapshots used by optimistic writes.

@@ -25,8 +25,9 @@ validated_ngsi_name! {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_name::AttributeName;
+    use crate::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT, reference::NgsiLdReferenceError};
     use indexmap::IndexMap;
+    use iri_rs::IriBuf;
 
     #[test]
     fn an_attribute_name_accepts_a_compact_short_name() {
@@ -67,4 +68,6 @@ mod tests {
         let result = serde_json::from_value::<IndexMap<AttributeName, u8>>(serde_json::json!({"bad name": 1}));
         assert!(result.is_err());
     }
+
+    name_length_tests!(AttributeName);
 }

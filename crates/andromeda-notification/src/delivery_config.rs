@@ -129,7 +129,7 @@ pub struct DeliveryConfig {
     /// Characters of a failure diagnostic kept when a failed attempt is recorded.
     ///
     /// The delivery schema constrains the stored column, so this may not exceed
-    /// [`DeliveryErrorBound::SCHEMA_MAXIMUM_CHARACTERS`].
+    /// [`FAILURE_SUMMARY_MAX_CHARACTERS`](andromeda_context_commit::failure_summary::FAILURE_SUMMARY_MAX_CHARACTERS).
     pub error_max_chars: u32,
     /// Age after which acknowledged deliveries are removed, in human-readable
     /// form (`"1day"`).
@@ -269,7 +269,8 @@ impl DeliveryConfig {
     /// # Errors
     ///
     /// Returns [`DeliveryErrorBoundError`] when the configured bound is zero
-    /// characters or above [`DeliveryErrorBound::SCHEMA_MAXIMUM_CHARACTERS`].
+    /// characters or above
+    /// [`FAILURE_SUMMARY_MAX_CHARACTERS`](andromeda_context_commit::failure_summary::FAILURE_SUMMARY_MAX_CHARACTERS).
     pub const fn error_bound(&self) -> Result<DeliveryErrorBound, DeliveryErrorBoundError> {
         DeliveryErrorBound::from_characters(self.error_max_chars)
     }

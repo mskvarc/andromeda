@@ -32,7 +32,11 @@ where
 #[cfg(test)]
 mod tests {
     use crate::typed_path::TypedPath;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        identifier_length::IDENTIFIER_BYTE_LIMIT,
+        uri::{Uri, UriView},
+    };
     use axum::{
         Router,
         body::{Body, to_bytes},
@@ -44,10 +48,10 @@ mod tests {
     use tower::ServiceExt;
 
     async fn uri_value(TypedPath(id): TypedPath<Uri>) -> String {
-        match id {
-            Uri::Urn(value) => format!("urn:{value}"),
-            Uri::Url(value) => format!("url:{value}"),
-            Uri::Iri(value) => format!("iri:{value}"),
+        match id.view() {
+            UriView::Urn(value) => format!("urn:{value}"),
+            UriView::Url(value) => format!("url:{value}"),
+            UriView::Iri(value) => format!("iri:{value}"),
         }
     }
 
@@ -90,6 +94,18 @@ mod tests {
             pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
             pretty_assertions::assert_eq!(problem["instance"], path);
         }
+    }
+
+    /// An identifier past the identifier bound is refused at the path, before
+    /// any store is asked about it (clause 5.5.4).
+    #[tokio::test]
+    async fn an_over_long_uri_path_returns_bad_request_data() {
+        let path = format!("/entities/urn%3Angsi-ld%3ABuilding%3A{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
+        let response = response(&path, "/entities/{id}", get(uri_value)).await;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem: Value = serde_json::from_str(&body_text(response).await).expect("problem detail JSON");
+        pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+        assert!(problem["detail"].as_str().is_some_and(|detail| detail.contains("bytes")), "{problem}");
     }
 
     #[tokio::test]

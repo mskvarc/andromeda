@@ -52,7 +52,12 @@ pub(super) fn finish_page(outcome: QueryOutcome<Value>, pagination: Pagination) 
             Ok(FinishedPage { rows, total_count: total })
         }
         PaginationOutcome::Deferred => {
-            let admitted: Vec<Value> = rows.into_iter().filter(|row| residual_filter::matches(&unapplied, row)).collect();
+            let mut admitted = Vec::with_capacity(rows.len());
+            for row in rows {
+                if residual_filter::matches(&unapplied, &row)? {
+                    admitted.push(row);
+                }
+            }
             Ok(window(admitted, pagination))
         }
     }
@@ -108,12 +113,15 @@ impl EntityQueryService {
                     return Ok(rows.into_iter().skip(pagination.offset as usize).take(pagination.limit as usize).collect());
                 }
                 let payloads = self.reader.get_batch(target, &rows).await?;
-                Ok(rows
-                    .into_iter()
-                    .filter(|id| payloads.get(id).is_some_and(|payload| residual_filter::matches(&unapplied, payload)))
-                    .skip(pagination.offset as usize)
-                    .take(pagination.limit as usize)
-                    .collect())
+                let mut admitted = Vec::with_capacity(rows.len());
+                for id in rows {
+                    if let Some(payload) = payloads.get(&id)
+                        && residual_filter::matches(&unapplied, payload)?
+                    {
+                        admitted.push(id);
+                    }
+                }
+                Ok(admitted.into_iter().skip(pagination.offset as usize).take(pagination.limit as usize).collect())
             }
         }
     }

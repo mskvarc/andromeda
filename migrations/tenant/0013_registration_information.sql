@@ -45,6 +45,12 @@
 --     into every mutation. `COLLATE "C"` -- these are identifiers, compared
 --     for equality, and byte-wise comparison keeps the btree free of any
 --     locale.
+--   * `registration_id`, `entity_id` and `entity_id_pattern` each carry a
+--     btree, so each is bounded at 1024 UTF-8 octets, the identifier bound
+--     (`IDENTIFIER_BYTE_LIMIT` in `andromeda-ngsi-ld-lexicon`): the lexicon
+--     `Uri` enforces it on the two identifiers, and the registration model
+--     holds an `idPattern` to the same bound, so a request past it is refused
+--     as `BadRequestData` before it reaches the 2704-byte btree limit.
 --   * `entity_types` is the set of type names a selector's clause-4.17
 --     expression mentions, or `{'*'}` where the expression admits every type
 --     (`*` is not a legal type name, so the sentinel cannot collide). A
@@ -68,26 +74,9 @@
 --     because the writer widens both together when it cannot intern a declared
 --     name; the well-formedness check pins that. Readers ask
 --     `property_name_ids && (ARRAY(<resolved keys>) || 0)`.
---   * `operations` is the registration-wide clause-5.2.9 member, replicated
---     onto every row of that registration so one indexed row carries every
---     dimension a preselect could test. It holds the numbers of the
---     migration-owned registry the broker compiles in
---     (`andromeda-postgresql-codes` `CsrOperationCode`, 1 `createEntity`
---     through 48 `redirectionOps`, the five Table 4.20-2 group tokens
---     included as members in their own right), not the clause-4.20 tokens as
---     text -- the encoding the registration's own `operations` column (0012)
---     carries, under the same check. The check pins the range: a number
---     outside it could only come from a release that knows an operation this
---     schema does not.
 --
---     An array rather than a bitmask, because the question asked of it is
---     "does this registration declare operation X, or a group covering it",
---     which is `&&` -- an operator GIN serves directly -- and because a
---     forty-eight-member vocabulary that already grew once must not be
---     capped at the sixty-four a bitmask word would allow. No index on it
---     yet: no reader filters on operations today, operation matching stays
---     residual, and an index with no query behind it is maintenance cost for
---     nothing.
+-- The registration's `operations` are not projected: operation matching reads
+-- the registration's own column (0012), and no preselect filters on them.
 --
 -- The index set is exactly the predicates the readers emit
 -- (`andromeda-postgresql-context-query` `csr::projection`), one named
@@ -100,15 +89,19 @@
 -- ============================================================================
 
 CREATE TABLE registration_information (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    registration_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL
-        REFERENCES context_source_registrations(id) ON DELETE CASCADE,
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    registration_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     entity_types TEXT[] COMPRESSION lz4 COLLATE "C" NOT NULL,
     entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     entity_id_pattern TEXT COMPRESSION lz4,
     property_name_ids INTEGER[] COMPRESSION lz4 NOT NULL,
     relationship_name_ids INTEGER[] COMPRESSION lz4 NOT NULL,
-    operations SMALLINT[] COMPRESSION lz4,
+    CONSTRAINT pk_registration_information PRIMARY KEY (id),
+    CONSTRAINT fk_registration_information_registration FOREIGN KEY (registration_id)
+        REFERENCES context_source_registrations(id) ON DELETE CASCADE,
+    CONSTRAINT chk_registration_information_registration_id_length CHECK (octet_length(registration_id) <= 1024),
+    CONSTRAINT chk_registration_information_entity_id_length CHECK (octet_length(entity_id) <= 1024),
+    CONSTRAINT chk_registration_information_entity_id_pattern_length CHECK (octet_length(entity_id_pattern) <= 1024),
     CONSTRAINT chk_registration_information_wildcards_well_formed CHECK (
         cardinality(entity_types) > 0
         AND array_position(entity_types, NULL) IS NULL
@@ -119,13 +112,7 @@ CREATE TABLE registration_information (
         AND array_position(relationship_name_ids, NULL) IS NULL
         AND 0 <= ALL (relationship_name_ids)
         AND (0 <> ALL (relationship_name_ids) OR relationship_name_ids = ARRAY[0])
-        AND ((property_name_ids = ARRAY[0]) = (relationship_name_ids = ARRAY[0]))),
-    CONSTRAINT chk_registration_information_operations_registered CHECK (
-        operations IS NULL
-        OR (cardinality(operations) > 0
-            AND array_position(operations, NULL) IS NULL
-            AND 1 <= ALL (operations)
-            AND 48 >= ALL (operations)))
+        AND ((property_name_ids = ARRAY[0]) = (relationship_name_ids = ARRAY[0])))
 ) WITH (
     autovacuum_vacuum_scale_factor = 0.05,
     autovacuum_vacuum_threshold = 200,

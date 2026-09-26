@@ -2,16 +2,10 @@
 //! reported as stuck.
 
 use crate::error::TemporalError;
+use andromeda_context_commit::failure_summary::{FAILURE_SUMMARY_LIMIT, bounded_failure_summary};
 use chrono::{DateTime, TimeDelta, Utc};
 use std::{fmt::Display, num::NonZeroU32, time::Duration};
 use thiserror::Error;
-
-/// The longest failure summary the queue row keeps.
-///
-/// Mirrors the `last_error` length check of `temporal_append_intents`; a
-/// longer sink message is cut here so the retry never fails on its own
-/// bookkeeping.
-pub const ERROR_SUMMARY_LIMIT: usize = 2048;
 
 /// The retry schedule and stuck threshold of the temporal intent drain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,20 +61,18 @@ impl TemporalIntentRetryPolicy {
         attempts >= self.stuck_after.get()
     }
 
-    /// The failure summary the queue row keeps, cut at a character boundary.
+    /// The failure summary the queue row keeps, cut to the bound the
+    /// `last_error` check of `temporal_append_intents` states so the retry never
+    /// fails on its own bookkeeping.
     pub fn summary(error: &(impl Display + ?Sized)) -> String {
-        let mut summary = error.to_string();
-        if summary.len() > ERROR_SUMMARY_LIMIT {
-            let cut = (0..=ERROR_SUMMARY_LIMIT).rev().find(|index| summary.is_char_boundary(*index)).unwrap_or(0);
-            summary.truncate(cut);
-        }
-        summary
+        bounded_failure_summary(&error.to_string(), FAILURE_SUMMARY_LIMIT).into_owned()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::intent_retry_policy::{ERROR_SUMMARY_LIMIT, RetryCeilingBelowBase, TemporalIntentRetryPolicy};
+    use crate::intent_retry_policy::{RetryCeilingBelowBase, TemporalIntentRetryPolicy};
+    use andromeda_context_commit::failure_summary::FAILURE_SUMMARY_MAX_CHARACTERS;
     use chrono::{TimeDelta, TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use std::{num::NonZeroU32, time::Duration};
@@ -117,9 +109,9 @@ mod tests {
 
     #[test]
     fn a_long_summary_is_cut_at_the_column_limit_on_a_character_boundary() {
-        let long = "é".repeat(ERROR_SUMMARY_LIMIT);
+        let long = "é".repeat(3000);
         let summary = TemporalIntentRetryPolicy::summary(&long);
-        assert!(summary.len() <= ERROR_SUMMARY_LIMIT);
+        assert_eq!(summary.chars().count(), usize::try_from(FAILURE_SUMMARY_MAX_CHARACTERS).expect("fits usize"));
         assert!(summary.chars().all(|character| character == 'é'));
         assert_eq!(TemporalIntentRetryPolicy::summary("boom"), "boom");
     }

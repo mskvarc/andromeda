@@ -29,10 +29,12 @@
 -- ============================================================================
 
 CREATE TABLE unit_codes (
-    id SMALLINT PRIMARY KEY,
+    id SMALLINT NOT NULL,
     first_revision SMALLINT NOT NULL,
     retired_revision SMALLINT,
-    code TEXT COLLATE "C" NOT NULL UNIQUE,
+    code TEXT COLLATE "C" NOT NULL,
+    CONSTRAINT pk_unit_codes PRIMARY KEY (id),
+    CONSTRAINT uq_unit_codes_code UNIQUE (code),
     CONSTRAINT chk_unit_codes_id_positive CHECK (id > 0),
     CONSTRAINT chk_unit_codes_code_shape CHECK (code ~ '^[A-Z0-9]{2,3}$'),
     CONSTRAINT chk_unit_codes_retired_after_first CHECK (retired_revision IS NULL OR retired_revision > first_revision)
@@ -47,8 +49,9 @@ GRANT SELECT ON unit_codes TO PUBLIC;
 CREATE TABLE unit_code_catalog_metadata (
     rec20_revision SMALLINT NOT NULL,
     generated_at TIMESTAMPTZ NOT NULL,
-    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
+    singleton BOOLEAN NOT NULL DEFAULT TRUE,
     source_sha256 TEXT COLLATE "C" NOT NULL,
+    CONSTRAINT pk_unit_code_catalog_metadata PRIMARY KEY (singleton),
     CONSTRAINT chk_unit_code_catalog_metadata_singleton CHECK (singleton),
     CONSTRAINT chk_unit_code_catalog_metadata_revision_positive CHECK (rec20_revision > 0),
     CONSTRAINT chk_unit_code_catalog_metadata_digest_hex CHECK (source_sha256 ~ '^[0-9a-f]{64}$')

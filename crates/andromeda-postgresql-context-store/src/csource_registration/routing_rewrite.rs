@@ -5,14 +5,11 @@
 //! with them, inside the transaction that writes the registration payload.
 
 use crate::{
-    csource_registration::{
-        information_projection::{RegistrationInformationRow, derive_routing, projected_attribute_names},
-        operation_code::stored_operation,
-    },
+    csource_registration::information_projection::{RegistrationInformationRow, derive_routing, projected_attribute_names},
     error::ContextStoreError,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::registration::{info::RegistrationInfo, operation::CsrOperation};
+use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_schema::csr::RegistrationInformation;
@@ -30,11 +27,7 @@ fn delete_rows_statement(registration: &Uri) -> (String, SqlxValues) {
 
 /// The insert half of the wholesale rewrite: one `VALUES` row per routing row,
 /// every array bound as one typed value.
-fn insert_rows_statement(
-    registration: &Uri,
-    rows: &[RegistrationInformationRow<'_>],
-    operation_codes: Option<&[i16]>,
-) -> Result<(String, SqlxValues), ContextStoreError> {
+fn insert_rows_statement(registration: &Uri, rows: &[RegistrationInformationRow<'_>]) -> Result<(String, SqlxValues), ContextStoreError> {
     let mut insert = Query::insert();
     insert.into_table(RegistrationInformation::Table).columns([
         RegistrationInformation::RegistrationId,
@@ -43,7 +36,6 @@ fn insert_rows_statement(
         RegistrationInformation::EntityIdPattern,
         RegistrationInformation::PropertyNameIds,
         RegistrationInformation::RelationshipNameIds,
-        RegistrationInformation::Operations,
     ]);
     for row in rows {
         let (properties, relationships) = row.attributes.stored();
@@ -55,8 +47,6 @@ fn insert_rows_statement(
                 Expr::val(row.identifier_pattern.map(Pattern::as_str)),
                 Expr::val(properties),
                 Expr::val(relationships),
-                // to_vec: every row binds its own copy of the registration-wide set.
-                Expr::val(operation_codes.map(<[i16]>::to_vec)),
             ])
             .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
     }
@@ -85,7 +75,6 @@ pub async fn replace_registration_information(
     connection: &mut PgConnection,
     registration: &Uri,
     information: &[RegistrationInfo],
-    operations: Option<&[CsrOperation]>,
     attribute_names: &dyn NameLookup<AttributeName>,
 ) -> Result<(), ContextStoreError> {
     // Resolved on the caller's connection, so the dictionary rows this mints
@@ -102,11 +91,7 @@ pub async fn replace_registration_information(
         .execute(&mut *connection)
         .await?;
 
-    let operation_codes: Option<Vec<i16>> = operations
-        .filter(|operations| !operations.is_empty())
-        .map(|operations| operations.iter().map(|operation| stored_operation(*operation).code()).collect());
-
-    let (insert_sql, insert_values) = insert_rows_statement(registration, &rows, operation_codes.as_deref())?;
+    let (insert_sql, insert_values) = insert_rows_statement(registration, &rows)?;
     sqlx::query_with(sqlx::AssertSqlSafe(insert_sql.as_str()), insert_values)
         .execute(connection)
         .await?;
@@ -152,14 +137,14 @@ mod tests {
             RegistrationRouting::Selective(rows) => rows,
         };
         rows.push(RegistrationInformationRow::wildcard());
-        let (sql, values) = insert_rows_statement(&registration, &rows, Some(&[22, 44])).expect("the insert builds");
+        let (sql, values) = insert_rows_statement(&registration, &rows).expect("the insert builds");
         assert!(
             sql.starts_with(
-                r#"INSERT INTO "registration_information" ("registration_id", "entity_types", "entity_id", "entity_id_pattern", "property_name_ids", "relationship_name_ids", "operations") VALUES ($1, $2, $3, $4, $5, $6, $7), ($8, $9, $10, $11, $12, $13, $14)"#
+                r#"INSERT INTO "registration_information" ("registration_id", "entity_types", "entity_id", "entity_id_pattern", "property_name_ids", "relationship_name_ids") VALUES ($1, $2, $3, $4, $5, $6), ($7, $8, $9, $10, $11, $12)"#
             ),
             "{sql}"
         );
-        assert_eq!(values.0.0.len(), 14, "two rows of seven bound values");
+        assert_eq!(values.0.0.len(), 12, "two rows of six bound values");
         let rendered = format!("{:?}", values.0.0);
         assert!(rendered.contains("\"*\""), "the wildcard row stores the type sentinel: {rendered}");
         assert!(rendered.contains("\"\""), "the wildcard row stores the identifier sentinel: {rendered}");

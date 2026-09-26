@@ -1,5 +1,6 @@
 //! Temporal Evolution consequences carried by an atomic write.
 
+use crate::error::CommitError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     instance_key::{AttributeInstanceKey, attribute_instance_families},
@@ -67,8 +68,14 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Uri>, attribute_type:
 /// deletion rather than a value, and what it deleted is already recorded by the
 /// tombstones below it. Keeping it would write `urn:ngsi-ld:null` into history
 /// as the value of the member the write removed.
-pub fn mutation_history(observed: &Arc<Value>, previous: &Value, current: &Value) -> Vec<HistoryRecord> {
-    let removed = removed_attribute_instances(previous, current);
+///
+/// # Errors
+///
+/// Returns [`CommitError::Invariant`] when either state carries an instance
+/// whose `datasetId` cannot be read, since its tombstone would name no
+/// instance.
+pub fn mutation_history(observed: &Arc<Value>, previous: &Value, current: &Value) -> Result<Vec<HistoryRecord>, CommitError> {
+    let removed = removed_attribute_instances(previous, current).map_err(CommitError::invariant)?;
     let mut history = Vec::with_capacity(removed.len() + 2);
     let observation = match without_null_sentinels(observed) {
         Some(stripped) => Arc::new(stripped),
@@ -80,7 +87,7 @@ pub fn mutation_history(observed: &Arc<Value>, previous: &Value, current: &Value
     if scope_was_cleared(previous, current) {
         history.push(HistoryRecord::ScopeRemoval);
     }
-    history
+    Ok(history)
 }
 
 /// Whether the mutation left the Entity with no Scope at all, having had one.
@@ -99,8 +106,14 @@ fn scope_was_cleared(previous: &Value, current: &Value) -> bool {
 /// The order is fixed by the instance identity rather than left to the set that
 /// collected it: a tombstone's position in the write is half of the key its
 /// stored row deduplicates on, so a replay has to produce the same order.
-pub fn deletion_history(previous: &Value) -> Vec<HistoryRecord> {
+///
+/// # Errors
+///
+/// Returns [`CommitError::Invariant`] when the entity carries an instance whose
+/// `datasetId` cannot be read.
+pub fn deletion_history(previous: &Value) -> Result<Vec<HistoryRecord>, CommitError> {
     let mut removed = attribute_instance_families(previous)
+        .map_err(CommitError::invariant)?
         .into_iter()
         .map(|(key, attribute_type)| RemovedAttributeInstance { key, attribute_type })
         .collect::<Vec<RemovedAttributeInstance>>();
@@ -120,7 +133,7 @@ pub fn deletion_history(previous: &Value) -> Vec<HistoryRecord> {
     if !extract_scopes(previous).is_empty() {
         history.push(HistoryRecord::ScopeRemoval);
     }
-    history
+    Ok(history)
 }
 
 #[cfg(test)]
@@ -142,7 +155,7 @@ mod tests {
             "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}]
         }]);
         let observed = Arc::new(replacement.clone()); // clone: the test compares the replacement after sharing it.
-        let history = mutation_history(&observed, &previous, &replacement);
+        let history = mutation_history(&observed, &previous, &replacement).expect("readable datasetIds");
         assert!(history[0].is_observations());
         assert!(history.iter().any(HistoryRecord::is_tombstone));
     }
@@ -174,7 +187,7 @@ mod tests {
             }]
         }]));
 
-        let history = mutation_history(&observed, &previous, &current);
+        let history = mutation_history(&observed, &previous, &current).expect("readable datasetIds");
 
         pretty_assertions::assert_eq!(history.len(), 2);
         assert!(history[1].is_tombstone());
@@ -197,6 +210,7 @@ mod tests {
         }]);
 
         let named = deletion_history(&previous)
+            .expect("readable datasetIds")
             .into_iter()
             .map(|entry| match entry {
                 HistoryRecord::Tombstone(removed) => (removed.key.attr.as_str().to_owned(), removed.key.dataset_id.map(|id| id.as_str().to_owned())),
@@ -216,6 +230,6 @@ mod tests {
 
     #[test]
     fn deleting_an_entity_that_held_no_attributes_records_nothing() {
-        assert!(deletion_history(&json!([{"@id": "urn:ngsi-ld:A"}])).is_empty());
+        assert!(deletion_history(&json!([{"@id": "urn:ngsi-ld:A"}])).expect("readable datasetIds").is_empty());
     }
 }

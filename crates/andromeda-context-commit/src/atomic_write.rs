@@ -7,6 +7,7 @@
 use crate::{
     batch_side_effect_job::BatchSideEffectJob,
     entity_mutation::EntityMutation,
+    error::CommitError,
     history_record::HistoryRecord,
     precondition::Precondition,
     subscription_match::SubscriptionMatch,
@@ -61,18 +62,22 @@ impl AtomicWrite {
     /// those operations is an `EntityTemporal` (clause 5.2.20), which is
     /// "the same datatype as mandated by clause 5.2.4" and therefore carries
     /// `type`.
-    #[must_use]
-    pub fn recorded_entity_types(&self) -> Vec<EntityTypeName> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommitError::Invariant`] when the observation's types cannot
+    /// be read: the write path admitted them before building this write.
+    pub fn recorded_entity_types(&self) -> Result<Vec<EntityTypeName>, CommitError> {
         match self.entity.record() {
-            Some(record) => record.projection.types.clone(), // clone: the durable temporal intent outlives the write it was interpreted from.
+            Some(record) => Ok(record.projection.types.clone()), // clone: the durable temporal intent outlives the write it was interpreted from.
             None => self
                 .history
                 .iter()
                 .find_map(|consequence| match consequence {
-                    HistoryRecord::Observations(payload) => Some(extract_types(payload)),
+                    HistoryRecord::Observations(payload) => Some(extract_types(payload).map_err(CommitError::invariant)),
                     HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
                 })
-                .unwrap_or_default(),
+                .unwrap_or_else(|| Ok(Vec::new())),
         }
     }
 }
@@ -139,10 +144,10 @@ mod tests {
     fn a_write_that_stores_entity_state_records_the_merged_entitys_types_not_the_fragments() {
         let write = AtomicWrite::builder()
             .entity_id(entity_id())
-            .entity(EntityMutation::Update(EntityRecord::from_expanded(merged_entity())))
+            .entity(EntityMutation::Update(EntityRecord::from_expanded(merged_entity()).expect("readable members")))
             .history(vec![HistoryRecord::Observations(typeless_fragment())])
             .build();
-        pretty_assertions::assert_eq!(named(&write.recorded_entity_types()), vec![VEHICLE]);
+        pretty_assertions::assert_eq!(named(&write.recorded_entity_types().expect("readable types")), vec![VEHICLE]);
     }
 
     /// Clauses 5.6.11 and 5.6.12 provide a Temporal Evolution without current
@@ -155,7 +160,7 @@ mod tests {
             .entity(EntityMutation::None)
             .history(vec![HistoryRecord::Observations(merged_entity())])
             .build();
-        pretty_assertions::assert_eq!(named(&write.recorded_entity_types()), vec![VEHICLE]);
+        pretty_assertions::assert_eq!(named(&write.recorded_entity_types().expect("readable types")), vec![VEHICLE]);
     }
 
     /// An Entity deletion stores no Entity row and observes nothing: clauses
@@ -169,6 +174,6 @@ mod tests {
             .entity(EntityMutation::Delete)
             .history(vec![tombstone(&speed, None, AttributeType::Property)])
             .build();
-        pretty_assertions::assert_eq!(write.recorded_entity_types(), Vec::new());
+        pretty_assertions::assert_eq!(write.recorded_entity_types().expect("readable types"), Vec::new());
     }
 }

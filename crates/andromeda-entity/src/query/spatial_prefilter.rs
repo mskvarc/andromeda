@@ -86,7 +86,12 @@ impl EntityQueryService {
             return SpatialNarrowing::Query(Arc::clone(compiled));
         }
 
-        let candidate_ids: Vec<Uri> = union.into_iter().map(Uri::Urn).collect();
+        // Every indexed URN was admitted as an entity identifier, so none is
+        // past the identifier bound; should one ever be, the store evaluates the
+        // full `georel` rather than the narrowing silently dropping it.
+        let Ok(candidate_ids) = union.into_iter().map(Uri::try_from).collect::<Result<Vec<Uri>, _>>() else {
+            return SpatialNarrowing::Query(Arc::clone(compiled));
+        };
 
         let final_ids: Vec<Uri> = if selector.ids.is_empty() {
             candidate_ids

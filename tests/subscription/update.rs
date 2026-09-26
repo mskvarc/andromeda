@@ -303,3 +303,48 @@ async fn subscription_update_adding_time_interval_to_a_conflicting_subscription_
     }
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Table 5.2.12-1 gives `notificationTrigger` cardinality 0..1 and makes each
+/// member a trigger, so a present but empty array names no trigger at all and
+/// the subscription could never fire. It is refused as `BadRequestData` both
+/// when a subscription is created with it and when an update would leave it
+/// behind, rather than reaching the schema's own non-empty check as a server
+/// error.
+#[tokio::test]
+async fn subscription_an_empty_notification_trigger_is_bad_request_data() {
+    let http_client = client();
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+
+    let refused_id = scope.id("Subscription:create-empty-notification-trigger");
+    let mut refused = watched_attributes_subscription(&refused_id);
+    refused["notificationTrigger"] = json!([]);
+    let (status, _, body) = create_subscription(&http_client, &refused).await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST, "create: {body}");
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str(), "create: {body}");
+
+    let (status, _) = retrieve_subscription(&http_client, &refused_id, true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND, "the refused subscription was not stored");
+
+    let accepted_id = scope.id("Subscription:update-empty-notification-trigger");
+    let mut accepted = watched_attributes_subscription(&accepted_id);
+    accepted["notificationTrigger"] = json!(["entityCreated", "entityUpdated"]);
+    let (status, _, body) = create_subscription(&http_client, &accepted).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "create: {body}");
+
+    let (status, body) = update_subscription(&http_client, &accepted_id, &json!({"notificationTrigger": []}), true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST, "update: {body}");
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str(), "update: {body}");
+
+    let (status, stored) = retrieve_subscription(&http_client, &accepted_id, true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let mut kept: Vec<&str> = stored["notificationTrigger"]
+        .as_array()
+        .expect("the stored triggers are an array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    kept.sort_unstable();
+    let kept = kept;
+    pretty_assertions::assert_eq!(kept, ["entityCreated", "entityUpdated"], "the refused update changed nothing: {stored}");
+    scope.finish().await.expect("cleanup failed");
+}

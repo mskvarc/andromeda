@@ -26,7 +26,7 @@ const SUITE: &str = "csr";
 /// The routing rows one registration projects, ordered so two runs compare.
 async fn routing_rows(pool: &PgPool, registration_id: &str) -> Vec<Value> {
     sqlx::query(
-        "SELECT entity_types, entity_id, entity_id_pattern, property_name_ids, relationship_name_ids, operations \
+        "SELECT entity_types, entity_id, entity_id_pattern, property_name_ids, relationship_name_ids \
          FROM registration_information WHERE registration_id = $1 \
          ORDER BY entity_types, entity_id, entity_id_pattern",
     )
@@ -44,7 +44,6 @@ async fn routing_rows(pool: &PgPool, registration_id: &str) -> Vec<Value> {
             "relationship_name_ids": row.get::<Vec<i32>, _>("relationship_name_ids").len(),
             "property_wildcard": row.get::<Vec<i32>, _>("property_name_ids") == vec![0],
             "relationship_wildcard": row.get::<Vec<i32>, _>("relationship_name_ids") == vec![0],
-            "operations": row.get::<Option<Vec<i16>>, _>("operations"),
         })
     })
     .collect()
@@ -111,14 +110,15 @@ async fn a_registration_projects_every_dimension_its_information_declares() {
     assert_eq!(row["property_name_ids"], json!(1), "the declared property name is interned: {row}");
     assert_eq!(row["relationship_name_ids"], json!(1), "the declared relationship name is interned: {row}");
     assert_eq!(row["property_wildcard"], json!(false), "a declared name is not the sentinel: {row}");
-    // Operations are a registration-wide member replicated onto every row, and
-    // the group token of Table 4.20-2 is a member in its own right rather than
-    // being expanded into the operations it stands for.
-    assert_eq!(
-        row["operations"],
-        json!([22, 44]),
-        "the declared operations are stored as registry numbers: {row}"
-    );
+    // Operations stay on the registration: the group token of Table 4.20-2 is
+    // a member in its own right rather than being expanded into the operations
+    // it stands for.
+    let operations: Option<Vec<i16>> = sqlx::query_scalar("SELECT operations FROM context_source_registrations WHERE id = $1")
+        .bind(&registration_id)
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("the registration's operations must be readable");
+    assert_eq!(operations, Some(vec![22, 44]), "the declared operations are stored as registry numbers");
 
     let deleted = client.delete_registration(&registration_id).await.expect("delete registration request failed");
     assert_eq!(deleted.status, StatusCode::NO_CONTENT, "delete registration: {:?}", deleted.body);

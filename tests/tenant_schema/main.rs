@@ -5,9 +5,12 @@
 //! the compact code registries the schema persists numbers from, the absence of
 //! procedural logic, the referential state the schema holds, the all-or-nothing
 //! shape of every migration phase, the maintenance settings the hot-update
-//! relations carry, the TOAST compression the wide columns declare, and the
-//! storage policy the temporal hypertables declare and the broker reconciles. Each is executed as a catalogue or constraint query with a
-//! pass/fail assertion rather than as a measurement a reader has to interpret.
+//! relations carry, the TOAST compression the wide columns declare, the
+//! explicit name every constraint carries, the octet bound every identifier
+//! column holds, the integrity the stored JSON-LD contexts enforce, and the
+//! storage policy the temporal hypertables declare and the broker reconciles.
+//! Each is executed as a catalogue or constraint query with a pass/fail
+//! assertion rather than as a measurement a reader has to interpret.
 //!
 //! Naming convention: `<subject>_<scenario>_<expected outcome>`.
 
@@ -15,7 +18,10 @@
 
 mod code_registry;
 mod concurrent_provisioning;
+mod constraint_names;
 mod hot_update_maintenance;
+mod identifier_bounds;
+mod jsonld_context_constraints;
 mod migration_failure;
 mod migration_ledgers;
 mod platform_configuration;

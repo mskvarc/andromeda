@@ -83,7 +83,10 @@ impl LinkedHop {
     /// index, and the join to `entities.id` is that table's unique external key.
     ///
     /// A deleted Relationship needs no exclusion: the projection holds no
-    /// tombstone row, so an instance that is present names an entity.
+    /// tombstone row, so an instance that is present names an entity. The join
+    /// needs no overflow arm either: a Relationship object is an identifier of
+    /// at most 1024 octets, so it is always in `value_uri` and never in
+    /// `value_long_text`.
     pub(crate) fn probe(
         &self,
         relationship_id: AttributeNameId,

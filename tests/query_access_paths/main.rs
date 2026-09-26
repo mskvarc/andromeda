@@ -3,8 +3,8 @@
 //! Covers the database-schema-redesign verification-matrix rows "Typed q
 //! predicates", "Arbitrary `GeoProperty`", "Entity access-path plans",
 //! "Identifier collation", "Object GIN operator class", "Extended statistics",
-//! "Physical column layout", "Semantic-time plans", and "Registration routing
-//! plans".
+//! "Physical column layout", "Semantic-time plans", "Temporal access-path
+//! plans", "Write-record release plans", and "Registration routing plans".
 //!
 //! The measurement-shaped rows are executed as SQL checks with a pass/fail
 //! assertion — `EXPLAIN (ANALYZE, BUFFERS)`, `pg_attribute` offsets,
@@ -25,4 +25,6 @@ mod registration_routing;
 mod seeded_corpus;
 mod seeded_history;
 mod semantic_time;
+mod temporal_plans;
 mod typed_q;
+mod write_record_release;

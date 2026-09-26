@@ -291,7 +291,10 @@ fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Sca
 /// existence test in `NOT (...)`, which matched entities that simply lacked the
 /// attribute.
 ///
-/// Only `value_string` is tested. Clause 4.9 requires a Relationship operand to
+/// Only the two string columns are tested, `value_string` and the overflow
+/// `value_long_text`, as one disjunction: a row's value sits in exactly one of
+/// them, so the other arm is NULL and the disjunction reads the one that holds
+/// it. Clause 4.9 requires a Relationship operand to
 /// non-match every operator other than equality and inequality, and the pattern
 /// operators are defined over String targets — so a Relationship's object, which
 /// is the whole content of `value_uri`, is never a pattern target. Probing it
@@ -306,7 +309,8 @@ fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Sca
 /// across attributes yields candidates only from the one probed. When no
 /// trigram is extractable the probe is still narrowed by the
 /// `attribute_name_id` prefix of `idx_cav_attr_string` before any regex is
-/// evaluated.
+/// evaluated. `idx_cav_attr_long_text_trgm` serves the overflow arm the same
+/// way.
 fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
     match local_target(path) {
         LocalTarget::OwnValue => (),
@@ -318,11 +322,10 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
         return unsatisfiable();
     };
 
-    let value = Condition::all().add(pattern_predicate(
-        probe_column(CurrentAttributeValues::ValueString),
-        polarity,
-        SeaExpr::val(pattern.as_str()),
-    ));
+    let on = |column| pattern_predicate(probe_column(column), polarity, SeaExpr::val(pattern.as_str()));
+    let value = Condition::any()
+        .add(on(CurrentAttributeValues::ValueString))
+        .add(on(CurrentAttributeValues::ValueLongText));
     exists_on_projection(id, value, rows)
 }
 
@@ -332,7 +335,7 @@ mod tests {
     use crate::{dictionary::resolved_names::ResolvedNames, entity_row_refs::DocumentsRef, entity_type_id::EntityTypeId};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::parser;
-    use andromeda_postgresql_schema::current::Entities;
+    use andromeda_postgresql_schema::{current::Entities, projected_string_column::INDEXED_STRING_BYTE_LIMIT};
     use sea_query::{Alias, PostgresQueryBuilder, Query, Value};
 
     const SPEED: &str = "https://example.com/speed";
@@ -430,6 +433,7 @@ mod tests {
         // nothing else, so a pattern must not probe it.
         let (sql, _) = render("\"https://example.com/brandName\"~=\"Merc.*\"");
         assert!(sql.contains("\"cav\".\"value_string\" ~"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_long_text\" ~"), "a pattern reads both string columns: {sql}");
         assert!(!sql.contains("value_uri"), "a pattern must not test relationship objects: {sql}");
     }
 
@@ -437,6 +441,7 @@ mod tests {
     fn a_negated_pattern_does_not_reach_relationship_objects_either() {
         let (sql, _) = render("\"https://example.com/brandName\"!~=\"Merc.*\"");
         assert!(sql.contains("\"cav\".\"value_string\" !~"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_long_text\" !~"), "{sql}");
         assert!(!sql.contains("value_uri"), "{sql}");
     }
 
@@ -507,6 +512,38 @@ mod tests {
         assert!(sql.contains("\"cav\".\"value_uri\" = "), "{sql}");
         assert!(sql.contains("\"cav\".\"value_object\" @> "), "{sql}");
         assert!(!sql.contains(" != "), "no per-column inequality survives: {sql}");
+    }
+
+    /// A long operand's equality reads only the overflow column, and its
+    /// inequality is still the total negation of that equality (clause 4.9
+    /// `unequal`), so a short stored value -- whose overflow arm is unknown --
+    /// is unequal to it rather than dropped.
+    #[test]
+    fn a_negated_long_string_equality_is_the_total_negation_of_the_overflow_comparison() {
+        let long = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
+        let (sql, _) = render(&format!("\"https://example.com/name\"!=\"{long}\""));
+        assert!(sql.contains("NOT COALESCE("), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_long_text\" = "), "{sql}");
+        assert!(!sql.contains("\"cav\".\"value_string\" = "), "{sql}");
+    }
+
+    /// A string range is two ordering comparisons, and each reads both string
+    /// columns.
+    #[test]
+    fn a_string_range_reads_both_string_columns_on_each_bound() {
+        let (sql, _) = render("\"https://example.com/brandName\"==\"a\"..\"z\"");
+        assert_eq!(sql.matches("\"cav\".\"value_string\" ").count(), 2, "{sql}");
+        assert_eq!(sql.matches("\"cav\".\"value_long_text\" ").count(), 2, "{sql}");
+    }
+
+    /// A Relationship object is an identifier of at most 1024 octets, so the
+    /// hop joins the linked entity on `value_uri` alone.
+    #[test]
+    fn a_hop_joins_on_value_uri_alone() {
+        let (sql, _) = render("\"https://example.com/isParkedIn\"{\"https://example.com/name\"==\"x\"}");
+        assert!(sql.contains(r#"."id" = "cav_ln1"."value_uri""#), "{sql}");
+        let join = sql.split(" WHERE ").next().unwrap_or_default();
+        assert!(!join.contains("value_long_text"), "{join}");
     }
 
     /// The equality operator keeps the plain comparison: clause 4.9 states the
@@ -684,12 +721,14 @@ mod tests {
     fn pattern_match_uses_posix_regex_on_the_string_column() {
         let (sql, _) = render("\"https://example.com/name\"~=\"^A.*\"");
         assert!(sql.contains("\"cav\".\"value_string\" ~"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_long_text\" ~"), "{sql}");
     }
 
     #[test]
     fn negated_pattern_sits_inside_the_probe_so_missing_attributes_do_not_match() {
         let (sql, _) = render("\"https://example.com/name\"!~=\"^A.*\"");
         assert!(sql.contains("\"cav\".\"value_string\" !~"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_long_text\" !~"), "{sql}");
         assert!(
             !sql.contains("NOT (EXISTS") && !sql.contains("NOT EXISTS"),
             "clause 4.9 requires the target element to be present: {sql}"

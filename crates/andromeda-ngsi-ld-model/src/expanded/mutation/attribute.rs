@@ -2,7 +2,7 @@
 //! (clauses 5.6.4, 5.6.5 and 5.6.19).
 
 use crate::expanded::{
-    dataset_id::get_instance_dataset_id,
+    dataset_id::{get_instance_dataset_id, position_of_dataset},
     merge::remove_instances_by_dataset,
     mutation::{error::ExpandedEntityError, selection::DatasetSelection},
     node::expanded_object_mut,
@@ -34,7 +34,9 @@ use serde_json::Value;
 /// [`ExpandedEntityError::DatasetNotFound`],
 /// [`ExpandedEntityError::DefaultInstanceNotFound`] or
 /// [`ExpandedEntityError::AttributeTypeMismatch`] depending on which part of
-/// the lookup fails.
+/// the lookup fails, and [`ExpandedEntityError::InvalidDatasetId`] when the
+/// fragment or a stored instance carries a `datasetId` that is not an
+/// identifier -- never the default instance in its place (clause 4.5.5).
 pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&Uri>, fragment: &Value) -> Result<(), ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
 
@@ -42,7 +44,7 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Op
         return Err(ExpandedEntityError::AttributeNotFound { attribute: attr_iri.clone() });
     }
 
-    let fragment_dataset = get_instance_dataset_id(fragment);
+    let fragment_dataset = get_instance_dataset_id(fragment)?;
     let effective_ds = dataset_id.or(fragment_dataset.as_ref());
 
     if instance_is_null_sentinel(fragment) {
@@ -54,10 +56,7 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Op
         return patch_unwrapped_attribute(entity_obj, attr_iri, effective_ds, &fragment_types, fragment);
     };
 
-    let selected = match effective_ds {
-        Some(ds_id) => instances.iter_mut().find(|instance| get_instance_dataset_id(instance).as_ref() == Some(ds_id)),
-        None => instances.iter_mut().find(|instance| get_instance_dataset_id(instance).is_none()),
-    };
+    let selected = position_of_dataset(instances, effective_ds)?.and_then(|position| instances.get_mut(position));
 
     let Some(instance) = selected else {
         return Err(missing_instance(attr_iri, effective_ds));
@@ -70,7 +69,7 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Op
 /// Delete the instance an NGSI-LD Null fragment selected (clauses 5.5.8 and
 /// 5.6.5).
 fn delete_selected_instance(entity_obj: &mut serde_json::Map<String, Value>, attr_iri: &IriBuf, effective_ds: Option<&Uri>) -> Result<(), ExpandedEntityError> {
-    if remove_instances_by_dataset(entity_obj, attr_iri.as_str(), effective_ds) {
+    if remove_instances_by_dataset(entity_obj, attr_iri.as_str(), effective_ds)? {
         Ok(())
     } else {
         Err(missing_instance(attr_iri, effective_ds))
@@ -92,7 +91,7 @@ fn patch_unwrapped_attribute(
     let Some(attr_value) = entity_obj.get_mut(attr_iri.as_str()) else {
         return Err(ExpandedEntityError::AttributeNotFound { attribute: attr_iri.clone() });
     };
-    if effective_ds.is_some() && get_instance_dataset_id(attr_value).as_ref() != effective_ds {
+    if effective_ds.is_some() && get_instance_dataset_id(attr_value)?.as_ref() != effective_ds {
         return Err(missing_instance(attr_iri, effective_ds));
     }
     if !fragment_types.is_empty() {
@@ -161,7 +160,8 @@ fn attribute_types(value: &Value) -> Result<Vec<AttributeType>, ExpandedEntityEr
 /// Returns [`ExpandedEntityError::AttributeNotFound`] if the entity has no such
 /// attribute, or [`ExpandedEntityError::DatasetNotFound`] /
 /// [`ExpandedEntityError::DefaultInstanceNotFound`] if the selected instance is
-/// absent.
+/// absent, and [`ExpandedEntityError::InvalidDatasetId`] when an instance of
+/// the attribute carries a `datasetId` that is not an identifier.
 pub fn delete_attr(entity: &mut Value, attr_iri: &IriBuf, selection: DatasetSelection<'_>) -> Result<(), ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
 
@@ -177,7 +177,7 @@ pub fn delete_attr(entity: &mut Value, attr_iri: &IriBuf, selection: DatasetSele
         DatasetSelection::Single(dataset_id) => {
             // Instances record the datasetId as its raw `@id`; the target URI is
             // rendered once to that form to select by string equality.
-            if remove_instances_by_dataset(entity_obj, attr_iri.as_str(), Some(dataset_id)) {
+            if remove_instances_by_dataset(entity_obj, attr_iri.as_str(), Some(dataset_id))? {
                 Ok(())
             } else {
                 Err(ExpandedEntityError::DatasetNotFound {
@@ -187,7 +187,7 @@ pub fn delete_attr(entity: &mut Value, attr_iri: &IriBuf, selection: DatasetSele
             }
         }
         DatasetSelection::Default => {
-            if remove_instances_by_dataset(entity_obj, attr_iri.as_str(), None) {
+            if remove_instances_by_dataset(entity_obj, attr_iri.as_str(), None)? {
                 Ok(())
             } else {
                 Err(ExpandedEntityError::DefaultInstanceNotFound { attribute: attr_iri.clone() })
@@ -206,7 +206,9 @@ pub fn delete_attr(entity: &mut Value, attr_iri: &IriBuf, selection: DatasetSele
 ///
 /// Returns [`ExpandedEntityError::AttributeNotFound`] if the entity has no such
 /// attribute, or [`ExpandedEntityError::DatasetNotFound`] /
-/// [`ExpandedEntityError::DefaultInstanceNotFound`] if no instance matches.
+/// [`ExpandedEntityError::DefaultInstanceNotFound`] if no instance matches,
+/// and [`ExpandedEntityError::InvalidDatasetId`] when the value or a stored
+/// instance carries a `datasetId` that is not an identifier.
 pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&Uri>, value: &Value) -> Result<(), ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
 
@@ -218,7 +220,7 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&U
     // by the raw `@id` the document records, so the target URI is rendered to it.
     let target_ds: Option<Uri> = match dataset_id {
         Some(ds) => Some(ds.clone()),
-        None => get_instance_dataset_id(value),
+        None => get_instance_dataset_id(value)?,
     };
 
     let existing_instances = existing.as_array();
@@ -228,7 +230,7 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&U
         let mut replaced = false;
 
         for inst in instances {
-            let inst_ds = get_instance_dataset_id(inst);
+            let inst_ds = get_instance_dataset_id(inst)?;
             if inst_ds == target_ds {
                 // clone: the replacement is borrowed and the rebuilt array owns its elements.
                 new_instances.push(value.clone());
@@ -240,21 +242,14 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&U
         }
 
         if !replaced {
-            // The datasetId that matched nothing, as a URI for the ProblemDetail:
-            // the query-parameter URI if one was given, else the value's own
-            // datasetId, which the model validates as a URI on ingestion.
-            return match dataset_id {
-                Some(ds) => Err(ExpandedEntityError::DatasetNotFound {
+            // The datasetId that matched nothing, for the ProblemDetail: the
+            // query-parameter URI if one was given, else the value's own.
+            return match target_ds {
+                Some(dataset_id) => Err(ExpandedEntityError::DatasetNotFound {
                     attribute: attr_iri.clone(),
-                    dataset_id: Box::new(ds.clone()),
+                    dataset_id: Box::new(dataset_id),
                 }),
-                None => match get_instance_dataset_id(value) {
-                    Some(dataset_id) => Err(ExpandedEntityError::DatasetNotFound {
-                        attribute: attr_iri.clone(),
-                        dataset_id: Box::new(dataset_id),
-                    }),
-                    None => Err(ExpandedEntityError::DefaultInstanceNotFound { attribute: attr_iri.clone() }),
-                },
+                None => Err(ExpandedEntityError::DefaultInstanceNotFound { attribute: attr_iri.clone() }),
             };
         }
 
@@ -275,7 +270,7 @@ mod tests {
         selection::DatasetSelection,
         speed_entity,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier_length::IDENTIFIER_BYTE_LIMIT, uri::Uri};
     use iri_rs::IriBuf;
     use serde_json::json;
     use std::str::FromStr;
@@ -413,5 +408,24 @@ mod tests {
                 dataset_id: Box::new(dataset_uri("urn:ngsi-ld:Dataset:Z"))
             }
         );
+    }
+
+    /// Clause 4.5.5: a fragment whose `datasetId` cannot be read names no
+    /// instance the broker can identify, so the write is refused rather than
+    /// landing on the default instance.
+    #[test]
+    fn a_partial_update_with_an_unreadable_dataset_id_never_touches_the_default_instance() {
+        let mut entity = speed_entity::with_three_instances();
+        let before = entity.clone(); // clone: the unchanged original is compared after the refused write
+        let long_dataset = format!("urn:ngsi-ld:Dataset:{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
+        let fragment = json!({
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 99}],
+            "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": long_dataset}]
+        });
+
+        let result = partial_update_attr(&mut entity, &iri("https://example.com/speed"), None, &fragment);
+
+        assert!(matches!(result, Err(ExpandedEntityError::InvalidDatasetId(_))), "{result:?}");
+        pretty_assertions::assert_eq!(entity, before);
     }
 }

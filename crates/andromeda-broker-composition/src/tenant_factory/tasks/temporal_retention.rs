@@ -104,6 +104,8 @@ fn classify_retention_failure(error: &TemporalStoreError) -> TaskFailure {
         | TemporalStoreError::Encoding(_)
         | TemporalStoreError::CopyField(_)
         | TemporalStoreError::MixedAggregationGroup(_)
+        | TemporalStoreError::WriteRecordMismatch { .. }
+        | TemporalStoreError::ColumnstoreSettingsDrift { .. }
         | TemporalStoreError::UnitCode(_) => TaskFailure::invariant_violation(summary),
         TemporalStoreError::Validation(_)
         | TemporalStoreError::Query(_)

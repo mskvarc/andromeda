@@ -5,6 +5,7 @@
 pub mod context;
 pub mod entity_fixture;
 pub mod fixture_document;
+pub mod high_entropy_text;
 pub mod problem_detail;
 pub mod registration_fixture;
 pub mod snapshot_fixture;

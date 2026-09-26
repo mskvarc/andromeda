@@ -1,0 +1,91 @@
+//! Create Entity (clause 5.6.1).
+
+use crate::{
+    EntityService,
+    entity_validation_reason::EntityValidationReason,
+    error::EntityError,
+    expanded_member::{written_attribute_names, written_entity_types},
+    notification_plan::{NotificationGroup, attribute_change_groups},
+    write_admission::{EntityWrite, admit_expanded_entity},
+};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    entity_mutation::EntityMutation,
+    entity_record::EntityRecord,
+    history_record::HistoryRecord,
+    precondition::Precondition,
+    write_outcome::single,
+};
+use andromeda_context_space::context_target::ContextTarget;
+use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::{
+    entity::Entity,
+    expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError},
+    notification::NotificationTrigger,
+};
+use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
+use andromeda_telemetry::entity::{self, EntityOperation};
+use chrono::Utc;
+use serde_json::Value;
+use std::sync::Arc;
+
+impl EntityService {
+    /// Create a new NGSI-LD entity, returning its URI on success (clause 5.6.1).
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Validation`] when the entity cannot be serialised
+    /// or carries a malformed attribute instance, a null value or an invalid
+    /// `GeoProperty` geometry, [`EntityError::JsonLd`] when it cannot be
+    /// expanded against `context`, [`EntityError::AlreadyExists`] when another
+    /// entity already holds the identifier (clause 6.4.3.1), and
+    /// [`EntityError::Persistence`] when the store could not commit the insert.
+    pub async fn create(&self, target: &ContextTarget, entity: &Entity, context: &ContextSpec) -> Result<Uri, EntityError> {
+        let timer = entity::start(EntityOperation::Create);
+        let result: Result<Uri, EntityError> = async {
+            let id = &entity.id;
+
+            let mut entity_json = serde_json::to_value(entity).map_err(|err| EntityError::Validation(EntityValidationReason::EntityPayload(err)))?;
+            normalize_entity_attributes(&mut entity_json);
+            let expanded = self.engine.expand(entity_json, context).await?;
+            // Clause 5.6.1.4 opens with the clause 5.5.4 validation. The transport
+            // layer runs the same screening before it forwards anything, and runs
+            // it again here on whatever the forwarding phase left behind.
+            admit_expanded_entity(&expanded, EntityWrite::Create.null_sentinel_admission())?;
+
+            // Clause 4.8: a created entity's attribute instances carry the write
+            // instant as both createdAt and modifiedAt.
+            let mut expanded = expanded;
+            stamp_attribute_instants(&mut expanded, &Value::Null, Utc::now()).map_err(ExpandedEntityError::from)?;
+            let payload = Arc::new(expanded);
+            let types = written_entity_types(&payload)?;
+            let changed_attrs = written_attribute_names(&payload)?;
+            let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attrs)];
+            groups.extend(attribute_change_groups(&Value::Null, &payload)?);
+            let plan = self.plan_notifications(target, &entity.id, &types, &groups, Some(&payload), None);
+
+            let write = AtomicWrite::builder()
+                .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
+                .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::clone(&payload))?)) // clone: Arc ref-count bump; the payload is also the change event's
+                .history(vec![HistoryRecord::Observations(Arc::clone(&payload))]) // clone: Arc ref-count bump
+                .subscription_matches(plan.matches)
+                .precondition(Precondition::MustNotExist)
+                .build();
+
+            // A conflicting insert is 409, per NGSI-LD 6.4.3.1. It reaches here as a
+            // precondition failure rather than a duplicate-key error, which is what
+            // lets the same statement serve a partially-succeeding batch.
+            if single(self.writes.commit(target, vec![write]).await?)?.is_already_exists() {
+                return Err(EntityError::already_exists(id));
+            }
+
+            plan.events.into_iter().for_each(|event| self.emit_change(target, event));
+
+            Ok(id.clone()) // clone: the caller owns the created identifier while the request entity remains borrowed
+        }
+        .await;
+        timer.finish_result(&result);
+        result
+    }
+}

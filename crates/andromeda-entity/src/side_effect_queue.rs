@@ -114,12 +114,13 @@ pub trait SideEffectQueue: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Remove dead-lettered jobs created before `cutoff`, returning how many
-    /// were removed.
+    /// Remove jobs dead-lettered before `cutoff`, returning how many were
+    /// removed.
     ///
     /// A dead job is kept as evidence of a batch whose deferred side effects
-    /// never landed; this is the retention sweep that bounds how long. It
-    /// touches no live row and holds no lease.
+    /// never landed; this is the retention sweep that bounds how long, counted
+    /// from the instant the job was dead-lettered rather than from when it was
+    /// enqueued. It touches no live row and holds no lease.
     fn purge_dead_before<'life0, 'async_trait>(&'life0 self, cutoff: DateTime<Utc>) -> BoxFuture<'async_trait, Result<u64, EntityError>>
     where
         'life0: 'async_trait,

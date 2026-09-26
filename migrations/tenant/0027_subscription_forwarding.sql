@@ -11,7 +11,11 @@
 -- These mappings are tenant-global, not branch state -- a Snapshot branch never
 -- forwards -- so this file lives in `migrations/tenant/` and runs after the
 -- branch set has created the live `subscriptions` it references. Identifiers
--- are `COLLATE "C"`, compared for equality only.
+-- are `COLLATE "C"`, compared for equality only, and bounded at 1024 UTF-8
+-- octets, the identifier bound (`IDENTIFIER_BYTE_LIMIT` in
+-- `andromeda-ngsi-ld-lexicon`) each is parsed under -- chosen so the two
+-- identifiers of the `forwarded_subscriptions` primary key fit one btree
+-- entry, which a btree refuses past 2704 bytes.
 --
 -- Every edge cascades. Deleting a subscription removes its companion mapping
 -- (from either end) and its forwarded copies; deleting a registration removes
@@ -27,27 +31,45 @@
 
 CREATE TABLE subscription_companions (
     -- The local entity subscription.
-    local_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL PRIMARY KEY
-        REFERENCES subscriptions(id) ON DELETE CASCADE,
+    local_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
 
     -- The companion context source registration subscription this broker minted.
-    companion_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE
-        REFERENCES subscriptions(id) ON DELETE CASCADE
+    companion_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+
+    CONSTRAINT pk_subscription_companions PRIMARY KEY (local_subscription_id),
+    CONSTRAINT uq_subscription_companions_companion UNIQUE (companion_subscription_id),
+    CONSTRAINT fk_subscription_companions_local FOREIGN KEY (local_subscription_id)
+        REFERENCES subscriptions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_subscription_companions_companion FOREIGN KEY (companion_subscription_id)
+        REFERENCES subscriptions(id) ON DELETE CASCADE,
+    CONSTRAINT chk_subscription_companions_local_subscription_id_length
+        CHECK (octet_length(local_subscription_id) <= 1024),
+    CONSTRAINT chk_subscription_companions_companion_subscription_id_length
+        CHECK (octet_length(companion_subscription_id) <= 1024)
 );
 
 CREATE TABLE forwarded_subscriptions (
     -- The local entity subscription the copy reduces.
-    local_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL
-        REFERENCES subscriptions(id) ON DELETE CASCADE,
+    local_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
 
     -- The registration whose context source holds the copy.
-    registration_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL
-        REFERENCES context_source_registrations(id) ON DELETE CASCADE,
+    registration_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
 
     -- The identifier the copy carries at the context source.
-    remote_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE,
+    remote_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
 
-    PRIMARY KEY (local_subscription_id, registration_id)
+    CONSTRAINT pk_forwarded_subscriptions PRIMARY KEY (local_subscription_id, registration_id),
+    CONSTRAINT uq_forwarded_subscriptions_remote UNIQUE (remote_subscription_id),
+    CONSTRAINT fk_forwarded_subscriptions_local FOREIGN KEY (local_subscription_id)
+        REFERENCES subscriptions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_forwarded_subscriptions_registration FOREIGN KEY (registration_id)
+        REFERENCES context_source_registrations(id) ON DELETE CASCADE,
+    CONSTRAINT chk_forwarded_subscriptions_local_subscription_id_length
+        CHECK (octet_length(local_subscription_id) <= 1024),
+    CONSTRAINT chk_forwarded_subscriptions_registration_id_length
+        CHECK (octet_length(registration_id) <= 1024),
+    CONSTRAINT chk_forwarded_subscriptions_remote_subscription_id_length
+        CHECK (octet_length(remote_subscription_id) <= 1024)
 );
 
 CREATE INDEX idx_forwarded_subscriptions_registration

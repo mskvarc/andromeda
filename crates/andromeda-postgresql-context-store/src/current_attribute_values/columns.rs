@@ -15,6 +15,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_schema::projected_string_column::ProjectedStringColumn;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
@@ -24,12 +25,16 @@ use serde_json::Value;
 ///
 /// Exactly one field is populated, decided by the value's own shape rather than
 /// by the caller, which is what keeps the `value_kind` code and the column
-/// holding the value from ever disagreeing.
+/// holding the value from ever disagreeing. A String is placed by
+/// [`ProjectedStringColumn::of`], the one placement the `q` compiler also
+/// routes an equality through.
 struct TypedValueColumns<'a> {
     /// The arbitrary-precision value bound directly as `NUMERIC`.
     number: Option<&'a BigDecimal>,
-    /// The string value.
+    /// The string value, when it fits `value_string`'s B-tree.
     text: Option<&'a str>,
+    /// The string value, when it is too long for `value_string`.
+    long_text: Option<&'a str>,
     /// The boolean value.
     boolean: Option<bool>,
     /// The geometry value, before EWKB encoding.
@@ -47,6 +52,7 @@ fn typed_value_columns(value: &ProjectedAttributeValue) -> TypedValueColumns<'_>
     let mut columns = TypedValueColumns {
         number: None,
         text: None,
+        long_text: None,
         boolean: None,
         geometry: None,
         object: None,
@@ -55,7 +61,10 @@ fn typed_value_columns(value: &ProjectedAttributeValue) -> TypedValueColumns<'_>
     };
     match value {
         ProjectedAttributeValue::Number(number) => columns.number = Some(number.decimal()),
-        ProjectedAttributeValue::String(text) => columns.text = Some(text),
+        ProjectedAttributeValue::String(text) => match ProjectedStringColumn::of(text) {
+            ProjectedStringColumn::Indexed => columns.text = Some(text),
+            ProjectedStringColumn::Overflow => columns.long_text = Some(text),
+        },
         ProjectedAttributeValue::Boolean(flag) => columns.boolean = Some(*flag),
         ProjectedAttributeValue::Geometry(geometry) => columns.geometry = Some(geometry),
         ProjectedAttributeValue::Object(object) => columns.object = Some(object),
@@ -93,6 +102,8 @@ pub struct ProjectionBinds<'a> {
     pub value_objects: Vec<Option<&'a Value>>,
     /// URI values, which is how a relationship object is projected.
     pub value_uris: Vec<Option<&'a str>>,
+    /// String values too long for `value_string`, under the String value kind.
+    pub value_long_texts: Vec<Option<&'a str>>,
 }
 
 impl<'a> ProjectionBinds<'a> {
@@ -117,6 +128,7 @@ impl<'a> ProjectionBinds<'a> {
             value_geos: Vec::with_capacity(rows.len()),
             value_objects: Vec::with_capacity(rows.len()),
             value_uris: Vec::with_capacity(rows.len()),
+            value_long_texts: Vec::with_capacity(rows.len()),
         };
         for row in rows {
             let value = typed_value_columns(&row.value);
@@ -135,6 +147,7 @@ impl<'a> ProjectionBinds<'a> {
             binds.value_geos.push(geometry_bytes(value.geometry)?);
             binds.value_objects.push(value.object);
             binds.value_uris.push(value.uri);
+            binds.value_long_texts.push(value.long_text);
         }
         Ok(binds)
     }
@@ -148,6 +161,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
+    use andromeda_postgresql_schema::projected_string_column::INDEXED_STRING_BYTE_LIMIT;
     use chrono::{TimeZone, Utc};
 
     /// One projection row carrying `value`, with no unit and no `datasetId`.
@@ -178,6 +192,7 @@ mod tests {
         let values = [
             ProjectedAttributeValue::Number(JsonNumber::try_from(-2.5e-4).expect("a finite number")),
             ProjectedAttributeValue::String("text".to_owned()),
+            ProjectedAttributeValue::String("x".repeat(3000)),
             ProjectedAttributeValue::Boolean(false),
             ProjectedAttributeValue::Object(serde_json::json!({"a": 1})),
             ProjectedAttributeValue::DateTime(instant),
@@ -187,6 +202,7 @@ mod tests {
             let columns = typed_value_columns(value);
             let populated = usize::from(columns.number.is_some())
                 + usize::from(columns.text.is_some())
+                + usize::from(columns.long_text.is_some())
                 + usize::from(columns.boolean.is_some())
                 + usize::from(columns.geometry.is_some())
                 + usize::from(columns.object.is_some())
@@ -205,6 +221,25 @@ mod tests {
         pretty_assertions::assert_eq!(binds.value_numbers, vec![None]);
         pretty_assertions::assert_eq!(binds.entity_keys, vec![1_i64]);
         pretty_assertions::assert_eq!(binds.attribute_name_ids, vec![7_i32]);
+    }
+
+    #[test]
+    fn a_string_within_the_limit_binds_the_indexed_column() {
+        let text = "a".repeat(INDEXED_STRING_BYTE_LIMIT);
+        let rows = [row(ProjectedAttributeValue::String(text.clone()))]; // clone: the bind is compared against the original
+        let binds = ProjectionBinds::from_rows(&rows).expect("no geometry to encode");
+        pretty_assertions::assert_eq!(binds.value_strings, vec![Some(text.as_str())]);
+        pretty_assertions::assert_eq!(binds.value_long_texts, vec![None]);
+    }
+
+    #[test]
+    fn a_string_past_the_limit_binds_the_overflow_column_under_the_string_kind() {
+        let text = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
+        let rows = [row(ProjectedAttributeValue::String(text.clone()))]; // clone: the bind is compared against the original
+        let binds = ProjectionBinds::from_rows(&rows).expect("no geometry to encode");
+        pretty_assertions::assert_eq!(binds.value_kinds, vec![ValueKind::code(ValueKind::String)]);
+        pretty_assertions::assert_eq!(binds.value_strings, vec![None]);
+        pretty_assertions::assert_eq!(binds.value_long_texts, vec![Some(text.as_str())]);
     }
 
     #[test]

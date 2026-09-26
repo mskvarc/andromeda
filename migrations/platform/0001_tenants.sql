@@ -27,13 +27,16 @@
 -- ============================================================================
 
 CREATE TABLE tenants (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status SMALLINT NOT NULL,
     is_unnamed_default BOOLEAN NOT NULL DEFAULT FALSE,
-    name TEXT COLLATE "C" UNIQUE,
-    db_name TEXT COLLATE "C" NOT NULL UNIQUE,
+    name TEXT COLLATE "C",
+    db_name TEXT COLLATE "C" NOT NULL,
+    CONSTRAINT pk_tenants PRIMARY KEY (id),
+    CONSTRAINT uq_tenants_name UNIQUE (name),
+    CONSTRAINT uq_tenants_db_name UNIQUE (db_name),
     CONSTRAINT chk_tenants_unnamed_default_has_no_name CHECK ((name IS NULL) = is_unnamed_default),
     CONSTRAINT chk_tenants_status CHECK (status BETWEEN 1 AND 2)
 );

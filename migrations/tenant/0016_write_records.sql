@@ -26,7 +26,8 @@
 CREATE TABLE write_records (
     recorded_at TIMESTAMPTZ NOT NULL,
     accepted_at TIMESTAMPTZ NOT NULL,
-    write_id UUID PRIMARY KEY
+    write_id UUID NOT NULL,
+    CONSTRAINT pk_write_records PRIMARY KEY (write_id)
 );
 
 CREATE INDEX idx_write_records_recorded_at ON write_records (recorded_at);

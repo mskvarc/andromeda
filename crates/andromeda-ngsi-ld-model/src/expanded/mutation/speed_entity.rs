@@ -1,5 +1,6 @@
-//! The multi-instance `speed` entity the mutation tests operate on, and the
-//! reader that flattens it back to the values it holds.
+//! The multi-instance `speed` entity the mutation tests operate on, the reader
+//! that flattens it back to the values it holds, and the Property instance
+//! those tests build their payloads from.
 
 use serde_json::{Value, json};
 
@@ -25,4 +26,17 @@ pub(crate) fn values(entity: &Value) -> Vec<i64> {
         .iter()
         .filter_map(|instance| instance["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"].as_i64())
         .collect()
+}
+
+/// One expanded Property instance carrying `value`, optionally tagged with a
+/// `datasetId`. A `value` of `urn:ngsi-ld:null` is a deletion sentinel.
+pub(crate) fn property_instance(value: &Value, dataset: Option<&str>) -> Value {
+    let mut node = json!({
+        "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]
+    });
+    if let Some(dataset) = dataset {
+        node["https://uri.etsi.org/ngsi-ld/datasetId"] = json!([{"@id": dataset}]);
+    }
+    node
 }

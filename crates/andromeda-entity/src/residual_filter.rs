@@ -7,7 +7,7 @@
 //!
 //! [`ResidualFilter`]: crate::query_residual::ResidualFilter
 
-use crate::query_residual::ResidualFilter;
+use crate::{error::EntityError, query_residual::ResidualFilter};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     entity_member::{extract_id, extract_types},
@@ -30,8 +30,13 @@ use serde_json::Value;
 ///
 /// Every predicate must hold at once, which is the clause 4.9 conjunction
 /// the store would have rendered as `AND`.
-#[must_use]
-pub fn matches(residual: &ResidualFilter, expanded: &Value) -> bool {
+///
+/// # Errors
+///
+/// Reports [`EntityError::Internal`] when a selector has to read the entity's
+/// `@id` or `@type` and cannot: an entity whose identity cannot be read is not
+/// one the query can admit or refuse.
+pub fn matches(residual: &ResidualFilter, expanded: &Value) -> Result<bool, EntityError> {
     let EntitySelection {
         selectors,
         attrs,
@@ -40,12 +45,12 @@ pub fn matches(residual: &ResidualFilter, expanded: &Value) -> bool {
         scope_q,
         considered,
     } = residual.selection();
-    considers_any_entity(*considered)
-        && selectors_match(selectors, expanded)
+    Ok(considers_any_entity(*considered)
+        && selectors_match(selectors, expanded)?
         && attributes_present(attrs, expanded)
         && value_filter_matches(q_expr.as_ref(), expanded)
         && geo_matches(geo.as_ref(), expanded)
-        && scope_matches(scope_q.as_ref(), expanded)
+        && scope_matches(scope_q.as_ref(), expanded))
 }
 
 /// Clause 5.5.14: a request narrowed to an empty identifier set considers no
@@ -65,16 +70,21 @@ const fn considers_any_entity(considered: ConsideredEntities) -> bool {
 /// Mirrors [`EntitySelection::selectors_constrain`] and the SQL renderer, so a
 /// store that pushes the union down and one that finishes it in memory return
 /// the same entities.
-fn selectors_match(selectors: &[EntitySelector], expanded: &Value) -> bool {
+fn selectors_match(selectors: &[EntitySelector], expanded: &Value) -> Result<bool, EntityError> {
     if selectors.is_empty() || selectors.iter().any(|selector| !selector.constrains()) {
-        return true;
+        return Ok(true);
     }
-    selectors.iter().any(|selector| selector_matches(selector, expanded))
+    for selector in selectors {
+        if selector_matches(selector, expanded)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether one selector's identifier list, pattern and type all hold at once.
-fn selector_matches(selector: &EntitySelector, expanded: &Value) -> bool {
-    identifier_matches(&selector.ids, selector.id_pattern.as_ref(), expanded) && type_matches(selector.type_expr.as_ref(), expanded)
+fn selector_matches(selector: &EntitySelector, expanded: &Value) -> Result<bool, EntityError> {
+    Ok(identifier_matches(&selector.ids, selector.id_pattern.as_ref(), expanded)? && type_matches(selector.type_expr.as_ref(), expanded)?)
 }
 
 /// Clause 5.7.2 `id` and `idPattern`.
@@ -83,27 +93,25 @@ fn selector_matches(selector: &EntitySelector, expanded: &Value) -> bool {
 /// `Pattern` is a Rust `regex`, which agrees with `~` on the IEEE 1003.2
 /// extended regular expressions clause 5.2.8 mandates and diverges only on
 /// engine extensions no conforming client may write.
-fn identifier_matches(ids: &[Uri], id_pattern: Option<&Pattern>, expanded: &Value) -> bool {
+fn identifier_matches(ids: &[Uri], id_pattern: Option<&Pattern>, expanded: &Value) -> Result<bool, EntityError> {
     if ids.is_empty() && id_pattern.is_none() {
-        return true;
+        return Ok(true);
     }
-    let Some(id) = extract_id(expanded) else {
-        return false;
-    };
+    let id = extract_id(expanded).map_err(EntityError::internal)?;
     if !ids.is_empty() && !ids.contains(&id) {
-        return false;
+        return Ok(false);
     }
-    id_pattern.is_none_or(|pattern| pattern.is_match(id.as_str()))
+    Ok(id_pattern.is_none_or(|pattern| pattern.is_match(id.as_str())))
 }
 
 /// Clause 4.17 type selection.
-fn type_matches(type_expr: Option<&TypeExpr>, expanded: &Value) -> bool {
+fn type_matches(type_expr: Option<&TypeExpr>, expanded: &Value) -> Result<bool, EntityError> {
     let Some(type_expr) = type_expr else {
-        return true;
+        return Ok(true);
     };
-    let types = extract_types(expanded);
+    let types = extract_types(expanded).map_err(EntityError::internal)?;
     let names: Vec<&str> = types.iter().map(EntityTypeName::as_str).collect();
-    type_expr.matches(&names)
+    Ok(type_expr.matches(&names))
 }
 
 /// Clause 5.7.2 `attrs`: the entity must carry at least one attribute named.
@@ -149,6 +157,11 @@ mod tests {
     };
     use serde_json::{Value, json};
     use std::str::FromStr;
+
+    /// Whether `residual` admits `payload`, whose identity the fixtures keep readable.
+    fn admits(residual: &ResidualFilter, payload: &Value) -> bool {
+        matches(residual, payload).expect("the fixture payload's identity is readable")
+    }
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
     const TEMPERATURE: &str = "https://example.com/temperature";
@@ -197,7 +210,7 @@ mod tests {
     fn an_empty_residual_admits_every_entity() {
         let residual = ResidualFilter::default();
         assert!(residual.is_empty());
-        assert!(matches(&residual, &entity(20.0)));
+        assert!(admits(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -205,8 +218,8 @@ mod tests {
         // Clause 4.9: `temperature>25` selects only instances above the bound.
         let residual = ResidualFilter::over(EntitySelection::builder().q_expr(Some(q("\"https://example.com/temperature\">25"))).build());
         assert!(!residual.is_empty());
-        assert!(!matches(&residual, &entity(20.0)));
-        assert!(matches(&residual, &entity(30.0)));
+        assert!(!admits(&residual, &entity(20.0)));
+        assert!(admits(&residual, &entity(30.0)));
     }
 
     #[test]
@@ -217,7 +230,7 @@ mod tests {
         let residual = ResidualFilter::over(EntitySelection::builder().q_expr(Some(q("\"https://example.com/temperature\">25"))).build());
         for temperature in [0.0, 25.0, 25.5, 100.0] {
             let payload = entity(temperature);
-            pretty_assertions::assert_eq!(matches(&residual, &payload), eval::evaluate(&expr, &payload), "disagreement at {temperature}");
+            pretty_assertions::assert_eq!(admits(&residual, &payload), eval::evaluate(&expr, &payload), "disagreement at {temperature}");
         }
     }
 
@@ -225,15 +238,15 @@ mod tests {
     fn a_residual_geo_filter_excludes_an_entity_outside_the_reference_geometry() {
         // Clause 4.10: `near;maxDistance==1000` about the reference point.
         let residual = ResidualFilter::over(EntitySelection::builder().geo(Some(near_berlin())).build());
-        assert!(matches(&residual, &located(13.4, 52.5)));
-        assert!(!matches(&residual, &located(13.4, 53.5)));
+        assert!(admits(&residual, &located(13.4, 52.5)));
+        assert!(!admits(&residual, &located(13.4, 53.5)));
     }
 
     #[test]
     fn a_residual_geo_filter_excludes_an_entity_that_carries_no_such_geoproperty() {
         // Clause 4.10 relates two geometries; an absent one relates to nothing.
         let residual = ResidualFilter::over(EntitySelection::builder().geo(Some(near_berlin())).build());
-        assert!(!matches(&residual, &entity(20.0)));
+        assert!(!admits(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -244,7 +257,7 @@ mod tests {
             "@id": "urn:ngsi-ld:Building:001",
             LOCATION: [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "{\"type\":\"Point\",\"coordinates\":[13.4,52.5]}"}]}]
         }]);
-        assert!(matches(&residual, &payload));
+        assert!(admits(&residual, &payload));
     }
 
     #[test]
@@ -255,8 +268,8 @@ mod tests {
                 .scope_q(Some(ScopeQuery::parse("/A/#").expect("valid scopeQ")))
                 .build(),
         );
-        assert!(matches(&residual, &scoped(&["/A/B/C"])));
-        assert!(!matches(&residual, &scoped(&["/B"])));
+        assert!(admits(&residual, &scoped(&["/A/B/C"])));
+        assert!(!admits(&residual, &scoped(&["/B"])));
     }
 
     #[test]
@@ -271,9 +284,9 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(matches(&residual, &entity(20.0)));
+        assert!(admits(&residual, &entity(20.0)));
         let vehicle = json!([{"@id": "urn:ngsi-ld:Vehicle:001", "@type": ["https://example.com/Vehicle"]}]);
-        assert!(!matches(&residual, &vehicle));
+        assert!(!admits(&residual, &vehicle));
     }
 
     #[test]
@@ -289,7 +302,7 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(matches(&residual, &entity(20.0)));
+        assert!(admits(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -302,7 +315,7 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(!matches(&residual, &entity(20.0)));
+        assert!(!admits(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -316,7 +329,7 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(!matches(&residual, &entity(20.0)));
+        assert!(!admits(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -330,7 +343,7 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(!matches(&residual, &entity(20.0)));
+        assert!(!admits(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -342,7 +355,7 @@ mod tests {
                 .build(),
         );
         // The `q` half holds and the `scopeQ` half does not.
-        assert!(!matches(&residual, &entity(20.0)));
+        assert!(!admits(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -364,10 +377,10 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(matches(&residual, &entity("urn:ngsi-ld:Building:001", "https://example.com/Office")));
-        assert!(matches(&residual, &entity("urn:ngsi-ld:Building:002", "https://example.com/Warehouse")));
-        assert!(!matches(&residual, &entity("urn:ngsi-ld:Building:001", "https://example.com/Warehouse")));
-        assert!(!matches(&residual, &entity("urn:ngsi-ld:Building:002", "https://example.com/Office")));
+        assert!(admits(&residual, &entity("urn:ngsi-ld:Building:001", "https://example.com/Office")));
+        assert!(admits(&residual, &entity("urn:ngsi-ld:Building:002", "https://example.com/Warehouse")));
+        assert!(!admits(&residual, &entity("urn:ngsi-ld:Building:001", "https://example.com/Warehouse")));
+        assert!(!admits(&residual, &entity("urn:ngsi-ld:Building:002", "https://example.com/Office")));
     }
 
     /// One entity carrying every member the seven predicate kinds address.
@@ -564,7 +577,7 @@ mod tests {
             .chain(scope_selection_cases());
 
         for (clause, selection, expected) in cases {
-            pretty_assertions::assert_eq!(matches(&ResidualFilter::over(selection), &entity), expected, "{clause}");
+            pretty_assertions::assert_eq!(admits(&ResidualFilter::over(selection), &entity), expected, "{clause}");
         }
     }
 }

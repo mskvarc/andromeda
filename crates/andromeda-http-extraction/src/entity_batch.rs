@@ -13,14 +13,14 @@ use crate::{
 };
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri as EntityId;
+use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use axum::{
     body::Bytes,
     extract::{FromRequest, FromRequestParts, OriginalUri, Request},
-    http::{HeaderMap, StatusCode, Uri},
+    http::{HeaderMap, StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
 };
 use headers::HeaderMapExt;
@@ -29,7 +29,7 @@ use serde_json::Value;
 use std::{collections::HashSet, mem::take};
 
 /// Construct a deliberate public batch-extraction failure with request instance.
-fn public_error(error_type: NgsiLdErrorType, detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
+fn public_error(error_type: NgsiLdErrorType, detail: impl Into<String>, instance: &HttpUri) -> ProblemResponse {
     ClassifiedReport::public(error_type, detail).with_instance(instance.clone())
 }
 
@@ -162,7 +162,7 @@ fn carries_context_link(headers: &HeaderMap) -> bool {
 ///
 /// The body is known to be non-empty: [`BatchBody`] exists only for a request
 /// that declared a payload length and carried one.
-fn batch_items(body: &Bytes, uri: &Uri) -> Result<Vec<Value>, ProblemResponse> {
+fn batch_items(body: &Bytes, uri: &HttpUri) -> Result<Vec<Value>, ProblemResponse> {
     let value: Value = parse_batch_body_json(body).map_err(|error| public_error(NgsiLdErrorType::InvalidRequest, format!("invalid JSON: {error}"), uri))?;
 
     match value {
@@ -225,8 +225,11 @@ fn merge_item_contexts(items: &[Value], context: ContextSpec) -> ContextSpec {
 ///
 /// Returns a [`ProblemResponse`] for the malformed content that fails the
 /// whole request: a null array item (clauses 5.6.7 to 5.6.10), or an item
-/// whose `id` is absent or not a URI.
-fn batch_entity_id(item: &Value, uri: &Uri) -> Result<EntityId, ProblemResponse> {
+/// whose `id` is absent or not a URI. A `BatchEntityError` names the entity it
+/// reports on, so an item whose `id` is a URI too long to be an identifier has
+/// nothing to report against either: it fails the request as the
+/// `BadRequestData` clause 5.5.4 makes of content the broker cannot store.
+fn batch_entity_id(item: &Value, uri: &HttpUri) -> Result<Uri, ProblemResponse> {
     // Clause 5.6.7 to 5.6.10: a null array item is malformed batch content,
     // reported as BadRequestData for the whole request rather than the
     // InvalidRequest a missing id raises.
@@ -238,8 +241,11 @@ fn batch_entity_id(item: &Value, uri: &Uri) -> Result<EntityId, ProblemResponse>
         .and_then(|o| o.get("id"))
         .and_then(|v| v.as_str())
         .ok_or_else(|| public_error(NgsiLdErrorType::InvalidRequest, "every batch entity must contain a valid URI id", uri))?
-        .parse::<EntityId>()
-        .map_err(|_error| public_error(NgsiLdErrorType::InvalidRequest, "every batch entity must contain a valid URI id", uri))
+        .parse::<Uri>()
+        .map_err(|error| match error {
+            UriParseError::Malformed => public_error(NgsiLdErrorType::InvalidRequest, "every batch entity must contain a valid URI id", uri),
+            UriParseError::TooLong(too_long) => public_error(NgsiLdErrorType::BadRequestData, format!("a batch entity id is not storable: {too_long}"), uri),
+        })
 }
 
 /// Decode one batch array item into its entity.
@@ -253,7 +259,7 @@ fn batch_entity_id(item: &Value, uri: &Uri) -> Result<EntityId, ProblemResponse>
 /// number the model cannot represent, carries an `@context` its representation
 /// forbids or lacks one it requires (clause 6.3.5), or is not an entity.
 /// Clause 5.6.7 reports these per entity, leaving the rest of the batch intact.
-fn decode_batch_item(mut item: Value, entity_id: EntityId, content_kind: ContentKind) -> Result<Entity, Box<BatchEntityError>> {
+fn decode_batch_item(mut item: Value, entity_id: Uri, content_kind: ContentKind) -> Result<Entity, Box<BatchEntityError>> {
     if let Err(error) = canonicalize_numbers(&mut item) {
         return Err(Box::new(BatchEntityError::new(entity_id, NgsiLdErrorType::BadRequestData, &error.to_string())));
     }
@@ -303,7 +309,11 @@ fn decode_batch_item(mut item: Value, entity_id: EntityId, content_kind: Content
 /// per entity in the returned [`BatchEntityError`] list, leaving the rest of
 /// the batch intact. The clause 6.3.4 media-type and payload-length refusals
 /// are not among them: [`BatchBody`] raised those before this was reached.
-pub fn parse_batch_entities(batch: &BatchBody, context: &ContextUrl, uri: &Uri) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), ProblemResponse> {
+pub fn parse_batch_entities(
+    batch: &BatchBody,
+    context: &ContextUrl,
+    uri: &HttpUri,
+) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), ProblemResponse> {
     let content_kind = batch.content_kind;
     let items = batch_items(&batch.body, uri)?;
 
@@ -334,6 +344,7 @@ mod tests {
         entity_batch::{BatchBody, parse_batch_entities},
     };
     use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
         body::{Body, to_bytes},
@@ -354,12 +365,12 @@ mod tests {
     /// The batch body an `application/json` request carries, as the extractor
     /// admits it: the clause 6.3.4 preconditions are the extractor's, so a
     /// fixture reaches [`parse_batch_entities`] only by passing them.
-    async fn json_batch(body: &'static str) -> BatchBody {
+    async fn json_batch(body: &str) -> BatchBody {
         let request = Request::builder()
             .uri(batch_uri())
             .header(CONTENT_TYPE, "application/json")
             .header(CONTENT_LENGTH, body.len())
-            .body(Body::from(body))
+            .body(Body::from(body.to_owned()))
             .expect("request builds");
         match BatchBody::from_request(request, &()).await {
             Ok(batch) => batch,
@@ -395,6 +406,26 @@ mod tests {
         let batch = json_batch(r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle"},null]"#).await;
         let error = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect_err("a null item fails the request");
         pretty_assertions::assert_eq!(error.problem().error_type(), NgsiLdErrorType::BadRequestData);
+    }
+
+    /// A `BatchEntityError` names the entity it reports on, so an item whose
+    /// `id` cannot be an identifier fails the request. One too long to store
+    /// is content the broker refuses (clause 5.5.4), not a malformed request.
+    #[tokio::test]
+    async fn a_batch_item_whose_id_is_too_long_fails_the_request_with_bad_request_data() {
+        let prefix = "urn:ngsi-ld:Vehicle:";
+        let long_id = format!("{prefix}{}", "a".repeat(IDENTIFIER_BYTE_LIMIT + 1 - prefix.len()));
+        let body = format!(r#"[{{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle"}},{{"id":"{long_id}","type":"Vehicle"}}]"#);
+        let batch = json_batch(&body).await;
+        let error = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect_err("an over-long id fails the request");
+        pretty_assertions::assert_eq!(error.problem().error_type(), NgsiLdErrorType::BadRequestData);
+    }
+
+    #[tokio::test]
+    async fn a_batch_item_whose_id_is_not_a_uri_still_fails_with_invalid_request() {
+        let batch = json_batch(r#"[{"id":"not a uri","type":"Vehicle"}]"#).await;
+        let error = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect_err("a non-URI id fails the request");
+        pretty_assertions::assert_eq!(error.problem().error_type(), NgsiLdErrorType::InvalidRequest);
     }
 
     #[tokio::test]

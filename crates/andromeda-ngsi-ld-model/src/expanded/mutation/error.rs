@@ -1,5 +1,6 @@
 //! Failures raised by the entity- and attribute-level mutation operations.
 
+use crate::expanded::dataset_id::InstanceDatasetIdError;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use iri_rs::IriBuf;
 use thiserror::Error;
@@ -35,6 +36,11 @@ pub enum ExpandedEntityError {
         /// The offending attribute key carried by the fragment.
         name: String,
     },
+    /// An attribute instance carries a `datasetId` that is not an identifier,
+    /// so the instance it names cannot be told apart from any other (clause
+    /// 4.5.5).
+    #[error(transparent)]
+    InvalidDatasetId(#[from] InstanceDatasetIdError),
     /// An attribute instance declared a type outside the clause-5.2.4 set.
     #[error("attribute instance has an invalid attribute type")]
     InvalidAttributeType,

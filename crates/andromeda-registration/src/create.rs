@@ -4,10 +4,9 @@ use crate::{
     RegistrationService,
     context_source_properties::expand_context_source_properties,
     error::RegistrationError,
-    identifier::generate_registration_id,
+    identifier::{client_registration_id, generate_registration_id},
     mode_rules::check_conflicts,
     payload::extract_create_params,
-    registration_validation_reason::RegistrationValidationReason,
     validation::{RegistrationShape, validate_shape},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, scoped_context_admission::reject_scoped_user_contexts};
@@ -34,9 +33,7 @@ impl RegistrationService {
     pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<Uri, RegistrationError> {
         let id = match payload.get("id").and_then(Value::as_str) {
             Some(raw) => {
-                let id = raw
-                    .parse::<Uri>()
-                    .map_err(|_| RegistrationError::Validation(RegistrationValidationReason::IdNotUri))?;
+                let id = client_registration_id(raw)?;
                 if self.repo.exists(&id).await? {
                     return Err(RegistrationError::already_exists(&id));
                 }

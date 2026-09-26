@@ -2,7 +2,7 @@
 
 use crate::{
     expanded::{
-        dataset_id::get_instance_dataset_id,
+        dataset_id::{InstanceDatasetIdError, get_instance_dataset_id},
         instance_key::{AttributeInstanceKey, is_system_attribute},
         node::expanded_object_ref,
     },
@@ -52,9 +52,14 @@ pub struct AttributeChange {
 /// a retained node whose expanded representation differs is updated. Entity
 /// keywords, system attributes, and `scope` are not Attributes and are
 /// excluded.
-pub fn classify_attribute_changes(previous: &Value, current: &Value) -> Vec<AttributeChange> {
-    let previous = attribute_instances(previous);
-    let current = attribute_instances(current);
+///
+/// # Errors
+///
+/// Returns [`InstanceDatasetIdError`] when either state carries an instance
+/// whose `datasetId` is not an identifier, since its identity cannot be told.
+pub fn classify_attribute_changes(previous: &Value, current: &Value) -> Result<Vec<AttributeChange>, InstanceDatasetIdError> {
+    let previous = attribute_instances(previous)?;
+    let current = attribute_instances(current)?;
     let mut changes = Vec::with_capacity(previous.len().saturating_add(current.len()));
 
     for (key, previous_instance) in &previous {
@@ -77,7 +82,7 @@ pub fn classify_attribute_changes(previous: &Value, current: &Value) -> Vec<Attr
         });
     }
     changes.sort_by(compare_changes);
-    changes
+    Ok(changes)
 }
 
 /// Whether two instances of the same `(attribute, datasetId)` differ in their
@@ -105,10 +110,10 @@ fn instance_data_differs(current: &Value, previous: &Value) -> bool {
 }
 
 /// Index one expanded entity's attribute instances by their dataset-partitioned key.
-fn attribute_instances(expanded: &Value) -> HashMap<AttributeInstanceKey, &Value> {
+fn attribute_instances(expanded: &Value) -> Result<HashMap<AttributeInstanceKey, &Value>, InstanceDatasetIdError> {
     let mut instances_by_key = HashMap::new();
     let Some(entity) = expanded_object_ref(expanded) else {
-        return instances_by_key;
+        return Ok(instances_by_key);
     };
     for (raw_name, value) in entity {
         if raw_name.starts_with('@') {
@@ -127,13 +132,13 @@ fn attribute_instances(expanded: &Value) -> HashMap<AttributeInstanceKey, &Value
             instances_by_key.insert(
                 AttributeInstanceKey {
                     attr: attr.clone(), // clone: every dataset-partitioned instance owns its key.
-                    dataset_id: get_instance_dataset_id(instance),
+                    dataset_id: get_instance_dataset_id(instance)?,
                 },
                 instance,
             );
         }
     }
-    instances_by_key
+    Ok(instances_by_key)
 }
 
 /// Order two changes by attribute name, then by `datasetId`, for a stable result.
@@ -178,7 +183,7 @@ mod tests {
             "https://example.com/speed": [property(4, None), property(5, Some("urn:dataset:new"))],
             "https://example.com/unchanged": [property(3, None)]
         }]);
-        let changes = classify_attribute_changes(&previous, &current);
+        let changes = classify_attribute_changes(&previous, &current).expect("readable datasetIds");
         pretty_assertions::assert_eq!(changes.len(), 3);
         assert!(
             changes
@@ -198,6 +203,6 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/A"}],
             "https://uri.etsi.org/ngsi-ld/modifiedAt": [{"@value": "2026-01-01T00:00:00Z"}]
         }]);
-        pretty_assertions::assert_eq!(classify_attribute_changes(&previous, &current), Vec::<AttributeChange>::new());
+        pretty_assertions::assert_eq!(classify_attribute_changes(&previous, &current), Ok(Vec::<AttributeChange>::new()));
     }
 }

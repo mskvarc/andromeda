@@ -30,7 +30,7 @@ use crate::{
         prepare::PreparedEntity,
     },
     error::EntityError,
-    expanded_member::unwrap_expanded_ref,
+    expanded_member::{unwrap_expanded_ref, written_attribute_names},
     notification_plan::attribute_change_groups,
     side_effect::BatchSideEffectMode,
     write_admission::BatchWrite,
@@ -41,9 +41,9 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    expanded::{
-        entity_member::extract_attribute_names,
-        mutation::entity::{DroppedSentinels, drop_deletion_sentinels, update_entity_attrs},
+    expanded::mutation::{
+        deletion_sentinel::{DroppedSentinels, drop_deletion_sentinels},
+        entity::update_entity_attrs,
     },
 };
 use chrono::{DateTime, Utc};
@@ -102,10 +102,15 @@ impl EntityService {
                 }
                 None => self.chunk_insert(target, entity, Precondition::MustNotExist, now),
             };
-            // clone: an `Arc` handle kept for a possible retry, which must not
-            // re-expand the request payload.
-            payloads.insert(write.id.clone(), Arc::clone(&write.observed));
-            writes.push(write);
+            match write {
+                Ok(write) => {
+                    // clone: an `Arc` handle kept for a possible retry, which must not
+                    // re-expand the request payload.
+                    payloads.insert(write.id.clone(), Arc::clone(&write.observed));
+                    writes.push(write);
+                }
+                Err(failure) => errors.push(*failure),
+            }
         }
 
         let mut success = Vec::new();
@@ -135,14 +140,23 @@ impl EntityService {
                 let Some(payload) = payloads.get(&id) else {
                     continue;
                 };
-                let changed = extract_attribute_names(payload);
+                let changed = match written_attribute_names(payload) {
+                    Ok(changed) => changed,
+                    Err(error) => {
+                        errors.push((id, error));
+                        continue;
+                    }
+                };
                 // clone: `Arc` ref-count bumps; the payload is reused for every
                 // attempt this entity needs.
                 let write = match snapshots.get(&id) {
                     Some(snapshot) => self.replacement_write(target, id, payload, &snapshot.payload, snapshot.modified_at, now),
                     None => self.chunk_insert_payload(target, id, Arc::clone(payload), changed, Precondition::MustNotExist, now),
                 };
-                retry_writes.push(write);
+                match write {
+                    Ok(write) => retry_writes.push(write),
+                    Err(failure) => errors.push(*failure),
+                }
             }
             outcome = self.commit_chunk(target, retry_writes, mode).await?;
         }
@@ -201,7 +215,10 @@ impl EntityService {
                 // created by someone else, and this request has nothing to add
                 // to it. Reported as neither a success nor a failure, which is
                 // what this path has always done.
-                writes.push(self.chunk_insert_created(target, entity, now));
+                match self.chunk_insert_created(target, entity, now) {
+                    Ok(write) => writes.push(write),
+                    Err(failure) => errors.push(*failure),
+                }
                 continue;
             };
 
@@ -216,9 +233,15 @@ impl EntityService {
 
             // Upsert-update mirrors the single attribute update (clause 5.6.9):
             // the per-attribute triggers, partitioned from the before/after diff.
-            let groups = attribute_change_groups(existing, &merged);
+            let groups = match attribute_change_groups(existing, &merged) {
+                Ok(groups) => groups,
+                Err(error) => {
+                    errors.push((id, error));
+                    continue;
+                }
+            };
 
-            writes.push(self.chunk_update(
+            match self.chunk_update(
                 target,
                 id,
                 UpdatedPayloads {
@@ -229,7 +252,10 @@ impl EntityService {
                 &groups,
                 Precondition::MustExist,
                 now,
-            ));
+            ) {
+                Ok(write) => writes.push(write),
+                Err(failure) => errors.push(*failure),
+            }
         }
 
         let outcome = self.commit_chunk(target, writes, mode).await?.settled();
@@ -252,14 +278,21 @@ impl EntityService {
     /// where the deletions the update branch admits have nothing to delete:
     /// they are dropped, and only a payload that carried one is re-derived,
     /// so an ordinary create keeps the columns the preparation pass computed.
-    fn chunk_insert_created(&self, target: &ContextTarget, prepared: PreparedEntity, now: DateTime<Utc>) -> ChunkWrite {
+    ///
+    /// # Errors
+    ///
+    /// Answers the entity's identifier with the failure, boxed because a
+    /// failure is the rare outcome, for the batch's per-entity report, when the payload's members cannot be read.
+    fn chunk_insert_created(&self, target: &ContextTarget, prepared: PreparedEntity, now: DateTime<Utc>) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
         let mut prepared = prepared;
         match drop_deletion_sentinels(&mut prepared.expanded) {
             DroppedSentinels::Unchanged => self.chunk_insert(target, prepared, Precondition::None, now),
             DroppedSentinels::Dropped => {
                 let payload = Arc::new(prepared.expanded);
-                let changed_attributes = extract_attribute_names(&payload);
-                self.chunk_insert_payload(target, prepared.id, payload, changed_attributes, Precondition::None, now)
+                match written_attribute_names(&payload) {
+                    Ok(changed_attributes) => self.chunk_insert_payload(target, prepared.id, payload, changed_attributes, Precondition::None, now),
+                    Err(error) => Err(Box::new((prepared.id, error))),
+                }
             }
         }
     }
@@ -269,6 +302,11 @@ impl EntityService {
     ///
     /// Mirrors the single replace (clause 5.6.18): one precise event for every
     /// created, updated, or deleted attribute instance.
+    ///
+    /// # Errors
+    ///
+    /// Answers the entity's identifier with the failure, boxed because a
+    /// failure is the rare outcome, for the batch's per-entity report, when either state's members cannot be read.
     fn replacement_write(
         &self,
         target: &ContextTarget,
@@ -277,8 +315,11 @@ impl EntityService {
         previous: &Value,
         modified_at: DateTime<Utc>,
         now: DateTime<Utc>,
-    ) -> ChunkWrite {
-        let groups = attribute_change_groups(previous, payload);
+    ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
+        let groups = match attribute_change_groups(previous, payload) {
+            Ok(groups) => groups,
+            Err(error) => return Err(Box::new((id, error))),
+        };
         self.chunk_update(
             target,
             id,

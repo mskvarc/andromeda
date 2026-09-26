@@ -25,15 +25,16 @@
 -- any role that is not the owner reads and cannot write, so introducing a
 -- separate runtime role later needs no further migration.
 --
--- Column order is physical, as every relation in this schema now is: not-null
+-- Column order is physical, as every relation in this schema is: not-null
 -- fixed-width columns first in descending alignment, variable-length last.
 -- ============================================================================
 
 CREATE TABLE schema_metadata (
     applied_at TIMESTAMPTZ NOT NULL,
     schema_version INTEGER NOT NULL,
-    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
+    singleton BOOLEAN NOT NULL DEFAULT TRUE,
     migrations_sha256 TEXT COLLATE "C" NOT NULL,
+    CONSTRAINT pk_schema_metadata PRIMARY KEY (singleton),
     CONSTRAINT chk_schema_metadata_singleton CHECK (singleton),
     CONSTRAINT chk_schema_metadata_version_positive CHECK (schema_version > 0),
     CONSTRAINT chk_schema_metadata_digest_hex CHECK (migrations_sha256 ~ '^[0-9a-f]{64}$')

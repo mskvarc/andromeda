@@ -1,19 +1,22 @@
 //! The NGSI-LD compacted-name grammar and the reference type built on it.
 
-use crate::{name::grammar::NameBuf, uri::Uri};
+use crate::{identifier_length::IdentifierTooLong, name::grammar::NameBuf, uri::Uri};
 use compact_str::CompactString;
-use derive_more::{AsRef, Deref, Display, From, Into};
+use derive_more::{AsRef, Deref, Display, Into};
 use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
 
 /// Error returned when a compacted NGSI-LD reference string is invalid.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum NgsiLdReferenceError {
     /// The value was empty.
     #[error("NGSI-LD reference must not be empty")]
     Empty,
+    /// The value is longer than a name may be.
+    #[error(transparent)]
+    TooLong(#[from] IdentifierTooLong),
     /// The reference did not match any supported NGSI-LD compacted or expanded form.
     #[error("invalid NGSI-LD reference: {0}")]
     Invalid(String),
@@ -28,12 +31,18 @@ pub enum NgsiLdReferenceError {
 ///
 /// # Errors
 ///
-/// Returns [`NgsiLdReferenceError::Empty`] for an empty value and
-/// [`NgsiLdReferenceError::Invalid`] when no accepted form matches.
+/// Returns [`NgsiLdReferenceError::Empty`] for an empty value,
+/// [`NgsiLdReferenceError::TooLong`] for one longer than
+/// [`IDENTIFIER_BYTE_LIMIT`], and [`NgsiLdReferenceError::Invalid`] when no
+/// accepted form matches. The length is checked before the grammar, because the
+/// IRI grammar admits a name of any length that the store would then refuse.
+///
+/// [`IDENTIFIER_BYTE_LIMIT`]: crate::identifier_length::IDENTIFIER_BYTE_LIMIT
 pub fn validate_ngsi_ld_name(value: &str) -> Result<(), NgsiLdReferenceError> {
     if value.is_empty() {
         return Err(NgsiLdReferenceError::Empty);
     }
+    IdentifierTooLong::check(value)?;
     if Uri::from_str(value).is_ok() || IriBuf::from_str(value).is_ok() || NameBuf::new(value.to_string()).is_ok() {
         return Ok(());
     }
@@ -54,13 +63,17 @@ validated_ngsi_name! {
     /// The compact wire form can be a short name, a compact IRI, or an expanded
     /// IRI/URI.
     NgsiLdReference,
-    derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, From, Into),
+    derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, Into),
     as_ref(str, CompactString)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::reference::NgsiLdReference;
+    use crate::{
+        identifier_length::IDENTIFIER_BYTE_LIMIT,
+        reference::{NgsiLdReference, NgsiLdReferenceError},
+    };
+    use iri_rs::IriBuf;
 
     #[test]
     fn ngsi_ld_reference_accepts_short_name() {
@@ -86,4 +99,6 @@ mod tests {
         pretty_assertions::assert_eq!(String::from(parsed), "https://example.com/Vehicle");
         assert!("".parse::<NgsiLdReference>().is_err());
     }
+
+    name_length_tests!(NgsiLdReference);
 }

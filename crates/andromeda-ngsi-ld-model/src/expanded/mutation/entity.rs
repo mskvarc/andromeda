@@ -2,9 +2,13 @@
 //! (5.6.17, behaviour in 5.5.4).
 
 use crate::expanded::{
-    dataset_id::get_instance_dataset_id,
+    dataset_id::{InstanceDatasetIdError, get_instance_dataset_id, position_of_dataset},
     merge::{InstancePatchDepth, deep_merge_attribute, remove_instances_by_dataset},
-    mutation::{error::ExpandedEntityError, selection::OverwritePolicy},
+    mutation::{
+        deletion_sentinel::{member_is_deletion, member_is_scope_deletion},
+        error::ExpandedEntityError,
+        selection::OverwritePolicy,
+    },
     node::{expanded_object_mut, expanded_object_ref},
     null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel},
 };
@@ -25,7 +29,8 @@ use std::{borrow::Cow, slice::from_ref};
 ///
 /// Returns [`ExpandedEntityError::EntityNotExpanded`] or
 /// [`ExpandedEntityError::PatchNotExpanded`] if either side is not an expanded
-/// JSON-LD node.
+/// JSON-LD node, and [`ExpandedEntityError::InvalidDatasetId`] when an instance
+/// on either side carries a `datasetId` that is not an identifier.
 pub fn merge_entity(entity: &mut Value, patch: &Value, default_observed_at: Option<DateTime<Utc>>) -> Result<(), ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
     let patch_obj = expanded_object_ref(patch).ok_or(ExpandedEntityError::PatchNotExpanded)?;
@@ -59,10 +64,10 @@ pub fn merge_entity(entity: &mut Value, patch: &Value, default_observed_at: Opti
         }
 
         let patch_instances = match default_observed_at {
-            Some(observed_at) => Cow::Owned(with_default_observed_at(entity_obj.get(key), patch_instances, observed_at)),
+            Some(observed_at) => Cow::Owned(with_default_observed_at(entity_obj.get(key), patch_instances, observed_at)?),
             None => Cow::Borrowed(patch_instances),
         };
-        apply_instance_patch(entity_obj, key, &patch_instances, InstancePatchDepth::DeepMerge);
+        apply_instance_patch(entity_obj, key, &patch_instances, InstancePatchDepth::DeepMerge)?;
     }
 
     Ok(())
@@ -71,17 +76,16 @@ pub fn merge_entity(entity: &mut Value, patch: &Value, default_observed_at: Opti
 /// Table 6.5.3.4-1 `observedAt`: the patch instances, each one that names no
 /// `observedAt` while the existing instance it merges into (same `datasetId`)
 /// carries one given `observed_at` in its place.
-fn with_default_observed_at(existing: Option<&Value>, patch_instances: &[Value], observed_at: DateTime<Utc>) -> Vec<Value> {
+fn with_default_observed_at(existing: Option<&Value>, patch_instances: &[Value], observed_at: DateTime<Utc>) -> Result<Vec<Value>, InstanceDatasetIdError> {
     let existing_instances = existing.and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     patch_instances
         .iter()
         .map(|patch_instance| {
-            let dataset_id = get_instance_dataset_id(patch_instance);
-            let previously_observed = existing_instances
-                .iter()
-                .find(|instance| get_instance_dataset_id(instance) == dataset_id)
+            let dataset_id = get_instance_dataset_id(patch_instance)?;
+            let previously_observed = position_of_dataset(existing_instances, dataset_id.as_ref())?
+                .and_then(|position| existing_instances.get(position))
                 .is_some_and(|instance| instance.get(properties::OBSERVED_AT.as_str()).is_some());
-            match patch_instance.as_object() {
+            Ok(match patch_instance.as_object() {
                 Some(instance) if previously_observed && !instance.contains_key(properties::OBSERVED_AT.as_str()) => {
                     let mut stamped = instance.clone(); // clone: the patch is borrowed and the stamped instance is a new value
                     // Table 6.5.3.4-1's `observedAt` is a value the client
@@ -95,7 +99,7 @@ fn with_default_observed_at(existing: Option<&Value>, patch_instances: &[Value],
                     Value::Object(stamped)
                 }
                 Some(_) | None => patch_instance.clone(), // clone: the patch is borrowed and the result owns every instance
-            }
+            })
         })
         .collect()
 }
@@ -109,96 +113,25 @@ fn with_default_observed_at(existing: Option<&Value>, patch_instances: &[Value],
 /// Applying them one at a time is what keeps an update that shares the array
 /// with a sentinel from being dropped, and stops a datasetId-less sentinel from
 /// skipping the instances that follow it.
-fn apply_instance_patch(entity_obj: &mut Map<String, Value>, key: &str, patch_instances: &[Value], depth: InstancePatchDepth) {
+fn apply_instance_patch(
+    entity_obj: &mut Map<String, Value>,
+    key: &str,
+    patch_instances: &[Value],
+    depth: InstancePatchDepth,
+) -> Result<(), InstanceDatasetIdError> {
     if !patch_instances.iter().any(instance_is_null_sentinel) {
-        deep_merge_attribute(entity_obj, key, patch_instances, depth);
-        return;
+        return deep_merge_attribute(entity_obj, key, patch_instances, depth);
     }
 
     for patch_instance in patch_instances {
         if instance_is_null_sentinel(patch_instance) {
-            let dataset_id = get_instance_dataset_id(patch_instance);
-            remove_instances_by_dataset(entity_obj, key, dataset_id.as_ref());
+            let dataset_id = get_instance_dataset_id(patch_instance)?;
+            remove_instances_by_dataset(entity_obj, key, dataset_id.as_ref())?;
         } else {
-            deep_merge_attribute(entity_obj, key, from_ref(patch_instance), depth);
+            deep_merge_attribute(entity_obj, key, from_ref(patch_instance), depth)?;
         }
     }
-}
-
-/// Whether an expanded `scope` member is the NGSI-LD Null of a deleted scope.
-///
-/// Clause 4.18 admits the sentinel only "in case of deleted scopes", so it is
-/// the whole value of the member and never one entry beside a path; a member
-/// that mixes the two is refused before a write reaches this point.
-fn member_is_scope_deletion(member: &Value) -> bool {
-    member.as_array().is_some_and(|values| values.len() == 1 && member_is_null_sentinel(&values[0]))
-}
-
-/// Whether an expanded member carries nothing but deletions.
-///
-/// Clause 4.5.0 spells a deleted member either as the bare NGSI-LD Null the
-/// first level takes or as an instance whose value member is the sentinel, and
-/// an attribute member is an array of instances. A member every instance of
-/// which is a deletion asks for the whole member to go.
-fn member_is_deletion(member: &Value) -> bool {
-    match member {
-        Value::Array(instances) => {
-            !instances.is_empty()
-                && instances
-                    .iter()
-                    .all(|instance| member_is_null_sentinel(instance) || instance_is_null_sentinel(instance))
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => {
-            member_is_null_sentinel(member) || instance_is_null_sentinel(member)
-        }
-    }
-}
-
-/// What [`drop_deletion_sentinels`] found in the payload it was given.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DroppedSentinels {
-    /// At least one member asked for a deletion and was dropped.
-    Dropped,
-    /// The payload asked for no deletion and is unchanged.
-    Unchanged,
-}
-
-/// Drop every member of an expanded entity payload that asks for a deletion.
-///
-/// This is clause 5.5.8 applied to a target that contains nothing: "for each
-/// member of the Fragment, whose value is an NGSI-LD Null, contained by the
-/// target, the target member is deleted" leaves a deletion the target does not
-/// contain with nothing to do. Clause 5.6.8.4 is where that arises -- its
-/// update mode runs clause 5.6.2, which supports NGSI-LD Nulls, over a payload
-/// that creates the Entity when it does not exist yet -- and the sentinels are
-/// dropped rather than stored, because clause 4.5.0 reserves the value for a
-/// deletion and a stored one would be served back as data.
-///
-/// The entity `scope` member of clause 4.18 is dropped on the same terms: the
-/// clause admits the sentinel there "only in case of deleted scopes".
-pub fn drop_deletion_sentinels(entity: &mut Value) -> DroppedSentinels {
-    let Some(entity_obj) = expanded_object_mut(entity) else {
-        return DroppedSentinels::Unchanged;
-    };
-    let deletions: Vec<String> = entity_obj
-        .iter()
-        .filter(|(key, _)| !key.starts_with('@'))
-        .filter(|(key, member)| {
-            if key.as_str() == properties::SCOPE.as_str() {
-                member_is_scope_deletion(member)
-            } else {
-                member_is_deletion(member)
-            }
-        })
-        .map(|(key, _)| key.clone()) // clone: the removal outlives the borrow the scan holds
-        .collect();
-    if deletions.is_empty() {
-        return DroppedSentinels::Unchanged;
-    }
-    for key in deletions {
-        entity_obj.remove(&key);
-    }
-    DroppedSentinels::Dropped
+    Ok(())
 }
 
 /// Append attributes (clause 5.6.3): add attributes from `attrs` to `entity`.
@@ -215,8 +148,10 @@ pub fn drop_deletion_sentinels(entity: &mut Value) -> DroppedSentinels {
 /// # Errors
 ///
 /// Returns [`ExpandedEntityError::EntityNotExpanded`] if `entity` is not an
-/// expanded JSON-LD node, or [`ExpandedEntityError::AttributesNotObject`] if
-/// `attrs` is not a JSON object.
+/// expanded JSON-LD node, [`ExpandedEntityError::AttributesNotObject`] if
+/// `attrs` is not a JSON object, and [`ExpandedEntityError::InvalidDatasetId`]
+/// when an instance on either side carries a `datasetId` that is not an
+/// identifier.
 pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: OverwritePolicy) -> Result<Vec<AttributeName>, ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
     let attrs_obj = attrs.as_object().ok_or(ExpandedEntityError::AttributesNotObject)?;
@@ -287,8 +222,8 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
             };
             let mut any_skipped = false;
             for patch_inst in patch_instances {
-                let patch_ds = get_instance_dataset_id(patch_inst);
-                let already_exists = existing_arr.iter().any(|inst| get_instance_dataset_id(inst) == patch_ds);
+                let patch_ds = get_instance_dataset_id(patch_inst)?;
+                let already_exists = position_of_dataset(existing_arr, patch_ds.as_ref())?.is_some();
                 if already_exists {
                     any_skipped = true;
                 } else {
@@ -305,7 +240,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
         } else {
             // Append with overwrite replaces the matched instance (clause 5.6.3),
             // the same whole-instance semantics as Update Attributes.
-            deep_merge_attribute(entity_obj, key, patch_instances, InstancePatchDepth::ReplaceInstance);
+            deep_merge_attribute(entity_obj, key, patch_instances, InstancePatchDepth::ReplaceInstance)?;
         }
     }
 
@@ -325,8 +260,10 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
 /// # Errors
 ///
 /// Returns [`ExpandedEntityError::EntityNotExpanded`] if `entity` is not an
-/// expanded JSON-LD node, or [`ExpandedEntityError::AttributesNotObject`] if
-/// `attrs` is not a JSON object.
+/// expanded JSON-LD node, [`ExpandedEntityError::AttributesNotObject`] if
+/// `attrs` is not a JSON object, and [`ExpandedEntityError::InvalidDatasetId`]
+/// when an instance on either side carries a `datasetId` that is not an
+/// identifier.
 pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<AttributeName>, ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
     let attrs_obj = attrs.as_object().ok_or(ExpandedEntityError::AttributesNotObject)?;
@@ -392,7 +329,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Attr
             continue;
         };
 
-        apply_instance_patch(entity_obj, key, patch_instances, InstancePatchDepth::ReplaceInstance);
+        apply_instance_patch(entity_obj, key, patch_instances, InstancePatchDepth::ReplaceInstance)?;
     }
 
     Ok(not_updated)
@@ -401,10 +338,10 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Attr
 #[cfg(test)]
 mod tests {
     use crate::expanded::mutation::{
-        entity::{DroppedSentinels, append_entity_attrs, drop_deletion_sentinels, merge_entity, update_entity_attrs},
+        entity::{append_entity_attrs, merge_entity, update_entity_attrs},
         error::ExpandedEntityError,
         selection::OverwritePolicy,
-        speed_entity,
+        speed_entity::{self, property_instance},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -413,19 +350,6 @@ mod tests {
     /// The expanded IRI of the entity `scope` member (clause 4.18).
     fn scope_iri() -> &'static str {
         properties::SCOPE.as_str()
-    }
-
-    /// One expanded Property instance carrying `value`, optionally tagged with a
-    /// `datasetId`. A `value` of `urn:ngsi-ld:null` is a deletion sentinel.
-    fn property_instance(value: &Value, dataset: Option<&str>) -> Value {
-        let mut node = json!({
-            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
-            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]
-        });
-        if let Some(dataset) = dataset {
-            node["https://uri.etsi.org/ngsi-ld/datasetId"] = json!([{"@id": dataset}]);
-        }
-        node
     }
 
     /// An entity carrying `speed` with the given instances.
@@ -726,66 +650,6 @@ mod tests {
         update_entity_attrs(&mut entity, &patch).expect("update succeeds");
 
         assert!(entity[0].get("https://example.com/speed").is_none(), "no member was appended: {entity}");
-    }
-
-    /// Clause 5.6.8.4 update mode runs clause 5.6.2 over a payload that also
-    /// creates the Entity when it does not exist: on that branch the deletions
-    /// have nothing to delete and are dropped, while everything else is stored.
-    #[test]
-    fn dropping_deletion_sentinels_keeps_the_data_and_removes_every_deletion() {
-        let mut payload = json!([{
-            "@id": "urn:ngsi-ld:Device:1",
-            "@type": ["https://example.com/Device"],
-            scope_iri(): [{"@value": "urn:ngsi-ld:null"}],
-            "https://example.com/speed": [property_instance(&json!(10), None)],
-            "https://example.com/gone": [property_instance(&json!("urn:ngsi-ld:null"), None)],
-            "https://example.com/bare": [{"@value": "urn:ngsi-ld:null"}]
-        }]);
-
-        pretty_assertions::assert_eq!(drop_deletion_sentinels(&mut payload), DroppedSentinels::Dropped);
-
-        pretty_assertions::assert_eq!(payload[0]["@id"], json!("urn:ngsi-ld:Device:1"));
-        pretty_assertions::assert_eq!(
-            payload[0]["https://example.com/speed"][0]["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"],
-            json!(10)
-        );
-        for dropped in [scope_iri(), "https://example.com/gone", "https://example.com/bare"] {
-            assert!(payload[0].get(dropped).is_none(), "{dropped} is dropped: {payload}");
-        }
-    }
-
-    /// A payload that asks for no deletion is left exactly as it was, so the
-    /// create branch keeps using the preparation pass's own projection.
-    #[test]
-    fn dropping_deletion_sentinels_leaves_a_payload_without_one_unchanged() {
-        let original = json!([{
-            "@id": "urn:ngsi-ld:Device:1",
-            scope_iri(): [{"@value": "/Madrid"}],
-            "https://example.com/speed": [property_instance(&json!(10), None)]
-        }]);
-        let mut payload = original.clone();
-
-        pretty_assertions::assert_eq!(drop_deletion_sentinels(&mut payload), DroppedSentinels::Unchanged);
-
-        pretty_assertions::assert_eq!(payload, original);
-    }
-
-    /// An attribute whose instances mix a deletion with live data is not a
-    /// deletion of the member: the surviving instances are what the create
-    /// branch stores, so the member stays and the patch decides per instance.
-    #[test]
-    fn an_attribute_mixing_a_deletion_with_data_is_not_dropped_as_a_deletion() {
-        let mut payload = json!([{
-            "@id": "urn:ngsi-ld:Device:1",
-            "https://example.com/speed": [
-                property_instance(&json!("urn:ngsi-ld:null"), Some("urn:ngsi-ld:Dataset:A")),
-                property_instance(&json!(20), Some("urn:ngsi-ld:Dataset:B"))
-            ]
-        }]);
-
-        pretty_assertions::assert_eq!(drop_deletion_sentinels(&mut payload), DroppedSentinels::Unchanged);
-
-        assert!(payload[0].get("https://example.com/speed").is_some(), "{payload}");
     }
 
     /// Clause 5.6.2.4: "If scope is included in the Fragment and the target

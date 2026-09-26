@@ -4,7 +4,7 @@ use crate::jsonld_context::{
     kind_code::kind_of,
     rows::{ContextMetadataRow, ContextSummaryRow},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{identifier_length::IdentifierTooLong, uri::Uri};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 use andromeda_postgresql_codes::{jsonld_context_kind::JsonldContextKindCode, registry::UnknownCompactCode};
 use iri_rs::IriBuf;
@@ -27,6 +27,9 @@ pub enum ContextMapperError {
         #[source]
         source: url::ParseError,
     },
+    /// Stored URL column is longer than an identifier may be.
+    #[error("over-long URL in database: {0}")]
+    UrlLength(#[from] IdentifierTooLong),
     /// `number_of_hits` column was negative.
     #[error("negative number_of_hits in database: {value}")]
     NegativeHits {
@@ -84,7 +87,7 @@ pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata
 /// Convert a summary projection into the public URL when present, otherwise its local identifier.
 pub(crate) fn row_to_identifier(row: ContextSummaryRow) -> Result<Uri, ContextMapperError> {
     match row.url {
-        Some(raw) => Url::parse(&raw).map(Uri::Url).map_err(|source| ContextMapperError::Url { source }),
+        Some(raw) => Ok(Uri::try_from(Url::parse(&raw).map_err(|source| ContextMapperError::Url { source })?)?),
         None => row.id.parse().map_err(|_| ContextMapperError::LocalId { value: row.id }),
     }
 }

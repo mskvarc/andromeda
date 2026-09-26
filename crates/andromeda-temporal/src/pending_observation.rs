@@ -16,6 +16,7 @@
 
 use crate::{
     append_intent::{SequencedTemporalAppendIntent, TemporalAppendEntry, TemporalObservationIdentity},
+    error::TemporalError,
     port::history_reader::TemporalHistoryObservation,
     scope_observation::ScopeObservation,
 };
@@ -33,13 +34,22 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 
 /// Return whether an intent contributes both entity selection and history rows.
-pub(crate) fn intent_matches_query(sequenced: &SequencedTemporalAppendIntent, compiled: &CompiledTemporalQuery, selection: &ResidualFilter) -> bool {
-    let selection_matches = sequenced
-        .intent
-        .selection_value
-        .as_ref()
-        .is_some_and(|value| residual_filter::matches(selection, value));
-    selection_matches && !pending_observations(sequenced, compiled).is_empty()
+///
+/// # Errors
+///
+/// Returns [`TemporalError::Internal`] when the intent's selection value
+/// carries an `@id` or `@type` the selection cannot read: the write that
+/// queued the intent admitted both.
+pub(crate) fn intent_matches_query(
+    sequenced: &SequencedTemporalAppendIntent,
+    compiled: &CompiledTemporalQuery,
+    selection: &ResidualFilter,
+) -> Result<bool, TemporalError> {
+    let selection_matches = match sequenced.intent.selection_value.as_ref() {
+        Some(value) => residual_filter::matches(selection, value).map_err(TemporalError::internal)?,
+        None => false,
+    };
+    Ok(selection_matches && !pending_observations(sequenced, compiled).is_empty())
 }
 
 /// Project matching history entries from one pending intent.

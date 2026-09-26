@@ -1,7 +1,7 @@
 //! Failures reported by the atomic context-commit boundary.
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use std::sync::Arc;
+use std::{fmt::Display, sync::Arc};
 use thiserror::Error;
 
 /// A semantic submission failure or an implementation failure hidden behind
@@ -55,6 +55,16 @@ pub enum CommitError {
         /// Number of outcomes returned by the implementation.
         actual: usize,
     },
+}
+
+impl CommitError {
+    /// Construct an invariant failure from the fault that broke it.
+    ///
+    /// Takes `impl Display` so a typed source is handed over directly rather
+    /// than pre-rendered at the call site.
+    pub fn invariant(source: impl Display) -> CommitError {
+        CommitError::Invariant { detail: source.to_string() }
+    }
 }
 
 #[cfg(test)]

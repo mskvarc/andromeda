@@ -24,9 +24,9 @@ const ROWS_FOR_ENTITY: &str = "SELECT an.name AS attribute_name, \
      c.dataset_id, \
      c.attribute_kind, \
      c.value_kind, \
-     COALESCE(c.value_number::text, c.value_string, c.value_bool::text, \
-              c.value_datetime::text, c.value_uri, c.value_object::text, \
-              ST_AsText(c.value_geo)) AS value_text \
+     COALESCE(c.value_number::text, c.value_string, c.value_long_text, \
+              c.value_bool::text, c.value_datetime::text, c.value_uri, \
+              c.value_object::text, ST_AsText(c.value_geo)) AS value_text \
      FROM current_attribute_values AS c \
      JOIN entities AS e ON e.entity_key = c.entity_key \
      JOIN attribute_names AS an ON an.id = c.attribute_name_id \
@@ -80,6 +80,24 @@ pub async fn temporal_entity_exists(pool: &PgPool, entity_id: &str) -> bool {
         .await
         .expect("temporal entity count must be readable")
         > 0
+}
+
+/// Read which of the two String columns holds the default instance of one
+/// attribute, matched by the local name at the end of its expanded IRI, as
+/// `(value_string, value_long_text)`. Exactly one side is present for a String
+/// value: the indexed column up to the B-tree bound, the overflow column past it.
+pub async fn string_placement(pool: &PgPool, entity_id: &str, local_name: &str) -> (Option<String>, Option<String>) {
+    sqlx::query_as(
+        "SELECT c.value_string, c.value_long_text FROM current_attribute_values AS c \
+         JOIN entities AS e ON e.entity_key = c.entity_key \
+         JOIN attribute_names AS an ON an.id = c.attribute_name_id \
+         WHERE e.id = $1 AND c.dataset_id IS NULL AND an.name LIKE '%' || $2",
+    )
+    .bind(entity_id)
+    .bind(local_name)
+    .fetch_one(pool)
+    .await
+    .expect("the default instance of the attribute must be projected")
 }
 
 /// Resolve the dictionary identifier of an expanded attribute IRI ending in the

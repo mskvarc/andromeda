@@ -32,15 +32,12 @@ pub const GOD_FILE_SIGNAL_LIMIT: usize = 400;
 /// removed from this list, which a stale-entry check enforces, so the baseline
 /// can only shrink toward empty.
 pub const GOD_FILE_BASELINE: &[&str] = &[
-    "crates/andromeda-entity/src/mutation.rs",
     "crates/andromeda-entity/src/notification_recording_harness.rs",
     "crates/andromeda-federation/src/provision_batch.rs",
     "crates/andromeda-http-temporal/src/temporal/query.rs",
-    "crates/andromeda-postgresql-context-store/src/current_attribute_values/upsert.rs",
     "crates/andromeda-postgresql-maintenance/src/inspection.rs",
     "crates/andromeda-postgresql-name-dictionary/src/name_cache.rs",
     "crates/andromeda-postgresql-temporal-store/src/instance_mutation.rs",
-    "crates/andromeda-temporal/src/linked.rs",
 ];
 
 /// Assert that no production file exceeds the hard limit, and that the set of

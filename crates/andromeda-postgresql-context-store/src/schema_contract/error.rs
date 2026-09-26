@@ -58,6 +58,13 @@ pub enum SchemaContractError {
         /// The digest the tenant is stamped with.
         found: MigrationsDigest,
     },
+    /// The server encoding is not UTF-8, so the byte bounds the migrations
+    /// state measure different octets than the broker does.
+    #[error("tenant schema contract: the server encoding is {found}, but the schema requires UTF8")]
+    ServerEncodingNotUtf8 {
+        /// The encoding the server reports.
+        found: String,
+    },
     /// The server is below the version the schema depends on.
     #[error("tenant schema contract: PostgreSQL {found} is below the required minimum {required}")]
     PostgresBelowMinimum {
@@ -102,6 +109,7 @@ impl SchemaContractError {
             | SchemaContractError::Unstamped { .. }
             | SchemaContractError::SchemaVersionMismatch { .. }
             | SchemaContractError::MigrationsDigestMismatch { .. }
+            | SchemaContractError::ServerEncodingNotUtf8 { .. }
             | SchemaContractError::PostgresBelowMinimum { .. }
             | SchemaContractError::PostGisBelowMinimum { .. }
             | SchemaContractError::TimescaleDbBelowMinimum { .. } => false,

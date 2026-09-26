@@ -49,7 +49,7 @@ fn notification_id() -> Result<Uri, SubscriptionForwardingError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Notification:{}", Uuid::new_v4()))
         .build()
         .map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
-    Ok(Uri::from(urn))
+    Uri::try_from(urn).map_err(|error| SubscriptionForwardingError::internal(error.to_string()))
 }
 
 impl SubscriptionForwardingService {

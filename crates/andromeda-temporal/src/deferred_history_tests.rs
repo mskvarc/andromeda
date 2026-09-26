@@ -2,7 +2,7 @@ use crate::{
     append_intent::{SequencedTemporalAppendIntent, TemporalAppendEntry, TemporalAppendIntent, TemporalIntentSequence, TemporalObservationIdentity},
     error::TemporalError,
     intent_drain::{TemporalIntentClaim, TemporalIntentDrain},
-    intent_retry_policy::{ERROR_SUMMARY_LIMIT, TemporalIntentRetryPolicy},
+    intent_retry_policy::TemporalIntentRetryPolicy,
     outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
     pending_overlay::PendingTemporalHistoryOverlay,
     port::{
@@ -23,6 +23,7 @@ use crate::{
     temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_commit::{
+    failure_summary::FAILURE_SUMMARY_MAX_CHARACTERS,
     lease_acknowledgement::LeaseAcknowledgement,
     lease_holder::LeaseHolder,
     write_id::WriteId,
@@ -585,6 +586,6 @@ async fn a_long_sink_failure_summary_is_cut_to_the_column_limit() {
         .execute(instant())
         .await
         .expect("failure is retained per item");
-    let summaries: Vec<usize> = queue.retries().await.iter().map(|retry| retry.summary.len()).collect();
-    assert_eq!(summaries, vec![ERROR_SUMMARY_LIMIT]);
+    let summaries: Vec<usize> = queue.retries().await.iter().map(|retry| retry.summary.chars().count()).collect();
+    assert_eq!(summaries, vec![usize::try_from(FAILURE_SUMMARY_MAX_CHARACTERS).expect("fits usize")]);
 }

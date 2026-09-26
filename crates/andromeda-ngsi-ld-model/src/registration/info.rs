@@ -1,7 +1,7 @@
 //! What one information block of a registration covers (ETSI GS CIM 009 clause 5.2.10).
 
 use crate::entity_info::EntityInfo;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IdentifierTooLong};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -10,6 +10,10 @@ use thiserror::Error;
 /// Table 5.2.10-1 forbids an empty array on every member and requires at least
 /// one member to be present, so a wire document violating either is rejected at
 /// deserialisation rather than stored as a block that covers nothing.
+///
+/// An `idPattern` is also held to the identifier bound: the routing projection
+/// keys a B-tree index on it, which refuses an entry that long, and clause
+/// 5.2.8 sets no length of its own.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", try_from = "RegistrationInfoWire")]
 pub struct RegistrationInfo {
@@ -41,6 +45,9 @@ pub enum RegistrationInfoError {
     /// A member was present as an empty array.
     #[error("RegistrationInfo member {0} must not be an empty array")]
     EmptyMember(&'static str),
+    /// An `idPattern` is longer than the identifier bound.
+    #[error("a RegistrationInfo idPattern is not storable: {0}")]
+    IdPatternTooLong(#[from] IdentifierTooLong),
 }
 
 /// The clause 5.2.10 wire shape before its cardinality restrictions are checked.
@@ -71,10 +78,39 @@ impl TryFrom<RegistrationInfoWire> for RegistrationInfo {
         if wire.relationship_names.as_ref().is_some_and(Vec::is_empty) {
             return Err(RegistrationInfoError::EmptyMember("relationshipNames"));
         }
+        wire.entities
+            .iter()
+            .flatten()
+            .filter_map(|entity| entity.id_pattern.as_ref())
+            .try_for_each(|pattern| IdentifierTooLong::check(pattern.as_str()))?;
         Ok(RegistrationInfo {
             entities: wire.entities,
             property_names: wire.property_names,
             relationship_names: wire.relationship_names,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::registration::info::{RegistrationInfo, RegistrationInfoError};
+    use andromeda_ngsi_ld_lexicon::identifier_length::{IDENTIFIER_BYTE_LIMIT, IdentifierTooLong};
+    use serde_json::json;
+
+    #[test]
+    fn an_id_pattern_at_the_limit_is_admitted() {
+        let pattern = format!("urn:ngsi-ld:Vehicle:{}", "a".repeat(IDENTIFIER_BYTE_LIMIT - "urn:ngsi-ld:Vehicle:".len()));
+        let info: RegistrationInfo =
+            serde_json::from_value(json!({"entities": [{"type": "Vehicle", "idPattern": pattern}]})).expect("an idPattern at the limit");
+        assert!(info.entities.is_some());
+    }
+
+    #[test]
+    fn an_id_pattern_past_the_limit_is_refused() {
+        let pattern = format!("urn:ngsi-ld:Vehicle:{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
+        let error =
+            serde_json::from_value::<RegistrationInfo>(json!({"entities": [{"type": "Vehicle", "idPattern": pattern}]})).expect_err("an over-long idPattern");
+        let expected = RegistrationInfoError::IdPatternTooLong(IdentifierTooLong { length: pattern.len() }).to_string();
+        assert!(error.to_string().contains(&expected), "{error}");
     }
 }

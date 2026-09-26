@@ -22,7 +22,8 @@ validated_ngsi_name! {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_type_name::EntityTypeName;
+    use crate::{entity_type_name::EntityTypeName, identifier_length::IDENTIFIER_BYTE_LIMIT, reference::NgsiLdReferenceError};
+    use iri_rs::IriBuf;
 
     #[test]
     fn an_entity_type_name_accepts_terms_prefixes_and_expanded_iris() {
@@ -36,4 +37,6 @@ mod tests {
         assert!("".parse::<EntityTypeName>().is_err());
         assert!("two words".parse::<EntityTypeName>().is_err());
     }
+
+    name_length_tests!(EntityTypeName);
 }

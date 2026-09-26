@@ -64,9 +64,17 @@
 -- modification instant and moves only when the client changes the
 -- subscription, never on delivery.
 --
+-- A `subscriptions` row therefore changes only on a client update (clause
+-- 5.8.3) and on the one-shot expiry that moves `status` to expired, so it
+-- takes the default fillfactor and autovacuum settings: nothing rewrites it at
+-- a rate the queue-grade parameters of its delivery state would be for.
+--
 -- `id` is `COLLATE "C"`: it is a URI, compared and matched byte-wise
 -- everywhere the broker uses it, and byte order is what lets a prefix match
--- use its unique index. The variable-length JSONB and array columns are stored
+-- use its unique index. It is bounded at 1024 UTF-8 octets, the identifier
+-- bound (`IDENTIFIER_BYTE_LIMIT` in `andromeda-ngsi-ld-lexicon`) a
+-- subscription id is parsed under, well inside the 2704 bytes the unique
+-- btree admits. The variable-length JSONB and array columns are stored
 -- with lz4 TOAST compression: they are written once per client update and read
 -- on every cache reload, and lz4 decompresses far faster than pglz for the
 -- same read.
@@ -85,7 +93,7 @@
 CREATE TABLE subscriptions (
     -- Narrow surrogate identity referenced by the notification queue, and the
     -- primary key.
-    subscription_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    subscription_key BIGINT GENERATED ALWAYS AS IDENTITY,
 
     -- System-managed temporal properties (clause 4.8).
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -154,7 +162,9 @@ CREATE TABLE subscriptions (
     -- records what the Context Subscriber wrote and nothing else -- NULL is the
     -- absent member, which `effective_notification_triggers` reads as the clause
     -- 5.2.12 default (attributeCreated plus attributeUpdated) wherever a match is
-    -- decided, rather than materialising a selection the writer never made.
+    -- decided, rather than materialising a selection the writer never made. An
+    -- empty array is no selection at all -- a subscription that could never
+    -- fire -- and is refused as BadRequestData before it is written.
     notification_trigger SMALLINT[] COMPRESSION lz4,
 
     -- NGSI-LD query string (clause 4.9) that entities must satisfy.
@@ -199,13 +209,20 @@ CREATE TABLE subscriptions (
     -- SQL. Nullable: an absent member means no amendment, with no default version.
     ngsild_conformance TEXT,
 
+    CONSTRAINT pk_subscriptions PRIMARY KEY (subscription_key),
+
     -- `id` is the external identity a client registers and matches under; the
     -- surrogate key is the primary key, so `id` carries its own unique index.
     CONSTRAINT uq_subscriptions_id UNIQUE (id),
+    CONSTRAINT chk_subscriptions_id_length CHECK (octet_length(id) <= 1024),
 
-    -- Every stored trigger is one of the six clause-5.2.12 registry codes;
-    -- mirrors the notification queue's `trigger` bound (0024).
-    CONSTRAINT chk_subscriptions_notification_trigger CHECK (notification_trigger <@ ARRAY[1, 2, 3, 4, 5, 6]::SMALLINT[]),
+    -- A stored selection names at least one trigger, and every trigger is one
+    -- of the six clause-5.2.12 registry codes; mirrors the notification queue's
+    -- `trigger` bound (0024).
+    CONSTRAINT chk_subscriptions_notification_trigger CHECK (
+        notification_trigger IS NULL
+        OR (cardinality(notification_trigger) > 0
+            AND notification_trigger <@ ARRAY[1, 2, 3, 4, 5, 6]::SMALLINT[])),
     CONSTRAINT chk_subscriptions_kind CHECK (kind BETWEEN 1 AND 2),
     CONSTRAINT chk_subscriptions_status CHECK (status BETWEEN 1 AND 3),
     CONSTRAINT chk_subscriptions_time_interval_positive CHECK (time_interval > 0),
@@ -214,13 +231,6 @@ CREATE TABLE subscriptions (
         CHECK (NOT (time_interval IS NOT NULL AND throttling IS NOT NULL)),
     CONSTRAINT chk_subscriptions_time_interval_excludes_watched_attributes
         CHECK (NOT (time_interval IS NOT NULL AND watched_attributes IS NOT NULL))
-) WITH (
-    fillfactor = 50,
-    autovacuum_vacuum_scale_factor = 0.005,
-    autovacuum_vacuum_threshold = 100,
-    autovacuum_analyze_scale_factor = 0.02,
-    autovacuum_analyze_threshold = 100,
-    autovacuum_vacuum_cost_delay = 0
 );
 
 -- Lookup active subscriptions for notification matching (partitioned by kind)
@@ -245,12 +255,13 @@ CREATE INDEX idx_subscriptions_expires_at ON subscriptions(expires_at) WHERE exp
 -- is the delivery rate, so the default scale factors would let dead tuples
 -- outnumber live rows many times over before a vacuum ran.
 CREATE TABLE subscription_delivery_state (
-    subscription_key BIGINT PRIMARY KEY,
+    subscription_key BIGINT NOT NULL,
     times_sent INTEGER NOT NULL DEFAULT 0,
     times_failed INTEGER NOT NULL DEFAULT 0,
     last_notification TIMESTAMPTZ,
     last_success TIMESTAMPTZ,
     last_failure TIMESTAMPTZ,
+    CONSTRAINT pk_subscription_delivery_state PRIMARY KEY (subscription_key),
     CONSTRAINT fk_subscription_delivery_state_subscription
         FOREIGN KEY (subscription_key)
         REFERENCES subscriptions(subscription_key) ON DELETE CASCADE,

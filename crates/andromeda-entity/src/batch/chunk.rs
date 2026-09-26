@@ -16,6 +16,7 @@ use crate::{
     EntityService,
     batch::prepare::PreparedEntity,
     error::EntityError,
+    expanded_member::written_entity_types,
     notification_plan::{NotificationGroup, NotificationPlan, attribute_change_groups},
     side_effect::BatchSideEffectMode,
 };
@@ -35,7 +36,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::{
         attribute_system_time::stamp_attribute_instants,
-        entity_member::extract_types,
+        mutation::error::ExpandedEntityError,
         null_sentinel::without_null_sentinels,
         removed_instance::removed_attribute_instances,
     },
@@ -113,7 +114,18 @@ impl EntityService {
     ///
     /// Mirrors the single create (clause 5.6.1): one `entityCreated` over the
     /// whole payload.
-    pub(super) fn chunk_insert(&self, target: &ContextTarget, prepared: PreparedEntity, precondition: Precondition, now: DateTime<Utc>) -> ChunkWrite {
+    ///
+    /// # Errors
+    ///
+    /// Answers the entity's identifier with the failure, boxed because a
+    /// failure is the rare outcome, for the batch's per-entity report, when an instance's `datasetId` cannot be read.
+    pub(super) fn chunk_insert(
+        &self,
+        target: &ContextTarget,
+        prepared: PreparedEntity,
+        precondition: Precondition,
+        now: DateTime<Utc>,
+    ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
         let PreparedEntity {
             id,
             mut expanded,
@@ -124,13 +136,18 @@ impl EntityService {
         } = prepared;
         // Clause 4.8: a created entity's attribute instances carry the write
         // instant as both createdAt and modifiedAt.
-        stamp_attribute_instants(&mut expanded, &Value::Null, now);
+        if let Err(error) = stamp_attribute_instants(&mut expanded, &Value::Null, now) {
+            return Err(Box::new((id, ExpandedEntityError::from(error).into())));
+        }
         let payload = Arc::new(expanded);
         let types = projection.types.clone(); // clone: the plan carries the names after the record has taken them
         let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attributes)];
-        groups.extend(attribute_change_groups(&Value::Null, &payload));
+        match attribute_change_groups(&Value::Null, &payload) {
+            Ok(changes) => groups.extend(changes),
+            Err(error) => return Err(Box::new((id, error))),
+        }
         let plan = self.plan_notifications(target, &id, &types, &groups, Some(&payload), None);
-        ChunkWrite {
+        Ok(ChunkWrite {
             id,
             entity: EntityMutation::Insert(EntityRecord::from_parts(
                 Arc::clone(&payload), // clone: Arc ref-count bump; the same payload is the observation
@@ -142,11 +159,16 @@ impl EntityService {
             precondition,
             tombstones: Vec::new(),
             plan,
-        }
+        })
     }
 
     /// The write that stores `payload` as a new entity, deriving its columns
     /// from the payload rather than from a preparation pass.
+    ///
+    /// # Errors
+    ///
+    /// Answers the entity's identifier with the failure, boxed because a
+    /// failure is the rare outcome, for the batch's per-entity report, when the payload's members cannot be read.
     pub(super) fn chunk_insert_payload(
         &self,
         target: &ContextTarget,
@@ -155,31 +177,46 @@ impl EntityService {
         changed_attributes: Vec<AttributeName>,
         precondition: Precondition,
         now: DateTime<Utc>,
-    ) -> ChunkWrite {
+    ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
         // Clause 4.8: stamp the created entity's attribute instances before the
         // record derives its columns from the payload.
         let mut payload_value = Arc::try_unwrap(payload).unwrap_or_else(|shared| (*shared).clone()); // clone: only when another reference still holds the payload
-        stamp_attribute_instants(&mut payload_value, &Value::Null, now);
+        if let Err(error) = stamp_attribute_instants(&mut payload_value, &Value::Null, now) {
+            return Err(Box::new((id, ExpandedEntityError::from(error).into())));
+        }
         let payload = Arc::new(payload_value);
-        let record = EntityRecord::from_expanded(Arc::clone(&payload)); // clone: Arc ref-count bump; the same payload is the observation
+        let record = match EntityRecord::from_expanded(Arc::clone(&payload)) {
+            // clone: Arc ref-count bump; the same payload is the observation
+            Ok(record) => record,
+            Err(error) => return Err(Box::new((id, error.into()))),
+        };
         let types = record.projection.types.clone(); // clone: the plan carries the names the record holds
         let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attributes)];
-        groups.extend(attribute_change_groups(&Value::Null, &payload));
+        match attribute_change_groups(&Value::Null, &payload) {
+            Ok(changes) => groups.extend(changes),
+            Err(error) => return Err(Box::new((id, error))),
+        }
         let plan = self.plan_notifications(target, &id, &types, &groups, Some(&payload), None);
-        ChunkWrite {
+        Ok(ChunkWrite {
             id,
             entity: EntityMutation::Insert(record),
             observed: payload,
             precondition,
             tombstones: Vec::new(),
             plan,
-        }
+        })
     }
 
     /// The write that overwrites an existing entity with the state replacing it,
     /// under the per-op notification `groups`.
     ///
     /// The build site supplies one precise group per changed attribute instance.
+    ///
+    /// # Errors
+    ///
+    /// Answers the entity's identifier with the failure, boxed because a
+    /// failure is the rare outcome, for the batch's per-entity report, when the merged payload's members or either state's
+    /// `datasetId`s cannot be read.
     pub(super) fn chunk_update(
         &self,
         target: &ContextTarget,
@@ -188,13 +225,15 @@ impl EntityService {
         groups: &[NotificationGroup],
         precondition: Precondition,
         now: DateTime<Utc>,
-    ) -> ChunkWrite {
+    ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
         let UpdatedPayloads { previous, merged, observed } = payloads;
         // Clause 4.8: an updated instance takes `now` for modifiedAt and keeps
         // its createdAt; an untouched one keeps both. Stamped before the columns
         // and the notification plan read the payload, so both see it.
         let mut merged_value = Arc::try_unwrap(merged).unwrap_or_else(|shared| (*shared).clone()); // clone: only when another reference still holds the merged payload
-        stamp_attribute_instants(&mut merged_value, previous, now);
+        if let Err(error) = stamp_attribute_instants(&mut merged_value, previous, now) {
+            return Err(Box::new((id, ExpandedEntityError::from(error).into())));
+        }
         let merged = Arc::new(merged_value);
         // Clause 4.5.0 makes an NGSI-LD Null an encoding of `null` rather than a
         // value, so it is an instruction to this write and not something the
@@ -206,21 +245,27 @@ impl EntityService {
             Some(stripped) => Arc::new(stripped),
             None => observed,
         };
-        let tombstones = removed_attribute_instances(previous, &merged)
-            .into_iter()
-            .map(HistoryRecord::Tombstone)
-            .collect();
-        let types = extract_types(&merged);
+        let tombstones = match removed_attribute_instances(previous, &merged) {
+            Ok(removed) => removed.into_iter().map(HistoryRecord::Tombstone).collect(),
+            Err(error) => return Err(Box::new((id, ExpandedEntityError::from(error).into()))),
+        };
+        let types = match written_entity_types(&merged) {
+            Ok(types) => types,
+            Err(error) => return Err(Box::new((id, error))),
+        };
         let plan = self.plan_notifications(target, &id, &types, groups, Some(&merged), Some(previous));
-        let record = EntityRecord::from_expanded(merged);
-        ChunkWrite {
+        let record = match EntityRecord::from_expanded(merged) {
+            Ok(record) => record,
+            Err(error) => return Err(Box::new((id, error.into()))),
+        };
+        Ok(ChunkWrite {
             id,
             entity: EntityMutation::Update(record),
             observed,
             precondition,
             tombstones,
             plan,
-        }
+        })
     }
 }
 

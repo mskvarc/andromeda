@@ -28,10 +28,13 @@
 -- ============================================================================
 
 CREATE TABLE postgresql_maintenance_tenants (
-    tenant_id BIGINT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+    tenant_id BIGINT NOT NULL,
     last_inspected_at TIMESTAMPTZ,
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     last_result SMALLINT,
+    CONSTRAINT pk_postgresql_maintenance_tenants PRIMARY KEY (tenant_id),
+    CONSTRAINT fk_postgresql_maintenance_tenants_tenant FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id) ON DELETE CASCADE,
     CONSTRAINT chk_postgresql_maintenance_tenant_failures_non_negative
         CHECK (consecutive_failures >= 0),
     CONSTRAINT chk_postgresql_maintenance_tenant_last_result
@@ -39,7 +42,7 @@ CREATE TABLE postgresql_maintenance_tenants (
 );
 
 CREATE TABLE postgresql_maintenance_targets (
-    tenant_id BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    tenant_id BIGINT NOT NULL,
     last_sampled_at TIMESTAMPTZ,
     cooldown_until TIMESTAMPTZ,
     last_action_at TIMESTAMPTZ,
@@ -50,7 +53,9 @@ CREATE TABLE postgresql_maintenance_targets (
     target SMALLINT NOT NULL,
     last_action_result SMALLINT,
     pending_action BOOLEAN NOT NULL DEFAULT FALSE,
-    PRIMARY KEY (tenant_id, target),
+    CONSTRAINT pk_postgresql_maintenance_targets PRIMARY KEY (tenant_id, target),
+    CONSTRAINT fk_postgresql_maintenance_targets_tenant FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id) ON DELETE CASCADE,
     CONSTRAINT chk_postgresql_maintenance_target_code
         CHECK (target BETWEEN 1 AND 12),
     CONSTRAINT chk_postgresql_maintenance_target_action_result

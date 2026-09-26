@@ -20,15 +20,18 @@
 --
 -- The permanently stable rendering template for a broker-minted identifier is
 -- `urn:ngsi-ld:scope:instance:{uuid}`; a client-supplied identifier is stored
--- exactly as received.
+-- exactly as received, bounded at 1024 UTF-8 octets, the identifier bound
+-- (`IDENTIFIER_BYTE_LIMIT` in `andromeda-ngsi-ld-lexicon`) an `instanceId` is
+-- parsed under.
 --
 -- The path keeps its `ltree` type and its GiST index, which is what scopeQ
 -- matching reads (clause 4.18).
 --
 -- This file creates a plain table, exactly as 0020 does: in `public` it
--- becomes a hypertable in migration 0028 and gains the columnstore in 0029,
--- where the chunk interval and the segment-and-order choice are explained; a
--- Snapshot branch keeps the plain table.
+-- becomes a hypertable in migration 0028, where the chunk interval is
+-- explained, and gains the columnstore from the broker's storage-policy
+-- reconciler, which owns the segment-and-order choice; a Snapshot branch keeps
+-- the plain table.
 --
 -- Every semantic axis carries a BRIN block summary and no B-tree, again as
 -- migration 0020 explains: the entity-led B-trees answer entity-scoped reads,
@@ -59,6 +62,8 @@ CREATE TABLE scope_history (
     CONSTRAINT chk_scope_history_write_ordinal CHECK (write_ordinal >= 0),
     CONSTRAINT chk_scope_history_instance_identity
         CHECK (num_nonnulls(generated_instance_uuid, verbatim_instance_id) = 1),
+    CONSTRAINT chk_scope_history_verbatim_instance_id_length
+        CHECK (octet_length(verbatim_instance_id) <= 1024),
     CONSTRAINT chk_scope_history_value_presence CHECK (
         (value_kind = 0 AND deleted_at IS NOT NULL AND scope_path IS NULL)
         OR

@@ -131,15 +131,9 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Uri, params: 
         .execute(&mut *transaction)
         .await
         .map_err(persistence_error)?;
-    replace_registration_information(
-        &mut transaction,
-        id,
-        &params.information,
-        Some(&params.operations),
-        store.attribute_names.as_ref(),
-    )
-    .await
-    .map_err(persistence_error)?;
+    replace_registration_information(&mut transaction, id, &params.information, store.attribute_names.as_ref())
+        .await
+        .map_err(persistence_error)?;
     transaction.commit().await.map_err(persistence_error)?;
     Ok(())
 }
@@ -189,15 +183,9 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Uri, values: 
         // a missing registration has no projection rows to speak for.
         RegistrationMutation::Missing => transaction.rollback().await.map_err(persistence_error)?,
         RegistrationMutation::Applied => {
-            replace_registration_information(
-                &mut transaction,
-                id,
-                &values.information,
-                Some(&values.operations),
-                store.attribute_names.as_ref(),
-            )
-            .await
-            .map_err(persistence_error)?;
+            replace_registration_information(&mut transaction, id, &values.information, store.attribute_names.as_ref())
+                .await
+                .map_err(persistence_error)?;
             transaction.commit().await.map_err(persistence_error)?;
         }
     }

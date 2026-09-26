@@ -41,7 +41,9 @@
 -- versions a claim leaves behind before they accumulate. Column order is
 -- alignment order -- not-null fixed-width descending, then nullable fixed-width,
 -- then varlena -- with LZ4 on the varlena columns; `entity_id` is `COLLATE "C"`
--- like every identifier column, since it is only ever matched by equality.
+-- like every identifier column, since it is only ever matched by equality, and
+-- bounded at 1024 UTF-8 octets, the identifier bound (`IDENTIFIER_BYTE_LIMIT`
+-- in `andromeda-ngsi-ld-lexicon`) an entity id is parsed under.
 --
 -- Claim-path note. The claim `UPDATE ... WHERE sequence IN (SELECT ... ORDER BY
 -- sequence LIMIT n FOR UPDATE SKIP LOCKED)` is served by
@@ -61,7 +63,7 @@
 -- ============================================================================
 
 CREATE TABLE temporal_append_intents (
-    sequence BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    sequence BIGINT GENERATED ALWAYS AS IDENTITY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     base INTEGER NOT NULL,
@@ -73,11 +75,13 @@ CREATE TABLE temporal_append_intents (
     entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     intent JSONB COMPRESSION lz4 NOT NULL,
     last_error TEXT COMPRESSION lz4,
+    CONSTRAINT pk_temporal_append_intents PRIMARY KEY (sequence),
     CONSTRAINT uq_temporal_append_intents_write UNIQUE (write_id, entity_id, base),
     CONSTRAINT chk_temporal_append_intents_attempt_count_non_negative CHECK (attempt_count >= 0),
     CONSTRAINT chk_temporal_append_intents_base_non_negative CHECK (base >= 0),
     CONSTRAINT chk_temporal_append_intents_claim_coherent CHECK (num_nonnulls(claimed_at, lease_until, claimed_by) IN (0, 3)),
-    CONSTRAINT chk_temporal_append_intents_last_error_length CHECK (last_error IS NULL OR length(last_error) <= 2048)
+    CONSTRAINT chk_temporal_append_intents_last_error_bound CHECK (last_error IS NULL OR char_length(last_error) <= 2048),
+    CONSTRAINT chk_temporal_append_intents_entity_id_length CHECK (octet_length(entity_id) <= 1024)
 ) WITH (
     fillfactor = 70,
     autovacuum_vacuum_scale_factor = 0.005,

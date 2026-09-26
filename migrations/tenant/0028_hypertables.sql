@@ -26,9 +26,9 @@
 -- startup against its temporal configuration, so an operator change does not
 -- need a migration.
 --
--- Hypercore columnstore compression is configured separately, in 0029, and
--- only on the TSL edition of the image; on the Apache-2.0 core both stay plain
--- hypertables.
+-- Hypercore columnstore compression is not a migration's to configure: the
+-- broker's storage-policy reconciler enables it at startup on the TSL edition
+-- of the image, and on the Apache-2.0 core both stay plain hypertables.
 -- ============================================================================
 
 SELECT create_hypertable('attribute_history', by_range('recorded_at', INTERVAL '7 days'), create_default_indexes => false);

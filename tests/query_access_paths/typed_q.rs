@@ -6,7 +6,7 @@
 //! pushed down have to fall back to the payload without changing the answer.
 
 use andromeda_test_client::test_client::TestClient;
-use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
+use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, high_entropy_text::high_entropy_text};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
@@ -49,6 +49,44 @@ async fn selects_fixture(client: &TestClient, id: &str, filter: &str) -> bool {
         .await
         .expect("query failed");
     assert_eq!(response.status, StatusCode::OK, "q={filter}: {:?}", response.body);
+    let body = response.json_value().expect("query body must be JSON");
+    body.as_array().is_some_and(|entities| !entities.is_empty())
+}
+
+/// Characters of high-entropy text behind the leading `m` of the long-string
+/// fixture: far past the 2048-octet bound, so the value is held in the
+/// overflow column `value_long_text` rather than in `value_string`.
+const ESSAY_TAIL_LENGTH: usize = 6000;
+
+/// Seed of the long-string fixture text, fixed so every run stores the same
+/// value.
+const ESSAY_SEED: u64 = 4_009;
+
+/// Build the long-string fixture Entity: one String past the indexed bound and
+/// one short String beside it.
+fn long_string_fixture(id: &str, essay: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "Building",
+        "essay": {"type": "Property", "value": essay},
+        "note": {"type": "Property", "value": "short"},
+        "@context": [TEST_SUITE_CONTEXT]
+    })
+}
+
+/// Run one `q` filter through the POST query form (clause 5.7.2) restricted to
+/// the fixture Entity and report whether it selected it. The filter travels in
+/// the body, so an operand far longer than any request line still reaches the
+/// broker.
+async fn posted_query_selects_fixture(client: &TestClient, id: &str, label: &str, filter: &str) -> bool {
+    let body = json!({
+        "type": "Query",
+        "entities": [{"id": id, "type": "Building"}],
+        "q": filter,
+        "@context": TEST_SUITE_CONTEXT
+    });
+    let response = client.batch_query(&body, "application/json", None).await.expect("query failed");
+    assert_eq!(response.status, StatusCode::OK, "{label}: {:?}", response.body);
     let body = response.json_value().expect("query body must be JSON");
     body.as_array().is_some_and(|entities| !entities.is_empty())
 }
@@ -105,6 +143,54 @@ async fn typed_q_predicates_agree_with_the_residual_oracle_for_every_scalar_shap
     ];
     for (filter, expected) in cases {
         assert_eq!(selects_fixture(client, &id, filter).await, expected, "q={filter}");
+    }
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A String past the 2048-octet bound is projected into `value_long_text`, and
+/// every clause 4.9 operator over it must still agree with the value the
+/// fixture holds: equality reads the one column the operand itself would be
+/// placed in, ordering and patterns read both string columns, and a long
+/// operand compared against a short value selects nothing.
+#[tokio::test]
+async fn typed_q_predicates_agree_with_the_residual_oracle_for_long_strings() {
+    let scope = TestEnvironment::from_suite("query_access_paths").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:typed-q-long-strings");
+    let essay = format!("m{}", high_entropy_text(ESSAY_TAIL_LENGTH, ESSAY_SEED));
+    let created = client
+        .post_entity(&long_string_fixture(&id, &essay))
+        .send()
+        .await
+        .expect("create entity failed");
+    assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
+
+    let truncated = essay.get(..essay.len() - 1).expect("the essay is ASCII, so every index is a boundary");
+    let middle = essay
+        .get(ESSAY_TAIL_LENGTH / 2..ESSAY_TAIL_LENGTH / 2 + 16)
+        .expect("the essay is ASCII, so every index is a boundary");
+
+    // (label, filter, whether the fixture satisfies it). The label keeps a
+    // failure message readable where the filter itself is six kilobytes long.
+    let cases = [
+        ("essay equals itself", format!("essay==\"{essay}\""), true),
+        ("essay equals its own prefix", format!("essay==\"{truncated}\""), false),
+        ("essay differs from itself", format!("essay!=\"{essay}\""), false),
+        ("essay differs from a short string", "essay!=\"short\"".to_owned(), true),
+        ("essay orders after a", "essay>\"a\"".to_owned(), true),
+        ("essay orders before a", "essay<\"a\"".to_owned(), false),
+        ("essay orders before z", "essay<\"z\"".to_owned(), true),
+        ("essay lies in the range a to z", "essay==\"a\"..\"z\"".to_owned(), true),
+        ("essay matches its own middle", format!("essay~=\"{middle}\""), true),
+        ("essay matches an absent anchored prefix", "essay~=\"^zzz\"".to_owned(), false),
+        ("essay does not match its own middle", format!("essay!~=\"{middle}\""), false),
+        ("essay does not match an absent anchored prefix", "essay!~=\"^zzz\"".to_owned(), true),
+        ("essay exists", "essay".to_owned(), true),
+        ("short note equals the essay", format!("note==\"{essay}\""), false),
+    ];
+    for (label, filter, expected) in cases {
+        assert_eq!(posted_query_selects_fixture(client, &id, label, &filter).await, expected, "{label}");
     }
 
     scope.finish().await.expect("cleanup failed");

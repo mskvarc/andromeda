@@ -31,6 +31,7 @@ use andromeda_ngsi_ld_lexicon::{
     ngsi_ld_date_time::NgsiLdDateTimeError,
     ngsi_ld_time::NgsiLdTimeError,
     reference::NgsiLdReferenceError,
+    uri::UriParseError,
 };
 use andromeda_ngsi_ld_number::JsonNumberError;
 
@@ -323,9 +324,16 @@ pub enum QueryError {
     // -----------------------------------------------------------------------
     // Parameter values the query and projection languages above parse themselves (clauses 4.9 and 4.21)
     // -----------------------------------------------------------------------
-    /// An `id` value could not be parsed as a URI.
-    #[error("invalid id value: '{0}'")]
-    ParamIdInvalid(String),
+    /// An `id` value could not be parsed as a URI, or is one too long to be
+    /// an identifier.
+    #[error("invalid id value '{raw}': {source}")]
+    ParamIdInvalid {
+        /// The value as the request spelled it.
+        raw: String,
+        /// Why it is not an identifier.
+        #[source]
+        source: UriParseError,
+    },
     /// An empty value appeared in a comma-separated id list.
     #[error("invalid id: empty value in comma-separated list")]
     ParamIdListEmpty,
@@ -335,9 +343,16 @@ pub enum QueryError {
     /// The `aggrPeriodDuration` value was not an ISO 8601 duration.
     #[error("invalid aggrPeriodDuration value: '{0}'")]
     ParamAggrPeriodDurationInvalid(String),
-    /// A `datasetId` entry was neither `@none` nor a URN.
-    #[error("invalid datasetId value: '{0}'")]
-    ParamDatasetIdInvalid(String),
+    /// A `datasetId` entry was neither `@none` nor a URI short enough to be
+    /// an identifier.
+    #[error("invalid datasetId value '{raw}': {source}")]
+    ParamDatasetIdInvalid {
+        /// The value as the request spelled it.
+        raw: String,
+        /// Why it is not an identifier.
+        #[source]
+        source: UriParseError,
+    },
     /// `timerel=between` was provided without an `endTimeAt`.
     #[error("endTimeAt is required when timerel is 'between'")]
     ParamEndTimeAtRequired,

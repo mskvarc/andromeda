@@ -81,10 +81,10 @@ mod tests {
         let selectors_hold = !selection.selectors_constrain()
             || selection.selectors.iter().any(|selector| {
                 let type_ok = selector.type_expr.as_ref().is_none_or(|type_expr| {
-                    let types = extract_types(entity);
+                    let types = extract_types(entity).expect("the fixtures carry readable types");
                     type_expr.matches(&types.iter().map(EntityTypeName::as_str).collect::<Vec<&str>>())
                 });
-                let id_ok = selector.ids.is_empty() || extract_id(entity).is_some_and(|id| selector.ids.contains(&id));
+                let id_ok = selector.ids.is_empty() || extract_id(entity).is_ok_and(|id| selector.ids.contains(&id));
                 type_ok && id_ok
             });
         q_holds && geo_holds && scope_holds && selectors_hold && considered_holds
@@ -115,7 +115,11 @@ mod tests {
             let mut pushed = compiled.selection.clone(); // clone: the store runs a narrowed copy of the caller's query
             unapplied.strip_from(&mut pushed);
 
-            let admitted = self.entities.iter().filter(|entity| reference_matches(&pushed, entity)).filter_map(extract_id);
+            let admitted = self
+                .entities
+                .iter()
+                .filter(|entity| reference_matches(&pushed, entity))
+                .map(|entity| extract_id(entity).expect("the fixtures carry readable identifiers"));
 
             if unapplied.is_empty() {
                 let all: Vec<Uri> = admitted.collect();
@@ -152,14 +156,14 @@ mod tests {
     impl EntityReader for ProfiledEntityStore {
         async fn get(&self, _target: &ContextTarget, id: &Uri) -> Result<Option<Value>, EntityError> {
             // clone: the double hands out owned payloads, as a real store does
-            Ok(self.entities.iter().find(|entity| extract_id(entity).as_ref() == Some(id)).cloned())
+            Ok(self.entities.iter().find(|entity| extract_id(entity).as_ref() == Ok(id)).cloned())
         }
 
         async fn get_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
             Ok(self
                 .entities
                 .iter()
-                .filter_map(|entity| extract_id(entity).map(|id| (id, entity)))
+                .map(|entity| (extract_id(entity).expect("the fixtures carry readable identifiers"), entity))
                 .filter(|(id, _)| ids.contains(id))
                 .map(|(id, entity)| (id, entity.clone())) // clone: as above
                 .collect())

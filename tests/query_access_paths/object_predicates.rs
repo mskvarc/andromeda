@@ -7,9 +7,10 @@
 //! the absent index has no silent consumer, and the two operator classes behave
 //! as declared when they are present.
 
+use crate::seeded_corpus::explain;
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::assert_eq;
-use sqlx::{Executor, PgConnection};
+use sqlx::Executor;
 
 /// Statements building a two-index fixture whose plans distinguish the operator
 /// classes. It lives in a temporary relation so the production schema keeps the
@@ -24,15 +25,6 @@ const FIXTURE: [&str; 5] = [
     "ANALYZE object_predicate_fixture",
 ];
 
-/// Run `EXPLAIN` on one connection so a temporary relation stays visible.
-async fn explain_on(connection: &mut PgConnection, statement: &str) -> String {
-    let plans: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN (ANALYZE, BUFFERS) {statement}")))
-        .fetch_all(&mut *connection)
-        .await
-        .expect("the plan must be readable");
-    plans.join("\n")
-}
-
 #[tokio::test]
 async fn object_containment_uses_path_ops_and_key_existence_needs_the_default_class() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
@@ -43,8 +35,8 @@ async fn object_containment_uses_path_ops_and_key_existence_needs_the_default_cl
         transaction.execute(statement).await.expect("fixture statement must succeed");
     }
 
-    let containment = explain_on(
-        &mut transaction,
+    let containment = explain(
+        &mut *transaction,
         "SELECT id FROM object_predicate_fixture WHERE containment @> '{\"city\": \"city-42\"}'::jsonb",
     )
     .await;
@@ -53,7 +45,7 @@ async fn object_containment_uses_path_ops_and_key_existence_needs_the_default_cl
         "a containment predicate must use the jsonb_path_ops index: {containment}"
     );
 
-    let existence = explain_on(&mut transaction, "SELECT id FROM object_predicate_fixture WHERE existence ? 'city'").await;
+    let existence = explain(&mut *transaction, "SELECT id FROM object_predicate_fixture WHERE existence ? 'city'").await;
     assert!(
         !existence.contains("object_predicate_path_ops"),
         "key existence must never be answered by an index class that cannot serve it: {existence}"

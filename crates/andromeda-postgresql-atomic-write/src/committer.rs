@@ -251,7 +251,7 @@ fn interpret(landed: &[&AtomicWrite], record: &WriteRecord, base: WriteOrdinal) 
     let mut next = base;
     let mut intents = Vec::with_capacity(landed.len());
     for write in landed {
-        let entity_types = write.recorded_entity_types();
+        let entity_types = write.recorded_entity_types()?;
         let Some(intent) = TemporalAppendIntent::from_history(&write.entity_id, &entity_types, &write.history, *record, next).map_err(temporal)? else {
             continue;
         };

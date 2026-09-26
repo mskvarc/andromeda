@@ -37,7 +37,13 @@
 -- it is and rendered through one permanently stable template,
 -- `urn:ngsi-ld:attribute:instance:{uuid}`; a client-supplied one is stored
 -- exactly as received, because clause 4.5.7 hands the identifier back to the
--- client. Exactly one of the two columns is populated.
+-- client. Exactly one of the two columns is populated. `verbatim_instance_id`,
+-- here and on `attribute_history_instance_claims`, is bounded at 1024 UTF-8
+-- octets, the identifier bound (`IDENTIFIER_BYTE_LIMIT` in
+-- `andromeda-ngsi-ld-lexicon`) an `instanceId` is parsed under; the claim's
+-- constraint is named `chk_attribute_history_instance_claims_id_length`
+-- because the regular spelling would exceed the 63 bytes a PostgreSQL
+-- identifier may take.
 --
 -- `value_geo` is typmod-free `geometry` with explicit SRID and Zm-flag checks
 -- rather than `GEOMETRY(Geometry, 4326)`: no typmod spelling accepts XY and
@@ -73,7 +79,7 @@
 -- `stream_key` is the eight-byte key `temporal_attribute_streams` generates
 -- (migration 0019). It is the column every stream-led index below leads with
 -- and the column the columnstore segments by, so its width is paid on every
--- row and every index entry; the BIGINT halves what the earlier UUID cost.
+-- row and every index entry.
 --
 -- Column order is alignment order -- not-null fixed-width descending, then
 -- nullable fixed-width, then varlena -- and is the order the binary COPY path
@@ -87,10 +93,11 @@
 --
 -- This file creates a plain table. In `public` it becomes a hypertable in
 -- migration 0028, which converts the empty table and carries every index
--- created here onto each chunk; the chunk interval, the columnstore (0029) and
--- their rationale live there. A Snapshot branch keeps the plain table, which
--- is the intended shape for a bounded, read-mostly captured history -- and is
--- why this file, like every branch file, must stay valid against both.
+-- created here onto each chunk; the chunk interval and its rationale live
+-- there, and the broker's storage-policy reconciler enables the columnstore at
+-- startup on an edition that has one. A Snapshot branch keeps the plain table,
+-- which is the intended shape for a bounded, read-mostly captured history --
+-- and is why this file, like every branch file, must stay valid against both.
 --
 -- Branch relation: this file is in `migrations/branch/`, so it creates the live
 -- relations in `public` as part of the tenant migration set and creates and
@@ -126,6 +133,8 @@ CREATE TABLE attribute_history (
     CONSTRAINT chk_attribute_history_attribute_kind CHECK (attribute_kind BETWEEN 1 AND 8),
     CONSTRAINT chk_attribute_history_instance_identity
         CHECK (num_nonnulls(generated_instance_uuid, verbatim_instance_id) = 1),
+    CONSTRAINT chk_attribute_history_verbatim_instance_id_length
+        CHECK (octet_length(verbatim_instance_id) <= 1024),
     CONSTRAINT chk_attribute_history_value_presence CHECK (
         (value_kind = 0
             AND deleted_at IS NOT NULL
@@ -256,11 +265,16 @@ CREATE INDEX idx_attribute_history_deleted_at_brin
 -- construction and never claims a row.
 CREATE TABLE attribute_history_instance_claims (
     temporal_entity_key BIGINT NOT NULL,
-    attribute_name_id INTEGER NOT NULL REFERENCES attribute_names(id),
+    attribute_name_id INTEGER NOT NULL,
     verbatim_instance_id TEXT COLLATE "C" NOT NULL,
     CONSTRAINT pk_attribute_history_instance_claims
         PRIMARY KEY (temporal_entity_key, attribute_name_id, verbatim_instance_id),
     CONSTRAINT fk_attribute_history_instance_claims_entity
         FOREIGN KEY (temporal_entity_key)
-        REFERENCES temporal_entities(entity_key) ON DELETE CASCADE
+        REFERENCES temporal_entities(entity_key) ON DELETE CASCADE,
+    CONSTRAINT fk_attribute_history_instance_claims_attribute_name
+        FOREIGN KEY (attribute_name_id)
+        REFERENCES attribute_names(id),
+    CONSTRAINT chk_attribute_history_instance_claims_id_length
+        CHECK (octet_length(verbatim_instance_id) <= 1024)
 );

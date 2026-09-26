@@ -23,27 +23,28 @@
 --     halves of that unrepresentable: it pins the kind to the populated
 --     column and admits no arm for 0.
 --
---     Which value kind a Property value has changed with this file. Clause
---     4.6.3 names three data types -- DateTime, Date and Time -- whose whole
---     representation IS the string, so a Property carrying one declares no
---     JSON-LD `@type` and the broker has to read the data type off the
---     literal. It now does: a value written in one of those three lexical
---     forms and satisfying it is projected as that data type, so a bare
---     timestamp lands in `value_datetime` under value kind 6 where it used to
---     land in `value_string` under value kind 2, and a Time value's stored
---     text is now the canonical fixed-width `HH:MM:SS.ffffffZ` rendering
---     rather than the client's spelling. The clause 4.9 `q` compiler probes
---     exactly those columns, so a row written before this change is a row a
---     conformant filter silently fails to select -- a wrong answer rather
---     than an error.
---
---     There is no backfill and there is deliberately none. Under the
---     pre-release rule in `docs/schema-migration-policy.md` a migration is
---     edited in place and every existing tenant database is recreated; the
---     digest of the embedded migration set that this edit changes
---     (`schema_metadata.migrations_sha256`, migration 0017) is what makes a
---     database written under the old projection refuse to serve instead of
---     answering from stale rows.
+--     Clause 4.6.3 names three data types -- DateTime, Date and Time -- whose
+--     whole representation IS the string, so a Property carrying one declares
+--     no JSON-LD `@type` and the broker reads the data type off the literal:
+--     a value written in one of those three lexical forms and satisfying it
+--     is projected as that data type. A DateTime lands in `value_datetime`
+--     under value kind 6. A Date or a Time lands in `value_string` under value
+--     kind 2 in its canonical fixed-width form (`YYYY-MM-DD`,
+--     `HH:MM:SS.ffffffZ`), so byte order is chronological order and the clause
+--     4.9 `q` compiler compares it as that data type.
+--   * String overflow. A B-tree refuses an entry past 2704 bytes (SQLSTATE
+--     54000), and `idx_cav_attr_string` keys on `value_string`, so a String
+--     longer than 2048 UTF-8 octets is held in `value_long_text` under value
+--     kind 2 instead. The bound is `INDEXED_STRING_BYTE_LIMIT` in
+--     `andromeda-postgresql-schema`, whose one placement function both the
+--     writer and the `q` compiler call; a unit test in `migration_set` pins
+--     the literal below to that constant. The two length checks make the
+--     placement canonical -- every string has exactly one column it may sit
+--     in -- which is what lets an equality read only the column its operand
+--     would occupy. `value_uri` never overflows: it holds a Relationship
+--     object, an identifier bounded at 1024 UTF-8 octets by
+--     `IDENTIFIER_BYTE_LIMIT` in `andromeda-ngsi-ld-lexicon`, and so does
+--     `dataset_id`.
 --   * `value_number` is `NUMERIC`, not `DOUBLE PRECISION`. JSONB stores
 --     numbers as exact numerics, and a comparison beyond 2^53 stays correct
 --     without falling back to an unindexed payload scan.
@@ -80,7 +81,8 @@
 -- tuple version on its own page more often, and the aggressive vacuum
 -- cadence is the primary defence.
 --
--- Every text column here is `COLLATE "C"`, `value_string` included. Clause
+-- Every text column here is `COLLATE "C"`, `value_string` and
+-- `value_long_text` included. Clause
 -- 4.9 orders string values with `<`, `>`, `<=` and `>=` and clause 4.5.19
 -- takes `min` and `max` over them, so under a locale collation the same `q`
 -- predicate would select different Entities on two clusters holding
@@ -120,6 +122,16 @@
 --     write-dominated tenant that ever needs it.
 --   * no trigram on `value_uri` -- a second trigram index would be written
 --     on every Relationship write to serve a disjunct nothing drives from.
+--   * the overflow pair on `value_long_text`: a partial B-tree on
+--     `attribute_name_id` alone, for the attribute-driven path of a `q`
+--     comparison over long strings, which filters the value on the heap (the
+--     value itself is too long to key a B-tree on); and an attribute-aware
+--     trigram GIN on `(attribute_name_id, value_long_text)`, for `~=` / `!~=`
+--     over long strings and for their equality, which `gin_trgm_ops` serves
+--     too. It takes `fastupdate = off` for the same reason as its sibling. The
+--     overflow indexes are not maintenance targets: they cover the rare
+--     strings past 2048 octets, and heap vacuum of this relation reclaims
+--     their dead entries.
 --   * one composite GiST on `(attribute_name_id, value_geo)` for clause 4.10
 --     geo-queries against a named GeoProperty, and one partial B-tree on
 --     `(attribute_name_id, entity_key)` for the correlated instance lookup
@@ -145,11 +157,11 @@
 
 CREATE TABLE current_attribute_values (
     entity_key BIGINT NOT NULL,
-    attribute_name_id INTEGER NOT NULL REFERENCES attribute_names(id),
+    attribute_name_id INTEGER NOT NULL,
     attribute_kind SMALLINT NOT NULL,
     value_kind SMALLINT NOT NULL,
     value_datetime TIMESTAMPTZ,
-    unit_code_id SMALLINT REFERENCES unit_codes(id),
+    unit_code_id SMALLINT,
     value_bool BOOLEAN,
     dataset_id TEXT COMPRESSION lz4 COLLATE "C",
     value_number NUMERIC COMPRESSION lz4,
@@ -157,19 +169,26 @@ CREATE TABLE current_attribute_values (
     value_geo geometry COMPRESSION lz4,
     value_object JSONB COMPRESSION lz4,
     value_uri TEXT COMPRESSION lz4 COLLATE "C",
+    value_long_text TEXT COMPRESSION lz4 COLLATE "C",
     CONSTRAINT fk_current_attribute_values_entity
         FOREIGN KEY (entity_key)
         REFERENCES entities(entity_key) ON DELETE CASCADE,
+    CONSTRAINT fk_current_attribute_values_attribute_name
+        FOREIGN KEY (attribute_name_id)
+        REFERENCES attribute_names(id),
+    CONSTRAINT fk_current_attribute_values_unit_code
+        FOREIGN KEY (unit_code_id)
+        REFERENCES unit_codes(id),
     CONSTRAINT uq_current_attribute_values_grain
         UNIQUE NULLS NOT DISTINCT (entity_key, attribute_name_id, dataset_id),
     CONSTRAINT chk_current_attribute_values_attribute_kind
         CHECK (attribute_kind BETWEEN 1 AND 8),
     CONSTRAINT chk_current_attribute_values_single_value CHECK (
         num_nonnulls(value_number, value_string, value_bool, value_geo,
-                     value_object, value_datetime, value_uri) = 1),
+                     value_object, value_datetime, value_uri, value_long_text) = 1),
     CONSTRAINT chk_current_attribute_values_value_kind_column CHECK (
         (value_kind = 1 AND value_number IS NOT NULL)
-        OR (value_kind = 2 AND value_string IS NOT NULL)
+        OR (value_kind = 2 AND num_nonnulls(value_string, value_long_text) = 1)
         OR (value_kind = 3 AND value_bool IS NOT NULL)
         OR (value_kind = 4 AND value_geo IS NOT NULL)
         OR (value_kind = 5 AND value_object IS NOT NULL)
@@ -180,7 +199,15 @@ CREATE TABLE current_attribute_values (
     CONSTRAINT chk_current_attribute_values_value_geo_srid
         CHECK (value_geo IS NULL OR ST_SRID(value_geo) = 4326),
     CONSTRAINT chk_current_attribute_values_value_geo_zm
-        CHECK (value_geo IS NULL OR ST_Zmflag(value_geo) IN (0, 2))
+        CHECK (value_geo IS NULL OR ST_Zmflag(value_geo) IN (0, 2)),
+    CONSTRAINT chk_current_attribute_values_value_string_length
+        CHECK (octet_length(value_string) <= 2048),
+    CONSTRAINT chk_current_attribute_values_value_long_text_length
+        CHECK (octet_length(value_long_text) > 2048),
+    CONSTRAINT chk_current_attribute_values_value_uri_length
+        CHECK (octet_length(value_uri) <= 1024),
+    CONSTRAINT chk_current_attribute_values_dataset_id_length
+        CHECK (octet_length(dataset_id) <= 1024)
 ) WITH (
     fillfactor = 80,
     autovacuum_vacuum_scale_factor = 0.005,
@@ -214,6 +241,15 @@ CREATE INDEX idx_cav_attr_datetime
 CREATE INDEX idx_cav_attr_uri
     ON current_attribute_values (attribute_name_id, value_uri)
     WHERE value_uri IS NOT NULL;
+
+CREATE INDEX idx_cav_attr_long_text
+    ON current_attribute_values (attribute_name_id)
+    WHERE value_long_text IS NOT NULL;
+
+CREATE INDEX idx_cav_attr_long_text_trgm
+    ON current_attribute_values USING GIN (attribute_name_id int4_ops, value_long_text gin_trgm_ops)
+    WITH (fastupdate = off)
+    WHERE value_long_text IS NOT NULL;
 
 CREATE INDEX idx_cav_attr_geo
     ON current_attribute_values USING GIST (attribute_name_id, value_geo)

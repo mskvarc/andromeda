@@ -8,8 +8,18 @@
 
 use crate::merge_fragment::MergeFragmentError;
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReferenceError, uri::Uri};
-use andromeda_ngsi_ld_model::expanded::{mutation::error::ExpandedEntityError, scope_member::ScopeMemberError};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    reference::NgsiLdReferenceError,
+    uri::{Uri, UriParseError},
+};
+use andromeda_ngsi_ld_model::expanded::{
+    dataset_id::InstanceDatasetIdError,
+    entity_member::ExpandedMemberError,
+    mutation::error::ExpandedEntityError,
+    scope_member::ScopeMemberError,
+};
 use thiserror::Error;
 
 /// Why an entity payload or operation is invalid.
@@ -32,6 +42,32 @@ pub enum EntityValidationReason {
         /// The grammar violation.
         #[source]
         source: NgsiLdReferenceError,
+    },
+    /// An expanded entity's `@id`, `@type` or member key cannot be read as the
+    /// identifier, type name or attribute name it stands for (clause 5.5.4).
+    #[error(transparent)]
+    ExpandedMember(ExpandedMemberError),
+    /// An attribute instance carries a `datasetId` that is not an identifier
+    /// (clauses 4.5.5 and 5.5.4).
+    #[error("attribute '{attribute}': {source}")]
+    ExpandedDatasetId {
+        /// The attribute the instance belongs to.
+        attribute: AttributeName,
+        /// The unreadable `datasetId`.
+        #[source]
+        source: InstanceDatasetIdError,
+    },
+    /// An attribute instance carries an `instanceId` that is not an identifier
+    /// (clauses 4.5.7 and 5.5.4).
+    #[error("attribute '{attribute}' carries the instanceId '{raw}', which is not a valid identifier: {source}")]
+    ExpandedInstanceId {
+        /// The attribute the instance belongs to.
+        attribute: AttributeName,
+        /// The `instanceId` as the payload spells it.
+        raw: String,
+        /// Why it is not an identifier.
+        #[source]
+        source: UriParseError,
     },
     /// An attribute name begins with the reserved `@` character.
     #[error("invalid attribute name '{name}': names beginning with '@' are reserved")]

@@ -1,6 +1,6 @@
 //! The `urn:ngsi-ld:<Kind>:<id>` identifiers the broker generates for its own resources.
 
-use crate::uri::Uri;
+use crate::{identifier_length::IdentifierTooLong, uri::Uri};
 use derive_more::{AsRef, Deref, Display};
 use serde::{Deserialize, Serialize, Serializer};
 use std::str::FromStr;
@@ -13,7 +13,11 @@ use uuid::Uuid;
 ///
 /// Expands to a struct that serialises as its URN string and rejects, at
 /// deserialisation, any value that is not a URN, does not use the `ngsi-ld`
-/// namespace, or does not carry the given kind as its first NSS segment.
+/// namespace, does not carry the given kind as its first NSS segment, or is
+/// longer than [`IDENTIFIER_BYTE_LIMIT`] -- the last so that every such
+/// identifier converts into a [`Uri`] without a second, fallible check.
+///
+/// [`IDENTIFIER_BYTE_LIMIT`]: crate::identifier_length::IDENTIFIER_BYTE_LIMIT
 macro_rules! ngsi_ld_urn_id {
     ($name:ident, $error:ident, $constant:literal) => {
         #[doc = concat!("A `urn:ngsi-ld:", $constant, ":<id>` identifier.")]
@@ -37,6 +41,9 @@ macro_rules! ngsi_ld_urn_id {
             /// The identifier itself contains a `:`, which would make the kind ambiguous.
             #[error("identifier suffix must not contain ':'")]
             ExtraColonInSuffix,
+            /// The identifier is longer than any identifier may be.
+            #[error(transparent)]
+            TooLong(#[from] IdentifierTooLong),
         }
 
         impl $name {
@@ -55,6 +62,7 @@ macro_rules! ngsi_ld_urn_id {
 
             fn try_from(value: Urn) -> Result<Self, Self::Error> {
                 let raw = value.as_str();
+                IdentifierTooLong::check(raw)?;
                 if !raw.starts_with(Self::PREFIX) {
                     return Err($error::WrongConstant);
                 }
@@ -119,7 +127,7 @@ macro_rules! ngsi_ld_urn_id {
 
         impl From<$name> for Uri {
             fn from(value: $name) -> Uri {
-                Uri::Urn(value.0)
+                Uri::from_bounded_urn(value.0)
             }
         }
 

@@ -1,11 +1,14 @@
 //! The length a recorded delivery failure is trimmed to before it is stored.
 //!
 //! The schema, not the worker, owns the ceiling: the migration that creates the
-//! delivery queue constrains `delivery_error`, so a diagnostic longer than that
-//! would fail the write and lose the retry bookkeeping travelling with it. The
-//! bound is applied at write time — on the way into the store, never on the way
-//! out — so what is read back is exactly what was persisted.
+//! delivery queue constrains `last_error` to
+//! [`FAILURE_SUMMARY_MAX_CHARACTERS`], so a diagnostic longer than that would
+//! fail the write and lose the retry bookkeeping travelling with it. The bound
+//! is applied at write time — on the way into the store, never on the way out —
+//! so what is read back is exactly what was persisted. An operator may
+//! configure a tighter bound; never a looser one.
 
+use andromeda_context_commit::failure_summary::{FAILURE_SUMMARY_MAX_CHARACTERS, bounded_failure_summary};
 use std::{borrow::Cow, num::NonZeroU32};
 use thiserror::Error;
 
@@ -32,21 +35,18 @@ pub enum DeliveryErrorBoundError {
 pub struct DeliveryErrorBound(NonZeroU32);
 
 impl DeliveryErrorBound {
-    /// The largest bound the delivery schema accepts.
-    pub const SCHEMA_MAXIMUM_CHARACTERS: u32 = 2_048;
-
     /// Build a bound from a whole number of characters.
     ///
     /// # Errors
     ///
     /// Returns [`DeliveryErrorBoundError::ZeroCharacters`] when `characters` is
     /// zero, and [`DeliveryErrorBoundError::AboveSchemaMaximum`] when it exceeds
-    /// [`DeliveryErrorBound::SCHEMA_MAXIMUM_CHARACTERS`].
+    /// [`FAILURE_SUMMARY_MAX_CHARACTERS`].
     pub const fn from_characters(characters: u32) -> Result<DeliveryErrorBound, DeliveryErrorBoundError> {
-        if characters > DeliveryErrorBound::SCHEMA_MAXIMUM_CHARACTERS {
+        if characters > FAILURE_SUMMARY_MAX_CHARACTERS {
             return Err(DeliveryErrorBoundError::AboveSchemaMaximum {
                 characters,
-                maximum: DeliveryErrorBound::SCHEMA_MAXIMUM_CHARACTERS,
+                maximum: FAILURE_SUMMARY_MAX_CHARACTERS,
             });
         }
         match NonZeroU32::new(characters) {
@@ -67,13 +67,7 @@ impl DeliveryErrorBound {
     /// multi-byte diagnostic is shortened rather than split into invalid UTF-8.
     #[must_use]
     pub fn truncate(self, detail: &str) -> Cow<'_, str> {
-        let Ok(limit) = usize::try_from(self.characters()) else {
-            return Cow::Borrowed(detail);
-        };
-        match detail.char_indices().nth(limit) {
-            Some((cut, _)) => Cow::Owned(detail[..cut].to_owned()),
-            None => Cow::Borrowed(detail),
-        }
+        bounded_failure_summary(detail, self.0)
     }
 }
 

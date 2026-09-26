@@ -83,7 +83,7 @@ impl TemporalService {
                 // Unconditional: two concurrent temporal writes for one new
                 // identifier are both legitimate, and neither should fail
                 // because the other materialised the row first.
-                .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::clone(&payload)))) // clone: Arc ref-count bump
+                .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::clone(&payload))?)) // clone: Arc ref-count bump
                 .history(vec![HistoryRecord::Observations(payload)])
                 .build();
             self.writes.commit(target, vec![write]).await?;

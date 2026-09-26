@@ -7,7 +7,8 @@
 //! rows are written directly and cleared again by the exclusive serialized
 //! reset that runs before each test in this suite.
 
-use sqlx::PgPool;
+use andromeda_test_fixtures::high_entropy_text::high_entropy_text;
+use sqlx::{Executor, PgPool, Postgres};
 
 /// Identifier prefix every resource this suite seeds carries.
 ///
@@ -41,6 +42,31 @@ pub const CITY_ATTRIBUTE: &str = "https://example.test/query-access-paths/city";
 /// Expanded IRI of the attribute every 1000th seeded Entity carries, selective
 /// enough that an `attrs` term on it prefers the index.
 pub const ALARM_ATTRIBUTE: &str = "https://example.test/query-access-paths/alarm";
+
+/// Expanded IRI of the attribute whose seeded values are all longer than the
+/// 2048-octet indexed bound, so every one of them is projected into
+/// `value_long_text`.
+pub const ESSAY_ATTRIBUTE: &str = "https://example.test/query-access-paths/essay";
+
+/// Seeded Entities carrying an essay, the first of the corpus by ordinal.
+///
+/// A handful of overflow rows is cheaper to filter on the heap from the
+/// partial B-tree than to probe through the trigram GIN, so the planner only
+/// reaches for the trigram indexes once the overflow population is in the
+/// thousands; this is comfortably past that crossover, which lies between one
+/// and two thousand rows for this corpus.
+const SEEDED_ESSAYS: u64 = 3_000;
+
+/// Octets of every seeded essay: past the 2048-octet bound, short of anything
+/// that would make the corpus slow to write.
+const ESSAY_LENGTH: usize = 3000;
+
+/// Ordinal of the essay the probe substring is cut from.
+const PROBED_ESSAY: usize = 7;
+
+/// Characters of the probe substring, enough trigrams that the pattern is
+/// selective.
+const PROBE_LENGTH: usize = 16;
 
 /// The dictionary identifiers of a seeded corpus, resolved once so a plan
 /// assertion binds an integer instead of joining the dictionary.
@@ -103,10 +129,31 @@ impl SeededCorpus {
     }
 }
 
+/// The overflow strings seeded beside a corpus, and the identities a plan
+/// assertion binds.
+pub struct SeededEssays {
+    /// Dictionary identifier of [`ESSAY_ATTRIBUTE`].
+    attribute: i32,
+    /// A substring from the middle of one seeded essay, present in no other.
+    probe: String,
+}
+
+impl SeededEssays {
+    /// Dictionary identifier of the overflowing attribute.
+    pub const fn attribute(&self) -> i32 {
+        self.attribute
+    }
+
+    /// Borrow the substring a pattern over the essays probes for.
+    pub fn probe(&self) -> &str {
+        &self.probe
+    }
+}
+
 /// Resolve, creating if necessary, the dictionary identifier of an attribute
 /// IRI. The dictionary is deliberately never truncated by the harness, so a
 /// repeated run reuses the same identifier.
-async fn dictionary_id(pool: &PgPool, name: &str) -> i32 {
+pub async fn dictionary_id(pool: &PgPool, name: &str) -> i32 {
     sqlx::query_scalar("INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id")
         .bind(name)
         .fetch_one(pool)
@@ -117,7 +164,7 @@ async fn dictionary_id(pool: &PgPool, name: &str) -> i32 {
 /// Resolve, creating if necessary, the type dictionary identifier of an entity
 /// type IRI. Like the attribute dictionary, it is never truncated by the
 /// harness, so a repeated run reuses the same identifier.
-async fn type_dictionary_id(pool: &PgPool, name: &str) -> i32 {
+pub async fn type_dictionary_id(pool: &PgPool, name: &str) -> i32 {
     sqlx::query_scalar("INSERT INTO entity_type_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id")
         .bind(name)
         .fetch_one(pool)
@@ -222,6 +269,40 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     }
 }
 
+/// Project one high-entropy essay past the indexed bound onto each of the
+/// first [`SEEDED_ESSAYS`] Entities of a seeded corpus, and re-analyze.
+///
+/// The essays land in `value_long_text` under value kind 2, the placement the
+/// writer gives every String longer than 2048 UTF-8 octets, so the overflow
+/// indexes hold exactly these rows.
+pub async fn seed_essays(pool: &PgPool, corpus: &SeededCorpus) -> SeededEssays {
+    let attribute = dictionary_id(pool, ESSAY_ATTRIBUTE).await;
+    let essays: Vec<String> = (0..SEEDED_ESSAYS).map(|seed| high_entropy_text(ESSAY_LENGTH, seed)).collect();
+    let probe = essays
+        .get(PROBED_ESSAY)
+        .and_then(|essay| essay.get(ESSAY_LENGTH / 2..ESSAY_LENGTH / 2 + PROBE_LENGTH))
+        .expect("the probed essay is seeded and ASCII")
+        .to_owned();
+
+    sqlx::query(
+        "INSERT INTO current_attribute_values \
+         (entity_key, attribute_name_id, attribute_kind, value_kind, value_long_text) \
+         SELECT e.entity_key, $1, 1, 2, essay.body \
+         FROM unnest($2::text[]) WITH ORDINALITY AS essay(body, ordinal) \
+         JOIN entities AS e ON e.id = $3::text || ':seed:' || lpad(essay.ordinal::text, 6, '0')",
+    )
+    .bind(attribute)
+    .bind(&essays)
+    .bind(corpus.prefix())
+    .execute(pool)
+    .await
+    .expect("overflow projection corpus must be writable");
+
+    analyze(pool).await;
+
+    SeededEssays { attribute, probe }
+}
+
 /// Refresh the statistics the planner reads for every relation the plans touch.
 pub async fn analyze(pool: &PgPool) {
     for statement in [
@@ -234,11 +315,45 @@ pub async fn analyze(pool: &PgPool) {
     }
 }
 
-/// Run `EXPLAIN (ANALYZE, BUFFERS)` and return the plan as one text block.
-pub async fn explain(pool: &PgPool, statement: &str) -> String {
+/// The planner paths a rolled-back `EXPLAIN` leaves open.
+#[derive(Clone, Copy)]
+pub enum PlannerPaths {
+    /// Every path the planner considers by default.
+    Unrestricted,
+    /// Sequential scans priced out, for a corpus too small for the planner to
+    /// prefer an index on cost alone: the plan then shows whether the index can
+    /// answer the predicate at all.
+    WithoutSequentialScans,
+}
+
+/// Run `EXPLAIN (ANALYZE, BUFFERS)` on one executor and return the plan as one
+/// text block.
+pub async fn explain<'e, E>(executor: E, statement: &str) -> String
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let lines: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN (ANALYZE, BUFFERS) {statement}")))
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await
         .expect("the plan must be readable");
     lines.join("\n")
+}
+
+/// Run `EXPLAIN (ANALYZE, BUFFERS)` inside a transaction that is rolled back
+/// afterwards, so a planner setting stays local to the one statement and a
+/// planned write leaves nothing behind.
+pub async fn explain_rolled_back(pool: &PgPool, paths: PlannerPaths, statement: &str) -> String {
+    let mut transaction = pool.begin().await.expect("the plan transaction must open");
+    match paths {
+        PlannerPaths::Unrestricted => (),
+        PlannerPaths::WithoutSequentialScans => {
+            sqlx::query("SET LOCAL enable_seqscan = off")
+                .execute(&mut *transaction)
+                .await
+                .expect("the planner setting must apply");
+        }
+    }
+    let plan = explain(&mut *transaction, statement).await;
+    transaction.rollback().await.expect("the plan transaction must roll back");
+    plan
 }

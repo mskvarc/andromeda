@@ -2,7 +2,8 @@
 //! path needs them.
 
 use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_model::expanded::entity_member::{ExpandedMemberError, extract_attribute_names, extract_types};
 use serde_json::Value;
 
 /// The node object inside an expanded payload's array wrapper.
@@ -25,4 +26,50 @@ pub(crate) fn attr_name_of(attr_iri: &str) -> Result<AttributeName, EntityError>
             source: err,
         })
     })
+}
+
+/// A member of a payload the write path built from an admitted request that
+/// cannot be read: clause 5.5.4 makes it `BadRequestData`, whichever step of
+/// the write finds it.
+const fn written_member_fault(error: ExpandedMemberError) -> EntityError {
+    EntityError::Validation(EntityValidationReason::ExpandedMember(error))
+}
+
+/// The entity types of a payload the write path built from an admitted
+/// request.
+///
+/// # Errors
+///
+/// Reports [`EntityError::Validation`] for a type that cannot be read.
+pub(crate) fn written_entity_types(payload: &Value) -> Result<Vec<EntityTypeName>, EntityError> {
+    extract_types(payload).map_err(written_member_fault)
+}
+
+/// The attribute names of a payload the write path built from an admitted
+/// request.
+///
+/// # Errors
+///
+/// Reports [`EntityError::Validation`] for a member key that cannot be read.
+pub(crate) fn written_attribute_names(payload: &Value) -> Result<Vec<AttributeName>, EntityError> {
+    extract_attribute_names(payload).map_err(written_member_fault)
+}
+
+/// The entity types of a payload read back from the store.
+///
+/// # Errors
+///
+/// Reports [`EntityError::Internal`] for a type that cannot be read: every
+/// stored payload was admitted when it was written.
+pub(crate) fn stored_entity_types(payload: &Value) -> Result<Vec<EntityTypeName>, EntityError> {
+    extract_types(payload).map_err(EntityError::internal)
+}
+
+/// The attribute names of a payload read back from the store.
+///
+/// # Errors
+///
+/// Reports [`EntityError::Internal`] for a member key that cannot be read.
+pub(crate) fn stored_attribute_names(payload: &Value) -> Result<Vec<AttributeName>, EntityError> {
+    extract_attribute_names(payload).map_err(EntityError::internal)
 }

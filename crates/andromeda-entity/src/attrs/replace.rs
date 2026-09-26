@@ -5,7 +5,7 @@ use crate::{
     attrs::attribute_write::{MutatedEntity, payload_write},
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
-    expanded_member::unwrap_expanded_ref,
+    expanded_member::{unwrap_expanded_ref, written_entity_types},
     notification_plan::attribute_change_groups,
     write_admission::{AttributeWrite, admit_expanded_attribute},
 };
@@ -13,7 +13,10 @@ use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{attribute_fragment::expand_attribute_fragment, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::expanded::{attribute_system_time::stamp_attribute_instants, entity_member::extract_types, mutation::attribute::replace_attr};
+use andromeda_ngsi_ld_model::expanded::{
+    attribute_system_time::stamp_attribute_instants,
+    mutation::{attribute::replace_attr, error::ExpandedEntityError},
+};
 use andromeda_ngsi_ld_representation::normalization::normalize_attribute_node;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::Utc;
@@ -84,15 +87,15 @@ impl EntityService {
 
                 // its createdAt across the read-modify-write.
 
-                stamp_attribute_instants(&mut existing, previous, now);
+                stamp_attribute_instants(&mut existing, previous, now).map_err(ExpandedEntityError::from)?;
 
                 let merged = Arc::new(existing);
-                let types = extract_types(&merged);
+                let types = written_entity_types(&merged)?;
 
-                let groups = attribute_change_groups(previous, &merged);
+                let groups = attribute_change_groups(previous, &merged)?;
                 let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
-                let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))], plan.matches); // clone: Arc ref-count bump
+                let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))], plan.matches)?; // clone: Arc ref-count bump
                 Ok((write, MutatedEntity { events: plan.events }))
             })
             .await?;

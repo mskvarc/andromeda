@@ -22,13 +22,13 @@ pub(crate) fn payload() -> Result<Value, ContextRegistryError> {
 
 /// Build the virtual metadata record for an embedded core Context.
 pub(crate) fn metadata(identifier: &Uri) -> Result<ContextMetadata, ContextRegistryError> {
-    let Uri::Url(url) = identifier else {
+    let Some(url) = identifier.as_url() else {
         return Err(ContextRegistryError::Invariant {
             detail: "core Context identifier is not a URL".to_string(),
         });
     };
     let url = url.clone(); // clone: metadata owns both the public URL and its URI identifier.
-    let local_id = Uri::Url(url.clone()); // clone: the URL is also retained in the metadata URL field.
+    let local_id = identifier.clone(); // clone: the identifier is also retained as the metadata's local id.
     // The embedded core Context serves under its own URL; keep it verbatim as
     // the hit-counter key, the same string a `numberOfHits` fold looks up.
     let serving_iri = IriBuf::new(url.as_str().to_owned()).map_err(|error| ContextRegistryError::Invariant {
