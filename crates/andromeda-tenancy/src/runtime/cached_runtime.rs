@@ -1,7 +1,7 @@
 //! One tenant's live runtime, when it was last reached for, and the hold a
 //! request takes against its eviction.
 
-use crate::{database_name::TenantDatabaseName, runtime::lease::LeaseOrigin};
+use crate::{database_name::TenantDatabaseName, runtime::lease::LeaseOrigin, state_factory::TenantRuntime};
 use std::{
     sync::{
         Arc,
@@ -47,6 +47,14 @@ pub(super) struct CachedRuntime<S, R> {
     pub(super) origin: Arc<LeaseOrigin>,
 }
 
+impl<S, R: TenantRuntime> CachedRuntime<S, R> {
+    /// Record that this runtime was just used, and tell the runtime so.
+    pub(super) fn touch(&self) {
+        self.last_used.store(now_millis(), Ordering::Relaxed);
+        self.runtime.record_activity();
+    }
+}
+
 impl<S, R> CachedRuntime<S, R> {
     /// Build a freshly leased runtime and the lease held against it.
     ///
@@ -86,11 +94,6 @@ impl<S, R> CachedRuntime<S, R> {
         }
     }
 
-    /// Record that this runtime was just used.
-    pub(super) fn touch(&self) {
-        self.last_used.store(now_millis(), Ordering::Relaxed);
-    }
-
     /// Age this runtime's last use by `age`, so it sorts older for eviction.
     ///
     /// A woken runtime is backdated by the idle TTL minus its residency, leaving
@@ -123,5 +126,52 @@ impl<S, R> CachedRuntime<S, R> {
     /// longer be handed to a request.
     pub(super) fn is_retired(&self) -> bool {
         self.origin.is_retired()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        database_name::TenantDatabaseName,
+        runtime::{cached_runtime::CachedRuntime, lease::LeaseOrigin},
+        state_factory::TenantRuntime,
+    };
+    use async_trait::async_trait;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use tokio::sync::Notify;
+
+    /// A runtime counting how often it is told it was reached for.
+    struct ActivityCountingRuntime {
+        activity: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl TenantRuntime for ActivityCountingRuntime {
+        async fn shutdown(self) {}
+
+        fn record_activity(&self) {
+            self.activity.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Pacing background work by use needs every touch to reach the runtime,
+    /// not only the cache's own last-use stamp.
+    #[test]
+    fn every_touch_tells_the_runtime_it_was_reached_for() {
+        let activity = Arc::new(AtomicUsize::new(0));
+        let cached = CachedRuntime::unleased(
+            Arc::new(()),
+            ActivityCountingRuntime {
+                activity: Arc::clone(&activity),
+            },
+            TenantDatabaseName::from("andromeda_tenant_acme".to_string()),
+            LeaseOrigin::new(Arc::new(Notify::new())),
+        );
+        cached.touch();
+        cached.touch();
+        pretty_assertions::assert_eq!(activity.load(Ordering::Relaxed), 2);
     }
 }

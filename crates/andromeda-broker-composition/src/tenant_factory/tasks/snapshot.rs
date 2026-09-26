@@ -3,7 +3,7 @@
 
 use crate::{
     event::snapshot_notification_sink::{DeliverySnapshotNotificationSink, SnapshotStatusDeliveryDrain},
-    tenant_factory::error::TenantAssemblyError,
+    tenant_factory::{error::TenantAssemblyError, tasks::sweep_pacer::SweepPacer},
 };
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_notification::delivery_config::DeliveryConfig;
@@ -32,13 +32,6 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 
-/// Register snapshot preparation and the durable delivery of the lifecycle
-/// notifications it produces.
-///
-/// # Errors
-///
-/// Returns [`TenantAssemblyError`] when the configured delivery cadence is
-/// rejected or when the supervisor refuses either registration.
 /// The wake endpoints the Snapshot status-delivery workers share.
 ///
 /// The scheduled sweep and the create-time preparation path both wake through
@@ -52,13 +45,30 @@ pub(super) struct SnapshotStatusWake {
     pub(super) receiver: DrainWakeReceiver,
 }
 
+/// The inputs of the scheduled sweep that recovers Snapshot preparations a
+/// failed or crashed worker left behind.
+pub(super) struct PreparationRecovery {
+    /// The preparation the sweep drives.
+    pub(super) preparation: Arc<SnapshotPreparation>,
+    /// How often the sweep ticks.
+    pub(super) cadence: Duration,
+    /// Rests the sweep while the tenant is quiet and nothing is preparing.
+    pub(super) pacer: Arc<SweepPacer>,
+}
+
+/// Register snapshot preparation and the durable delivery of the lifecycle
+/// notifications it produces.
+///
+/// # Errors
+///
+/// Returns [`TenantAssemblyError`] when the configured delivery cadence is
+/// rejected or when the supervisor refuses either registration.
 pub(super) fn register_snapshot_workers(
     supervisor: &TaskSupervisor,
     pool: &PgPool,
-    preparation: Arc<SnapshotPreparation>,
+    recovery: PreparationRecovery,
     transport: &Arc<TransportDispatcher>,
     config: &DeliveryConfig,
-    preparation_recovery: Duration,
     wake: SnapshotStatusWake,
 ) -> Result<(), TenantAssemblyError> {
     // The scheduled sweep wakes status delivery the moment it prepares a
@@ -67,7 +77,7 @@ pub(super) fn register_snapshot_workers(
     // its own clone of the handle, so a freshly created Snapshot's notification
     // does not wait for the drain's fallback either.
     let SnapshotStatusWake { sweep_wake, receiver } = wake;
-    register_snapshot_preparation(supervisor, preparation, sweep_wake, preparation_recovery)?;
+    register_snapshot_preparation(supervisor, recovery, sweep_wake)?;
     let drain = Arc::new(
         SnapshotStatusDeliveryDrain::new(
             Arc::new(SnapshotStatusOutbox::new(pool)),
@@ -92,7 +102,12 @@ pub(super) fn register_snapshot_workers(
 ///
 /// Returns [`TenantAssemblyError`] when the cadence is rejected or when the
 /// supervisor refuses the registration.
-pub(super) fn register_snapshot_expiry(supervisor: &TaskSupervisor, store: Arc<dyn SnapshotStore>, cadence: Duration) -> Result<(), TenantAssemblyError> {
+pub(super) fn register_snapshot_expiry(
+    supervisor: &TaskSupervisor,
+    pacer: Arc<SweepPacer>,
+    store: Arc<dyn SnapshotStore>,
+    cadence: Duration,
+) -> Result<(), TenantAssemblyError> {
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("snapshot-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
@@ -105,11 +120,16 @@ pub(super) fn register_snapshot_expiry(supervisor: &TaskSupervisor, store: Arc<d
     let expiry = Arc::new(SnapshotExpiry::new(store));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let expiry = Arc::clone(&expiry); // clone: each execution owns the bounded operation while running.
+        let pacer = Arc::clone(&pacer); // clone: each execution consults the tenant's one pacer.
         async move {
-            let cutoff = DateTime::<Utc>::from(execution.cutoff());
-            let expired = expiry.execute(cutoff).await.map_err(|error| classify_snapshot_failure(&error))?;
-            tracing::info!(expired, "snapshot expiry completed");
-            Ok(())
+            pacer
+                .run(async move {
+                    let cutoff = DateTime::<Utc>::from(execution.cutoff());
+                    let expired = expiry.execute(cutoff).await.map_err(|error| classify_snapshot_failure(&error))?;
+                    tracing::info!(expired, "snapshot expiry completed");
+                    Ok(())
+                })
+                .await
         }
     });
     supervisor
@@ -118,12 +138,8 @@ pub(super) fn register_snapshot_expiry(supervisor: &TaskSupervisor, store: Arc<d
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 
-fn register_snapshot_preparation(
-    supervisor: &TaskSupervisor,
-    preparation: Arc<SnapshotPreparation>,
-    status_wake: WakeHandle,
-    cadence: Duration,
-) -> Result<(), TenantAssemblyError> {
+fn register_snapshot_preparation(supervisor: &TaskSupervisor, recovery: PreparationRecovery, status_wake: WakeHandle) -> Result<(), TenantAssemblyError> {
+    let PreparationRecovery { preparation, cadence, pacer } = recovery;
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("snapshot-preparation").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
@@ -136,18 +152,23 @@ fn register_snapshot_preparation(
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
         let preparation = Arc::clone(&preparation); // clone: each execution owns the bounded operation while running.
         let status_wake = status_wake.clone(); // clone: each execution wakes delivery through its own handle.
+        let pacer = Arc::clone(&pacer); // clone: each execution consults the tenant's one pacer.
         async move {
-            match preparation.execute().await.map_err(|error| classify_snapshot_failure(&error))? {
-                SnapshotPreparationOutcome::Idle => {}
-                SnapshotPreparationOutcome::Prepared { count } => {
-                    tracing::info!(count, "snapshot preparation completed");
-                    // A prepared Snapshot enqueued its status notification, so
-                    // deliver it now rather than on the delivery drain's idle
-                    // fallback.
-                    report_status_wake(status_wake.wake());
-                }
-            }
-            Ok(())
+            pacer
+                .run(async move {
+                    match preparation.execute().await.map_err(|error| classify_snapshot_failure(&error))? {
+                        SnapshotPreparationOutcome::Idle => {}
+                        SnapshotPreparationOutcome::Prepared { count } => {
+                            tracing::info!(count, "snapshot preparation completed");
+                            // A prepared Snapshot enqueued its status
+                            // notification, so deliver it now rather than on the
+                            // delivery drain's idle fallback.
+                            report_status_wake(status_wake.wake());
+                        }
+                    }
+                    Ok(())
+                })
+                .await
         }
     });
     supervisor

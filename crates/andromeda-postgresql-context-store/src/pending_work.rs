@@ -16,6 +16,7 @@
 //! a subscription is next due.
 
 use crate::{
+    error::ContextStoreError,
     migration_set::branch::{BranchSchemaVersion, current_branch_version},
     snapshot::{branch_version::branch_is_current, status_code::stored_status as stored_snapshot_status},
     subscription_store::{delivery_state::interval_anchor_select, status_code::status_is_not},
@@ -105,28 +106,62 @@ impl PendingWorkProbe for PostgresPendingWorkProbe {
 }
 
 impl PostgresPendingWorkProbe {
-    /// Run both probe reads over the transient pool and fold their results.
+    /// Read the earliest obligation over the transient pool, classifying a
+    /// failure the way the wake loop needs it.
     async fn earliest_over(&self, pool: &sqlx::PgPool, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
-        let current = current_branch_version().map_err(|error| PendingWorkError::ProbeFailed {
-            database: database.clone(), // clone: the error outlives this borrow
-            detail: error.to_string(),
-        })?;
-        let (queue_sql, queue_values) = least_due_select(current).build_sqlx(PostgresQueryBuilder);
-        let queue_due: Option<DateTime<Utc>> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(queue_sql.as_str()), queue_values)
-            .fetch_one(pool)
-            .await
-            .map_err(|error| Self::classify(&error, database))?;
-
-        let (interval_sql, interval_values) = interval_probe_select().build_sqlx(PostgresQueryBuilder);
-        let anchors: Vec<(DateTime<Utc>, f64)> = sqlx::query_as_with(sqlx::AssertSqlSafe(interval_sql.as_str()), interval_values)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| Self::classify(&error, database))?;
-
-        let interval_due = earliest_interval_due(anchors);
-        let earliest = [queue_due, interval_due].into_iter().flatten().min();
-        Ok(earliest.map_or(PendingWork::None, |due| PendingWork::DueAt(SystemTime::from(due))))
+        match earliest_obligation(pool).await {
+            Ok(due) => Ok(due.map_or(PendingWork::None, PendingWork::DueAt)),
+            Err(ContextStoreError::Saturated) => Err(PendingWorkError::Saturated {
+                database: database.clone(), // clone: the error outlives this borrow
+            }),
+            Err(ContextStoreError::Database(error)) => Err(Self::classify(&error, database)),
+            Err(
+                error @ (ContextStoreError::SchemaContract(_)
+                | ContextStoreError::UniqueViolation(_)
+                | ContextStoreError::InvalidRegex(_)
+                | ContextStoreError::Encoding(_)
+                | ContextStoreError::Collation(_)
+                | ContextStoreError::CopyField(_)
+                | ContextStoreError::Render(_)
+                | ContextStoreError::NameLookup(_)
+                | ContextStoreError::EntityTypes(_)
+                | ContextStoreError::ContextMapper(_)
+                | ContextStoreError::Migration(_)
+                | ContextStoreError::BranchVersion(_)
+                | ContextStoreError::Internal(_)),
+            ) => Err(PendingWorkError::ProbeFailed {
+                database: database.clone(), // clone: the error outlives this borrow
+                detail: error.to_string(),
+            }),
+        }
     }
+}
+
+/// The earliest instant any background obligation of the database behind
+/// `pool` falls due -- a durable-queue item, a preparing Snapshot, an
+/// `expiresAt` of any kind, or a clause-5.8.6 periodic notification -- or
+/// `None` when nothing is outstanding.
+///
+/// One index-backed `SELECT LEAST(...)` plus the periodic-notification anchors.
+/// It serves both the wake loop's probe of a dormant tenant, over a transient
+/// pool, and a resident tenant pacing its own sweeps, over its serving pool.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::BranchVersion`] when the embedded branch set has
+/// no version, and the classified database failure of either read.
+pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTime>, ContextStoreError> {
+    let (queue_sql, queue_values) = least_due_select(current_branch_version()?).build_sqlx(PostgresQueryBuilder);
+    let queue_due: Option<DateTime<Utc>> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(queue_sql.as_str()), queue_values)
+        .fetch_one(pool)
+        .await?;
+
+    let (interval_sql, interval_values) = interval_probe_select().build_sqlx(PostgresQueryBuilder);
+    let anchors: Vec<(DateTime<Utc>, f64)> = sqlx::query_as_with(sqlx::AssertSqlSafe(interval_sql.as_str()), interval_values)
+        .fetch_all(pool)
+        .await?;
+
+    Ok([queue_due, earliest_interval_due(anchors)].into_iter().flatten().min().map(SystemTime::from))
 }
 
 /// The earliest instant any periodic subscription owes a notification.

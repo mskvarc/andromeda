@@ -11,6 +11,7 @@ use crate::{
         tasks::{
             maintenance::{classify_entity_expiry_failure, classify_registration_expiry_failure, classify_subscription_expiry_failure},
             snapshot::register_snapshot_expiry,
+            sweep_pacer::SweepPacer,
         },
     },
     tenant_state::AndromedaState,
@@ -41,7 +42,9 @@ use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 
-/// Register every sweep that deletes a resource past its `expiresAt`.
+/// Register every sweep that deletes a resource past its `expiresAt`, each
+/// paced by `pacer` so a tenant nobody is using sweeps only when something is
+/// due.
 ///
 /// # Errors
 ///
@@ -53,10 +56,14 @@ pub(super) fn register_expiry_workers(
     storage: &TenantStorage,
     state: &AndromedaState,
     registration_changes: &broadcast::Sender<CsrChangeEvent>,
+    pacer: &Arc<SweepPacer>,
 ) -> Result<(), TenantAssemblyError> {
     let interval = config.temporal.expiration_check_interval.duration();
+    // clone: every sweep of the tenant consults the tenant's one pacer.
+    let sweep_pacer = || Arc::clone(pacer);
     register_subscription_expiry(
         supervisor,
+        sweep_pacer(),
         "subscription-expiry",
         state.live_target.clone(),        // clone: the sweep owns the live branch it operates on.
         Arc::clone(&state.subscriptions), // clone: request handling and the sweep share one policy.
@@ -64,6 +71,7 @@ pub(super) fn register_expiry_workers(
     )?;
     register_subscription_expiry(
         supervisor,
+        sweep_pacer(),
         "csource-subscription-expiry",
         state.live_target.clone(),            // clone: the sweep owns the live branch it operates on.
         Arc::clone(&state.csr_subscriptions), // clone: request handling and the sweep share one policy.
@@ -71,6 +79,7 @@ pub(super) fn register_expiry_workers(
     )?;
     register_registration_expiry(
         supervisor,
+        sweep_pacer(),
         Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
         Arc::new(BroadcastRegistrationChangeSink::new(registration_changes.clone())), // clone: each worker owns a sender handle.
         // clone: request handling and the sweep tear down removed registrations through one forwarding service.
@@ -82,14 +91,15 @@ pub(super) fn register_expiry_workers(
     )?;
     register_entity_expiry(
         supervisor,
+        sweep_pacer(),
         state.live_target.clone(),   // clone: the sweep owns the live branch it operates on.
         Arc::clone(&state.entities), // clone: request handling and the sweep share one policy.
         Arc::clone(&storage.entity_ports.expiry),
         interval,
         config.entity.expiry_batch_size,
     )?;
-    register_snapshot_expiry(supervisor, Arc::clone(&storage.snapshot_store), interval)?; // clone: every snapshot worker shares one store.
-    register_entity_map_expiry(supervisor, Arc::clone(&storage.entity_map_store), interval)?; // clone: request handling and the sweep share one store.
+    register_snapshot_expiry(supervisor, sweep_pacer(), Arc::clone(&storage.snapshot_store), interval)?; // clone: every snapshot worker shares one store.
+    register_entity_map_expiry(supervisor, sweep_pacer(), Arc::clone(&storage.entity_map_store), interval)?; // clone: request handling and the sweep share one store.
     register_cached_context_invalidation(supervisor, Arc::clone(&storage.cached_context_invalidation)) // clone: the sweep and every other Context capability share one repository.
 }
 
@@ -125,6 +135,7 @@ fn register_cached_context_invalidation(supervisor: &TaskSupervisor, store: Arc<
 
 fn register_entity_expiry(
     supervisor: &TaskSupervisor,
+    pacer: Arc<SweepPacer>,
     target: ContextTarget,
     entity_policy: Arc<EntityService>,
     entity_expiry_source: Arc<dyn EntityExpirySource>,
@@ -144,16 +155,21 @@ fn register_entity_expiry(
     let sweep = Arc::new(EntityExpirySweep::new(target, entity_policy, entity_expiry_source, expiry_batch_size));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let sweep = Arc::clone(&sweep); // clone: each scheduled future owns the shared policy operation for its duration.
+        let pacer = Arc::clone(&pacer); // clone: each scheduled future consults the tenant's one pacer.
         async move {
-            let cutoff = DateTime::<Utc>::from(execution.cutoff());
-            match sweep.execute(cutoff).await.map_err(|error| classify_entity_expiry_failure(&error))? {
-                EntityExpiryOutcome::DeferredForBatchActivity => tracing::debug!("entity expiry deferred during recent batch activity"),
-                EntityExpiryOutcome::Applied {
-                    expired_entities,
-                    purged_attributes,
-                } => tracing::info!(expired_entities, purged_attributes, "entity expiry sweep completed"),
-            }
-            Ok(())
+            pacer
+                .run(async move {
+                    let cutoff = DateTime::<Utc>::from(execution.cutoff());
+                    match sweep.execute(cutoff).await.map_err(|error| classify_entity_expiry_failure(&error))? {
+                        EntityExpiryOutcome::DeferredForBatchActivity => tracing::debug!("entity expiry deferred during recent batch activity"),
+                        EntityExpiryOutcome::Applied {
+                            expired_entities,
+                            purged_attributes,
+                        } => tracing::info!(expired_entities, purged_attributes, "entity expiry sweep completed"),
+                    }
+                    Ok(())
+                })
+                .await
         }
     });
     supervisor
@@ -165,6 +181,7 @@ fn register_entity_expiry(
 /// Register one subscription variant as an independent scheduled policy operation.
 fn register_subscription_expiry<V>(
     supervisor: &TaskSupervisor,
+    pacer: Arc<SweepPacer>,
     task_name: &'static str,
     target: ContextTarget,
     policy: Arc<SubscriptionService<V>>,
@@ -185,11 +202,16 @@ where
     let expiry = Arc::new(SubscriptionExpiry::new(target, policy));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let expiry = Arc::clone(&expiry); // clone: each scheduled future owns the policy operation while executing.
+        let pacer = Arc::clone(&pacer); // clone: each scheduled future consults the tenant's one pacer.
         async move {
-            let cutoff = DateTime::<Utc>::from(execution.cutoff());
-            let outcome = expiry.execute(cutoff).await.map_err(|error| classify_subscription_expiry_failure(&error))?;
-            tracing::info!(expired = outcome.expired.len(), task = task_name, "subscription expiry completed");
-            Ok(())
+            pacer
+                .run(async move {
+                    let cutoff = DateTime::<Utc>::from(execution.cutoff());
+                    let outcome = expiry.execute(cutoff).await.map_err(|error| classify_subscription_expiry_failure(&error))?;
+                    tracing::info!(expired = outcome.expired.len(), task = task_name, "subscription expiry completed");
+                    Ok(())
+                })
+                .await
         }
     });
     supervisor
@@ -211,6 +233,7 @@ where
 /// reads already treat it as deleted.
 fn register_registration_expiry(
     supervisor: &TaskSupervisor,
+    pacer: Arc<SweepPacer>,
     store: Arc<dyn RegistrationStore>,
     change_sink: Arc<dyn RegistrationChangeSink>,
     removal_hook: Option<Arc<dyn RegistrationRemovalHook>>,
@@ -228,11 +251,16 @@ fn register_registration_expiry(
     let expiry = Arc::new(RegistrationExpiry::new(store, Some(change_sink), removal_hook));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let expiry = Arc::clone(&expiry); // clone: each scheduled future owns the policy operation while executing.
+        let pacer = Arc::clone(&pacer); // clone: each scheduled future consults the tenant's one pacer.
         async move {
-            let cutoff = DateTime::<Utc>::from(execution.cutoff());
-            let outcome = expiry.execute(cutoff).await.map_err(|error| classify_registration_expiry_failure(&error))?;
-            tracing::info!(expired = outcome.expired.len(), "registration expiry completed");
-            Ok(())
+            pacer
+                .run(async move {
+                    let cutoff = DateTime::<Utc>::from(execution.cutoff());
+                    let outcome = expiry.execute(cutoff).await.map_err(|error| classify_registration_expiry_failure(&error))?;
+                    tracing::info!(expired = outcome.expired.len(), "registration expiry completed");
+                    Ok(())
+                })
+                .await
         }
     });
     supervisor
@@ -244,7 +272,12 @@ fn register_registration_expiry(
 /// Register the sweep that removes Entity Maps past their `expiresAt`
 /// (clause 5.2.39); the maps are durable, so a stale one would otherwise stay
 /// referenceable across instances forever.
-fn register_entity_map_expiry(supervisor: &TaskSupervisor, store: Arc<dyn EntityMapStore>, cadence: Duration) -> Result<(), TenantAssemblyError> {
+fn register_entity_map_expiry(
+    supervisor: &TaskSupervisor,
+    pacer: Arc<SweepPacer>,
+    store: Arc<dyn EntityMapStore>,
+    cadence: Duration,
+) -> Result<(), TenantAssemblyError> {
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("entity-map-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
@@ -257,11 +290,16 @@ fn register_entity_map_expiry(supervisor: &TaskSupervisor, store: Arc<dyn Entity
     let expiry = Arc::new(EntityMapExpiry::new(store));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let expiry = Arc::clone(&expiry); // clone: each execution owns the bounded operation while running.
+        let pacer = Arc::clone(&pacer); // clone: each execution consults the tenant's one pacer.
         async move {
-            let cutoff = DateTime::<Utc>::from(execution.cutoff());
-            let expired = expiry.execute(cutoff).await.map_err(|error| classify_entity_map_failure(&error))?;
-            tracing::info!(expired, "entity map expiry completed");
-            Ok(())
+            pacer
+                .run(async move {
+                    let cutoff = DateTime::<Utc>::from(execution.cutoff());
+                    let expired = expiry.execute(cutoff).await.map_err(|error| classify_entity_map_failure(&error))?;
+                    tracing::info!(expired, "entity map expiry completed");
+                    Ok(())
+                })
+                .await
         }
     });
     supervisor

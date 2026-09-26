@@ -1,6 +1,6 @@
 //! Runtime resources owned by one tenant and their shutdown order.
 
-use crate::tenant_factory::storage::TenantContextWorkers;
+use crate::tenant_factory::{storage::TenantContextWorkers, tasks::sweep_pacer::SweepPacer};
 use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_tenancy::state_factory::TenantRuntime;
@@ -18,6 +18,8 @@ pub struct BrokerTenantRuntime {
     pool: PgPool,
     health_shutdown: Option<watch::Sender<bool>>,
     task_supervisor: TaskSupervisor,
+    /// Paces the tenant's sweeps; told of every use of the runtime.
+    pacer: Arc<SweepPacer>,
 }
 
 impl BrokerTenantRuntime {
@@ -28,6 +30,7 @@ impl BrokerTenantRuntime {
         pool: PgPool,
         health_shutdown: Option<watch::Sender<bool>>,
         task_supervisor: TaskSupervisor,
+        pacer: Arc<SweepPacer>,
     ) -> BrokerTenantRuntime {
         BrokerTenantRuntime {
             context_workers,
@@ -36,6 +39,7 @@ impl BrokerTenantRuntime {
             pool,
             health_shutdown,
             task_supervisor,
+            pacer,
         }
     }
 
@@ -59,6 +63,10 @@ impl TenantRuntime for BrokerTenantRuntime {
         info!(event = "tenant_context_hits_flushed");
         self.pool.close().await;
         info!(event = "tenant_pool_closed");
+    }
+
+    fn record_activity(&self) {
+        self.pacer.record_activity();
     }
 }
 

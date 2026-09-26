@@ -19,6 +19,14 @@ pub trait TenantRuntime: Send + Sync + 'static {
     /// makes unwritable.
     #[must_use = "runtime shutdown must be awaited"]
     async fn shutdown(self);
+
+    /// Note that the runtime was just reached for.
+    ///
+    /// The cache calls it each time it hands the runtime to a request, and when
+    /// its janitor keeps the runtime resident for work that is about to fall
+    /// due, so a runtime can pace its background work by whether its tenant is
+    /// in use instead of polling at a fixed cadence while nobody is.
+    fn record_activity(&self);
 }
 
 /// Building everything a tenant needs in order to serve requests.

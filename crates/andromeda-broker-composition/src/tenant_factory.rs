@@ -289,6 +289,7 @@ async fn build_tenant_state(
             storage.pool,
             supervision.health_shutdown,
             supervision.task_supervisor,
+            supervision.pacer,
         ),
     ))
 }

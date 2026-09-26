@@ -315,6 +315,8 @@ impl TenantRuntime for FakeRuntime {
     async fn shutdown(self) {
         self.shutdowns.fetch_add(1, Ordering::Relaxed);
     }
+
+    fn record_activity(&self) {}
 }
 
 /// A factory recording which database each runtime was built against.
@@ -1008,6 +1010,8 @@ impl TenantRuntime for ShutdownConcurrencyProbe {
         sleep(self.hold).await;
         self.active.fetch_sub(1, Ordering::SeqCst);
     }
+
+    fn record_activity(&self) {}
 }
 
 /// A factory that builds [`ShutdownConcurrencyProbe`] runtimes sharing one pair
@@ -1097,6 +1101,8 @@ impl TenantRuntime for GatedShutdownRuntime {
         self.gate.notified().await;
         self.shutdowns.fetch_add(1, Ordering::SeqCst);
     }
+
+    fn record_activity(&self) {}
 }
 
 /// A factory building [`GatedShutdownRuntime`]s that share one gate.
@@ -1446,6 +1452,8 @@ impl TenantRuntime for CommitOnShutdownRuntime {
         self.committed.store(true, Ordering::SeqCst);
         self.shutdowns.fetch_add(1, Ordering::SeqCst);
     }
+
+    fn record_activity(&self) {}
 }
 
 /// A factory building [`CommitOnShutdownRuntime`]s that share one commit flag.
@@ -1561,6 +1569,8 @@ impl TenantRuntime for LatchedShutdownRuntime {
         let _closed = self.latch.acquire().await;
         self.alive.fetch_sub(1, Ordering::SeqCst);
     }
+
+    fn record_activity(&self) {}
 }
 
 /// A factory building [`LatchedShutdownRuntime`]s that share one latch and one
