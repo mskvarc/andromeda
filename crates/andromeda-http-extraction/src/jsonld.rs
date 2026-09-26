@@ -8,28 +8,54 @@ use crate::content_length_precondition::{ContentLengthPreconditionError, declare
 use andromeda_http_headers::link::header::Link;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact};
+use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact, deserialize_exact_document};
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
-    http::{StatusCode, header::LINK},
+    http::{StatusCode, Uri, header::LINK},
 };
 use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use std::{collections::HashSet, str::FromStr};
 
-/// Axum extractor for NGSI-LD JSON-LD request bodies.
+/// Axum extractor for NGSI-LD JSON-LD request bodies decoded into a domain type.
 ///
 /// Validates the `Content-Type` header against the supported NGSI-LD media types
 /// (`application/json`, `application/ld+json`, `application/merge-patch+json`),
 /// extracts and merges `@context` values from the body when present, and
-/// deserializes the context-stripped payload into `T`.
+/// deserializes the context-stripped payload into `T`. A handler that keeps
+/// the body as an untyped JSON document takes [`JsonLdDocument`] instead.
 pub struct JsonLd<T> {
     /// The deserialized request body with `@context` removed.
     pub value: T,
     /// The extracted context specification from the body and/or Link header.
     pub context: ContextSpec,
+}
+
+/// Axum extractor for NGSI-LD JSON-LD request bodies kept as untyped JSON
+/// documents.
+///
+/// Applies every precondition [`JsonLd`] applies and yields the same document
+/// `JsonLd<Value>` would, without re-reading a document that is
+/// already in the shape a read of its serialization gives.
+pub struct JsonLdDocument {
+    /// The request body with `@context` removed.
+    pub document: Value,
+    /// The extracted context specification from the body and/or Link header.
+    pub context: ContextSpec,
+}
+
+/// A request body that passed the NGSI-LD body preconditions, with its
+/// numbers canonicalized and its `@context` split off.
+struct AdmittedBody {
+    /// The context-stripped body.
+    document: Value,
+    /// The extracted context specification from the body and/or Link header.
+    context: ContextSpec,
+    /// The request URI, the `instance` of any later rejection.
+    uri: Uri,
 }
 
 /// Classify the Content-Type into one of the supported NGSI-LD types.
@@ -69,21 +95,21 @@ fn classify_content_type(raw: &str) -> Option<ContentKind> {
 }
 
 /// Return whether a decoded document carries a top-level JSON-LD context.
-fn document_has_context(document: &serde_json::Value) -> bool {
+fn document_has_context(document: &Value) -> bool {
     match document {
-        serde_json::Value::Object(obj) => obj.contains_key("@context"),
-        serde_json::Value::Array(items) => items.iter().any(|item| item.as_object().is_some_and(|o| o.contains_key("@context"))),
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => false,
+        Value::Object(obj) => obj.contains_key("@context"),
+        Value::Array(items) => items.iter().any(|item| item.as_object().is_some_and(|o| o.contains_key("@context"))),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
     }
 }
 
 /// Merge the context values carried by a document into one JSON value.
-fn merge_context_values_from_document(document: &serde_json::Value) -> Option<serde_json::Value> {
+fn merge_context_values_from_document(document: &Value) -> Option<Value> {
     let mut merged = Vec::new();
     let mut seen = HashSet::new();
 
-    let mut push_context = |ctx: serde_json::Value| match ctx {
-        serde_json::Value::Array(items) => {
+    let mut push_context = |ctx: Value| match ctx {
+        Value::Array(items) => {
             for item in items {
                 let key = item.to_string();
                 if seen.insert(key) {
@@ -91,11 +117,7 @@ fn merge_context_values_from_document(document: &serde_json::Value) -> Option<se
                 }
             }
         }
-        other @ (serde_json::Value::Null
-        | serde_json::Value::Bool(_)
-        | serde_json::Value::Number(_)
-        | serde_json::Value::String(_)
-        | serde_json::Value::Object(_)) => {
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => {
             let key = other.to_string();
             if seen.insert(key) {
                 merged.push(other);
@@ -104,25 +126,25 @@ fn merge_context_values_from_document(document: &serde_json::Value) -> Option<se
     };
 
     match document {
-        serde_json::Value::Object(obj) => {
+        Value::Object(obj) => {
             if let Some(ctx) = obj.get("@context") {
                 push_context(ctx.clone());
             }
         }
-        serde_json::Value::Array(items) => {
+        Value::Array(items) => {
             for item in items {
                 if let Some(ctx) = item.as_object().and_then(|obj| obj.get("@context")) {
                     push_context(ctx.clone());
                 }
             }
         }
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 
     match merged.len() {
         0 => None,
         1 => merged.into_iter().next(),
-        _ => Some(serde_json::Value::Array(merged)),
+        _ => Some(Value::Array(merged)),
     }
 }
 
@@ -130,42 +152,45 @@ fn merge_context_values_from_document(document: &serde_json::Value) -> Option<se
 /// gives it: an IRI string, a context definition object, or an array of those
 /// (and `null`, which resets). Clause 5.5.4: any other shape is data that is
 /// not syntactically correct according to the API data type definitions.
-fn is_well_formed_context(context: &serde_json::Value) -> bool {
+fn is_well_formed_context(context: &Value) -> bool {
     match context {
-        serde_json::Value::Null | serde_json::Value::String(_) | serde_json::Value::Object(_) => true,
-        serde_json::Value::Array(items) => items
-            .iter()
-            .all(|item| matches!(item, serde_json::Value::Null | serde_json::Value::String(_) | serde_json::Value::Object(_))),
-        serde_json::Value::Bool(_) | serde_json::Value::Number(_) => false,
+        Value::Null | Value::String(_) | Value::Object(_) => true,
+        Value::Array(items) => items.iter().all(|item| matches!(item, Value::Null | Value::String(_) | Value::Object(_))),
+        Value::Bool(_) | Value::Number(_) => false,
     }
 }
 
 /// Whether every top-level `@context` a document carries is well formed.
-fn document_contexts_are_well_formed(document: &serde_json::Value) -> bool {
+fn document_contexts_are_well_formed(document: &Value) -> bool {
     match document {
-        serde_json::Value::Object(obj) => obj.get("@context").is_none_or(is_well_formed_context),
-        serde_json::Value::Array(items) => items
+        Value::Object(obj) => obj.get("@context").is_none_or(is_well_formed_context),
+        Value::Array(items) => items
             .iter()
             .all(|item| item.as_object().and_then(|o| o.get("@context")).is_none_or(is_well_formed_context)),
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => true,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
     }
 }
 
 /// Remove top-level JSON-LD context members before policy deserialization.
-fn strip_context_from_value(value: &mut serde_json::Value) {
+fn strip_context_from_value(value: &mut Value) {
     match value {
-        serde_json::Value::Object(obj) => {
+        Value::Object(obj) => {
             obj.remove("@context");
         }
-        serde_json::Value::Array(items) => {
+        Value::Array(items) => {
             for item in items {
-                if let serde_json::Value::Object(obj) = item {
+                if let Value::Object(obj) = item {
                     obj.remove("@context");
                 }
             }
         }
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
+}
+
+/// Reject a body that does not decode into the extractor's target.
+fn undecodable_body(error: &serde_json::Error, uri: Uri) -> ExtractorRejection {
+    ExtractorRejection::bad_request_data(format!("Invalid JSON: {error}"), uri)
 }
 
 impl<S, T> FromRequest<S> for JsonLd<T>
@@ -176,102 +201,121 @@ where
     type Rejection = ExtractorRejection;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let uri = req.uri().clone();
-        // Clause 6.3.4: the payload length is checked before the payload is
-        // looked at, so an absent Content-Length is the bare 411 the clause
-        // requires rather than a decoding failure.
-        declared_body_length(req.headers()).map_err(|error| error.into_rejection(uri.clone()))?;
-        let content_type_raw = req
-            .headers()
-            .typed_get::<headers::ContentType>()
-            .map(|value| value.to_string())
-            .unwrap_or_default();
+        let AdmittedBody { document, context, uri } = admit_body(req, state).await?;
+        let value = deserialize_exact(&document).map_err(|error| undecodable_body(&error, uri))?;
+        Ok(JsonLd { value, context })
+    }
+}
 
-        let Some(content_kind) = classify_content_type(&content_type_raw) else {
-            tracing::warn!("JsonLd extraction failed: unsupported media type '{}'", content_type_raw);
-            return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
-        };
+impl<S> FromRequest<S> for JsonLdDocument
+where
+    S: Send + Sync,
+{
+    type Rejection = ExtractorRejection;
 
-        let is_ld_json = matches!(content_kind, ContentKind::LdJson);
-        let is_plain_json = matches!(content_kind, ContentKind::Json);
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let AdmittedBody { document, context, uri } = admit_body(req, state).await?;
+        let document = deserialize_exact_document(document).map_err(|error| undecodable_body(&error, uri))?;
+        Ok(JsonLdDocument { document, context })
+    }
+}
 
-        // Collect raw Link header strings before the request body is consumed.
-        let link_header_strings: Vec<String> = req.headers().get_all(LINK).iter().filter_map(|v| v.to_str().ok().map(String::from)).collect();
-        let mut link_contexts = Vec::new();
-        for raw in &link_header_strings {
-            let parsed = Link::from_str(raw).map_err(|_| ExtractorRejection::bad_request_data("Invalid Link header", uri.clone()))?;
-            link_contexts.extend(parsed.context_urls().cloned());
-        }
+/// Apply the clause 6.3.4 and 6.3.5 request preconditions, parse the body,
+/// canonicalize its numbers, and split its `@context` off.
+async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedBody, ExtractorRejection> {
+    let uri = req.uri().clone();
+    // Clause 6.3.4: the payload length is checked before the payload is
+    // looked at, so an absent Content-Length is the bare 411 the clause
+    // requires rather than a decoding failure.
+    declared_body_length(req.headers()).map_err(|error| error.into_rejection(uri.clone()))?;
+    let content_type_raw = req
+        .headers()
+        .typed_get::<headers::ContentType>()
+        .map(|value| value.to_string())
+        .unwrap_or_default();
 
-        // Per NGSI-LD 6.3.5: application/ld+json MUST NOT be combined with a Link header
-        // containing a JSON-LD context relation
-        if is_ld_json {
-            let has_context_link = link_header_strings.iter().any(|s| s.contains("http://www.w3.org/ns/json-ld#context"));
-            if has_context_link {
-                return Err(ExtractorRejection::bad_request_data(
-                    "application/ld+json must not be combined with a Link context header",
-                    uri,
-                ));
-            }
-        }
+    let Some(content_kind) = classify_content_type(&content_type_raw) else {
+        tracing::warn!("JsonLd extraction failed: unsupported media type '{}'", content_type_raw);
+        return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
+    };
 
-        let bytes = Bytes::from_request(req, state)
-            .await
-            .map_err(|e| ExtractorRejection::invalid_request(format!("Invalid request body: {e}"), uri.clone()))?;
+    let is_ld_json = matches!(content_kind, ContentKind::LdJson);
+    let is_plain_json = matches!(content_kind, ContentKind::Json);
 
-        // A declared length the payload did not carry leaves clause 5.5.4 with
-        // no JSON document to read, which is the refusal the `Content-Length`
-        // precondition already owns.
-        if bytes.is_empty() {
-            return Err(ContentLengthPreconditionError::Empty.into_rejection(uri.clone()));
-        }
+    // Collect raw Link header strings before the request body is consumed.
+    let link_header_strings: Vec<String> = req.headers().get_all(LINK).iter().filter_map(|v| v.to_str().ok().map(String::from)).collect();
+    let mut link_contexts = Vec::new();
+    for raw in &link_header_strings {
+        let parsed = Link::from_str(raw).map_err(|_| ExtractorRejection::bad_request_data("Invalid Link header", uri.clone()))?;
+        link_contexts.extend(parsed.context_urls().cloned());
+    }
 
-        let mut value: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|error| ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri.clone()))?;
-        canonicalize_numbers(&mut value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?;
-
-        // Reject empty arrays — not a valid NGSI-LD entity or batch payload
-        if value.as_array().is_some_and(Vec::is_empty) {
+    // Per NGSI-LD 6.3.5: application/ld+json MUST NOT be combined with a Link header
+    // containing a JSON-LD context relation
+    if is_ld_json {
+        let has_context_link = link_header_strings.iter().any(|s| s.contains("http://www.w3.org/ns/json-ld#context"));
+        if has_context_link {
             return Err(ExtractorRejection::bad_request_data(
-                "Invalid JSON: expected object, got empty array",
-                uri.clone(),
-            ));
-        }
-
-        // Clause 6.3.21: a profile `Link` announcing the payload's NGSI-LD
-        // version is read by the `PayloadProfile` extractor. This broker
-        // interprets every version the clause 4.3.6.8 tables describe, so no
-        // amendment of the payload is needed for it to be accepted here.
-        // Per NGSI-LD 6.3.5: application/json MUST NOT contain @context in body
-        if is_plain_json && document_has_context(&value) {
-            return Err(ExtractorRejection::bad_request_data("application/json body must not contain @context", uri));
-        }
-
-        // Per NGSI-LD 6.3.5: application/ld+json MUST contain @context in body
-        if is_ld_json && !document_has_context(&value) {
-            return Err(ExtractorRejection::bad_request_data("application/ld+json body must contain @context", uri));
-        }
-
-        if !document_contexts_are_well_formed(&value) {
-            return Err(ExtractorRejection::bad_request_data(
-                "@context must be a string, an object, or an array of those",
+                "application/ld+json must not be combined with a Link context header",
                 uri,
             ));
         }
-
-        let mut context = ContextSpec::from_links(link_contexts);
-        if is_ld_json && let Some(ctx) = merge_context_values_from_document(&value) {
-            context = context.with_body_context(Some(ctx));
-        }
-
-        // Always strip @context before deserializing into Entity
-        // Context is handled separately by ContextUrl extractor
-        strip_context_from_value(&mut value);
-
-        let typed_value: T = deserialize_exact(&value).map_err(|e| ExtractorRejection::bad_request_data(format!("Invalid JSON: {e}"), uri.clone()))?;
-
-        Ok(JsonLd { value: typed_value, context })
     }
+
+    let bytes = Bytes::from_request(req, state)
+        .await
+        .map_err(|e| ExtractorRejection::invalid_request(format!("Invalid request body: {e}"), uri.clone()))?;
+
+    // A declared length the payload did not carry leaves clause 5.5.4 with
+    // no JSON document to read, which is the refusal the `Content-Length`
+    // precondition already owns.
+    if bytes.is_empty() {
+        return Err(ContentLengthPreconditionError::Empty.into_rejection(uri.clone()));
+    }
+
+    let mut value: Value =
+        serde_json::from_slice(&bytes).map_err(|error| ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri.clone()))?;
+    canonicalize_numbers(&mut value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?;
+
+    // Reject empty arrays — not a valid NGSI-LD entity or batch payload
+    if value.as_array().is_some_and(Vec::is_empty) {
+        return Err(ExtractorRejection::bad_request_data(
+            "Invalid JSON: expected object, got empty array",
+            uri.clone(),
+        ));
+    }
+
+    // Clause 6.3.21: a profile `Link` announcing the payload's NGSI-LD
+    // version is read by the `PayloadProfile` extractor. This broker
+    // interprets every version the clause 4.3.6.8 tables describe, so no
+    // amendment of the payload is needed for it to be accepted here.
+    // Per NGSI-LD 6.3.5: application/json MUST NOT contain @context in body
+    if is_plain_json && document_has_context(&value) {
+        return Err(ExtractorRejection::bad_request_data("application/json body must not contain @context", uri));
+    }
+
+    // Per NGSI-LD 6.3.5: application/ld+json MUST contain @context in body
+    if is_ld_json && !document_has_context(&value) {
+        return Err(ExtractorRejection::bad_request_data("application/ld+json body must contain @context", uri));
+    }
+
+    if !document_contexts_are_well_formed(&value) {
+        return Err(ExtractorRejection::bad_request_data(
+            "@context must be a string, an object, or an array of those",
+            uri,
+        ));
+    }
+
+    let mut context = ContextSpec::from_links(link_contexts);
+    if is_ld_json && let Some(ctx) = merge_context_values_from_document(&value) {
+        context = context.with_body_context(Some(ctx));
+    }
+
+    // Always strip @context before deserializing into Entity
+    // Context is handled separately by ContextUrl extractor
+    strip_context_from_value(&mut value);
+
+    Ok(AdmittedBody { document: value, context, uri })
 }
 
 #[cfg(test)]
@@ -285,16 +329,33 @@ mod tests {
             header::{CONTENT_LENGTH, CONTENT_TYPE},
         },
     };
-    use serde_json::Value;
 
-    async fn extract<T>(mut request: Request<Body>) -> Result<JsonLd<T>, ExtractorRejection>
-    where
-        T: DeserializeOwned,
-    {
+    /// Declare the fixed length of a test request's body.
+    fn with_content_length(mut request: Request<Body>) -> Request<Body> {
         let length = request.body().size_hint().exact().expect("a fixed test body length");
         let value = HeaderValue::from_str(&length.to_string()).expect("a valid content length");
         request.headers_mut().insert(CONTENT_LENGTH, value);
-        JsonLd::<T>::from_request(request, &()).await
+        request
+    }
+
+    async fn extract<T>(request: Request<Body>) -> Result<JsonLd<T>, ExtractorRejection>
+    where
+        T: DeserializeOwned,
+    {
+        JsonLd::<T>::from_request(with_content_length(request), &()).await
+    }
+
+    async fn extract_document(request: Request<Body>) -> Result<JsonLdDocument, ExtractorRejection> {
+        JsonLdDocument::from_request(with_content_length(request), &()).await
+    }
+
+    /// A JSON request carrying `body`.
+    fn json_request(body: &'static str) -> Request<Body> {
+        Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .expect("request builds")
     }
 
     #[tokio::test]
@@ -305,7 +366,7 @@ mod tests {
             .body(Body::from("{}"))
             .unwrap();
 
-        let result = extract::<Value>(req).await;
+        let result = extract_document(req).await;
         match result {
             Err(ExtractorRejection::Empty(status)) => {
                 pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
@@ -323,7 +384,7 @@ mod tests {
             .body(Body::from("{}"))
             .unwrap();
 
-        let result = extract::<Value>(req).await;
+        let result = extract_document(req).await;
         match result {
             Err(ExtractorRejection::Empty(status)) => {
                 pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
@@ -341,7 +402,7 @@ mod tests {
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
-        let result = extract::<Value>(req).await;
+        let result = extract_document(req).await;
         assert!(result.is_ok(), "merge-patch+json should be accepted");
     }
 
@@ -353,7 +414,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let result = extract::<Value>(req).await;
+        let result = extract_document(req).await;
         assert!(matches!(result, Err(ExtractorRejection::InvalidRequest { .. })));
     }
 
@@ -365,7 +426,7 @@ mod tests {
             .body(Body::from("[]"))
             .unwrap();
 
-        let result = extract::<Value>(req).await;
+        let result = extract_document(req).await;
         assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }
 
@@ -382,9 +443,9 @@ mod tests {
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
-        let result = extract::<Value>(req).await.unwrap();
+        let result = extract_document(req).await.unwrap();
         pretty_assertions::assert_eq!(result.context.body_context(), Some(&serde_json::json!("http://example.org/context")));
-        assert!(result.value.as_object().unwrap().get("@context").is_none());
+        assert!(result.document.as_object().unwrap().get("@context").is_none());
     }
 
     #[tokio::test]
@@ -408,7 +469,7 @@ mod tests {
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
-        let result = extract::<Value>(req).await.unwrap();
+        let result = extract_document(req).await.unwrap();
         pretty_assertions::assert_eq!(
             result.context.body_context(),
             Some(&serde_json::json!(["https://example.org/a", "https://example.org/b"]))
@@ -430,7 +491,7 @@ mod tests {
                 .header(CONTENT_TYPE, "application/ld+json")
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap();
-            let result = extract::<Value>(req).await;
+            let result = extract_document(req).await;
             assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })), "{context}");
         }
     }
@@ -444,7 +505,7 @@ mod tests {
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
-        let result = extract::<Value>(req).await;
+        let result = extract_document(req).await;
         assert!(result.is_ok());
     }
 
@@ -458,8 +519,8 @@ mod tests {
             ))
             .expect("request builds");
 
-        let extracted = extract::<Value>(req).await.expect("supported exact numbers");
-        let encoded = serde_json::to_string(&extracted.value).expect("exact JSON");
+        let extracted = extract_document(req).await.expect("supported exact numbers");
+        let encoded = serde_json::to_string(&extracted.document).expect("exact JSON");
         assert!(encoded.contains("0.100000000000000005"), "{encoded}");
         assert!(encoded.contains("18446744073709551616"), "{encoded}");
         assert!(encoded.contains("-2.5e-400") || encoded.contains("-2.5E-400"), "{encoded}");
@@ -476,7 +537,7 @@ mod tests {
             ))
             .expect("request builds");
 
-        match extract::<Value>(req).await {
+        match extract_document(req).await {
             Err(ExtractorRejection::BadRequestData { detail, .. }) => {
                 assert!(detail.contains("/property/value/nested/0"), "{detail}");
             }
@@ -496,9 +557,46 @@ mod tests {
             .body(Body::from("{}"))
             .expect("request builds");
 
-        match JsonLd::<Value>::from_request(req, &()).await {
+        match JsonLdDocument::from_request(req, &()).await {
             Err(ExtractorRejection::Empty(status)) => pretty_assertions::assert_eq!(status, StatusCode::LENGTH_REQUIRED),
             _other => panic!("expected a bare 411"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_untyped_document_is_the_document_a_value_typed_extraction_gives() {
+        let bodies = [
+            r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":[21.5,-7,0,18446744073709551616,0.100000000000000005]}}"#,
+            r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":[1e-7,-2.5e-400,1E+20,1e20,0.00001,1.50]}}"#,
+            r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":{"b":1,"$serde_json::private::Number":"5"}}}"#,
+            r#"[{"id":"urn:ngsi-ld:T:1","type":"T"},{"id":"urn:ngsi-ld:T:2","type":"T","s":"text"}]"#,
+        ];
+        for body in bodies {
+            let untyped = extract_document(json_request(body)).await.map(|extracted| extracted.document.to_string());
+            let typed = extract::<Value>(json_request(body)).await.map(|extracted| extracted.value.to_string());
+            match (untyped, typed) {
+                (Ok(untyped), Ok(typed)) => pretty_assertions::assert_eq!(untyped, typed, "{body}"),
+                (Err(ExtractorRejection::BadRequestData { detail: untyped, .. }), Err(ExtractorRejection::BadRequestData { detail: typed, .. })) => {
+                    pretty_assertions::assert_eq!(untyped, typed, "{body}");
+                }
+                _other => panic!("{body}: the untyped and Value-typed extractions disagree"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_typed_body_that_does_not_decode_is_bad_request_data_with_the_positioned_reader_message() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Named {
+            name: String,
+        }
+
+        match extract::<Named>(json_request(r#"{"name":5}"#)).await {
+            Err(ExtractorRejection::BadRequestData { detail, .. }) => {
+                pretty_assertions::assert_eq!(detail, "Invalid JSON: invalid type: integer `5`, expected a string at line 1 column 9");
+            }
+            Ok(extracted) => panic!("accepted the name {}", extracted.value.name),
+            Err(other) => panic!("expected BadRequestData, got {other:?}"),
         }
     }
 }

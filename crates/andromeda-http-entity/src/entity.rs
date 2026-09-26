@@ -18,7 +18,7 @@ use andromeda_http_extraction::{
     accept::AcceptFormat,
     context::ContextUrl,
     entity_query::EntityQuery,
-    jsonld::JsonLd,
+    jsonld::{JsonLd, JsonLdDocument},
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,

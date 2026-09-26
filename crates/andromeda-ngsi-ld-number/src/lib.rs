@@ -12,6 +12,7 @@ use std::{num::ParseIntError, str::FromStr};
 use thiserror::Error;
 
 pub mod json_value;
+mod number_token;
 
 /// Maximum decimal digits PostgreSQL `NUMERIC` supports before the decimal point.
 pub const MAX_INTEGRAL_DIGITS: i64 = 131_072;

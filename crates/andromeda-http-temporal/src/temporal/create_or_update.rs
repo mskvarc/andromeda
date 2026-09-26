@@ -9,7 +9,7 @@ use crate::{
         HeaderMap,
         IncomingVia,
         IntoResponse,
-        JsonLd,
+        JsonLdDocument,
         LocalOnlyParams,
         LocalOutcome,
         Method,
@@ -58,10 +58,10 @@ pub async fn create_or_update(
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
-    JsonLd {
-        value: payload,
+    JsonLdDocument {
+        document: payload,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context = context.merge(body_context);

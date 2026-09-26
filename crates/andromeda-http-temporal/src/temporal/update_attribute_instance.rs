@@ -8,7 +8,7 @@ use crate::{
         InstanceFamily,
         InstanceIdentity,
         IntoResponse,
-        JsonLd,
+        JsonLdDocument,
         LocalOnlyParams,
         LocalOutcome,
         Method,
@@ -23,7 +23,6 @@ use crate::{
         TypedPath,
         Uri,
         ValidatedQuery,
-        Value,
         collect_proxied_attrs,
         local_temporal_outcome,
         provision_response,
@@ -47,10 +46,10 @@ pub async fn update_attr_instance(
     }: NgsiLdRequestEnvelope,
     TypedPath((id, attr_id, instance_id)): TypedPath<(Uri, AttributeName, Uri)>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    JsonLd {
-        value: payload,
+    JsonLdDocument {
+        document: payload,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context = context.merge(body_context);

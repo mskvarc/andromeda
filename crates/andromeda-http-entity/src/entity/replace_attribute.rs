@@ -8,7 +8,7 @@ use crate::{
         ForwardProvisionRequest,
         ForwardingOperation,
         IntoResponse,
-        JsonLd,
+        JsonLdDocument,
         LocalOutcome,
         NgsiLdRequestEnvelope,
         ProblemResponse,
@@ -19,7 +19,6 @@ use crate::{
         TypedPath,
         Uri,
         ValidatedQuery,
-        Value,
         classify_entity_error,
         collect_proxied_attrs,
         provision_response,
@@ -46,10 +45,10 @@ pub(crate) async fn replace_attr(
     }: NgsiLdRequestEnvelope,
     TypedPath((id, attr_id)): TypedPath<(Uri, AttributeName)>,
     ValidatedQuery(params): ValidatedQuery<ReplaceAttrParams>,
-    JsonLd {
-        value: fragment,
+    JsonLdDocument {
+        document: fragment,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let dataset_id = selected_dataset_uri(params.dataset_id.as_ref());

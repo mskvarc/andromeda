@@ -8,7 +8,7 @@ use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     context::ContextUrl,
     context_target::{ExistingTargetedTenantState, ProvisionableTargetedTenantState},
-    jsonld::JsonLd,
+    jsonld::JsonLdDocument,
     origin::RequestOrigin,
     prefer::PreferHeader,
     query::ValidatedQuery,
@@ -35,7 +35,6 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use serde_json::Value;
 
 /// POST /ngsi-ld/v1/subscriptions -- Create a new subscription.
 pub async fn create(
@@ -45,10 +44,10 @@ pub async fn create(
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
-    JsonLd {
-        value: payload,
+    JsonLdDocument {
+        document: payload,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
     let context = context.merge(body_context);
@@ -182,10 +181,10 @@ pub async fn update(
     RequestOrigin(base_url): RequestOrigin,
     context: ContextUrl,
     TypedPath(subscription_id): TypedPath<Uri>,
-    JsonLd {
-        value: payload,
+    JsonLdDocument {
+        document: payload,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
     let context = context.merge(body_context);

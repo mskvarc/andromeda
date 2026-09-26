@@ -12,7 +12,7 @@ use crate::{
     error::{bad_request_data, classify_forwarding, classify_resolution},
     state::NotificationReceiverState,
 };
-use andromeda_http_extraction::{context::ContextUrl, jsonld::JsonLd};
+use andromeda_http_extraction::{context::ContextUrl, jsonld::JsonLdDocument};
 use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -82,10 +82,10 @@ pub(crate) async fn receive(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     context: ContextUrl,
-    JsonLd {
-        value: document,
+    JsonLdDocument {
+        document,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let received = Received::try_from(document).map_err(|error| bad_request_data(format!("not a notification: {error}"), &uri))?;
     let context = context.merge(body_context);

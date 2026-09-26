@@ -7,7 +7,7 @@ use crate::{
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     context::ContextUrl,
-    jsonld::JsonLd,
+    jsonld::JsonLdDocument,
     prefer::PreferHeader,
     query::ValidatedQuery,
     tenant_state::{ExistingTenantState, ProvisionableTenantState},
@@ -38,16 +38,15 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use serde_json::Value;
 
 pub(crate) async fn create(
     ProvisionableTenantState(state): RegistrationTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    JsonLd {
-        value: payload,
+    JsonLdDocument {
+        document: payload,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let identifier = state
         .registrations
@@ -175,10 +174,10 @@ pub(crate) async fn update(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(registration_id): TypedPath<Uri>,
-    JsonLd {
-        value: payload,
+    JsonLdDocument {
+        document: payload,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     state
         .registrations

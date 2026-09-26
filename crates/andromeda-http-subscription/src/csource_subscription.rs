@@ -7,7 +7,7 @@ use crate::{
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     context::ContextUrl,
-    jsonld::JsonLd,
+    jsonld::JsonLdDocument,
     prefer::PreferHeader,
     query::ValidatedQuery,
     tenant_state::{ExistingTenantState, ProvisionableTenantState},
@@ -35,7 +35,6 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use serde_json::Value;
 
 /// POST /ngsi-ld/v1/csourceSubscriptions -- Create a context source subscription.
 pub async fn create(
@@ -44,10 +43,10 @@ pub async fn create(
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
-    JsonLd {
-        value: payload,
+    JsonLdDocument {
+        document: payload,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
     let context = context.merge(body_context);
@@ -193,10 +192,10 @@ pub async fn update(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(subscription_id): TypedPath<Uri>,
-    JsonLd {
-        value: payload,
+    JsonLdDocument {
+        document: payload,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
     let context = context.merge(body_context);

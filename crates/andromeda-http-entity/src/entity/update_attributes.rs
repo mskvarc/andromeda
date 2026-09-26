@@ -9,7 +9,7 @@ use crate::{
         ForwardingOperation,
         IncomingVia,
         IntoResponse,
-        JsonLd,
+        JsonLdDocument,
         LocalOutcome,
         OriginalUri,
         ProblemResponse,
@@ -18,7 +18,6 @@ use crate::{
         StatusCode,
         TypedPath,
         Uri,
-        Value,
         classify_entity_error,
         collect_proxied_attrs,
         provision_response,
@@ -43,10 +42,10 @@ pub(crate) async fn update_attrs(
     TypedPath(id): TypedPath<Uri>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
-    JsonLd {
-        value: fragment,
+    JsonLdDocument {
+        document: fragment,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let context = context.merge(body_context);

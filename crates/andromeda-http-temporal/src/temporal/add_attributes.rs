@@ -5,7 +5,7 @@ use crate::{
         ForwardProvisionRequest,
         ForwardingOperation,
         IntoResponse,
-        JsonLd,
+        JsonLdDocument,
         LocalOnlyParams,
         LocalOutcome,
         Method,
@@ -20,7 +20,6 @@ use crate::{
         TypedPath,
         Uri,
         ValidatedQuery,
-        Value,
         collect_proxied_attrs,
         has_attributes,
         local_temporal_outcome,
@@ -47,10 +46,10 @@ pub async fn add_attrs(
     }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    JsonLd {
-        value: payload,
+    JsonLdDocument {
+        document: payload,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context = context.merge(body_context);

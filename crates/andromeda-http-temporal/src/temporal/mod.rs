@@ -14,7 +14,7 @@ use andromeda_federation::{
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     context::ContextUrl,
-    jsonld::JsonLd,
+    jsonld::JsonLdDocument,
     prefer::PreferHeader,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,

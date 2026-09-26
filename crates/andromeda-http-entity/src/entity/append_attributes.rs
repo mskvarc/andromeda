@@ -9,7 +9,7 @@ use crate::{
         ForwardProvisionRequest,
         ForwardingOperation,
         IntoResponse,
-        JsonLd,
+        JsonLdDocument,
         LocalOutcome,
         NgsiLdRequestEnvelope,
         OverwritePolicy,
@@ -52,10 +52,10 @@ pub(crate) async fn append_attrs(
     }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<AppendParams>,
-    JsonLd {
-        value: fragment,
+    JsonLdDocument {
+        document: fragment,
         context: body_context,
-    }: JsonLd<Value>,
+    }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let context = context.merge(body_context);
