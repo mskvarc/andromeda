@@ -9,7 +9,10 @@ use crate::{EntityService, NotificationWriteConfig};
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
+use andromeda_ngsi_ld_model::{
+    expanded::attribute_expiry::standing_at,
+    notification::{ChangeOrigin, NotificationTrigger},
+};
 use andromeda_subscription::{matching::matches_entity_filters, spatial_narrowing::narrow_by_spatial_index};
 use chrono::Utc;
 use serde_json::Value;
@@ -112,9 +115,12 @@ impl EntityService {
             entity_snapshot
         };
         let matching: Vec<_> = if let Some(data) = filter_snapshot {
-            narrow_by_spatial_index(subscription_cache, target, outcome.matched, data, entity_types)
+            // Clause 4.22: an instance past its `expiresAt` is invalid, so no
+            // filter may match through it while the sweep has yet to delete it.
+            let data = standing_at(data, Utc::now());
+            narrow_by_spatial_index(subscription_cache, target, outcome.matched, &data, entity_types)
                 .into_iter()
-                .filter(|sub| matches_entity_filters(sub, data))
+                .filter(|sub| matches_entity_filters(sub, &data))
                 .collect()
         } else {
             outcome.matched

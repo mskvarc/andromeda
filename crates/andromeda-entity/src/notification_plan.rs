@@ -19,10 +19,13 @@ use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::Su
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::attribute_change::{AttributeChange, classify_attribute_changes},
+    expanded::{
+        attribute_change::{AttributeChange, classify_attribute_changes},
+        attribute_expiry::{attribute_stands, instance_expired},
+    },
     notification::{ChangeOrigin, NotificationTrigger},
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -82,6 +85,41 @@ pub(crate) fn attribute_change_groups(previous: &Value, current: &Value) -> Resu
         .collect())
 }
 
+/// The attributes a group still reports once the instances expired at `at`
+/// are treated as absent, or `None` when the one instance it reports is itself
+/// expired.
+///
+/// Clause 4.22 makes an instance past its `expiresAt` invalid, so writing one
+/// changes nothing a subscriber can see: an attribute-instance group whose
+/// instance has expired in the entity the write left behind is dropped, and an
+/// entity-level group reports only the attributes that still have a standing
+/// instance, which is what `watchedAttributes` is matched against. A deletion
+/// group reports what the mutation removed and is kept as it is -- the removal
+/// of an expired instance by the expiry sweep is still an `attributeDeleted`.
+fn standing_attributes(group: &NotificationGroup, current: Option<&Value>, at: DateTime<Utc>) -> Option<Vec<AttributeName>> {
+    let Some(current) = current else {
+        return Some(group.attributes.clone()); // clone: the groups are borrowed and each event owns its names
+    };
+    match group.trigger {
+        NotificationTrigger::AttributeDeleted | NotificationTrigger::EntityDeleted => Some(group.attributes.clone()), // clone: same
+        NotificationTrigger::AttributeCreated | NotificationTrigger::AttributeUpdated => {
+            let expired = group
+                .attributes
+                .iter()
+                .any(|attribute| instance_expired(current, attribute.as_str(), group.dataset_id.as_ref(), at));
+            (!expired).then(|| group.attributes.clone()) // clone: same
+        }
+        NotificationTrigger::EntityCreated | NotificationTrigger::EntityUpdated => Some(
+            group
+                .attributes
+                .iter()
+                .filter(|attribute| attribute_stands(current, attribute.as_str(), at))
+                .cloned() // clone: each event owns its names
+                .collect(),
+        ),
+    }
+}
+
 impl EntityService {
     /// Plan both notification channels for one mutation from its per-trigger
     /// groups.
@@ -112,8 +150,12 @@ impl EntityService {
         };
         let mut matches = Vec::new();
         let mut events = Vec::with_capacity(groups.len());
+        let now = Utc::now();
         for group in groups {
-            matches.extend(self.build_subscription_matches_for_instance(mutated, group.trigger, &group.attributes, group.dataset_id.as_ref(), snapshots));
+            let Some(attributes) = standing_attributes(group, snapshot_ref, now) else {
+                continue;
+            };
+            matches.extend(self.build_subscription_matches_for_instance(mutated, group.trigger, &attributes, group.dataset_id.as_ref(), snapshots));
             events.push(
                 ChangeEvent::builder()
                     .entity_id(entity_id.clone()) // clone: the event owns its identifier
@@ -121,7 +163,7 @@ impl EntityService {
                     .trigger_reason(group.trigger)
                     .occurred_at(Utc::now())
                     .origin(ChangeOrigin::Local)
-                    .changed_attributes(group.attributes.clone()) // clone: the event owns its names
+                    .changed_attributes(attributes)
                     .changed_dataset_id(group.dataset_id.clone()) // clone: the event owns its dataset identity
                     .previous_attributes(previous_snapshot.cloned())
                     .current_payload(entity_snapshot.map(Arc::clone)) // clone: Arc ref-count bump
@@ -134,9 +176,91 @@ impl EntityService {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_plan::attribute_change_groups;
+    use crate::notification_plan::{NotificationGroup, attribute_change_groups, standing_attributes};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-    use serde_json::json;
+    use chrono::{DateTime, Utc};
+    use serde_json::{Value, json};
+
+    fn name(raw: &str) -> AttributeName {
+        raw.parse().expect("a valid attribute name")
+    }
+
+    fn instant(raw: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(raw).expect("instant parses").with_timezone(&Utc)
+    }
+
+    /// An entity whose `speed` expired in 2000 and whose `heading` never expires.
+    fn half_expired() -> Value {
+        json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "https://example.com/speed": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+                "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@value": "2000-01-01T00:00:00Z"}]
+            }],
+            "https://example.com/heading": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 2}]
+            }]
+        }])
+    }
+
+    fn attribute_group(trigger: NotificationTrigger, attribute: &str) -> NotificationGroup {
+        NotificationGroup {
+            trigger,
+            attributes: vec![name(attribute)],
+            dataset_id: None,
+        }
+    }
+
+    /// Clause 4.22: writing an instance already past its `expiresAt` changes
+    /// nothing a subscriber can see, so its attribute-instance change is not
+    /// reported to `watchedAttributes` at all.
+    #[test]
+    fn an_attribute_change_to_an_expired_instance_is_not_reported() {
+        let at = instant("2030-01-01T00:00:00Z");
+        let current = half_expired();
+        pretty_assertions::assert_eq!(
+            standing_attributes(
+                &attribute_group(NotificationTrigger::AttributeUpdated, "https://example.com/speed"),
+                Some(&current),
+                at
+            ),
+            None
+        );
+        pretty_assertions::assert_eq!(
+            standing_attributes(
+                &attribute_group(NotificationTrigger::AttributeUpdated, "https://example.com/heading"),
+                Some(&current),
+                at
+            ),
+            Some(vec![name("https://example.com/heading")])
+        );
+    }
+
+    #[test]
+    fn an_entity_level_change_reports_only_the_attributes_that_still_stand() {
+        let group = NotificationGroup::entity(
+            NotificationTrigger::EntityCreated,
+            vec![name("https://example.com/speed"), name("https://example.com/heading")],
+        );
+        pretty_assertions::assert_eq!(
+            standing_attributes(&group, Some(&half_expired()), instant("2030-01-01T00:00:00Z")),
+            Some(vec![name("https://example.com/heading")])
+        );
+    }
+
+    /// The expiry sweep removing an expired instance is still an
+    /// `attributeDeleted`: a deletion reports what the mutation removed.
+    #[test]
+    fn a_deletion_is_reported_whatever_the_removed_instance_carried() {
+        let group = attribute_group(NotificationTrigger::AttributeDeleted, "https://example.com/speed");
+        pretty_assertions::assert_eq!(
+            standing_attributes(&group, Some(&half_expired()), instant("2030-01-01T00:00:00Z")),
+            Some(vec![name("https://example.com/speed")])
+        );
+    }
 
     #[test]
     fn a_pure_addition_raises_only_attribute_created() {

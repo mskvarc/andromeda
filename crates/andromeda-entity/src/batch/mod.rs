@@ -150,7 +150,6 @@ impl EntityService {
     ) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchCreate);
         let result: Result<BatchResult, EntityError> = async {
-            self.batch_activity.record_activity();
             let (_, entities) = admitted.into_parts();
             // Clause 5.5.11.1: only the first instance of an identifier creates, so
             // there is nothing left to order and no second round to run.
@@ -185,7 +184,6 @@ impl EntityService {
     pub async fn batch_delete(&self, target: &ContextTarget, entity_ids: &[Uri], mode: BatchSideEffectMode) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchDelete);
         let result: Result<BatchResult, EntityError> = async {
-            self.batch_activity.record_activity();
             // Clause 5.5.11.4: the first occurrence deletes, every later one is
             // answered as an entity that does not exist.
             let mut seen = HashSet::new();
@@ -247,7 +245,6 @@ impl EntityService {
     ) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchUpdate);
         let result: Result<BatchResult, EntityError> = async {
-            self.batch_activity.record_activity();
             let (_, entities) = admitted.into_parts();
             let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();
@@ -292,7 +289,6 @@ impl EntityService {
     ) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchMerge);
         let result: Result<BatchResult, EntityError> = async {
-            self.batch_activity.record_activity();
             let (_, entities) = admitted.into_parts();
             let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();
@@ -339,7 +335,6 @@ impl EntityService {
     ) -> Result<(BatchResult, Vec<Uri>), EntityError> {
         let timer = entity::start(EntityOperation::BatchUpsert);
         let result: Result<(BatchResult, Vec<Uri>), EntityError> = async {
-            self.batch_activity.record_activity();
             let (BatchUpsert(policy), entities) = admitted.into_parts();
             let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();

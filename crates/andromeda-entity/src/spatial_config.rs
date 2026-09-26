@@ -25,34 +25,36 @@ pub enum SpatialConfigError {
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum SpatialConsistency {
-    /// Every committed write updates the index before the write returns.
-    ///
-    /// Exact for a single broker process writing its store. A write committed
-    /// by another process sharing the store -- a replica -- reaches this
-    /// process's index only at the next rebuild, and until then a geo query
-    /// here can miss the entity.
-    #[default]
-    CommitSynchronous,
-    /// The index is not kept: the store evaluates every geo query.
-    ///
-    /// Exact in every deployment, at the cost of the store evaluating the
-    /// relation against every candidate row its own spatial index yields.
-    StoreVerified,
     /// The index is caught up from the store before it narrows a query.
     ///
     /// Before narrowing, the query path reads the location of every entity
     /// the store changed since the index's recorded position in the store's
     /// commit history, then advances the position. Exact in every deployment,
     /// including replicas sharing the store, at the cost of one indexed read
-    /// per geo query.
+    /// per geo query; the default because a broker cannot know whether another
+    /// process writes its database.
+    #[default]
     Watermark,
+    /// Every committed write updates the index before the write returns.
+    ///
+    /// Exact only when exactly one broker process writes the store, which then
+    /// saves the per-query read `Watermark` makes. A write committed by another
+    /// process sharing the store -- a replica -- reaches this process's index
+    /// only at the next rebuild, and until then a geo query here can miss the
+    /// entity.
+    CommitSynchronous,
+    /// The index is not kept: the store evaluates every geo query.
+    ///
+    /// Exact in every deployment, at the cost of the store evaluating the
+    /// relation against every candidate row its own spatial index yields.
+    StoreVerified,
 }
 
 /// Spatial-index consistency and rebuild policy.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct SpatialConfig {
-    /// How the index is kept consistent with the store:
-    /// `commit-synchronous`, `store-verified` or `watermark`.
+    /// How the index is kept consistent with the store: `watermark`
+    /// (default), `commit-synchronous` or `store-verified`.
     #[toml_comment(inline)]
     pub consistency: SpatialConsistency,
     /// Interval between full index rebuilds from the store, in human-readable
@@ -106,9 +108,13 @@ mod tests {
         assert_eq!(config.validate(), Err(SpatialConfigError::ZeroRebuildInterval));
     }
 
+    /// The default must be exact whether or not another broker process writes
+    /// the same database, which only `watermark` and `store-verified` are, and
+    /// of the two only `watermark` keeps the index.
     #[test]
-    fn the_default_consistency_updates_the_index_on_the_commit_path() {
-        assert_eq!(SpatialConfig::default().consistency, SpatialConsistency::CommitSynchronous);
+    fn the_default_consistency_catches_the_index_up_from_the_store() {
+        assert_eq!(SpatialConfig::default().consistency, SpatialConsistency::Watermark);
+        assert_eq!(SpatialConsistency::default(), SpatialConsistency::Watermark);
     }
 
     #[test]

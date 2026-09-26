@@ -1,6 +1,7 @@
 //! A hold that keeps a cached tenant runtime resident for the life of a
 //! request.
 
+use crate::state_factory::RuntimeActivity;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -24,15 +25,25 @@ pub(super) struct LeaseOrigin {
     /// Woken when a lease on a retired runtime is released, so the janitor
     /// evicts it without waiting for its next tick.
     release_signal: Arc<Notify>,
+    /// Where the runtime hears of use: every lease reports when it is taken and
+    /// when it is released.
+    activity: Arc<dyn RuntimeActivity>,
 }
 
 impl LeaseOrigin {
-    /// A fresh, serving origin whose retired releases wake `release_signal`.
-    pub(super) fn new(release_signal: Arc<Notify>) -> Arc<LeaseOrigin> {
+    /// A fresh, serving origin whose retired releases wake `release_signal` and
+    /// whose leases report to `activity`.
+    pub(super) fn new(release_signal: Arc<Notify>, activity: Arc<dyn RuntimeActivity>) -> Arc<LeaseOrigin> {
         Arc::new(LeaseOrigin {
             retired: AtomicBool::new(false),
             release_signal,
+            activity,
         })
+    }
+
+    /// Report a use of the runtime: a request reached for it or let it go.
+    pub(super) fn record_activity(&self) {
+        self.activity.record_activity();
     }
 
     /// Whether the runtime has been retired and must no longer be handed out.
@@ -67,6 +78,9 @@ impl LeaseOrigin {
 /// every clone has dropped and the origin's strong count falls back to one.
 /// Dropping a lease on a retired runtime wakes the janitor, so the runtime of a
 /// tenant suspended mid-request is released as soon as its last hold goes.
+///
+/// Dropping any lease reports a use to the runtime: the request holding it has
+/// committed whatever it wrote by the time it lets the runtime go.
 #[derive(Clone)]
 pub struct RuntimeLease {
     /// The cloned eviction origin whose strong count keeps the runtime resident.
@@ -105,6 +119,7 @@ impl Drop for RuntimeLease {
         let Some(origin) = self.hold.take() else {
             return;
         };
+        origin.record_activity();
         if origin.is_retired() {
             // clone: the signal must outlive the hold, which is released first so
             // the woken janitor reads the lowered strong count.

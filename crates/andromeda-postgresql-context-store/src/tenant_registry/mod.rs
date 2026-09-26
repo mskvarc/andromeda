@@ -50,9 +50,11 @@ use std::time::Duration;
 /// tenant runtime and is the only thing that can answer which tenants exist
 /// after they have all been evicted.
 pub struct PostgresTenantRegistry {
-    /// The platform database's request-path pool, where the registry lives and
-    /// serves the default tenant. Reaches PostgreSQL through the pooler when one
-    /// is configured.
+    /// The platform database's pool, where the registry lives. The composition
+    /// root connects it straight to PostgreSQL even when a pooler is
+    /// configured: the platform is one database, so a pooler has nothing to
+    /// multiplex for it, and provisioning holds a transaction on it across
+    /// `CREATE DATABASE`.
     main_pool: PgPool,
     /// The straight-to-PostgreSQL base URL every per-tenant database is derived
     /// from for provisioning and migration. Never a pooler: `CREATE DATABASE`

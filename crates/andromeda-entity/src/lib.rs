@@ -15,8 +15,6 @@ pub mod attribute_summary;
 pub mod attrs;
 /// Batch entity operations and execution policy.
 pub mod batch;
-/// Tracking recent batch activity for coordinated background work.
-pub mod batch_activity;
 /// Publication boundary for committed entity changes.
 pub mod change_sink;
 /// The change events a committed durable side effect publishes once its acknowledgement is confirmed.
@@ -125,7 +123,6 @@ pub mod write_kind;
 
 use crate::{
     batch::execution::BatchExecutionConfig,
-    batch_activity::BatchActivityTracker,
     change_sink::EntityChangeSink,
     id_lock::{IdLockMap, acquire_id_locks_in},
     port::{
@@ -167,7 +164,6 @@ pub struct EntityService {
     writes: Arc<dyn ContextCommitter>,
     engine: JsonLdEngine,
     change_sink: Option<Arc<dyn EntityChangeSink>>,
-    batch_activity: BatchActivityTracker,
     batch_execution: BatchExecutionConfig,
     notifications: Option<NotificationWriteConfig>,
     id_locks: Arc<IdLockMap>,
@@ -181,7 +177,6 @@ impl EntityService {
         engine: JsonLdEngine,
         change_sink: Option<Arc<dyn EntityChangeSink>>,
         batch_config: BatchExecutionConfig,
-        batch_activity: BatchActivityTracker,
         notifications: Option<NotificationWriteConfig>,
     ) -> EntityService {
         let EntityServicePorts {
@@ -202,7 +197,6 @@ impl EntityService {
             writes,
             engine,
             change_sink,
-            batch_activity,
             batch_execution,
             notifications,
             id_locks,

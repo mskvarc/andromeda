@@ -13,7 +13,6 @@ use crate::{
         projection_remainder::projection_remainder,
         pushdown_refusal::refuse_unnarrowable,
         residual::finish_page,
-        spatial_prefilter::SpatialNarrowing,
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -24,7 +23,6 @@ use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
     dataset::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
-    pagination::CountPolicy,
     projection::compiled::Projection,
     term_expander::TermExpander,
     type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
@@ -186,23 +184,10 @@ impl EntityQueryService {
                     Arc::new(owned)
                 }
             };
-            // Gated on the narrowed selection, not the one the client wrote: the
-            // spatial index *applies* a geo relation rather than declining it, so a
-            // store that cannot narrow `georel` is never asked to when the index
-            // already answered it.
-            let narrowed = match self.spatial_prefilter(target, &compiled).await {
-                SpatialNarrowing::Query(query) => query,
-                SpatialNarrowing::EmptyResult => {
-                    // A warm index that matched nothing is an empty page: returning
-                    // it directly stops an empty candidate set from widening into an
-                    // unconstrained store query (clause 4.10).
-                    let total_count = match compiled.pagination.count {
-                        CountPolicy::Emit => Some(0),
-                        CountPolicy::Omit => None,
-                    };
-                    return Ok((Vec::new(), total_count));
-                }
-            };
+            // The spatial index narrows only the default `location` instances;
+            // the store still evaluates the geo-query, so the refusal below reads
+            // the selection the store is actually handed.
+            let narrowed = self.spatial_prefilter(target, &compiled).await;
             refuse_unnarrowable(*self.query_store.profile(), &narrowed.selection)?;
             let outcome = self.query_store.query_compiled(target, &narrowed).await?;
             let mut page = finish_page(outcome, compiled.pagination)?;

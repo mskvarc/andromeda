@@ -3,7 +3,7 @@
 use crate::{
     EntityService,
     admission_fixture::admitted_entity,
-    query::{service_test_double::service_narrowing_through, spatial_prefilter::SpatialNarrowing},
+    query::service_test_double::service_narrowing_through,
     spatial_acceleration::SpatialAcceleration,
     spatial_placement::LocationPlacement,
     write_kind::CreateEntity,
@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{EntitySelection, EntitySelector},
-    geo::query::GeoQuery,
+    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
     type_selection::grammar::TypeExpr,
 };
 use andromeda_spatial_index::{
@@ -24,6 +24,7 @@ use andromeda_spatial_index::{
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use iri_rs::IriBuf;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
@@ -94,12 +95,22 @@ pub(super) fn near_origin(id: &str) -> Arc<CompiledEntityQuery> {
     Arc::new(CompiledEntityQuery::builder().selection(selection).build())
 }
 
-/// The identifiers the store is asked for, or `None` when the index answered
-/// the query as empty without the store.
+/// What the index hands the store about the query's default `location`
+/// instances: `None` when it narrowed nothing, or the candidates it found.
+///
+/// Whatever it holds, the narrowing leaves the request's own identifiers and
+/// the geo-query itself untouched, so the store still evaluates every
+/// `location` instance carrying a `datasetId`.
 pub(super) async fn narrowed_ids(spatial: SpatialAcceleration, query: &Arc<CompiledEntityQuery>) -> Option<Vec<Uri>> {
-    match service_narrowing_through(spatial).spatial_prefilter(&ContextTarget::Live, query).await {
-        SpatialNarrowing::Query(narrowed) => Some(narrowed.selection.selectors[0].ids.clone()), // clone: the answer outlives the narrowed query
-        SpatialNarrowing::EmptyResult => None,
+    let narrowed = service_narrowing_through(spatial).spatial_prefilter(&ContextTarget::Live, query).await;
+    assert_eq!(
+        narrowed.selection.selectors[0].ids, query.selection.selectors[0].ids,
+        "the request's identifiers are never narrowed"
+    );
+    assert_eq!(narrowed.selection.geo, query.selection.geo, "the store still evaluates the geo-query");
+    match &narrowed.selection.default_location {
+        DefaultLocationNarrowing::Unnarrowed => None,
+        DefaultLocationNarrowing::Candidates(candidates) => Some(candidates.clone()), // clone: the answer outlives the narrowed query
     }
 }
 

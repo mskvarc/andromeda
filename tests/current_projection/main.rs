@@ -4,7 +4,7 @@
 //! projection atomicity", "Current projection delete", "Default dataset
 //! uniqueness", "Distinct datasets", "Narrow Entity keys", "Empty Entity
 //! type", "Current projection replayed writes", "Current projection no-op
-//! suppression", "Current projection long strings", "Identifier bounds",
+//! suppression", "Current projection long strings", "Instance expiry", "Identifier bounds",
 //! "Attribute write consequences" and "Entity write consequences".
 //! Each test drives the broker over HTTP (or, for the no-op guard, the
 //! broker's own projection statement) and then reads
@@ -30,6 +30,7 @@ mod entity_keys;
 mod entity_type;
 mod entity_writes;
 mod identifier_bounds;
+mod instance_expiry;
 mod long_text;
 mod noop_suppression;
 mod projection_rows;

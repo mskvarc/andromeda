@@ -37,11 +37,14 @@ use serde_json::Value;
 /// `@id` or `@type` and cannot: an entity whose identity cannot be read is not
 /// one the query can admit or refuse.
 pub fn matches(residual: &ResidualFilter, expanded: &Value) -> Result<bool, EntityError> {
+    // An index's narrowing of the default `location` instances only restates
+    // part of `geo`, which is evaluated here over every instance in full.
     let EntitySelection {
         selectors,
         attrs,
         q_expr,
         geo,
+        default_location: _,
         scope_q,
         considered,
     } = residual.selection();

@@ -388,3 +388,72 @@ async fn snapshot_concurrent_clone_update_delete_and_purge_races_are_determinist
     pretty_assertions::assert_eq!(get_snapshot(&client(), target).await.0, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(get_snapshot(&client(), source).await.0, StatusCode::OK);
 }
+
+/// Clause 5.16.2.4: a clone copies "All Entity and Temporal Evolution of Entity
+/// data that is part of the Snapshot to be cloned". A source still preparing
+/// holds that data only once it finishes, so the clone waits for it instead of
+/// copying an empty or missing branch -- and then carries the source's data.
+///
+/// The source is held in `preparing` deterministically: a session holds the
+/// live `entity_documents` relation in ACCESS EXCLUSIVE mode, which the
+/// source's capture has to read, until the clone has been seen waiting.
+#[tokio::test]
+#[serial(snapshot)]
+async fn snapshot_clone_of_a_preparing_source_waits_and_copies_the_source_data() {
+    let _serialized_environment = clean_database().await;
+    let entity_type = "https://example.org/CloneWaitVehicle";
+    let entity_id = "urn:ngsi-ld:CloneWaitVehicle:1";
+    let source = "urn:ngsi-ld:Snapshot:clone-wait-source";
+    let target = "urn:ngsi-ld:Snapshot:clone-wait-target";
+    pretty_assertions::assert_eq!(
+        create_entity(
+            &client(),
+            &json!({"id": entity_id, "type": entity_type, "https://example.org/speed": {"type": "Property", "value": 7}, "@context": "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"})
+        )
+        .await,
+        StatusCode::CREATED
+    );
+
+    let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
+        .await
+        .expect("Snapshot database connection");
+    let mut holder = pool.begin().await.expect("lock holder transaction");
+    sqlx::query("LOCK TABLE entity_documents IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *holder)
+        .await
+        .expect("hold the live documents");
+
+    let source_body = json!({"id": source, "type": "Snapshot", "snapshotQueries": [{"type": "Query", "entities": [{"type": entity_type}]}]});
+    pretty_assertions::assert_eq!(create_snapshot_raw(&client(), &source_body).await.0, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(get_snapshot(&client(), source).await.1["snapshotStatus"], "preparing");
+    let (cloned, _, _) = clone_snapshot_raw(&client(), source, &json!({"id": target, "type": "Snapshot"})).await;
+    pretty_assertions::assert_eq!(cloned, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(
+        get_snapshot(&client(), target).await.1["snapshotStatus"],
+        "preparing",
+        "the clone waits while its source is still preparing"
+    );
+
+    holder.rollback().await.expect("release the live documents");
+    pretty_assertions::assert_eq!(
+        wait_for_snapshot_terminal(&client(), source, Duration::from_secs(10)).await["snapshotStatus"],
+        "success"
+    );
+    pretty_assertions::assert_eq!(
+        wait_for_snapshot_terminal(&client(), target, Duration::from_secs(10)).await["snapshotStatus"],
+        "success"
+    );
+    let (status, _, entities) = query_snapshot_entities(&client(), target, &format!("type={}", urlencoding::encode(entity_type))).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let ids: Vec<&str> = entities
+        .as_array()
+        .expect("an Entity array")
+        .iter()
+        .filter_map(|entity| entity["id"].as_str())
+        .collect();
+    pretty_assertions::assert_eq!(ids, vec![entity_id], "the clone carries the source's captured data");
+
+    for id in [target, source] {
+        pretty_assertions::assert_eq!(delete_snapshot_raw(&client(), id).await.0, StatusCode::NO_CONTENT);
+    }
+}

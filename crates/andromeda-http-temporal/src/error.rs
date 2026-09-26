@@ -159,6 +159,8 @@ mod tests {
         temporal_operation_unsupported::TemporalOperationUnsupported,
         temporal_validation_reason::TemporalValidationReason,
     };
+    use axum::http::StatusCode;
+    use std::time::Duration;
 
     #[test]
     fn every_temporal_error_variant_has_one_typed_http_classification() {
@@ -270,5 +272,24 @@ mod tests {
             detail: "missing timerel".to_string(),
         }));
         pretty_assertions::assert_eq!(report.detail(), "missing timerel");
+    }
+
+    /// Clause 5.5.6: a temporal write every retry lost to a concurrent
+    /// transaction, and a saturated pool, are `InternalError` failures; only the
+    /// 503 binding status and `Retry-After` say the request can be repeated.
+    #[test]
+    fn a_load_shed_temporal_answer_is_a_503_internal_error_with_retry_after() {
+        for error in [TemporalError::StoreSaturated, TemporalError::TransactionContended] {
+            let report = classify_temporal_error(&error);
+            let classification = report.classification();
+            pretty_assertions::assert_eq!(classification, ProblemClassification::ServiceUnavailable, "{error}");
+            pretty_assertions::assert_eq!(
+                classification.type_iri().as_str(),
+                NgsiLdErrorType::InternalError.type_iri().as_str(),
+                "{error}"
+            );
+            pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE, "{error}");
+            pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(1)), "{error}");
+        }
     }
 }

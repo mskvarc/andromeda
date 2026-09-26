@@ -81,3 +81,84 @@ pub(super) fn indexed_commits(
 pub(super) fn location_placement(tenant: &TenantRef) -> Result<LocationPlacement, TenantAssemblyError> {
     LocationPlacement::new(tenant.clone()).map_err(|error| TenantAssemblyError::invariant(error.to_string())) // clone: the placement owns its tenant
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::tenant_factory::spatial::{indexed_commits, initialize_spatial};
+    use andromeda_context_commit::{
+        atomic_write::AtomicWrite,
+        commit_replay::CommitReplay,
+        committer::{CommitFuture, ContextCommitter},
+    };
+    use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_entity::{
+        error::EntityError,
+        port::spatial_snapshot::{ChangeHorizon, EntitySpatialSnapshotSource, LocationRead},
+        spatial_acceleration::SpatialAcceleration,
+        spatial_config::SpatialConfig,
+    };
+    use andromeda_tenancy::tenant_ref::TenantRef;
+    use futures::future::BoxFuture;
+    use std::sync::Arc;
+
+    /// A store holding no located entity.
+    struct EmptyStore;
+
+    impl EntitySpatialSnapshotSource for EmptyStore {
+        fn locations<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async {
+                Ok(LocationRead {
+                    locations: Vec::new(),
+                    horizon: ChangeHorizon::new(1),
+                })
+            })
+        }
+
+        fn locations_changed_since<'life0, 'async_trait>(&'life0 self, horizon: ChangeHorizon) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async move {
+                Ok(LocationRead {
+                    locations: Vec::new(),
+                    horizon,
+                })
+            })
+        }
+    }
+
+    /// A commit port no test commits through.
+    struct UnusedCommitter;
+
+    impl ContextCommitter for UnusedCommitter {
+        fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn commit_replayed(&self, _target: &ContextTarget, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+    }
+
+    /// The default composition catches the index up from the store before it
+    /// narrows, which stays exact when replicas share the database, and so
+    /// leaves the commit path undecorated.
+    #[tokio::test]
+    async fn the_default_configuration_composes_a_watermarked_index_and_plain_commits() {
+        let source: Arc<dyn EntitySpatialSnapshotSource> = Arc::new(EmptyStore);
+        let spatial = initialize_spatial(SpatialConfig::default().consistency, &source, &TenantRef::UnnamedDefault)
+            .await
+            .expect("the default composes");
+        assert!(matches!(spatial, SpatialAcceleration::Watermark(_)), "the default is the watermark mode");
+
+        let writes: Arc<dyn ContextCommitter> = Arc::new(UnusedCommitter);
+        // clone: the composition is handed one handle and the test keeps another to compare
+        let composed = indexed_commits(Arc::clone(&writes), &spatial, &TenantRef::UnnamedDefault).expect("composes");
+        assert!(Arc::ptr_eq(&composed, &writes), "a watermarked index needs no commit-path maintenance");
+    }
+}

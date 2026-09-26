@@ -24,7 +24,11 @@ async fn under_commit_synchronous_a_created_entity_is_a_candidate_for_the_next_g
     let index = warm_index();
     let service = indexed_service(&index);
     let query = near_origin("urn:ngsi-ld:Vehicle:new");
-    assert_eq!(narrowed_ids(SpatialAcceleration::CommitSynchronous(Arc::clone(&index)), &query).await, None); // clone: the query service shares the index
+    // clone: the query service shares the index
+    assert_eq!(
+        narrowed_ids(SpatialAcceleration::CommitSynchronous(Arc::clone(&index)), &query).await,
+        Some(Vec::new())
+    );
 
     create(&service, vehicle_at("urn:ngsi-ld:Vehicle:new", 0.001)).await;
 
@@ -40,7 +44,11 @@ async fn under_commit_synchronous_a_merge_moving_an_entity_into_range_makes_it_a
     let service = indexed_service(&index);
     create(&service, vehicle_at("urn:ngsi-ld:Vehicle:mover", 50.0)).await;
     let query = near_origin("urn:ngsi-ld:Vehicle:mover");
-    assert_eq!(narrowed_ids(SpatialAcceleration::CommitSynchronous(Arc::clone(&index)), &query).await, None); // clone: the query service shares the index
+    // clone: the query service shares the index
+    assert_eq!(
+        narrowed_ids(SpatialAcceleration::CommitSynchronous(Arc::clone(&index)), &query).await,
+        Some(Vec::new())
+    );
 
     let patch: EntityPatch =
         serde_json::from_value(json!({"location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0.002, 0.0]}}})).expect("a valid patch");
@@ -75,7 +83,7 @@ async fn under_commit_synchronous_a_deleted_entity_leaves_the_candidates() {
 
     assert_eq!(
         narrowed_ids(SpatialAcceleration::CommitSynchronous(index), &near_origin("urn:ngsi-ld:Vehicle:gone")).await,
-        None
+        Some(Vec::new())
     );
 }
 
@@ -96,5 +104,34 @@ async fn under_commit_synchronous_an_enqueued_batch_create_is_a_candidate_before
     assert_eq!(
         narrowed_ids(SpatialAcceleration::CommitSynchronous(index), &near_origin("urn:ngsi-ld:Vehicle:batched")).await,
         Some(vec![uri("urn:ngsi-ld:Vehicle:batched")])
+    );
+}
+
+/// Clause 5.7.2.4: any `location` instance meeting the restriction is enough.
+/// The index holds the default instance alone, which here lies far outside the
+/// area, so it finds no candidate -- and that narrows the default instance
+/// only: the request's identifiers and the geo-query reach the store intact,
+/// and the store evaluates the `datasetId` instance that does lie inside.
+#[tokio::test]
+async fn under_commit_synchronous_an_entity_matching_only_through_a_dataset_instance_is_not_narrowed_away() {
+    let index = warm_index();
+    let service = indexed_service(&index);
+    create(
+        &service,
+        json!({
+            "id": "urn:ngsi-ld:Vehicle:two-fixes",
+            "type": "Vehicle",
+            "location": [
+                {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [50.0, 0.0]}},
+                {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0.001, 0.0]}, "datasetId": "urn:ngsi-ld:Dataset:gps"}
+            ]
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        narrowed_ids(SpatialAcceleration::CommitSynchronous(index), &near_origin("urn:ngsi-ld:Vehicle:two-fixes")).await,
+        Some(Vec::new()),
+        "the default instance is outside; the dataset instance is left to the store"
     );
 }

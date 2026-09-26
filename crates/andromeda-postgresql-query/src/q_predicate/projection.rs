@@ -891,7 +891,8 @@ mod tests {
             sql,
             concat!(
                 r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_key" = $1 AND "cav"."entity_key" = "entities"."entity_key")"#,
+                r#"WHERE "cav"."attribute_name_key" = $1 AND ("cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW()) "#,
+                r#"AND "cav"."entity_key" = "entities"."entity_key")"#,
             )
         );
         assert!(matches!(binds[0], Value::Int(Some(7))), "{binds:?}");
@@ -988,9 +989,11 @@ mod tests {
                 r#"JOIN "entity_search" AS "ls1" ON "ls1"."entity_key" = "le1"."entity_key" "#,
                 r#"WHERE "cav_ln1"."entity_key" = "entities"."entity_key" "#,
                 r#"AND "cav_ln1"."attribute_name_key" = $1 "#,
+                r#"AND ("cav_ln1"."expires_at" IS NULL OR "cav_ln1"."expires_at" > NOW()) "#,
                 r#"AND (("ls1"."entity_type_name_keys" @> (ARRAY[31])) OR ("ls1"."entity_type_name_keys" @> (ARRAY[32]))) "#,
                 r#"AND EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_key" = $2 AND ("cav"."value_string" = $3 OR "cav"."value_uri" = $4 "#,
+                r#"WHERE "cav"."attribute_name_key" = $2 AND ("cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW()) "#,
+                r#"AND ("cav"."value_string" = $3 OR "cav"."value_uri" = $4 "#,
                 r#"OR (("cav"."value_object" @> jsonb_build_array($5::text)) "#,
                 r#"OR ("cav"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text))))) "#,
                 r#"AND "cav"."entity_key" = "le1"."entity_key"))"#,

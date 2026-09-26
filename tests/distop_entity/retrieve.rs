@@ -3,10 +3,6 @@
 //!
 //! Tests retrieving single entities across context sources with different registration modes.
 
-use andromeda_test_harness::environment::TestEnvironment;
-use reqwest::{Method, StatusCode};
-use serde_json::Value;
-
 use crate::{
     context_source_adapter::ContextSourceAdapter as MockServer,
     helpers::{
@@ -25,6 +21,10 @@ use crate::{
         vehicle_registration_with_ops,
     },
 };
+use andromeda_test_harness::environment::TestEnvironment;
+use reqwest::{Method, StatusCode};
+use serde_json::Value;
+use urlencoding::encode;
 
 // ---------------------------------------------------------------------------
 // Auxiliary mode tests
@@ -284,12 +284,92 @@ async fn assert_retrieve_skips_registration_advertising_only(operation: &str, la
     let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     // The retrieval answered only after every forwarded request settled, so a
-    // source that was contacted has already recorded it.
-    pretty_assertions::assert_eq!(mock.get_total_count(), 0, "a {operation}-only source is never contacted for a retrieval");
+    // source that was contacted has already recorded it. Only requests naming
+    // this entity count: the suite shares one tenant, and a concurrent test's
+    // type-only query is rightly forwarded to this queryEntity source.
+    pretty_assertions::assert_eq!(
+        requests_naming(&mock, &entity_id).await,
+        Vec::<String>::new(),
+        "a {operation}-only source is never contacted for a retrieval"
+    );
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
+}
+
+/// The URIs of every request `mock` received that names `entity_id`, in its
+/// path or its query string.
+async fn requests_naming(mock: &MockServer, entity_id: &str) -> Vec<String> {
+    let encoded = encode(entity_id).into_owned();
+    mock.drain_requests()
+        .await
+        .into_iter()
+        .map(|request| request.uri.to_string())
+        .filter(|uri| uri.contains(entity_id) || uri.contains(&encoded))
+        .collect()
+}
+
+/// Clause 5.7.1.4 forwards a retrieval to the registrations that "support the
+/// retrieveEntity operation (see operations and operation groups in clause
+/// 4.20)". Table 4.20-2 puts `retrieveEntity` in `retrieveOps`,
+/// `redirectionOps`, `federationOps` and `associationOps`, and a registration
+/// naming no `operations` advertises `federationOps`. Each such registration is
+/// contacted with the retrieval itself, `GET /entities/{id}`.
+async fn assert_retrieve_forwarded_to_registration_advertising(operations: Option<&[&str]>, label: &str) {
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
+    let c = client();
+    let mock = MockServer::start().await;
+
+    let entity_id = scope.id(&format!("Vehicle:{label}"));
+    let reg_id = scope.id(&format!("Registration:{label}"));
+    let reg = match operations {
+        Some(operations) => vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, operations),
+        None => vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), None),
+    };
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let retrieve_path = format!("/ngsi-ld/v1/entities/{entity_id}");
+    mock.set_stub_with_body(Method::GET, &retrieve_path, 200, &vehicle_entity(&entity_id)).await;
+
+    let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
+    let forwarded = requests_naming(&mock, &entity_id).await;
+    delete_registration(&c, &reg_id).await;
+    mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
+
+    pretty_assertions::assert_eq!(status, StatusCode::OK, "{operations:?}: the source answers the retrieval");
+    pretty_assertions::assert_eq!(forwarded.len(), 1, "{operations:?}: exactly one forwarded request: {forwarded:?}");
+    assert!(
+        forwarded.iter().all(|uri| !uri.contains("entityOperations") && !uri.contains("?id=")),
+        "{operations:?}: the retrieval is forwarded as itself, never as a query: {forwarded:?}"
+    );
+}
+
+#[tokio::test]
+async fn distop_entity_retrieve_with_retrieve_ops_group_is_forwarded() {
+    assert_retrieve_forwarded_to_registration_advertising(Some(&["retrieveOps"]), "retrieve-group-retrieve-ops").await;
+}
+
+#[tokio::test]
+async fn distop_entity_retrieve_with_redirection_ops_group_is_forwarded() {
+    assert_retrieve_forwarded_to_registration_advertising(Some(&["redirectionOps"]), "retrieve-group-redirection-ops").await;
+}
+
+#[tokio::test]
+async fn distop_entity_retrieve_with_federation_ops_group_is_forwarded() {
+    assert_retrieve_forwarded_to_registration_advertising(Some(&["federationOps"]), "retrieve-group-federation-ops").await;
+}
+
+#[tokio::test]
+async fn distop_entity_retrieve_with_association_ops_group_is_forwarded() {
+    assert_retrieve_forwarded_to_registration_advertising(Some(&["associationOps"]), "retrieve-group-association-ops").await;
+}
+
+#[tokio::test]
+async fn distop_entity_retrieve_with_no_operations_member_is_forwarded() {
+    assert_retrieve_forwarded_to_registration_advertising(None, "retrieve-group-default").await;
 }
 
 #[tokio::test]
@@ -387,4 +467,69 @@ async fn distop_entity_retrieve_redirect_local_true_returns_404() {
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
+}
+
+// ---------------------------------------------------------------------------
+// Retrieve Entity `type` parameter (clauses 5.7.1.3, 5.7.1.4)
+// ---------------------------------------------------------------------------
+
+/// Clause 5.7.1.4 retrieves the Entity "whose id (URI), and where specified
+/// type, is equivalent": a local Entity of another type is not found, one of
+/// the requested type is, and clause 6.3.20 refuses a selector the clause 4.17
+/// grammar does not produce.
+#[tokio::test]
+async fn distop_entity_retrieve_type_selects_the_local_entity_only_when_its_type_matches() {
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
+    let c = client();
+    let entity_id = scope.id("Vehicle:retrieve-type-local");
+
+    let (status, _) = create_entity_local(&c, &vehicle_entity(&entity_id)).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let (matching, _, body) = get_entity(&c, &entity_id, "type=Vehicle", &jsonld_link_value()).await;
+    let (other, _, _) = get_entity(&c, &entity_id, "type=Building", &jsonld_link_value()).await;
+    let (invalid, _, _) = get_entity(&c, &entity_id, "type=Vehicle%7C", &jsonld_link_value()).await;
+    delete_entity(&c, &entity_id).await;
+    scope.finish().await.expect("cleanup failed");
+
+    pretty_assertions::assert_eq!(matching, StatusCode::OK, "the Entity has the requested type");
+    pretty_assertions::assert_eq!(body["id"], entity_id.as_str());
+    pretty_assertions::assert_eq!(other, StatusCode::NOT_FOUND, "no Entity with this id has the requested type");
+    pretty_assertions::assert_eq!(invalid, StatusCode::BAD_REQUEST, "a dangling type-selector operator is refused");
+}
+
+/// Clause 5.7.1.4 bullet on registrations: only registrations that match the
+/// request -- including its type (clause 5.12) -- are contacted, and the type is
+/// passed on so the source applies the same restriction (clause 4.3.6.1: "the
+/// Entity type selector ... can be added as a filter on forwarded requests").
+#[tokio::test]
+async fn distop_entity_retrieve_type_is_forwarded_only_to_registrations_covering_it() {
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
+    let c = client();
+    let mock = MockServer::start().await;
+    let entity_id = scope.id("Vehicle:retrieve-type-forward");
+    let reg_id = scope.id("Registration:retrieve-type-forward");
+
+    let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["retrieveEntity"]);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 200, &vehicle_entity(&entity_id))
+        .await;
+
+    let (uncovered, _, _) = get_entity(&c, &entity_id, "type=Building", &jsonld_link_value()).await;
+    let forwarded_uncovered = requests_naming(&mock, &entity_id).await;
+    let (covered, _, _) = get_entity(&c, &entity_id, "type=Vehicle", &jsonld_link_value()).await;
+    let forwarded_covered = requests_naming(&mock, &entity_id).await;
+    delete_registration(&c, &reg_id).await;
+    mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
+
+    pretty_assertions::assert_eq!(uncovered, StatusCode::NOT_FOUND, "a Vehicle-only registration does not cover Building");
+    pretty_assertions::assert_eq!(forwarded_uncovered, Vec::<String>::new(), "the uncovering registration is never contacted");
+    pretty_assertions::assert_eq!(covered, StatusCode::OK);
+    pretty_assertions::assert_eq!(forwarded_covered.len(), 1, "{forwarded_covered:?}");
+    assert!(
+        forwarded_covered.iter().all(|uri| uri.contains("type=") && uri.contains("Vehicle")),
+        "the requested type travels with the forwarded retrieval: {forwarded_covered:?}"
+    );
 }

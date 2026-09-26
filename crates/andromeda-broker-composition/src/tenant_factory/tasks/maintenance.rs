@@ -4,6 +4,7 @@ use crate::{
     event::entity_change_sink::BroadcastEntityChangeSink,
     tenant_factory::{
         TenantFactoryConfig,
+        background_pacer::BackgroundPacer,
         error::TenantAssemblyError,
         spatial::location_placement,
         storage::TenantStorage,
@@ -57,6 +58,7 @@ pub(super) fn register_entity_side_effects(
     writes: &Arc<dyn ContextCommitter>,
     changes: &broadcast::Sender<ContextChangeEvent>,
     wake: DrainWakeReceiver,
+    pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
     let entity_config = &config.entity;
     let change_sink = Arc::new(BroadcastEntityChangeSink::new(changes.clone())) as Arc<dyn EntityChangeSink>; // clone: services and the drain each own a sender handle.
@@ -79,6 +81,7 @@ pub(super) fn register_entity_side_effects(
         entity_config.pending_side_effects_poll_max.duration(),
         entity_config.pending_side_effects_lease.duration(),
         wake,
+        pacer,
     )?;
     register_entity_side_effect_reap(
         supervisor,
@@ -136,6 +139,7 @@ fn register_entity_side_effect_drain(
     fallback_ceiling: Duration,
     lease_duration: Duration,
     wake: DrainWakeReceiver,
+    pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
     let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("entity-side-effect-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
@@ -147,14 +151,19 @@ fn register_entity_side_effect_drain(
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
         let drain = Arc::clone(&drain); // clone: each bounded future owns the policy operation while executing.
+        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
         async move {
-            let now = DateTime::<Utc>::from(execution.cutoff());
-            let outcome = drain.execute(now).await.map_err(|error| classify_entity_expiry_failure(&error))?;
-            if outcome.work_may_remain {
-                Ok(DrainPassOutcome::WorkMayRemain)
-            } else {
-                Ok(DrainPassOutcome::Idle)
-            }
+            pacer
+                .run_drain_pass(execution.cause(), async move {
+                    let now = DateTime::<Utc>::from(execution.cutoff());
+                    let outcome = drain.execute(now).await.map_err(|error| classify_entity_expiry_failure(&error))?;
+                    if outcome.work_may_remain {
+                        Ok(DrainPassOutcome::WorkMayRemain)
+                    } else {
+                        Ok(DrainPassOutcome::Idle)
+                    }
+                })
+                .await
         }
     });
     supervisor

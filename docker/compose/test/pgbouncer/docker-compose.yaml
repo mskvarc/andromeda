@@ -15,8 +15,10 @@ x-broker-env: &broker-env
   ANDROMEDA__MANAGEMENT__MODE: "merged"
   ANDROMEDA__MANAGEMENT__METRICS: "prometheus"
   ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
-  # Every broker here writes the same tenant databases, so the spatial index
-  # runs in watermark mode (docs/spatial-index-consistency.md).
+  # Every broker here writes the same tenant databases. The spatial index's
+  # default watermark mode is the one that stays exact across them; it is
+  # pinned so a change of default cannot silently weaken this stack
+  # (docs/spatial-index-consistency.md).
   ANDROMEDA__SPATIAL__CONSISTENCY: "watermark"
 
 # Pooled tenant pools size from the pooler section, not tenancy.

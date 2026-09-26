@@ -1,5 +1,5 @@
 use crate::{
-    control::RunNowRequest,
+    control::{DrainCause, DrainExecution, RunNowRequest},
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
     failure::TaskFailure,
@@ -602,6 +602,45 @@ async fn an_idle_drain_runs_at_most_six_passes_in_thirty_seconds() -> Result<(),
     assert!(
         (1..=6).contains(&count),
         "an idle drain backs off to at most six passes in thirty seconds, ran {count}"
+    );
+    supervisor.shutdown().await;
+    Ok(())
+}
+
+/// A pass knows what started it, so a composer can treat a producer's wake
+/// and its follow-up passes differently from the fallback timer.
+#[tokio::test(start_paused = true)]
+async fn every_drain_pass_reports_whether_a_wake_its_predecessor_or_the_fallback_started_it() -> Result<(), TestError> {
+    let supervisor = TaskSupervisor::process(Handle::current());
+    let causes = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&causes);
+    let task = DrainTask::new(
+        registration("drain-causes", RestartPolicy::Never, Duration::from_secs(1))?,
+        DrainFallbackPolicy::new(Duration::from_secs(60), Duration::from_secs(60))?,
+        move |execution: DrainExecution| {
+            let observed = Arc::clone(&observed);
+            async move {
+                let mut causes = observed.lock().expect("cause log");
+                causes.push(execution.cause());
+                // The woken pass reports more work, so exactly one continuation follows it.
+                Ok(if causes.len() == 1 {
+                    DrainPassOutcome::WorkMayRemain
+                } else {
+                    DrainPassOutcome::Idle
+                })
+            }
+        },
+    );
+    let (wake, receiver) = wake_channel();
+    supervisor.register_drain(task, receiver)?;
+    settle().await;
+    assert_eq!(wake.wake(), WakeRequest::Scheduled);
+    settle().await;
+    sleep(Duration::from_secs(61)).await;
+    settle().await;
+    assert_eq!(
+        causes.lock().expect("cause log").clone(),
+        vec![DrainCause::Wake, DrainCause::Continuation, DrainCause::Fallback]
     );
     supervisor.shutdown().await;
     Ok(())

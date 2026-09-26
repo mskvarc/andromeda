@@ -111,7 +111,9 @@ async fn copy_staged_batches_commit_atomically_across_concurrent_tenants() {
     reset(&client, &pool).await;
     let broker = endpoints::broker();
     let tenants = tenant_load::tenant_names("pgbatomic", 24);
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 24).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 24)
+        .await
+        .expect("every tenant is provisioned");
 
     let writes = tenants.iter().map(|tenant| upsert_batch(&client, &broker, tenant, 500));
     let outcomes = join_all(writes).await;
@@ -165,7 +167,9 @@ async fn statement_cache_eviction_at_the_pooler_is_transparent() {
     reset(&client, &pool).await;
     let broker = endpoints::broker();
     let tenants = tenant_load::tenant_names("pgbstmt", 8);
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 8).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 8)
+        .await
+        .expect("every tenant is provisioned");
 
     // More distinct query shapes than max_prepared_statements (32), round-robined
     // across tenants and rounds, so the pooler evicts and re-prepares statements.
@@ -222,8 +226,12 @@ async fn snapshot_branch_clone_and_promote_run_through_the_pooler_under_load() {
     let broker = endpoints::broker();
     let snapshot_tenants = tenant_load::tenant_names("pgbsnap", 4);
     let load_tenants = tenant_load::tenant_names("pgbsnapload", 16);
-    tenant_load::provision_tenants(&client, &broker, &snapshot_tenants, CORE_CONTEXT, 4).await;
-    tenant_load::provision_tenants(&client, &broker, &load_tenants, CORE_CONTEXT, 16).await;
+    tenant_load::provision_tenants(&client, &broker, &snapshot_tenants, CORE_CONTEXT, 4)
+        .await
+        .expect("every tenant is provisioned");
+    tenant_load::provision_tenants(&client, &broker, &load_tenants, CORE_CONTEXT, 16)
+        .await
+        .expect("every tenant is provisioned");
 
     // Background load on sixteen tenants while snapshots run on four.
     let picker = tenant_load::UniformPicker::new(load_tenants.len(), 42);
@@ -333,7 +341,9 @@ async fn durable_notifications_are_delivered_exactly_per_change_through_the_pool
     let callback = server.endpoint_url().expect("callback url");
 
     let tenants = tenant_load::tenant_names("pgbnotif", 16);
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 16).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 16)
+        .await
+        .expect("every tenant is provisioned");
     for tenant in &tenants {
         subscribe(&client, &broker, tenant, &callback).await;
     }
@@ -401,7 +411,9 @@ async fn synchronous_commit_is_a_database_default_not_session_state() {
     reset(&client, &pool).await;
     let broker = endpoints::broker();
     let tenants = tenant_load::tenant_names("pgbsync", 1);
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
 
     // The broker applies synchronous_commit with ALTER DATABASE, so it appears in
     // pg_db_role_setting for the tenant database rather than as session state.
@@ -476,7 +488,9 @@ async fn maintenance_holds_its_session_lock_on_a_direct_connection_while_request
     reset(&client, &pool).await;
     let broker = endpoints::broker();
     let tenants = tenant_load::tenant_names("pgbmaint", 4);
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 4).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 4)
+        .await
+        .expect("every tenant is provisioned");
 
     let before = maintenance_decisions(&client, &broker).await;
     // Drive some writes to give maintenance something to decide on, then wait a
@@ -515,7 +529,9 @@ async fn concurrent_writes_to_one_entity_serialise_correctly_on_two_backends() {
     reset(&client, &pool).await;
     let broker = endpoints::broker();
     let tenant = tenant_load::tenant_names("pgbserial", 1).remove(0);
-    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
 
     // Thirty-two concurrent PATCHes to the one provisioned entity.
     let entity_id = format!("urn:ngsi-ld:Device:provision:{tenant}");

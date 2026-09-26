@@ -19,6 +19,18 @@ pub struct ScheduledExecution {
     cutoff: SystemTime,
 }
 
+/// What set a durable drain pass in motion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DrainCause {
+    /// An edge wake from a producer that just enqueued work.
+    Wake,
+    /// The previous pass reported that work may remain.
+    Continuation,
+    /// The fallback timer: no producer asked for this pass, it recovers a
+    /// missed wake or serves work that became due with time.
+    Fallback,
+}
+
 /// Context supplied to one bounded durable drain execution.
 #[derive(Clone, Debug)]
 pub struct DrainExecution {
@@ -26,12 +38,20 @@ pub struct DrainExecution {
     cancellation: CancellationToken,
     /// Fixed wall-clock instant for the bounded claim-and-process pass.
     cutoff: SystemTime,
+    /// What set this pass in motion.
+    cause: DrainCause,
 }
 
 impl DrainExecution {
     /// Construct one drain execution context.
-    pub(crate) const fn new(cancellation: CancellationToken, cutoff: SystemTime) -> DrainExecution {
-        DrainExecution { cancellation, cutoff }
+    pub(crate) const fn new(cancellation: CancellationToken, cutoff: SystemTime, cause: DrainCause) -> DrainExecution {
+        DrainExecution { cancellation, cutoff, cause }
+    }
+
+    /// What set this pass in motion.
+    #[must_use]
+    pub const fn cause(&self) -> DrainCause {
+        self.cause
     }
 
     /// Return the cancellation token for cooperative active shutdown.

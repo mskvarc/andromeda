@@ -90,7 +90,9 @@ async fn reconnect_under_load_loses_no_request() {
     reset(&client, &pool).await;
     let broker = endpoints::broker();
     let tenants = tenant_load::tenant_names("pgbrecon", 16);
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 16).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 16)
+        .await
+        .expect("every tenant is provisioned");
     let console = PoolerConsole::new(endpoints::pgbouncer_admin_url());
 
     let report = load_with(&client, &broker, &tenants, 10, async {
@@ -116,7 +118,9 @@ async fn a_paused_pooler_stalls_then_resumes_requests() {
     reset(&client, &pool).await;
     let broker = endpoints::broker();
     let tenants = tenant_load::tenant_names("pgbpause", 16);
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 16).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 16)
+        .await
+        .expect("every tenant is provisioned");
     let console = PoolerConsole::new(endpoints::pgbouncer_admin_url());
 
     // The pause stays well inside the pooler's fifteen-second
@@ -156,7 +160,9 @@ async fn terminated_server_backends_are_replaced() {
     reset(&client, &pool).await;
     let broker = endpoints::broker();
     let tenants = tenant_load::tenant_names("pgbterm", 16);
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 16).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 16)
+        .await
+        .expect("every tenant is provisioned");
 
     // Terminate every pooler-origin server backend mid-load; the pooler must
     // reconnect and requests recover.
@@ -207,13 +213,17 @@ async fn pool_saturation_is_a_503_with_retry_after_never_a_500() {
     // Provision the target alone so its database is the only tenant database,
     // then find its name and provision a bystander tenant.
     let target = tenant_load::tenant_names("pgbsat", 1).remove(0);
-    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&target), CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&target), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
     let target_db: String = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' LIMIT 1")
         .fetch_one(&pool)
         .await
         .expect("target tenant database exists");
     let bystander = tenant_load::tenant_names("pgbsatby", 1).remove(0);
-    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&bystander), CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&bystander), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
 
     // Occupy the target database's whole pool (default_pool_size + reserve = 3)
     // with long sleeps opened through the pooler from the test.
@@ -286,7 +296,9 @@ async fn a_killed_database_pool_recovers() {
     reset(&client, &pool).await;
     let broker = endpoints::broker();
     let tenant = tenant_load::tenant_names("pgbkill", 1).remove(0);
-    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
     let target_db: String = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' LIMIT 1")
         .fetch_one(&pool)
         .await

@@ -45,17 +45,29 @@ pub fn device_entity(id: &str, context: &str) -> Value {
     })
 }
 
-/// The outcome of provisioning a tenant set.
+/// The outcome of provisioning a tenant set in which every create succeeded.
 #[derive(Debug, Clone)]
 pub struct ProvisionReport {
-    /// How many creates returned 201.
+    /// How many creates returned 201: every tenant of the set.
     pub created: usize,
-    /// How many creates returned anything other than 201.
-    pub failed: usize,
     /// Wall-clock time the whole burst took.
     pub elapsed: Duration,
     /// Provisioning throughput in tenants per second.
     pub tenants_per_second: f64,
+}
+
+/// A provisioning burst in which some creates did not return 201.
+///
+/// Every later assertion about the tenant set -- how many are cached, how many
+/// backends they hold, whether a newcomer is starved -- presumes the set
+/// exists, so a burst that left tenants unprovisioned is a failure of its own,
+/// reported with the answer each missing tenant got rather than discovered
+/// later as a count that is mysteriously short.
+#[derive(Debug, thiserror::Error)]
+#[error("{} of {total} tenant creates did not return 201: {failures:?}", failures.len())]
+pub struct ProvisioningIncomplete {
+    /// How many creates the burst issued.
+    pub total: usize,
     /// Every create that did not return 201, with its status and body or its
     /// transport failure.
     pub failures: Vec<RequestOutcome>,
@@ -66,7 +78,17 @@ pub struct ProvisionReport {
 ///
 /// A first-touch create under a fresh tenant provisions its database, so this
 /// both materialises the tenant set and measures the provisioning burst.
-pub async fn provision_tenants(client: &Client, broker_base: &str, tenants: &[String], context: &str, concurrency: usize) -> ProvisionReport {
+///
+/// # Errors
+///
+/// Returns [`ProvisioningIncomplete`] when any create did not return 201.
+pub async fn provision_tenants(
+    client: &Client,
+    broker_base: &str,
+    tenants: &[String],
+    context: &str,
+    concurrency: usize,
+) -> Result<ProvisionReport, ProvisioningIncomplete> {
     let started = Instant::now();
     let requests = tenants.iter().cloned().map(|tenant| async move {
         let id = format!("urn:ngsi-ld:Device:provision:{tenant}");
@@ -76,15 +98,16 @@ pub async fn provision_tenants(client: &Client, broker_base: &str, tenants: &[St
     let elapsed = started.elapsed();
     let total = outcomes.len();
     let failures: Vec<RequestOutcome> = outcomes.into_iter().filter(|outcome| outcome.status() != Some(201)).collect();
+    if !failures.is_empty() {
+        return Err(ProvisioningIncomplete { total, failures });
+    }
     let seconds = elapsed.as_secs_f64();
     let tenants_per_second = if seconds > 0.0 { as_f64(tenants.len()) / seconds } else { 0.0 };
-    ProvisionReport {
-        created: total - failures.len(),
-        failed: failures.len(),
+    Ok(ProvisionReport {
+        created: total,
         elapsed,
         tenants_per_second,
-        failures,
-    }
+    })
 }
 
 /// Create one entity under `tenant`.

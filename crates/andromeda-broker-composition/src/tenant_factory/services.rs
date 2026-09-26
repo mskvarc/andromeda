@@ -26,7 +26,6 @@ use andromeda_entity::{
     EntityService,
     NotificationWriteConfig,
     batch::execution::BatchExecutionConfig,
-    batch_activity::BatchActivityTracker,
     change_sink::EntityChangeSink,
     discovery::EntityDiscoveryService,
     port::{attribute_history::AttributeDatasetHistory, service_ports::EntityServicePorts},
@@ -189,7 +188,6 @@ fn compose_entity_service(
             prepare_blocking_threshold: config.entity.batch_prepare_blocking_threshold,
             async_side_effect_threshold: config.entity.batch_async_side_effect_threshold,
         },
-        BatchActivityTracker::new(),
         config.notifications.delivery.is_durable().then(|| NotificationWriteConfig {
             subscription_cache: Arc::clone(&storage.subscription_cache),
         }),

@@ -59,8 +59,8 @@ pub enum EntitySearch {
     EntityKey,
     /// The `xid8` of the transaction that last wrote the row
     WrittenXid,
-    /// Latest `expiresAt` among the payload's `location` instances, NULL when
-    /// any instance carries none (clause 4.22)
+    /// The clause 4.22 `expiresAt` of the hoisted default `location` instance,
+    /// NULL when it carries none
     LocationExpiresAt,
     /// Array of `entity_type_names` keys, one per type the entity carries
     EntityTypeNameKeys,
@@ -107,6 +107,8 @@ pub enum CurrentAttributeValues {
     ValueKind,
     /// `DateTime` value, when `value_kind` selects it
     ValueDateTime,
+    /// The instance's own clause 4.22 `expiresAt`, NULL when it never expires
+    ExpiresAt,
     /// Foreign key to `unit_codes` for the instance's `unitCode` (clause 4.5.2)
     UnitCodeId,
     /// Boolean value, when `value_kind` selects it
@@ -202,6 +204,7 @@ mod tests {
         assert_eq!(CurrentAttributeValues::ValueGeometry.to_string(), "value_geometry");
         assert_eq!(CurrentAttributeValues::ValueObject.to_string(), "value_object");
         assert_eq!(CurrentAttributeValues::ValueDateTime.to_string(), "value_date_time");
+        assert_eq!(CurrentAttributeValues::ExpiresAt.to_string(), "expires_at");
         assert_eq!(CurrentAttributeValues::ValueUri.to_string(), "value_uri");
         assert_eq!(CurrentAttributeValues::ValueLongText.to_string(), "value_long_text");
     }

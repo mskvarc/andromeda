@@ -24,7 +24,11 @@ use andromeda_jsonld::{
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{entity::Entity, expanded::attribute_system_time::strip_attribute_instants, notification::NotificationTrigger};
+use andromeda_ngsi_ld_model::{
+    entity::Entity,
+    expanded::{attribute_expiry::remove_expired_instances, attribute_system_time::strip_attribute_instants},
+    notification::NotificationTrigger,
+};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_query::projection::term::ProjectionTerm;
 use andromeda_ngsi_ld_render::{
@@ -110,6 +114,11 @@ pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>
     if entity.is_null() {
         return vec![];
     }
+    // Clause 5.8.6 notifies the entity as it is, and clause 4.22 makes an
+    // instance past its `expiresAt` invalid, so an expired instance the sweep
+    // has yet to delete is not part of it, nor of the `attributes` narrowing
+    // and projection below.
+    remove_expired_instances(&mut entity, Utc::now());
 
     apply_deletion_shape(&mut entity, params);
     apply_notification_selection(&mut entity, params.sub);

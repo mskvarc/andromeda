@@ -232,15 +232,22 @@ async fn construct(
     telemetry: Option<Arc<TelemetryRecorder>>,
     started_at: DateTime<Utc>,
 ) -> Result<BrokerExecution, BrokerStartupError> {
-    // Two bases. The request path connects through the pooler when one is
-    // configured; provisioning, migration and maintenance always reach
+    // Two bases. A tenant's request path connects through the pooler when one
+    // is configured; provisioning, migration and maintenance always reach
     // PostgreSQL directly, because each keeps session state (a `CREATE DATABASE`
     // outside any transaction, the migrator's session advisory lock, the
     // maintenance sweep's session lock) that a transaction-pooling proxy breaks.
     let request_url = DatabaseUrl::new(config.database.request_url().clone()); // clone: the tenant factory retains the request base URL
     let direct_url = DatabaseUrl::new(config.database.direct_url().clone()); // clone: registry, maintenance and the tenant factory retain the direct base URL
+    // The platform database -- the tenant registry every cold load reads, the
+    // wake schedule, the forwarded-subscription routes -- is one database, so a
+    // pooler has nothing to multiplex for it: routed through one, every replica
+    // shares the pooler's handful of server connections for that one database,
+    // and provisioning holds one of them across `CREATE DATABASE`, which queues
+    // every cold load's registry read behind it. It is served directly, bounded
+    // by `database.max_connections`.
     let main_pool = configure_pool_options(config.database.max_connections, config.database.acquire_timeout())
-        .connect(config.database.request_url().as_str())
+        .connect(config.database.direct_url().as_str())
         .await?;
     let registry = Arc::new(
         PostgresTenantRegistry::connect(

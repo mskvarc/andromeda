@@ -118,7 +118,10 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 WakeOutcome::AlreadyCached
             }
             Entry::Vacant(vacant) => {
-                let cached = CachedRuntime::unleased(state, runtime, database, self.new_origin());
+                let cached = {
+                    let origin = self.new_origin(&runtime);
+                    CachedRuntime::unleased(state, runtime, database, origin)
+                };
                 cached.backdate(self.waker.woken_backdate());
                 drop(vacant.insert(cached));
                 self.record_cache_size();

@@ -82,10 +82,11 @@ CREATE TABLE entity_search (
     -- transaction below a snapshot's `xmin` had finished before the snapshot
     -- was taken.
     written_xid XID8 NOT NULL DEFAULT pg_current_xact_id(),
-    -- The latest `expiresAt` among the payload's `location` instances, NULL
-    -- when any of them carries none. A geo-query on the default GeoProperty
-    -- excludes an Entity whose every `location` instance has expired
-    -- (clause 4.22) by reading this column rather than the payload.
+    -- The clause 4.22 `expiresAt` of the hoisted default `location` instance,
+    -- NULL when it carries none. A geo-query reads the hoisted instance only
+    -- while this is NULL or ahead of NOW(): clause 4.22 invalidates that one
+    -- instance at its own expiry, whatever the Entity's other `location`
+    -- instances carry in `current_attribute_values`.
     location_expires_at TIMESTAMPTZ,
     -- `entity_type_names` keys.
     entity_type_name_keys INTEGER[] COMPRESSION lz4 NOT NULL,

@@ -51,8 +51,9 @@ x-broker-base: &broker-base
     retries: 40
     start_period: 5s
 
-# snapshot-primary and snapshot-replica write one database, so the spatial
-# index runs in watermark mode, the one that stays exact across replicas
+# snapshot-primary and snapshot-replica write one database. The spatial index's
+# default watermark mode is the one that stays exact across replicas; it is
+# pinned here so a change of default cannot silently weaken this stack
 # (docs/spatial-index-consistency.md).
 x-primary-env: &primary-env
   <<: *broker-env

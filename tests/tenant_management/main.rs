@@ -17,9 +17,21 @@ use andromeda_test_harness::{
     database_access::connect_test_database,
     serialized_environment::SerializedEnvironment,
 };
-use reqwest::{Client, StatusCode, header::HeaderMap};
+use andromeda_test_mocks::{
+    callback_path::CallbackPath,
+    callback_server::{CallbackServer, MockResponse, RequestMatcher, ResponseGate},
+    server_config::MockServerConfig,
+};
+use bytes::Bytes;
+use reqwest::{
+    Client,
+    Method,
+    StatusCode,
+    header::{CONTENT_TYPE, HeaderMap, HeaderValue},
+};
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use std::time::Duration;
 use uuid::Uuid;
 
 const NONEXISTENT_TENANT_ERROR: &iri_rs::Iri<&str> = error::NONEXISTENT_TENANT;
@@ -353,5 +365,95 @@ async fn tenant_management_suspending_one_tenant_leaves_another_serving() {
     let (status, _) = create_entity(&http, &beta, "urn:ngsi-ld:Device:tm-iso-b2").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
+    environment.finish().await;
+}
+
+/// Clause 5.5.10 with the suspension contract of `docs/tenant-management.md`:
+/// a suspended tenant answers every data-path request `404 NonexistentTenant`,
+/// even while a request admitted before the suspension still holds the
+/// tenant's runtime. That in-flight request once kept the runtime cached and
+/// serving after the suspension, because eviction spared a runtime in use and
+/// nothing evicted it when the request finished.
+///
+/// The in-flight request is held open deterministically: it is a retrieval
+/// forwarded to a registered Context Source whose answer waits at a closed
+/// gate until the test releases it.
+#[serial_test::serial]
+#[tokio::test]
+async fn tenant_management_suspension_refuses_the_tenant_while_a_request_still_holds_it() {
+    let environment = reset().await;
+    let http = client();
+    let tenant = unique_tenant("tmleased");
+    let local_id = "urn:ngsi-ld:Device:tm-leased-local";
+    let remote_id = "urn:ngsi-ld:Device:tm-leased-remote";
+    let (status, _) = create_entity(&http, &tenant, local_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let source = CallbackServer::start(MockServerConfig::from_environment().expect("context source configuration"))
+        .await
+        .expect("gated context source starts");
+    let gate = ResponseGate::closed();
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/ld+json"));
+    let retrieval_path = CallbackPath::parse(format!("/ngsi-ld/v1/entities/{remote_id}")).expect("retrieval path");
+    source
+        .enqueue(
+            RequestMatcher::new(Method::GET, retrieval_path),
+            MockResponse::builder()
+                .status(StatusCode::OK)
+                .headers(headers)
+                .body(Bytes::from(device_entity(remote_id).to_string()))
+                .gate(Some(gate.clone()))
+                .build(),
+        )
+        .await;
+    let endpoint = source.endpoint(&CallbackPath::parse("/").expect("root path")).expect("context source endpoint");
+    let registration = json!({
+        "id": "urn:ngsi-ld:ContextSourceRegistration:tm-leased",
+        "type": "ContextSourceRegistration",
+        "endpoint": endpoint,
+        "information": [{"entities": [{"id": remote_id, "type": "Device"}]}],
+        "@context": [CORE_CONTEXT]
+    });
+    let registered = http
+        .post(format!("{BASE_URL}/csourceRegistrations"))
+        .header("NGSILD-Tenant", &tenant)
+        .header("Content-Type", "application/ld+json")
+        .json(&registration)
+        .send()
+        .await
+        .expect("registration request");
+    pretty_assertions::assert_eq!(registered.status(), StatusCode::CREATED);
+
+    let in_flight = tokio::spawn({
+        let http = http.clone(); // clone: the spawned request owns its handle to the shared client
+        let tenant = tenant.clone(); // clone: the spawned request owns the tenant it addresses
+        async move { retrieve_entity(&http, &tenant, remote_id).await.0 }
+    });
+    source
+        .next_request(Duration::from_secs(10))
+        .await
+        .expect("the retrieval reaches the gated source and holds the tenant's runtime");
+
+    pretty_assertions::assert_eq!(patch_active(&http, &tenant, false).await, StatusCode::NO_CONTENT);
+    let (status, _, body) = retrieve_entity(&http, &tenant, local_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND, "a suspended tenant is refused while a request still holds it");
+    pretty_assertions::assert_eq!(body["type"].as_str(), Some(NONEXISTENT_TENANT_ERROR.as_str()));
+
+    gate.release();
+    in_flight.await.expect("the in-flight retrieval finishes");
+    let (status, _, body) = retrieve_entity(&http, &tenant, local_id).await;
+    pretty_assertions::assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a suspended tenant stays refused after the last request releases it"
+    );
+    pretty_assertions::assert_eq!(body["type"].as_str(), Some(NONEXISTENT_TENANT_ERROR.as_str()));
+
+    pretty_assertions::assert_eq!(patch_active(&http, &tenant, true).await, StatusCode::NO_CONTENT);
+    let (status, _, _) = retrieve_entity(&http, &tenant, local_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK, "a resumed tenant serves again");
+
+    source.shutdown().await.expect("context source shutdown");
     environment.finish().await;
 }

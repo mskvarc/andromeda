@@ -2,7 +2,6 @@
 
 use crate::{
     port::spatial_snapshot::EntitySpatialSnapshotSource,
-    query::{service_test_double::service_narrowing_through, spatial_prefilter::SpatialNarrowing},
     spatial_acceleration::SpatialAcceleration,
     spatial_watermark::SpatialWatermark,
     spatial_write_visibility::{
@@ -10,7 +9,6 @@ use crate::{
         replicated_store::ReplicatedStore,
     },
 };
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
@@ -27,7 +25,11 @@ async fn under_watermark_an_entity_another_process_moved_into_range_is_a_candida
     ));
     watermark.rebuild().await.expect("the store is readable");
     let query = near_origin("urn:ngsi-ld:Vehicle:remote");
-    assert_eq!(narrowed_ids(SpatialAcceleration::Watermark(Arc::clone(&watermark)), &query).await, None); // clone: the query service shares the watermark
+    // clone: the query service shares the watermark
+    assert_eq!(
+        narrowed_ids(SpatialAcceleration::Watermark(Arc::clone(&watermark)), &query).await,
+        Some(Vec::new())
+    );
 
     store.write("urn:ngsi-ld:Vehicle:remote", 0.001);
 
@@ -49,12 +51,9 @@ async fn under_watermark_an_unreadable_store_leaves_the_query_unnarrowed() {
     watermark.rebuild().await.expect("the store is readable");
     *store.unreachable.lock().expect("the reachability lock is not poisoned") = true;
 
-    let query = near_origin("urn:ngsi-ld:Vehicle:remote");
-    match service_narrowing_through(SpatialAcceleration::Watermark(watermark))
-        .spatial_prefilter(&ContextTarget::Live, &query)
-        .await
-    {
-        SpatialNarrowing::Query(unchanged) => assert!(Arc::ptr_eq(&unchanged, &query), "the query reaches the store as the client wrote it"),
-        SpatialNarrowing::EmptyResult => panic!("an index that could not catch up must not answer"),
-    }
+    assert_eq!(
+        narrowed_ids(SpatialAcceleration::Watermark(watermark), &near_origin("urn:ngsi-ld:Vehicle:remote")).await,
+        None,
+        "an index that could not catch up must not narrow"
+    );
 }

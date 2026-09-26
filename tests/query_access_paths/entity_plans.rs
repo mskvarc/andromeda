@@ -187,6 +187,62 @@ async fn entity_access_path_for_a_type_filter_uses_the_types_gin_index() {
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 5.7.2.4 lets any `location` instance match, so a `location`
+/// geo-query is a semi-join over two arms: the hoisted default instance and
+/// every instance row carrying a `datasetId`. Each arm must reach its own `GiST`
+/// index, or the common single-instance query would lose the hoisted path it
+/// had before the instance rows joined it. The seeded `entrance` rows stand in
+/// for the `location` instance rows: the arm reads them by the same key and
+/// columns.
+#[tokio::test]
+async fn every_arm_of_a_location_geo_query_reaches_its_gist_index() {
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let pool = scope.database_pool();
+    let corpus = seed(pool, SEED_PREFIX).await;
+    let instances = corpus.entrance();
+
+    let within = format!(
+        "SELECT e.id FROM entities AS e JOIN entity_search AS s ON s.entity_key = e.entity_key \
+         WHERE e.entity_key IN ( \
+               SELECT geo_default.entity_key FROM entity_search AS geo_default \
+                WHERE (geo_default.location_expires_at IS NULL OR geo_default.location_expires_at > NOW()) \
+                  AND ST_Intersects(geo_default.location, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326)) \
+               UNION ALL \
+               SELECT c.entity_key FROM current_attribute_values AS c \
+                WHERE c.attribute_name_key = {instances} AND c.dataset_id IS NOT NULL AND c.value_geometry IS NOT NULL \
+                  AND (c.expires_at IS NULL OR c.expires_at > NOW()) \
+                  AND ST_Intersects(c.value_geometry, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326)))"
+    );
+    let plan = explain(pool, &within).await;
+    assert!(plan.contains("idx_entity_search_location"), "the hoisted arm must use its GiST index: {plan}");
+    assert!(plan.contains("idx_cav_value_geometry"), "the instance arm must use its GiST index: {plan}");
+
+    // `near` reads the hoisted `geography` twin, and prefilters the cast
+    // instance geometry with a box the geometry GiST answers.
+    let near = format!(
+        "SELECT e.id FROM entities AS e JOIN entity_search AS s ON s.entity_key = e.entity_key \
+         WHERE e.entity_key IN ( \
+               SELECT geo_default.entity_key FROM entity_search AS geo_default \
+                WHERE ST_DWithin(geo_default.location_geography, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326)::geography, 50.0) \
+               UNION ALL \
+               SELECT c.entity_key FROM current_attribute_values AS c \
+                WHERE c.attribute_name_key = {instances} AND c.dataset_id IS NOT NULL AND c.value_geometry IS NOT NULL \
+                  AND c.value_geometry && ST_MakeEnvelope(13.004, 52.004, 13.006, 52.006, 4326) \
+                  AND ST_DWithin(c.value_geometry::geography, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326)::geography, 50.0))"
+    );
+    let plan = explain(pool, &near).await;
+    assert!(
+        plan.contains("idx_entity_search_location_geography"),
+        "the hoisted arm must use its geography GiST index: {plan}"
+    );
+    assert!(
+        plan.contains("idx_cav_value_geometry"),
+        "the prefiltered instance arm must use its GiST index: {plan}"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 #[tokio::test]
 async fn typed_value_indexes_exclude_rows_whose_value_column_is_null() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");

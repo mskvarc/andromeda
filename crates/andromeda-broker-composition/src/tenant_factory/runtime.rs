@@ -1,9 +1,9 @@
 //! Runtime resources owned by one tenant and their shutdown order.
 
-use crate::tenant_factory::{storage::TenantContextWorkers, tasks::sweep_pacer::SweepPacer};
+use crate::tenant_factory::{background_pacer::BackgroundPacer, storage::TenantContextWorkers};
 use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
 use andromeda_task_runtime::supervisor::TaskSupervisor;
-use andromeda_tenancy::state_factory::TenantRuntime;
+use andromeda_tenancy::state_factory::{RuntimeActivity, TenantRuntime};
 use async_trait::async_trait;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ pub struct BrokerTenantRuntime {
     health_shutdown: Option<watch::Sender<bool>>,
     task_supervisor: TaskSupervisor,
     /// Paces the tenant's sweeps; told of every use of the runtime.
-    pacer: Arc<SweepPacer>,
+    pacer: Arc<BackgroundPacer>,
 }
 
 impl BrokerTenantRuntime {
@@ -30,7 +30,7 @@ impl BrokerTenantRuntime {
         pool: PgPool,
         health_shutdown: Option<watch::Sender<bool>>,
         task_supervisor: TaskSupervisor,
-        pacer: Arc<SweepPacer>,
+        pacer: Arc<BackgroundPacer>,
     ) -> BrokerTenantRuntime {
         BrokerTenantRuntime {
             context_workers,
@@ -65,8 +65,8 @@ impl TenantRuntime for BrokerTenantRuntime {
         info!(event = "tenant_pool_closed");
     }
 
-    fn record_activity(&self) {
-        self.pacer.record_activity();
+    fn activity(&self) -> Arc<dyn RuntimeActivity> {
+        Arc::clone(&self.pacer) as Arc<dyn RuntimeActivity> // clone: the cache reports use to the pacer the tenant's tasks consult.
     }
 }
 

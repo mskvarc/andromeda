@@ -193,14 +193,14 @@ async fn provisioning_burst_stays_within_the_direct_connection_budget() {
     let sampler = BackendSampler::start(&endpoints::database_url(), &[endpoints::BROKER_APPLICATION_NAME])
         .await
         .expect("start sampler");
-    let report = tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
+    let provisioned = tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
     let series = sampler.stop().await;
+    let report = provisioned.expect("every first-touch create must provision without a 5xx");
 
     println!(
-        "provisioning: {} created, {} failed, {:.1} tenants/s, peak {} backends, failures {:?}",
-        report.created, report.failed, report.tenants_per_second, series.max, report.failures
+        "provisioning: {} created, {:.1} tenants/s, peak {} backends",
+        report.created, report.tenants_per_second, series.max
     );
-    assert_eq!(report.failed, 0, "every first-touch create must provision without a 5xx: {:?}", report.failures);
     assert!(
         series.max < 300,
         "provisioning must stay within the PostgreSQL connection budget, saw {}",
@@ -216,7 +216,9 @@ async fn a_working_set_three_times_the_cache_is_served_without_a_single_failure(
     reset(&client).await;
     let broker = endpoints::broker();
     let tenants = tenant_load::tenant_names("pgbwork", 96);
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32)
+        .await
+        .expect("every tenant is provisioned");
 
     let before = cold_builds(&client, &broker).await;
     let sampler = BackendSampler::start(&endpoints::database_url(), &[endpoints::BROKER_APPLICATION_NAME])
@@ -291,7 +293,9 @@ async fn a_zipf_working_set_keeps_hot_tenants_resident() {
     reset(&client).await;
     let broker = endpoints::broker();
     let tenants = tenant_load::tenant_names("pgbzipf", tenant_count());
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32)
+        .await
+        .expect("every tenant is provisioned");
 
     // Warm up with a Zipf-skewed working set so the hot tenants become resident.
     let picker = ZipfPicker::new(tenants.len(), 1.1, 0xB0B);
@@ -347,7 +351,9 @@ async fn an_idle_wide_cache_releases_its_backends() {
     reset(&client).await;
     let broker = endpoints::broker_wide();
     let tenants = tenant_load::tenant_names("pgbwide", tenant_count());
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32)
+        .await
+        .expect("every tenant is provisioned");
 
     // Touch every tenant once so all are cached, then let the fleet go idle.
     for tenant in &tenants {
@@ -384,7 +390,9 @@ async fn the_global_pooler_cap_never_starves_a_new_tenant() {
     reset(&client).await;
     let broker = endpoints::broker_wide();
     let resident = tenant_load::tenant_names("pgbcap", tenant_count());
-    tenant_load::provision_tenants(&client, &broker, &resident, CORE_CONTEXT, 32).await;
+    tenant_load::provision_tenants(&client, &broker, &resident, CORE_CONTEXT, 32)
+        .await
+        .expect("every tenant is provisioned");
     for tenant in &resident {
         let _ = get_entity(&client, &broker, tenant).await;
     }
@@ -424,7 +432,9 @@ async fn two_replicas_share_one_pooler_without_doubling_backends() {
     // contract is `a_working_set_three_times_the_cache_is_served_without_a_single_failure`'s,
     // while this test isolates what a second replica costs in backends.
     let tenants = tenant_load::tenant_names("pgbrepl", REPLICA_WORKING_SET);
-    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32)
+        .await
+        .expect("every tenant is provisioned");
 
     // Single-replica baseline: the working set through one broker.
     let single = {
@@ -546,7 +556,9 @@ struct BurstFootprint {
 /// Provision `tenants` on `broker`, drive a uniform read/write burst, and report
 /// the backends connected under `application_names` during and after it.
 async fn measure_burst_footprint(client: &Client, broker: &str, application_names: &'static [&'static str], tenants: &[String]) -> BurstFootprint {
-    tenant_load::provision_tenants(client, broker, tenants, CORE_CONTEXT, 16).await;
+    tenant_load::provision_tenants(client, broker, tenants, CORE_CONTEXT, 16)
+        .await
+        .expect("every tenant is provisioned");
     let sampler = BackendSampler::start(&endpoints::database_url(), application_names)
         .await
         .expect("start sampler");

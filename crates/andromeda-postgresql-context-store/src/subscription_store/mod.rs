@@ -23,6 +23,8 @@ mod interned_attributes;
 pub mod mapper;
 /// Borrowed input structs for subscription operations.
 pub mod params;
+/// Which periodic subscriptions are owed a notification.
+pub(crate) mod periodic_due;
 /// Direct PostgreSQL implementations of the subscription persistence ports.
 mod postgresql;
 /// The read-side projection every subscription query shares.

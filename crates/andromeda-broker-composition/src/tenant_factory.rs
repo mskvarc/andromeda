@@ -7,6 +7,7 @@
 use crate::{
     config::{notifications::NotificationsConfig, runtime::RuntimeConfig},
     tenant_factory::{
+        background_pacer::{BackgroundPacer, TenantObligations},
         commit_consequence::RuntimeCommitConsequencePublisher,
         error::TenantAssemblyError,
         runtime::BrokerTenantRuntime,
@@ -51,6 +52,7 @@ use std::{
 use tracing::debug;
 use url::Url;
 
+mod background_pacer;
 mod commit_consequence;
 mod error;
 /// Runtime ownership and ordered shutdown.
@@ -220,7 +222,21 @@ async fn build_tenant_state(
     };
     let signals = TenantSignals::new(entity_change_capacity);
     let storage = initialize_storage(config, serving_url, migration_url, tenant).await?;
-    let temporal = compose_temporal_history(&storage.pool, &storage.temporal_repo, &config.temporal, &task_supervisor, &storage.live_target)?;
+    // One pacer for every background pass the tenant runs, created before the
+    // first of them is registered, so one obligation read decides for all of
+    // them while the tenant is quiet.
+    let pacer = Arc::new(BackgroundPacer::new(
+        config.temporal.expiration_check_interval.duration(),
+        Arc::new(TenantObligations::new(&storage.pool)),
+    ));
+    let temporal = compose_temporal_history(
+        &storage.pool,
+        &storage.temporal_repo,
+        &config.temporal,
+        &task_supervisor,
+        &storage.live_target,
+        &pacer,
+    )?;
     // Every write path reaches the `current_attribute_values` projection
     // through this complete atomic commit implementation, which writes it in
     // the transaction that mutates the entity.
@@ -278,6 +294,7 @@ async fn build_tenant_state(
         side_effect_wake: side_effect_receiver,
         snapshot_status_wake,
         snapshot_status_receiver,
+        pacer: Arc::clone(&pacer), // clone: the tasks consult the pacer the runtime reports use to.
     };
     let supervision = supervise_tasks(config, &storage, &services, &writes, &transports.dispatcher, task_supervisor, channels)?;
     Ok((
@@ -289,7 +306,7 @@ async fn build_tenant_state(
             storage.pool,
             supervision.health_shutdown,
             supervision.task_supervisor,
-            supervision.pacer,
+            pacer,
         ),
     ))
 }

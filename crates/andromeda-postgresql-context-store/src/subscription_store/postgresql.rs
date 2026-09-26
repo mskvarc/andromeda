@@ -22,19 +22,12 @@ use crate::{
             entity_create_sql,
             entity_update_sql,
         },
-        delivery_state::{
-            DeliveryOutcome,
-            advance_interval_anchor_statement,
-            claim_statement,
-            interval_anchor_select,
-            interval_elapsed,
-            mark_statement,
-            state_insert_sql,
-        },
+        delivery_state::{DeliveryOutcome, advance_interval_anchor_statement, claim_statement, mark_statement, state_insert_sql},
         failure::{create_error, persistence_error},
         interned_attributes::intern_attribute_lists,
         mapper::{row_from_pg, row_to_stored_subscription, rows_to_stored_subscriptions, stored_subscription_uri},
         params::DatasetIdPresence,
+        periodic_due::{due_interval_select, interval_anchors_select},
         projection::{apply_subscription_keyset, count_of_kind, one_of, projected_select},
         status_code::{status_is, status_is_not, stored_status},
         stored_kind::{StoredKind, of_kind},
@@ -293,13 +286,7 @@ macro_rules! impl_subscription_store {
                 target: &ContextTarget,
                 cutoff: chrono::DateTime<chrono::Utc>,
             ) -> Result<Vec<Subscription>, SubscriptionError> {
-                let mut select = projected_select($kind, target);
-                select
-                    .and_where(status_is(SubscriptionStatus::Active))
-                    .and_where(of_kind($kind))
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).is_not_null())
-                    .cond_where(interval_elapsed(cutoff));
-                let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+                let (sql, values) = due_interval_select($kind, target, cutoff).build_sqlx(PostgresQueryBuilder);
                 let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
                     .await
@@ -318,12 +305,7 @@ macro_rules! impl_subscription_store {
                 target: &ContextTarget,
                 cutoff: chrono::DateTime<chrono::Utc>,
             ) -> Result<Option<chrono::DateTime<chrono::Utc>>, SubscriptionError> {
-                let mut select = interval_anchor_select(target);
-                select
-                    .and_where(status_is(SubscriptionStatus::Active))
-                    .and_where(of_kind($kind))
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).is_not_null());
-                let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+                let (sql, values) = interval_anchors_select($kind, target, cutoff).build_sqlx(PostgresQueryBuilder);
                 let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
                     .await

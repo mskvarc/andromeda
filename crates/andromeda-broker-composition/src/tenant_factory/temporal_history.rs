@@ -1,6 +1,7 @@
 //! Selection of one tenant's temporal history commit mode and read path.
 
 use crate::tenant_factory::{
+    background_pacer::BackgroundPacer,
     error::TenantAssemblyError,
     temporal_intent_task::{TemporalIntentRegistration, register_temporal_intent_drain},
 };
@@ -60,6 +61,7 @@ pub(super) fn compose_temporal_history(
     config: &TemporalConfig,
     supervisor: &TaskSupervisor,
     live_target: &ContextTarget,
+    pacer: &Arc<BackgroundPacer>,
 ) -> Result<TemporalComposition, TenantAssemblyError> {
     let intent_store = Arc::new(PostgresTemporalIntentStore::new(pool));
     let sink = Arc::new(PostgresTemporalHistorySink::new(Arc::clone(repository))); // clone: the sink and the read path share one repository.
@@ -70,6 +72,7 @@ pub(super) fn compose_temporal_history(
         Arc::clone(&intent_store) as Arc<dyn TemporalIntentQueue>, // clone: one store answers both intent ports.
         Arc::clone(&intent_store) as Arc<dyn PendingTemporalIntentReader>, // clone: same store, second port.
         sink,
+        Arc::clone(pacer), // clone: the intent drain consults the tenant's one pacer.
     )?;
     let (history_mode, reader): (TemporalHistoryCommitMode, Arc<dyn TemporalHistoryReader>) = match config.append_mode {
         TemporalAppendMode::Native => (

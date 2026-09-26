@@ -14,7 +14,6 @@ use crate::{
     EntityService,
     NotificationWriteConfig,
     batch::execution::BatchExecutionConfig,
-    batch_activity::BatchActivityTracker,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     port::{
@@ -368,7 +367,6 @@ pub(crate) async fn recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicW
             prepare_blocking_threshold: 1024,
             async_side_effect_threshold: None,
         },
-        BatchActivityTracker::new(),
         Some(NotificationWriteConfig {
             subscription_cache: Arc::clone(&cache), // clone: the service and the test each hold the cache.
         }),

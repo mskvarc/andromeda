@@ -8,6 +8,7 @@
 //! they are composed together.
 
 use crate::tenant_factory::{
+    background_pacer::BackgroundPacer,
     error::TenantAssemblyError,
     storage::TenantStorage,
     tasks::notification_schedule::{classify_notification_failure, register_notification_schedule, register_periodic_wake},
@@ -82,6 +83,7 @@ pub(super) fn register_csource_notification_workers(
     csource_subscriptions: Arc<dyn SubscriptionStore>,
     streams: CsourceNotificationStreams,
     interval_max_sleep: Duration,
+    pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
     // clone: the periodic sweep subscribes to the same registration and
     // context-source-subscription streams so a change wakes it, while the
@@ -113,6 +115,7 @@ pub(super) fn register_csource_notification_workers(
         registration_changes,
         subscription_changes,
         interval_max_sleep,
+        pacer,
     )
 }
 
@@ -199,6 +202,7 @@ fn register_csource_interval_notification(
     registration_changes: broadcast::Sender<CsrChangeEvent>,
     subscription_changes: broadcast::Sender<CsourceSubscriptionChange>,
     interval_max_sleep: Duration,
+    pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
     let (interval_wake, receiver) = wake_channel();
     // Both streams change what a periodic csource notification would report: the
@@ -216,11 +220,18 @@ fn register_csource_interval_notification(
         interval_wake,
         subscription_changes,
     )?;
-    register_notification_schedule(supervisor, "csource-notification-interval", interval_max_sleep, receiver, move |cutoff| {
-        let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
-        async move {
-            operation.execute(cutoff).await?;
-            operation.next_due(cutoff).await
-        }
-    })
+    register_notification_schedule(
+        supervisor,
+        "csource-notification-interval",
+        interval_max_sleep,
+        receiver,
+        pacer,
+        move |cutoff| {
+            let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
+            async move {
+                operation.execute(cutoff).await?;
+                operation.next_due(cutoff).await
+            }
+        },
+    )
 }

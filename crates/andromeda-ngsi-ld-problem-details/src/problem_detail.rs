@@ -25,6 +25,13 @@ pub enum ProblemClassification {
     /// representation and returns 501 (Table 6.4.3.2-3, clause 6.3.7).
     NotImplemented,
     /// A local operation cannot complete before its bounded policy deadline and returns 503.
+    ///
+    /// Clause 5.5.6 makes a failure the client did not cause, "database
+    /// timeouts" included, an `InternalError`, and clause 5.5.2 defines no
+    /// other type for it, so the document carries the `InternalError` type and
+    /// title. Only the HTTP binding status differs: 503 with `Retry-After`
+    /// tells the client the identical request can succeed shortly, which the
+    /// open list of clause 6.3.2 binding statuses admits.
     ServiceUnavailable,
 }
 
@@ -62,18 +69,19 @@ impl ProblemClassification {
     /// Clause 6.3.17 names no IRI for the 508/504/502 distributed failures, so
     /// the broker publishes dedicated IRIs under the ETSI errors namespace
     /// rather than collapsing all three onto `InternalError`, which would leave
-    /// the `type` disagreeing with the status. The remaining classifications
-    /// carry their clause 5.5.2 category's canonical IRI.
+    /// the `type` disagreeing with the status. The remaining classifications,
+    /// load-shedding 503 among them, carry their clause 5.5.2 category's
+    /// canonical IRI.
     #[must_use]
     pub const fn type_iri(self) -> Iri<&'static str> {
         match self {
             ProblemClassification::LoopDetected => iri!("https://uri.etsi.org/ngsi-ld/errors/LoopDetected"),
             ProblemClassification::GatewayTimeout => iri!("https://uri.etsi.org/ngsi-ld/errors/GatewayTimeout"),
             ProblemClassification::BadGateway => iri!("https://uri.etsi.org/ngsi-ld/errors/BadGateway"),
-            ProblemClassification::ServiceUnavailable => iri!("https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable"),
-            ProblemClassification::Category(_) | ProblemClassification::DistributedResourceNotFound | ProblemClassification::NotImplemented => {
-                self.error_type().type_iri()
-            }
+            ProblemClassification::Category(_)
+            | ProblemClassification::DistributedResourceNotFound
+            | ProblemClassification::NotImplemented
+            | ProblemClassification::ServiceUnavailable => self.error_type().type_iri(),
         }
     }
 
@@ -85,10 +93,10 @@ impl ProblemClassification {
             ProblemClassification::LoopDetected => "Loop detected",
             ProblemClassification::GatewayTimeout => "Gateway timeout",
             ProblemClassification::BadGateway => "Bad gateway",
-            ProblemClassification::ServiceUnavailable => "Service unavailable",
-            ProblemClassification::Category(_) | ProblemClassification::DistributedResourceNotFound | ProblemClassification::NotImplemented => {
-                self.error_type().title()
-            }
+            ProblemClassification::Category(_)
+            | ProblemClassification::DistributedResourceNotFound
+            | ProblemClassification::NotImplemented
+            | ProblemClassification::ServiceUnavailable => self.error_type().title(),
         }
     }
 
@@ -103,7 +111,6 @@ impl ProblemClassification {
             ProblemClassification::LoopDetected,
             ProblemClassification::GatewayTimeout,
             ProblemClassification::BadGateway,
-            ProblemClassification::ServiceUnavailable,
         ]
         .into_iter()
         .find(|classification| classification.type_iri().as_str() == iri.as_str())
@@ -377,6 +384,15 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/errors/OperationNotSupported",
                 "Operation not supported",
                 StatusCode::NOT_IMPLEMENTED,
+            ),
+            // Clause 5.5.6: a failure the client did not cause is an
+            // InternalError whatever its binding status, so load shedding
+            // keeps the spec's type and title and differs only in its 503.
+            (
+                ProblemClassification::ServiceUnavailable,
+                "https://uri.etsi.org/ngsi-ld/errors/InternalError",
+                "Internal error",
+                StatusCode::SERVICE_UNAVAILABLE,
             ),
         ] {
             let problem = ProblemDetail::from_classification(classification, "distributed failure");

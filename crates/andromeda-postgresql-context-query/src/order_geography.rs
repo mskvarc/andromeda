@@ -7,10 +7,11 @@ use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
+    instance_expiry::instance_stands,
 };
 use andromeda_postgresql_schema::current::EntitySearch;
 use andromeda_postgresql_seaquery::{postgis::validated_geom_from_ewkb, spherical_distance::st_distance_sphere};
-use sea_query::{Expr as SeaExpr, Func, QueryStatementBuilder, SimpleExpr};
+use sea_query::{CaseStatement, Expr as SeaExpr, Func, Keyword, QueryStatementBuilder, SimpleExpr};
 
 /// The expression measuring an entity's distance to the reference geometry a
 /// distance ordering sorts by (clause 4.23), with the reference geometry bound
@@ -49,7 +50,17 @@ pub fn geo_order_distance(
     let reference_geometry = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()));
     match order_subject(geoproperty, attribute_names) {
         OrderSubject::None => None,
-        OrderSubject::LocationColumn => Some(st_distance_sphere(outer.search_column(EntitySearch::Location), reference_geometry())),
+        // Clause 4.22: past its own `expiresAt` the hoisted instance holds no
+        // geometry to measure to, exactly as an expired instance row does not.
+        OrderSubject::LocationColumn => Some(
+            CaseStatement::new()
+                .case(
+                    instance_stands(outer.search_column(EntitySearch::LocationExpiresAt)),
+                    st_distance_sphere(outer.search_column(EntitySearch::Location), reference_geometry()),
+                )
+                .finally(Keyword::Null)
+                .into(),
+        ),
         OrderSubject::Instances(attribute_name_key) => {
             let mut scan = geometry_instances_of(outer, ORDER_ALIAS, attribute_name_key);
             scan.expr(Func::min(st_distance_sphere(instance_geometry_column(ORDER_ALIAS), reference_geometry())));
@@ -153,6 +164,10 @@ mod tests {
         );
         assert!(sql.contains("ST_DistanceSphere(\"entity_search\".\"location\""), "{sql}");
         assert!(
+            sql.contains("CASE WHEN (\"entity_search\".\"location_expires_at\" IS NULL OR \"entity_search\".\"location_expires_at\" > NOW())"),
+            "an expired default instance is not measured to: {sql}"
+        );
+        assert!(
             !sql.contains("current_attribute_values"),
             "the default GeoProperty needs no instance lookup: {sql}"
         );
@@ -172,6 +187,10 @@ mod tests {
             "correlated to the ordered row: {sql}"
         );
         assert!(!sql.contains("ST_GeomFromGeoJSON"), "the geometry is stored decoded: {sql}");
+        assert!(
+            sql.contains("\"geo_order\".\"expires_at\" IS NULL OR \"geo_order\".\"expires_at\" > NOW()"),
+            "an expired instance is not measured to: {sql}"
+        );
     }
 
     /// The correlation binds the outer relation it was handed rather than

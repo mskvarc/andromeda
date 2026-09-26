@@ -17,6 +17,7 @@ use andromeda_postgresql_context_store::current_attribute_values::{
 use andromeda_test_fixtures::high_entropy_text::high_entropy_text;
 use andromeda_test_harness::environment::TestEnvironment;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
+use chrono::{DateTime, TimeZone, Utc};
 use pretty_assertions::assert_eq;
 use sqlx::{Postgres, Transaction};
 
@@ -59,6 +60,7 @@ impl ProbeGrain {
             attribute_kind: AttributeKind::Property,
             value: ProjectedAttributeValue::String(value.to_owned()),
             unit_code_id,
+            expires_at: None,
         }
     }
 }
@@ -120,13 +122,30 @@ async fn current_projection_restating_an_identical_value_rewrites_no_row() {
         "a unit-only change must rewrite the row once more"
     );
 
-    let (stored_value, stored_unit): (Option<String>, Option<i16>) =
-        sqlx::query_as("SELECT value_string, unit_code_id FROM current_attribute_values WHERE entity_key = $1")
+    // Clause 4.22: a changed `expiresAt` changes when the instance stands, so
+    // an expiry-only restatement is a difference too.
+    let expires_at = Utc.timestamp_opt(4_070_908_800, 0).single().expect("a representable instant");
+    let mut expiring = grain.string_row("reading-2", Some(unit));
+    expiring.expires_at = Some(expires_at);
+    upsert_projection_in_tx(&mut transaction, &target, &[expiring])
+        .await
+        .expect("the expiry change must land");
+    assert_eq!(
+        rows_updated_in_transaction(&mut transaction).await,
+        3,
+        "an expiry-only change must rewrite the row once more"
+    );
+
+    let (stored_value, stored_unit, stored_expiry): (Option<String>, Option<i16>, Option<DateTime<Utc>>) =
+        sqlx::query_as("SELECT value_string, unit_code_id, expires_at FROM current_attribute_values WHERE entity_key = $1")
             .bind(grain.entity_key)
             .fetch_one(&mut *transaction)
             .await
             .expect("the projected row must be readable");
-    assert_eq!((stored_value.as_deref(), stored_unit), (Some("reading-2"), Some(unit_code)));
+    assert_eq!(
+        (stored_value.as_deref(), stored_unit, stored_expiry),
+        (Some("reading-2"), Some(unit_code), Some(expires_at))
+    );
 
     transaction.rollback().await.expect("the probe transaction must roll back");
     scope.finish().await.expect("cleanup failed");

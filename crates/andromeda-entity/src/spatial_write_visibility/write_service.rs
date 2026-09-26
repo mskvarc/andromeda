@@ -3,7 +3,6 @@
 use crate::{
     EntityService,
     batch::execution::BatchExecutionConfig,
-    batch_activity::BatchActivityTracker,
     error::EntityError,
     port::{
         attribute_history::AttributeDatasetHistory,
@@ -73,7 +72,6 @@ fn entity_service(store: &Arc<InMemoryStore>, writes: Arc<dyn ContextCommitter>)
             prepare_blocking_threshold: 1024,
             async_side_effect_threshold: None,
         },
-        BatchActivityTracker::new(),
         None,
     )
 }

@@ -1,7 +1,8 @@
 -- ============================================================================
 -- 0022: Current attribute values
 -- ============================================================================
--- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.5.5, 4.6.3, 4.9, 4.10, 4.23, 5.6.6
+-- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.5.5, 4.6.3, 4.9, 4.10, 4.22, 4.23,
+-- 5.6.6
 --
 -- The value each attribute instance of each Entity currently has, one row per
 -- Entity, attribute name and `datasetId` (clause 4.5.5), in one typed column
@@ -27,6 +28,17 @@
 -- canonical fixed-width form (`YYYY-MM-DD`, `HH:MM:SS.ffffffZ`), so byte order
 -- is chronological order and a clause 4.9 comparison orders it correctly.
 --
+-- `expires_at` is the instance's own clause 4.22 `expiresAt`, NULL when the
+-- instance never expires. Clause 4.22 makes an attribute "invalid" at that
+-- instant while letting its deletion lag ("final deletion will always lag the
+-- expiresAt timestamp to a certain extent"), so every read of this table
+-- excludes a past-due instance with `expires_at IS NULL OR expires_at > NOW()`
+-- and the attribute-expiry sweep deletes the row later. The sweep finds its
+-- candidates through `entities.min_attribute_expires_at`, the earliest of these
+-- instants per Entity computed from the same payload, so the column carries no
+-- index of its own: it is only ever read beside a row another index found, and
+-- leaving it unindexed keeps an expiry-only rewrite of a row heap-only.
+--
 -- There is no `modified_at`: nothing reads when a projected value was last
 -- written, since `entity_documents.modified_at` carries the Entity's instant.
 -- A per-row instant would turn every restatement of an unchanged value into a
@@ -44,6 +56,7 @@ CREATE TABLE current_attribute_values (
     attribute_kind SMALLINT NOT NULL,
     value_kind SMALLINT NOT NULL,
     value_date_time TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
     unit_code_id SMALLINT,
     value_boolean BOOLEAN,
     dataset_id TEXT COMPRESSION lz4 COLLATE "C",

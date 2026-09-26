@@ -57,7 +57,9 @@ async fn reset(client: &Client, pool: &PgPool) {
 /// least-recently-used, is evicted from the cache.
 async fn evict_by_pressure(client: &Client, broker: &str) {
     let others = tenant_load::tenant_names("pgbevict", EVICTION_PRESSURE);
-    tenant_load::provision_tenants(client, broker, &others, CORE_CONTEXT, 16).await;
+    tenant_load::provision_tenants(client, broker, &others, CORE_CONTEXT, 16)
+        .await
+        .expect("every tenant is provisioned");
     for tenant in &others {
         let id = urlencoding::encode(&format!("urn:ngsi-ld:Device:provision:{tenant}")).into_owned();
         let _ = client
@@ -97,7 +99,9 @@ async fn a_time_interval_subscription_keeps_notifying_after_its_tenant_is_evicte
         .expect("notification server");
     let callback = server.endpoint_url().expect("callback url");
     let tenant = tenant_load::tenant_names("pgbinterval", 1).remove(0);
-    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
 
     // Clause 5.8.6: a periodic notification every five seconds.
     let _ = client
@@ -154,7 +158,9 @@ async fn a_failed_durable_delivery_is_retried_after_eviction() {
     let callback = server.endpoint(&path).expect("callback endpoint").to_string();
 
     let tenant = tenant_load::tenant_names("pgbretry", 1).remove(0);
-    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
     subscribe_change(&client, &broker, &tenant, &callback).await;
 
     // Trigger a change: the first delivery attempt gets a 500.
@@ -291,7 +297,9 @@ async fn a_tenant_with_nothing_due_stays_dormant() {
     reset(&client, &pool).await;
     let broker = endpoints::broker();
     let tenant = tenant_load::tenant_names("pgbquiet", 1).remove(0);
-    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
     let database = only_tenant_database(&pool).await;
 
     // A counter series appears only once its first increment is recorded, so an
@@ -335,7 +343,9 @@ async fn a_busy_outbox_keeps_its_tenant_serviced_after_eviction() {
     let path = CallbackPath::parse("/dormant-busy").expect("callback path");
     let callback = server.endpoint(&path).expect("callback endpoint").to_string();
     let tenant = tenant_load::tenant_names("pgbbusy", 1).remove(0);
-    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
     subscribe_change(&client, &broker, &tenant, &callback).await;
 
     // Every delivery fails, so the outbox keeps retrying: a busy outbox with no
@@ -392,7 +402,9 @@ async fn suspend(client: &Client, broker: &str, tenant: &str, is_active: bool) {
 /// resident, and return its name and database.
 async fn resident_tenant(client: &Client, pool: &PgPool, broker: &str, prefix: &str) -> (String, String) {
     let tenant = tenant_load::tenant_names(prefix, 1).remove(0);
-    tenant_load::provision_tenants(client, broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(client, broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
     let id = urlencoding::encode(&format!("urn:ngsi-ld:Device:provision:{tenant}")).into_owned();
     let touched = client
         .get(format!("{broker}entities/{id}"))
@@ -497,7 +509,9 @@ async fn a_suspended_tenant_is_inert_until_resumed() {
         .expect("notification server");
     let callback = server.endpoint_url().expect("callback url");
     let tenant = tenant_load::tenant_names("pgbsuspinert", 1).remove(0);
-    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
 
     // A periodic notification every five seconds (clause 5.8.6).
     let _ = client

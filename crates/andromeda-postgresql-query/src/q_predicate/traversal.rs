@@ -23,6 +23,7 @@ use crate::{
     attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::{DocumentsRef, EntityRowRefs},
+    instance_expiry::instance_stands,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_schema::current::{CurrentAttributeValues, Entities, EntitySearch};
@@ -113,7 +114,9 @@ impl LinkedHop {
             // Relationship's dictionary key is still the probe's first bound
             // value, ahead of the guard's types and the inner predicate's operands.
             .and_where(SeaExpr::col((hop(), CurrentAttributeValues::EntityKey)).eq(outer.entity_key_column()))
-            .and_where(SeaExpr::col((hop(), CurrentAttributeValues::AttributeNameKey)).eq(relationship_id.get()));
+            .and_where(SeaExpr::col((hop(), CurrentAttributeValues::AttributeNameKey)).eq(relationship_id.get()))
+            // Clause 4.22: a past-due Relationship instance links nothing.
+            .and_where(instance_stands(SeaExpr::col((hop(), CurrentAttributeValues::ExpiresAt))));
         // A multi-type guard is a disjunction; adding it as one condition keeps it
         // parenthesised so a second alternative cannot escape the correlation and
         // the attribute-name test to match any entity in the tenant that carries it.

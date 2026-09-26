@@ -18,6 +18,7 @@ workspace = true
 andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-postgresql-branch.workspace = true
 andromeda-postgresql-codes.workspace = true
@@ -47,7 +48,6 @@ uuid = { version = "1.26.1", features = ["v4"] }
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
-andromeda-ngsi-ld-model.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.1", features = ["macros", "rt", "test-util", "time"] }
 uuid = { version = "1.26.1", features = ["v4"] }

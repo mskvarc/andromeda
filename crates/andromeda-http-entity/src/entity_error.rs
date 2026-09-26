@@ -51,6 +51,8 @@ mod tests {
     use andromeda_http_response::batch_projection::batch_entity_error;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+    use axum::http::StatusCode;
+    use std::time::Duration;
 
     fn entity_id() -> Result<Uri, EntityError> {
         "urn:ngsi-ld:Entity:1".parse::<Uri>().map_err(EntityError::internal)
@@ -116,12 +118,25 @@ mod tests {
     }
 
     #[test]
-    fn store_saturation_is_a_503_with_retry_after() {
-        use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
-        use std::time::Duration;
-        let report = classify_entity_error(&EntityError::StoreSaturated);
-        pretty_assertions::assert_eq!(report.classification(), ProblemClassification::ServiceUnavailable);
-        pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(1)));
+    fn a_load_shed_answer_is_a_503_internal_error_with_retry_after() {
+        // Clause 5.5.6: a failure the client did not cause -- a saturated pool,
+        // a transaction every retry lost to a concurrent one -- is an
+        // InternalError, and clause 5.5.3 allows no `type` outside clause
+        // 5.5.2. Only the binding status says the identical request can be
+        // sent again shortly.
+        for source in [EntityError::StoreSaturated, EntityError::TransactionContended] {
+            let report = classify_entity_error(&source);
+            let classification = report.classification();
+            pretty_assertions::assert_eq!(classification, ProblemClassification::ServiceUnavailable, "{source}");
+            pretty_assertions::assert_eq!(
+                classification.type_iri().as_str(),
+                NgsiLdErrorType::InternalError.type_iri().as_str(),
+                "{source}"
+            );
+            pretty_assertions::assert_eq!(classification.title(), NgsiLdErrorType::InternalError.title(), "{source}");
+            pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE, "{source}");
+            pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(1)), "{source}");
+        }
     }
 
     #[test]

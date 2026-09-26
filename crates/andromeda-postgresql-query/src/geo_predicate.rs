@@ -6,35 +6,50 @@
 //! vary, and before this module they were written three times.
 //!
 //! Clause 4.10 lets `geoproperty` name any `GeoProperty` of the entity, defaulting
-//! to `location`. The default one has dedicated `PostGIS` columns on
-//! `entity_search` and is read directly. Every other `GeoProperty` — `observationSpace` and
-//! `operationSpace` as much as a custom one — is read from the
-//! `current_attribute_values` projection, which holds one `value_geometry` row per attribute
-//! instance keyed by the `attribute_names` dictionary. Reading the instance rows
-//! rather than a single column is also what gives clause 4.10 its multi-instance
-//! rule: where a `GeoProperty` has several `datasetId` instances, one of them
-//! meeting the restriction is enough.
+//! to `location`, and clause 5.7.2.4 counts an entity as matching when any
+//! instance of it meets the restriction. Every `GeoProperty` — `observationSpace`
+//! and `operationSpace` as much as a custom one — is read from the
+//! `current_attribute_values` projection, which holds one `value_geometry` row
+//! per attribute instance keyed by the `attribute_names` dictionary, so the
+//! multi-instance rule is an existential over those rows. The default
+//! `location` additionally has its default instance hoisted into dedicated
+//! `PostGIS` columns on `entity_search`; [`crate::location_instances`] reads
+//! both.
 
 use crate::{
     attribute_instance_correlation::{existence_marker, geometry_instances_of, instance_geometry_column},
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
+    location_instances::any_location_instance,
 };
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
+use andromeda_ngsi_ld_geometry::{distance::grow_lonlat_bounds_metres, geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{error::QueryError, geo::query::GeoQuery};
+use andromeda_ngsi_ld_query::{
+    error::QueryError,
+    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
+};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_encoding::ewkb::encode;
-use andromeda_postgresql_schema::current::EntitySearch;
 use andromeda_postgresql_seaquery::{
     cast::cast,
-    clock::now,
     literal::false_literal,
     pg_type::PostgresType,
-    postgis::{st_contains, st_disjoint, st_distance, st_dwithin, st_equals, st_intersects, st_overlaps, st_within, validated_geom_from_ewkb},
+    postgis::{
+        bounding_boxes_overlap,
+        st_contains,
+        st_disjoint,
+        st_distance,
+        st_dwithin,
+        st_equals,
+        st_intersects,
+        st_make_envelope,
+        st_overlaps,
+        st_within,
+        validated_geom_from_ewkb,
+    },
 };
-use sea_query::{Alias, Cond, Condition, Expr as SeaExpr, ExprTrait, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SelectStatement, SimpleExpr};
 
 /// What a geo predicate is filtering, which fixes both where it reads the
 /// subject geometry and what a row without one means.
@@ -49,11 +64,11 @@ pub enum GeometrySource<'a> {
     /// One entity's current-state rows, addressed through the names the
     /// enclosing statement knows them by.
     ///
-    /// The default `location` reads the `location` / `location_geography` columns of
-    /// the search row and is additionally guarded against expiry through the
-    /// `location_expires_at` column beside them. Any other `GeoProperty` is
-    /// reached through its `current_attribute_values` instance rows, correlated
-    /// back to the identity row's surrogate key.
+    /// A `GeoProperty` is reached through its `current_attribute_values`
+    /// instance rows, correlated back to the identity row's surrogate key. The
+    /// default `location` also reads the hoisted default instance on the search
+    /// row, narrowed by what an in-memory index established about it. Every
+    /// instance is excluded once its own clause 4.22 `expiresAt` has passed.
     ///
     /// Clause 4.10: an Entity that conveys no instance of the target
     /// `GeoProperty` is non-matching.
@@ -61,6 +76,9 @@ pub enum GeometrySource<'a> {
         /// The entity rows the predicate filters, and that any correlated
         /// instance subquery binds back to.
         rows: &'a EntityRowRefs,
+        /// What an in-memory spatial index established about the default
+        /// `location` instances; ignored for any other `GeoProperty`.
+        default_location: &'a DefaultLocationNarrowing,
     },
     /// A plain `PostGIS` `geometry` column, as a Context Source Registration
     /// carries. Registrations have no payload and no `GeoProperty` of their own,
@@ -88,6 +106,11 @@ pub enum GeometrySource<'a> {
 /// `georel=near` names neither `maxDistance` nor `minDistance`, which clause
 /// 4.10 requires at least one of.
 pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &ResolvedNames<AttributeName>) -> Result<Condition, RenderError> {
+    if let GeometrySource::Entity { rows, default_location } = source
+        && geo.geoproperty.as_str() == LOCATION.as_str()
+    {
+        return any_location_instance(geo, rows, default_location, attribute_names.get(&geo.geoproperty));
+    }
     let Some(subject) = subject_geometry(geo, source, attribute_names) else {
         // Clause 4.10: an Entity that does not convey the target GeoProperty is
         // non-matching. An IRI with no `attribute_names` row is conveyed by no
@@ -96,7 +119,8 @@ pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &R
         return Ok(Condition::all().add(false_literal()));
     };
     let SubjectGeometry { planar, geographic, envelope } = subject;
-    // clone: a registration also reads the planar column for its null guard.
+    // clone: a registration also reads the planar column for its null guard, and
+    // an instance scan for its bounding-box prefilter.
     let spatial = relation_expression(&geo.georel, planar.clone(), geographic, &geo.geometry)?;
 
     Ok(match envelope {
@@ -104,16 +128,43 @@ pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &R
         // excluded by a geo filter, so the null column is an alternative to the
         // relation rather than a failure of it.
         Envelope::RegistrationColumn => Condition::any().add(SeaExpr::expr(planar).is_null()).add(spatial),
-        Envelope::EntityColumn { expiry_guard } => Condition::all().add(spatial).add(expiry_guard),
-        // Clause 4.10: it is enough that one instance of the GeoProperty meets
-        // the restriction, which is exactly an existential over the instance
-        // rows.
+        // Clause 5.7.2.4: it is enough that one instance of the GeoProperty
+        // meets the restriction, which is exactly an existential over the
+        // instance rows.
         Envelope::Instances { correlation } => {
             let mut probe = *correlation;
-            probe.expr(existence_marker()).and_where(spatial);
+            probe.expr(existence_marker());
+            if let Some(prefilter) = near_envelope_prefilter(geo, planar) {
+                probe.and_where(prefilter);
+            }
+            probe.and_where(spatial);
             Condition::all().add(SeaExpr::exists(probe))
         }
     })
+}
+
+/// A bounding-box test a geometry `GiST` index answers, admitting every geometry
+/// a `near` relation with a `maxDistance` could match, or `None` for any other
+/// relation.
+///
+/// `near` measures on the spheroid over a `geometry` column cast to
+/// `geography`, which reaches no index. The reference geometry's box grown by
+/// `maxDistance` never under-covers (see [`grow_lonlat_bounds_metres`]), so the
+/// test only discards geometries the relation would reject and the exact
+/// distance is still evaluated on what it keeps. A `near` with only a
+/// `minDistance` matches geometries arbitrarily far from the reference and
+/// admits no box.
+pub(crate) fn near_envelope_prefilter(geo: &GeoQuery, geometry: SimpleExpr) -> Option<SimpleExpr> {
+    let GeoRel::Near {
+        max_distance: Some(max_distance),
+        ..
+    } = &geo.georel
+    else {
+        return None;
+    };
+    let rect = geo.geometry.bounding_rect()?;
+    let (min, max) = grow_lonlat_bounds_metres([rect.min().x, rect.min().y], [rect.max().x, rect.max().y], max_distance.metres());
+    Some(bounding_boxes_overlap(geometry, st_make_envelope(min, max)))
 }
 
 /// The topological or distance relation of a geo query as a boolean SQL
@@ -174,12 +225,6 @@ enum Envelope {
     /// A registration's own geometry column, where a null column matches
     /// (clause 5.10.2).
     RegistrationColumn,
-    /// The entity's dedicated `location` columns, where a null column does not
-    /// match (clause 4.10) and an expired `location` is excluded outright.
-    EntityColumn {
-        /// Expiry guard to `AND` onto the predicate.
-        expiry_guard: SimpleExpr,
-    },
     /// The geometry lives in the attribute's instance rows, so the relation is
     /// evaluated inside a correlated `EXISTS`. An entity with no such row
     /// satisfies no existential, which is the clause 4.10 exclusion.
@@ -204,14 +249,7 @@ fn subject_geometry(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names:
             geographic: cast(SeaExpr::col(Alias::new(column)), PostgresType::Geography),
             envelope: Envelope::RegistrationColumn,
         }),
-        GeometrySource::Entity { rows } if geo.geoproperty.as_str() == LOCATION.as_str() => Some(SubjectGeometry {
-            planar: rows.search_column(EntitySearch::Location),
-            geographic: rows.search_column(EntitySearch::LocationGeography),
-            envelope: Envelope::EntityColumn {
-                expiry_guard: location_expiry_guard(rows.search_column(EntitySearch::LocationExpiresAt)),
-            },
-        }),
-        GeometrySource::Entity { rows } => {
+        GeometrySource::Entity { rows, .. } => {
             let attribute_name_key = attribute_names.get(&geo.geoproperty)?;
             Some(SubjectGeometry {
                 planar: instance_geometry_column(INSTANCE_ALIAS),
@@ -253,19 +291,6 @@ fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Opti
             Ok(first.and(second))
         }
     }
-}
-
-/// Exclude entities whose `location` attribute has expired.
-///
-/// The search row carries the latest `expiresAt` among the payload's
-/// `location` instances, or NULL while at least one instance carries none, so
-/// "some instance still stands" (clause 4.22) is
-/// `location_expires_at IS NULL OR location_expires_at > NOW()`.
-fn location_expiry_guard(location_expires_at: SimpleExpr) -> SimpleExpr {
-    Cond::any()
-        .add(location_expires_at.clone().is_null()) // clone: the column is read twice, for its presence and its value
-        .add(SeaExpr::expr(location_expires_at).gt(now()))
-        .into()
 }
 
 #[cfg(test)]
@@ -318,13 +343,22 @@ mod tests {
         }
     }
 
+    /// No in-memory index answered for the default `location` instances.
+    static UNNARROWED: DefaultLocationNarrowing = DefaultLocationNarrowing::Unnarrowed;
+
     fn entity_source() -> GeometrySource<'static> {
-        GeometrySource::Entity { rows: &UNALIASED }
+        GeometrySource::Entity {
+            rows: &UNALIASED,
+            default_location: &UNNARROWED,
+        }
     }
 
     /// The entity source as the temporal path aliases it.
     fn aliased_source() -> GeometrySource<'static> {
-        GeometrySource::Entity { rows: &ALIASED }
+        GeometrySource::Entity {
+            rows: &ALIASED,
+            default_location: &UNNARROWED,
+        }
     }
 
     /// The registration source every discovery query renders against.
@@ -423,14 +457,15 @@ mod tests {
     }
 
     #[test]
-    fn a_search_alias_reaches_both_the_geometry_column_and_the_expiry_guard() {
+    fn a_search_alias_reaches_the_semi_join_and_each_instance_carries_its_own_expiry_guard() {
         let geo = point_query(GeoRel::Within, LOCATION);
         let sql = render(condition(&geo, aliased_source(), &resolved_custom()).unwrap());
-        assert!(sql.contains("\"s\".\"location\""), "{sql}");
+        assert!(sql.contains("\"e\".\"entity_key\" IN (SELECT \"geo_default\".\"entity_key\""), "{sql}");
         assert!(
-            sql.contains("\"s\".\"location_expires_at\" IS NULL OR \"s\".\"location_expires_at\" > NOW()"),
-            "the expiry guard reads the aliased search row: {sql}"
+            sql.contains("\"geo_default\".\"location_expires_at\" IS NULL OR \"geo_default\".\"location_expires_at\" > NOW()"),
+            "the hoisted default instance is guarded by its own expiry: {sql}"
         );
+        assert!(!sql.contains("\"s\".\"location_expires_at\""), "no entity-level expiry is mixed in: {sql}");
         assert!(!sql.contains("payload"), "the guard no longer walks the payload: {sql}");
     }
 
@@ -458,7 +493,10 @@ mod tests {
             !sql.contains("ST_GeomFromGeoJSON"),
             "the geometry is stored decoded, not as GeoJSON text: {sql}"
         );
-        assert!(!sql.contains("expiresAt"), "the expiry guard is specific to the default location: {sql}");
+        assert!(
+            sql.contains("\"geo_instance\".\"expires_at\" IS NULL OR \"geo_instance\".\"expires_at\" > NOW()"),
+            "each instance is guarded by its own clause 4.22 expiry: {sql}"
+        );
     }
 
     /// Clause 4.10: where a `GeoProperty` has several `datasetId` instances, one
@@ -492,17 +530,27 @@ mod tests {
         }
     }
 
-    /// The default `GeoProperty` keeps its dedicated columns, so the common case
-    /// still reads an indexed column rather than a correlated subquery.
+    /// Clause 5.7.2.4: any instance of the default `GeoProperty` may match, so
+    /// once the dictionary knows `location` the relation reads both the hoisted
+    /// default instance and every `datasetId` instance row.
     #[test]
-    fn the_default_geoproperty_reads_its_dedicated_columns_without_a_subquery() {
+    fn the_default_geoproperty_reads_its_hoisted_instance_and_every_dataset_instance() {
+        let geo = point_query(GeoRel::Within, LOCATION);
+        let names = ResolvedNames::from_pairs([(name(LOCATION), AttributeNameKey::from(3_i32))]);
+        let sql = render(condition(&geo, entity_source(), &names).unwrap());
+        assert!(sql.contains("ST_Within(\"geo_default\".\"location\""), "{sql}");
+        assert!(sql.contains("\"geo_location_instance\".\"attribute_name_key\" = 3"), "{sql}");
+        assert!(sql.contains("\"geo_location_instance\".\"dataset_id\" IS NOT NULL"), "{sql}");
+    }
+
+    /// A `location` the dictionary has never recorded has no instance rows, so
+    /// the hoisted default instance decides alone.
+    #[test]
+    fn an_unrecorded_default_geoproperty_reads_its_hoisted_instance_alone() {
         let geo = point_query(GeoRel::Within, LOCATION);
         let sql = render(condition(&geo, entity_source(), &resolved_none()).unwrap());
-        assert!(sql.contains("\"entity_search\".\"location\""), "{sql}");
-        assert!(
-            !sql.contains("current_attribute_values"),
-            "the default GeoProperty needs no instance lookup: {sql}"
-        );
+        assert!(sql.contains("ST_Within(\"geo_default\".\"location\""), "{sql}");
+        assert!(!sql.contains("current_attribute_values"), "{sql}");
     }
 
     /// Clause 4.10: an Entity that does not convey the target `GeoProperty` is
@@ -530,6 +578,10 @@ mod tests {
         let sql = render(condition(&geo, entity_source(), &resolved_custom()).unwrap());
         assert!(sql.contains("\"geo_instance\".\"value_geometry\"::geography"), "{sql}");
         assert!(sql.contains("ST_DWithin"), "{sql}");
+        assert!(
+            sql.contains("\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope("),
+            "the cast column reaches no index, so a box the geometry GiST answers prefilters it: {sql}"
+        );
     }
 
     /// The instance subquery correlates to whichever alias the enclosing
@@ -620,8 +672,11 @@ mod tests {
         let temporal_sql = render(condition(&geo, aliased_source(), &resolved_custom()).unwrap());
         assert!(entity_sql.contains("ST_DWithin"), "{entity_sql}");
         assert!(temporal_sql.contains("ST_DWithin"), "{temporal_sql}");
-        // The only difference is the qualification of the search row's columns.
-        assert_eq!(entity_sql.replace("\"entity_search\".", "\"s\"."), temporal_sql);
+        // The only difference is the qualification of the outer rows' columns.
+        assert_eq!(
+            entity_sql.replace("\"entity_search\".", "\"s\".").replace("\"entities\".", "\"e\"."),
+            temporal_sql
+        );
     }
 
     // -- a third ordinate does not reach the predicate (clause 4.10) ----------

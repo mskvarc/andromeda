@@ -7,7 +7,7 @@
 //! [`NotificationError`]. Registering the schedule and reading that error are
 //! the two things they genuinely share.
 
-use crate::tenant_factory::error::TenantAssemblyError;
+use crate::tenant_factory::{background_pacer::BackgroundPacer, error::TenantAssemblyError};
 use andromeda_notification::error::NotificationError;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -41,6 +41,7 @@ pub(super) fn register_notification_schedule<F, Fut>(
     task_name: &'static str,
     ceiling: Duration,
     wake: DrainWakeReceiver,
+    pacer: Arc<BackgroundPacer>,
     operation: F,
 ) -> Result<(), TenantAssemblyError>
 where
@@ -61,12 +62,17 @@ where
     let operation = Arc::new(operation);
     let task = DrainTask::new(registration, fallback, move |execution| {
         let operation = Arc::clone(&operation); // clone: each bounded pass owns its operation while executing.
+        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
         async move {
-            let cutoff = DateTime::<Utc>::from(execution.cutoff());
-            match operation(cutoff).await.map_err(|error| classify_notification_failure(&error))? {
-                Some(next_due) => Ok(DrainPassOutcome::IdleUntil(next_due.into())),
-                None => Ok(DrainPassOutcome::Idle),
-            }
+            pacer
+                .run_drain_pass(execution.cause(), async move {
+                    let cutoff = DateTime::<Utc>::from(execution.cutoff());
+                    match operation(cutoff).await.map_err(|error| classify_notification_failure(&error))? {
+                        Some(next_due) => Ok(DrainPassOutcome::IdleUntil(next_due.into())),
+                        None => Ok(DrainPassOutcome::Idle),
+                    }
+                })
+                .await
         }
     });
     supervisor

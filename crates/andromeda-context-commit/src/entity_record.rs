@@ -37,8 +37,8 @@ pub struct SearchProjection {
     pub observation_space: Option<Geometry>,
     /// Hoisted `operationSpace` geometry, when present.
     pub operation_space: Option<Geometry>,
-    /// The instant after which every `location` instance has expired, or
-    /// `None` while at least one never does (clause 4.22).
+    /// The clause 4.22 `expiresAt` of the hoisted `location` instance, the one
+    /// `location` holds, or `None` when it carries none.
     pub location_expires_at: Option<DateTime<Utc>>,
 }
 

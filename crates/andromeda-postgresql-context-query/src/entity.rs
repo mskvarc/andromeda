@@ -249,7 +249,11 @@ fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows
     }
 
     if let Some(geo) = &query.selection.geo {
-        condition = condition.add(geo_sql::condition(geo, GeometrySource::Entity { rows }, &names.attributes)?);
+        let source = GeometrySource::Entity {
+            rows,
+            default_location: &query.selection.default_location,
+        };
+        condition = condition.add(geo_sql::condition(geo, source, &names.attributes)?);
     }
 
     if let Some(scope_q) = &query.selection.scope_q {
@@ -1080,8 +1084,8 @@ mod tests {
         assert!(
             built
                 .sql
-                .contains(r#""entity_search"."location_expires_at" IS NULL OR "entity_search"."location_expires_at" > NOW()"#),
-            "the guard reads the search row's expiry column: {}",
+                .contains(r#""geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()"#),
+            "the guard reads the hoisted instance's own expiry column: {}",
             built.sql
         );
         assert!(!built.sql.contains("expiresAt"), "the guard no longer walks the payload: {}", built.sql);

@@ -9,7 +9,7 @@
 //! about which rows a `GeoProperty` lives in would silently order by a geometry
 //! they did not filter on.
 
-use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs};
+use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, instance_expiry::instance_stands};
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::literal::int_literal;
 use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
@@ -37,7 +37,9 @@ pub fn geometry_instances_of(outer: &EntityRowRefs, subquery_alias: &str, attrib
     scan.from(outer.table(CurrentAttributeValues::Table).alias(alias.clone()))
         .and_where(SeaExpr::col((alias.clone(), CurrentAttributeValues::EntityKey)).eq(outer.entity_key_column()))
         .and_where(SeaExpr::col((alias.clone(), CurrentAttributeValues::AttributeNameKey)).eq(attribute_name_key.get()))
-        .and_where(SeaExpr::col((alias, CurrentAttributeValues::ValueGeometry)).is_not_null());
+        .and_where(SeaExpr::col((alias.clone(), CurrentAttributeValues::ValueGeometry)).is_not_null())
+        // Clause 4.22: a past-due instance neither matches nor is measured to.
+        .and_where(instance_stands(SeaExpr::col((alias, CurrentAttributeValues::ExpiresAt))));
     scan
 }
 

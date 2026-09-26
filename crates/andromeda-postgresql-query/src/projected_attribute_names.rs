@@ -33,7 +33,8 @@ pub fn projected_attribute_names(attrs: &[IriBuf], q_expr: Option<&Expr>, geo: O
         referenced_attribute_names(q_expr, &mut names);
     }
     if let Some(geo) = geo {
-        push_geoproperty(&geo.geoproperty, &mut names);
+        // clone: the caller owns the resolved list, which outlives the query
+        names.push(geo.geoproperty.clone());
     }
     for term in order_terms.iter().filter(|term| term.direction.is_distance()) {
         match &term.target {
@@ -43,7 +44,7 @@ pub fn projected_attribute_names(attrs: &[IriBuf], q_expr: Option<&Expr>, geo: O
             // into a member of a compound value addresses a value inside one,
             // which carries no geometry of its own — so it resolves no
             // dictionary row and falls through to the clause 4.23.2 value keys.
-            OrderTarget::Attribute(path) if path.is_simple() => push_geoproperty(&path.attr, &mut names),
+            OrderTarget::Attribute(path) if path.is_simple() => push_distance_target(&path.attr, &mut names),
             // None of the clause 4.23 keywords names an attribute, so none of
             // them has a dictionary row.
             OrderTarget::Attribute(_) | OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => {}
@@ -52,19 +53,18 @@ pub fn projected_attribute_names(attrs: &[IriBuf], q_expr: Option<&Expr>, geo: O
     names
 }
 
-/// Add the `GeoProperty` a geo-query or a distance ordering targets, unless it is
-/// the one that needs no dictionary row.
+/// Add the `GeoProperty` a distance ordering measures to, unless it is the one
+/// that needs no dictionary row.
 ///
-/// Clause 4.10 defaults `geoproperty` to `location`, and the default is the one
-/// `GeoProperty` the broker stores in dedicated `entities` columns rather than in
-/// the `current_attribute_values` projection. Both the filter and the ordering read
-/// those columns directly, so resolving `location` would key a projection
-/// neither of them touches — and, worse, would make a plain `georel=near`
-/// query wait on the projection's read-your-writes barrier for writes its SQL
-/// cannot observe. Every other `GeoProperty`, the clause 4.7 `observationSpace`
-/// and `operationSpace` included, does go through the projection and is
+/// A geo-query always resolves its target, the default `location` included:
+/// clause 5.7.2.4 lets any instance of it match, and every instance but the
+/// hoisted default one is a `current_attribute_values` row keyed by the
+/// dictionary. A distance ordering on `location` (clause 4.23) measures from
+/// the hoisted default instance's dedicated `geography` column alone, so it
+/// keys nothing; every other `GeoProperty`, the clause 4.7 `observationSpace`
+/// and `operationSpace` included, goes through the projection and is
 /// collected.
-fn push_geoproperty(name: &AttributeName, out: &mut Vec<AttributeName>) {
+fn push_distance_target(name: &AttributeName, out: &mut Vec<AttributeName>) {
     if name.as_str() == LOCATION.as_str() {
         return;
     }
@@ -140,13 +140,16 @@ mod tests {
         );
     }
 
-    /// Clause 4.10's default `GeoProperty` is read from the dedicated `entities`
-    /// columns, so it keys no dictionary row and a query that touches nothing
-    /// else resolves no attribute name at all.
+    /// Clause 5.7.2.4 lets any `location` instance match, and every instance
+    /// carrying a `datasetId` is a projection row keyed by the dictionary, so a
+    /// geo-query on the default `GeoProperty` resolves it too.
     #[test]
-    fn a_geo_query_on_the_default_geoproperty_resolves_nothing() {
+    fn a_geo_query_on_the_default_geoproperty_resolves_it_for_its_dataset_instances() {
         let geo = geo_query(LOCATION.as_str());
-        assert_eq!(projected_attribute_names(&[], None, Some(&geo), &[]), [] as [AttributeName; 0]);
+        assert_eq!(
+            collected(&projected_attribute_names(&[], None, Some(&geo), &[])),
+            vec![LOCATION.as_str().to_owned()]
+        );
     }
 
     /// The clause 4.7 `GeoProperties` are stored in the projection like any other

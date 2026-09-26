@@ -60,9 +60,6 @@ impl EntityExpirySweep {
     /// [`EntityError::Validation`] when a due entity's stored payload cannot be
     /// reduced to its unexpired instances.
     pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<EntityExpiryOutcome, EntityError> {
-        if self.entity_policy.batch_activity.is_within_cooldown() {
-            return Ok(EntityExpiryOutcome::DeferredForBatchActivity);
-        }
         let expired_entities = self
             .entity_policy
             .expire_due_entities(&self.target, self.source.as_ref(), cutoff, self.batch_size)
@@ -71,7 +68,7 @@ impl EntityExpirySweep {
             .entity_policy
             .purge_expired_attributes(&self.target, self.source.as_ref(), cutoff, self.batch_size)
             .await?;
-        Ok(EntityExpiryOutcome::Applied {
+        Ok(EntityExpiryOutcome {
             expired_entities,
             purged_attributes,
         })
@@ -111,18 +108,17 @@ pub enum EntityExpiryBatchSizeError {
     TooLarge,
 }
 
-/// Semantic result of one bounded entity expiry reconciliation.
+/// What one bounded entity expiry reconciliation removed at its cutoff.
+///
+/// Clause 4.22 lets deletion lag `expiresAt` only by the clean-up cadence, so
+/// the reconciliation always runs when it is scheduled; the tenant's pacer
+/// already schedules it only once an `expiresAt` has fallen due.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EntityExpiryOutcome {
-    /// Recent batch activity deferred this level-triggered reconciliation.
-    DeferredForBatchActivity,
-    /// Expiry reconciliation completed against the supplied cutoff.
-    Applied {
-        /// Entity-level deletions that committed.
-        expired_entities: usize,
-        /// Entity payloads whose expired attribute instances were removed.
-        purged_attributes: usize,
-    },
+pub struct EntityExpiryOutcome {
+    /// Entity-level deletions that committed.
+    pub expired_entities: usize,
+    /// Entity payloads whose expired attribute instances were removed.
+    pub purged_attributes: usize,
 }
 
 impl EntityService {

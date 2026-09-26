@@ -5,7 +5,7 @@
 //! inline at each call site.
 
 use crate::{cast::cast, pg_type::PostgresType};
-use sea_query::{Expr, Func, Iden, SimpleExpr};
+use sea_query::{BinOper, Expr, ExprTrait, Func, Iden, SimpleExpr};
 
 /// The `PostGIS` functions clause 4.10's spatial predicates are built from.
 ///
@@ -50,7 +50,17 @@ enum PostgisFunction {
     /// `ST_AsGeoJSON(geom)`.
     #[iden = "ST_AsGeoJSON"]
     AsGeoJson,
+    /// `ST_MakeEnvelope(xmin, ymin, xmax, ymax, srid)`.
+    #[iden = "ST_MakeEnvelope"]
+    MakeEnvelope,
 }
+
+/// The `PostGIS` bounding-box overlap operator `&&`, true when two geometries'
+/// 2D bounding boxes share a point -- the test a geometry `GiST` index answers.
+const BOUNDING_BOXES_OVERLAP: &str = "&&";
+
+/// The spatial reference system every stored geometry is in (WGS 84).
+const WGS84_SRID: i32 = 4326;
 
 /// Build a spatial function call from its two geometry operands.
 fn binary_spatial(function: PostgisFunction, geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
@@ -109,6 +119,33 @@ pub fn st_disjoint(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
     binary_spatial(PostgisFunction::Disjoint, geo_col, ref_geom)
 }
 
+/// `PostGIS`: `ST_MakeEnvelope(min_x, min_y, max_x, max_y, 4326)` - the WGS 84
+/// rectangle spanning two longitude/latitude corners.
+///
+/// The corners are computed from a request, so they bind as parameters.
+#[must_use]
+pub fn st_make_envelope(min: [f64; 2], max: [f64; 2]) -> SimpleExpr {
+    Func::cust(PostgisFunction::MakeEnvelope)
+        .args([
+            Expr::val(min[0]),
+            Expr::val(min[1]),
+            Expr::val(max[0]),
+            Expr::val(max[1]),
+            Expr::val(WGS84_SRID),
+        ])
+        .into()
+}
+
+/// `PostGIS`: `geometry && envelope` - whether the two bounding boxes overlap.
+///
+/// The one test a geometry `GiST` index answers directly, so it is what a
+/// predicate the index cannot otherwise use -- a spheroidal `ST_DWithin` over a
+/// cast column -- is prefiltered with.
+#[must_use]
+pub fn bounding_boxes_overlap(geometry: SimpleExpr, envelope: SimpleExpr) -> SimpleExpr {
+    geometry.binary(BinOper::Custom(BOUNDING_BOXES_OVERLAP), envelope)
+}
+
 /// `PostGIS`: `ST_GeomFromEWKB(bytes)` - creates geometry from EWKB (SRID embedded).
 fn st_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
     Func::cust(PostgisFunction::GeomFromEwkb).args([ewkb]).into()
@@ -148,6 +185,19 @@ mod tests {
 
     fn render(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    }
+
+    #[test]
+    fn an_envelope_binds_its_corners_and_names_the_wgs84_srid() {
+        let (sql, values) = Query::select()
+            .expr(bounding_boxes_overlap(
+                Expr::col(("c", "value_geometry")),
+                st_make_envelope([1.0, 2.0], [3.0, 4.0]),
+            ))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        pretty_assertions::assert_eq!(sql, r#"SELECT "c"."value_geometry" && ST_MakeEnvelope($1, $2, $3, $4, $5)"#);
+        pretty_assertions::assert_eq!(values.0.len(), 5);
     }
 
     #[test]

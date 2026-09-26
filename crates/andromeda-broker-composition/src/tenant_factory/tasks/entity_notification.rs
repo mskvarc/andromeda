@@ -9,6 +9,7 @@
 use crate::{
     linked_entity_forwarding::ForwardedLinkedEntitySource,
     tenant_factory::{
+        background_pacer::BackgroundPacer,
         error::TenantAssemblyError,
         storage::TenantStorage,
         tasks::{
@@ -108,7 +109,7 @@ pub(super) fn register_notification_workers(
     processor: Arc<NotificationProcessor>,
     entity_changes: &broadcast::Sender<ContextChangeEvent>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
-    wake: Option<DrainWakeReceiver>,
+    durable: Option<DurableDeliveryDrive>,
 ) -> Result<(), TenantAssemblyError> {
     let delivery = if config.is_durable() {
         EntityNotificationDelivery::Durable
@@ -125,11 +126,21 @@ pub(super) fn register_notification_workers(
     if !config.is_durable() {
         return Ok(());
     }
-    let wake = wake.ok_or_else(|| TenantAssemblyError::invariant("durable notification delivery requires a wake receiver"))?;
+    let drive = durable.ok_or_else(|| TenantAssemblyError::invariant("durable notification delivery requires a wake receiver"))?;
     let store = Arc::new(NotificationDeliveryQueue::new(pool)) as Arc<dyn DeliveryStore>;
     let drain = NotificationDeliveryDrain::new(store, processor as Arc<dyn NotificationDeliveryTransport>, config)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    register_notification_delivery(supervisor, Arc::new(drain), config, wake)
+    register_notification_delivery(supervisor, Arc::new(drain), config, drive)
+}
+
+/// What drives the durable notification-delivery drain: the wake its commits
+/// raise, and the pacer that rests it while the tenant is quiet and nothing is
+/// due.
+pub(super) struct DurableDeliveryDrive {
+    /// The drain's wake receiver.
+    pub(super) wake: DrainWakeReceiver,
+    /// The tenant's background pacer.
+    pub(super) pacer: Arc<BackgroundPacer>,
 }
 
 /// Register the sweep delivering one tenant's `timeInterval` entity
@@ -145,6 +156,7 @@ pub(super) fn register_interval_notification(
     subscriptions: Arc<dyn SubscriptionStore>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
     interval_max_sleep: Duration,
+    pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
     let operation = Arc::new(IntervalNotificationOperation::new(
         storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
@@ -157,7 +169,7 @@ pub(super) fn register_interval_notification(
     ));
     let (interval_wake, receiver) = wake_channel();
     register_periodic_wake(supervisor, "notification-interval-wake", interval_wake, subscription_changes)?;
-    register_notification_schedule(supervisor, "notification-interval", interval_max_sleep, receiver, move |cutoff| {
+    register_notification_schedule(supervisor, "notification-interval", interval_max_sleep, receiver, pacer, move |cutoff| {
         let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
         async move {
             operation.execute(cutoff).await?;
@@ -234,8 +246,9 @@ fn register_notification_delivery(
     supervisor: &TaskSupervisor,
     drain: Arc<NotificationDeliveryDrain>,
     config: &DeliveryConfig,
-    wake: DrainWakeReceiver,
+    drive: DurableDeliveryDrive,
 ) -> Result<(), TenantAssemblyError> {
+    let DurableDeliveryDrive { wake, pacer } = drive;
     let fallback_floor = config.poll_interval.duration().max(Duration::from_secs(1));
     let fallback_ceiling = config
         .poll_interval_max
@@ -253,14 +266,19 @@ fn register_notification_delivery(
     let operation = Arc::clone(&drain); // clone: delivery and cleanup executions share one stateless delivery operation.
     let task = DrainTask::new(registration, fallback, move |execution| {
         let operation = Arc::clone(&operation); // clone: each delivery pass owns the policy operation while executing.
+        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
         async move {
-            let now = DateTime::<Utc>::from(execution.cutoff());
-            let outcome = operation.execute(now).await.map_err(|error| classify_notification_failure(&error))?;
-            if outcome.work_may_remain {
-                Ok(DrainPassOutcome::WorkMayRemain)
-            } else {
-                Ok(DrainPassOutcome::Idle)
-            }
+            pacer
+                .run_drain_pass(execution.cause(), async move {
+                    let now = DateTime::<Utc>::from(execution.cutoff());
+                    let outcome = operation.execute(now).await.map_err(|error| classify_notification_failure(&error))?;
+                    if outcome.work_may_remain {
+                        Ok(DrainPassOutcome::WorkMayRemain)
+                    } else {
+                        Ok(DrainPassOutcome::Idle)
+                    }
+                })
+                .await
         }
     });
     supervisor

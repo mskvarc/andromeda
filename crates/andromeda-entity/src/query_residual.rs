@@ -10,7 +10,10 @@
 //! implementation which is outside this crate's scope.
 
 use crate::residual_predicate::ResidualPredicate;
-use andromeda_ngsi_ld_query::entity_selection::{ConsideredEntities, EntitySelection};
+use andromeda_ngsi_ld_query::{
+    entity_selection::{ConsideredEntities, EntitySelection},
+    geo::default_location_narrowing::DefaultLocationNarrowing,
+};
 
 /// The subset of an [`EntitySelection`] a store did not apply.
 ///
@@ -50,6 +53,7 @@ impl ResidualFilter {
             attrs,
             q_expr,
             geo,
+            default_location: _,
             scope_q,
             considered,
         } = &self.0;
@@ -80,7 +84,10 @@ impl ResidualFilter {
             selection.q_expr = None;
         }
         if geo.is_some() {
+            // What an index established about the default `location` instances
+            // narrows only the geo-query, and goes with it.
             selection.geo = None;
+            selection.default_location = DefaultLocationNarrowing::Unnarrowed;
         }
         if scope_q.is_some() {
             selection.scope_q = None;
@@ -91,11 +98,14 @@ impl ResidualFilter {
     /// evaluated.
     #[must_use]
     pub fn kinds(&self) -> Vec<ResidualPredicate> {
+        // An index's narrowing of the default `location` instances is part of
+        // the geo-query, not a predicate of its own.
         let EntitySelection {
             selectors,
             attrs,
             q_expr,
             geo,
+            default_location: _,
             scope_q,
             considered,
         } = &self.0;

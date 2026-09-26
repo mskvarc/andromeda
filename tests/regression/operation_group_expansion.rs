@@ -91,30 +91,51 @@ async fn regression_operation_group_redirection_ops_advertises_purge_entity() {
 /// `associationOps` therefore must not admit it -- widening the fix to every
 /// group would leak provisioning operations to sources that only advertise
 /// consumption ones.
+///
+/// Only a forwarded purge is counted. The registrations live in the tenant the
+/// whole suite shares, and both groups advertise consumption operations
+/// (`retrieveEntityTypes`, `queryEntity`, `createSubscription`, ...), so a
+/// concurrent test's type-less discovery or query is rightly forwarded to them
+/// by clause 5.12; that traffic says nothing about purge forwarding.
 #[tokio::test]
 async fn regression_operation_group_no_other_group_advertises_purge_entity() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
 
+    let mut forwarded_purges = Vec::new();
     for (group, probe_base) in [("federationOps", "PurgeFederationProbe"), ("associationOps", "PurgeAssociationProbe")] {
         let source = ContextSourceAdapter::start().await;
         let entity_type = scope.entity_type(probe_base);
         let registration = registration_advertising(&scope.id(&format!("registration:purge-{group}")), &source.url("/"), group, &entity_type);
         let created = client.create_registration(&registration).await.expect("create registration");
-        assert_eq!(created.status, StatusCode::CREATED, "{group}: {:?}", created.body);
-
-        source.set_stub(Method::DELETE, FORWARDED_PURGE_PATH, 204).await;
-        purge_by_type(client, &entity_type).await;
-
-        assert_eq!(
-            source.get_total_count(),
-            0,
-            "{group} does not list purgeEntity in Table 4.20-2, so nothing is forwarded to it"
-        );
+        if created.status == StatusCode::CREATED {
+            source.set_stub(Method::DELETE, FORWARDED_PURGE_PATH, 204).await;
+            purge_by_type(client, &entity_type).await;
+            let purges: Vec<String> = source
+                .drain_requests()
+                .await
+                .into_iter()
+                .filter(|request| request.method == Method::DELETE)
+                .map(|request| request.uri.to_string())
+                .collect();
+            forwarded_purges.push((group, created.status, purges));
+        } else {
+            forwarded_purges.push((group, created.status, Vec::new()));
+        }
         source.shutdown().await;
     }
-
+    // Cleanup runs before the assertions, so a failure never leaves a
+    // registration behind for the rest of the suite to match against.
     scope.finish().await.expect("cleanup failed");
+
+    for (group, created, purges) in forwarded_purges {
+        assert_eq!(created, StatusCode::CREATED, "{group}: the registration is created");
+        assert_eq!(
+            purges,
+            Vec::<String>::new(),
+            "{group} does not list purgeEntity in Table 4.20-2, so no purge is forwarded to it"
+        );
+    }
 }
 
 /// Clause 4.20: a registration naming `purgeEntity` itself has always been a

@@ -1,6 +1,6 @@
 //! Composition of temporal intent policy with drain runtime mechanics.
 
-use crate::tenant_factory::error::TenantAssemblyError;
+use crate::tenant_factory::{background_pacer::BackgroundPacer, error::TenantAssemblyError};
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_task_runtime::{
@@ -67,6 +67,7 @@ pub(super) fn register_temporal_intent_drain(
     queue: Arc<dyn TemporalIntentQueue>,
     pending: Arc<dyn PendingTemporalIntentReader>,
     sink: Arc<dyn TemporalHistorySink>,
+    pacer: Arc<BackgroundPacer>,
 ) -> Result<TemporalIntentRegistration, TenantAssemblyError> {
     let fallback_floor = config.intent_fallback.duration();
     let fallback_ceiling = config.intent_fallback_max.duration().max(config.intent_fallback.duration());
@@ -100,14 +101,19 @@ pub(super) fn register_temporal_intent_drain(
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
         let drain = Arc::clone(&scheduled_drain); // clone: each bounded runtime future owns the shared policy operation.
+        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
         async move {
-            let now = DateTime::<Utc>::from(execution.cutoff());
-            let outcome = drain.execute(now).await.map_err(|error| classify_temporal_drain_failure(&error))?;
-            if outcome.work_may_remain {
-                Ok(DrainPassOutcome::WorkMayRemain)
-            } else {
-                Ok(DrainPassOutcome::Idle)
-            }
+            pacer
+                .run_drain_pass(execution.cause(), async move {
+                    let now = DateTime::<Utc>::from(execution.cutoff());
+                    let outcome = drain.execute(now).await.map_err(|error| classify_temporal_drain_failure(&error))?;
+                    if outcome.work_may_remain {
+                        Ok(DrainPassOutcome::WorkMayRemain)
+                    } else {
+                        Ok(DrainPassOutcome::Idle)
+                    }
+                })
+                .await
         }
     });
     let (wake, receiver) = wake_channel();

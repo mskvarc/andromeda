@@ -22,7 +22,10 @@ use andromeda_delivery::{
 use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::notification::{NotificationTrigger, SysAttrsSnapshot};
+use andromeda_ngsi_ld_model::{
+    expanded::attribute_expiry::standing_at,
+    notification::{NotificationTrigger, SysAttrsSnapshot},
+};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     cache::SubscriptionCache,
@@ -33,6 +36,7 @@ use andromeda_subscription::{
     store::SubscriptionStore,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
+use chrono::Utc;
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::sync::Arc;
@@ -261,7 +265,8 @@ impl NotificationProcessor {
     /// A deletion is evaluated against what the entity was, because what it is
     /// now is nothing; every other trigger is evaluated against the entity the
     /// write left behind. With neither document available no filter can be
-    /// evaluated, so the candidates stand as they are.
+    /// evaluated, so the candidates stand as they are. Either document is read
+    /// as it stands now, without its expired instances.
     fn narrow_by_entity_filters(
         &self,
         target: &ContextTarget,
@@ -277,8 +282,11 @@ impl NotificationProcessor {
         let Some(data) = filter_data else {
             return candidates;
         };
-        let geo_filtered = narrow_by_spatial_index(&self.cache, target, candidates, data, &event.entity_types);
-        geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
+        // Clause 4.22: an instance past its `expiresAt` is invalid, so no filter
+        // may match through it while the sweep has yet to delete it.
+        let data = standing_at(data, Utc::now());
+        let geo_filtered = narrow_by_spatial_index(&self.cache, target, candidates, &data, &event.entity_types);
+        geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, &data)).collect()
     }
 
     /// The entity's clause 4.8 system attributes, resolved once when any

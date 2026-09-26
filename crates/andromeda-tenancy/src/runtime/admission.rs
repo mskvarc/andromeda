@@ -188,7 +188,10 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 // The runtime is leased before it enters the cache, so the trim
                 // any concurrent cold build runs -- which sees this entry the
                 // instant it is inserted -- observes the lease and spares it.
-                let (cached, leased) = CachedRuntime::newly_leased(Arc::clone(&state), runtime, database, self.new_origin());
+                let (cached, leased) = {
+                    let origin = self.new_origin(&runtime);
+                    CachedRuntime::newly_leased(Arc::clone(&state), runtime, database, origin)
+                };
                 drop(vacant.insert(cached));
                 self.record_cache_size();
                 Ok(LeasedState {

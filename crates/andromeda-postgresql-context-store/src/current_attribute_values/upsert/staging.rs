@@ -77,6 +77,7 @@ pub(super) fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
         .expr(staged(CurrentAttributeValues::AttributeKind))
         .expr(staged(CurrentAttributeValues::ValueKind))
         .expr(staged(CurrentAttributeValues::ValueDateTime))
+        .expr(staged(CurrentAttributeValues::ExpiresAt))
         .expr(staged(CurrentAttributeValues::UnitCodeId))
         .expr(staged(CurrentAttributeValues::ValueBoolean))
         .expr(staged(CurrentAttributeValues::DatasetId))

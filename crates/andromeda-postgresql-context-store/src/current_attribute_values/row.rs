@@ -89,6 +89,10 @@ pub struct ProjectedAttributeRow {
     /// Catalog identity of the instance's `unitCode`, absent when the instance
     /// declares no unit (clause 5.2.5).
     pub unit_code_id: Option<UnitCodeId>,
+    /// The instance's own clause 4.22 `expiresAt`, absent when it never
+    /// expires. Past it the instance is invalid, and every read of the
+    /// projection excludes it before the expiry sweep removes it.
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[cfg(test)]

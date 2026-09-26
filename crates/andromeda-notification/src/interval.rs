@@ -114,7 +114,7 @@ impl IntervalNotificationOperation {
                 };
 
                 // Apply q/geoQ/scopeQ filters
-                let entities = apply_subscription_filters(&sub, entities);
+                let entities = apply_subscription_filters(&sub, entities, Utc::now());
 
                 if entities.is_empty() {
                     // Clause 5.8.6: no matching entities means no notification.

@@ -18,6 +18,7 @@ use crate::commit_refusal::{context_store, unit_code};
 use andromeda_context_commit::error::CommitError;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_model::expanded::attribute_expiry::instance_expires_at;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_store::current_attribute_values::{
     delete::delete_instances_in_tx,
@@ -99,6 +100,10 @@ fn collect(
                         attribute_kind: stored_attribute_kind(row.attribute_type),
                         value,
                         unit_code_id: unit_code_in(row.metadata.as_ref()).map_err(unit_code)?,
+                        // The instance's own members other than its value are
+                        // its metadata, so its clause 4.22 `expiresAt` is read
+                        // from there exactly as the payload carries it.
+                        expires_at: row.metadata.as_ref().and_then(instance_expires_at),
                     }),
                 }
             }
@@ -175,6 +180,10 @@ mod tests {
     }
 
     fn observation(value: TemporalValue) -> TemporalAppendEntry {
+        observation_with(value, None)
+    }
+
+    fn observation_with(value: TemporalValue, metadata: Option<serde_json::Value>) -> TemporalAppendEntry {
         TemporalAppendEntry::Observation {
             row: TemporalHistoryRow {
                 attribute_name: speed(),
@@ -186,7 +195,7 @@ mod tests {
                 created_at: None,
                 modified_at: None,
                 instance: InstanceIdentity::Generated(Uuid::nil()),
-                metadata: None,
+                metadata,
                 partition_total: None,
             },
         }
@@ -213,6 +222,28 @@ mod tests {
         collect(&mut work, &intent, entity_key(), &dictionary()).expect("a projectable observation");
         pretty_assertions::assert_eq!(work.upserts.len(), 1);
         pretty_assertions::assert_eq!(work.upserts[0].value.kind(), ValueKind::String);
+    }
+
+    /// Clause 4.22: past its `expiresAt` an instance is invalid, so the
+    /// projection carries the instant for every read to exclude it by.
+    #[test]
+    fn an_observation_projects_the_instances_own_expiry() {
+        let mut work = ProjectionWork::default();
+        let metadata = serde_json::json!({"https://uri.etsi.org/ngsi-ld/expiresAt": [{"@value": "2030-01-01T00:00:00Z"}]});
+        let intent = intent(vec![observation_with(TemporalValue::Number(JsonNumber::from(1)), Some(metadata))]);
+        collect(&mut work, &intent, entity_key(), &dictionary()).expect("a projectable observation");
+        pretty_assertions::assert_eq!(
+            work.upserts[0].expires_at,
+            Some(Utc.timestamp_opt(1_893_456_000, 0).single().expect("a representable instant"))
+        );
+    }
+
+    #[test]
+    fn an_observation_without_an_expiry_projects_none() {
+        let mut work = ProjectionWork::default();
+        let intent = intent(vec![observation(TemporalValue::Number(JsonNumber::from(1)))]);
+        collect(&mut work, &intent, entity_key(), &dictionary()).expect("a projectable observation");
+        pretty_assertions::assert_eq!(work.upserts[0].expires_at, None);
     }
 
     #[test]

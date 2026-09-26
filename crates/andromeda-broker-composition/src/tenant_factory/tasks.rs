@@ -8,23 +8,22 @@ mod notification_schedule;
 mod pool_gauges;
 mod retention;
 mod snapshot;
-pub(super) mod sweep_pacer;
 mod table_size_gauges;
 mod temporal_retention;
 
 use crate::tenant_factory::{
     TenantFactoryConfig,
+    background_pacer::BackgroundPacer,
     error::TenantAssemblyError,
     services::ConstructedServices,
     storage::TenantStorage,
     tasks::{
         csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
-        entity_notification::{compose_notification_processor, register_interval_notification, register_notification_workers},
+        entity_notification::{DurableDeliveryDrive, compose_notification_processor, register_interval_notification, register_notification_workers},
         expiry::register_expiry_workers,
         maintenance::{register_entity_side_effects, register_spatial_workers},
         pool_gauges::register_pool_gauges,
         snapshot::{PreparationRecovery, SnapshotStatusWake, register_snapshot_workers},
-        sweep_pacer::{SweepPacer, TenantObligations},
         table_size_gauges::register_table_size_gauges,
         temporal_retention::register_temporal_retention,
     },
@@ -77,8 +76,6 @@ pub(super) struct TaskSupervision {
     pub(super) handles: Vec<JoinHandle<()>>,
     pub(super) health_shutdown: Option<watch::Sender<bool>>,
     pub(super) task_supervisor: TaskSupervisor,
-    /// The pacer the tenant's sweeps consult, told of every use of the tenant.
-    pub(super) pacer: Arc<SweepPacer>,
 }
 
 /// The change signals and consequence-drain wake receivers a tenant's tasks
@@ -95,6 +92,9 @@ pub(super) struct TenantTaskChannels {
     pub(super) snapshot_status_wake: WakeHandle,
     /// The Snapshot status-delivery drain's wake receiver.
     pub(super) snapshot_status_receiver: DrainWakeReceiver,
+    /// Decides when the tenant's background passes run; every task consults
+    /// the one pacer, so one obligation read serves them all.
+    pub(super) pacer: Arc<BackgroundPacer>,
 }
 
 /// Build the delivery signal the Snapshot service raises after enqueuing status
@@ -132,6 +132,7 @@ pub(super) fn supervise_tasks(
         side_effect_wake,
         snapshot_status_wake,
         snapshot_status_receiver,
+        pacer,
     } = channels;
     let TenantSignals {
         entity,
@@ -140,16 +141,11 @@ pub(super) fn supervise_tasks(
         csource_subscription,
     } = signals;
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
-    // One pacer for every sweep the tenant runs, so one obligation read decides
-    // for all of them while the tenant is quiet.
-    let pacer = Arc::new(SweepPacer::new(
-        config.temporal.expiration_check_interval.duration(),
-        Arc::new(TenantObligations::new(&storage.pool)),
-    ));
     register_pool_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
     // clone: PgPool is a shared handle sampled by the size-gauge task, which consults the tenant's one pacer.
     register_table_size_gauges(&task_supervisor, Arc::clone(&pacer), storage.pool.clone(), &storage.tenant)?;
-    register_entity_side_effects(&task_supervisor, config, storage, writes, &entity, side_effect_wake)?;
+    // clone: every background pass of the tenant consults its one pacer.
+    register_entity_side_effects(&task_supervisor, config, storage, writes, &entity, side_effect_wake, Arc::clone(&pacer))?;
     let health_shutdown = if storage.tenant.is_unnamed_default() {
         let (shutdown, receiver) = watch::channel(false);
         handles.push(transport.mqtt_pool().spawn_health_probe(receiver));
@@ -172,7 +168,10 @@ pub(super) fn supervise_tasks(
         notification_processor,
         &entity,
         subscription,
-        notification_wake,
+        notification_wake.map(|wake| DurableDeliveryDrive {
+            wake,
+            pacer: Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
+        }),
     )?;
     register_expiry_workers(&task_supervisor, config, storage, &services.state, &registration, &pacer)?;
     register_interval_notification(
@@ -182,6 +181,7 @@ pub(super) fn supervise_tasks(
         entity_subscriptions,
         interval_subscription_changes,
         config.notifications.interval_max_sleep.duration(),
+        Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
     )?;
     register_csource_notification_workers(
         &task_supervisor,
@@ -193,6 +193,7 @@ pub(super) fn supervise_tasks(
             subscriptions: csource_subscription,
         },
         config.notifications.interval_max_sleep.duration(),
+        Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
     )?;
     register_temporal_retention(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
     register_snapshot_workers(
@@ -201,7 +202,7 @@ pub(super) fn supervise_tasks(
         PreparationRecovery {
             preparation: Arc::clone(&services.snapshot_preparation), // clone: the worker drives the same preparation the snapshot service schedules.
             cadence: config.snapshot.preparation_recovery.duration(),
-            pacer: Arc::clone(&pacer), // clone: every sweep of the tenant consults its one pacer.
+            pacer,
         },
         transport,
         &config.notifications.delivery,
@@ -215,7 +216,6 @@ pub(super) fn supervise_tasks(
         handles,
         health_shutdown,
         task_supervisor,
-        pacer,
     })
 }
 

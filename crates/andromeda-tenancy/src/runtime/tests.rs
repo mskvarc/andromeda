@@ -12,7 +12,7 @@ use crate::{
     lifecycle::TenantLifecycle,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     runtime::TenantRuntimeManager,
-    state_factory::{TenantRuntime, TenantStateFactory},
+    state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_keyset::TenantKeyset,
     tenant_record::TenantRecord,
@@ -304,6 +304,13 @@ impl TenantLifecycle for FakeRegistry {
     }
 }
 
+/// Where the test runtimes report use: nowhere, since none paces background work.
+struct Unobserved;
+
+impl RuntimeActivity for Unobserved {
+    fn record_activity(&self) {}
+}
+
 /// A runtime that records the fact it was released.
 struct FakeRuntime {
     /// Incremented on shutdown.
@@ -316,7 +323,9 @@ impl TenantRuntime for FakeRuntime {
         self.shutdowns.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn record_activity(&self) {}
+    fn activity(&self) -> Arc<dyn RuntimeActivity> {
+        Arc::new(Unobserved)
+    }
 }
 
 /// A factory recording which database each runtime was built against.
@@ -1011,7 +1020,9 @@ impl TenantRuntime for ShutdownConcurrencyProbe {
         self.active.fetch_sub(1, Ordering::SeqCst);
     }
 
-    fn record_activity(&self) {}
+    fn activity(&self) -> Arc<dyn RuntimeActivity> {
+        Arc::new(Unobserved)
+    }
 }
 
 /// A factory that builds [`ShutdownConcurrencyProbe`] runtimes sharing one pair
@@ -1102,7 +1113,9 @@ impl TenantRuntime for GatedShutdownRuntime {
         self.shutdowns.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn record_activity(&self) {}
+    fn activity(&self) -> Arc<dyn RuntimeActivity> {
+        Arc::new(Unobserved)
+    }
 }
 
 /// A factory building [`GatedShutdownRuntime`]s that share one gate.
@@ -1453,7 +1466,9 @@ impl TenantRuntime for CommitOnShutdownRuntime {
         self.shutdowns.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn record_activity(&self) {}
+    fn activity(&self) -> Arc<dyn RuntimeActivity> {
+        Arc::new(Unobserved)
+    }
 }
 
 /// A factory building [`CommitOnShutdownRuntime`]s that share one commit flag.
@@ -1570,7 +1585,9 @@ impl TenantRuntime for LatchedShutdownRuntime {
         self.alive.fetch_sub(1, Ordering::SeqCst);
     }
 
-    fn record_activity(&self) {}
+    fn activity(&self) -> Arc<dyn RuntimeActivity> {
+        Arc::new(Unobserved)
+    }
 }
 
 /// A factory building [`LatchedShutdownRuntime`]s that share one latch and one

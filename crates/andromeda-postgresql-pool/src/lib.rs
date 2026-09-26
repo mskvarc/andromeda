@@ -76,6 +76,11 @@ const POOLER_QUERY_WAIT_TIMEOUT: &str = "query_wait_timeout";
 ///   another connection ([`is_connection_resource_exhausted`]): a working set
 ///   larger than the runtime cache churns per-tenant pools fast enough to exhaust
 ///   the host's ephemeral ports, which is load, not a transport fault.
+/// - a [`sqlx::Error::Database`] whose SQLSTATE says the server is going away or
+///   not yet accepting work ([`is_server_unavailable`]): an administrator
+///   terminated the backend, the server is recovering from a crash, or it is
+///   starting or shutting down. The backend's transaction was rolled back with
+///   it, so nothing of the request persisted and it can be retried unchanged.
 ///
 /// Every other `sqlx::Error` -- a closed pool, a crashed worker, any other
 /// protocol or database error, or any other I/O fault -- is a genuine failure and
@@ -86,7 +91,7 @@ pub fn is_pool_saturated(error: &sqlx::Error) -> bool {
         return true;
     }
     if let sqlx::Error::Database(database_error) = error {
-        return is_pooler_backpressure(database_error.as_ref());
+        return is_pooler_backpressure(database_error.as_ref()) || is_server_unavailable(database_error.as_ref());
     }
     if let sqlx::Error::Io(io_error) = error {
         return is_connection_resource_exhausted(io_error);
@@ -100,6 +105,16 @@ pub fn is_pool_saturated(error: &sqlx::Error) -> bool {
 /// SQLSTATE, which it shares with unrelated protocol violations.
 fn is_pooler_backpressure(error: &dyn DatabaseError) -> bool {
     error.message().contains(POOLER_QUERY_WAIT_TIMEOUT)
+}
+
+/// Whether a database error says the server cannot serve the request right now.
+///
+/// SQLSTATE 57P01 (`admin_shutdown`: the backend was terminated by an
+/// administrator), 57P02 (`crash_shutdown`: another backend crashed and the
+/// server is resetting) and 57P03 (`cannot_connect_now`: the server is starting
+/// up or shutting down) all describe the server, not the request.
+fn is_server_unavailable(error: &dyn DatabaseError) -> bool {
+    error.code().is_some_and(|code| matches!(code.as_ref(), "57P01" | "57P02" | "57P03"))
 }
 
 /// Whether a `sqlx` error is a transient transaction rollback that re-running
@@ -273,6 +288,17 @@ mod tests {
             message: "contended".to_string(),
             code: code.to_string(),
         }))
+    }
+
+    #[test]
+    fn a_server_going_away_or_not_yet_accepting_work_is_saturation() {
+        // A backend an administrator terminated, a crash reset and a server
+        // starting or stopping are answered 503, not the 500 a fault earns.
+        for code in ["57P01", "57P02", "57P03"] {
+            assert!(is_pool_saturated(&database_error(code)), "{code}");
+        }
+        assert!(!is_pool_saturated(&database_error("57014")), "a statement timeout is not the server going away");
+        assert!(!is_pool_saturated(&database_error("23505")));
     }
 
     #[test]

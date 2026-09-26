@@ -2,7 +2,7 @@
 
 use crate::{
     bounded_driver,
-    control::DrainExecution,
+    control::{DrainCause, DrainExecution},
     drain_backoff::DrainBackoff,
     drain_task::{DrainOperation, DrainPassOutcome},
     driver_supervision::DriverSupervision,
@@ -32,7 +32,7 @@ pub(crate) async fn run(
     // tenant does not fire every drain the instant it is cached.
     let mut delay = backoff.record_idle();
     loop {
-        tokio::select! {
+        let cause = tokio::select! {
             biased;
             () = cancellation.cancelled() => return DriverTerminal::Cancelled,
             signal = wake.recv() => {
@@ -40,10 +40,11 @@ pub(crate) async fn run(
                     return DriverTerminal::Failed(TaskFailure::invariant_violation("drain wake channel closed while task was active"));
                 }
                 backoff.record_wake();
+                DrainCause::Wake
             }
-            () = sleep(delay) => {}
-        }
-        delay = match drain_until_settled(&supervision, &operation, &mut backoff).await {
+            () = sleep(delay) => DrainCause::Fallback,
+        };
+        delay = match drain_until_settled(&supervision, &operation, &mut backoff, cause).await {
             Ok(next) => next,
             Err(terminal) => return terminal,
         };
@@ -54,16 +55,25 @@ pub(crate) async fn run(
 ///
 /// Repeats immediately while a pass reports work may remain; a pass that found
 /// work resets the backoff to the floor, a bare idle pass backs off, and a pass
-/// with a known next-due time sleeps until then within the band.
-async fn drain_until_settled(supervision: &DriverSupervision, operation: &Arc<DrainOperation>, backoff: &mut DrainBackoff) -> Result<Duration, DriverTerminal> {
+/// with a known next-due time sleeps until then within the band. The first pass
+/// carries `cause`; every repeat is a [`DrainCause::Continuation`].
+async fn drain_until_settled(
+    supervision: &DriverSupervision,
+    operation: &Arc<DrainOperation>,
+    backoff: &mut DrainBackoff,
+    cause: DrainCause,
+) -> Result<Duration, DriverTerminal> {
     let cancellation = &supervision.cancellation;
     let mut did_work = false;
+    let mut cause = cause;
     loop {
+        let pass_cause = cause;
         let result = bounded_driver::execute(supervision, || {
-            let execution = DrainExecution::new(cancellation.clone(), SystemTime::now()); // clone: one bounded pass owns a cooperative task-local cancellation handle.
+            let execution = DrainExecution::new(cancellation.clone(), SystemTime::now(), pass_cause); // clone: one bounded pass owns a cooperative task-local cancellation handle.
             operation(execution)
         })
         .await;
+        cause = DrainCause::Continuation;
         match result {
             Ok(DrainPassOutcome::WorkMayRemain) => did_work = true,
             Ok(DrainPassOutcome::Idle) => return Ok(if did_work { backoff.record_worked() } else { backoff.record_idle() }),

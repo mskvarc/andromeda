@@ -1,7 +1,7 @@
 //! One tenant's live runtime, when it was last reached for, and the hold a
 //! request takes against its eviction.
 
-use crate::{database_name::TenantDatabaseName, runtime::lease::LeaseOrigin, state_factory::TenantRuntime};
+use crate::{database_name::TenantDatabaseName, runtime::lease::LeaseOrigin};
 use std::{
     sync::{
         Arc,
@@ -47,15 +47,13 @@ pub(super) struct CachedRuntime<S, R> {
     pub(super) origin: Arc<LeaseOrigin>,
 }
 
-impl<S, R: TenantRuntime> CachedRuntime<S, R> {
+impl<S, R> CachedRuntime<S, R> {
     /// Record that this runtime was just used, and tell the runtime so.
     pub(super) fn touch(&self) {
         self.last_used.store(now_millis(), Ordering::Relaxed);
-        self.runtime.record_activity();
+        self.origin.record_activity();
     }
-}
 
-impl<S, R> CachedRuntime<S, R> {
     /// Build a freshly leased runtime and the lease held against it.
     ///
     /// `origin` is fresh, so the caller's lease and this runtime's field are its
@@ -133,45 +131,59 @@ impl<S, R> CachedRuntime<S, R> {
 mod tests {
     use crate::{
         database_name::TenantDatabaseName,
-        runtime::{cached_runtime::CachedRuntime, lease::LeaseOrigin},
-        state_factory::TenantRuntime,
+        runtime::{
+            cached_runtime::CachedRuntime,
+            lease::{LeaseOrigin, RuntimeLease},
+        },
+        state_factory::RuntimeActivity,
     };
-    use async_trait::async_trait;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
     use tokio::sync::Notify;
 
-    /// A runtime counting how often it is told it was reached for.
-    struct ActivityCountingRuntime {
-        activity: Arc<AtomicUsize>,
+    /// Counts every use reported to a runtime.
+    #[derive(Default)]
+    struct ActivityCount(AtomicUsize);
+
+    impl RuntimeActivity for ActivityCount {
+        fn record_activity(&self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
-    #[async_trait]
-    impl TenantRuntime for ActivityCountingRuntime {
-        async fn shutdown(self) {}
-
-        fn record_activity(&self) {
-            self.activity.fetch_add(1, Ordering::Relaxed);
-        }
+    fn cached_reporting_to(activity: &Arc<ActivityCount>) -> CachedRuntime<(), ()> {
+        CachedRuntime::unleased(
+            Arc::new(()),
+            (),
+            TenantDatabaseName::from("andromeda_tenant_acme".to_string()),
+            LeaseOrigin::new(Arc::new(Notify::new()), Arc::clone(activity) as Arc<dyn RuntimeActivity>),
+        )
     }
 
     /// Pacing background work by use needs every touch to reach the runtime,
     /// not only the cache's own last-use stamp.
     #[test]
     fn every_touch_tells_the_runtime_it_was_reached_for() {
-        let activity = Arc::new(AtomicUsize::new(0));
-        let cached = CachedRuntime::unleased(
-            Arc::new(()),
-            ActivityCountingRuntime {
-                activity: Arc::clone(&activity),
-            },
-            TenantDatabaseName::from("andromeda_tenant_acme".to_string()),
-            LeaseOrigin::new(Arc::new(Notify::new())),
-        );
+        let activity = Arc::new(ActivityCount::default());
+        let cached = cached_reporting_to(&activity);
         cached.touch();
         cached.touch();
-        pretty_assertions::assert_eq!(activity.load(Ordering::Relaxed), 2);
+        pretty_assertions::assert_eq!(activity.0.load(Ordering::Relaxed), 2);
+    }
+
+    /// A request commits what it wrote before it lets the runtime go, so the
+    /// release is reported too: a runtime that read its due work while the
+    /// request was in flight learns that it must read again.
+    #[test]
+    fn letting_a_lease_go_tells_the_runtime_it_was_used() {
+        let activity = Arc::new(ActivityCount::default());
+        let cached = cached_reporting_to(&activity);
+        cached.touch();
+        let lease = RuntimeLease::clone_from(&cached.origin);
+        pretty_assertions::assert_eq!(activity.0.load(Ordering::Relaxed), 1);
+        drop(lease);
+        pretty_assertions::assert_eq!(activity.0.load(Ordering::Relaxed), 2);
     }
 }

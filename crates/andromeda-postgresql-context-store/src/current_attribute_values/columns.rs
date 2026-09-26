@@ -86,6 +86,8 @@ pub struct ProjectionBinds<'a> {
     pub value_kinds: Vec<i16>,
     /// Timestamp values.
     pub value_date_times: Vec<Option<DateTime<Utc>>>,
+    /// The clause 4.22 `expiresAt` of each instance, absent when it never expires.
+    pub expires_ats: Vec<Option<DateTime<Utc>>>,
     /// Catalog identities of the instances' units.
     pub unit_code_ids: Vec<Option<i16>>,
     /// Boolean values.
@@ -120,6 +122,7 @@ impl<'a> ProjectionBinds<'a> {
             attribute_kinds: Vec::with_capacity(rows.len()),
             value_kinds: Vec::with_capacity(rows.len()),
             value_date_times: Vec::with_capacity(rows.len()),
+            expires_ats: Vec::with_capacity(rows.len()),
             unit_code_ids: Vec::with_capacity(rows.len()),
             value_booleans: Vec::with_capacity(rows.len()),
             dataset_ids: Vec::with_capacity(rows.len()),
@@ -137,6 +140,7 @@ impl<'a> ProjectionBinds<'a> {
             binds.attribute_kinds.push(AttributeKind::code(row.attribute_kind));
             binds.value_kinds.push(ValueKind::code(row.value.kind()));
             binds.value_date_times.push(value.datetime);
+            binds.expires_ats.push(row.expires_at);
             binds.unit_code_ids.push(row.unit_code_id.map(UnitCodeId::get));
             binds.value_booleans.push(value.boolean);
             binds.dataset_ids.push(row.key.dataset_id.as_ref().map(Uri::as_str));
@@ -175,6 +179,7 @@ mod tests {
             attribute_kind: AttributeKind::Property,
             value,
             unit_code_id: None,
+            expires_at: None,
         }
     }
 
@@ -240,6 +245,16 @@ mod tests {
         pretty_assertions::assert_eq!(binds.value_kinds, vec![ValueKind::code(ValueKind::String)]);
         pretty_assertions::assert_eq!(binds.value_strings, vec![None]);
         pretty_assertions::assert_eq!(binds.value_long_texts, vec![Some(text.as_str())]);
+    }
+
+    #[test]
+    fn each_row_binds_its_own_expiry_beside_its_value() {
+        let expires_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
+        let mut expiring = row(ProjectedAttributeValue::Boolean(true));
+        expiring.expires_at = Some(expires_at);
+        let rows = [expiring, row(ProjectedAttributeValue::Boolean(false))];
+        let binds = ProjectionBinds::from_rows(&rows).expect("no geometry to encode");
+        pretty_assertions::assert_eq!(binds.expires_ats, vec![Some(expires_at), None]);
     }
 
     #[test]

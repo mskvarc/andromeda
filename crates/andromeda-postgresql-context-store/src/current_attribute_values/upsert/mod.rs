@@ -63,8 +63,8 @@ const CAV_UPSERT: StatementName = StatementName("cav-upsert");
 /// which is acceptable because no reader renders a projected number, only
 /// compares it.
 ///
-/// The fourteen column arrays bind through `sqlx` rather than sea-query because
-/// ten of them carry NULLs (`Vec<Option<T>>`), which `sea-query-sqlx` cannot
+/// The fifteen column arrays bind through `sqlx` rather than sea-query because
+/// eleven of them carry NULLs (`Vec<Option<T>>`), which `sea-query-sqlx` cannot
 /// represent — see [`external_placeholder`]. The statement structure is still
 /// built by sea-query; only the array values are bound outside it, in the marker
 /// order [`projection_upsert_sql`] emits.
@@ -90,6 +90,7 @@ pub async fn upsert_projection_in_tx(
         .bind(&binds.attribute_kinds)
         .bind(&binds.value_kinds)
         .bind(&binds.value_date_times)
+        .bind(&binds.expires_ats)
         .bind(&binds.unit_code_ids)
         .bind(&binds.value_booleans)
         .bind(&binds.dataset_ids)
@@ -110,7 +111,7 @@ pub async fn upsert_projection_in_tx(
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Internal`] if the projection's expression count
-/// ever stops matching the insert's fourteen-wide column list, which the fixed
+/// ever stops matching the insert's fifteen-wide column list, which the fixed
 /// shapes of the stages make unreachable.
 fn projection_upsert_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = staging_columns();
@@ -123,7 +124,7 @@ fn projection_upsert_sql(target: &ContextTarget) -> Result<String, ContextStoreE
     let mut insert = Query::insert();
     insert.into_table(table_of(target, CurrentAttributeValues::Table)).columns(PROJECTION_COLUMNS);
     // `select_from` fails only on a column/expression arity mismatch, which the
-    // fixed fourteen-wide column list and projection above make unreachable.
+    // fixed fifteen-wide column list and projection above make unreachable.
     insert
         .select_from(unmatched_input_select())
         .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
@@ -141,7 +142,7 @@ mod tests {
 
     /// The rendered upsert statement, unwrapped for assertion.
     fn rendered() -> String {
-        projection_upsert_sql(&ContextTarget::Live).expect("the fixed fourteen-wide projection builds")
+        projection_upsert_sql(&ContextTarget::Live).expect("the fixed fifteen-wide projection builds")
     }
 
     /// Every `$n` placeholder in `sql`, as numbers.
@@ -156,7 +157,7 @@ mod tests {
 
     #[test]
     fn the_upsert_binds_one_contiguous_array_per_column() {
-        pretty_assertions::assert_eq!(placeholders(&rendered()), (1..=14).collect::<BTreeSet<u32>>());
+        pretty_assertions::assert_eq!(placeholders(&rendered()), (1..=15).collect::<BTreeSet<u32>>());
     }
 
     #[test]
@@ -168,11 +169,12 @@ mod tests {
             "$3::smallint[]",
             "$4::smallint[]",
             "$5::timestamptz[]",
-            "$7::boolean[]",
-            "$9::numeric[]",
-            "$11::bytea[]",
-            "$12::jsonb[]",
-            "$14::text[]",
+            "$6::timestamptz[]",
+            "$8::boolean[]",
+            "$10::numeric[]",
+            "$12::bytea[]",
+            "$13::jsonb[]",
+            "$15::text[]",
         ] {
             assert!(sql.contains(cast), "missing {cast} in {sql}");
         }
@@ -252,7 +254,7 @@ mod tests {
     #[test]
     fn a_number_reaches_the_arbitrary_precision_column_rather_than_a_double() {
         let sql = rendered();
-        assert!(sql.contains(r"$9::numeric[]"), "{sql}");
+        assert!(sql.contains(r"$10::numeric[]"), "{sql}");
         assert!(!sql.contains(r#""d"."value_number"::numeric"#), "{sql}");
         assert!(!sql.contains("double precision"), "{sql}");
         assert!(!sql.contains("float8"), "{sql}");
@@ -274,7 +276,7 @@ mod tests {
         assert!(!sql.contains(r#"AS "d""#), "the closed table-source alias must be rewritten: {sql}");
         assert!(
             sql.contains(
-                "WITH ORDINALITY AS d(entity_key, attribute_name_key, attribute_kind, value_kind, value_date_time, unit_code_id, value_boolean, dataset_id, value_number, value_string, value_geometry, value_object, value_uri, value_long_text, ordinality)"
+                "WITH ORDINALITY AS d(entity_key, attribute_name_key, attribute_kind, value_kind, value_date_time, expires_at, unit_code_id, value_boolean, dataset_id, value_number, value_string, value_geometry, value_object, value_uri, value_long_text, ordinality)"
             ),
             "{sql}"
         );
@@ -287,6 +289,7 @@ mod tests {
             "attribute_kind",
             "value_kind",
             "value_date_time",
+            "expires_at",
             "unit_code_id",
             "value_boolean",
             "value_number",
@@ -332,6 +335,7 @@ mod tests {
             "attribute_kind",
             "value_kind",
             "value_date_time",
+            "expires_at",
             "unit_code_id",
             "value_boolean",
             "value_number",

@@ -449,8 +449,12 @@ mod tests {
                 "{} must test presence structurally: {projection_sql}",
                 case.expression
             );
+            // The clause 4.22 guard a probe carries is the one `IS NULL OR` the
+            // rendering legitimately holds: it tests the instance's expiry, not
+            // the addressed element.
+            let unguarded = projection_sql.replace(r#"("cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW())"#, "");
             assert!(
-                !projection_sql.contains("IS NULL OR"),
+                !unguarded.contains("IS NULL OR"),
                 "{} must not admit a missing element: {projection_sql}",
                 case.expression
             );

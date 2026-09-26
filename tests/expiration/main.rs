@@ -583,3 +583,45 @@ async fn expiration_worker_attribute_expiry_does_not_affect_entity_level_expires
     assert_eq!(body["expiresAt"], "2099-12-31T23:59:59Z");
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Clause 4.22 lets final deletion "lag the expiresAt timestamp to a certain
+/// extent" -- the clean-up cadence, not an unbounded wait. A batch write once
+/// suspended the entity expiry sweep for ten seconds after every batch
+/// operation in the tenant, so an attribute that expired alongside batch
+/// traffic outlived the sweep's bound. The entity here is itself written by a
+/// batch, immediately before the sweep is awaited, and its expired attribute
+/// must still be purged within the ordinary sweep bound. The purge is observed
+/// through the entity row's recorded minimum expiry, which only the sweep
+/// changes (the read path filters an expired instance on its own).
+#[tokio::test]
+async fn expiration_worker_expired_attribute_purged_within_sweep_bound_right_after_a_batch_write() {
+    let scope = TestEnvironment::from_suite("expiration").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:exp-after-batch");
+    let created = client
+        .batch_create(&json!([{
+            "id": id,
+            "type": "Vehicle",
+            "speed": {"type": "Property", "value": 80, "expiresAt": "2020-01-01T00:00:00Z"},
+            "fuel": {"type": "Property", "value": 55},
+            "@context": [TEST_SUITE_CONTEXT]
+        }]))
+        .await
+        .expect("batch create request");
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    assert_eq!(
+        recorded_minimum_expiry(&scope, &id).await.as_deref(),
+        Some("2020-01-01T00:00:00Z"),
+        "the batch write records the attribute's expiry for the sweep to find"
+    );
+
+    wait_for_expiry_sweep("the sweep to purge the expired attribute after a batch write", || async {
+        recorded_minimum_expiry(&scope, &id).await.is_none()
+    })
+    .await;
+
+    let body = fetch(client, &id, "options=sysAttrs").await;
+    assert!(body.get("speed").is_none(), "{body}");
+    assert!(body.get("fuel").is_some(), "{body}");
+    scope.finish().await.expect("cleanup failed");
+}

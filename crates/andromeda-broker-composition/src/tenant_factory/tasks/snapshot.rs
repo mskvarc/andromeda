@@ -3,7 +3,7 @@
 
 use crate::{
     event::snapshot_notification_sink::{DeliverySnapshotNotificationSink, SnapshotStatusDeliveryDrain},
-    tenant_factory::{error::TenantAssemblyError, tasks::sweep_pacer::SweepPacer},
+    tenant_factory::{background_pacer::BackgroundPacer, error::TenantAssemblyError},
 };
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_notification::delivery_config::DeliveryConfig;
@@ -53,7 +53,7 @@ pub(super) struct PreparationRecovery {
     /// How often the sweep ticks.
     pub(super) cadence: Duration,
     /// Rests the sweep while the tenant is quiet and nothing is preparing.
-    pub(super) pacer: Arc<SweepPacer>,
+    pub(super) pacer: Arc<BackgroundPacer>,
 }
 
 /// Register snapshot preparation and the durable delivery of the lifecycle
@@ -77,6 +77,7 @@ pub(super) fn register_snapshot_workers(
     // its own clone of the handle, so a freshly created Snapshot's notification
     // does not wait for the drain's fallback either.
     let SnapshotStatusWake { sweep_wake, receiver } = wake;
+    let pacer = Arc::clone(&recovery.pacer); // clone: the preparation sweep and the status drain consult the tenant's one pacer.
     register_snapshot_preparation(supervisor, recovery, sweep_wake)?;
     let drain = Arc::new(
         SnapshotStatusDeliveryDrain::new(
@@ -92,7 +93,7 @@ pub(super) fn register_snapshot_workers(
         .duration()
         .max(config.poll_interval.duration())
         .max(Duration::from_secs(1));
-    register_snapshot_status_delivery(supervisor, Arc::clone(&drain), floor, ceiling, receiver)?; // clone: delivery and cleanup share one drain.
+    register_snapshot_status_delivery(supervisor, Arc::clone(&drain), floor, ceiling, receiver, pacer)?; // clone: delivery and cleanup share one drain.
     register_snapshot_status_cleanup(supervisor, drain, config.cleanup_interval.duration().max(Duration::from_secs(1)))
 }
 
@@ -104,7 +105,7 @@ pub(super) fn register_snapshot_workers(
 /// supervisor refuses the registration.
 pub(super) fn register_snapshot_expiry(
     supervisor: &TaskSupervisor,
-    pacer: Arc<SweepPacer>,
+    pacer: Arc<BackgroundPacer>,
     store: Arc<dyn SnapshotStore>,
     cadence: Duration,
 ) -> Result<(), TenantAssemblyError> {
@@ -217,6 +218,7 @@ fn register_snapshot_status_delivery(
     floor: Duration,
     ceiling: Duration,
     wake: DrainWakeReceiver,
+    pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
     let fallback = DrainFallbackPolicy::new(floor, ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("snapshot-status-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
@@ -228,20 +230,25 @@ fn register_snapshot_status_delivery(
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
         let drain = Arc::clone(&drain); // clone: each bounded pass owns the shared delivery operation while executing.
+        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
         async move {
-            let delivered = drain
-                .execute(DateTime::<Utc>::from(execution.cutoff()))
+            pacer
+                .run_drain_pass(execution.cause(), async move {
+                    let delivered = drain
+                        .execute(DateTime::<Utc>::from(execution.cutoff()))
+                        .await
+                        .map_err(|error| classify_snapshot_failure(&error))?;
+                    if delivered > 0 {
+                        tracing::info!(claimed = delivered, "snapshot status notification delivery completed");
+                    }
+                    // A full batch may leave more waiting, so drain again immediately.
+                    if i32::try_from(delivered).is_ok_and(|claimed| claimed >= drain.batch_size()) {
+                        Ok(DrainPassOutcome::WorkMayRemain)
+                    } else {
+                        Ok(DrainPassOutcome::Idle)
+                    }
+                })
                 .await
-                .map_err(|error| classify_snapshot_failure(&error))?;
-            if delivered > 0 {
-                tracing::info!(claimed = delivered, "snapshot status notification delivery completed");
-            }
-            // A full batch may leave more waiting, so drain again immediately.
-            if i32::try_from(delivered).is_ok_and(|claimed| claimed >= drain.batch_size()) {
-                Ok(DrainPassOutcome::WorkMayRemain)
-            } else {
-                Ok(DrainPassOutcome::Idle)
-            }
         }
     });
     supervisor

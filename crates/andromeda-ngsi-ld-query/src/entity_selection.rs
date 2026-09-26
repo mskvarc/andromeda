@@ -1,6 +1,12 @@
 //! Which entities a query matches.
 
-use crate::{filter::expression::Expr, geo::query::GeoQuery, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExpr};
+use crate::{
+    filter::expression::Expr,
+    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
+    pattern::Pattern,
+    scope::query::ScopeQuery,
+    type_selection::grammar::TypeExpr,
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
@@ -89,7 +95,8 @@ impl ConsideredEntities {
 /// The identifier, pattern and type axes are grouped into [`EntitySelector`]s
 /// and combined as a union (clause 5.2.33): an entity matches when it satisfies
 /// any selector. The remaining members — `attrs`, `q`, `geo`, `scopeQ` and
-/// `considered` — are global, and hold for every selector at once. One type
+/// `considered` — are global, and hold for every selector at once;
+/// `default_location` only narrows what `geo` already requires. One type
 /// serves the entity and temporal paths; a selection with no member set matches
 /// every entity, which is what makes `Default` meaningful here: it is the empty
 /// filter, and a caller describing the predicates a store *declined* starts
@@ -110,6 +117,10 @@ pub struct EntitySelection {
     pub q_expr: Option<Expr>,
     /// Geo-spatial query filter, if specified (clause 4.10).
     pub geo: Option<GeoQuery>,
+    /// What an in-memory spatial index established about `geo`'s default
+    /// `location` instances, set by the broker after compilation and never by a
+    /// request.
+    pub default_location: DefaultLocationNarrowing,
     /// Scope query filtering by the entity's scope hierarchy (clause 4.18).
     ///
     /// A temporal query matches against `scope_history` rather than the

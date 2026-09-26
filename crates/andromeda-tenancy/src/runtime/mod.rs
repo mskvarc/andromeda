@@ -19,7 +19,7 @@ use crate::{
     pending_work::PendingWorkProbe,
     residency::TenantResidency,
     runtime::{cached_runtime::CachedRuntime, lease::LeaseOrigin},
-    state_factory::TenantStateFactory,
+    state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_keyset::TenantKeyset,
     tenant_listing::TenantListing,
@@ -151,10 +151,10 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         Some(tokio::spawn(async move { manager.run_janitor().await }))
     }
 
-    /// A fresh eviction origin for a runtime about to enter the cache, wired to
-    /// this manager's release signal.
-    fn new_origin(&self) -> Arc<LeaseOrigin> {
-        LeaseOrigin::new(Arc::clone(&self.release_signal))
+    /// A fresh eviction origin for `runtime` about to enter the cache, wired to
+    /// this manager's release signal and to the runtime's activity.
+    fn new_origin(&self, runtime: &F::Runtime) -> Arc<LeaseOrigin> {
+        LeaseOrigin::new(Arc::clone(&self.release_signal), runtime.activity())
     }
 
     /// Publish the current number of cached runtimes to the tenancy gauge.

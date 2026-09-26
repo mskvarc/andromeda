@@ -1,9 +1,12 @@
-//! Reading a dormant tenant's database for the earliest instant it has work due.
+//! Reading a tenant's database for the earliest instant it has work due.
 //!
-//! Implements the tenancy crate's [`PendingWorkProbe`] port. A tenant no request
-//! is touching still owes background work -- durable-delivery retries, snapshot
-//! status and preparation, pending side effects, temporal append intents, every
-//! `expiresAt` sweep, and clause-5.8.6 periodic notifications. The probe answers
+//! Implements the tenancy crate's [`PendingWorkProbe`] port, and answers a
+//! resident tenant's background pacer through [`earliest_obligation`]. A tenant
+//! no request is touching still owes background work -- durable-delivery
+//! retries, snapshot status and preparation, pending side effects, temporal
+//! append intents, every `expiresAt` sweep, clause-5.8.6 and clause-5.11.7
+//! periodic notifications, and the clause-5.13.1 invalidation of every
+//! `"Cached"` `@context` whose expiration time has passed. The probe answers
 //! the single earliest instant any of those falls due, over a transient
 //! one-connection pool on the tenant's request URL so it adds no permanent
 //! backend and is safe through a transaction pooler.
@@ -19,16 +22,22 @@ use crate::{
     error::ContextStoreError,
     migration_set::branch::{BranchSchemaVersion, current_branch_version},
     snapshot::{branch_version::branch_is_current, status_code::stored_status as stored_snapshot_status},
-    subscription_store::{delivery_state::interval_anchor_select, status_code::status_is_not},
+    subscription_store::{
+        delivery_state::interval_anchor_select,
+        periodic_due::unexpired_at,
+        status_code::{status_is, status_is_not},
+    },
     tenant_database::DatabaseUrl,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_model::{snapshot::SnapshotStatus, subscription::SubscriptionStatus};
+use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_pool::{configure_pool_options, is_pool_saturated};
 use andromeda_postgresql_schema::{
     csr::Csr,
     current::Entities,
     entity_map::EntityMaps,
+    jsonld::JsonldContexts,
     notification::NotificationDeliveries,
     queue::{PendingSideEffects, TemporalAppendIntents},
     snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots},
@@ -215,6 +224,7 @@ fn least_due_select(current: BranchSchemaVersion) -> SelectStatement {
         expiry_min(Csr::Table, Csr::ExpiresAt),
         earliest_min(Snapshots::Table, Snapshots::ExpiresAt),
         earliest_min(EntityMaps::Table, EntityMaps::ExpiresAt),
+        cached_context_expiry_min(),
     ];
     Query::select().expr_as(Func::least(sources), Alias::new("due")).to_owned()
 }
@@ -270,6 +280,19 @@ fn earliest_min(table: impl IntoTableRef, column: impl IntoColumnRef + Copy) -> 
     scalar(select)
 }
 
+/// A scalar subquery of the earliest expiration time of a `"Cached"` `@context`
+/// (clause 5.13.1): the instant the periodic invalidation next has a row to
+/// reclaim. Hosted contexts never expire and are left out.
+fn cached_context_expiry_min() -> SimpleExpr {
+    let mut select = Query::select();
+    select
+        .expr(Func::min(Expr::col(JsonldContexts::ExpiresAt)))
+        .from(JsonldContexts::Table)
+        .and_where(Expr::col(JsonldContexts::Kind).eq(JsonldContextKindCode::Cached.code()))
+        .and_where(Expr::col(JsonldContexts::ExpiresAt).is_not_null());
+    scalar(select)
+}
+
 /// A scalar subquery of the earliest subscription expiry, ignoring subscriptions
 /// already expired.
 fn subscription_expiry_min() -> SimpleExpr {
@@ -282,14 +305,22 @@ fn subscription_expiry_min() -> SimpleExpr {
     scalar(select)
 }
 
-/// The active periodic subscriptions' grid anchors and intervals, so the caller
-/// can compute the soonest next-due with the shared grid, ignoring expired ones.
+/// The active periodic subscriptions' grid anchors and intervals -- entity
+/// subscriptions (clause 5.8.6) and context source subscriptions (clause
+/// 5.11.7) alike, which share the table -- so the caller can compute the
+/// soonest next-due with the shared grid.
+///
+/// Only an active subscription still in force is owed a periodic notification:
+/// a paused one sends nothing, and once `expiresAt` has passed "notifications
+/// will no longer be sent" (clause 5.8.1.4), even before the expiry sweep has
+/// marked it expired. Counting either would report the tenant due forever.
 fn interval_probe_select() -> SelectStatement {
     let mut select = interval_anchor_select(&ContextTarget::Live);
     select
         .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).is_not_null())
         .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).gt(0.0))
-        .and_where(status_is_not(SubscriptionStatus::Expired));
+        .and_where(status_is(SubscriptionStatus::Active))
+        .cond_where(unexpired_at(now()));
     select
 }
 
@@ -323,6 +354,7 @@ mod tests {
         migration_set::branch::BranchSchemaVersion,
         pending_work::{PostgresPendingWorkProbe, code_is_undefined_database, earliest_interval_due, interval_probe_select, least_due_select},
     };
+    use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
     use andromeda_tenancy::{database_name::TenantDatabaseName, pending_work::PendingWorkError};
     use chrono::{Duration, Utc};
     use sea_query::PostgresQueryBuilder;
@@ -435,6 +467,28 @@ mod tests {
         assert!(sql.contains("FROM \"entity_maps\""), "{sql}");
     }
 
+    /// Clause 5.13.1 invalidation is due when the earliest `"Cached"` entry
+    /// lapses; a hosted entry never lapses.
+    #[test]
+    fn the_probe_reads_the_earliest_cached_context_expiry() {
+        let sql = least_sql();
+        assert!(
+            sql.contains(&format!(
+                "(SELECT MIN(\"expires_at\") FROM \"jsonld_contexts\" WHERE \"kind\" = {} AND \"expires_at\" IS NOT NULL)",
+                JsonldContextKindCode::Cached.code()
+            )),
+            "{sql}"
+        );
+    }
+
+    /// Entity and context source subscriptions share the table, so one source
+    /// serves both kinds of periodic notification.
+    #[test]
+    fn the_interval_source_reads_every_kind_of_subscription() {
+        let interval_sql = interval_probe_select().to_string(PostgresQueryBuilder);
+        assert!(!interval_sql.contains("\"kind\""), "no kind filter narrows the periodic source: {interval_sql}");
+    }
+
     #[test]
     fn the_probe_folds_every_source_into_one_least() {
         assert!(least_sql().contains("SELECT LEAST("), "{}", least_sql());
@@ -442,8 +496,9 @@ mod tests {
 
     #[test]
     fn the_probe_ignores_expired_status_subscriptions() {
-        // Both the subscription-expiry source and the periodic-notification
-        // source exclude a subscription already in the expired state.
+        // The subscription-expiry source excludes a subscription already
+        // expired; the periodic-notification source reads active ones only, so
+        // neither an expired nor a paused subscription keeps the tenant due.
         assert!(
             least_sql().contains("\"subscriptions\".\"status\" <> 3"),
             "the subscription-expiry source excludes expired: {}",
@@ -451,8 +506,12 @@ mod tests {
         );
         let interval_sql = interval_probe_select().to_string(PostgresQueryBuilder);
         assert!(
-            interval_sql.contains("\"subscriptions\".\"status\" <> 3"),
-            "the interval source excludes expired: {interval_sql}"
+            interval_sql.contains("\"subscriptions\".\"status\" = 1"),
+            "the interval source reads active subscriptions only: {interval_sql}"
+        );
+        assert!(
+            interval_sql.contains("(\"subscriptions\".\"expires_at\" IS NULL OR \"subscriptions\".\"expires_at\" > NOW())"),
+            "the interval source reads subscriptions still in force only: {interval_sql}"
         );
         assert!(
             interval_sql.contains("\"time_interval\""),

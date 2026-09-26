@@ -1,6 +1,6 @@
 //! Periodic sampling of one tenant's base-table sizes into the metrics gauges.
 
-use crate::tenant_factory::{error::TenantAssemblyError, tasks::sweep_pacer::SweepPacer};
+use crate::tenant_factory::{background_pacer::BackgroundPacer, error::TenantAssemblyError};
 use andromeda_postgresql_maintenance::table_size::table_sizes;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -16,7 +16,10 @@ use andromeda_task_runtime::{
 use andromeda_telemetry::storage::{StorageGauges, TableSizeSample};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, atomic::AtomicU64},
+    time::Duration,
+};
 
 /// How often base-table sizes are sampled.
 ///
@@ -27,9 +30,9 @@ const SAMPLE_CADENCE: Duration = Duration::from_secs(60);
 /// Register the task that publishes the tenant's base-table sizes each minute.
 ///
 /// The sizes are a bounded catalog read over a fixed table allowlist, so the
-/// task is merely observed: its failure never degrades the tenant. It is paced
-/// like the tenant's sweeps: the sizes of a tenant nobody is using and that has
-/// nothing due do not move, so it is not sampled.
+/// task is merely observed: its failure never degrades the tenant. Sizes move
+/// only when something writes, so a tick samples only when the tenant has been
+/// used or a background pass has run since the last sample.
 ///
 /// # Errors
 ///
@@ -37,7 +40,7 @@ const SAMPLE_CADENCE: Duration = Duration::from_secs(60);
 /// schedule or the supervisor refuses the registration.
 pub(super) fn register_table_size_gauges(
     supervisor: &TaskSupervisor,
-    pacer: Arc<SweepPacer>,
+    pacer: Arc<BackgroundPacer>,
     pool: PgPool,
     tenant: &TenantRef,
 ) -> Result<(), TenantAssemblyError> {
@@ -51,13 +54,16 @@ pub(super) fn register_table_size_gauges(
         ShutdownPolicy::new(SAMPLE_CADENCE),
     );
     let gauges = StorageGauges::for_tenant(tenant.to_string());
+    // The write count the last sample ran under, shared by every tick.
+    let observed = Arc::new(AtomicU64::new(0));
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
         let pool = pool.clone(); // clone: PgPool is a shared handle; each pass acquires one connection.
         let gauges = gauges.clone(); // clone: each bounded pass owns the gauge labels while recording.
         let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
+        let observed = Arc::clone(&observed); // clone: every tick compares against the one last-sample count.
         async move {
             pacer
-                .run(async move {
+                .run_when_written(&observed, async move {
                     let mut connection = pool.acquire().await.map_err(|error| TaskFailure::transient(error.to_string()))?;
                     let samples = table_sizes(&mut connection).await.map_err(|error| TaskFailure::transient(error.to_string()))?;
                     for sample in samples {

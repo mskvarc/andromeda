@@ -6,7 +6,7 @@
 //! condition written against [`probe_column`] composes into either without
 //! knowing which.
 
-use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs};
+use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, instance_expiry::instance_stands};
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::literal::int_literal;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Iden, Query, SimpleExpr};
@@ -39,7 +39,8 @@ pub fn attribute_row_exists(id: AttributeNameKey, rows: &EntityRowRefs) -> Condi
 /// dictionary key and the value condition, and correlated on the enclosing
 /// statement's entity key. The attribute-name test is added before the value so
 /// its dictionary key binds ahead of the value's operands, and the correlation
-/// is added last so it binds nothing after them.
+/// is added last so it binds nothing after them. An instance whose clause 4.22
+/// `expiresAt` has passed is not probed at all.
 #[must_use]
 pub fn exists_on_projection(id: AttributeNameKey, value: Condition, rows: &EntityRowRefs) -> Condition {
     let mut probe = Query::select();
@@ -47,6 +48,9 @@ pub fn exists_on_projection(id: AttributeNameKey, value: Condition, rows: &Entit
         .expr(int_literal(1))
         .from(rows.table(CurrentAttributeValues::Table).alias(Cav))
         .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameKey)).eq(id.get()))
+        // Clause 4.22: a past-due instance neither carries the attribute nor
+        // holds its value, whether or not the sweep has deleted it yet.
+        .and_where(instance_stands(probe_column(CurrentAttributeValues::ExpiresAt)))
         .cond_where(value)
         .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(rows.entity_key_column()));
     Condition::all().add(SeaExpr::exists(probe))
@@ -79,7 +83,8 @@ mod tests {
             render(attribute_row_exists(AttributeNameKey::from(7), &EntityRowRefs::unaliased(None))),
             concat!(
                 r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_key" = $1 AND "cav"."entity_key" = "entities"."entity_key")"#,
+                r#"WHERE "cav"."attribute_name_key" = $1 AND ("cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW()) "#,
+                r#"AND "cav"."entity_key" = "entities"."entity_key")"#,
             )
         );
     }
@@ -91,7 +96,9 @@ mod tests {
         let value = Condition::all().add(probe_column(CurrentAttributeValues::ValueString).eq("red"));
         let sql = render(exists_on_projection(AttributeNameKey::from(7), value, &EntityRowRefs::unaliased(None)));
         assert!(
-            sql.contains(r#""cav"."attribute_name_key" = $1 AND "cav"."value_string" = $2 AND "cav"."entity_key""#),
+            sql.contains(
+                r#""cav"."attribute_name_key" = $1 AND ("cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW()) AND "cav"."value_string" = $2 AND "cav"."entity_key""#
+            ),
             "{sql}"
         );
     }

@@ -20,12 +20,23 @@ pub trait TenantRuntime: Send + Sync + 'static {
     #[must_use = "runtime shutdown must be awaited"]
     async fn shutdown(self);
 
-    /// Note that the runtime was just reached for.
+    /// Where the cache reports use of this runtime.
     ///
-    /// The cache calls it each time it hands the runtime to a request, and when
-    /// its janitor keeps the runtime resident for work that is about to fall
-    /// due, so a runtime can pace its background work by whether its tenant is
-    /// in use instead of polling at a fixed cadence while nobody is.
+    /// The cache keeps the handle beside the runtime's eviction origin and
+    /// reports on it whenever a request is handed the runtime and whenever a
+    /// request lets it go, so a runtime pacing its background work by what is
+    /// due learns of every request that may have changed that.
+    fn activity(&self) -> Arc<dyn RuntimeActivity>;
+}
+
+/// Told when requests reach for, and let go of, one tenant runtime.
+///
+/// A request may write work that falls due later -- an `expiresAt`, a
+/// periodic subscription, a queued delivery -- and it has committed that work
+/// by the time it lets the runtime go, so a runtime that caches what it last
+/// read as due must read again after either report.
+pub trait RuntimeActivity: Send + Sync + 'static {
+    /// Note that a request reached for or let go of the runtime.
     fn record_activity(&self);
 }
 

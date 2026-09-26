@@ -10,11 +10,14 @@ use andromeda_postgresql_seaquery::{pg_type::PostgresType, unnest::UnnestColumn}
 /// row and its stored predecessor are value-identical when and only when every
 /// column here is; the grain columns are equal by construction on a conflict.
 /// `value_long_text` is among them, so a String moving between its two columns
-/// is a difference on two fields at once.
-pub(super) const REFRESHED_COLUMNS: [CurrentAttributeValues; 11] = [
+/// is a difference on two fields at once, and `expires_at` is among them, so an
+/// instance whose value is unchanged but whose clause 4.22 `expiresAt` moved is
+/// rewritten.
+pub(super) const REFRESHED_COLUMNS: [CurrentAttributeValues; 12] = [
     CurrentAttributeValues::AttributeKind,
     CurrentAttributeValues::ValueKind,
     CurrentAttributeValues::ValueDateTime,
+    CurrentAttributeValues::ExpiresAt,
     CurrentAttributeValues::UnitCodeId,
     CurrentAttributeValues::ValueBoolean,
     CurrentAttributeValues::ValueNumber,
@@ -26,12 +29,13 @@ pub(super) const REFRESHED_COLUMNS: [CurrentAttributeValues; 11] = [
 ];
 
 /// All persisted projection columns, in table order.
-pub(super) const PROJECTION_COLUMNS: [CurrentAttributeValues; 14] = [
+pub(super) const PROJECTION_COLUMNS: [CurrentAttributeValues; 15] = [
     CurrentAttributeValues::EntityKey,
     CurrentAttributeValues::AttributeNameKey,
     CurrentAttributeValues::AttributeKind,
     CurrentAttributeValues::ValueKind,
     CurrentAttributeValues::ValueDateTime,
+    CurrentAttributeValues::ExpiresAt,
     CurrentAttributeValues::UnitCodeId,
     CurrentAttributeValues::ValueBoolean,
     CurrentAttributeValues::DatasetId,
@@ -43,18 +47,19 @@ pub(super) const PROJECTION_COLUMNS: [CurrentAttributeValues; 14] = [
     CurrentAttributeValues::ValueLongText,
 ];
 
-/// The fourteen staging columns, in the order the batch binds them.
+/// The fifteen staging columns, in the order the batch binds them.
 ///
 /// Each pairs the name the row column takes in the `AS d(…)` alias with the
 /// array element type its `UNNEST` argument casts to. The `value_number` array
 /// is `numeric[]`, so exact decimals are bound without a text or binary64 hop.
-pub(super) fn staging_columns() -> [UnnestColumn; 14] {
+pub(super) fn staging_columns() -> [UnnestColumn; 15] {
     [
         UnnestColumn::new(CurrentAttributeValues::EntityKey, PostgresType::BigintArray),
         UnnestColumn::new(CurrentAttributeValues::AttributeNameKey, PostgresType::IntegerArray),
         UnnestColumn::new(CurrentAttributeValues::AttributeKind, PostgresType::SmallintArray),
         UnnestColumn::new(CurrentAttributeValues::ValueKind, PostgresType::SmallintArray),
         UnnestColumn::new(CurrentAttributeValues::ValueDateTime, PostgresType::TimestamptzArray),
+        UnnestColumn::new(CurrentAttributeValues::ExpiresAt, PostgresType::TimestamptzArray),
         UnnestColumn::new(CurrentAttributeValues::UnitCodeId, PostgresType::SmallintArray),
         UnnestColumn::new(CurrentAttributeValues::ValueBoolean, PostgresType::BooleanArray),
         UnnestColumn::new(CurrentAttributeValues::DatasetId, PostgresType::TextArray),
