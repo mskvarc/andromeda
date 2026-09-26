@@ -91,7 +91,9 @@ async fn dist_http_chain_forward_appends_broker_host_alias_to_via() {
     let to_mock = retrieval_source(&middle_reg, &mock.url(""), &entity_id, &vtype, "inclusive");
     assert_status(&middle.client().create_registration(&to_mock).await.expect("register mock on middle"), 201);
     // Front broker A forwards to the real middle broker B.
-    let to_middle = retrieval_source(&front_reg, middle.peer_url(), &entity_id, &vtype, "inclusive");
+    let mut to_middle = retrieval_source(&front_reg, middle.peer_url(), &entity_id, &vtype, "inclusive");
+    // Clause 4.14: the middle broker is contacted in the registration's tenant.
+    to_middle["tenant"] = json!(topology.tenant());
     assert_status(&front.client().create_registration(&to_middle).await.expect("register middle on front"), 201);
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 

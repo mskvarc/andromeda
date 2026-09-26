@@ -14,7 +14,7 @@ pub enum NotificationEvents {
     /// Table name: `notification_events`
     Table,
     /// Surrogate key referenced by every delivery that answers the event
-    Id,
+    EventKey,
     /// Instant the event was written, the retention clock reads
     CreatedAt,
     /// Identity of the write that produced the event
@@ -26,7 +26,7 @@ pub enum NotificationEvents {
     /// Entity whose change the event records
     EntityId,
     /// Dictionary keys of the attributes the change touched
-    ChangedAttributeNameIds,
+    ChangedAttributeNameKeys,
     /// Dataset discriminator of an attribute-level event
     ChangedDatasetId,
     /// Entity state after the change
@@ -41,9 +41,9 @@ pub enum NotificationDeliveries {
     /// Table name: `notification_deliveries`
     Table,
     /// Delivery surrogate key
-    Id,
+    DeliveryKey,
     /// Event the delivery answers
-    EventId,
+    EventKey,
     /// External key of the subscription the delivery is owed to
     SubscriptionKey,
     /// Number of attempts made so far
@@ -73,13 +73,13 @@ mod tests {
     #[test]
     fn notification_events_table_and_columns() {
         assert_eq!(NotificationEvents::Table.to_string(), "notification_events");
-        assert_eq!(NotificationEvents::Id.to_string(), "id");
+        assert_eq!(NotificationEvents::EventKey.to_string(), "event_key");
         assert_eq!(NotificationEvents::CreatedAt.to_string(), "created_at");
         assert_eq!(NotificationEvents::WriteId.to_string(), "write_id");
         assert_eq!(NotificationEvents::EventOrdinal.to_string(), "event_ordinal");
         assert_eq!(NotificationEvents::Trigger.to_string(), "trigger");
         assert_eq!(NotificationEvents::EntityId.to_string(), "entity_id");
-        assert_eq!(NotificationEvents::ChangedAttributeNameIds.to_string(), "changed_attribute_name_ids");
+        assert_eq!(NotificationEvents::ChangedAttributeNameKeys.to_string(), "changed_attribute_name_keys");
         assert_eq!(NotificationEvents::ChangedDatasetId.to_string(), "changed_dataset_id");
         assert_eq!(NotificationEvents::EntitySnapshot.to_string(), "entity_snapshot");
         assert_eq!(NotificationEvents::PreviousSnapshot.to_string(), "previous_snapshot");
@@ -88,8 +88,8 @@ mod tests {
     #[test]
     fn notification_deliveries_table_and_columns() {
         assert_eq!(NotificationDeliveries::Table.to_string(), "notification_deliveries");
-        assert_eq!(NotificationDeliveries::Id.to_string(), "id");
-        assert_eq!(NotificationDeliveries::EventId.to_string(), "event_id");
+        assert_eq!(NotificationDeliveries::DeliveryKey.to_string(), "delivery_key");
+        assert_eq!(NotificationDeliveries::EventKey.to_string(), "event_key");
         assert_eq!(NotificationDeliveries::SubscriptionKey.to_string(), "subscription_key");
         assert_eq!(NotificationDeliveries::AttemptCount.to_string(), "attempt_count");
         assert_eq!(NotificationDeliveries::NextAttemptAt.to_string(), "next_attempt_at");

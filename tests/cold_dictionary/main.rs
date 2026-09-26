@@ -103,8 +103,8 @@ async fn cold_dictionary_concurrent_cold_mints_commit_without_a_foreign_key_viol
 
     let orphans: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM temporal_attribute_streams s \
-         LEFT JOIN attribute_names n ON s.attribute_name_id = n.id \
-         WHERE n.id IS NULL",
+         LEFT JOIN attribute_names n ON s.attribute_name_key = n.attribute_name_key \
+         WHERE n.attribute_name_key IS NULL",
     )
     .fetch_one(scope.database_pool())
     .await
@@ -185,7 +185,7 @@ async fn cold_dictionary_a_recreated_tenant_schema_refreshes_the_name_cache() {
     }
 
     let admin = PgPool::connect(&database_base()).await.expect("admin pool");
-    let database: String = sqlx::query_scalar("SELECT db_name FROM tenants WHERE name = $1")
+    let database: String = sqlx::query_scalar("SELECT database_name FROM tenants WHERE name = $1")
         .bind(&tenant_raw)
         .fetch_one(&admin)
         .await

@@ -33,11 +33,11 @@ const INVARIANTS: &[Invariant] = &[
     },
     Invariant {
         description: "streams whose temporal entity no longer exists",
-        count: "SELECT COUNT(*) FROM temporal_attribute_streams s WHERE NOT EXISTS (SELECT 1 FROM temporal_entities te WHERE te.entity_key = s.temporal_entity_key)",
+        count: "SELECT COUNT(*) FROM temporal_attribute_streams s WHERE NOT EXISTS (SELECT 1 FROM temporal_entities te WHERE te.temporal_entity_key = s.temporal_entity_key)",
     },
     Invariant {
         description: "scope history rows whose temporal entity no longer exists",
-        count: "SELECT COUNT(*) FROM scope_history sh WHERE NOT EXISTS (SELECT 1 FROM temporal_entities te WHERE te.entity_key = sh.temporal_entity_key)",
+        count: "SELECT COUNT(*) FROM scope_history sh WHERE NOT EXISTS (SELECT 1 FROM temporal_entities te WHERE te.temporal_entity_key = sh.temporal_entity_key)",
     },
     Invariant {
         description: "current projection rows whose entity no longer exists",
@@ -61,25 +61,25 @@ const INVARIANTS: &[Invariant] = &[
     },
     Invariant {
         description: "search rows naming a type key that does not exist",
-        count: "SELECT COUNT(*) FROM entity_search s CROSS JOIN LATERAL unnest(s.type_ids) AS declared(key) WHERE NOT EXISTS (SELECT 1 FROM entity_type_names n WHERE n.id = declared.key)",
+        count: "SELECT COUNT(*) FROM entity_search s CROSS JOIN LATERAL unnest(s.entity_type_name_keys) AS declared(key) WHERE NOT EXISTS (SELECT 1 FROM entity_type_names n WHERE n.entity_type_name_key = declared.key)",
     },
     Invariant {
         description: "search rows naming an attribute key that does not exist",
-        count: "SELECT COUNT(*) FROM entity_search s CROSS JOIN LATERAL unnest(s.attribute_name_ids) AS declared(key) WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.id = declared.key)",
+        count: "SELECT COUNT(*) FROM entity_search s CROSS JOIN LATERAL unnest(s.attribute_name_keys) AS declared(key) WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =declared.key)",
     },
     Invariant {
         description: "streams naming a dictionary key that does not exist",
-        count: "SELECT COUNT(*) FROM temporal_attribute_streams s WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.id = s.attribute_name_id)",
+        count: "SELECT COUNT(*) FROM temporal_attribute_streams s WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =s.attribute_name_key)",
     },
     Invariant {
         description: "current projection rows naming a dictionary key that does not exist",
-        count: "SELECT COUNT(*) FROM current_attribute_values cav WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.id = cav.attribute_name_id)",
+        count: "SELECT COUNT(*) FROM current_attribute_values cav WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =cav.attribute_name_key)",
     },
     Invariant {
         description: "routing projection rows naming a dictionary key that does not exist (the wildcard sentinel 0 names none)",
         count: "SELECT COUNT(*) FROM registration_information ri \
-                CROSS JOIN LATERAL unnest(ri.property_name_ids || ri.relationship_name_ids) AS declared(key) \
-                WHERE declared.key <> 0 AND NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.id = declared.key)",
+                CROSS JOIN LATERAL unnest(ri.property_name_keys || ri.relationship_name_keys) AS declared(key) \
+                WHERE declared.key <> 0 AND NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =declared.key)",
     },
     Invariant {
         description: "registrations without a routing row (an unconstrained registration has its wildcard row)",
@@ -100,7 +100,7 @@ const INVARIANTS: &[Invariant] = &[
     },
     Invariant {
         description: "history rows populating neither instance identity column exactly once",
-        count: "SELECT COUNT(*) FROM attribute_history WHERE (generated_instance_uuid IS NULL) = (verbatim_instance_id IS NULL)",
+        count: "SELECT COUNT(*) FROM attribute_history WHERE (generated_instance_id IS NULL) = (verbatim_instance_id IS NULL)",
     },
 ];
 
@@ -270,7 +270,7 @@ async fn an_invariant_violation_is_actually_counted_rather_than_silently_passing
 
     sqlx::query(
         "INSERT INTO attribute_history \
-         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, generated_instance_uuid, value_number) \
+         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, generated_instance_id, value_number) \
          VALUES (now(), $1, 9223372036854775807, 0, 1, 1, gen_random_uuid(), 1::numeric)",
     )
     .bind(write_id)

@@ -30,7 +30,7 @@ struct ProbeGrain {
     /// Surrogate key of the bare Entity row.
     entity_key: i64,
     /// Dictionary identifier of the probed attribute.
-    attribute_name_id: i32,
+    attribute_name_key: i32,
 }
 
 impl ProbeGrain {
@@ -41,8 +41,11 @@ impl ProbeGrain {
             .fetch_one(&mut **transaction)
             .await
             .expect("the entity row must be writable");
-        let attribute_name_id = insert_attribute_name(transaction, attribute_iri).await;
-        ProbeGrain { entity_key, attribute_name_id }
+        let attribute_name_key = insert_attribute_name(transaction, attribute_iri).await;
+        ProbeGrain {
+            entity_key,
+            attribute_name_key,
+        }
     }
 
     /// The default-instance projection row holding one String value.
@@ -50,7 +53,7 @@ impl ProbeGrain {
         ProjectedAttributeRow {
             key: ProjectedAttributeKey {
                 entity_key: EntityKey::try_from(self.entity_key).expect("a positive surrogate key"),
-                attribute_name_id: self.attribute_name_id.into(),
+                attribute_name_key: self.attribute_name_key.into(),
                 dataset_id: None,
             },
             attribute_kind: AttributeKind::Property,

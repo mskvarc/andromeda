@@ -97,8 +97,11 @@ mod tests {
 
     #[test]
     fn array_position_renders_the_two_argument_function() {
-        let sql = render_expr(array_position(Expr::col(Alias::new("type_ids")), Expr::col(Alias::new("id"))));
-        assert_eq!(sql, "SELECT array_position(\"type_ids\", \"id\")");
+        let sql = render_expr(array_position(
+            Expr::col(Alias::new("entity_type_name_keys")),
+            Expr::col(Alias::new("entity_type_name_key")),
+        ));
+        assert_eq!(sql, "SELECT array_position(\"entity_type_name_keys\", \"entity_type_name_key\")");
     }
 
     #[test]
@@ -117,7 +120,7 @@ mod tests {
     #[test]
     fn equality_against_any_binds_the_array_once() {
         let (sql, values) = Query::select()
-            .column(Alias::new("id"))
+            .column(Alias::new("attribute_name_key"))
             .from(Alias::new("attribute_names"))
             .and_where(Expr::col(Alias::new("name")).eq(any(Expr::val(vec!["a".to_string(), "b".to_string()]))))
             .to_owned()

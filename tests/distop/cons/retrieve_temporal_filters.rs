@@ -68,6 +68,7 @@ async fn distop_retrieve_temporal_auxiliary_added_only_if_timeproperty_absent() 
 
     let registration_id = topology.id("registration:cons47");
     let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("auxiliary")
         .entity_id(&entity_id)
         .property_names(&["speed", "fuelLevel"])
@@ -134,6 +135,7 @@ async fn distop_retrieve_temporal_datasetid_filters_s1() {
     );
     let registration_id = topology.id("registration:cons49");
     let registration = CsrBuilder::new(&registration_id, holder.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
@@ -259,6 +261,7 @@ async fn distop_retrieve_temporal_lastn_limits_projected_instances() {
         let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons51-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+            .tenant(topology.tenant())
             .mode("inclusive")
             .entity_id(&entity_id)
             .property_names(&["speed"])

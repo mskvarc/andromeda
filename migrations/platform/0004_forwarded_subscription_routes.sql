@@ -1,34 +1,27 @@
 -- ============================================================================
--- 0004: Forwarded subscription routes (platform database)
+-- 0004: Forwarded subscription routes
 -- ============================================================================
--- Every subscription identifier this broker mints and hands to a peer -- the
--- companion registration subscription of a local subscription, and each
--- reduced copy placed at a context source (clause 5.8.1.4) -- mapped to the
--- tenant that owns it. An inbound notification names the minted identifier
--- and carries, at most, the peer's own tenant (clause 6.3.14), so this table
--- is how the receiver finds the tenant database to continue in.
+-- Spec: ETSI GS CIM 009 v1.9.1 clauses 5.8.1.4, 6.3.14
 --
--- `tenant_id` is the `tenants(id)` surrogate, the unnamed default tenant
--- included, and is cascade-deleted with the tenant so a removed tenant leaves
--- no route pointing at a database that no longer exists.
--- `idx_forwarded_subscription_routes_tenant` backs that cascade.
---
--- `minted_subscription_id` is bounded at 1024 UTF-8 octets, the identifier
--- bound (`IDENTIFIER_BYTE_LIMIT` in `andromeda-ngsi-ld-lexicon`) a
--- subscription id is parsed under, well inside the 2704 bytes its primary-key
--- btree admits.
+-- Every subscription identifier this broker mints and hands to a peer, mapped
+-- to the tenant that owns it: the companion registration subscription of a
+-- local subscription, and each reduced copy placed at a context source
+-- (clause 5.8.1.4). An inbound notification names only the minted identifier
+-- and, at most, the peer's own tenant (clause 6.3.14), so this table is how
+-- the receiving broker finds the tenant database to continue in. The unnamed
+-- default tenant has routes like any other.
 -- ============================================================================
 
 CREATE TABLE forwarded_subscription_routes (
-    tenant_id BIGINT NOT NULL,
+    tenant_key BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    minted_subscription_id TEXT COLLATE "C" NOT NULL,
+    minted_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     CONSTRAINT pk_forwarded_subscription_routes PRIMARY KEY (minted_subscription_id),
-    CONSTRAINT fk_forwarded_subscription_routes_tenant FOREIGN KEY (tenant_id)
-        REFERENCES tenants(id) ON DELETE CASCADE,
+    CONSTRAINT fk_forwarded_subscription_routes_tenant FOREIGN KEY (tenant_key)
+        REFERENCES tenants(tenant_key) ON DELETE CASCADE,
     CONSTRAINT chk_forwarded_subscription_routes_minted_id_length
         CHECK (octet_length(minted_subscription_id) <= 1024)
 );
 
 CREATE INDEX idx_forwarded_subscription_routes_tenant
-    ON forwarded_subscription_routes (tenant_id);
+    ON forwarded_subscription_routes (tenant_key);

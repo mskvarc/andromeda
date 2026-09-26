@@ -6,7 +6,7 @@
 //! condition written against [`probe_column`] composes into either without
 //! knowing which.
 
-use crate::{attribute_name_id::AttributeNameId, entity_row_refs::EntityRowRefs};
+use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs};
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::literal::int_literal;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Iden, Query, SimpleExpr};
@@ -25,11 +25,11 @@ pub fn probe_column(column: CurrentAttributeValues) -> SimpleExpr {
 /// The `EXISTS` probe that answers presence alone: a row for this attribute
 /// under the enclosing statement's entity.
 ///
-/// The probe reads the leading `(entity_key, attribute_name_id)` columns of the
+/// The probe reads the leading `(entity_key, attribute_name_key)` columns of the
 /// clause 4.5.5 grain constraint, so it is an index-only lookup on the same
 /// index the write path conflicts against.
 #[must_use]
-pub fn attribute_row_exists(id: AttributeNameId, rows: &EntityRowRefs) -> Condition {
+pub fn attribute_row_exists(id: AttributeNameKey, rows: &EntityRowRefs) -> Condition {
     exists_on_projection(id, Condition::all(), rows)
 }
 
@@ -41,12 +41,12 @@ pub fn attribute_row_exists(id: AttributeNameId, rows: &EntityRowRefs) -> Condit
 /// its dictionary key binds ahead of the value's operands, and the correlation
 /// is added last so it binds nothing after them.
 #[must_use]
-pub fn exists_on_projection(id: AttributeNameId, value: Condition, rows: &EntityRowRefs) -> Condition {
+pub fn exists_on_projection(id: AttributeNameKey, value: Condition, rows: &EntityRowRefs) -> Condition {
     let mut probe = Query::select();
     probe
         .expr(int_literal(1))
         .from(rows.table(CurrentAttributeValues::Table).alias(Cav))
-        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameId)).eq(id.get()))
+        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameKey)).eq(id.get()))
         .cond_where(value)
         .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(rows.entity_key_column()));
     Condition::all().add(SeaExpr::exists(probe))
@@ -55,7 +55,7 @@ pub fn exists_on_projection(id: AttributeNameId, value: Condition, rows: &Entity
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_id::AttributeNameId,
+        attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
         q_predicate::projection_probe::{attribute_row_exists, exists_on_projection, probe_column},
     };
@@ -76,10 +76,10 @@ mod tests {
     #[test]
     fn a_presence_probe_tests_the_attribute_key_and_the_correlation_and_nothing_else() {
         pretty_assertions::assert_eq!(
-            render(attribute_row_exists(AttributeNameId::from(7), &EntityRowRefs::unaliased(None))),
+            render(attribute_row_exists(AttributeNameKey::from(7), &EntityRowRefs::unaliased(None))),
             concat!(
                 r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_id" = $1 AND "cav"."entity_key" = "entities"."entity_key")"#,
+                r#"WHERE "cav"."attribute_name_key" = $1 AND "cav"."entity_key" = "entities"."entity_key")"#,
             )
         );
     }
@@ -89,9 +89,9 @@ mod tests {
     #[test]
     fn a_value_probe_places_its_condition_between_the_attribute_key_and_the_correlation() {
         let value = Condition::all().add(probe_column(CurrentAttributeValues::ValueString).eq("red"));
-        let sql = render(exists_on_projection(AttributeNameId::from(7), value, &EntityRowRefs::unaliased(None)));
+        let sql = render(exists_on_projection(AttributeNameKey::from(7), value, &EntityRowRefs::unaliased(None)));
         assert!(
-            sql.contains(r#""cav"."attribute_name_id" = $1 AND "cav"."value_string" = $2 AND "cav"."entity_key""#),
+            sql.contains(r#""cav"."attribute_name_key" = $1 AND "cav"."value_string" = $2 AND "cav"."entity_key""#),
             "{sql}"
         );
     }

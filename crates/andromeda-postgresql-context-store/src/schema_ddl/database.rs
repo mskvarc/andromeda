@@ -9,7 +9,7 @@
 /// The name is embedded as a double-quoted identifier with any embedded quote
 /// removed, because an identifier cannot be a bound parameter. Callers pass a
 /// name already constrained to the sanitised, length-bounded form
-/// [`crate::tenant_database::generate_db_name`] produces.
+/// [`crate::tenant_database::generate_database_name`] produces.
 #[must_use]
 pub fn create_database(name: &str) -> String {
     format!("CREATE DATABASE \"{}\"", name.replace('"', ""))

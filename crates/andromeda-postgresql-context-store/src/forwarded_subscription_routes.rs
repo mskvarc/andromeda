@@ -1,7 +1,7 @@
 //! The platform route from a minted subscription identifier to its tenant
 //! (clause 5.8.1.4), kept in the main database beside the tenant registry.
 //!
-//! A route references the tenant by its `tenants(id)` surrogate, so removing a
+//! A route references the tenant by its `tenants(tenant_key)` surrogate, so removing a
 //! tenant removes its routes; the name is resolved against the registry when a
 //! route is written and read back through it when a route is followed.
 
@@ -55,22 +55,22 @@ fn is_tenant(tenant: &TenantRef) -> SimpleExpr {
 /// tenant the registry does not hold resolves to `NULL`, which the column
 /// refuses.
 fn register_statement(minted: &Uri, tenant: &TenantRef) -> Result<InsertStatement, SeaQueryError> {
-    let tenant_id = Query::select()
-        .column((Tenants::Table, Tenants::Id))
+    let tenant_key = Query::select()
+        .column((Tenants::Table, Tenants::TenantKey))
         .from(Tenants::Table)
         .and_where(is_tenant(tenant))
         .to_owned();
     let mut insert = Query::insert();
     insert
         .into_table(ForwardedSubscriptionRoutes::Table)
-        .columns([ForwardedSubscriptionRoutes::MintedSubscriptionId, ForwardedSubscriptionRoutes::TenantId])
+        .columns([ForwardedSubscriptionRoutes::MintedSubscriptionId, ForwardedSubscriptionRoutes::TenantKey])
         .values([
             Expr::val(minted.as_str()),
-            SimpleExpr::SubQuery(None, Box::new(tenant_id.into_sub_query_statement())),
+            SimpleExpr::SubQuery(None, Box::new(tenant_key.into_sub_query_statement())),
         ])?
         .on_conflict(
             OnConflict::column(ForwardedSubscriptionRoutes::MintedSubscriptionId)
-                .update_column(ForwardedSubscriptionRoutes::TenantId)
+                .update_column(ForwardedSubscriptionRoutes::TenantKey)
                 .to_owned(),
         );
     Ok(insert)
@@ -84,7 +84,7 @@ fn tenant_of_statement(minted: &Uri) -> SelectStatement {
         .join(
             JoinType::Join,
             Tenants::Table,
-            Expr::col((Tenants::Table, Tenants::Id)).equals((ForwardedSubscriptionRoutes::Table, ForwardedSubscriptionRoutes::TenantId)),
+            Expr::col((Tenants::Table, Tenants::TenantKey)).equals((ForwardedSubscriptionRoutes::Table, ForwardedSubscriptionRoutes::TenantKey)),
         )
         .and_where(Expr::col((ForwardedSubscriptionRoutes::Table, ForwardedSubscriptionRoutes::MintedSubscriptionId)).eq(minted.as_str()))
         .to_owned()
@@ -195,7 +195,7 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"INSERT INTO "forwarded_subscription_routes" ("minted_subscription_id", "tenant_id") VALUES ('urn:ngsi-ld:Subscription:forwarded:1', (SELECT "tenants"."id" FROM "tenants" WHERE "tenants"."name" = 'acme' AND "tenants"."is_unnamed_default" = FALSE)) ON CONFLICT ("minted_subscription_id") DO UPDATE SET "tenant_id" = "excluded"."tenant_id""#
+            r#"INSERT INTO "forwarded_subscription_routes" ("minted_subscription_id", "tenant_key") VALUES ('urn:ngsi-ld:Subscription:forwarded:1', (SELECT "tenants"."tenant_key" FROM "tenants" WHERE "tenants"."name" = 'acme' AND "tenants"."is_unnamed_default" = FALSE)) ON CONFLICT ("minted_subscription_id") DO UPDATE SET "tenant_key" = "excluded"."tenant_key""#
         );
     }
 
@@ -205,7 +205,7 @@ mod tests {
             .expect("the fixed insert builds")
             .to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#"(SELECT "tenants"."id" FROM "tenants" WHERE "tenants"."is_unnamed_default" = TRUE)"#),
+            sql.contains(r#"(SELECT "tenants"."tenant_key" FROM "tenants" WHERE "tenants"."is_unnamed_default" = TRUE)"#),
             "{sql}"
         );
     }
@@ -215,7 +215,7 @@ mod tests {
         let sql = tenant_of_statement(&minted()).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"SELECT "tenants"."name" FROM "forwarded_subscription_routes" JOIN "tenants" ON "tenants"."id" = "forwarded_subscription_routes"."tenant_id" WHERE "forwarded_subscription_routes"."minted_subscription_id" = 'urn:ngsi-ld:Subscription:forwarded:1'"#
+            r#"SELECT "tenants"."name" FROM "forwarded_subscription_routes" JOIN "tenants" ON "tenants"."tenant_key" = "forwarded_subscription_routes"."tenant_key" WHERE "forwarded_subscription_routes"."minted_subscription_id" = 'urn:ngsi-ld:Subscription:forwarded:1'"#
         );
     }
 }

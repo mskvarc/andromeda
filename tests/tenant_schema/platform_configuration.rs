@@ -32,7 +32,7 @@ async fn concurrent_brokers_configuring_a_fresh_platform_database_all_succeed() 
         .expect("scratch database");
 
     // Remove the setting row, so the database is as fresh as an operator-created one.
-    let admin = base.with_db_name(&TenantDatabaseName::from("postgres".to_owned()));
+    let admin = base.with_database_name(&TenantDatabaseName::from("postgres".to_owned()));
     let mut connection = PgConnection::connect(admin.as_str()).await.expect("administrative connection");
     sqlx::query(sqlx::AssertSqlSafe(format!("ALTER DATABASE {CONFIGURATION_DATABASE} RESET ALL")))
         .execute(&mut connection)
@@ -41,7 +41,7 @@ async fn concurrent_brokers_configuring_a_fresh_platform_database_all_succeed() 
 
     let pool = PgPoolOptions::new()
         .max_connections(u32::try_from(CONCURRENT_BROKERS).expect("broker count fits"))
-        .connect(base.with_db_name(&name).as_str())
+        .connect(base.with_database_name(&name).as_str())
         .await
         .expect("scratch database connection");
     let outcomes =

@@ -78,6 +78,7 @@ async fn fed_registration_lifecycle_controls_domain_routing() {
     );
     let registration_id = topology.id("registration:madrid-lifecycle");
     let csr = registration(
+        topology.tenant(),
         &registration_id,
         madrid.peer_url(),
         &btype,
@@ -144,6 +145,7 @@ async fn fed_coarse_scope_selects_matching_domain() {
             201,
         );
         let csr = registration(
+            topology.tenant(),
             &topology.id(&format!("registration:{role:?}")),
             domain.peer_url(),
             &btype,
@@ -174,7 +176,7 @@ async fn fed_geographic_coverage_selects_matching_domain() {
     let id = topology.id("Building:geo-madrid");
     let located = json!({"id": id, "type": btype, "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [ -3.7, 40.4 ]}}, "@context": COMPOUND_CONTEXT.as_str()});
     assert_status(&madrid.client().post_entity(&located).with_ld_json().send().await.expect("geo entity"), 201);
-    let csr = json!({"id": topology.id("registration:geo-madrid"), "type": "ContextSourceRegistration", "endpoint": madrid.peer_url(), "information": [{"entities": [{"type": btype}]}], "location": {"type": "Point", "coordinates": [-3.7,40.4]}, "operations": ["queryEntity"], "@context": COMPOUND_CONTEXT.as_str()});
+    let csr = json!({"id": topology.id("registration:geo-madrid"), "type": "ContextSourceRegistration", "endpoint": madrid.peer_url(), "tenant": topology.tenant(), "information": [{"entities": [{"type": btype}]}], "location": {"type": "Point", "coordinates": [-3.7,40.4]}, "operations": ["queryEntity"], "@context": COMPOUND_CONTEXT.as_str()});
     assert_status(&hub.client().create_registration(&csr).await.expect("geo registration"), 201);
     let response = hub
         .client()
@@ -211,6 +213,7 @@ async fn fed_query_merges_multi_domain_entities_and_dataset_instances() {
     assert_status(&berlin.client().post_entity(&second).with_ld_json().send().await.expect("second fragment"), 201);
     for (domain, role) in [(madrid, "madrid"), (berlin, "berlin")] {
         let csr = registration(
+            topology.tenant(),
             &topology.id(&format!("registration:{role}")),
             domain.peer_url(),
             &btype,
@@ -253,6 +256,7 @@ async fn fed_query_is_transparent_to_consumer() {
         201,
     );
     let csr = registration(
+        topology.tenant(),
         &topology.id("registration:transparent"),
         madrid.peer_url(),
         &btype,
@@ -290,6 +294,7 @@ async fn fed_centralized_domain_serves_local_state() {
         );
     }
     let csr = registration(
+        topology.tenant(),
         &topology.id("registration:centralized"),
         madrid.peer_url(),
         &btype,
@@ -330,6 +335,7 @@ async fn fed_distributed_domain_resolves_downstream_source() {
         &nordic
             .client()
             .create_registration(&registration_for_entity(
+                topology.tenant(),
                 &topology.id("registration:nordic-north"),
                 north.peer_url(),
                 &id,
@@ -344,6 +350,7 @@ async fn fed_distributed_domain_resolves_downstream_source() {
     assert_status(
         &hub.client()
             .create_registration(&registration_for_entity(
+                topology.tenant(),
                 &topology.id("registration:hub-nordic"),
                 nordic.peer_url(),
                 &id,
@@ -387,6 +394,7 @@ async fn fed_nested_federation_excludes_back_edge() {
         &nordic
             .client()
             .create_registration(&registration(
+                topology.tenant(),
                 &topology.id("registration:nested-north"),
                 north.peer_url(),
                 &btype,
@@ -402,6 +410,7 @@ async fn fed_nested_federation_excludes_back_edge() {
         &north
             .client()
             .create_registration(&registration(
+                topology.tenant(),
                 &topology.id("registration:north-hub-back-edge"),
                 hub.peer_url(),
                 &btype,
@@ -416,6 +425,7 @@ async fn fed_nested_federation_excludes_back_edge() {
     assert_status(
         &hub.client()
             .create_registration(&registration(
+                topology.tenant(),
                 &topology.id("registration:hub-nordic"),
                 nordic.peer_url(),
                 &btype,
@@ -455,6 +465,7 @@ async fn fed_direct_discovery_contacts_exact_domain_endpoint() {
         201,
     );
     let csr = registration(
+        topology.tenant(),
         &topology.id("registration:direct-discovery"),
         madrid.peer_url(),
         &btype,
@@ -506,6 +517,7 @@ async fn fed_single_access_point_combines_local_and_three_domains() {
         assert_status(
             &hub.client()
                 .create_registration(&registration(
+                    topology.tenant(),
                     &topology.id(&format!("registration:{name}")),
                     domain.peer_url(),
                     &btype,
@@ -554,6 +566,7 @@ async fn fed_split_entity_filters_after_cross_domain_merge() {
         assert_status(
             &hub.client()
                 .create_registration(&registration(
+                    topology.tenant(),
                     &topology.id(&format!("registration:{name}")),
                     domain.peer_url(),
                     &btype,
@@ -600,6 +613,7 @@ async fn fed_partial_read_failure_preserves_healthy_domain_results() {
     assert_status(
         &hub.client()
             .create_registration(&registration(
+                topology.tenant(),
                 &topology.id("registration:healthy"),
                 madrid.peer_url(),
                 &btype,
@@ -648,6 +662,7 @@ async fn fed_entity_map_stabilizes_cross_domain_pagination() {
         assert_status(
             &hub.client()
                 .create_registration(&registration(
+                    topology.tenant(),
                     &topology.id(&format!("registration:{name}")),
                     domain.peer_url(),
                     &btype,
@@ -691,6 +706,7 @@ async fn fed_available_types_and_attributes_union_domain_metadata() {
         assert_status(
             &hub.client()
                 .create_registration(&registration(
+                    topology.tenant(),
                     &topology.id(&format!("registration:{entity_type}")),
                     domain.peer_url(),
                     &entity_type,

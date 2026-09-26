@@ -45,8 +45,8 @@ const STAGE_ENTITIES_FIELD_COUNT: i16 = 11;
 const CREATE_STAGE_ENTITIES_SQL: &str = r"
 CREATE TEMP TABLE stage_entities (
     id text,
-    type_ids_json jsonb,
-    attribute_name_ids_json jsonb,
+    entity_type_name_keys_json jsonb,
+    attribute_name_keys_json jsonb,
     scope_paths_json jsonb,
     payload jsonb,
     loc bytea,
@@ -59,7 +59,7 @@ CREATE TEMP TABLE stage_entities (
 ";
 
 /// Binary COPY statement targeting the staging table.
-const COPY_INTO_STAGE_SQL: &str = "COPY stage_entities (id, type_ids_json, attribute_name_ids_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at) FROM STDIN WITH (FORMAT binary)";
+const COPY_INTO_STAGE_SQL: &str = "COPY stage_entities (id, entity_type_name_keys_json, attribute_name_keys_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at) FROM STDIN WITH (FORMAT binary)";
 
 /// Materialise staged rows into the three entity relations of the target
 /// branch: the same projection and the same three inserts the `UNNEST` path
@@ -73,8 +73,8 @@ fn insert_from_stage_sql(schema: &str) -> String {
 WITH proj AS (
     SELECT
         s.id,
-        ARRAY(SELECT jsonb_array_elements_text(s.type_ids_json)::integer) AS type_ids,
-        ARRAY(SELECT jsonb_array_elements_text(s.attribute_name_ids_json)::integer) AS attribute_name_ids,
+        ARRAY(SELECT jsonb_array_elements_text(s.entity_type_name_keys_json)::integer) AS entity_type_name_keys,
+        ARRAY(SELECT jsonb_array_elements_text(s.attribute_name_keys_json)::integer) AS attribute_name_keys,
         ARRAY(SELECT jsonb_array_elements_text(s.scope_paths_json)::ltree) AS scope_paths,
         s.payload,
         CASE WHEN s.loc IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(s.loc)) ELSE NULL END AS location,
@@ -96,8 +96,8 @@ docs AS (
     SELECT ins.entity_key, proj.payload FROM ins JOIN proj ON proj.id = ins.id
 ),
 srch AS (
-    INSERT INTO {schema}entity_search (entity_key, location_expires_at, type_ids, attribute_name_ids, scope_paths, location, observation_space, operation_space)
-    SELECT ins.entity_key, proj.location_expires_at, proj.type_ids, proj.attribute_name_ids, proj.scope_paths, proj.location, proj.observation_space, proj.operation_space
+    INSERT INTO {schema}entity_search (entity_key, location_expires_at, entity_type_name_keys, attribute_name_keys, scope_paths, location, observation_space, operation_space)
+    SELECT ins.entity_key, proj.location_expires_at, proj.entity_type_name_keys, proj.attribute_name_keys, proj.scope_paths, proj.location, proj.observation_space, proj.operation_space
     FROM ins JOIN proj ON proj.id = ins.id
 )
 SELECT entity_key, id FROM ins
@@ -162,8 +162,8 @@ fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Result<Vec<u8
     for index in 0..columns.ids.len() {
         write_field_count(&mut buf, STAGE_ENTITIES_FIELD_COUNT);
         write_text(&mut buf, columns.ids[index].as_str())?;
-        write_jsonb(&mut buf, &columns.type_ids_json[index])?;
-        write_jsonb(&mut buf, &columns.attribute_name_ids_json[index])?;
+        write_jsonb(&mut buf, &columns.entity_type_name_keys_json[index])?;
+        write_jsonb(&mut buf, &columns.attribute_name_keys_json[index])?;
         write_jsonb(&mut buf, &columns.scope_paths_json[index])?;
         write_jsonb_text(&mut buf, &columns.payload_json[index])?;
         write_bytea_opt(&mut buf, columns.locations[index].as_deref())?;
@@ -195,10 +195,10 @@ mod tests {
         let mut columns = PreparedEntityColumns::with_capacity(2);
         columns.ids.push("urn:ngsi-ld:Building:1".parse().expect("entity URI"));
         columns.ids.push("urn:ngsi-ld:Building:2".parse().expect("entity URI"));
-        columns.type_ids_json.push(serde_json::json!([7]));
-        columns.type_ids_json.push(serde_json::json!([7]));
-        columns.attribute_name_ids_json.push(serde_json::json!([3, 4]));
-        columns.attribute_name_ids_json.push(serde_json::json!([]));
+        columns.entity_type_name_keys_json.push(serde_json::json!([7]));
+        columns.entity_type_name_keys_json.push(serde_json::json!([7]));
+        columns.attribute_name_keys_json.push(serde_json::json!([3, 4]));
+        columns.attribute_name_keys_json.push(serde_json::json!([]));
         columns.scope_paths_json.push(serde_json::json!(["root.a"]));
         columns.scope_paths_json.push(serde_json::json!([]));
         columns
@@ -253,8 +253,8 @@ mod tests {
     fn the_staged_columns_and_the_copy_column_list_agree() {
         for column in [
             "id",
-            "type_ids_json",
-            "attribute_name_ids_json",
+            "entity_type_name_keys_json",
+            "attribute_name_keys_json",
             "scope_paths_json",
             "payload",
             "loc",
@@ -270,7 +270,7 @@ mod tests {
         let live = insert_from_stage_sql("");
         assert!(live.contains("INSERT INTO entities (id, expires_at, min_attribute_expires_at)"));
         assert!(live.contains("INSERT INTO entity_documents (entity_key, payload)"));
-        assert!(live.contains("INSERT INTO entity_search (entity_key, location_expires_at, type_ids, attribute_name_ids"));
+        assert!(live.contains("INSERT INTO entity_search (entity_key, location_expires_at, entity_type_name_keys, attribute_name_keys"));
         assert!(live.contains("ON CONFLICT (id) DO NOTHING"));
     }
 

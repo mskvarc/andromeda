@@ -46,7 +46,7 @@ pub struct LeasedSideEffect {
     /// counter at this value rather than restarting it at zero, so a
     /// crash-retried delivery reproduces exactly the ordinals its first
     /// attempt would have produced.
-    pub consequence_base: WriteOrdinal,
+    pub base_ordinal: WriteOrdinal,
 }
 
 /// Draining the durable side-effect queue.

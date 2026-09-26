@@ -118,6 +118,7 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
     );
 
     let speed_registration = CsrBuilder::new(&topology.id("registration:split-speed"), speed_source.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .entity_id(&entity_id)
@@ -126,6 +127,7 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
         .build();
     assert_status(&front.client().create_registration(&speed_registration).await.expect("speed registration"), 201);
     let fuel_registration = CsrBuilder::new(&topology.id("registration:split-fuel"), fuel_source.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .entity_id(&entity_id)
@@ -173,6 +175,7 @@ async fn distop_entity_map_unitary_sequence_creates_and_caches_map() {
     );
 
     let registration = CsrBuilder::new(&topology.id("registration:unitary-map"), source.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryEntity"])

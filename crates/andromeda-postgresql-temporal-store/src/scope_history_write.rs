@@ -4,7 +4,7 @@ use crate::{
     error::TemporalStoreError,
     repo::TemporalRepository,
     scope_history_entry::ScopeHistoryEntry,
-    stored_instance_columns::{generated_instance_uuid, verbatim_instance_id},
+    stored_instance_columns::{generated_instance_id, verbatim_instance_id},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
@@ -57,7 +57,7 @@ enum Staged {
     /// Deletion instant, present only on a tombstone.
     DeletedAt,
     /// Broker-minted instance identifier.
-    GeneratedInstanceUuid,
+    GeneratedInstanceId,
     /// Instance identifier stored exactly as received.
     VerbatimInstanceId,
     /// Scope path in `ltree` label notation, absent on a tombstone.
@@ -91,7 +91,7 @@ impl TemporalRepository {
         let dedup_sql = scope_history_dedup_sql(target);
         sqlx::query(AssertSqlSafe(dedup_sql))
             .bind(&binds.entity_ids)
-            .bind(&binds.generated_instance_uuids)
+            .bind(&binds.generated_instance_ids)
             .bind(&binds.verbatim_instance_ids)
             .execute(&mut **tx)
             .await?;
@@ -106,7 +106,7 @@ impl TemporalRepository {
             .bind(&binds.created_ats)
             .bind(&binds.modified_ats)
             .bind(&binds.deleted_ats)
-            .bind(&binds.generated_instance_uuids)
+            .bind(&binds.generated_instance_ids)
             .bind(&binds.verbatim_instance_ids)
             .bind(&binds.scope_paths)
             .execute(&mut **tx)
@@ -136,7 +136,7 @@ struct ScopeHistoryBinds<'a> {
     /// Deletion instants, present only on tombstones.
     deleted_ats: Vec<Option<DateTime<Utc>>>,
     /// Broker-minted instance identifiers.
-    generated_instance_uuids: Vec<Option<Uuid>>,
+    generated_instance_ids: Vec<Option<Uuid>>,
     /// Instance identifiers stored exactly as received.
     verbatim_instance_ids: Vec<Option<&'a str>>,
     /// Scope paths in `ltree` label notation, absent on tombstones.
@@ -155,7 +155,7 @@ fn scope_history_binds(entries: &[ScopeHistoryEntry]) -> Result<ScopeHistoryBind
         created_ats: Vec::with_capacity(entries.len()),
         modified_ats: Vec::with_capacity(entries.len()),
         deleted_ats: Vec::with_capacity(entries.len()),
-        generated_instance_uuids: Vec::with_capacity(entries.len()),
+        generated_instance_ids: Vec::with_capacity(entries.len()),
         verbatim_instance_ids: Vec::with_capacity(entries.len()),
         scope_paths: Vec::with_capacity(entries.len()),
     };
@@ -175,7 +175,7 @@ fn scope_history_binds(entries: &[ScopeHistoryEntry]) -> Result<ScopeHistoryBind
         binds.created_ats.push(entry.axes.created_at);
         binds.modified_ats.push(entry.axes.modified_at);
         binds.deleted_ats.push(entry.value.deleted_at());
-        binds.generated_instance_uuids.push(generated_instance_uuid(&entry.instance));
+        binds.generated_instance_ids.push(generated_instance_id(&entry.instance));
         binds.verbatim_instance_ids.push(verbatim_instance_id(&entry.instance));
         binds.scope_paths.push(entry.value.path().map(scope_to_ltree));
     }
@@ -192,7 +192,7 @@ fn scope_history_binds(entries: &[ScopeHistoryEntry]) -> Result<ScopeHistoryBind
 fn scope_history_dedup_sql(target: &ContextTarget) -> String {
     let columns = [
         UnnestColumn::new(Staged::EntityId, PostgresType::TextArray),
-        UnnestColumn::new(Staged::GeneratedInstanceUuid, PostgresType::UuidArray),
+        UnnestColumn::new(Staged::GeneratedInstanceId, PostgresType::UuidArray),
         UnnestColumn::new(Staged::VerbatimInstanceId, PostgresType::TextArray),
     ];
     let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
@@ -207,10 +207,10 @@ fn scope_history_dedup_sql(target: &ContextTarget) -> String {
             Te,
             Expr::col((Te, TemporalEntities::Id)).equals((D, Staged::EntityId)),
         )
-        .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)).equals((Te, TemporalEntities::EntityKey)))
+        .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)).equals((Te, TemporalEntities::TemporalEntityKey)))
         .and_where(
-            SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::GeneratedInstanceUuid)))
-                .not_distinct_from(Expr::col((D, Staged::GeneratedInstanceUuid))),
+            SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::GeneratedInstanceId)))
+                .not_distinct_from(Expr::col((D, Staged::GeneratedInstanceId))),
         )
         .and_where(
             SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::VerbatimInstanceId))).not_distinct_from(Expr::col((D, Staged::VerbatimInstanceId))),
@@ -229,7 +229,7 @@ fn scope_history_dedup_sql(target: &ContextTarget) -> String {
 /// holding only the entity identifier does not read the catalogue first.
 ///
 /// The twelve staging arrays carry NULLs and bind through `sqlx`. The conflict
-/// target names the columns `uq_scope_history_write` covers, so a row replayed
+/// target names the columns `uq_scope_history_write_identity` covers, so a row replayed
 /// under its original write identity is a no-op rather than a duplicate.
 fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalStoreError> {
     let columns = [
@@ -242,7 +242,7 @@ fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalSt
         UnnestColumn::new(Staged::CreatedAt, PostgresType::TimestamptzArray),
         UnnestColumn::new(Staged::ModifiedAt, PostgresType::TimestamptzArray),
         UnnestColumn::new(Staged::DeletedAt, PostgresType::TimestamptzArray),
-        UnnestColumn::new(Staged::GeneratedInstanceUuid, PostgresType::UuidArray),
+        UnnestColumn::new(Staged::GeneratedInstanceId, PostgresType::UuidArray),
         UnnestColumn::new(Staged::VerbatimInstanceId, PostgresType::TextArray),
         UnnestColumn::new(Staged::ScopePath, PostgresType::TextArray),
     ];
@@ -251,7 +251,7 @@ fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalSt
     let mut select = Query::select();
     select
         .expr(Expr::col((D, Staged::RecordedAt)))
-        .expr(Expr::col((Te, TemporalEntities::EntityKey)))
+        .expr(Expr::col((Te, TemporalEntities::TemporalEntityKey)))
         .expr(Expr::col((D, Staged::WriteId)))
         .expr(Expr::col((D, Staged::WriteOrdinal)))
         .expr(Expr::col((D, Staged::ValueKind)))
@@ -259,7 +259,7 @@ fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalSt
         .expr(Expr::col((D, Staged::CreatedAt)))
         .expr(Expr::col((D, Staged::ModifiedAt)))
         .expr(Expr::col((D, Staged::DeletedAt)))
-        .expr(Expr::col((D, Staged::GeneratedInstanceUuid)))
+        .expr(Expr::col((D, Staged::GeneratedInstanceId)))
         .expr(Expr::col((D, Staged::VerbatimInstanceId)))
         .expr(cast(Expr::col((D, Staged::ScopePath)), PostgresType::Ltree))
         .from_function(call, D)
@@ -282,7 +282,7 @@ fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalSt
         ScopeHistory::CreatedAt,
         ScopeHistory::ModifiedAt,
         ScopeHistory::DeletedAt,
-        ScopeHistory::GeneratedInstanceUuid,
+        ScopeHistory::GeneratedInstanceId,
         ScopeHistory::VerbatimInstanceId,
         ScopeHistory::ScopePath,
     ]);
@@ -344,6 +344,6 @@ mod tests {
         let sql = scope_history_dedup_sql(&ContextTarget::Live);
         assert!(sql.contains(r#"DELETE FROM "scope_history" WHERE EXISTS"#), "{sql}");
         assert_eq!(sql.matches("IS NOT DISTINCT FROM").count(), 2, "{sql}");
-        assert!(sql.contains("AS d(entity_id, generated_instance_uuid, verbatim_instance_id)"), "{sql}");
+        assert!(sql.contains("AS d(entity_id, generated_instance_id, verbatim_instance_id)"), "{sql}");
     }
 }

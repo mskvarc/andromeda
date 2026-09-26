@@ -134,6 +134,30 @@ pub async fn connect_pool(endpoint: &DatabaseEndpoint) -> Result<PgPool, Databas
         .map_err(DatabaseIsolationError::from_sqlx)
 }
 
+/// How long a lazily opened harness connection stays idle before it is closed.
+const LAZY_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A bounded pool for `endpoint` that opens no connection until a statement
+/// needs one and closes connections soon after they fall idle.
+///
+/// A multi-broker topology keeps a pool per broker store for its whole test but
+/// uses it only around setup and teardown, so holding a connection open in
+/// between would take a slot of the server's `max_connections` for nothing.
+///
+/// # Errors
+///
+/// Returns [`DatabaseIsolationError::Sqlx`] when the endpoint is not a usable
+/// connection URL.
+pub fn connect_lazy_pool(endpoint: &DatabaseEndpoint) -> Result<PgPool, DatabaseIsolationError> {
+    PgPoolOptions::new()
+        .min_connections(0)
+        .max_connections(POOL_MAX_CONNECTIONS)
+        .acquire_timeout(POOL_ACQUIRE_TIMEOUT)
+        .idle_timeout(LAZY_POOL_IDLE_TIMEOUT)
+        .connect_lazy(endpoint.url().as_str())
+        .map_err(DatabaseIsolationError::from_sqlx)
+}
+
 /// Database connection or advisory-lock failure.
 #[derive(Debug, Error)]
 pub enum DatabaseIsolationError {

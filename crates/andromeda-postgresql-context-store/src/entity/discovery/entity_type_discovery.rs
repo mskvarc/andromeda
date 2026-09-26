@@ -9,7 +9,7 @@ use crate::{
     entity::{
         discovery::{
             aggregate_source::{AttrKey, D, attribute_container, keyset_after, search_with_documents},
-            type_dictionary::{N, join_type_names, type_name, unnest_type_ids},
+            type_dictionary::{N, join_type_names, type_name, unnest_entity_type_name_keys},
         },
         mapper::{stored_attribute_name, stored_type_name},
         repo::EntityRepository,
@@ -50,12 +50,12 @@ struct TypeIri;
 struct AttrKeys;
 
 /// Every dictionary type at least one entity carries, in name order:
-/// `SELECT n.name FROM entity_type_names n WHERE EXISTS (SELECT 1 FROM entity_search WHERE type_ids @> ARRAY(SELECT n.id::integer)) ORDER BY n.name`.
+/// `SELECT n.name FROM entity_type_names n WHERE EXISTS (SELECT 1 FROM entity_search WHERE entity_type_name_keys @> ARRAY(SELECT n.entity_type_name_key::integer)) ORDER BY n.name`.
 fn types_in_use_statement(target: &ContextTarget) -> SelectStatement {
     let mut carried = Query::select();
     carried.expr(Expr::val(1)).from(table_of(target, EntitySearch::Table)).and_where(array_contains(
-        Expr::col((EntitySearch::Table, EntitySearch::TypeIds)),
-        Expr::col((N, EntityTypeNames::Id)),
+        Expr::col((EntitySearch::Table, EntitySearch::EntityTypeNameKeys)),
+        Expr::col((N, EntityTypeNames::EntityTypeNameKey)),
         PostgresType::Integer,
     ));
     let mut statement = Query::select();
@@ -89,7 +89,7 @@ fn entity_type_summaries_statement(target: &ContextTarget, after: Option<&str>, 
         AttrKeys,
     );
     search_with_documents(&mut statement, target);
-    unnest_type_ids(&mut statement);
+    unnest_entity_type_name_keys(&mut statement);
     join_type_names(&mut statement)
         .join_lateral(JoinType::InnerJoin, keys, Ak, SimpleExpr::from(Expr::val(true)))
         .and_where(Expr::col((Ak, AttrKey)).not_like("@%"))
@@ -104,8 +104,8 @@ impl EntityRepository {
     /// Return all distinct entity type IRIs present in the store.
     ///
     /// Driven from the dictionary rather than by unnesting every entity's
-    /// `type_ids`: a type is reported when at least one entity carries its
-    /// key, which the `type_ids` GIN index answers per dictionary row.
+    /// `entity_type_name_keys`: a type is reported when at least one entity carries its
+    /// key, which the `entity_type_name_keys` GIN index answers per dictionary row.
     ///
     /// # Errors
     ///
@@ -124,13 +124,13 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the dictionary lookup for the type or
     /// the count fails.
     pub async fn count_by_type(&self, target: &ContextTarget, entity_type: &EntityTypeName) -> Result<i64, ContextStoreError> {
-        let Some(type_id) = self.type_id(entity_type).await? else {
+        let Some(type_key) = self.type_key(entity_type).await? else {
             return Ok(0);
         };
         let statement = Query::select()
             .expr(count_all())
             .from(table_of(target, EntitySearch::Table))
-            .and_where(array_contains_key(Expr::col(EntitySearch::TypeIds), type_id.get()))
+            .and_where(array_contains_key(Expr::col(EntitySearch::EntityTypeNameKeys), type_key.get()))
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(&self.pool).await?)
@@ -180,11 +180,11 @@ mod tests {
         );
         assert!(sql.contains(r#"GROUP BY "n"."name""#), "{sql}");
         assert!(
-            sql.contains(r#"INNER JOIN LATERAL (SELECT UNNEST("s"."type_ids") AS "t") AS "t" ON $"#),
+            sql.contains(r#"INNER JOIN LATERAL (SELECT UNNEST("s"."entity_type_name_keys") AS "t") AS "t" ON $"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"INNER JOIN "entity_type_names" AS "n" ON "n"."id" = "t"."t""#),
+            sql.contains(r#"INNER JOIN "entity_type_names" AS "n" ON "n"."entity_type_name_key" = "t"."t""#),
             "every unnested type key is read back through the dictionary: {sql}"
         );
     }
@@ -194,6 +194,9 @@ mod tests {
     #[test]
     fn the_types_in_use_are_the_dictionary_rows_some_entity_carries() {
         let sql = types_in_use_statement(&ContextTarget::Live).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""entity_search"."type_ids" @> ARRAY(SELECT "n"."id"::integer)"#), "{sql}");
+        assert!(
+            sql.contains(r#""entity_search"."entity_type_name_keys" @> ARRAY(SELECT "n"."entity_type_name_key"::integer)"#),
+            "{sql}"
+        );
     }
 }

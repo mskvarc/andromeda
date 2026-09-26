@@ -19,7 +19,7 @@ pub struct SeededHistoryRow {
     /// Identity of the write the row is attributed to.
     pub write_id: Uuid,
     /// Broker-minted instance identifier of the row.
-    pub generated_instance_uuid: Uuid,
+    pub generated_instance_id: Uuid,
     /// Declared observation instant.
     pub observed_at: DateTime<Utc>,
     /// Numeric value the row carries.
@@ -34,24 +34,24 @@ pub async fn seed_temporal_entity(pool: &PgPool, entity_id: &str, entity_type: &
         .fetch_one(pool)
         .await
         .expect("seeded temporal entity")
-        .get("entity_key")
+        .get("temporal_entity_key")
 }
 
 /// Resolve, creating if needed, the dictionary identity of one attribute name.
-pub async fn attribute_name_id(pool: &PgPool, attribute_name: &str) -> i32 {
-    sqlx::query(ATTRIBUTE_NAME_ID_SQL)
+pub async fn attribute_name_key(pool: &PgPool, attribute_name: &str) -> i32 {
+    sqlx::query(ATTRIBUTE_NAME_KEY_SQL)
         .bind(attribute_name)
         .fetch_one(pool)
         .await
         .expect("attribute dictionary identity")
-        .get("id")
+        .get("attribute_name_key")
 }
 
 /// Insert one attribute stream and return the key the database generated for it.
-pub async fn seed_stream(pool: &PgPool, temporal_entity_key: i64, attribute_name_id: i32) -> i64 {
+pub async fn seed_stream(pool: &PgPool, temporal_entity_key: i64, attribute_name_key: i32) -> i64 {
     sqlx::query(SEED_STREAM_SQL)
         .bind(temporal_entity_key)
-        .bind(attribute_name_id)
+        .bind(attribute_name_key)
         .fetch_one(pool)
         .await
         .expect("seeded attribute stream")
@@ -70,7 +70,7 @@ pub async fn seed_history_row(pool: &PgPool, row: &SeededHistoryRow) {
         .bind(row.recorded_at)
         .bind(row.write_id)
         .bind(row.stream_key)
-        .bind(row.generated_instance_uuid)
+        .bind(row.generated_instance_id)
         .bind(row.observed_at)
         .bind(row.value_number)
         .execute(pool)
@@ -85,22 +85,22 @@ const SEED_TEMPORAL_ENTITY_SQL: &str = r"
 WITH type_name AS (
     INSERT INTO entity_type_names (name) VALUES ($2)
     ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-    RETURNING id
+    RETURNING entity_type_name_key
 )
-INSERT INTO temporal_entities (created_at, modified_at, id, type_ids)
-SELECT NOW(), NOW(), $1, ARRAY[type_name.id] FROM type_name
-RETURNING entity_key
+INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys)
+SELECT NOW(), NOW(), $1, ARRAY[type_name.entity_type_name_key] FROM type_name
+RETURNING temporal_entity_key
 ";
 
-const ATTRIBUTE_NAME_ID_SQL: &str = r"
+const ATTRIBUTE_NAME_KEY_SQL: &str = r"
 INSERT INTO attribute_names (name) VALUES ($1)
 ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-RETURNING id
+RETURNING attribute_name_key
 ";
 
 const SEED_STREAM_SQL: &str = r"
-INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_id)
-SELECT entity_key, $2 FROM temporal_entities WHERE entity_key = $1
+INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_key)
+SELECT temporal_entity_key, $2 FROM temporal_entities WHERE temporal_entity_key = $1
 RETURNING stream_key
 ";
 
@@ -111,7 +111,7 @@ INSERT INTO write_records (write_id, recorded_at, accepted_at) VALUES ($1, $2, $
 const SEED_HISTORY_ROW_SQL: &str = r"
 INSERT INTO attribute_history
     (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
-     generated_instance_uuid, observed_at, created_at, modified_at, value_number)
+     generated_instance_id, observed_at, created_at, modified_at, value_number)
 SELECT $1, $2, stream_key, 0, 1, 1, $4, $5, $1, $1, $6
 FROM temporal_attribute_streams WHERE stream_key = $3
 ";

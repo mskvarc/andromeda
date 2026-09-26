@@ -63,7 +63,7 @@ pub fn apply(
             // The interned keys sort by dictionary id, which is meaningless to a
             // client; the IRIs are read back through the dictionary and sorted.
             OrderTarget::Type => {
-                let names = type_names_of(rows.search_column(EntitySearch::TypeIds));
+                let names = type_names_of(rows.search_column(EntitySearch::EntityTypeNameKeys));
                 select.order_by_expr_with_nulls(collate(names, &collation), sql_order(direction), NullOrdering::Last);
             }
             // The scope path column is an `ltree[]`, which no client collation applies to.

@@ -17,9 +17,9 @@ use derive_more::From;
 /// rather than a modelled constraint. Bounding dictionary growth is a policy
 /// decision taken where names are created, not a width chosen here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, From)]
-pub struct AttributeNameId(i32);
+pub struct AttributeNameKey(i32);
 
-impl AttributeNameId {
+impl AttributeNameKey {
     /// The underlying `INTEGER` value, for SQL binding.
     #[must_use]
     pub const fn get(self) -> i32 {
@@ -29,11 +29,11 @@ impl AttributeNameId {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_name_id::AttributeNameId;
+    use crate::attribute_name_key::AttributeNameKey;
 
     #[test]
     fn a_dictionary_key_round_trips_through_its_integer() {
-        pretty_assertions::assert_eq!(AttributeNameId::from(7_i32).get(), 7_i32);
+        pretty_assertions::assert_eq!(AttributeNameKey::from(7_i32).get(), 7_i32);
     }
 
     /// The widened key has to carry values a `SMALLINT` never could; a
@@ -41,6 +41,6 @@ mod tests {
     /// IRIs onto one key.
     #[test]
     fn a_dictionary_key_carries_values_beyond_the_smallint_ceiling() {
-        pretty_assertions::assert_eq!(AttributeNameId::from(2_000_000_000_i32).get(), 2_000_000_000_i32);
+        pretty_assertions::assert_eq!(AttributeNameKey::from(2_000_000_000_i32).get(), 2_000_000_000_i32);
     }
 }

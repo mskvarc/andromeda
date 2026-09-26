@@ -11,7 +11,7 @@
 //!
 //! Predicates now compile to an `EXISTS` probe against the
 //! `current_attribute_values` projection, whose typed partial indexes are keyed
-//! `(attribute_name_id, value_*)`. The planner scans the typed index, fetches
+//! `(attribute_name_key, value_*)`. The planner scans the typed index, fetches
 //! `entity_key` from the heap, and semi-joins back to the driving table.
 //!
 //! Every probe correlates on `entity_key`, the surrogate the projection is keyed
@@ -68,7 +68,7 @@
 //! so a nested probe cannot shadow its enclosing one.
 //!
 //! Reading the object from the projection rather than the payload keeps the
-//! probe on the `(attribute_name_id, value_uri)` index. A hop's optional
+//! probe on the `(attribute_name_key, value_uri)` index. A hop's optional
 //! entity-type guard becomes a disjunction of membership tests against the
 //! linked entity's `types` column, and a Relationship name absent from
 //! `attribute_names` compiles to constant `FALSE` exactly as any other unknown

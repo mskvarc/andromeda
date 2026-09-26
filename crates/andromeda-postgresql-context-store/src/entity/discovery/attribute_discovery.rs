@@ -8,7 +8,7 @@ use crate::{
     entity::{
         discovery::{
             aggregate_source::{AttrKey, D, S, attribute_container, keyset_after, search_with_documents},
-            type_dictionary::{join_type_names, type_name, unnest_type_ids},
+            type_dictionary::{join_type_names, type_name, unnest_entity_type_name_keys},
         },
         mapper::{stored_attribute_name, stored_type_name},
         repo::EntityRepository,
@@ -108,7 +108,7 @@ fn attribute_type_iris(attribute_type: &dyn Fn() -> SimpleExpr) -> FunctionCall 
 /// attribute keys of an entity feed the aggregate, and by the trailing keyset
 /// clauses the caller appends. `entity_search s` joined to `entity_documents d`
 /// is cross-joined with a lateral derived table of the payload's attributes
-/// and with `unnest(s.type_ids)` joined to the type dictionary, then a lateral
+/// and with `unnest(s.entity_type_name_keys)` joined to the type dictionary, then a lateral
 /// `@type` expansion is left-joined so an attribute with no declared type still
 /// contributes its entity to the counts. Entities are counted by surrogate
 /// key, so the identity row is never read.
@@ -137,7 +137,7 @@ fn attribute_summary_base(target: &ContextTarget, key_predicate: SimpleExpr) -> 
             AttributeTypes,
         );
     search_with_documents(&mut statement, target);
-    unnest_type_ids(&mut statement);
+    unnest_entity_type_name_keys(&mut statement);
     join_type_names(&mut statement)
         .join_lateral(JoinType::InnerJoin, attributes, Attrs, SimpleExpr::from(Expr::val(true)))
         .join_lateral(JoinType::LeftJoin, attribute_types, At, SimpleExpr::from(Expr::val(true)))
@@ -297,7 +297,7 @@ mod tests {
         let (summary, _) = attribute_summary_statement(&ContextTarget::Live, None, 10).build_sqlx(PostgresQueryBuilder);
         assert!(summary.contains(r#"array_agg(DISTINCT "n"."name") AS "entity_types""#), "{summary}");
         assert!(
-            summary.contains(r#"INNER JOIN LATERAL (SELECT UNNEST("s"."type_ids") AS "t") AS "t" ON $"#),
+            summary.contains(r#"INNER JOIN LATERAL (SELECT UNNEST("s"."entity_type_name_keys") AS "t") AS "t" ON $"#),
             "{summary}"
         );
         assert!(!summary.contains(r#""entities""#), "the identity row is never read: {summary}");

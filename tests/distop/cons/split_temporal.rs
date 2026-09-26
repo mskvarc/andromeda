@@ -100,6 +100,7 @@ async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal
                 .client()
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
+                        .tenant(topology.tenant())
                         .mode("inclusive")
                         .entity_type(&vtype)
                         .operations(&["queryTemporal"])
@@ -254,6 +255,7 @@ async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope()
                 .client()
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
+                        .tenant(topology.tenant())
                         .mode("inclusive")
                         .entity_type(&vtype)
                         .operations(&["queryTemporal"])
@@ -315,6 +317,7 @@ async fn distop_split_temporal_query_no_reapply_s7_equals_s4() {
                 .client()
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
+                        .tenant(topology.tenant())
                         .mode("inclusive")
                         .entity_type(&vtype)
                         .operations(&["queryTemporal"])

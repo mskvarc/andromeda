@@ -318,6 +318,7 @@ async fn update_attrs_pair_exclusive_end_to_end() {
     assert_status(&seeded, 201);
 
     let registration = CsrBuilder::new(&reg_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])

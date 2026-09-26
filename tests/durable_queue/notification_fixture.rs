@@ -33,7 +33,7 @@ pub async fn queue_notification(pool: &PgPool, subscriptions: usize) -> QueuedNo
         ordinal: WriteOrdinal::at(0),
         trigger: NotificationTrigger::EntityCreated,
         entity_id: &entity,
-        changed_attribute_name_ids: Vec::new(),
+        changed_attribute_name_keys: Vec::new(),
         changed_dataset_id: None,
         entity_snapshot: Some(&snapshot),
         previous_snapshot: None,
@@ -46,7 +46,7 @@ pub async fn queue_notification(pool: &PgPool, subscriptions: usize) -> QueuedNo
 
 /// Identifiers of the deliveries one write owes, in queue order.
 pub async fn delivery_ids(pool: &PgPool, record: &WriteRecord) -> Vec<i64> {
-    sqlx::query_scalar("SELECT d.id FROM notification_deliveries d JOIN notification_events e ON e.id = d.event_id WHERE e.write_id = $1 ORDER BY d.id")
+    sqlx::query_scalar("SELECT d.delivery_key FROM notification_deliveries d JOIN notification_events e ON e.event_key = d.event_key WHERE e.write_id = $1 ORDER BY d.delivery_key")
         .bind(record.write_id().as_uuid())
         .fetch_all(pool)
         .await

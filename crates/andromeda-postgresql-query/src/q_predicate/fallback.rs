@@ -178,7 +178,7 @@ fn value_extraction_jsonpath(path: &AttrPath, terminal_iri: &str) -> String {
 mod tests {
     use super::*;
     use crate::{
-        attribute_name_id::AttributeNameId,
+        attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         q_predicate::projection::compile,
     };
@@ -198,12 +198,12 @@ mod tests {
 
     fn attribute_names() -> ResolvedNames<AttributeName> {
         ResolvedNames::from_pairs([
-            (SPEED.parse().expect("valid attribute name"), AttributeNameId::from(7)),
+            (SPEED.parse().expect("valid attribute name"), AttributeNameKey::from(7)),
             (
                 "https://example.com/temperature".parse().expect("valid attribute name"),
-                AttributeNameId::from(12),
+                AttributeNameKey::from(12),
             ),
-            ("https://example.com/address".parse().expect("valid attribute name"), AttributeNameId::from(15)),
+            ("https://example.com/address".parse().expect("valid attribute name"), AttributeNameKey::from(15)),
         ])
     }
 

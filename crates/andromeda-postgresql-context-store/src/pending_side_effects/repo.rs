@@ -23,7 +23,7 @@ use uuid::Uuid;
 /// already queued and adds no second copy, so the at-least-once drain never
 /// executes the same batch's side effects twice because of a retried commit.
 ///
-/// `recorded_at` and `consequence_base` are persisted alongside the payload so
+/// `recorded_at` and `base_ordinal` are persisted alongside the payload so
 /// a worker that later leases this job can rebuild the exact
 /// [`WriteRecord`](andromeda_context_commit::write_record::WriteRecord) and
 /// ordinal base the enqueueing commit used, and resume its temporal and
@@ -34,7 +34,7 @@ fn enqueue_statement(
     id: Uuid,
     write_id: Uuid,
     recorded_at: DateTime<Utc>,
-    consequence_base: i32,
+    base_ordinal: i32,
     payload: Value,
 ) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
@@ -44,16 +44,10 @@ fn enqueue_statement(
             PendingSideEffects::Id,
             PendingSideEffects::WriteId,
             PendingSideEffects::RecordedAt,
-            PendingSideEffects::ConsequenceBase,
+            PendingSideEffects::BaseOrdinal,
             PendingSideEffects::Payload,
         ])
-        .values([
-            Expr::val(id),
-            Expr::val(write_id),
-            recorded_at.into(),
-            consequence_base.into(),
-            Expr::val(payload),
-        ])?
+        .values([Expr::val(id), Expr::val(write_id), recorded_at.into(), base_ordinal.into(), Expr::val(payload)])?
         .on_conflict(OnConflict::column(PendingSideEffects::WriteId).do_nothing().to_owned());
     Ok(statement.clone())
 }
@@ -84,7 +78,7 @@ impl PendingSideEffectsRepository {
     ///
     /// The row identity is minted here rather than defaulted by the database,
     /// and the identity of the committing write is stored alongside it as the
-    /// deduplication key. `record` and `consequence_base` are persisted
+    /// deduplication key. `record` and `base_ordinal` are persisted
     /// verbatim, so a worker that leases this job later can resume the
     /// enqueueing commit's identity and ordinal counter exactly.
     ///
@@ -98,12 +92,12 @@ impl PendingSideEffectsRepository {
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         record: &WriteRecord,
-        consequence_base: WriteOrdinal,
+        base_ordinal: WriteOrdinal,
         payload: &PersistedBatchSideEffectJob,
     ) -> Result<(), ContextStoreError> {
         let payload_json =
             serde_json::to_value(payload).map_err(|err| ContextStoreError::Internal(format!("failed to encode pending_side_effects payload: {err}")))?;
-        let consequence_base = consequence_base
+        let base_ordinal = base_ordinal
             .as_i32()
             .map_err(|error| ContextStoreError::Internal(format!("pending side-effect consequence base is out of range: {error}")))?;
         let statement = enqueue_statement(
@@ -111,7 +105,7 @@ impl PendingSideEffectsRepository {
             SideEffectJobId::mint().as_uuid(),
             record.write_id().as_uuid(),
             record.recorded_at(),
-            consequence_base,
+            base_ordinal,
             payload_json,
         )
         .map_err(|error| ContextStoreError::Internal(format!("failed to build pending_side_effects insert: {error}")))?;
@@ -143,7 +137,7 @@ mod tests {
             sql.contains(r#""id""#)
                 && sql.contains(r#""write_id""#)
                 && sql.contains(r#""recorded_at""#)
-                && sql.contains(r#""consequence_base""#)
+                && sql.contains(r#""base_ordinal""#)
                 && sql.contains(r#""payload""#),
             "{sql}"
         );

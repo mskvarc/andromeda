@@ -43,6 +43,7 @@ async fn distop_entity_auxiliary_never_overrides_local_attribute() {
     assert_status(&peer.client().post_entity(&remote).with_ld_json().send().await.expect("peer create"), 201);
 
     let registration = CsrBuilder::new(&topology.id("registration:auxiliary-merge"), peer.peer_url())
+        .tenant(topology.tenant())
         .mode("auxiliary")
         .entity_id(&entity_id)
         .property_names(&["speed", "fuel"])

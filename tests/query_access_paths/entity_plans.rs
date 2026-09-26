@@ -59,8 +59,8 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
         },
         PlannedShape {
             shape: "rare attrs term",
-            statement: format!("SELECT s.entity_key FROM entity_search AS s WHERE s.attribute_name_ids @> ARRAY[{alarm}]"),
-            index: "idx_entity_search_attribute_name_ids",
+            statement: format!("SELECT s.entity_key FROM entity_search AS s WHERE s.attribute_name_keys @> ARRAY[{alarm}]"),
+            index: "idx_entity_search_attribute_name_keys",
         },
         // The page shape the entity list issues: ordered by identifier, limited,
         // payload read by key. A key the planner could not estimate would make
@@ -71,9 +71,9 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
             statement: format!(
                 "SELECT (SELECT d.payload FROM entity_documents AS d WHERE d.entity_key = e.entity_key) AS payload \
                  FROM entities AS e JOIN entity_search AS s ON s.entity_key = e.entity_key \
-                 WHERE s.attribute_name_ids @> ARRAY[{alarm}] ORDER BY e.id LIMIT 100"
+                 WHERE s.attribute_name_keys @> ARRAY[{alarm}] ORDER BY e.id LIMIT 100"
             ),
-            index: "idx_entity_search_attribute_name_ids",
+            index: "idx_entity_search_attribute_name_keys",
         },
         PlannedShape {
             shape: "attribute-expiry sweep",
@@ -89,10 +89,10 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
             shape: "arbitrary GeoProperty geo",
             statement: format!(
                 "SELECT c.entity_key FROM current_attribute_values AS c \
-                 WHERE c.attribute_name_id = {entrance} \
-                   AND ST_Intersects(c.value_geo, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326))"
+                 WHERE c.attribute_name_key = {entrance} \
+                   AND ST_Intersects(c.value_geometry, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326))"
             ),
-            index: "idx_cav_attr_geo",
+            index: "idx_cav_value_geometry",
         },
         PlannedShape {
             shape: "attribute existence",
@@ -100,7 +100,7 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
                 "SELECT e.id FROM entities AS e \
                  WHERE e.id LIKE '{prefix}:seed:00001%' \
                    AND EXISTS (SELECT 1 FROM current_attribute_values AS c \
-                               WHERE c.entity_key = e.entity_key AND c.attribute_name_id = {reading})"
+                               WHERE c.entity_key = e.entity_key AND c.attribute_name_key = {reading})"
             ),
             index: "uq_current_attribute_values_grain",
         },
@@ -109,18 +109,18 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
             statement: format!(
                 "SELECT e.id FROM entities AS e \
                  WHERE EXISTS (SELECT 1 FROM current_attribute_values AS c \
-                               WHERE c.entity_key = e.entity_key AND c.attribute_name_id = {reading} \
+                               WHERE c.entity_key = e.entity_key AND c.attribute_name_key = {reading} \
                                  AND c.value_number = 42::numeric)"
             ),
-            index: "idx_cav_attr_number",
+            index: "idx_cav_value_number",
         },
         PlannedShape {
             shape: "unanchored string pattern q",
             statement: format!(
                 "SELECT c.entity_key FROM current_attribute_values AS c \
-                 WHERE c.attribute_name_id = {city} AND c.value_string ~ 'ty-12'"
+                 WHERE c.attribute_name_key = {city} AND c.value_string ~ 'ty-12'"
             ),
-            index: "idx_cav_attr_string_trgm",
+            index: "idx_cav_value_string_trgm",
         },
     ];
 
@@ -139,23 +139,26 @@ async fn entity_access_path_for_a_type_filter_uses_the_types_gin_index() {
     let corpus = seed(pool, SEED_PREFIX).await;
 
     // The type filter is the one shape whose compiled form decides whether
-    // `idx_entity_search_type_ids` has a consumer at all: GIN `array_ops` serves
-    // `&&`, `@>` and `<@`, and does not serve `= ANY(type_ids)`. This is the
+    // `idx_entity_search_entity_type_name_keys` has a consumer at all: GIN `array_ops` serves
+    // `&&`, `@>` and `<@`, and does not serve `= ANY(entity_type_name_keys)`. This is the
     // containment shape the type-selection rendering of clause 4.17 compiles
     // to, with the resolved dictionary key inlined as an array literal so the
     // planner estimates it from the column's element statistics.
-    let compiled = format!("SELECT s.entity_key FROM entity_search AS s WHERE s.type_ids @> ARRAY[{}]", corpus.rare_type());
+    let compiled = format!(
+        "SELECT s.entity_key FROM entity_search AS s WHERE s.entity_type_name_keys @> ARRAY[{}]",
+        corpus.rare_type()
+    );
     let plan = explain(pool, &compiled).await;
     assert!(
-        plan.contains("idx_entity_search_type_ids"),
-        "a type filter must reach the type_ids GIN index: {plan}"
+        plan.contains("idx_entity_search_entity_type_name_keys"),
+        "a type filter must reach the entity_type_name_keys GIN index: {plan}"
     );
 
     // The same predicate must select the same Entities however it is planned,
     // so the residual oracle counts with the equality spelling the index cannot
     // answer and the two must agree.
     let selective: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE $1 = ANY(s.type_ids) AND e.id LIKE $2::text || ':seed:%'",
+        "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE $1 = ANY(s.entity_type_name_keys) AND e.id LIKE $2::text || ':seed:%'",
     )
     .bind(corpus.rare_type())
     .bind(corpus.prefix())
@@ -163,7 +166,7 @@ async fn entity_access_path_for_a_type_filter_uses_the_types_gin_index() {
     .await
     .expect("type count must be readable");
     let contained: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE s.type_ids @> ARRAY(SELECT $1::integer) AND e.id LIKE $2::text || ':seed:%'",
+        "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE s.entity_type_name_keys @> ARRAY(SELECT $1::integer) AND e.id LIKE $2::text || ':seed:%'",
     )
         .bind(corpus.rare_type())
         .bind(corpus.prefix())
@@ -172,7 +175,7 @@ async fn entity_access_path_for_a_type_filter_uses_the_types_gin_index() {
         .expect("type count must be readable");
     assert_eq!(selective, contained, "containment and equality must select the same Entities");
     let common: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE s.type_ids @> ARRAY(SELECT $1::integer) AND e.id LIKE $2::text || ':seed:%'",
+        "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE s.entity_type_name_keys @> ARRAY(SELECT $1::integer) AND e.id LIKE $2::text || ':seed:%'",
     )
         .bind(corpus.common_type())
         .bind(corpus.prefix())
@@ -190,16 +193,16 @@ async fn typed_value_indexes_exclude_rows_whose_value_column_is_null() {
     let pool = scope.database_pool();
 
     for (index, column) in [
-        ("idx_cav_attr_number", "value_number"),
-        ("idx_cav_attr_string", "value_string"),
-        ("idx_cav_attr_string_trgm", "value_string"),
-        ("idx_cav_attr_bool", "value_bool"),
-        ("idx_cav_attr_datetime", "value_datetime"),
-        ("idx_cav_attr_uri", "value_uri"),
-        ("idx_cav_attr_long_text", "value_long_text"),
-        ("idx_cav_attr_long_text_trgm", "value_long_text"),
-        ("idx_cav_attr_geo", "value_geo"),
-        ("idx_cav_attr_entity_geo", "value_geo"),
+        ("idx_cav_value_number", "value_number"),
+        ("idx_cav_value_string", "value_string"),
+        ("idx_cav_value_string_trgm", "value_string"),
+        ("idx_cav_value_boolean", "value_boolean"),
+        ("idx_cav_value_date_time", "value_date_time"),
+        ("idx_cav_value_uri", "value_uri"),
+        ("idx_cav_value_long_text", "value_long_text"),
+        ("idx_cav_value_long_text_trgm", "value_long_text"),
+        ("idx_cav_value_geometry", "value_geometry"),
+        ("idx_cav_entity_geometry", "value_geometry"),
     ] {
         let predicate = index_predicate(pool, index).await;
         assert_eq!(predicate, Some(format!("({column} IS NOT NULL)")), "{index} must be partial on {column}");
@@ -237,7 +240,7 @@ async fn long_string_access_paths_use_the_overflow_indexes() {
     )
     .await;
     assert!(
-        pattern.contains("idx_cav_attr_long_text_trgm"),
+        pattern.contains("idx_cav_value_long_text_trgm"),
         "an unanchored pattern over long strings must use the overflow trigram index: {pattern}"
     );
 
@@ -245,13 +248,13 @@ async fn long_string_access_paths_use_the_overflow_indexes() {
         pool,
         &format!(
             "SELECT c.entity_key FROM current_attribute_values AS c \
-             WHERE c.attribute_name_id = {attribute} \
+             WHERE c.attribute_name_key = {attribute} \
                AND (c.value_string ~ '{probe}' OR c.value_long_text ~ '{probe}')"
         ),
     )
     .await;
     assert!(
-        disjunction.contains("BitmapOr") && disjunction.contains("idx_cav_attr_string_trgm") && disjunction.contains("idx_cav_attr_long_text_trgm"),
+        disjunction.contains("BitmapOr") && disjunction.contains("idx_cav_value_string_trgm") && disjunction.contains("idx_cav_value_long_text_trgm"),
         "the compiled pattern must OR one bitmap per string column's trigram index: {disjunction}"
     );
 
@@ -262,13 +265,13 @@ async fn long_string_access_paths_use_the_overflow_indexes() {
         PlannerPaths::WithoutSequentialScans,
         &format!(
             "SELECT c.entity_key FROM current_attribute_values AS c \
-             WHERE c.attribute_name_id = {attribute} \
+             WHERE c.attribute_name_key = {attribute} \
                AND (c.value_string > 'a' OR c.value_long_text > 'a')"
         ),
     )
     .await;
     assert!(
-        ordering.contains("idx_cav_attr_long_text "),
+        ordering.contains("idx_cav_value_long_text "),
         "an ordering over long strings must be driven from the overflow B-tree: {ordering}"
     );
 
@@ -288,7 +291,7 @@ async fn attrs_terms_select_by_the_recorded_attribute_keys() {
     let count = |attribute: i32| {
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key \
-             WHERE s.attribute_name_ids @> ARRAY(SELECT $1::integer) AND e.id LIKE $2::text || ':seed:%'",
+             WHERE s.attribute_name_keys @> ARRAY(SELECT $1::integer) AND e.id LIKE $2::text || ':seed:%'",
         )
         .bind(attribute)
         .bind(corpus.prefix())

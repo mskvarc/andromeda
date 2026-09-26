@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 use andromeda_ngsi_ld_model::registration::{forwarding_mode::ForwardingMode, operation::CsrOperation, status::CsrStatus};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_postgresql_query::ltree::scope_to_ltree;
-use andromeda_postgresql_schema::csr::{Csr, CsrDeliveryState};
+use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState};
 use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
 use andromeda_registration::{error::RegistrationError, store::forwarding_outcome::ForwardingOutcome};
 use sea_query::{CaseStatement, Expr as SeaExpr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SimpleExpr};
@@ -138,8 +138,8 @@ pub(super) fn csr_update_sql() -> String {
 pub(super) fn delivery_state_insert_sql() -> Result<String, RegistrationError> {
     let mut insert = Query::insert();
     insert
-        .into_table(CsrDeliveryState::Table)
-        .columns([CsrDeliveryState::RegistrationId, CsrDeliveryState::Status])
+        .into_table(RegistrationDeliveryState::Table)
+        .columns([RegistrationDeliveryState::RegistrationId, RegistrationDeliveryState::Status])
         .values([external_placeholder(1), SeaExpr::val(stored_status(CsrStatus::Ok).code())])
         .map_err(persistence_error)?;
     Ok(insert.to_string(PostgresQueryBuilder))
@@ -175,20 +175,23 @@ pub(super) fn dataset_selectors(dataset_id: Option<&[DatasetSelector]>) -> Optio
 pub(super) fn health_update_sql(outcome: ForwardingOutcome) -> String {
     let mut update = Query::update();
     update
-        .table(CsrDeliveryState::Table)
-        .value(CsrDeliveryState::TimesSent, SeaExpr::col(CsrDeliveryState::TimesSent).add(1))
-        .and_where(SeaExpr::col(CsrDeliveryState::RegistrationId).eq(external_placeholder(1)));
+        .table(RegistrationDeliveryState::Table)
+        .value(RegistrationDeliveryState::TimesSent, SeaExpr::col(RegistrationDeliveryState::TimesSent).add(1))
+        .and_where(SeaExpr::col(RegistrationDeliveryState::RegistrationId).eq(external_placeholder(1)));
     match outcome {
         ForwardingOutcome::Succeeded => {
             update
-                .value(CsrDeliveryState::LastSuccess, external_placeholder(2))
-                .value(CsrDeliveryState::Status, stored_status(CsrStatus::Ok).code());
+                .value(RegistrationDeliveryState::LastSuccess, external_placeholder(2))
+                .value(RegistrationDeliveryState::Status, stored_status(CsrStatus::Ok).code());
         }
         ForwardingOutcome::Failed => {
             update
-                .value(CsrDeliveryState::TimesFailed, SeaExpr::col(CsrDeliveryState::TimesFailed).add(1))
-                .value(CsrDeliveryState::LastFailure, external_placeholder(2))
-                .value(CsrDeliveryState::Status, stored_status(CsrStatus::Failed).code());
+                .value(
+                    RegistrationDeliveryState::TimesFailed,
+                    SeaExpr::col(RegistrationDeliveryState::TimesFailed).add(1),
+                )
+                .value(RegistrationDeliveryState::LastFailure, external_placeholder(2))
+                .value(RegistrationDeliveryState::Status, stored_status(CsrStatus::Failed).code());
         }
     }
     update.to_string(PostgresQueryBuilder)
@@ -262,13 +265,13 @@ mod tests {
     #[test]
     fn a_new_registration_starts_its_delivery_state_as_ok() {
         let sql = delivery_state_insert_sql().expect("the fixed delivery-state insert builds");
-        assert_eq!(sql, r#"INSERT INTO "csr_delivery_state" ("registration_id", "status") VALUES ($1, 1)"#);
+        assert_eq!(sql, r#"INSERT INTO "registration_delivery_state" ("registration_id", "status") VALUES ($1, 1)"#);
     }
 
     #[test]
     fn a_forwarding_outcome_updates_the_delivery_state_not_the_registration() {
         let success = health_update_sql(ForwardingOutcome::Succeeded);
-        assert!(success.starts_with(r#"UPDATE "csr_delivery_state""#), "{success}");
+        assert!(success.starts_with(r#"UPDATE "registration_delivery_state""#), "{success}");
         assert!(success.contains(r#""times_sent" = "times_sent" + 1"#), "{success}");
         assert!(success.contains(r#""last_success" = $2"#), "{success}");
         assert!(success.contains(r#""status" = 1"#), "{success}");

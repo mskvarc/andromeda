@@ -96,7 +96,7 @@ async fn kinds_of(pool: &PgPool, id: &str, local_name: &str) -> (i16, i16) {
     sqlx::query_as(
         "SELECT c.attribute_kind, c.value_kind FROM current_attribute_values AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
-         JOIN attribute_names AS an ON an.id = c.attribute_name_id \
+         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND an.name LIKE '%' || $2",
     )
     .bind(id)
@@ -292,7 +292,7 @@ async fn typed_q_list_relationship_projects_the_related_entity_identifiers() {
     let projected: Value = sqlx::query_scalar(
         "SELECT c.value_object FROM current_attribute_values AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
-         JOIN attribute_names AS an ON an.id = c.attribute_name_id \
+         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND an.name LIKE '%members'",
     )
     .bind(&id)

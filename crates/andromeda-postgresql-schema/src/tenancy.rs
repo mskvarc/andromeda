@@ -15,13 +15,13 @@ pub enum Tenants {
     /// Table name: `tenants`
     Table,
     /// Surrogate primary key
-    Id,
+    TenantKey,
     /// Tenant name, `NULL` for the unnamed default tenant
     Name,
     /// Whether this row is the unnamed default tenant
     IsUnnamedDefault,
     /// Name of the database holding the tenant's context
-    DbName,
+    DatabaseName,
     /// Tenant administrative status (`TenantStatusCode`)
     Status,
     /// Instant the row was created
@@ -37,7 +37,7 @@ pub enum TenantWakeSchedule {
     /// Table name: `tenant_wake_schedule`
     Table,
     /// Foreign key to the owning `tenants` row
-    TenantId,
+    TenantKey,
     /// Instant the tenant next has work due, `NULL` when nothing is pending
     WakeAt,
     /// Instant the schedule was last written
@@ -82,17 +82,17 @@ mod tests {
     #[test]
     fn tenant_wake_schedule_table_and_columns() {
         assert_eq!(TenantWakeSchedule::Table.to_string(), "tenant_wake_schedule");
-        assert_eq!(TenantWakeSchedule::TenantId.to_string(), "tenant_id");
+        assert_eq!(TenantWakeSchedule::TenantKey.to_string(), "tenant_key");
         assert_eq!(TenantWakeSchedule::WakeAt.to_string(), "wake_at");
         assert_eq!(TenantWakeSchedule::ProbedAt.to_string(), "probed_at");
     }
 
     #[test]
     fn tenants_column_names() {
-        assert_eq!(Tenants::Id.to_string(), "id");
+        assert_eq!(Tenants::TenantKey.to_string(), "tenant_key");
         assert_eq!(Tenants::Name.to_string(), "name");
         assert_eq!(Tenants::IsUnnamedDefault.to_string(), "is_unnamed_default");
-        assert_eq!(Tenants::DbName.to_string(), "db_name");
+        assert_eq!(Tenants::DatabaseName.to_string(), "database_name");
         assert_eq!(Tenants::Status.to_string(), "status");
         assert_eq!(Tenants::CreatedAt.to_string(), "created_at");
         assert_eq!(Tenants::ModifiedAt.to_string(), "modified_at");

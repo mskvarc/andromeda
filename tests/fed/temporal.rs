@@ -18,11 +18,13 @@ fn temporal_entity(id: &str, entity_type: &str, first: i64, second: i64) -> serd
     })
 }
 
-fn temporal_registration(id: &str, endpoint: &str, entity_type: &str) -> serde_json::Value {
+/// A temporal registration held by the domain broker under `tenant` (clause 4.14).
+fn temporal_registration(tenant: &str, id: &str, endpoint: &str, entity_type: &str) -> serde_json::Value {
     json!({
         "id": id,
         "type": "ContextSourceRegistration",
         "endpoint": endpoint,
+        "tenant": tenant,
         "information": [{"entities": [{"type": entity_type}]}],
         "operations": ["queryTemporal"],
         "observationInterval": {"startAt": "2023-01-01T00:00:00Z", "endAt": "2025-01-01T00:00:00Z"},
@@ -50,6 +52,7 @@ async fn fed_temporal_query_selects_domains_by_operation_and_interval() {
         assert_status(
             &hub.client()
                 .create_registration(&temporal_registration(
+                    topology.tenant(),
                     &topology.id(&format!("registration:temporal:{name}")),
                     domain.peer_url(),
                     &btype,
@@ -103,6 +106,7 @@ async fn fed_temporal_fragments_merge_and_apply_last_n() {
         assert_status(
             &hub.client()
                 .create_registration(&temporal_registration(
+                    topology.tenant(),
                     &topology.id(&format!("registration:temporal-merge:{name}")),
                     domain.peer_url(),
                     &btype,
@@ -149,7 +153,12 @@ async fn fed_nested_temporal_query_reaches_subdomain_without_backtracking() {
     assert_status(
         &nordic
             .client()
-            .create_registration(&temporal_registration(&topology.id("registration:north-temporal"), north.peer_url(), &btype))
+            .create_registration(&temporal_registration(
+                topology.tenant(),
+                &topology.id("registration:north-temporal"),
+                north.peer_url(),
+                &btype,
+            ))
             .await
             .expect("north temporal registration"),
         201,
@@ -157,14 +166,24 @@ async fn fed_nested_temporal_query_reaches_subdomain_without_backtracking() {
     assert_status(
         &north
             .client()
-            .create_registration(&temporal_registration(&topology.id("registration:back-temporal"), hub.peer_url(), &btype))
+            .create_registration(&temporal_registration(
+                topology.tenant(),
+                &topology.id("registration:back-temporal"),
+                hub.peer_url(),
+                &btype,
+            ))
             .await
             .expect("back temporal registration"),
         201,
     );
     assert_status(
         &hub.client()
-            .create_registration(&temporal_registration(&topology.id("registration:nordic-temporal"), nordic.peer_url(), &btype))
+            .create_registration(&temporal_registration(
+                topology.tenant(),
+                &topology.id("registration:nordic-temporal"),
+                nordic.peer_url(),
+                &btype,
+            ))
             .await
             .expect("hub temporal registration"),
         201,

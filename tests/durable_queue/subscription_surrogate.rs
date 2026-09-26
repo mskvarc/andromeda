@@ -50,7 +50,7 @@ async fn durable_queue_deleting_a_subscription_reclaims_its_deliveries_through_t
             ordinal: WriteOrdinal::at(0),
             trigger: NotificationTrigger::EntityCreated,
             entity_id: &entity,
-            changed_attribute_name_ids: Vec::new(),
+            changed_attribute_name_keys: Vec::new(),
             changed_dataset_id: None,
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
@@ -59,7 +59,7 @@ async fn durable_queue_deleting_a_subscription_reclaims_its_deliveries_through_t
     )
     .await
     .expect("the event the queued deliveries reference");
-    let event: i64 = sqlx::query_scalar("SELECT id FROM notification_events WHERE write_id = $1")
+    let event: i64 = sqlx::query_scalar("SELECT event_key FROM notification_events WHERE write_id = $1")
         .bind(record.write_id().as_uuid())
         .fetch_one(&pool)
         .await
@@ -69,7 +69,7 @@ async fn durable_queue_deleting_a_subscription_reclaims_its_deliveries_through_t
     // fraction of a queue dominated by deliveries that must survive. The live
     // branch's deliveries live in the default schema, so nothing names a branch.
     sqlx::query(
-        "INSERT INTO notification_deliveries (event_id, subscription_key, next_attempt_at) \
+        "INSERT INTO notification_deliveries (event_key, subscription_key, next_attempt_at) \
          SELECT $1, s.subscription_key, NOW() FROM subscriptions s, generate_series(1, $2) WHERE s.subscription_key <> $3",
     )
     .bind(event)
@@ -78,7 +78,7 @@ async fn durable_queue_deleting_a_subscription_reclaims_its_deliveries_through_t
     .execute(&pool)
     .await
     .expect("queue the unaffected deliveries");
-    sqlx::query("INSERT INTO notification_deliveries (event_id, subscription_key, next_attempt_at) SELECT $1, $2, NOW() FROM generate_series(1, $3)")
+    sqlx::query("INSERT INTO notification_deliveries (event_key, subscription_key, next_attempt_at) SELECT $1, $2, NOW() FROM generate_series(1, $3)")
         .bind(event)
         .bind(owner_key)
         .bind(OWNED_DELIVERIES - 1)

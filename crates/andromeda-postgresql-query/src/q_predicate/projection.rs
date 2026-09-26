@@ -2,7 +2,7 @@
 //! `current_attribute_values` projection.
 
 use crate::{
-    attribute_name_id::AttributeNameId,
+    attribute_name_key::AttributeNameKey,
     dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     operator::{does_not_hold, pattern as pattern_predicate},
@@ -169,7 +169,7 @@ fn compile_exists(path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> 
 /// Compile an equality comparison (`==`/`!=`) against the columns of
 /// `current_attribute_values` that can hold the clause 4.9 target value.
 fn compile_equality_on_projection(
-    id: AttributeNameId,
+    id: AttributeNameKey,
     target: StructuredTarget<'_>,
     membership: SetMembership,
     rhs: &CompareValue,
@@ -275,7 +275,7 @@ fn within_range(min: &Scalar, max: &Scalar) -> Condition {
 
 /// Compile an ordering comparison (`>`/`>=`/`<`/`<=`) against the typed columns
 /// of `current_attribute_values`.
-fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Scalar, rows: &EntityRowRefs) -> Condition {
+fn compile_ordering_on_projection(id: AttributeNameKey, op: OrderingOp, rhs: &Scalar, rows: &EntityRowRefs) -> Condition {
     exists_on_projection(id, Condition::all().add(typed_column_condition(rhs, op.as_cmp_op())), rows)
 }
 
@@ -301,15 +301,15 @@ fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Sca
 /// made `owner~="urn:Person:.*"` select entities the standard requires it to
 /// reject.
 ///
-/// The attribute-aware trigram index `idx_cav_attr_string_trgm` on
-/// `(attribute_name_id int4_ops, value_string gin_trgm_ops)` can accelerate
+/// The attribute-aware trigram index `idx_cav_value_string_trgm` on
+/// `(attribute_name_key int4_ops, value_string gin_trgm_ops)` can accelerate
 /// POSIX `~` (since PostgreSQL 9.3) whenever the pattern yields extractable
 /// trigrams — `urn:ngsi-ld:.*` does, an anchored `^A.*` does not — and it
 /// intersects those trigrams with the attribute key, so a pattern common
 /// across attributes yields candidates only from the one probed. When no
 /// trigram is extractable the probe is still narrowed by the
-/// `attribute_name_id` prefix of `idx_cav_attr_string` before any regex is
-/// evaluated. `idx_cav_attr_long_text_trgm` serves the overflow arm the same
+/// `attribute_name_key` prefix of `idx_cav_value_string` before any regex is
+/// evaluated. `idx_cav_value_long_text_trgm` serves the overflow arm the same
 /// way.
 fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
     match local_target(path) {
@@ -332,7 +332,7 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{dictionary::resolved_names::ResolvedNames, entity_row_refs::DocumentsRef, entity_type_id::EntityTypeId};
+    use crate::{dictionary::resolved_names::ResolvedNames, entity_row_refs::DocumentsRef, entity_type_name_key::EntityTypeNameKey};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::parser;
     use andromeda_postgresql_schema::{current::Entities, projected_string_column::INDEXED_STRING_BYTE_LIMIT};
@@ -344,37 +344,46 @@ mod tests {
         QueryNames {
             attributes: attribute_names(),
             types: ResolvedNames::from_pairs([
-                ("https://example.com/Building".parse().expect("valid type name"), EntityTypeId::from(31)),
-                ("https://example.com/Store".parse().expect("valid type name"), EntityTypeId::from(32)),
+                ("https://example.com/Building".parse().expect("valid type name"), EntityTypeNameKey::from(31)),
+                ("https://example.com/Store".parse().expect("valid type name"), EntityTypeNameKey::from(32)),
             ]),
         }
     }
 
     fn attribute_names() -> ResolvedNames<AttributeName> {
         ResolvedNames::from_pairs([
-            (SPEED.parse().expect("valid attribute name"), AttributeNameId::from(7)),
-            ("https://example.com/brandName".parse().expect("valid attribute name"), AttributeNameId::from(8)),
-            ("https://example.com/active".parse().expect("valid attribute name"), AttributeNameId::from(9)),
-            ("https://example.com/observed".parse().expect("valid attribute name"), AttributeNameId::from(10)),
-            ("https://example.com/d".parse().expect("valid attribute name"), AttributeNameId::from(11)),
+            (SPEED.parse().expect("valid attribute name"), AttributeNameKey::from(7)),
+            (
+                "https://example.com/brandName".parse().expect("valid attribute name"),
+                AttributeNameKey::from(8),
+            ),
+            ("https://example.com/active".parse().expect("valid attribute name"), AttributeNameKey::from(9)),
+            (
+                "https://example.com/observed".parse().expect("valid attribute name"),
+                AttributeNameKey::from(10),
+            ),
+            ("https://example.com/d".parse().expect("valid attribute name"), AttributeNameKey::from(11)),
             (
                 "https://example.com/temperature".parse().expect("valid attribute name"),
-                AttributeNameId::from(12),
+                AttributeNameKey::from(12),
             ),
-            ("https://example.com/color".parse().expect("valid attribute name"), AttributeNameId::from(13)),
-            ("https://example.com/name".parse().expect("valid attribute name"), AttributeNameId::from(14)),
-            ("https://example.com/address".parse().expect("valid attribute name"), AttributeNameId::from(15)),
-            ("https://example.com/a".parse().expect("valid attribute name"), AttributeNameId::from(16)),
-            ("https://example.com/b".parse().expect("valid attribute name"), AttributeNameId::from(17)),
-            ("https://example.com/c".parse().expect("valid attribute name"), AttributeNameId::from(18)),
+            ("https://example.com/color".parse().expect("valid attribute name"), AttributeNameKey::from(13)),
+            ("https://example.com/name".parse().expect("valid attribute name"), AttributeNameKey::from(14)),
+            ("https://example.com/address".parse().expect("valid attribute name"), AttributeNameKey::from(15)),
+            ("https://example.com/a".parse().expect("valid attribute name"), AttributeNameKey::from(16)),
+            ("https://example.com/b".parse().expect("valid attribute name"), AttributeNameKey::from(17)),
+            ("https://example.com/c".parse().expect("valid attribute name"), AttributeNameKey::from(18)),
             (
                 "https://example.com/isParkedIn".parse().expect("valid attribute name"),
-                AttributeNameId::from(19),
+                AttributeNameKey::from(19),
             ),
-            ("https://example.com/category".parse().expect("valid attribute name"), AttributeNameId::from(20)),
-            ("https://example.com/outer".parse().expect("valid attribute name"), AttributeNameId::from(21)),
-            ("https://example.com/inner".parse().expect("valid attribute name"), AttributeNameId::from(22)),
-            ("https://example.com/zone".parse().expect("valid attribute name"), AttributeNameId::from(23)),
+            (
+                "https://example.com/category".parse().expect("valid attribute name"),
+                AttributeNameKey::from(20),
+            ),
+            ("https://example.com/outer".parse().expect("valid attribute name"), AttributeNameKey::from(21)),
+            ("https://example.com/inner".parse().expect("valid attribute name"), AttributeNameKey::from(22)),
+            ("https://example.com/zone".parse().expect("valid attribute name"), AttributeNameKey::from(23)),
         ])
     }
 
@@ -613,14 +622,14 @@ mod tests {
     #[test]
     fn boolean_comparison_binds_native_boolean() {
         let (sql, binds) = render("\"https://example.com/active\"==true");
-        assert!(sql.contains("\"cav\".\"value_bool\" ="), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_boolean\" ="), "{sql}");
         assert!(binds.iter().any(|b| matches!(b, Value::Bool(Some(true)))), "{binds:?}");
     }
 
     #[test]
     fn datetime_comparison_binds_native_timestamp() {
         let (sql, binds) = render("\"https://example.com/observed\">=2017-12-24T12:00:00Z");
-        assert!(sql.contains("\"cav\".\"value_datetime\" >="), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_date_time\" >="), "{sql}");
         assert!(binds.iter().any(|b| matches!(b, Value::ChronoDateTimeUtc(_))), "{binds:?}");
     }
 
@@ -628,7 +637,7 @@ mod tests {
     fn date_scalar_compares_as_text_because_the_projection_stores_it_that_way() {
         let (sql, _) = render("\"https://example.com/d\"==2024-01-01");
         assert!(sql.contains("\"cav\".\"value_string\" ="), "{sql}");
-        assert!(!sql.contains("value_datetime"), "only full date-times reach value_datetime: {sql}");
+        assert!(!sql.contains("value_date_time"), "only full date-times reach value_date_time: {sql}");
     }
 
     #[test]
@@ -882,7 +891,7 @@ mod tests {
             sql,
             concat!(
                 r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_id" = $1 AND "cav"."entity_key" = "entities"."entity_key")"#,
+                r#"WHERE "cav"."attribute_name_key" = $1 AND "cav"."entity_key" = "entities"."entity_key")"#,
             )
         );
         assert!(matches!(binds[0], Value::Int(Some(7))), "{binds:?}");
@@ -958,7 +967,7 @@ mod tests {
     #[test]
     fn a_hop_guard_tests_the_linked_entitys_types_for_any_of_its_alternatives() {
         // Clause 4.9 lists the guard's types as alternatives, so one membership
-        // test against `entities.type_ids` per resolved type, disjoined.
+        // test against `entities.entity_type_name_keys` per resolved type, disjoined.
         let (sql, binds) = render(&format!(
             "{}{{{},{}:{}==\"x\"}}",
             quoted(IS_PARKED_IN),
@@ -978,10 +987,10 @@ mod tests {
                 r#"JOIN "entities" AS "le1" ON "le1"."id" = "cav_ln1"."value_uri" "#,
                 r#"JOIN "entity_search" AS "ls1" ON "ls1"."entity_key" = "le1"."entity_key" "#,
                 r#"WHERE "cav_ln1"."entity_key" = "entities"."entity_key" "#,
-                r#"AND "cav_ln1"."attribute_name_id" = $1 "#,
-                r#"AND (("ls1"."type_ids" @> (ARRAY[31])) OR ("ls1"."type_ids" @> (ARRAY[32]))) "#,
+                r#"AND "cav_ln1"."attribute_name_key" = $1 "#,
+                r#"AND (("ls1"."entity_type_name_keys" @> (ARRAY[31])) OR ("ls1"."entity_type_name_keys" @> (ARRAY[32]))) "#,
                 r#"AND EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_id" = $2 AND ("cav"."value_string" = $3 OR "cav"."value_uri" = $4 "#,
+                r#"WHERE "cav"."attribute_name_key" = $2 AND ("cav"."value_string" = $3 OR "cav"."value_uri" = $4 "#,
                 r#"OR (("cav"."value_object" @> jsonb_build_array($5::text)) "#,
                 r#"OR ("cav"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text))))) "#,
                 r#"AND "cav"."entity_key" = "le1"."entity_key"))"#,
@@ -1011,13 +1020,13 @@ mod tests {
             quoted("https://example.com/Warehouse"),
             quoted(CATEGORY)
         ));
-        assert!(sql.contains(r#"(("ls1"."type_ids" @> (ARRAY[31])) OR (FALSE))"#), "{sql}");
+        assert!(sql.contains(r#"(("ls1"."entity_type_name_keys" @> (ARRAY[31])) OR (FALSE))"#), "{sql}");
     }
 
     #[test]
     fn an_unguarded_hop_emits_no_type_test() {
         let (sql, _) = render(&format!("{}{{{}==\"commercial\"}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
-        assert!(!sql.contains("\"type_ids\""), "no guard was written: {sql}");
+        assert!(!sql.contains("\"entity_type_name_keys\""), "no guard was written: {sql}");
     }
 
     #[test]

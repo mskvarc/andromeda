@@ -46,8 +46,8 @@ impl SeededHistory {
 /// tombstone. That separation is what makes an axis answering from another
 /// axis' column detectable.
 pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
-    let attribute_name_id: i32 =
-        sqlx::query_scalar("INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id")
+    let attribute_name_key: i32 =
+        sqlx::query_scalar("INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING attribute_name_key")
             .bind(HISTORY_ATTRIBUTE)
             .fetch_one(pool)
             .await
@@ -56,10 +56,10 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
     let entity_key: i64 = sqlx::query_scalar(
         "WITH type_name AS ( \
              INSERT INTO entity_type_names (name) VALUES ('https://example.test/query-access-paths/Historic') \
-             ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id) \
-         INSERT INTO temporal_entities (created_at, modified_at, id, type_ids) \
-         SELECT now(), now(), $1::text || ':history', ARRAY[type_name.id] FROM type_name \
-         RETURNING entity_key",
+             ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING entity_type_name_key) \
+         INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
+         SELECT now(), now(), $1::text || ':history', ARRAY[type_name.entity_type_name_key] FROM type_name \
+         RETURNING temporal_entity_key",
     )
     .bind(prefix)
     .fetch_one(pool)
@@ -67,13 +67,13 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
     .expect("temporal catalogue insert must succeed");
 
     let streams: Vec<i64> = sqlx::query_scalar(
-        "INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_id, dataset_id) \
+        "INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_key, dataset_id) \
          SELECT $1, $2, 'urn:ngsi-ld:Dataset:' || lpad(g::text, 4, '0') \
          FROM generate_series(1, $3::bigint) AS g \
          RETURNING stream_key",
     )
     .bind(entity_key)
-    .bind(attribute_name_id)
+    .bind(attribute_name_key)
     .bind(SEEDED_STREAMS)
     .fetch_all(pool)
     .await
@@ -82,7 +82,7 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
     sqlx::query(
         "INSERT INTO attribute_history \
          (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, \
-          observed_at, created_at, modified_at, deleted_at, generated_instance_uuid, value_number) \
+          observed_at, created_at, modified_at, deleted_at, generated_instance_id, value_number) \
          SELECT now() - (g || ' hours')::interval, \
                 gen_random_uuid(), s.stream_key, 0, 1, \
                 CASE WHEN g = 1 THEN 0 ELSE 1 END, \

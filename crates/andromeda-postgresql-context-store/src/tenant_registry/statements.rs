@@ -21,7 +21,7 @@ use sea_query::{
 /// The five columns a tenant registry row projects, in the order the row mapper
 /// reads them.
 fn record_columns(query: &mut SelectStatement) {
-    query.columns([Tenants::Name, Tenants::Status, Tenants::DbName, Tenants::CreatedAt, Tenants::ModifiedAt]);
+    query.columns([Tenants::Name, Tenants::Status, Tenants::DatabaseName, Tenants::CreatedAt, Tenants::ModifiedAt]);
 }
 
 /// The names of every named tenant, in name order.
@@ -42,7 +42,7 @@ pub(super) fn registered_tenants_query() -> SelectStatement {
 /// exists.
 pub(super) fn named_tenant_database_query(name: &str) -> SelectStatement {
     Query::select()
-        .column(Tenants::DbName)
+        .column(Tenants::DatabaseName)
         .from(Tenants::Table)
         .and_where(Expr::col(Tenants::Name).eq(name))
         .to_owned()
@@ -122,16 +122,16 @@ pub(super) fn advisory_lock_query(name: &str) -> SelectStatement {
 
 /// Insert the unnamed default tenant, refreshing its timestamp if it exists.
 ///
-/// The conflict target is `db_name`, whose unique index is what keeps a restart
+/// The conflict target is `database_name`, whose unique index is what keeps a restart
 /// from inserting a second default row.
-pub(super) fn default_tenant_upsert(db_name: &str, status: TenantStatusCode) -> Result<InsertStatement, SeaQueryError> {
+pub(super) fn default_tenant_upsert(database_name: &str, status: TenantStatusCode) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(Tenants::Table)
         .columns([
             Tenants::Name,
             Tenants::IsUnnamedDefault,
-            Tenants::DbName,
+            Tenants::DatabaseName,
             Tenants::Status,
             Tenants::CreatedAt,
             Tenants::ModifiedAt,
@@ -139,13 +139,13 @@ pub(super) fn default_tenant_upsert(db_name: &str, status: TenantStatusCode) -> 
         .values([
             SimpleExpr::Keyword(Keyword::Null),
             true.into(),
-            db_name.into(),
+            database_name.into(),
             status.code().into(),
             Expr::current_timestamp(),
             Expr::current_timestamp(),
         ])?
         .on_conflict(
-            OnConflict::column(Tenants::DbName)
+            OnConflict::column(Tenants::DatabaseName)
                 .values([(Tenants::ModifiedAt, Expr::current_timestamp())])
                 .to_owned(),
         );
@@ -153,14 +153,14 @@ pub(super) fn default_tenant_upsert(db_name: &str, status: TenantStatusCode) -> 
 }
 
 /// Insert a named tenant.
-pub(super) fn tenant_insert(name: &str, db_name: &str, status: TenantStatusCode) -> Result<InsertStatement, SeaQueryError> {
+pub(super) fn tenant_insert(name: &str, database_name: &str, status: TenantStatusCode) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(Tenants::Table)
         .columns([
             Tenants::Name,
             Tenants::IsUnnamedDefault,
-            Tenants::DbName,
+            Tenants::DatabaseName,
             Tenants::Status,
             Tenants::CreatedAt,
             Tenants::ModifiedAt,
@@ -168,7 +168,7 @@ pub(super) fn tenant_insert(name: &str, db_name: &str, status: TenantStatusCode)
         .values([
             name.into(),
             false.into(),
-            db_name.into(),
+            database_name.into(),
             status.code().into(),
             Expr::current_timestamp(),
             Expr::current_timestamp(),
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn the_provisioning_lookup_reads_any_row() {
         let sql = select_sql(&named_tenant_database_query("acme"));
-        assert!(sql.contains("SELECT \"db_name\" FROM \"tenants\""), "{sql}");
+        assert!(sql.contains("SELECT \"database_name\" FROM \"tenants\""), "{sql}");
         assert!(sql.contains("\"name\" ="), "{sql}");
         assert!(!sql.contains("is_unnamed_default"), "provisioning must not exclude the default row: {sql}");
     }
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn a_record_read_projects_every_column_and_excludes_the_default() {
         let sql = select_sql(&tenant_record_query("acme"));
-        for column in ["\"name\"", "\"status\"", "\"db_name\"", "\"created_at\"", "\"modified_at\""] {
+        for column in ["\"name\"", "\"status\"", "\"database_name\"", "\"created_at\"", "\"modified_at\""] {
             assert!(sql.contains(column), "record read must project {column}: {sql}");
         }
         assert!(sql.contains("\"name\" ="), "{sql}");
@@ -300,7 +300,7 @@ mod tests {
             .expect("arity")
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("INSERT INTO \"tenants\""), "{sql}");
-        assert!(sql.contains("ON CONFLICT (\"db_name\") DO UPDATE"), "{sql}");
+        assert!(sql.contains("ON CONFLICT (\"database_name\") DO UPDATE"), "{sql}");
         assert!(sql.contains("\"modified_at\" = CURRENT_TIMESTAMP"), "{sql}");
     }
 

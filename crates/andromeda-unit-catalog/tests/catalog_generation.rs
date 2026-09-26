@@ -137,18 +137,14 @@ fn render_snapshot(entries: &[UnitCodeEntry]) -> Result<String, CatalogGeneratio
 /// Render the seed migration that loads the catalog into a tenant schema.
 fn render_seed(entries: &[UnitCodeEntry]) -> Result<String, CatalogGenerationFailure> {
     let mut rendered = String::new();
-    rendered.push_str("-- generated - never hand-edited\n");
     rendered.push_str("-- ============================================================================\n");
-    rendered.push_str("-- 0010: UN/CEFACT unit-code catalogue seed\n");
+    rendered.push_str("-- 0010: Unit-code catalog seed\n");
     rendered.push_str("-- ============================================================================\n");
-    rendered.push_str("-- Rendered by the generation test of `crates/andromeda-unit-catalog` from the\n");
-    rendered.push_str("-- same identity assignment the broker compiles in, so an identifier written\n");
-    rendered.push_str("-- by the broker names the same row the database holds. The assignment is\n");
-    rendered.push_str("-- append-only: an identity is never reassigned and a row is never deleted,\n");
-    rendered.push_str("-- because stored attributes point at these numbers.\n");
+    rendered.push_str("-- Generated from the unit-code assignment every broker carries; never edited\n");
+    rendered.push_str("-- by hand.\n");
     rendered.push_str("--\n");
-    rendered.push_str("-- Regenerate with:\n");
-    rendered.push_str("--   ANDROMEDA_UNIT_CATALOG_BLESS=1 cargo test -p andromeda-unit-catalog\n");
+    rendered.push_str("-- The assignment is append-only: an identity is never reassigned and a row\n");
+    rendered.push_str("-- is never deleted, because stored attributes point at these numbers.\n");
     rendered.push_str("-- ============================================================================\n\n");
     rendered.push_str("INSERT INTO unit_codes (id, code, first_revision, retired_revision) VALUES\n");
 

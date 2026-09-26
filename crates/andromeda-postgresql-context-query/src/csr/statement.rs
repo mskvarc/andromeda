@@ -309,7 +309,7 @@ mod tests {
             "{}",
             built.sql
         );
-        assert!(built.sql.contains("LEFT JOIN \"csr_delivery_state\""), "{}", built.sql);
+        assert!(built.sql.contains("LEFT JOIN \"registration_delivery_state\""), "{}", built.sql);
         assert!(!built.sql.contains("\"type\""), "{}", built.sql);
     }
 
@@ -471,7 +471,7 @@ mod tests {
             built.sql
         );
         assert!(built.sql.contains("\"ri\".\"entity_id\" IN ('urn:ngsi-ld:Vehicle:1', '')"), "{}", built.sql);
-        assert!(built.sql.contains("\"ri\".\"property_name_ids\" && array_append("), "{}", built.sql);
+        assert!(built.sql.contains("\"ri\".\"property_name_keys\" && array_append("), "{}", built.sql);
         assert!(!built.sql.contains("NOT EXISTS"), "{}", built.sql);
         assert!(built.sql.contains("jsonb_array_elements(\"information\")"), "{}", built.sql);
     }

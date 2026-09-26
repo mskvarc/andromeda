@@ -39,6 +39,7 @@ async fn fed_subscription_two_domain_lifecycle_delivers_original_id() {
         assert_status(
             &hub.client()
                 .create_registration(&registration(
+                    topology.tenant(),
                     &topology.id(&format!("registration:subscription:{name}")),
                     domain.peer_url(),
                     &btype,
@@ -108,6 +109,7 @@ async fn fed_subscription_discovers_domain_registered_after_creation() {
     assert_status(
         &hub.client()
             .create_registration(&registration(
+                topology.tenant(),
                 &topology.id("registration:late-madrid"),
                 madrid.peer_url(),
                 &btype,
@@ -162,6 +164,7 @@ async fn fed_nested_subscription_delivers_from_subdomain_and_cleans_up() {
         &nordic
             .client()
             .create_registration(&registration(
+                topology.tenant(),
                 &topology.id("registration:sub-north"),
                 north.peer_url(),
                 &btype,
@@ -176,6 +179,7 @@ async fn fed_nested_subscription_delivers_from_subdomain_and_cleans_up() {
     assert_status(
         &hub.client()
             .create_registration(&registration(
+                topology.tenant(),
                 &topology.id("registration:sub-nordic"),
                 nordic.peer_url(),
                 &btype,

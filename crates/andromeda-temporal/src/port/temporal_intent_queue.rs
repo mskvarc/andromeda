@@ -1,6 +1,6 @@
 //! Durable claim, acknowledgement and retry state for temporal intent delivery.
 
-use crate::{append_intent::SequencedTemporalAppendIntent, error::TemporalError};
+use crate::{append_intent::KeyedTemporalAppendIntent, error::TemporalError};
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -30,7 +30,7 @@ impl TemporalIntentBatchSize {
 #[derive(Clone, Debug)]
 pub struct ClaimedTemporalAppendIntent {
     /// Durable ordered intent.
-    pub pending: SequencedTemporalAppendIntent,
+    pub pending: KeyedTemporalAppendIntent,
     /// Number of earlier delivery attempts.
     pub attempts: u32,
 }
@@ -76,12 +76,7 @@ pub trait TemporalIntentQueue: Send + Sync {
     /// worker that now holds it. The sink is idempotent under the write
     /// identity, so a second delivery lands nothing twice.
     #[must_use = "temporal intent acknowledgements must be awaited"]
-    async fn acknowledge(
-        &self,
-        target: &ContextTarget,
-        owner: LeaseHolder,
-        intent: &SequencedTemporalAppendIntent,
-    ) -> Result<LeaseAcknowledgement, TemporalError>;
+    async fn acknowledge(&self, target: &ContextTarget, owner: LeaseHolder, intent: &KeyedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError>;
 
     /// Release one failed intent with explicit retry metadata.
     ///
@@ -91,7 +86,7 @@ pub trait TemporalIntentQueue: Send + Sync {
         &self,
         target: &ContextTarget,
         owner: LeaseHolder,
-        intent: &SequencedTemporalAppendIntent,
+        intent: &KeyedTemporalAppendIntent,
         retry: TemporalIntentRetry,
     ) -> Result<LeaseAcknowledgement, TemporalError>;
 }

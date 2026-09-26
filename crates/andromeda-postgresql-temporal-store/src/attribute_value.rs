@@ -30,13 +30,13 @@ pub struct HistoryValueColumns {
     /// String value for string-typed properties.
     pub value_string: Option<String>,
     /// Boolean value for boolean-typed properties.
-    pub value_bool: Option<bool>,
+    pub value_boolean: Option<bool>,
     /// Geometry value for geo-typed properties.
-    pub value_geo: Option<Geometry>,
+    pub value_geometry: Option<Geometry>,
     /// Arbitrary JSON value for object-typed or complex properties.
     pub value_object: Option<Value>,
     /// Datetime value for datetime-typed properties.
-    pub value_datetime: Option<DateTime<Utc>>,
+    pub value_date_time: Option<DateTime<Utc>>,
     /// URI string for relationship objects.
     pub value_uri: Option<Uri>,
 }
@@ -71,19 +71,19 @@ impl AttributeValue {
         let mut columns = HistoryValueColumns {
             value_number: None,
             value_string: None,
-            value_bool: None,
-            value_geo: None,
+            value_boolean: None,
+            value_geometry: None,
             value_object: None,
-            value_datetime: None,
+            value_date_time: None,
             value_uri: None,
         };
         match self {
             AttributeValue::Number(number) => columns.value_number = Some(number.into_decimal()),
             AttributeValue::String(text) => columns.value_string = Some(text),
-            AttributeValue::Boolean(flag) => columns.value_bool = Some(flag),
-            AttributeValue::Geometry(geometry) => columns.value_geo = Some(geometry),
+            AttributeValue::Boolean(flag) => columns.value_boolean = Some(flag),
+            AttributeValue::Geometry(geometry) => columns.value_geometry = Some(geometry),
             AttributeValue::Object(object) => columns.value_object = Some(object),
-            AttributeValue::DateTime(instant) => columns.value_datetime = Some(instant.get()),
+            AttributeValue::DateTime(instant) => columns.value_date_time = Some(instant.get()),
             AttributeValue::Uri(uri) => columns.value_uri = Some(uri),
         }
         columns
@@ -408,7 +408,7 @@ mod tests {
         });
         let value = extract_attribute_value(&instance, AttributeType::Property).expect("datetime property");
         let columns = value.into_columns();
-        assert!(columns.value_datetime.is_some());
+        assert!(columns.value_date_time.is_some());
         assert!(columns.value_string.is_none());
     }
 
@@ -426,7 +426,7 @@ mod tests {
         assert!(columns.value_string.is_none(), "a timestamp is not text");
         pretty_assertions::assert_eq!(
             columns
-                .value_datetime
+                .value_date_time
                 .map(|instant| instant.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)),
             Some("2026-07-25T10:00:00.250000Z".to_owned())
         );

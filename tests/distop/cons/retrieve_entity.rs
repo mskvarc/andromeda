@@ -123,6 +123,7 @@ async fn distop_retrieve_entity_local_data_is_merge_base() {
 
     let registration_id = topology.id("registration:cons2");
     let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_id(&entity_id)
         .property_names(&["fuelLevel"])
@@ -320,6 +321,7 @@ async fn distop_retrieve_entity_merges_per_4_5_5() {
         let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons11-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+            .tenant(topology.tenant())
             .mode("inclusive")
             .entity_id(&entity_id)
             .property_names(names)

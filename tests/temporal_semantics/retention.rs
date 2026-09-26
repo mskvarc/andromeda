@@ -15,7 +15,7 @@ use crate::{
     database,
     get_temporal_entity,
     rendered_instances,
-    seeded_temporal::{SeededHistoryRow, attribute_name_id, seed_history_row, seed_stream, seed_temporal_entity},
+    seeded_temporal::{SeededHistoryRow, attribute_name_key, seed_history_row, seed_stream, seed_temporal_entity},
     stored_history::{stored_history, temporal_catalog_rows},
     unique_id,
 };
@@ -93,15 +93,15 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
     // Storage the horizon ages out: a write recorded well behind it.
     let aged_write = Uuid::now_v7();
     let entity_key = seed_temporal_entity(&pool, &aged_id, "Sensor").await;
-    let name_id = attribute_name_id(&pool, &attribute_iri("reading")).await;
-    let aged_stream = seed_stream(&pool, entity_key, name_id).await;
+    let name_key = attribute_name_key(&pool, &attribute_iri("reading")).await;
+    let aged_stream = seed_stream(&pool, entity_key, name_key).await;
     seed_history_row(
         &pool,
         &SeededHistoryRow {
             stream_key: aged_stream,
             recorded_at: Utc::now() - TimeDelta::days(AGED_DAYS),
             write_id: aged_write,
-            generated_instance_uuid: Uuid::now_v7(),
+            generated_instance_id: Uuid::now_v7(),
             observed_at: "2020-01-01T00:00:00Z".parse().expect("a valid fixture instant"),
             value_number: 1,
         },

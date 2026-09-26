@@ -206,7 +206,7 @@ mod tests {
     use super::*;
     use andromeda_ngsi_ld_query::filter::{eval::evaluate, parser};
     use andromeda_postgresql_query::{
-        attribute_name_id::AttributeNameId,
+        attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_row_refs::EntityRowRefs,
         q_predicate::projection::compile,
@@ -353,9 +353,9 @@ mod tests {
     fn names() -> QueryNames {
         QueryNames {
             attributes: ResolvedNames::from_pairs([
-                (SPEED.parse().expect("valid attribute name"), AttributeNameId::from(1)),
-                (COLOR.parse().expect("valid attribute name"), AttributeNameId::from(2)),
-                (NAME.parse().expect("valid attribute name"), AttributeNameId::from(3)),
+                (SPEED.parse().expect("valid attribute name"), AttributeNameKey::from(1)),
+                (COLOR.parse().expect("valid attribute name"), AttributeNameKey::from(2)),
+                (NAME.parse().expect("valid attribute name"), AttributeNameKey::from(3)),
             ]),
             types: ResolvedNames::default(),
         }

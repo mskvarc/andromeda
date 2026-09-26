@@ -16,11 +16,11 @@ pub enum TemporalEntities {
     /// Table name: `temporal_entities`
     Table,
     /// Surrogate key the stream catalogue and scope history reference
-    EntityKey,
+    TemporalEntityKey,
     /// Entity URI, carried independently of `entities`
     Id,
     /// Array of `entity_type_names` keys, one per type the entity carries
-    TypeIds,
+    EntityTypeNameKeys,
     /// Instant the Temporal Evolution began (clause 4.8 `createdAt`), never moved
     CreatedAt,
     /// Instant the Temporal Evolution was last extended (clause 4.8 `modifiedAt`)
@@ -37,7 +37,7 @@ pub enum TemporalAttributeStreams {
     /// Foreign key to `temporal_entities`
     TemporalEntityKey,
     /// Foreign key to `attribute_names`
-    AttributeNameId,
+    AttributeNameKey,
     /// Optional dataset identifier (clause 4.5.5)
     DatasetId,
 }
@@ -64,7 +64,7 @@ pub enum AttributeHistory {
     /// Instant a tombstone row records the instance ended, when it does
     DeletedAt,
     /// Bare UUID of a broker-minted `instanceId`
-    GeneratedInstanceUuid,
+    GeneratedInstanceId,
     /// Verbatim text of a client-supplied `instanceId`
     VerbatimInstanceId,
     /// Attribute family code of the stored instance
@@ -76,13 +76,13 @@ pub enum AttributeHistory {
     /// String value, when `value_kind` selects it
     ValueString,
     /// Boolean value, when `value_kind` selects it
-    ValueBool,
+    ValueBoolean,
     /// Geometry value, when `value_kind` selects it
-    ValueGeo,
+    ValueGeometry,
     /// JSON object or array value, when `value_kind` selects it
     ValueObject,
     /// `DateTime` value, when `value_kind` selects it
-    ValueDatetime,
+    ValueDateTime,
     /// URI value, when `value_kind` selects it
     ValueUri,
     /// Expanded instance metadata, without the `unitCode` member
@@ -102,7 +102,7 @@ pub enum AttributeHistoryInstanceClaims {
     /// Foreign key to `temporal_entities`
     TemporalEntityKey,
     /// Foreign key to `attribute_names`
-    AttributeNameId,
+    AttributeNameKey,
 }
 
 /// The `scope_history` table - the temporal evolution of an entity's scopes.
@@ -129,7 +129,7 @@ pub enum ScopeHistory {
     /// Deletion instant, present only on a tombstone row
     DeletedAt,
     /// Bare UUID of a broker-minted `instanceId`
-    GeneratedInstanceUuid,
+    GeneratedInstanceId,
     /// Verbatim text of a client-supplied `instanceId`
     VerbatimInstanceId,
     /// The scope as an `ltree` label path, absent on a tombstone
@@ -144,16 +144,16 @@ mod tests {
     #[test]
     fn temporal_entity_names() {
         pretty_assertions::assert_eq!(TemporalEntities::Table.to_string(), "temporal_entities");
-        pretty_assertions::assert_eq!(TemporalEntities::EntityKey.to_string(), "entity_key");
+        pretty_assertions::assert_eq!(TemporalEntities::TemporalEntityKey.to_string(), "temporal_entity_key");
         pretty_assertions::assert_eq!(TemporalEntities::Id.to_string(), "id");
-        pretty_assertions::assert_eq!(TemporalEntities::TypeIds.to_string(), "type_ids");
+        pretty_assertions::assert_eq!(TemporalEntities::EntityTypeNameKeys.to_string(), "entity_type_name_keys");
     }
 
     #[test]
     fn temporal_attribute_stream_names() {
         pretty_assertions::assert_eq!(TemporalAttributeStreams::Table.to_string(), "temporal_attribute_streams");
         pretty_assertions::assert_eq!(TemporalAttributeStreams::TemporalEntityKey.to_string(), "temporal_entity_key");
-        pretty_assertions::assert_eq!(TemporalAttributeStreams::AttributeNameId.to_string(), "attribute_name_id");
+        pretty_assertions::assert_eq!(TemporalAttributeStreams::AttributeNameKey.to_string(), "attribute_name_key");
         pretty_assertions::assert_eq!(TemporalAttributeStreams::DatasetId.to_string(), "dataset_id");
     }
 

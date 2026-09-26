@@ -5,7 +5,7 @@
 //! PostgreSQL. A `q` filter becomes a probe against the
 //! `current_attribute_values` projection, a `georel` becomes a `PostGIS`
 //! predicate, a `scopeQ` becomes an `lquery` match, a type selection becomes a
-//! predicate over the interned `type_ids` array.
+//! predicate over the interned `entity_type_name_keys` array.
 //!
 //! The primitives those renderings are built from live below the NGSI-LD line:
 //! the dialect vocabulary (PostGIS/ltree/jsonb operators, casts, bind, quoting)
@@ -24,11 +24,11 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod attribute_instance_correlation;
-pub mod attribute_name_id;
+pub mod attribute_name_key;
 pub mod dictionary;
 pub mod entity_ordering;
 pub mod entity_row_refs;
-pub mod entity_type_id;
+pub mod entity_type_name_key;
 pub mod error;
 pub mod geo_predicate;
 pub mod jsonb;

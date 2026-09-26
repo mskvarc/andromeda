@@ -9,11 +9,11 @@ use crate::notification_delivery::{acknowledge, claim, cleanup, rows::ClaimedDel
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{
-    delivery_entry::{DeliveryEntry, DeliveryId},
+    delivery_entry::{DeliveryEntry, DeliveryKey},
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     delivery_store::DeliveryStore,
     error::NotificationError,
-    notification_event::{NotificationEvent, NotificationEventId},
+    notification_event::{NotificationEvent, NotificationEventKey},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -45,32 +45,32 @@ impl DeliveryStore for NotificationDeliveryQueue {
         Ok(claimed.into_iter().filter_map(readable).collect())
     }
 
-    async fn mark_delivered(&self, id: DeliveryId, worker_id: &LeaseHolder, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_delivered(&self.pool, id.into_inner(), *worker_id, target)
+    async fn mark_delivered(&self, key: DeliveryKey, worker_id: &LeaseHolder, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+        let outcome = acknowledge::mark_delivered(&self.pool, key.into_inner(), *worker_id, target)
             .await
             .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
-        held(outcome, id, worker_id)
+        held(outcome, key, worker_id)
     }
 
     async fn mark_failed(
         &self,
-        id: DeliveryId,
+        key: DeliveryKey,
         worker_id: &LeaseHolder,
         failure: &str,
         next_attempt_at: DateTime<Utc>,
         target: &ContextTarget,
     ) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_failed(&self.pool, id.into_inner(), *worker_id, failure, next_attempt_at, target)
+        let outcome = acknowledge::mark_failed(&self.pool, key.into_inner(), *worker_id, failure, next_attempt_at, target)
             .await
             .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
-        held(outcome, id, worker_id)
+        held(outcome, key, worker_id)
     }
 
-    async fn mark_terminal(&self, id: DeliveryId, worker_id: &LeaseHolder, failure: &str, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_exhausted(&self.pool, id.into_inner(), *worker_id, failure, target)
+    async fn mark_terminal(&self, key: DeliveryKey, worker_id: &LeaseHolder, failure: &str, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+        let outcome = acknowledge::mark_exhausted(&self.pool, key.into_inner(), *worker_id, failure, target)
             .await
             .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
-        held(outcome, id, worker_id)
+        held(outcome, key, worker_id)
     }
 
     async fn delete_delivered_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
@@ -93,10 +93,10 @@ impl DeliveryStore for NotificationDeliveryQueue {
 }
 
 /// Report a lost lease as the typed failure the port defines.
-const fn held(outcome: LeaseAcknowledgement, id: DeliveryId, worker_id: &LeaseHolder) -> Result<(), DeliveryLeaseError> {
+const fn held(outcome: LeaseAcknowledgement, key: DeliveryKey, worker_id: &LeaseHolder) -> Result<(), DeliveryLeaseError> {
     match outcome {
         LeaseAcknowledgement::Applied => Ok(()),
-        LeaseAcknowledgement::Lost => Err(DeliveryLeaseError::lease_lost(id, worker_id)),
+        LeaseAcknowledgement::Lost => Err(DeliveryLeaseError::lease_lost(key, worker_id)),
     }
 }
 
@@ -120,13 +120,13 @@ fn readable(claimed: Result<ClaimedDelivery, impl Display>) -> Option<DeliveryEn
 fn entry(delivery: ClaimedDelivery) -> DeliveryEntry {
     DeliveryEntry::builder()
         .target(delivery.target)
-        .id(DeliveryId::from(delivery.id))
+        .key(DeliveryKey::from(delivery.delivery_key))
         .subscription_id(delivery.subscription_id)
         .attempt_count(delivery.attempt_count)
         .next_attempt_at(delivery.next_attempt_at)
         .event(
             NotificationEvent::builder()
-                .id(NotificationEventId::from(delivery.event_id))
+                .key(NotificationEventKey::from(delivery.event_key))
                 .write_id(delivery.write_id)
                 .event_ordinal(delivery.event_ordinal)
                 .trigger(delivery.trigger)
@@ -150,18 +150,18 @@ mod tests {
     use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-    use andromeda_notification::{delivery_entry::DeliveryId, delivery_lease::DeliveryLeaseError, notification_event::NotificationEventId};
+    use andromeda_notification::{delivery_entry::DeliveryKey, delivery_lease::DeliveryLeaseError, notification_event::NotificationEventKey};
     use chrono::Utc;
     use uuid::Uuid;
 
     fn delivery() -> ClaimedDelivery {
         ClaimedDelivery {
             target: ContextTarget::Live,
-            id: 11,
+            delivery_key: 11,
             subscription_id: "urn:ngsi-ld:Subscription:1".parse().expect("a valid subscription URI"),
             attempt_count: 1,
             next_attempt_at: Utc::now(),
-            event_id: 3,
+            event_key: 3,
             write_id: WriteId::from_uuid(Uuid::nil()),
             event_ordinal: WriteOrdinal::at(2),
             trigger: NotificationTrigger::EntityCreated,
@@ -177,23 +177,23 @@ mod tests {
     #[test]
     fn an_applied_acknowledgement_leaves_the_worker_holding_its_lease() {
         let worker = LeaseHolder::from(Uuid::nil());
-        assert!(held(LeaseAcknowledgement::Applied, DeliveryId::from(11_i64), &worker).is_ok());
+        assert!(held(LeaseAcknowledgement::Applied, DeliveryKey::from(11_i64), &worker).is_ok());
     }
 
     #[test]
     fn a_lost_acknowledgement_becomes_the_typed_lost_lease_failure() {
         let worker = LeaseHolder::from(Uuid::nil());
-        let outcome = held(LeaseAcknowledgement::Lost, DeliveryId::from(11_i64), &worker);
+        let outcome = held(LeaseAcknowledgement::Lost, DeliveryKey::from(11_i64), &worker);
         assert!(matches!(outcome, Err(DeliveryLeaseError::LeaseLost { .. })));
     }
 
     #[test]
     fn a_claimed_delivery_becomes_the_entry_the_worker_delivers() {
         let entry = entry(delivery());
-        pretty_assertions::assert_eq!(entry.id, DeliveryId::from(11_i64));
+        pretty_assertions::assert_eq!(entry.key, DeliveryKey::from(11_i64));
         pretty_assertions::assert_eq!(entry.subscription_id.as_str(), "urn:ngsi-ld:Subscription:1");
         pretty_assertions::assert_eq!(entry.attempt_count, 1);
-        pretty_assertions::assert_eq!(entry.event.id, NotificationEventId::from(3_i64));
+        pretty_assertions::assert_eq!(entry.event.key, NotificationEventKey::from(3_i64));
         pretty_assertions::assert_eq!(entry.event.event_ordinal, WriteOrdinal::at(2));
         pretty_assertions::assert_eq!(entry.event.trigger, NotificationTrigger::EntityCreated);
     }

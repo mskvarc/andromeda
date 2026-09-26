@@ -15,7 +15,7 @@ use sqlx::{Postgres, Transaction};
 /// Every landed write of one commit contributes to a single queued job, which
 /// is stored under `record`'s write identity: replaying the commit under its
 /// original identity re-runs this enqueue against a row that already exists
-/// and changes nothing. `consequence_base` is stored alongside it, so a worker
+/// and changes nothing. `base_ordinal` is stored alongside it, so a worker
 /// that later leases and replays the job resumes the commit's ordinal counter
 /// exactly where this commit left it, rather than restarting it at zero.
 pub(crate) async fn apply(
@@ -23,7 +23,7 @@ pub(crate) async fn apply(
     target: &ContextTarget,
     landed: &[&AtomicWrite],
     record: &WriteRecord,
-    consequence_base: WriteOrdinal,
+    base_ordinal: WriteOrdinal,
 ) -> Result<ConsequenceWrite, CommitError> {
     let mut merged = PersistedBatchSideEffectJob {
         temporal_entities: Vec::new(),
@@ -59,7 +59,7 @@ pub(crate) async fn apply(
     if merged.temporal_entities.is_empty() && merged.change_events.is_empty() {
         return Ok(ConsequenceWrite::Nothing);
     }
-    PendingSideEffectsRepository::enqueue_in_tx(tx, target, record, consequence_base, &merged)
+    PendingSideEffectsRepository::enqueue_in_tx(tx, target, record, base_ordinal, &merged)
         .await
         .map_err(context_store)?;
     Ok(ConsequenceWrite::Written)

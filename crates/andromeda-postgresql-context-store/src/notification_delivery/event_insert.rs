@@ -70,11 +70,11 @@ pub async fn insert_events_in_tx(
     // then owed its deliveries.
     let inserted: Vec<(i64, i32)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut **tx).await?;
 
-    let (event_ids, subscription_keys) = owed_deliveries(events, &inserted);
-    if event_ids.is_empty() {
+    let (event_keys, subscription_keys) = owed_deliveries(events, &inserted);
+    if event_keys.is_empty() {
         return Ok(());
     }
-    let statement = insert_deliveries_statement(target, event_ids, subscription_keys, record.recorded_at())?;
+    let statement = insert_deliveries_statement(target, event_keys, subscription_keys, record.recorded_at())?;
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let (alias, columns) = pair_source();
     let sql = apply_column_alias(sql, &alias, &columns);
@@ -89,8 +89,8 @@ pub async fn insert_events_in_tx(
 fn owed_deliveries(events: &[NewNotificationEvent<'_>], inserted: &[(i64, i32)]) -> (Vec<i64>, Vec<i64>) {
     inserted
         .iter()
-        .filter_map(|(event_id, ordinal)| events.iter().find(|event| matches_ordinal(event, *ordinal)).map(|event| (*event_id, event)))
-        .flat_map(|(event_id, event)| event.subscription_keys.iter().map(move |key| (event_id, key.get())))
+        .filter_map(|(event_key, ordinal)| events.iter().find(|event| matches_ordinal(event, *ordinal)).map(|event| (*event_key, event)))
+        .flat_map(|(event_key, event)| event.subscription_keys.iter().map(move |key| (event_key, key.get())))
         .unzip()
 }
 
@@ -124,7 +124,7 @@ fn insert_events_statement(
         NotificationEvents::EventOrdinal,
         NotificationEvents::Trigger,
         NotificationEvents::EntityId,
-        NotificationEvents::ChangedAttributeNameIds,
+        NotificationEvents::ChangedAttributeNameKeys,
         NotificationEvents::ChangedDatasetId,
         NotificationEvents::EntitySnapshot,
         NotificationEvents::PreviousSnapshot,
@@ -134,7 +134,7 @@ fn insert_events_statement(
             .ordinal
             .as_i32()
             .map_err(|error| ContextStoreError::Internal(format!("notification event ordinal: {error}")))?;
-        let changed_attribute_name_ids: Vec<i32> = event.changed_attribute_name_ids.iter().map(|id| id.get()).collect();
+        let changed_attribute_name_keys: Vec<i32> = event.changed_attribute_name_keys.iter().map(|id| id.get()).collect();
         statement
             .values([
                 recorded_at.into(),
@@ -142,7 +142,7 @@ fn insert_events_statement(
                 event_ordinal.into(),
                 stored_trigger(event.trigger).code().into(),
                 event.entity_id.as_str().into(),
-                Expr::val(changed_attribute_name_ids),
+                Expr::val(changed_attribute_name_keys),
                 event.changed_dataset_id.map(Uri::as_str).into(),
                 // The snapshot is bound by value because a bound parameter owns
                 // its data; the entity state cannot be borrowed into the wire
@@ -158,7 +158,7 @@ fn insert_events_statement(
                 .do_nothing()
                 .to_owned(),
         )
-        .returning(Query::returning().columns([NotificationEvents::Id, NotificationEvents::EventOrdinal]));
+        .returning(Query::returning().columns([NotificationEvents::EventKey, NotificationEvents::EventOrdinal]));
     Ok(statement.clone())
 }
 
@@ -167,7 +167,7 @@ fn snapshot_value(snapshot: Option<&Value>) -> sea_query::SimpleExpr {
     Expr::val(snapshot.cloned())
 }
 
-/// The `UNNEST(…) AS p(event_id, subscription_key)` source the delivery
+/// The `UNNEST(…) AS p(event_key, subscription_key)` source the delivery
 /// set-write reads its pairs from.
 ///
 /// [`apply_column_alias`] rewrites the alias sea-query renders into this
@@ -176,7 +176,7 @@ fn pair_source() -> (Alias, [UnnestColumn; 2]) {
     (
         Alias::new("p"),
         [
-            UnnestColumn::new(NotificationDeliveries::EventId, PostgresType::BigintArray),
+            UnnestColumn::new(NotificationDeliveries::EventKey, PostgresType::BigintArray),
             UnnestColumn::new(NotificationDeliveries::SubscriptionKey, PostgresType::BigintArray),
         ],
     )
@@ -203,18 +203,18 @@ fn pair_source() -> (Alias, [UnnestColumn; 2]) {
 /// the order changes were accepted in.
 fn insert_deliveries_statement(
     target: &ContextTarget,
-    event_ids: Vec<i64>,
+    event_keys: Vec<i64>,
     subscription_keys: Vec<i64>,
     next_attempt_at: DateTime<Utc>,
 ) -> Result<InsertStatement, ContextStoreError> {
     let (pairs, columns) = pair_source();
     let subscription = Alias::new("s");
     let source = Query::select()
-        .column((pairs.clone(), NotificationDeliveries::EventId))
+        .column((pairs.clone(), NotificationDeliveries::EventKey))
         .column((subscription.clone(), Subscriptions::SubscriptionKey))
         .expr(Expr::val(next_attempt_at))
         .from_function(
-            unnest_call([(&columns[0], Expr::val(event_ids)), (&columns[1], Expr::val(subscription_keys))]),
+            unnest_call([(&columns[0], Expr::val(event_keys)), (&columns[1], Expr::val(subscription_keys))]),
             pairs.clone(),
         )
         .join_as(
@@ -231,7 +231,7 @@ fn insert_deliveries_statement(
     statement
         .into_table(table_of(target, NotificationDeliveries::Table))
         .columns([
-            NotificationDeliveries::EventId,
+            NotificationDeliveries::EventKey,
             NotificationDeliveries::SubscriptionKey,
             NotificationDeliveries::NextAttemptAt,
         ])
@@ -250,7 +250,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use andromeda_postgresql_seaquery::unnest::apply_column_alias;
     use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
@@ -274,7 +274,7 @@ mod tests {
             ordinal: WriteOrdinal::at(ordinal),
             trigger: NotificationTrigger::AttributeUpdated,
             entity_id: entity,
-            changed_attribute_name_ids: vec![AttributeNameId::from(7), AttributeNameId::from(9)],
+            changed_attribute_name_keys: vec![AttributeNameKey::from(7), AttributeNameKey::from(9)],
             changed_dataset_id: None,
             entity_snapshot: Some(snapshot),
             previous_snapshot: None,
@@ -291,7 +291,7 @@ mod tests {
             .expect("a representable event")
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"ON CONFLICT ("write_id", "event_ordinal") DO NOTHING"#), "{sql}");
-        assert!(sql.contains(r#"RETURNING "id", "event_ordinal""#), "{sql}");
+        assert!(sql.contains(r#"RETURNING "event_key", "event_ordinal""#), "{sql}");
     }
 
     #[test]
@@ -324,18 +324,18 @@ mod tests {
         let (alias, columns) = pair_source();
         let sql = apply_column_alias(sql, &alias, &columns);
         assert!(
-            sql.contains(r#"INSERT INTO "notification_deliveries" ("event_id", "subscription_key", "next_attempt_at")"#),
+            sql.contains(r#"INSERT INTO "notification_deliveries" ("event_key", "subscription_key", "next_attempt_at")"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r"FROM UNNEST(ARRAY [42,42,43]::bigint[], ARRAY [1,2,1]::bigint[]) AS p(event_id, subscription_key)"),
+            sql.contains(r"FROM UNNEST(ARRAY [42,42,43]::bigint[], ARRAY [1,2,1]::bigint[]) AS p(event_key, subscription_key)"),
             "{sql}"
         );
         assert!(
             sql.contains(r#"INNER JOIN "subscriptions" AS "s" ON "s"."subscription_key" = "p"."subscription_key""#),
             "{sql}"
         );
-        assert!(sql.contains(r#"SELECT "p"."event_id", "s"."subscription_key""#), "{sql}");
+        assert!(sql.contains(r#"SELECT "p"."event_key", "s"."subscription_key""#), "{sql}");
     }
 
     #[test]
@@ -356,8 +356,8 @@ mod tests {
             event(&entity, 5, &[8], &snapshot),
         ];
         let inserted = [(100_i64, 3_i32), (101, 5)];
-        let (event_ids, subscription_keys) = owed_deliveries(&events, &inserted);
-        pretty_assertions::assert_eq!(event_ids, vec![100, 100, 101]);
+        let (event_keys, subscription_keys) = owed_deliveries(&events, &inserted);
+        pretty_assertions::assert_eq!(event_keys, vec![100, 100, 101]);
         pretty_assertions::assert_eq!(subscription_keys, vec![5, 6, 8]);
     }
 }

@@ -167,9 +167,9 @@ fn temporal_match_subquery(schema: Option<&DynIden>, compiled: &CompiledTemporal
             JoinType::Join,
             AttributeNames::Table,
             An,
-            SeaExpr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+            SeaExpr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
         )
-        .cond_where(SeaExpr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::EntityKey)))
+        .cond_where(SeaExpr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::TemporalEntityKey)))
         .cond_where(temporal_conditions);
 
     if compiled.window.interval.is_bounded() {
@@ -255,7 +255,7 @@ fn current_state_probe(schema: Option<&DynIden>, compiled: &CompiledTemporalQuer
 /// the `GeoProperty` instances that are within the interval defined by the
 /// temporal query". Every instance of the target `GeoProperty` - the default
 /// `location` and any named one alike - is an `attribute_history` row carrying a
-/// `value_geo`, so the probe reaches them uniformly through the stream rather
+/// `value_geometry`, so the probe reaches them uniformly through the stream rather
 /// than through the single hoisted current-state `location` column, which holds
 /// only one instant and answers a different question. Clause 4.10 makes one
 /// in-window instance meeting the restriction enough, which is exactly this
@@ -270,8 +270,8 @@ fn temporal_geo_existential(schema: Option<&DynIden>, compiled: &CompiledTempora
         return Ok(None);
     };
 
-    let planar = SeaExpr::col((Ahg, AttributeHistory::ValueGeo));
-    let geographic = cast(SeaExpr::col((Ahg, AttributeHistory::ValueGeo)), PostgresType::Geography);
+    let planar = SeaExpr::col((Ahg, AttributeHistory::ValueGeometry));
+    let geographic = cast(SeaExpr::col((Ahg, AttributeHistory::ValueGeometry)), PostgresType::Geography);
     let spatial = relation_expression(&geo.georel, planar, geographic, &geo.geometry)?;
 
     let mut probe = SelectStatement::new();
@@ -282,7 +282,7 @@ fn temporal_geo_existential(schema: Option<&DynIden>, compiled: &CompiledTempora
             JoinType::Join,
             AttributeNames::Table,
             Ang,
-            SeaExpr::col((Ang, AttributeNames::Id)).equals((Sg, TemporalAttributeStreams::AttributeNameId)),
+            SeaExpr::col((Ang, AttributeNames::AttributeNameKey)).equals((Sg, TemporalAttributeStreams::AttributeNameKey)),
         )
         .join_as(
             JoinType::Join,
@@ -290,9 +290,9 @@ fn temporal_geo_existential(schema: Option<&DynIden>, compiled: &CompiledTempora
             Ahg,
             SeaExpr::col((Ahg, AttributeHistory::StreamKey)).equals((Sg, TemporalAttributeStreams::StreamKey)),
         )
-        .cond_where(SeaExpr::col((Sg, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::EntityKey)))
+        .cond_where(SeaExpr::col((Sg, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::TemporalEntityKey)))
         .cond_where(SeaExpr::col((Ang, AttributeNames::Name)).eq(geo.geoproperty.as_str()))
-        .cond_where(SeaExpr::col((Ahg, AttributeHistory::ValueGeo)).is_not_null())
+        .cond_where(SeaExpr::col((Ahg, AttributeHistory::ValueGeometry)).is_not_null())
         .cond_where(geo_window_condition(compiled))
         .cond_where(spatial);
     Ok(Some(probe.take()))
@@ -335,7 +335,7 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
         condition = condition.add(regex_match(SeaExpr::col((E, TemporalEntities::Id)), SeaExpr::val(pattern.as_str())));
     }
     if let Some(type_expr) = &selector.type_expr {
-        condition = condition.add(type_condition(type_expr, &SeaExpr::col((E, TemporalEntities::TypeIds)), types));
+        condition = condition.add(type_condition(type_expr, &SeaExpr::col((E, TemporalEntities::EntityTypeNameKeys)), types));
     }
     condition
 }
@@ -378,7 +378,7 @@ fn build_temporal_stage1_conditions(schema: Option<&DynIden>, compiled: &Compile
     // which hangs off the temporal entity grain rather than off `entities`.
     if let Some(scope_q) = &compiled.entities.scope_q {
         let target = ScopeTarget::history(
-            (E, TemporalEntities::EntityKey),
+            (E, TemporalEntities::TemporalEntityKey),
             compiled.window.timeproperty,
             compiled.window.interval,
             schema.cloned(),
@@ -405,7 +405,7 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, entity_type_id::EntityTypeId};
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use chrono::{DateTime, Utc};
     use sea_query::{PostgresQueryBuilder, Value, Values};
     use std::str::FromStr;
@@ -428,7 +428,7 @@ mod tests {
             attributes: ResolvedNames::default(),
             types: ResolvedNames::from_pairs([(
                 "https://uri.etsi.org/ngsi-ld/default-context/Vehicle".parse().expect("valid type name"),
-                EntityTypeId::from(3),
+                EntityTypeNameKey::from(3),
             )]),
         }
     }
@@ -488,7 +488,7 @@ mod tests {
         let (sql, _) = built(&compiled, &vehicle_is_known());
         assert!(!sql.contains("SELECT DISTINCT"), "{sql}");
         assert!(sql.contains("EXISTS(SELECT"), "{sql}");
-        assert!(sql.contains("\"e\".\"type_ids\" @> (ARRAY[3])"), "{sql}");
+        assert!(sql.contains("\"e\".\"entity_type_name_keys\" @> (ARRAY[3])"), "{sql}");
         assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
     }
 
@@ -511,7 +511,7 @@ mod tests {
     fn the_stream_probe_correlates_on_the_temporal_entity_key() {
         let compiled = minimal_compiled();
         let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("\"s\".\"temporal_entity_key\" = \"e\".\"entity_key\""), "{sql}");
+        assert!(sql.contains("\"s\".\"temporal_entity_key\" = \"e\".\"temporal_entity_key\""), "{sql}");
     }
 
     #[test]
@@ -621,7 +621,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
         let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("\"e\".\"entity_key\""), "{sql}");
+        assert!(sql.contains("\"e\".\"temporal_entity_key\""), "{sql}");
     }
 
     #[test]
@@ -671,7 +671,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">50").unwrap());
         let names = QueryNames {
-            attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameId::from(7))]),
+            attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(7))]),
             types: ResolvedNames::default(),
         };
         let (sql, _) = built(&compiled, &names);
@@ -723,9 +723,9 @@ mod tests {
         let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains(r#"FROM "temporal_attribute_streams" AS "sg""#), "{sql}");
         assert!(sql.contains(r#"JOIN "attribute_history" AS "ahg""#), "{sql}");
-        assert!(sql.contains(r#""ahg"."value_geo""#), "{sql}");
+        assert!(sql.contains(r#""ahg"."value_geometry""#), "{sql}");
         assert!(
-            sql.contains(r#""sg"."temporal_entity_key" = "e"."entity_key""#),
+            sql.contains(r#""sg"."temporal_entity_key" = "e"."temporal_entity_key""#),
             "correlated to the temporal entity: {sql}"
         );
         assert!(!sql.contains("entity_search"), "the geo restriction no longer reads current state: {sql}");
@@ -777,7 +777,7 @@ mod tests {
             sql.contains(r#"JOIN "attribute_names" AS "ang""#),
             "the target GeoProperty is named through the dictionary: {sql}"
         );
-        assert!(sql.contains(r#""ahg"."value_geo""#), "{sql}");
+        assert!(sql.contains(r#""ahg"."value_geometry""#), "{sql}");
         assert!(
             !sql.contains("current_attribute_values"),
             "a temporal geo query reads history, not the current-state projection: {sql}"
@@ -797,7 +797,7 @@ mod tests {
         let names = QueryNames {
             attributes: ResolvedNames::from_pairs([(
                 "https://example.com/o'brien".parse().expect("valid attribute name"),
-                AttributeNameId::from(9_i32),
+                AttributeNameKey::from(9_i32),
             )]),
             types: ResolvedNames::default(),
         };

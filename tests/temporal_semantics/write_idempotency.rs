@@ -172,7 +172,7 @@ async fn temporal_semantics_write_idempotency_records_release_only_with_their_ow
 const REPLAY_HISTORY_ROW_SQL: &str = r"
 INSERT INTO attribute_history
     (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
-     generated_instance_uuid, value_number)
+     generated_instance_id, value_number)
 SELECT $1, $2, stream_key, $4, $5, $6, $7, 55
 FROM temporal_attribute_streams WHERE stream_key = $3
 ";

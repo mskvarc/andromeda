@@ -2,7 +2,7 @@
 //! value is held in.
 //!
 //! A B-tree refuses an entry past 2704 bytes (SQLSTATE 54000), and
-//! `idx_cav_attr_string` keys on `value_string`, so a String longer than
+//! `idx_cav_value_string` keys on `value_string`, so a String longer than
 //! [`INDEXED_STRING_BYTE_LIMIT`] is held in `value_long_text` instead. The
 //! migration's two length checks make that placement canonical: every string
 //! has exactly one column it may sit in. The writer places a value through
@@ -15,8 +15,8 @@ use crate::current::CurrentAttributeValues;
 /// The greatest length, in UTF-8 octets, a String held in `value_string` may
 /// have.
 ///
-/// 2048 leaves the `(attribute_name_id, value_string)` entry of
-/// `idx_cav_attr_string` well inside the 2704 bytes a B-tree entry may take. A
+/// 2048 leaves the `(attribute_name_key, value_string)` entry of
+/// `idx_cav_value_string` well inside the 2704 bytes a B-tree entry may take. A
 /// unit test in `migration_set` pins the literal migration 0022 states to this
 /// constant.
 pub const INDEXED_STRING_BYTE_LIMIT: usize = 2048;

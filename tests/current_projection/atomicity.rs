@@ -81,14 +81,14 @@ async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
     // A projection row whose declared value kind does not match its populated
     // column: exactly the corruption
     // `chk_current_attribute_values_value_kind_column` exists to refuse.
-    let name_id = insert_attribute_name(&mut transaction, "https://example.test/current-projection/rollback").await;
+    let name_key = insert_attribute_name(&mut transaction, "https://example.test/current-projection/rollback").await;
     let failure = sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_string) \
+         (entity_key, attribute_name_key, attribute_kind, value_kind, value_string) \
          VALUES ($1, $2, 1, 1, 'not a number')",
     )
     .bind(entity_key)
-    .bind(name_id)
+    .bind(name_key)
     .execute(&mut *transaction)
     .await
     .expect_err("a projection row contradicting its value kind must be refused");
@@ -239,7 +239,7 @@ async fn a_short_string_in_the_overflow_column_is_refused() {
 
     let mut transaction = scope.database_pool().begin().await.expect("transaction must start");
     let entity_key = insert_typed_entity(&mut transaction, &id, BUILDING_TYPE).await;
-    let name_id = insert_attribute_name(&mut transaction, "https://example.test/current-projection/short-overflow").await;
+    let name_key = insert_attribute_name(&mut transaction, "https://example.test/current-projection/short-overflow").await;
 
     // A String that fits the indexed column has exactly one place it may sit,
     // so a writer parking it in the overflow column would leave the B-tree
@@ -247,11 +247,11 @@ async fn a_short_string_in_the_overflow_column_is_refused() {
     // refuses that placement.
     let failure = sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_long_text) \
+         (entity_key, attribute_name_key, attribute_kind, value_kind, value_long_text) \
          VALUES ($1, $2, 1, 2, '0123456789')",
     )
     .bind(entity_key)
-    .bind(name_id)
+    .bind(name_key)
     .execute(&mut *transaction)
     .await
     .expect_err("a short string in the overflow column must be refused");

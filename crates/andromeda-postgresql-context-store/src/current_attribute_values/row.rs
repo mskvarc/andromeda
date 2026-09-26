@@ -4,7 +4,7 @@ use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
-use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -22,7 +22,7 @@ pub struct ProjectedAttributeKey {
     /// The entity the instance belongs to.
     pub entity_key: EntityKey,
     /// Dictionary key of the instance's expanded attribute IRI.
-    pub attribute_name_id: AttributeNameId,
+    pub attribute_name_key: AttributeNameKey,
     /// The instance's `datasetId`, absent on the default instance.
     pub dataset_id: Option<Uri>,
 }

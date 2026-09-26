@@ -4,7 +4,7 @@
 //! entities is one statement per child table rather than one per row.
 
 use crate::entity_map::{
-    lifecycle::{live_map_key_of, map_key_of},
+    lifecycle::{entity_map_key_of, live_entity_map_key_of},
     persistence_error,
 };
 use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
@@ -52,14 +52,14 @@ pub(crate) fn entries_insert_sql() -> Result<String, EntityMapError> {
     ]);
     let mut select = Query::select();
     select
-        .expr(map_key_of(external_placeholder(1)))
+        .expr(entity_map_key_of(external_placeholder(1)))
         .expr(Expr::col((D, EntityMapEntries::Position)))
         .expr(Expr::col((D, EntityMapEntries::EntityId)))
         .expr(Expr::col((D, EntityMapEntries::Source)))
         .from_function(call, D);
     let mut insert = Query::insert();
     insert.into_table(EntityMapEntries::Table).columns([
-        EntityMapEntries::MapKey.into_iden(),
+        EntityMapEntries::EntityMapKey.into_iden(),
         EntityMapEntries::Position.into_iden(),
         EntityMapEntries::EntityId.into_iden(),
         EntityMapEntries::Source.into_iden(),
@@ -78,13 +78,13 @@ pub(crate) fn links_insert_sql() -> Result<String, EntityMapError> {
     let call = unnest_call([(&columns[0], external_placeholder(2)), (&columns[1], external_placeholder(3))]);
     let mut select = Query::select();
     select
-        .expr(map_key_of(external_placeholder(1)))
+        .expr(entity_map_key_of(external_placeholder(1)))
         .expr(Expr::col((D, EntityMapLinks::RegistrationId)))
         .expr(Expr::col((D, EntityMapLinks::LinkedMapId)))
         .from_function(call, D);
     let mut insert = Query::insert();
     insert.into_table(EntityMapLinks::Table).columns([
-        EntityMapLinks::MapKey.into_iden(),
+        EntityMapLinks::EntityMapKey.into_iden(),
         EntityMapLinks::RegistrationId.into_iden(),
         EntityMapLinks::LinkedMapId.into_iden(),
     ]);
@@ -142,7 +142,7 @@ pub(crate) async fn insert_children(connection: &mut PgConnection, map: &EntityM
 fn link_upsert(id: &Uri, registration: &Uri, linked_map: &Uri) -> Result<InsertStatement, EntityMapError> {
     let mut staged = Query::select();
     staged
-        .column((EntityMapsTable::Table, EntityMapsTable::MapKey))
+        .column((EntityMapsTable::Table, EntityMapsTable::EntityMapKey))
         .expr(Expr::val(registration.as_str()))
         .expr(Expr::val(linked_map.as_str()))
         .from(EntityMapsTable::Table)
@@ -152,12 +152,12 @@ fn link_upsert(id: &Uri, registration: &Uri, linked_map: &Uri) -> Result<InsertS
     insert
         .into_table(EntityMapLinks::Table)
         .columns([
-            EntityMapLinks::MapKey.into_iden(),
+            EntityMapLinks::EntityMapKey.into_iden(),
             EntityMapLinks::RegistrationId.into_iden(),
             EntityMapLinks::LinkedMapId.into_iden(),
         ])
         .on_conflict(
-            OnConflict::columns([EntityMapLinks::MapKey, EntityMapLinks::RegistrationId])
+            OnConflict::columns([EntityMapLinks::EntityMapKey, EntityMapLinks::RegistrationId])
                 .update_column(EntityMapLinks::LinkedMapId)
                 .to_owned(),
         );
@@ -189,7 +189,7 @@ fn entries_delete(id: &Uri, entity_ids: &[&str]) -> DeleteStatement {
     let mut delete = Query::delete();
     delete
         .from_table(EntityMapEntries::Table)
-        .and_where(Expr::col(EntityMapEntries::MapKey).eq(live_map_key_of(Expr::val(id.as_str()))))
+        .and_where(Expr::col(EntityMapEntries::EntityMapKey).eq(live_entity_map_key_of(Expr::val(id.as_str()))))
         .and_where(Expr::col(EntityMapEntries::EntityId).eq(any(text_array(entity_ids))));
     delete
 }
@@ -213,7 +213,7 @@ pub(crate) async fn read_entries(pool: &PgPool, id: &Uri) -> Result<Vec<(String,
         .column(EntityMapEntries::EntityId)
         .column(EntityMapEntries::Source)
         .from(EntityMapEntries::Table)
-        .and_where(Expr::col(EntityMapEntries::MapKey).eq(map_key_of(Expr::val(id.as_str()))))
+        .and_where(Expr::col(EntityMapEntries::EntityMapKey).eq(entity_map_key_of(Expr::val(id.as_str()))))
         .order_by(EntityMapEntries::Position, Order::Asc)
         .build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -236,7 +236,7 @@ pub(crate) async fn read_links(pool: &PgPool, id: &Uri) -> Result<Vec<(String, S
         .column(EntityMapLinks::RegistrationId)
         .column(EntityMapLinks::LinkedMapId)
         .from(EntityMapLinks::Table)
-        .and_where(Expr::col(EntityMapLinks::MapKey).eq(map_key_of(Expr::val(id.as_str()))))
+        .and_where(Expr::col(EntityMapLinks::EntityMapKey).eq(entity_map_key_of(Expr::val(id.as_str()))))
         .order_by(EntityMapLinks::RegistrationId, Order::Asc)
         .build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -260,14 +260,14 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
 
     #[test]
-    fn the_entries_insert_stages_three_arrays_under_the_resolved_map_key() {
+    fn the_entries_insert_stages_three_arrays_under_the_resolved_entity_map_key() {
         let sql = entries_insert_sql().expect("builds");
         assert!(
-            sql.contains(r#"INSERT INTO "entity_map_entries" ("map_key", "position", "entity_id", "source")"#),
+            sql.contains(r#"INSERT INTO "entity_map_entries" ("entity_map_key", "position", "entity_id", "source")"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"(SELECT "entity_maps"."map_key" FROM "entity_maps" WHERE "entity_maps"."id" = ($1))"#),
+            sql.contains(r#"(SELECT "entity_maps"."entity_map_key" FROM "entity_maps" WHERE "entity_maps"."id" = ($1))"#),
             "{sql}"
         );
         assert!(
@@ -277,10 +277,10 @@ mod tests {
     }
 
     #[test]
-    fn the_links_insert_stages_two_arrays_under_the_resolved_map_key() {
+    fn the_links_insert_stages_two_arrays_under_the_resolved_entity_map_key() {
         let sql = links_insert_sql().expect("builds");
         assert!(
-            sql.contains(r#"INSERT INTO "entity_map_links" ("map_key", "registration_id", "linked_map_id")"#),
+            sql.contains(r#"INSERT INTO "entity_map_links" ("entity_map_key", "registration_id", "linked_map_id")"#),
             "{sql}"
         );
         assert!(sql.contains("UNNEST($2::text[], $3::text[]) AS d(registration_id, linked_map_id)"), "{sql}");
@@ -297,7 +297,7 @@ mod tests {
         .build(PostgresQueryBuilder);
         assert!(sql.contains(r#"DELETE FROM "entity_map_entries""#), "{sql}");
         assert!(
-            sql.contains(r#""map_key" = (SELECT "entity_maps"."map_key" FROM "entity_maps" WHERE "entity_maps"."id" = $1 AND "entity_maps"."expires_at" > "#),
+            sql.contains(r#""entity_map_key" = (SELECT "entity_maps"."entity_map_key" FROM "entity_maps" WHERE "entity_maps"."id" = $1 AND "entity_maps"."expires_at" > "#),
             "{sql}"
         );
         assert!(sql.contains(r#""entity_id" = ANY($2)"#), "{sql}");
@@ -314,13 +314,13 @@ mod tests {
         .expect("builds")
         .to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#"INSERT INTO "entity_map_links" ("map_key", "registration_id", "linked_map_id")"#),
+            sql.contains(r#"INSERT INTO "entity_map_links" ("entity_map_key", "registration_id", "linked_map_id")"#),
             "{sql}"
         );
         assert!(sql.contains(r#""entity_maps"."id" = 'urn:ngsi-ld:EntityMap:1'"#), "{sql}");
         assert!(sql.contains(r#""entity_maps"."expires_at" > "#), "{sql}");
         assert!(
-            sql.contains(r#"ON CONFLICT ("map_key", "registration_id") DO UPDATE SET "linked_map_id" = "excluded"."linked_map_id""#),
+            sql.contains(r#"ON CONFLICT ("entity_map_key", "registration_id") DO UPDATE SET "linked_map_id" = "excluded"."linked_map_id""#),
             "{sql}"
         );
     }

@@ -4,7 +4,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{
     attribute_instance_correlation::{geometry_instances_of, instance_geometry_column},
-    attribute_name_id::AttributeNameId,
+    attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
 };
@@ -50,8 +50,8 @@ pub fn geo_order_distance(
     match order_subject(geoproperty, attribute_names) {
         OrderSubject::None => None,
         OrderSubject::LocationColumn => Some(st_distance_sphere(outer.search_column(EntitySearch::Location), reference_geometry())),
-        OrderSubject::Instances(attribute_id) => {
-            let mut scan = geometry_instances_of(outer, ORDER_ALIAS, attribute_id);
+        OrderSubject::Instances(attribute_name_key) => {
+            let mut scan = geometry_instances_of(outer, ORDER_ALIAS, attribute_name_key);
             scan.expr(Func::min(st_distance_sphere(instance_geometry_column(ORDER_ALIAS), reference_geometry())));
             Some(SimpleExpr::SubQuery(None, Box::new(scan.into_sub_query_statement())))
         }
@@ -72,7 +72,7 @@ enum OrderSubject {
     /// The default `GeoProperty`'s dedicated geometry column.
     LocationColumn,
     /// The instance rows of one attribute, by dictionary key.
-    Instances(AttributeNameId),
+    Instances(AttributeNameKey),
 }
 
 /// Classify an ordering term by where its geometry is stored.
@@ -81,7 +81,7 @@ fn order_subject(geoproperty: &AttributeName, attribute_names: &ResolvedNames<At
         return OrderSubject::LocationColumn;
     }
     match attribute_names.get(geoproperty) {
-        Some(attribute_id) => OrderSubject::Instances(attribute_id),
+        Some(attribute_name_key) => OrderSubject::Instances(attribute_name_key),
         None => OrderSubject::None,
     }
 }
@@ -92,7 +92,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_query::{
-        attribute_name_id::AttributeNameId,
+        attribute_name_key::AttributeNameKey,
         dictionary::resolved_names::ResolvedNames,
         entity_row_refs::{DocumentsRef, EntityRowRefs},
     };
@@ -110,7 +110,7 @@ mod tests {
     }
 
     fn resolved_custom() -> ResolvedNames<AttributeName> {
-        ResolvedNames::from_pairs([(name(CUSTOM_GEOPROPERTY), AttributeNameId::from(CUSTOM_GEOPROPERTY_ID))])
+        ResolvedNames::from_pairs([(name(CUSTOM_GEOPROPERTY), AttributeNameKey::from(CUSTOM_GEOPROPERTY_ID))])
     }
 
     /// The entity statement selects the entity relations unaliased.
@@ -166,7 +166,7 @@ mod tests {
         let sql = render(geo_order_distance(&name(CUSTOM_GEOPROPERTY), &resolved_custom(), &outer(), REFERENCE).expect("a recorded GeoProperty is measurable"));
         assert!(sql.contains("FROM \"current_attribute_values\""), "{sql}");
         assert!(sql.contains("MIN(ST_DistanceSphere("), "the nearest instance decides: {sql}");
-        assert!(sql.contains(&format!("\"attribute_name_id\" = {CUSTOM_GEOPROPERTY_ID}")), "{sql}");
+        assert!(sql.contains(&format!("\"attribute_name_key\" = {CUSTOM_GEOPROPERTY_ID}")), "{sql}");
         assert!(
             sql.contains("\"geo_order\".\"entity_key\" = \"entities\".\"entity_key\""),
             "correlated to the ordered row: {sql}"
@@ -205,7 +205,7 @@ mod tests {
     /// and no apostrophe in one can terminate a literal.
     #[test]
     fn no_geoproperty_iri_reaches_the_statement_text() {
-        let names = ResolvedNames::from_pairs([(name("https://example.com/o'brien"), AttributeNameId::from(9_i32))]);
+        let names = ResolvedNames::from_pairs([(name("https://example.com/o'brien"), AttributeNameKey::from(9_i32))]);
         let sql = render(geo_order_distance(&name("https://example.com/o'brien"), &names, &outer(), REFERENCE).expect("a recorded GeoProperty is measurable"));
         assert!(!sql.contains("brien"), "{sql}");
         assert_eq!(sql.matches('\'').count() % 2, 0, "unbalanced SQL literal: {sql}");

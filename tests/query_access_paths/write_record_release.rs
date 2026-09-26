@@ -9,7 +9,7 @@
 //! 5.6.16) and every retention sweep seek one index entry per chunk instead of
 //! scanning every chunk the history spans.
 
-use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, dictionary_id, explain_rolled_back, type_dictionary_id};
+use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, dictionary_key, explain_rolled_back, type_dictionary_key};
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -37,22 +37,22 @@ const RELEASE_ATTRIBUTE: &str = "https://example.test/query-access-paths/release
 /// Every history row carries the `recorded_at` of its write's record, which is
 /// the invariant the committer keeps and the release correlation relies on.
 async fn seed_released_history(pool: &PgPool, prefix: &str) {
-    let type_id = type_dictionary_id(pool, HISTORIC_TYPE).await;
+    let type_key = type_dictionary_key(pool, HISTORIC_TYPE).await;
     let entity_key: i64 = sqlx::query_scalar(
-        "INSERT INTO temporal_entities (created_at, modified_at, id, type_ids) \
-         VALUES (now(), now(), $1::text || ':release', ARRAY[$2::integer]) RETURNING entity_key",
+        "INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
+         VALUES (now(), now(), $1::text || ':release', ARRAY[$2::integer]) RETURNING temporal_entity_key",
     )
     .bind(prefix)
-    .bind(type_id)
+    .bind(type_key)
     .fetch_one(pool)
     .await
     .expect("temporal catalogue insert must succeed");
 
-    let attribute_name_id = dictionary_id(pool, RELEASE_ATTRIBUTE).await;
+    let attribute_name_key = dictionary_key(pool, RELEASE_ATTRIBUTE).await;
     let stream_key: i64 =
-        sqlx::query_scalar("INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_id) VALUES ($1, $2) RETURNING stream_key")
+        sqlx::query_scalar("INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_key) VALUES ($1, $2) RETURNING stream_key")
             .bind(entity_key)
-            .bind(attribute_name_id)
+            .bind(attribute_name_key)
             .fetch_one(pool)
             .await
             .expect("stream insert must succeed");
@@ -72,7 +72,7 @@ async fn seed_released_history(pool: &PgPool, prefix: &str) {
     sqlx::query(
         "INSERT INTO attribute_history \
          (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, \
-          observed_at, generated_instance_uuid, value_number) \
+          observed_at, generated_instance_id, value_number) \
          SELECT w.recorded_at, w.write_id, $1, 0, 1, 1, w.recorded_at, gen_random_uuid(), 1 \
          FROM write_records AS w",
     )
@@ -83,7 +83,7 @@ async fn seed_released_history(pool: &PgPool, prefix: &str) {
 
     sqlx::query(
         "INSERT INTO scope_history \
-         (recorded_at, temporal_entity_key, write_id, write_ordinal, value_kind, observed_at, generated_instance_uuid, scope_path) \
+         (recorded_at, temporal_entity_key, write_id, write_ordinal, value_kind, observed_at, generated_instance_id, scope_path) \
          SELECT w.recorded_at, $1, w.write_id, 0, 1, w.recorded_at, gen_random_uuid(), 'seed.release'::ltree \
          FROM write_records AS w",
     )
@@ -144,7 +144,7 @@ async fn write_record_release_seeks_the_history_write_index_instead_of_scanning_
     // Every seeded record is protected, so the delete removes nothing; the
     // rollback keeps that true whatever the plan does.
     let plan = explain_rolled_back(pool, PlannerPaths::Unrestricted, &statement).await;
-    for index in ["uq_attribute_history_write", "uq_scope_history_write"] {
+    for index in ["uq_attribute_history_write_identity", "uq_scope_history_write_identity"] {
         assert!(plan.contains(index), "the release must seek {index} in each chunk: {plan}");
     }
     assert!(!plan.contains("Seq Scan on _hyper_"), "the release must not scan a history chunk: {plan}");

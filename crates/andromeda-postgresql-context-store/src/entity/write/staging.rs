@@ -63,8 +63,8 @@ pub(super) struct Doomed;
 /// The staging columns of the entity set-writes, named as the `AS d(…)` alias
 /// spells them rather than as the columns they land in.
 ///
-/// The key and scope arrays arrive as JSONB (`type_ids_json`,
-/// `attribute_name_ids_json`, `scope_paths_json`) and are expanded to
+/// The key and scope arrays arrive as JSONB (`entity_type_name_keys_json`,
+/// `attribute_name_keys_json`, `scope_paths_json`) and are expanded to
 /// `integer[]`/`ltree[]` in the projection; the geometries arrive as EWKB
 /// (`loc`, `obs`, `ops`) and are validated there. Not every statement uses
 /// every column: the delete stages only `id` and the expectation.
@@ -73,9 +73,9 @@ pub(super) enum StagedColumn {
     /// Entity identifier.
     Id,
     /// Type dictionary-key array as JSONB.
-    TypeIdsJson,
+    EntityTypeNameKeysJson,
     /// Attribute-name dictionary-key array as JSONB.
-    AttributeNameIdsJson,
+    AttributeNameKeysJson,
     /// Scope-path array as JSONB, in `ltree` dot notation.
     ScopePathsJson,
     /// Payload as JSON text, cast to `jsonb` in the projection.
@@ -129,8 +129,8 @@ fn array_of(column: StagedColumn, element_type: PostgresType) -> SimpleExpr {
 const fn value_staging_columns() -> [(StagedColumn, PostgresType); 11] {
     [
         (StagedColumn::Id, PostgresType::TextArray),
-        (StagedColumn::TypeIdsJson, PostgresType::JsonbArray),
-        (StagedColumn::AttributeNameIdsJson, PostgresType::JsonbArray),
+        (StagedColumn::EntityTypeNameKeysJson, PostgresType::JsonbArray),
+        (StagedColumn::AttributeNameKeysJson, PostgresType::JsonbArray),
         (StagedColumn::ScopePathsJson, PostgresType::JsonbArray),
         (StagedColumn::Payload, PostgresType::TextArray),
         (StagedColumn::Loc, PostgresType::ByteaArray),
@@ -180,10 +180,13 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], expectation: ExpectationS
     let mut select = Query::select();
     select
         .expr_as(staged(StagedColumn::Id), Entities::Id)
-        .expr_as(array_of(StagedColumn::TypeIdsJson, PostgresType::Integer), EntitySearch::TypeIds)
         .expr_as(
-            array_of(StagedColumn::AttributeNameIdsJson, PostgresType::Integer),
-            EntitySearch::AttributeNameIds,
+            array_of(StagedColumn::EntityTypeNameKeysJson, PostgresType::Integer),
+            EntitySearch::EntityTypeNameKeys,
+        )
+        .expr_as(
+            array_of(StagedColumn::AttributeNameKeysJson, PostgresType::Integer),
+            EntitySearch::AttributeNameKeys,
         )
         .expr_as(array_of(StagedColumn::ScopePathsJson, PostgresType::Ltree), EntitySearch::ScopePaths)
         .expr_as(cast(staged(StagedColumn::Payload), PostgresType::Jsonb), EntityDocuments::Payload)

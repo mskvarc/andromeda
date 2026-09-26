@@ -1,46 +1,37 @@
 -- ============================================================================
--- 0001: Tenant registry (platform database)
+-- 0001: Tenant registry
 -- ============================================================================
--- Maps every tenant to the database that holds its state. This lives in the
--- platform database, which is also the unnamed default tenant's database, and
--- is recorded in the platform ledger `_andromeda_platform_migrations`, apart
--- from the tenant schema's own ledger.
+-- Spec: ETSI GS CIM 009 v1.9.1 clause 6.3.14
 --
--- The unnamed default tenant is the row with `is_unnamed_default = TRUE` and
--- `name IS NULL`, never a row named "default": clause 6.3.14 gives the default
--- tenant no name, and a name would make it addressable by one.
--- `chk_tenants_unnamed_default_has_no_name` pins both halves -- a named row is
--- never the default and the default row is never named -- and
--- `idx_tenants_unnamed_default` admits at most one default row.
+-- Every tenant and the database that holds its state. The registry lives in
+-- the platform database, which is also the database of the unnamed default
+-- tenant.
 --
--- `name` is `COLLATE "C"`: a tenant name is an identifier compared for
--- equality through its unique index, never ordered linguistically.
+-- Codes:
 --
--- `status` is a code of the migration-owned registry the broker compiles in
--- (`andromeda-postgresql-codes` `TenantStatusCode`):
+--   status: 1 active, 2 suspended
 --
---   1 active, 2 suspended
---
--- The registry is append-only and never renumbered. The check pins the range:
--- a number outside it could only come from a release that knows a status this
--- schema does not.
+-- The unnamed default tenant is the row with `is_unnamed_default` set and no
+-- `name`, never a row named "default": clause 6.3.14 gives the default tenant
+-- no name, and a name would make it addressable by one. The unique partial
+-- index admits at most one such row.
 -- ============================================================================
 
 CREATE TABLE tenants (
-    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    tenant_key BIGINT GENERATED ALWAYS AS IDENTITY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status SMALLINT NOT NULL,
     is_unnamed_default BOOLEAN NOT NULL DEFAULT FALSE,
-    name TEXT COLLATE "C",
-    db_name TEXT COLLATE "C" NOT NULL,
-    CONSTRAINT pk_tenants PRIMARY KEY (id),
+    name TEXT COMPRESSION lz4 COLLATE "C",
+    database_name TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+    CONSTRAINT pk_tenants PRIMARY KEY (tenant_key),
     CONSTRAINT uq_tenants_name UNIQUE (name),
-    CONSTRAINT uq_tenants_db_name UNIQUE (db_name),
+    CONSTRAINT uq_tenants_database_name UNIQUE (database_name),
     CONSTRAINT chk_tenants_unnamed_default_has_no_name CHECK ((name IS NULL) = is_unnamed_default),
     CONSTRAINT chk_tenants_status CHECK (status BETWEEN 1 AND 2)
 );
 
-CREATE UNIQUE INDEX idx_tenants_unnamed_default
+CREATE UNIQUE INDEX uq_tenants_unnamed_default
     ON tenants (is_unnamed_default)
     WHERE is_unnamed_default = TRUE;

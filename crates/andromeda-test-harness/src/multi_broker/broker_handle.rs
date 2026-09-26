@@ -19,6 +19,7 @@ pub struct BrokerHandle<R> {
     pub(super) endpoint: BrokerEndpoint,
     pub(super) peer: Url,
     pub(super) alias: String,
+    pub(super) configured_alias: String,
     pub(super) tenant_pool: PgPool,
     pub(super) platform_pool: PgPool,
     pub(super) context: Option<HeaderValue>,
@@ -55,9 +56,18 @@ where
         self.peer.as_str()
     }
 
-    /// Borrow the broker's source alias.
+    /// Borrow the `contextSourceAlias` the broker names itself by under the
+    /// leased tenant: the pseudonym it writes into a `Via` chain and the alias a
+    /// registration pointing back at it uses for loop detection (Table
+    /// 5.2.40-1: in the multi-tenancy case the alias identifies a tenant).
     pub fn alias(&self) -> &str {
         &self.alias
+    }
+
+    /// Borrow the alias the broker was configured with, which is the one it
+    /// names itself by under the default tenant.
+    pub fn configured_alias(&self) -> &str {
+        &self.configured_alias
     }
 
     /// Borrow the pool of the leased tenant's database on this broker, for

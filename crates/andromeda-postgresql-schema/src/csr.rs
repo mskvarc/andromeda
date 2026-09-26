@@ -67,12 +67,12 @@ pub enum Csr {
     AdditionalProperties,
 }
 
-/// The `csr_delivery_state` relation: the forwarding statistics and health of
+/// The `registration_delivery_state` relation: the forwarding statistics and health of
 /// one registration (Table 5.2.9-2), split off the registration row because
 /// every forwarded request moves them.
 #[derive(Iden, Clone, Copy)]
-pub enum CsrDeliveryState {
-    /// The `csr_delivery_state` table.
+pub enum RegistrationDeliveryState {
+    /// The `registration_delivery_state` table.
     Table,
     /// Primary key and foreign key to the owning registration.
     RegistrationId,
@@ -113,16 +113,16 @@ pub enum RegistrationInformation {
     /// The interned property-name dictionary keys the item declares; `{0}` when
     /// it declares no name on either axis, `{}` when it declares names on the
     /// relationship axis only.
-    PropertyNameIds,
+    PropertyNameKeys,
     /// The interned relationship-name dictionary keys the item declares; `{0}`
     /// when it declares no name on either axis, `{}` when it declares names on
     /// the property axis only.
-    RelationshipNameIds,
+    RelationshipNameKeys,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::csr::{Csr, CsrDeliveryState, RegistrationInformation};
+    use crate::csr::{Csr, RegistrationDeliveryState, RegistrationInformation};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -143,17 +143,17 @@ mod tests {
     }
 
     #[test]
-    fn csr_delivery_state_column_names() {
-        assert_eq!(CsrDeliveryState::Table.to_string(), "csr_delivery_state");
-        assert_eq!(CsrDeliveryState::RegistrationId.to_string(), "registration_id");
-        assert_eq!(CsrDeliveryState::TimesSent.to_string(), "times_sent");
-        assert_eq!(CsrDeliveryState::Status.to_string(), "status");
+    fn registration_delivery_state_column_names() {
+        assert_eq!(RegistrationDeliveryState::Table.to_string(), "registration_delivery_state");
+        assert_eq!(RegistrationDeliveryState::RegistrationId.to_string(), "registration_id");
+        assert_eq!(RegistrationDeliveryState::TimesSent.to_string(), "times_sent");
+        assert_eq!(RegistrationDeliveryState::Status.to_string(), "status");
     }
 
     #[test]
     fn registration_information_column_names() {
         assert_eq!(RegistrationInformation::Table.to_string(), "registration_information");
         assert_eq!(RegistrationInformation::EntityTypes.to_string(), "entity_types");
-        assert_eq!(RegistrationInformation::PropertyNameIds.to_string(), "property_name_ids");
+        assert_eq!(RegistrationInformation::PropertyNameKeys.to_string(), "property_name_keys");
     }
 }

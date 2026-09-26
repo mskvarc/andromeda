@@ -1,30 +1,23 @@
 -- ============================================================================
--- 0016: Write idempotency record
+-- 0016: Write records
 -- ============================================================================
--- `write_records` is the record of one atomic broker write, and persists
--- that write's `recorded_at` so a replay reuses the original instant instead
--- of stamping a new one. `attribute_history` is deduplicated by
--- (recorded_at, write_id, write_ordinal) -- every unique index on a
--- hypertable must contain the partition column -- so a replay that
--- re-stamped ingestion time would never collide with the rows it
--- duplicates. Reusing the persisted instant is what makes the collision
--- happen.
+-- Spec: ETSI GS CIM 009 v1.9.1 clause 5.6.16
 --
--- It is tenant-global rather than branch state: a write identity is minted
--- once per tenant, and a Snapshot branch is populated by capture and clone,
--- never by a replayable broker write.
+-- One row per atomic broker write, holding the instant the write was recorded
+-- at, so a replay of the write reuses that instant instead of stamping a new
+-- one. History rows are deduplicated on the recorded instant together with the
+-- write identity, so a replay that stamped a fresh instant would never collide
+-- with the rows it duplicates.
 --
--- A row lives for as long as any effect it protects exists, and is released
--- by Temporal Evolution deletion (clause 5.6.16) or by the operator-configured
--- horizon sweep, which is what `idx_write_records_recorded_at` serves.
---
--- `accepted_at` is the instant the broker accepted the write, kept distinct
--- from `recorded_at` because a replayed write is accepted again at a later
--- moment while recording at the original one.
+-- A row lives as long as any effect it protects, and is released by Temporal
+-- Evolution deletion (clause 5.6.16) or by the operator's retention horizon,
+-- whose sweep ranges over `recorded_at`.
 -- ============================================================================
 
 CREATE TABLE write_records (
     recorded_at TIMESTAMPTZ NOT NULL,
+    -- When the broker accepted the write. A replay is accepted again, later,
+    -- while it keeps recording at the original instant.
     accepted_at TIMESTAMPTZ NOT NULL,
     write_id UUID NOT NULL,
     CONSTRAINT pk_write_records PRIMARY KEY (write_id)

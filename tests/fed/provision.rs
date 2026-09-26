@@ -14,6 +14,7 @@ async fn fed_redirected_entity_crud_lifecycle_reaches_domain() {
     let madrid = broker(&topology, FedRole::Madrid);
     let id = topology.id("Building:redirect-crud");
     let mut csr = registration(
+        topology.tenant(),
         &topology.id("registration:redirect-crud"),
         madrid.peer_url(),
         &btype,
@@ -94,7 +95,7 @@ async fn fed_batch_provision_routes_entities_to_three_domains() {
     for (role, prefix) in domains {
         let domain = broker(&topology, role);
         let pattern = format!("^{}:{prefix}-.*", topology.id_prefix());
-        let csr = json!({"id": topology.id(&format!("registration:batch:{prefix}")), "type": "ContextSourceRegistration", "endpoint": domain.peer_url(), "information": [{"entities": [{"type": btype, "idPattern": pattern}]}], "mode": "redirect", "operations": ["redirectionOps", "createBatch", "updateBatch", "deleteBatch"], "@context": COMPOUND_CONTEXT.as_str()});
+        let csr = json!({"id": topology.id(&format!("registration:batch:{prefix}")), "type": "ContextSourceRegistration", "endpoint": domain.peer_url(), "tenant": topology.tenant(), "information": [{"entities": [{"type": btype, "idPattern": pattern}]}], "mode": "redirect", "operations": ["redirectionOps", "createBatch", "updateBatch", "deleteBatch"], "@context": COMPOUND_CONTEXT.as_str()});
         assert_status(&hub.client().create_registration(&csr).await.expect("batch registration"), 201);
     }
     let mut entities = Vec::new();
@@ -138,6 +139,7 @@ async fn fed_batch_write_reports_partial_domain_failure() {
     // Both registrations' idPatterns are anchored to this test's prefix so they
     // route and fail only this test's own MAD/FAIL entities.
     let mut success = registration(
+        topology.tenant(),
         &topology.id("registration:batch-success"),
         madrid.peer_url(),
         &btype,

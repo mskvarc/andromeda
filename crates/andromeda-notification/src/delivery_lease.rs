@@ -8,7 +8,7 @@
 //! records what happened when a worker tried to act on a delivery whose lease
 //! it may no longer hold.
 
-use crate::delivery_entry::DeliveryId;
+use crate::delivery_entry::DeliveryKey;
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use chrono::{DateTime, Duration, Utc};
 use derive_more::Display;
@@ -94,7 +94,7 @@ pub enum DeliveryLeaseError {
     #[error("notification delivery {delivery} is no longer leased by {worker}")]
     LeaseLost {
         /// The delivery the worker tried to acknowledge.
-        delivery: DeliveryId,
+        delivery: DeliveryKey,
         /// The worker whose lease was not honoured.
         worker: LeaseHolder,
     },
@@ -109,7 +109,7 @@ pub enum DeliveryLeaseError {
 impl DeliveryLeaseError {
     /// Construct the lost-lease failure for one delivery and worker.
     #[must_use]
-    pub const fn lease_lost(delivery: DeliveryId, worker: &LeaseHolder) -> DeliveryLeaseError {
+    pub const fn lease_lost(delivery: DeliveryKey, worker: &LeaseHolder) -> DeliveryLeaseError {
         DeliveryLeaseError::LeaseLost { delivery, worker: *worker }
     }
 
@@ -122,7 +122,7 @@ impl DeliveryLeaseError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        delivery_entry::DeliveryId,
+        delivery_entry::DeliveryKey,
         delivery_lease::{DeliveryLeaseError, LeaseTerm, LeaseTermError},
     };
     use andromeda_context_commit::lease_holder::LeaseHolder;
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn lost_lease_failure_names_the_delivery_and_the_worker() {
         let worker = LeaseHolder::from(Uuid::nil());
-        let error = DeliveryLeaseError::lease_lost(DeliveryId::from(7_i64), &worker);
+        let error = DeliveryLeaseError::lease_lost(DeliveryKey::from(7_i64), &worker);
         assert_eq!(
             error.to_string(),
             "notification delivery 7 is no longer leased by 00000000-0000-0000-0000-000000000000"

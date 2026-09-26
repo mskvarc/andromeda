@@ -34,7 +34,7 @@ pub trait DictionaryRelation: InternedName + FromStr<Err = NgsiLdReferenceError>
     fn table() -> DynIden;
 
     /// The `INTEGER` key column.
-    fn id_column() -> DynIden;
+    fn key_column() -> DynIden;
 
     /// The name text column.
     fn name_column() -> DynIden;

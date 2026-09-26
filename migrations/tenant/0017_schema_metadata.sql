@@ -1,39 +1,25 @@
 -- ============================================================================
--- 0017: Per-tenant schema contract singleton
+-- 0017: Schema contract stamp
 -- ============================================================================
--- Database-per-tenant means the schema exists in as many copies as there are
--- tenants, and every copy can drift: a migration that fails mid-fleet, a tenant
--- restored from an older backup, manual surgery. This table is what the broker
--- checks when it first connects to a tenant, so drift is refused there instead
--- of being discovered by the first failing query.
+-- With a database per tenant, the schema exists in as many copies as there
+-- are tenants, and any copy can drift: a migration that failed part-way
+-- through the fleet, a tenant restored from an older backup, manual surgery.
+-- The broker checks this stamp when it first connects to a tenant, so drift
+-- is refused there instead of surfacing in the first failing query.
 --
--- The row is deliberately not written here. A migration cannot compute the
--- digest of the migration set it belongs to, so the broker upserts the single
--- row after the embedded migrator finishes and verifies it on every later
--- connection. An empty table therefore means "migrated, never stamped", which
--- the startup check reports as drift rather than tolerating.
---
--- The stamped set is the tenant migrator's: `migrations/tenant/` together with
--- `migrations/branch/`, which create the live branch relations in `public`,
--- sorted into one version space and recorded in `_andromeda_tenant_migrations`.
--- The platform migrations the default tenant's database also carries are
--- recorded in their own ledger and are not part of this contract.
---
--- Privileges: this deployment has no runtime-only database role -- the broker
--- connects as the database owner, and an owner keeps every right on its own
--- tables whatever is revoked. The pair below is the durable half of the intent:
--- any role that is not the owner reads and cannot write, so introducing a
--- separate runtime role later needs no further migration.
---
--- Column order is physical, as every relation in this schema is: not-null
--- fixed-width columns first in descending alignment, variable-length last.
+-- The row is not written here: a migration cannot compute the digest of the
+-- set it belongs to. The broker writes the one row after the migrations have
+-- run and verifies it on every later connection, so an empty table means
+-- "migrated, never stamped", which the check reports as drift. The digest
+-- covers the tenant schema's migrations, the live branch relations included,
+-- and not the platform migrations the default tenant's database also carries.
 -- ============================================================================
 
 CREATE TABLE schema_metadata (
     applied_at TIMESTAMPTZ NOT NULL,
     schema_version INTEGER NOT NULL,
     singleton BOOLEAN NOT NULL DEFAULT TRUE,
-    migrations_sha256 TEXT COLLATE "C" NOT NULL,
+    migrations_sha256 TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     CONSTRAINT pk_schema_metadata PRIMARY KEY (singleton),
     CONSTRAINT chk_schema_metadata_singleton CHECK (singleton),
     CONSTRAINT chk_schema_metadata_version_positive CHECK (schema_version > 0),

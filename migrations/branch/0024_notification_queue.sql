@@ -1,162 +1,49 @@
 -- ============================================================================
--- 0024: Notification queue -- events and deliveries
+-- 0024: Notification queue
 -- ============================================================================
--- The durable notification queue is two relations, because the payload is a
--- property of the change and only the queue state is a property of the
--- delivery. An Entity watched by twenty Subscriptions produces one change and
--- twenty deliveries; the Entity snapshot and, under `showChanges` (clause
--- 5.5.12), the previous one are written once per change, and every claim,
--- failure and acknowledgement rewrites a narrow delivery row rather than the
--- wide payload.
+-- Spec: ETSI GS CIM 009 v1.9.1 clauses 5.2.12, 5.2.14.1, 5.6.6
 --
--- `notification_events` holds the change, once. It is written inside the
--- Entity's own transaction and never updated afterwards: a claim, a retry and
--- an acknowledgement do not touch it, so the snapshots are read from a heap
--- that no queue traffic churns.
+-- The durable notification queue, as two relations: the payload belongs to
+-- the change, and only the queue state belongs to the delivery. An Entity
+-- watched by twenty Subscriptions produces one event and twenty deliveries.
+-- The Entity's state and, under `showChanges` (clause 5.2.14.1), its previous
+-- state are written once per change, while every claim, retry and
+-- acknowledgement rewrites a narrow delivery row.
 --
--- `notification_deliveries` holds the queue state, one row per matched
--- Subscription, and is the only relation the claim scans, locks or updates.
--- Its rows are narrow and fixed-width apart from one nullable diagnostic, so a
--- claim rewrites tens of bytes instead of kilobytes.
+-- Codes:
 --
--- An event with no matching Subscription is never written. The writer drops it
--- before the statement runs, so the schema never holds a payload no delivery
--- references; the reap below is for events whose deliveries have since been
--- removed, not for events that never owed one.
+--   trigger: 1 entityCreated, 2 entityUpdated, 3 entityDeleted,
+--     4 attributeCreated, 5 attributeUpdated, 6 attributeDeleted
 --
--- What the columns say:
---
---   * `write_id` and `event_ordinal` are the write identity `write_records` names,
---     carried here so a notification can be correlated with the history rows
---     and side effects of the same atomic write. `UNIQUE (write_id,
---     event_ordinal)` is what makes a replayed commit re-insert nothing rather
---     than emit a second notification for a change already announced; the
---     ordinal is the event's deterministic position within its write, so the
---     identity is stable across replays rather than dependent on insertion
---     order.
---   * `trigger` is a `SMALLINT` from the migration-owned registry the broker
---     compiles in (`andromeda-postgresql-codes`
---     `NotificationTriggerCode`), not the clause-5.2.12 token as text:
---
---       1 entityCreated, 2 entityUpdated, 3 entityDeleted,
---       4 attributeCreated, 5 attributeUpdated, 6 attributeDeleted
---
---     The check pins the range. A row carrying a number outside it could only
---     come from a release that knows a condition this schema does not, and the
---     reader refuses such a row by name rather than mapping it to a wrong
---     trigger.
---   * `changed_attribute_name_ids` are the four-byte dictionary keys of
---     `attribute_names`, not the expanded IRIs. A notification names a handful of
---     attributes out of a vocabulary the dictionary already stores once; the
---     claim resolves them back through `attribute_names` when it reads the
---     batch. The array is NOT NULL and empty for an entity-level trigger,
---     because "no attribute in particular" and "unknown" are not the same
---     statement and only one of them is true here.
---   * `entity_id` is `TEXT COLLATE "C"`, matching `entities.id`.
---     There is deliberately no foreign key: clause 5.6.6 deletion emits a
---     notification about an Entity that no longer exists, and a referential
---     edge would either forbid that row or cascade away the announcement of the
---     deletion itself. It and `changed_dataset_id` are bounded at 1024 UTF-8
---     octets, the identifier bound (`IDENTIFIER_BYTE_LIMIT` in
---     `andromeda-ngsi-ld-lexicon`) both are parsed under.
---
--- Column order is this schema's alignment order -- not-null fixed-width by
--- descending alignment, then nullable fixed-width, then varlena, LZ4 on each
--- varlena column. `write_id` is a UUID, which PostgreSQL stores byte-aligned,
--- so it sorts after the two-byte trigger rather than with the eight-byte
--- columns its width would suggest.
---
--- A delivery leaves the queue by one of two doors, and each door is its own
--- nullable instant: `delivered_at` when a subscriber acknowledged it, and
--- `exhausted_at` when the worker gave up on it -- either because the transport
--- reported a failure no retry can fix, or because the configured attempt
--- ceiling was reached. The ceiling is a delivery-policy setting the worker
--- owns; the schema does not repeat it, so neither a check constraint nor the
--- claim index predicate couples a runtime knob to a migration. `exhausted_at`
--- records the decision rather than re-deriving it from `attempt_count`, so the
--- claim predicate needs no ceiling, and the dead-letter reap ages a row by when
--- it was dead-lettered rather than by the event's `created_at`: that instant
--- is the retention clock. `chk_notification_deliveries_exhausted_state` pins
--- what exhaustion means: an exhausted row was never delivered and holds no
--- claim. `last_error` is bounded at 2048 characters, the failure-summary bound
--- every claimable queue in this schema shares.
---
--- Index set, one named consumer each:
---
---   * `idx_notification_deliveries_claimable` is the claim's access path. The
---     claim asks one question of every row -- is it due and unheld? -- and the
---     answer is a single instant, `GREATEST(next_attempt_at,
---     COALESCE(lease_until, '-infinity'))`: the later of when it becomes due
---     and when its lease (if any) lapses. Indexing that expression, with `id`
---     as the tiebreak, makes the claim's `WHERE claimable <= now ORDER BY
---     claimable, id LIMIT n` one bounded range scan whose depth is the batch
---     size, instead of a scan led by `next_attempt_at` that visits every due
---     row to filter the leased ones out. The predicate keeps only rows still
---     in the queue, so delivered and exhausted rows fall out of the index the
---     moment they are stamped. The claim statement in
---     `andromeda-postgresql-context-store` spells the expression through the
---     one helper (`andromeda-postgresql-seaquery` `queue::claimable_at`) so it
---     matches this definition structurally.
---   * `idx_notification_deliveries_exhausted` serves the dead-letter reap's
---     range scan over exhausted rows, the same way the delivered index serves
---     the completed reap.
---   * `idx_notification_deliveries_delivered` serves the cleanup's range scan
---     over completed rows: without it the reap
---     sequentially scans a table whose row count is dominated by delivered rows
---     until it catches up.
---   * `idx_notification_deliveries_subscription` supports the cascade. Deleting
---     a Subscription (clause 5.8.4) reclaims its queued deliveries in the same
---     statement, and PostgreSQL has no implicit index on the referencing side
---     of a foreign key.
---   * `idx_notification_deliveries_event` supports the orphan check the reap
---     runs against each event whose last delivery it removed.
---
--- No index on `notification_events` beyond its key and the write identity. It
--- is only ever reached by primary key from a claimed delivery, or by the write
--- identity when a replay tests whether its events are already there.
---
--- Storage parameters. `notification_deliveries` is queue-shaped: high insert
--- rate, every row updated once or twice, every row eventually deleted, so it
--- gets an absolute-ish autovacuum threshold, a small scale factor, no vacuum
--- cost delay, and a fillfactor below 100. Every update a delivery row sees
--- writes a column the claim index reads -- `lease_until` and `next_attempt_at`
--- feed its expression, `delivered_at` and `exhausted_at` its predicate -- so
--- none of them is heap-only; the fillfactor is the weaker lever here, keeping
--- the new tuple version on the same page rather than relocating it, and is
--- kept modest for that reason. `notification_events` is never
--- updated and so takes no fillfactor, but it is deleted in bulk by the reap
--- and gets the same vacuum cadence for that churn.
---
--- Every relation here is created empty, so the indexes are built in this
--- migration's transaction rather than concurrently: there is nothing to lock
--- out and no scan to keep short.
---
--- `claimed_by` is the schema-wide lease holder: a UUID naming one worker
--- instance, the same type on every claimable relation (`notification_deliveries`,
--- `pending_side_effects`, `temporal_append_intents`,
--- `snapshot_notification_outbox`, `snapshot_preparation`).
---
--- Branch relation: this file is in `migrations/branch/`, so it creates the live
--- relations in `public` as part of the tenant migration set and creates and
--- upgrades the same relations inside every Snapshot schema under the branch
--- ledger. Dictionary, unit-code and function references resolve to `public`
--- through the search path; every other reference resolves to the branch. A
--- branch file declares no foreign key into `public`: the dictionary
--- references of the live relations are added by the live-only 0029.
+-- An event that no Subscription matches is never written, so no stored event
+-- is without a delivery until its deliveries have been reaped.
 -- ============================================================================
 
+-- One row per change, written in the Entity's own transaction and never
+-- updated. Claims never touch it, so its payloads are read from a heap no
+-- queue traffic churns. It is reached only by primary key from a claimed
+-- delivery, or by write identity when a replay checks whether its events are
+-- already there.
 CREATE TABLE notification_events (
-    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    event_key BIGINT GENERATED ALWAYS AS IDENTITY,
     created_at TIMESTAMPTZ NOT NULL,
+    -- The event's deterministic position within its write. With `write_id`
+    -- it makes a replayed write insert nothing rather than announce a change
+    -- a second time.
     event_ordinal INTEGER NOT NULL,
     trigger SMALLINT NOT NULL,
     write_id UUID NOT NULL,
+    -- No foreign key: clause 5.6.6 deletion notifies about an Entity that no
+    -- longer exists, and a reference would either forbid that row or cascade
+    -- away the announcement of the deletion.
     entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    changed_attribute_name_ids INTEGER[] COMPRESSION lz4 NOT NULL,
+    -- `attribute_names` keys. Empty, never NULL, for an Entity-level trigger:
+    -- "no attribute in particular" is true there, and "unknown" is not.
+    changed_attribute_name_keys INTEGER[] COMPRESSION lz4 NOT NULL,
     changed_dataset_id TEXT COMPRESSION lz4 COLLATE "C",
     entity_snapshot JSONB COMPRESSION lz4,
     previous_snapshot JSONB COMPRESSION lz4,
-    CONSTRAINT pk_notification_events PRIMARY KEY (id),
+    CONSTRAINT pk_notification_events PRIMARY KEY (event_key),
     CONSTRAINT uq_notification_events_write_identity UNIQUE (write_id, event_ordinal),
     CONSTRAINT chk_notification_events_event_ordinal CHECK (event_ordinal >= 0),
     CONSTRAINT chk_notification_events_trigger CHECK (trigger BETWEEN 1 AND 6),
@@ -170,9 +57,11 @@ CREATE TABLE notification_events (
     autovacuum_vacuum_cost_delay = 0
 );
 
+-- The queue state, one row per matched Subscription, and the only relation a
+-- claim scans, locks or updates.
 CREATE TABLE notification_deliveries (
-    id BIGINT GENERATED ALWAYS AS IDENTITY,
-    event_id BIGINT NOT NULL,
+    delivery_key BIGINT GENERATED ALWAYS AS IDENTITY,
+    event_key BIGINT NOT NULL,
     subscription_key BIGINT NOT NULL,
     next_attempt_at TIMESTAMPTZ NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -182,10 +71,10 @@ CREATE TABLE notification_deliveries (
     exhausted_at TIMESTAMPTZ,
     claimed_by UUID,
     last_error TEXT COMPRESSION lz4,
-    CONSTRAINT pk_notification_deliveries PRIMARY KEY (id),
+    CONSTRAINT pk_notification_deliveries PRIMARY KEY (delivery_key),
     CONSTRAINT fk_notification_deliveries_event
-        FOREIGN KEY (event_id)
-        REFERENCES notification_events(id) ON DELETE CASCADE,
+        FOREIGN KEY (event_key)
+        REFERENCES notification_events(event_key) ON DELETE CASCADE,
     CONSTRAINT fk_notification_deliveries_subscription
         FOREIGN KEY (subscription_key)
         REFERENCES subscriptions(subscription_key) ON DELETE CASCADE,
@@ -196,7 +85,7 @@ CREATE TABLE notification_deliveries (
     CONSTRAINT chk_notification_deliveries_exhausted_state CHECK (
         exhausted_at IS NULL
         OR (delivered_at IS NULL AND num_nonnulls(claimed_at, claimed_by, lease_until) = 0)),
-    CONSTRAINT chk_notification_deliveries_last_error_bound
+    CONSTRAINT chk_notification_deliveries_last_error_length
         CHECK (last_error IS NULL OR char_length(last_error) <= 2048)
 ) WITH (
     fillfactor = 80,
@@ -207,20 +96,27 @@ CREATE TABLE notification_deliveries (
     autovacuum_vacuum_cost_delay = 0
 );
 
-CREATE INDEX idx_notification_deliveries_claimable
-    ON notification_deliveries (GREATEST(next_attempt_at, COALESCE(lease_until, '-infinity'::timestamptz)), id)
+-- The claim: rows still in the queue, due and unheld, in the order they became
+-- claimable. The expression is the later of when a row is due and when its
+-- lease lapses, so a claim is one range scan as deep as its batch.
+CREATE INDEX idx_notification_deliveries_claim
+    ON notification_deliveries (GREATEST(next_attempt_at, COALESCE(lease_until, '-infinity'::timestamptz)), delivery_key)
     WHERE delivered_at IS NULL AND exhausted_at IS NULL;
 
-CREATE INDEX idx_notification_deliveries_delivered
+-- The reap of delivered rows.
+CREATE INDEX idx_notification_deliveries_delivered_at
     ON notification_deliveries (delivered_at)
     WHERE delivered_at IS NOT NULL;
 
-CREATE INDEX idx_notification_deliveries_exhausted
+-- The reap of dead-lettered rows.
+CREATE INDEX idx_notification_deliveries_exhausted_at
     ON notification_deliveries (exhausted_at)
     WHERE exhausted_at IS NOT NULL;
 
 CREATE INDEX idx_notification_deliveries_subscription
     ON notification_deliveries (subscription_key);
 
+-- The event cascade, and the check the reap runs for events whose last
+-- delivery it removed.
 CREATE INDEX idx_notification_deliveries_event
-    ON notification_deliveries (event_id);
+    ON notification_deliveries (event_key);

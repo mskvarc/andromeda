@@ -12,7 +12,7 @@ use crate::{
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_notification::{delivery_entry::DeliveryId, delivery_lease::DeliveryLeaseError, delivery_store::DeliveryStore};
+use andromeda_notification::{delivery_entry::DeliveryKey, delivery_lease::DeliveryLeaseError, delivery_store::DeliveryStore};
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
@@ -27,7 +27,7 @@ const BATCH_SIZE: i32 = 10;
 
 /// The claim triple one delivery row currently holds.
 async fn claim_triple(pool: &PgPool, delivery: i64) -> (Option<DateTime<Utc>>, Option<Uuid>, Option<DateTime<Utc>>) {
-    sqlx::query_as("SELECT claimed_at, claimed_by, lease_until FROM notification_deliveries WHERE id = $1")
+    sqlx::query_as("SELECT claimed_at, claimed_by, lease_until FROM notification_deliveries WHERE delivery_key = $1")
         .bind(delivery)
         .fetch_one(pool)
         .await
@@ -46,7 +46,7 @@ async fn durable_queue_a_due_delivery_is_leased_to_exactly_one_worker() {
     let second = delivery_worker();
     let claimed = queue.claim_pending(&first, holding_lease(), BATCH_SIZE).await.expect("first claim");
     assert_eq!(claimed.len(), 1, "the due delivery must be leased to the first worker");
-    assert_eq!(claimed[0].id, DeliveryId::from(delivery));
+    assert_eq!(claimed[0].key, DeliveryKey::from(delivery));
 
     let contended = queue.claim_pending(&second, holding_lease(), BATCH_SIZE).await.expect("second claim");
     assert!(contended.is_empty(), "a live lease must exclude every other worker");
@@ -57,7 +57,7 @@ async fn durable_queue_a_due_delivery_is_leased_to_exactly_one_worker() {
     assert!(lease_until.is_some_and(|until| until > Utc::now()), "a claim takes a live lease");
 
     queue
-        .mark_delivered(DeliveryId::from(delivery), &first, &ContextTarget::Live)
+        .mark_delivered(DeliveryKey::from(delivery), &first, &ContextTarget::Live)
         .await
         .expect("the lease holder acknowledges");
     pool.close().await;
@@ -85,22 +85,22 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
         .await
         .expect("reclaim after expiry");
     assert_eq!(reclaimed.len(), 1, "an expired lease makes the delivery claimable again");
-    assert_eq!(reclaimed[0].id, DeliveryId::from(delivery));
+    assert_eq!(reclaimed[0].key, DeliveryKey::from(delivery));
 
     assert_lease_lost(
-        queue.mark_delivered(DeliveryId::from(delivery), &stale, &ContextTarget::Live).await,
+        queue.mark_delivered(DeliveryKey::from(delivery), &stale, &ContextTarget::Live).await,
         delivery,
         &stale,
     );
     assert_lease_lost(
         queue
-            .mark_failed(DeliveryId::from(delivery), &stale, "stale", Utc::now(), &ContextTarget::Live)
+            .mark_failed(DeliveryKey::from(delivery), &stale, "stale", Utc::now(), &ContextTarget::Live)
             .await,
         delivery,
         &stale,
     );
     assert_lease_lost(
-        queue.mark_terminal(DeliveryId::from(delivery), &stale, "stale", &ContextTarget::Live).await,
+        queue.mark_terminal(DeliveryKey::from(delivery), &stale, "stale", &ContextTarget::Live).await,
         delivery,
         &stale,
     );
@@ -113,10 +113,10 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
     );
 
     queue
-        .mark_delivered(DeliveryId::from(delivery), &reclaiming, &ContextTarget::Live)
+        .mark_delivered(DeliveryKey::from(delivery), &reclaiming, &ContextTarget::Live)
         .await
         .expect("the reclaiming worker acknowledges");
-    let delivered: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT delivered_at FROM notification_deliveries WHERE id = $1")
+    let delivered: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT delivered_at FROM notification_deliveries WHERE delivery_key = $1")
         .bind(delivery)
         .fetch_one(&pool)
         .await
@@ -137,7 +137,7 @@ fn assert_lease_lost(outcome: Result<(), DeliveryLeaseError>, delivery: i64, wor
         worker: owner,
     } = error
     {
-        assert_eq!(named, DeliveryId::from(delivery));
+        assert_eq!(named, DeliveryKey::from(delivery));
         assert_eq!(&owner, worker);
     }
 }

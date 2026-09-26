@@ -9,15 +9,15 @@ pub mod node_spec;
 
 use crate::{
     configuration::ConfigurationError,
-    database_isolation::{DatabaseIsolationError, connect_pool},
+    database_isolation::{DatabaseIsolationError, connect_lazy_pool},
     database_reset::{DatabaseResetError, cleanup_prefix, reset_owned_tenant},
     identifiers::{IdentifierError, TestIdentifiers, TestSuiteName},
     multi_broker::{broker_handle::BrokerHandle, node_spec::BrokerNodeSpec},
     readiness::{ReadinessError, ReadinessPolicy, wait_until_ready},
-    tenant_lease::TenantLease,
-    tenant_provisioning::{TenantProvisioningError, provisioned_tenant_database},
+    tenant_lease::{OwedReset, TenantLease, TenantLeaseError},
+    tenant_provisioning::{ProvisioningHistory, TenantProvisioningError, provisioned_tenant_database},
 };
-use andromeda_test_client::{tenant_name::TenantName, test_client::TestClient, transport_error::TenantNameError};
+use andromeda_test_client::{tenant_name::TenantName, test_client::TestClient};
 use dashmap::DashMap;
 use http::HeaderValue;
 use sqlx::PgPool;
@@ -72,6 +72,27 @@ where
     })
 }
 
+/// The `contextSourceAlias` the broker behind `client` names itself by under
+/// the client's tenant, which is also the pseudonym it writes into a `Via`
+/// chain (clause 6.3.18). Table 5.2.40-1 makes that alias identify "a specific
+/// Tenant within a registered Context Source", so it is read from the broker
+/// (clause 5.15.1) rather than assumed to be the configured one.
+async fn tenant_alias(client: &TestClient) -> Result<String, MultiBrokerError> {
+    let response = client
+        .source_identity(Some("application/json"))
+        .await
+        .map_err(|error| MultiBrokerError::Identity(error.to_string()))?;
+    if !response.status.is_success() {
+        return Err(MultiBrokerError::Identity(format!("GET /info/sourceIdentity answered {}", response.status)));
+    }
+    let identity = response.json_value().map_err(|error| MultiBrokerError::Identity(error.to_string()))?;
+    identity
+        .get("contextSourceAlias")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| MultiBrokerError::Identity("the source identity carries no contextSourceAlias".to_owned()))
+}
+
 /// A live, tenant-leased and prefix-isolated topology of independently stored
 /// brokers.
 pub struct MultiBrokerTopology<R> {
@@ -90,7 +111,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`MultiBrokerError::Identifier`] when the suite name or the allocated prefix is invalid, [`MultiBrokerError::Tenant`] when the leased tenant is not a valid header value, [`MultiBrokerError::Client`] when a DNS override cannot be applied, [`MultiBrokerError::Readiness`] when a broker never becomes ready, [`MultiBrokerError::Database`] when a broker pool cannot be opened, [`MultiBrokerError::Reset`] when resetting an owned store fails, and [`MultiBrokerError::Provisioning`] when the leased tenant cannot be created on a broker.
+    /// Returns [`MultiBrokerError::Identifier`] when the suite name or the allocated prefix is invalid, [`MultiBrokerError::Lease`] when no tenant can be leased, [`MultiBrokerError::Identity`] when a broker's source identity cannot be read, [`MultiBrokerError::Client`] when a DNS override cannot be applied, [`MultiBrokerError::Readiness`] when a broker never becomes ready, [`MultiBrokerError::Database`] when a broker pool cannot be opened, [`MultiBrokerError::Reset`] when resetting an owned store fails, and [`MultiBrokerError::Provisioning`] when the leased tenant cannot be created on a broker.
     pub async fn from_specs(
         suite: &str,
         specs: Vec<BrokerNodeSpec<R>>,
@@ -99,7 +120,7 @@ where
     ) -> Result<MultiBrokerTopology<R>, MultiBrokerError> {
         let suite = TestSuiteName::parse(suite)?;
         let identifiers = TestIdentifiers::allocate(&suite)?;
-        let lease = TenantLease::acquire(&suite)?;
+        let mut lease = TenantLease::acquire(&suite).await?;
         let mut brokers = Vec::with_capacity(specs.len());
         for spec in specs {
             let default_client = broker_client(&spec, None, context.as_ref())?;
@@ -109,11 +130,19 @@ where
                     role: format!("{:?}", spec.role()),
                     source: error,
                 })?;
-            let platform_pool = connect_pool(spec.database()).await?;
+            let platform_pool = connect_lazy_pool(spec.database())?;
             reset_database_once(&platform_pool, spec.database().url()).await?;
             let client = broker_client(&spec, Some(lease.tenant().clone()), context.as_ref())?; // clone: every client owns the tenant it runs under
-            let tenant_database = provisioned_tenant_database(&client, &platform_pool, spec.database(), lease.slot()).await?;
-            let tenant_pool = connect_pool(&tenant_database).await?;
+            let (tenant_database, history) = provisioned_tenant_database(&client, &platform_pool, spec.database(), lease.label()).await?;
+            let tenant_pool = connect_lazy_pool(&tenant_database)?;
+            // What an earlier run of the suite, or an earlier holder of the
+            // slot that did not finish cleanly, left in the tenant is cleared
+            // before this topology reads it.
+            let owed = lease.record_database(tenant_database.url());
+            if history == ProvisioningHistory::FirstUse || owed == OwedReset::Owed {
+                reset_owned_tenant(&tenant_pool).await?;
+            }
+            let alias = tenant_alias(&client).await?;
             brokers.push(BrokerHandle {
                 role: spec.role(),
                 identity: spec.identity(),
@@ -121,7 +150,8 @@ where
                 default_client,
                 endpoint: spec.client().clone(), // clone: the handle builds further tenant clients from the endpoint
                 peer: spec.peer().clone(),       // clone: the handle owns the endpoint it names in registrations
-                alias: spec.alias().to_owned(),
+                alias,
+                configured_alias: spec.alias().to_owned(),
                 tenant_pool,
                 platform_pool,
                 context: context.clone(), // clone: every broker handle owns the default context of its clients
@@ -148,6 +178,16 @@ where
         format!("{}:{local}", self.identifiers.prefix())
     }
 
+    /// Borrow the tenant the topology's clients run under, for the `tenant`
+    /// member of a registration pointing at one of the topology's brokers:
+    /// clause 4.14 has the forwarding broker contact the registered Context
+    /// Source in the registration's tenant, and in the default tenant when the
+    /// registration names none.
+    #[must_use]
+    pub fn tenant(&self) -> &str {
+        self.lease.label()
+    }
+
     /// Borrow the prefix used by this topology's cleanup.
     #[must_use]
     pub fn id_prefix(&self) -> &str {
@@ -157,8 +197,8 @@ where
     /// Clean every unique store under the leased tenant and the default tenant,
     /// close all pools, and hand the tenant back, preserving all cleanup errors.
     ///
-    /// A topology whose cleanup failed abandons its tenant rather than handing
-    /// back one that still holds its resources.
+    /// A topology whose cleanup failed still hands its tenant back, owing a
+    /// reset the next holder performs before using it.
     ///
     /// # Errors
     ///
@@ -183,7 +223,7 @@ where
             broker.platform_pool.close().await;
         }
         if failures.is_empty() {
-            lease.release();
+            lease.release_clean();
             Ok(())
         } else {
             Err(MultiBrokerError::Cleanup(failures.join("; ")))
@@ -203,9 +243,12 @@ pub enum MultiBrokerError {
     /// A peer endpoint was not a valid URL.
     #[error("invalid peer endpoint: {0}")]
     Endpoint(String),
-    /// The leased tenant is not a valid header value.
+    /// No tenant could be leased.
     #[error(transparent)]
-    Tenant(#[from] TenantNameError),
+    Lease(#[from] TenantLeaseError),
+    /// The broker's identity under the leased tenant could not be read.
+    #[error("the source identity of a broker could not be read: {0}")]
+    Identity(String),
     /// The test client could not be built.
     #[error("test client setup failed: {0}")]
     Client(String),

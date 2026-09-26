@@ -14,7 +14,7 @@ use crate::commit_refusal::name_lookup;
 use andromeda_context_commit::{atomic_write::AtomicWrite, error::CommitError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, entity_type_id::EntityTypeId};
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_temporal::append_intent::{TemporalAppendEntry, TemporalAppendIntent};
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;
@@ -24,9 +24,9 @@ use std::collections::HashMap;
 #[derive(Debug, Default)]
 pub(crate) struct ResolvedWriteNames {
     /// The key of every entity type a record declares.
-    pub(crate) types: HashMap<EntityTypeName, EntityTypeId>,
+    pub(crate) types: HashMap<EntityTypeName, EntityTypeNameKey>,
     /// The key of every attribute name a record's payload carries.
-    pub(crate) attributes: HashMap<AttributeName, AttributeNameId>,
+    pub(crate) attributes: HashMap<AttributeName, AttributeNameKey>,
 }
 
 /// Mint the dictionary key of every entity type and attribute name the
@@ -90,7 +90,7 @@ pub(crate) async fn resolve_attribute_names(
     tx: &mut Transaction<'_, Postgres>,
     intents: &[TemporalAppendIntent],
     attribute_names: &dyn NameLookup<AttributeName>,
-) -> Result<HashMap<AttributeName, AttributeNameId>, CommitError> {
+) -> Result<HashMap<AttributeName, AttributeNameKey>, CommitError> {
     let mut names: Vec<AttributeName> = intents
         .iter()
         .flat_map(|intent| intent.entries.iter())

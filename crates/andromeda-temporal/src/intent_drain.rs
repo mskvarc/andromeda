@@ -174,7 +174,7 @@ impl TemporalIntentDrain {
             return;
         }
         tracing::warn!(
-            sequence = %claim.pending.sequence,
+            intent_key = %claim.pending.key,
             write_id = %claim.pending.intent.record.write_id(),
             entity_id = %claim.pending.intent.entity_id,
             attempts,

@@ -151,10 +151,10 @@ impl TemporalRepository {
             .bind(state.value_kind.code())
             .bind(state.columns.value_number.as_ref())
             .bind(state.columns.value_string.as_deref())
-            .bind(state.columns.value_bool)
-            .bind(geometry_bytes(state.columns.value_geo.as_ref())?)
+            .bind(state.columns.value_boolean)
+            .bind(geometry_bytes(state.columns.value_geometry.as_ref())?)
             .bind(state.columns.value_object.as_ref())
-            .bind(state.columns.value_datetime)
+            .bind(state.columns.value_date_time)
             .bind(state.columns.value_uri.as_ref().map(Uri::as_str))
             .bind(state.observed_at)
             .bind(state.metadata.as_ref())
@@ -271,7 +271,7 @@ impl InstanceColumn {
     /// The `attribute_history` column this identity is addressed through.
     const fn column(self) -> AttributeHistory {
         match self {
-            InstanceColumn::Generated => AttributeHistory::GeneratedInstanceUuid,
+            InstanceColumn::Generated => AttributeHistory::GeneratedInstanceId,
             InstanceColumn::Verbatim => AttributeHistory::VerbatimInstanceId,
         }
     }
@@ -291,13 +291,13 @@ fn attribute_streams_subquery(target: &ContextTarget) -> SelectStatement {
             JoinType::InnerJoin,
             table_of(target, TemporalEntities::Table),
             Te,
-            Expr::col((Te, TemporalEntities::EntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
+            Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
         )
         .join_as(
             JoinType::InnerJoin,
             AttributeNames::Table,
             An,
-            Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
         )
         .and_where(Expr::col((Te, TemporalEntities::Id)).eq(external_placeholder(2)))
         .and_where(Expr::col((An, AttributeNames::Name)).eq(external_placeholder(3)))
@@ -325,14 +325,17 @@ fn release_verbatim_instance_claim_sql(target: &ContextTarget) -> String {
         .expr(Expr::val(1))
         .from(table_of(target, TemporalEntities::Table).alias(Te))
         .and_where(
-            Expr::col((Te, TemporalEntities::EntityKey)).equals((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::TemporalEntityKey)),
+            Expr::col((Te, TemporalEntities::TemporalEntityKey))
+                .equals((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::TemporalEntityKey)),
         )
         .and_where(Expr::col((Te, TemporalEntities::Id)).eq(external_placeholder(2)))
         .to_owned();
     let attribute_scope = Query::select()
         .expr(Expr::val(1))
         .from_as(AttributeNames::Table, An)
-        .and_where(Expr::col((An, AttributeNames::Id)).equals((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::AttributeNameId)))
+        .and_where(
+            Expr::col((An, AttributeNames::AttributeNameKey)).equals((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::AttributeNameKey)),
+        )
         .and_where(Expr::col((An, AttributeNames::Name)).eq(external_placeholder(3)))
         .to_owned();
     Query::delete()
@@ -369,10 +372,10 @@ fn update_instance_sql(column: InstanceColumn, target: &ContextTarget) -> String
             (AttributeHistory::ValueKind, external_placeholder(4)),
             (AttributeHistory::ValueNumber, external_placeholder(5)),
             (AttributeHistory::ValueString, external_placeholder(6)),
-            (AttributeHistory::ValueBool, external_placeholder(7)),
-            (AttributeHistory::ValueGeo, geometry_write(8)),
+            (AttributeHistory::ValueBoolean, external_placeholder(7)),
+            (AttributeHistory::ValueGeometry, geometry_write(8)),
             (AttributeHistory::ValueObject, external_placeholder(9)),
-            (AttributeHistory::ValueDatetime, external_placeholder(10)),
+            (AttributeHistory::ValueDateTime, external_placeholder(10)),
             (AttributeHistory::ValueUri, external_placeholder(11)),
             (AttributeHistory::ObservedAt, external_placeholder(12)),
             (AttributeHistory::Metadata, external_placeholder(13)),
@@ -448,12 +451,12 @@ mod tests {
             ] {
                 match column {
                     InstanceColumn::Generated => {
-                        assert!(statement.contains(r#""generated_instance_uuid" = ($1)"#), "{statement}");
+                        assert!(statement.contains(r#""generated_instance_id" = ($1)"#), "{statement}");
                         assert!(!statement.contains("verbatim_instance_id"), "{statement}");
                     }
                     InstanceColumn::Verbatim => {
                         assert!(statement.contains(r#""verbatim_instance_id" = ($1)"#), "{statement}");
-                        assert!(!statement.contains("generated_instance_uuid"), "{statement}");
+                        assert!(!statement.contains("generated_instance_id"), "{statement}");
                     }
                 }
             }

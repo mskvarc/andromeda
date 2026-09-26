@@ -97,7 +97,7 @@ mod tests {
     fn intent(record: WriteRecord) -> TemporalAppendIntent {
         TemporalAppendIntent {
             record,
-            base: WriteOrdinal::at(0),
+            base_ordinal: WriteOrdinal::at(0),
             entity_id: "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"),
             entity_types: Vec::new(),
             entries: Vec::new(),

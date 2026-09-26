@@ -72,7 +72,7 @@ async fn purge_delivered_in_branch(pool: &PgPool, target: &ContextTarget, cutoff
 ///
 /// A delivery is exhausted by one path only: the worker that made its last
 /// attempt stamped `exhausted_at`. That instant is the retention clock, so the
-/// reap is a range scan over `idx_notification_deliveries_exhausted`. Returns
+/// reap is a range scan over `idx_notification_deliveries_exhausted_at`. Returns
 /// the total deliveries removed.
 ///
 /// # Errors
@@ -137,21 +137,23 @@ fn purge_delivered_statement(target: &ContextTarget, cutoff: DateTime<Utc>) -> D
         .from_table(table_of(target, NotificationDeliveries::Table))
         .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_not_null())
         .and_where(Expr::col(NotificationDeliveries::DeliveredAt).lt(cutoff))
-        .returning_col(NotificationDeliveries::EventId)
+        .returning_col(NotificationDeliveries::EventKey)
         .to_owned()
 }
 
-/// Delete the events among `event_ids` that no delivery references any longer,
+/// Delete the events among `event_keys` that no delivery references any longer,
 /// in `target`'s branch.
-fn purge_orphan_events_among_statement(target: &ContextTarget, event_ids: &[i64]) -> DeleteStatement {
+fn purge_orphan_events_among_statement(target: &ContextTarget, event_keys: &[i64]) -> DeleteStatement {
     let referencing_delivery = Query::select()
         .expr(Expr::val(1))
         .from(table_of(target, NotificationDeliveries::Table))
-        .and_where(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::EventId)).equals((NotificationEvents::Table, NotificationEvents::Id)))
+        .and_where(
+            Expr::col((NotificationDeliveries::Table, NotificationDeliveries::EventKey)).equals((NotificationEvents::Table, NotificationEvents::EventKey)),
+        )
         .to_owned();
     Query::delete()
         .from_table(table_of(target, NotificationEvents::Table))
-        .and_where(Expr::col(NotificationEvents::Id).eq(any(Expr::val(event_ids.to_vec()))))
+        .and_where(Expr::col(NotificationEvents::EventKey).eq(any(Expr::val(event_keys.to_vec()))))
         .and_where(Expr::exists(referencing_delivery).not())
         .to_owned()
 }
@@ -170,7 +172,9 @@ fn purge_orphan_events_before_statement(target: &ContextTarget, cutoff: DateTime
     let referencing_delivery = Query::select()
         .expr(Expr::val(1))
         .from(table_of(target, NotificationDeliveries::Table))
-        .and_where(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::EventId)).equals((NotificationEvents::Table, NotificationEvents::Id)))
+        .and_where(
+            Expr::col((NotificationDeliveries::Table, NotificationDeliveries::EventKey)).equals((NotificationEvents::Table, NotificationEvents::EventKey)),
+        )
         .to_owned();
     Query::delete()
         .from_table(table_of(target, NotificationEvents::Table))
@@ -202,7 +206,7 @@ mod tests {
         let sql = purge_delivered_statement(&ContextTarget::Live, Utc::now()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"DELETE FROM "notification_deliveries""#), "{sql}");
         assert!(sql.contains(r#""delivered_at" IS NOT NULL"#), "{sql}");
-        assert!(sql.contains(r#"RETURNING "event_id""#), "{sql}");
+        assert!(sql.contains(r#"RETURNING "event_key""#), "{sql}");
     }
 
     #[test]

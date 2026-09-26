@@ -1,39 +1,23 @@
 -- ============================================================================
--- 0006: PostgreSQL Extensions
+-- 0006: PostgreSQL extensions
 -- ============================================================================
--- Required extensions for spatial, temporal, hierarchical, and diagnostic
--- functionality.
+-- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.9, 4.10, 4.18, 4.19
 --
---   * postgis            -- spatial data types, GIST indexes, and functions
---                           (ST_Within, ST_DWithin, ST_Intersects, etc.) for
---                           NGSI-LD GeoProperty queries and geo-spatial filtering
---   * timescaledb        -- hypertable support for attribute_history, enabling
---                           automatic time-based partitioning, transparent
---                           compression, and efficient temporal range queries
---                           required by the NGSI-LD Temporal API
---   * ltree              -- hierarchical label tree type for NGSI-LD Scopes
---                           (clause 4.18), supporting lquery/ltxtquery operators
---                           for scope path matching
---   * pg_trgm            -- trigram GIN indexes for unanchored clause 4.9
---                           patterns: `idx_entities_id_trgm` and
---                           `idx_temporal_entities_id_trgm` serve an
---                           `idPattern`, `idx_cav_attr_string_trgm` and
---                           `idx_cav_attr_long_text_trgm` a `~=` over string
---                           values
---   * btree_gist         -- enables GIST indexes on scalar types (e.g. SMALLINT)
---                           alongside geometry columns, used for composite
---                           (attribute_name_id, value_geo) indexes
---   * btree_gin          -- enables GIN entries on scalar types, used for the
---                           attribute-aware trigram index
---                           (attribute_name_id, value_string) on the current
---                           attribute-value projection
---   * pg_stat_statements -- query performance monitoring; requires
---                           shared_preload_libraries configuration, graceful
---                           fallback if unavailable
---   * pgstattuple        -- physical relation diagnostics (bloat and free
---                           space) for the opt-in maintenance controller; a
---                           supplied module managed installs may omit, so it is
---                           installed only when its control file is present
+-- The extensions the tenant schema depends on:
+--
+--   postgis: geometry and geography types, GiST indexes and the spatial
+--     predicates behind geo-queries (clause 4.10)
+--   timescaledb: hypertable partitioning of `attribute_history` and
+--     `scope_history`
+--   ltree: label paths for Scopes (clause 4.18) and their `lquery`
+--     matching (clause 4.19)
+--   pg_trgm: trigram GIN indexes for unanchored clause 4.9 patterns
+--   btree_gist: an attribute key beside a geometry in one GiST index
+--   btree_gin: an attribute key beside trigrams in one GIN index
+--   pg_stat_statements: statement statistics, installed only when the server
+--     preloads the library and skipped otherwise
+--   pgstattuple: relation bloat diagnostics for the opt-in maintenance
+--     controller, installed only when the server provides it
 -- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS postgis;
@@ -52,11 +36,10 @@ EXCEPTION
 END
 $$;
 
--- pgstattuple is a PostgreSQL supplied module, but managed installations may
--- omit its control file. Install it when available and let the opt-in
--- maintenance controller report a per-database capability deferral otherwise.
--- This never grants execution or MAINTAIN privileges to the broker role; those
--- remain explicit operator decisions.
+-- pgstattuple ships with PostgreSQL, but managed installations may omit its
+-- control file; without it the maintenance controller reports a capability
+-- deferral for the database. Installing it grants the broker role neither
+-- execution nor `MAINTAIN`: both remain the operator's decision.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pgstattuple') THEN

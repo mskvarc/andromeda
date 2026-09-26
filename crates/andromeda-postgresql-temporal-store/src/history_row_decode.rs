@@ -94,8 +94,8 @@ pub(crate) fn decode_dataset_id(row: &PgRow) -> Result<Option<Uri>, TemporalStor
 /// reported instead of being resolved by precedence.
 fn decode_instance_identity(row: &PgRow) -> Result<InstanceIdentity, TemporalStoreError> {
     let generated: Option<Uuid> = row
-        .try_get("generated_instance_uuid")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.generated_instance_uuid: {error}")))?;
+        .try_get("generated_instance_id")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.generated_instance_id: {error}")))?;
     let verbatim: Option<String> = row
         .try_get("verbatim_instance_id")
         .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.verbatim_instance_id: {error}")))?;
@@ -164,10 +164,10 @@ fn decode_value(row: &PgRow) -> Result<TemporalValue, TemporalStoreError> {
         }),
         ValueKind::Number => Ok(TemporalValue::Number(decode_number(row)?)),
         ValueKind::String => Ok(TemporalValue::String(required_column(row, "value_string")?)),
-        ValueKind::Boolean => Ok(TemporalValue::Boolean(required_column(row, "value_bool")?)),
+        ValueKind::Boolean => Ok(TemporalValue::Boolean(required_column(row, "value_boolean")?)),
         ValueKind::Geometry => Ok(TemporalValue::Geometry(decode_geometry(row)?)),
         ValueKind::Object => Ok(TemporalValue::Object(required_column(row, "value_object")?)),
-        ValueKind::DateTime => Ok(TemporalValue::DateTime(required_column(row, "value_datetime")?)),
+        ValueKind::DateTime => Ok(TemporalValue::DateTime(required_column(row, "value_date_time")?)),
         ValueKind::Uri => {
             let raw: String = required_column(row, "value_uri")?;
             raw.parse::<Uri>()
@@ -198,7 +198,7 @@ fn decode_number(row: &PgRow) -> Result<JsonNumber, TemporalStoreError> {
 
 /// Read the geometry column, which the query layer selects as EWKB.
 fn decode_geometry(row: &PgRow) -> Result<Value, TemporalStoreError> {
-    let bytes: Vec<u8> = required_column(row, "value_geo_ewkb")?;
+    let bytes: Vec<u8> = required_column(row, "value_geometry_ewkb")?;
     let ewkb = Ewkb::try_from(bytes.as_slice()).map_err(|error| TemporalStoreError::Decode(format!("EWKB read: {error}")))?;
     let geometry = Geometry::try_from(&ewkb)
         .map_err(|error| TemporalStoreError::Decode(format!("EWKB decode: {error}")))?

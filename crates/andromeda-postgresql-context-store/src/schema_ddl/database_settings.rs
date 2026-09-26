@@ -12,7 +12,7 @@
 /// `name` is embedded as a double-quoted identifier with any embedded quote
 /// removed, because an identifier cannot be a bound parameter; callers pass a
 /// name already constrained to the sanitised, length-bounded form
-/// [`crate::tenant_database::generate_db_name`] produces, or the platform
+/// [`crate::tenant_database::generate_database_name`] produces, or the platform
 /// database name read from the connection URL. `setting` is one of the fixed
 /// PostgreSQL tokens [`crate::config::SynchronousCommit::as_postgres_setting`]
 /// renders.

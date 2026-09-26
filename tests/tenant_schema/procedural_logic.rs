@@ -132,7 +132,7 @@ async fn temporal_evolution_deletion_removes_every_history_row_and_leaves_curren
     let orphan_history: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM attribute_history ah \
          JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key \
-         JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key \
+         JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key \
          WHERE te.id = $1",
     )
     .bind(&id)

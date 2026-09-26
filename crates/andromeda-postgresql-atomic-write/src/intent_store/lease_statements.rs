@@ -26,7 +26,7 @@ use uuid::Uuid;
 /// Claim an ordered bounded batch of eligible intents for `owner`.
 ///
 /// The original data-modifying CTE (`WITH eligible AS (SELECT … FOR UPDATE SKIP
-/// LOCKED) UPDATE … RETURNING`) is rebuilt as one `UPDATE` whose `WHERE sequence
+/// LOCKED) UPDATE … RETURNING`) is rebuilt as one `UPDATE` whose `WHERE intent_key
 /// IN (SELECT … FOR UPDATE SKIP LOCKED)` both selects and claims the batch
 /// atomically. When `entity_id` is given, only that entity's intents are
 /// eligible; the original expressed this with a `$4 IS NULL OR entity_id = $4`
@@ -34,7 +34,7 @@ use uuid::Uuid;
 pub(super) fn claim_statement(target: &ContextTarget, owner: LeaseHolder, entity_id: Option<&str>, limit: u32, lease_until: DateTime<Utc>) -> UpdateStatement {
     let mut eligible = Query::select();
     eligible
-        .column(TemporalAppendIntents::Sequence)
+        .column(TemporalAppendIntents::IntentKey)
         .from(table_of(target, TemporalAppendIntents::Table))
         .and_where(Expr::col(TemporalAppendIntents::NextAttemptAt).lte(Expr::current_timestamp()))
         .and_where(
@@ -46,7 +46,7 @@ pub(super) fn claim_statement(target: &ContextTarget, owner: LeaseHolder, entity
         eligible.and_where(Expr::col(TemporalAppendIntents::EntityId).eq(entity_id));
     }
     eligible
-        .order_by(TemporalAppendIntents::Sequence, Order::Asc)
+        .order_by(TemporalAppendIntents::IntentKey, Order::Asc)
         .limit(u64::from(limit))
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked);
 
@@ -56,26 +56,26 @@ pub(super) fn claim_statement(target: &ContextTarget, owner: LeaseHolder, entity
         .value(TemporalAppendIntents::LeaseUntil, lease_until)
         .value(TemporalAppendIntents::ClaimedBy, owner.as_uuid())
         .value(TemporalAppendIntents::AttemptCount, Expr::col(TemporalAppendIntents::AttemptCount).add(1))
-        .and_where(Expr::col(TemporalAppendIntents::Sequence).in_subquery(eligible.clone()))
+        .and_where(Expr::col(TemporalAppendIntents::IntentKey).in_subquery(eligible.clone()))
         .returning(Query::returning().columns([
-            TemporalAppendIntents::Sequence,
-            TemporalAppendIntents::Intent,
+            TemporalAppendIntents::IntentKey,
+            TemporalAppendIntents::Payload,
             TemporalAppendIntents::AttemptCount,
         ]))
         .to_owned()
 }
 
-/// Read pending intents in sequence order, optionally for one entity.
+/// Read pending intents in key order, optionally for one entity.
 pub(super) fn pending_statement(target: &ContextTarget, entity_id: Option<&str>) -> SelectStatement {
     let mut statement = Query::select();
     statement
-        .column(TemporalAppendIntents::Sequence)
-        .column(TemporalAppendIntents::Intent)
+        .column(TemporalAppendIntents::IntentKey)
+        .column(TemporalAppendIntents::Payload)
         .from(table_of(target, TemporalAppendIntents::Table));
     if let Some(entity_id) = entity_id {
         statement.and_where(Expr::col(TemporalAppendIntents::EntityId).eq(entity_id));
     }
-    statement.order_by(TemporalAppendIntents::Sequence, Order::Asc).to_owned()
+    statement.order_by(TemporalAppendIntents::IntentKey, Order::Asc).to_owned()
 }
 
 /// The guard every lease-scoped statement carries: the row is this worker's
@@ -85,19 +85,19 @@ pub(super) fn pending_statement(target: &ContextTarget, entity_id: Option<&str>)
 /// the row and stamp its own owner, but between the lapse and that claim the
 /// old owner still matches; only the live-lease test keeps a late
 /// acknowledgement or retry from overwriting what the next worker is doing.
-fn lease_guard(sequence: i64, write_id: Uuid, owner: LeaseHolder) -> Condition {
+fn lease_guard(intent_key: i64, write_id: Uuid, owner: LeaseHolder) -> Condition {
     Cond::all()
-        .add(Expr::col(TemporalAppendIntents::Sequence).eq(sequence))
+        .add(Expr::col(TemporalAppendIntents::IntentKey).eq(intent_key))
         .add(Expr::col(TemporalAppendIntents::WriteId).eq(write_id))
         .add(Expr::col(TemporalAppendIntents::ClaimedBy).eq(owner.as_uuid()))
         .add(Expr::col(TemporalAppendIntents::LeaseUntil).gt(Expr::current_timestamp()))
 }
 
 /// Remove one acknowledged intent held under this worker's live lease.
-pub(super) fn acknowledge_statement(target: &ContextTarget, sequence: i64, write_id: Uuid, owner: LeaseHolder) -> DeleteStatement {
+pub(super) fn acknowledge_statement(target: &ContextTarget, intent_key: i64, write_id: Uuid, owner: LeaseHolder) -> DeleteStatement {
     Query::delete()
         .from_table(table_of(target, TemporalAppendIntents::Table))
-        .cond_where(lease_guard(sequence, write_id, owner))
+        .cond_where(lease_guard(intent_key, write_id, owner))
         .to_owned()
 }
 
@@ -106,7 +106,7 @@ pub(super) fn retry_statement(
     target: &ContextTarget,
     next_attempt_at: DateTime<Utc>,
     last_error: &str,
-    sequence: i64,
+    intent_key: i64,
     write_id: Uuid,
     owner: LeaseHolder,
 ) -> UpdateStatement {
@@ -117,7 +117,7 @@ pub(super) fn retry_statement(
         .value(TemporalAppendIntents::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(TemporalAppendIntents::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .value(TemporalAppendIntents::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
-        .cond_where(lease_guard(sequence, write_id, owner))
+        .cond_where(lease_guard(intent_key, write_id, owner))
         .to_owned()
 }
 
@@ -152,9 +152,9 @@ mod tests {
     }
 
     #[test]
-    fn pending_reads_are_ordered_by_sequence() {
+    fn pending_reads_are_ordered_by_intent_key() {
         let all = pending_statement(&target(), None).to_string(PostgresQueryBuilder);
-        assert!(all.contains(r#"ORDER BY "sequence""#), "{all}");
+        assert!(all.contains(r#"ORDER BY "intent_key""#), "{all}");
         let one = pending_statement(&target(), Some("urn:ngsi-ld:Vehicle:1")).to_string(PostgresQueryBuilder);
         assert!(one.contains(r#""entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{one}");
     }

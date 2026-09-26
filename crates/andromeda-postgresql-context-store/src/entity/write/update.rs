@@ -34,9 +34,9 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 ///               WHERE entities.id = proj.id AND entity_documents.entity_key = entities.entity_key
 ///                 AND (proj.expected_modified_at IS NULL OR entity_documents.modified_at = proj.expected_modified_at)
 ///               RETURNING entity_documents.entity_key, entities.id),
-///      srch AS (UPDATE entity_search SET type_ids = proj.type_ids, …, written_xid = pg_current_xact_id() FROM docs, proj
+///      srch AS (UPDATE entity_search SET entity_type_name_keys = proj.entity_type_name_keys, …, written_xid = pg_current_xact_id() FROM docs, proj
 ///               WHERE proj.id = docs.id AND entity_search.entity_key = docs.entity_key
-///                 AND (entity_search.type_ids IS DISTINCT FROM proj.type_ids OR … )),
+///                 AND (entity_search.entity_type_name_keys IS DISTINCT FROM proj.entity_type_name_keys OR … )),
 ///      ents AS (UPDATE entities SET expires_at = COALESCE(proj.expires_at, entities.expires_at),
 ///                                   min_attribute_expires_at = proj.min_attribute_expires_at
 ///               FROM docs, proj
@@ -142,8 +142,8 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> String {
 /// guarded by the same list so no column can be rewritten without being
 /// compared, or compared without being written.
 const SEARCH_COLUMNS: [EntitySearch; 7] = [
-    EntitySearch::TypeIds,
-    EntitySearch::AttributeNameIds,
+    EntitySearch::EntityTypeNameKeys,
+    EntitySearch::AttributeNameKeys,
     EntitySearch::ScopePaths,
     EntitySearch::Location,
     EntitySearch::ObservationSpace,
@@ -186,8 +186,8 @@ impl EntityRepository {
         let sql = entity_update_sql(target);
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&ids)
-            .bind(&entities.type_ids_json)
-            .bind(&entities.attribute_name_ids_json)
+            .bind(&entities.entity_type_name_keys_json)
+            .bind(&entities.attribute_name_keys_json)
             .bind(&entities.scope_paths_json)
             .bind(&entities.payload_json)
             .bind(&entities.locations)
@@ -216,7 +216,7 @@ mod tests {
         pretty_assertions::assert_eq!(placeholders(&sql), (1..=12).collect::<BTreeSet<u32>>());
         assert!(
             sql.contains(
-                "AS d(id, type_ids_json, attribute_name_ids_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at, expected_modified_at)"
+                "AS d(id, entity_type_name_keys_json, attribute_name_keys_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at, expected_modified_at)"
             ),
             "{sql}"
         );
@@ -240,15 +240,18 @@ mod tests {
     #[test]
     fn the_search_row_is_rewritten_only_where_a_projected_column_differs() {
         let sql = entity_update_sql(&ContextTarget::Live);
-        assert!(sql.contains(r#""srch" AS (UPDATE "entity_search" SET "type_ids" = "proj"."type_ids""#), "{sql}");
+        assert!(
+            sql.contains(r#""srch" AS (UPDATE "entity_search" SET "entity_type_name_keys" = "proj"."entity_type_name_keys""#),
+            "{sql}"
+        );
         pretty_assertions::assert_eq!(
             sql.matches("IS DISTINCT FROM").count(),
             9,
             "seven search columns and two lifecycle columns are guarded: {sql}"
         );
         for column in [
-            "type_ids",
-            "attribute_name_ids",
+            "entity_type_name_keys",
+            "attribute_name_keys",
             "scope_paths",
             "location",
             "observation_space",

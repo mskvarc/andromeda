@@ -211,7 +211,7 @@ fn entity_types_from_snapshot(snapshot: Option<&Value>) -> Vec<EntityTypeName> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        notification_event::{NotificationEvent, NotificationEventId},
+        notification_event::{NotificationEvent, NotificationEventKey},
         processor::{
             durable_delivery::{entity_types_from_snapshot, stored_entity_survival, sys_attrs_from_snapshot},
             payload::EntitySurvival,
@@ -257,7 +257,7 @@ mod tests {
     /// One queued delivery of `trigger` for the `name` Attribute.
     fn queued(trigger: NotificationTrigger, snapshot: Option<Value>) -> NotificationEvent {
         NotificationEvent::builder()
-            .id(NotificationEventId::from(1_i64))
+            .key(NotificationEventKey::from(1_i64))
             .write_id(WriteId::from_uuid(Uuid::nil()))
             .event_ordinal(WriteOrdinal::at(0))
             .trigger(trigger)

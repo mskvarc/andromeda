@@ -25,11 +25,11 @@ const ROWS_FOR_ENTITY: &str = "SELECT an.name AS attribute_name, \
      c.attribute_kind, \
      c.value_kind, \
      COALESCE(c.value_number::text, c.value_string, c.value_long_text, \
-              c.value_bool::text, c.value_datetime::text, c.value_uri, \
-              c.value_object::text, ST_AsText(c.value_geo)) AS value_text \
+              c.value_boolean::text, c.value_date_time::text, c.value_uri, \
+              c.value_object::text, ST_AsText(c.value_geometry)) AS value_text \
      FROM current_attribute_values AS c \
      JOIN entities AS e ON e.entity_key = c.entity_key \
-     JOIN attribute_names AS an ON an.id = c.attribute_name_id \
+     JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
      WHERE e.id = $1 \
      ORDER BY an.name, c.dataset_id NULLS FIRST";
 
@@ -90,7 +90,7 @@ pub async fn string_placement(pool: &PgPool, entity_id: &str, local_name: &str) 
     sqlx::query_as(
         "SELECT c.value_string, c.value_long_text FROM current_attribute_values AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
-         JOIN attribute_names AS an ON an.id = c.attribute_name_id \
+         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND c.dataset_id IS NULL AND an.name LIKE '%' || $2",
     )
     .bind(entity_id)
@@ -102,11 +102,11 @@ pub async fn string_placement(pool: &PgPool, entity_id: &str, local_name: &str) 
 
 /// Resolve the dictionary identifier of an expanded attribute IRI ending in the
 /// supplied local name for one Entity.
-pub async fn attribute_name_id(pool: &PgPool, entity_id: &str, local_name: &str) -> i32 {
+pub async fn attribute_name_key(pool: &PgPool, entity_id: &str, local_name: &str) -> i32 {
     sqlx::query_scalar(
-        "SELECT c.attribute_name_id FROM current_attribute_values AS c \
+        "SELECT c.attribute_name_key FROM current_attribute_values AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
-         JOIN attribute_names AS an ON an.id = c.attribute_name_id \
+         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND an.name LIKE '%' || $2 LIMIT 1",
     )
     .bind(entity_id)
@@ -123,7 +123,7 @@ pub async fn unit_code_of(pool: &PgPool, entity_id: &str, local_name: &str, data
     sqlx::query_scalar(
         "SELECT u.code FROM current_attribute_values AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
-         JOIN attribute_names AS an ON an.id = c.attribute_name_id \
+         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          LEFT JOIN unit_codes AS u ON u.id = c.unit_code_id \
          WHERE e.id = $1 AND an.name LIKE '%' || $2 AND c.dataset_id IS NOT DISTINCT FROM $3",
     )

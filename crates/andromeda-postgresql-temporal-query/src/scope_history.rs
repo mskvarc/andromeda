@@ -86,7 +86,7 @@ pub fn build_scope_history_query(schema: Option<&DynIden>, entity_id: &Uri, comp
         ScopeHistory::CreatedAt,
         ScopeHistory::ModifiedAt,
         ScopeHistory::DeletedAt,
-        ScopeHistory::GeneratedInstanceUuid,
+        ScopeHistory::GeneratedInstanceId,
         ScopeHistory::VerbatimInstanceId,
     ] {
         select.expr(Expr::col((ScopeEvent, column)));
@@ -112,7 +112,7 @@ pub fn build_scope_history_query(schema: Option<&DynIden>, entity_id: &Uri, comp
             JoinType::Join,
             qualified(schema, TemporalEntities::Table),
             Te,
-            Expr::col((Te, TemporalEntities::EntityKey)).equals((ScopeEvent, ScopeHistory::TemporalEntityKey)),
+            Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((ScopeEvent, ScopeHistory::TemporalEntityKey)),
         )
         .cond_where(
             Condition::all()
@@ -179,7 +179,7 @@ mod tests {
     fn the_scope_read_reaches_the_entity_through_the_temporal_catalogue() {
         let sql = sql_of(&minimal_compiled());
         assert!(
-            sql.contains("JOIN \"temporal_entities\" AS \"te\" ON \"te\".\"entity_key\" = \"sh\".\"temporal_entity_key\""),
+            sql.contains("JOIN \"temporal_entities\" AS \"te\" ON \"te\".\"temporal_entity_key\" = \"sh\".\"temporal_entity_key\""),
             "{sql}"
         );
         assert!(!sql.contains("\"entities\""), "{sql}");

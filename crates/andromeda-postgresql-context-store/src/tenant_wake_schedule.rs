@@ -5,9 +5,9 @@
 //! statement so it composes with a transaction pooler and holds no lock across
 //! an await, and the claim is a `FOR UPDATE SKIP LOCKED` reservation so
 //! concurrent replicas never claim the same tenant and never block one another.
-//! The schedule keys on the `tenants` surrogate id; the port speaks tenant
-//! names, so a name is resolved to its id through a scalar subquery on write and
-//! the claimed ids are mapped back to names on read.
+//! The schedule keys on the `tenants` surrogate `tenant_key`; the port speaks tenant
+//! names, so a name is resolved to its key through a scalar subquery on write and
+//! the claimed keys are mapped back to names on read.
 
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_schema::tenancy::{TenantWakeSchedule as WakeScheduleTable, Tenants};
@@ -50,12 +50,12 @@ impl PostgresTenantWakeSchedule {
         PostgresTenantWakeSchedule { main_pool }
     }
 
-    /// Map the ids a claim returned back to their tenant names.
-    async fn names_for_ids(&self, ids: Vec<i64>) -> Result<Vec<TenantName>, WakeScheduleError> {
-        if ids.is_empty() {
+    /// Map the keys a claim returned back to their tenant names.
+    async fn names_for_keys(&self, keys: Vec<i64>) -> Result<Vec<TenantName>, WakeScheduleError> {
+        if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let (sql, values) = names_for_ids_query(ids).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = names_for_keys_query(keys).build_sqlx(PostgresQueryBuilder);
         let names: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.main_pool)
             .await
@@ -78,11 +78,11 @@ impl TenantWakeSchedule for PostgresTenantWakeSchedule {
 
     async fn claim_due(&self, now: SystemTime, lease_until: SystemTime, limit: usize) -> Result<Vec<TenantName>, WakeScheduleError> {
         let (sql, values) = claim_statement(now, lease_until, limit).build_sqlx(PostgresQueryBuilder);
-        let ids: Vec<i64> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let keys: Vec<i64> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| store_error(&error))?;
-        self.names_for_ids(ids).await
+        self.names_for_keys(keys).await
     }
 
     async fn settle(&self, tenant: &TenantName, probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {
@@ -123,16 +123,16 @@ fn tenant_name(name: String) -> Result<TenantName, WakeScheduleError> {
 /// Upsert `tenant`'s schedule row: probed now, next due at `wake_at` (NULL when
 /// nothing is pending), keyed on the tenant's surrogate id.
 fn upsert_statement(tenant: &TenantName, probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<InsertStatement, SeaQueryError> {
-    let tenant_id = SimpleExpr::SubQuery(None, Box::new(tenant_id_of(tenant).into_sub_query_statement()));
+    let tenant_key = SimpleExpr::SubQuery(None, Box::new(tenant_key_of(tenant).into_sub_query_statement()));
     let probed = DateTime::<Utc>::from(probed_at);
     let wake = wake_at.map(DateTime::<Utc>::from);
     let mut statement = Query::insert();
     statement
         .into_table(WakeScheduleTable::Table)
-        .columns([WakeScheduleTable::TenantId, WakeScheduleTable::ProbedAt, WakeScheduleTable::WakeAt])
-        .values([tenant_id, Expr::val(probed), Expr::val(wake)])?
+        .columns([WakeScheduleTable::TenantKey, WakeScheduleTable::ProbedAt, WakeScheduleTable::WakeAt])
+        .values([tenant_key, Expr::val(probed), Expr::val(wake)])?
         .on_conflict(
-            OnConflict::column(WakeScheduleTable::TenantId)
+            OnConflict::column(WakeScheduleTable::TenantKey)
                 .update_columns([WakeScheduleTable::ProbedAt, WakeScheduleTable::WakeAt])
                 .to_owned(),
         );
@@ -140,9 +140,9 @@ fn upsert_statement(tenant: &TenantName, probed_at: SystemTime, wake_at: Option<
 }
 
 /// The surrogate id of the tenant called `name`.
-fn tenant_id_of(tenant: &TenantName) -> SelectStatement {
+fn tenant_key_of(tenant: &TenantName) -> SelectStatement {
     Query::select()
-        .column(Tenants::Id)
+        .column(Tenants::TenantKey)
         .from(Tenants::Table)
         .and_where(Expr::col(Tenants::Name).eq(tenant.as_str()))
         .to_owned()
@@ -150,10 +150,10 @@ fn tenant_id_of(tenant: &TenantName) -> SelectStatement {
 
 /// Claim up to `limit` tenants due at or before `now`, leasing each to
 /// `lease_until` so a crash before the wake settles re-fires it, returning the
-/// claimed surrogate ids.
+/// claimed surrogate keys.
 fn claim_statement(now: SystemTime, lease_until: SystemTime, limit: usize) -> UpdateStatement {
     let candidates = Query::select()
-        .column(WakeScheduleTable::TenantId)
+        .column(WakeScheduleTable::TenantKey)
         .from(WakeScheduleTable::Table)
         .and_where(Expr::col(WakeScheduleTable::WakeAt).is_not_null())
         .and_where(Expr::col(WakeScheduleTable::WakeAt).lte(DateTime::<Utc>::from(now)))
@@ -165,18 +165,18 @@ fn claim_statement(now: SystemTime, lease_until: SystemTime, limit: usize) -> Up
     Query::update()
         .table(WakeScheduleTable::Table)
         .value(WakeScheduleTable::WakeAt, DateTime::<Utc>::from(lease_until))
-        .and_where(Expr::col(WakeScheduleTable::TenantId).in_subquery(candidates))
-        .returning_col(WakeScheduleTable::TenantId)
+        .and_where(Expr::col(WakeScheduleTable::TenantKey).in_subquery(candidates))
+        .returning_col(WakeScheduleTable::TenantKey)
         .to_owned()
 }
 
-/// The names of the tenants whose surrogate ids are in `ids`, skipping the
+/// The names of the tenants whose surrogate keys are in `keys`, skipping the
 /// unnamed default (whose name is NULL).
-fn names_for_ids_query(ids: Vec<i64>) -> SelectStatement {
+fn names_for_keys_query(keys: Vec<i64>) -> SelectStatement {
     Query::select()
         .column(Tenants::Name)
         .from(Tenants::Table)
-        .and_where(Expr::col(Tenants::Id).is_in(ids))
+        .and_where(Expr::col(Tenants::TenantKey).is_in(keys))
         .and_where(Expr::col(Tenants::Name).is_not_null())
         .to_owned()
 }
@@ -188,7 +188,7 @@ fn next_unprobed_query(limit: usize) -> SelectStatement {
         .from(Tenants::Table)
         .left_join(
             WakeScheduleTable::Table,
-            Expr::col((WakeScheduleTable::Table, WakeScheduleTable::TenantId)).equals((Tenants::Table, Tenants::Id)),
+            Expr::col((WakeScheduleTable::Table, WakeScheduleTable::TenantKey)).equals((Tenants::Table, Tenants::TenantKey)),
         )
         .and_where(Expr::col((Tenants::Table, Tenants::IsUnnamedDefault)).eq(false))
         .and_where(Expr::col((Tenants::Table, Tenants::Name)).is_not_null())
@@ -209,13 +209,16 @@ mod tests {
     }
 
     #[test]
-    fn the_upsert_keys_on_the_tenant_id_and_refreshes_on_conflict() {
+    fn the_upsert_keys_on_the_tenant_key_and_refreshes_on_conflict() {
         let sql = upsert_statement(&tenant(), SystemTime::UNIX_EPOCH, Some(SystemTime::UNIX_EPOCH))
             .expect("arity")
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("INSERT INTO \"tenant_wake_schedule\""), "{sql}");
-        assert!(sql.contains("SELECT \"id\" FROM \"tenants\""), "the tenant id is resolved by name: {sql}");
-        assert!(sql.contains("ON CONFLICT (\"tenant_id\") DO UPDATE"), "{sql}");
+        assert!(
+            sql.contains("SELECT \"tenant_key\" FROM \"tenants\""),
+            "the tenant key is resolved by name: {sql}"
+        );
+        assert!(sql.contains("ON CONFLICT (\"tenant_key\") DO UPDATE"), "{sql}");
     }
 
     #[test]
@@ -224,7 +227,7 @@ mod tests {
         let sql = claim_statement(now, now + Duration::from_secs(60), 4).to_string(PostgresQueryBuilder);
         assert!(sql.contains("UPDATE \"tenant_wake_schedule\""), "{sql}");
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
-        assert!(sql.contains("RETURNING \"tenant_id\""), "{sql}");
+        assert!(sql.contains("RETURNING \"tenant_key\""), "{sql}");
         assert!(sql.contains("LIMIT 4"), "{sql}");
     }
 

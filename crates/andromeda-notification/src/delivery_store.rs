@@ -19,7 +19,7 @@
 //! [`ContextTarget`] to name the branch its row lives in.
 
 use crate::{
-    delivery_entry::{DeliveryEntry, DeliveryId},
+    delivery_entry::{DeliveryEntry, DeliveryKey},
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     error::NotificationError,
 };
@@ -59,7 +59,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
     /// identifier is unique only within that branch.
     fn mark_delivered<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        id: DeliveryId,
+        key: DeliveryKey,
         worker_id: &'life1 LeaseHolder,
         target: &'life2 ContextTarget,
     ) -> BoxFuture<'async_trait, Result<(), DeliveryLeaseError>>
@@ -76,7 +76,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
     /// implementation stores it verbatim rather than trimming it again.
     fn mark_failed<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        id: DeliveryId,
+        key: DeliveryKey,
         worker_id: &'life1 LeaseHolder,
         error: &'life2 str,
         next_attempt_at: DateTime<Utc>,
@@ -97,7 +97,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
     /// `error` arrives already truncated to the bound the schema accepts.
     fn mark_terminal<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        id: DeliveryId,
+        key: DeliveryKey,
         worker_id: &'life1 LeaseHolder,
         error: &'life2 str,
         target: &'life3 ContextTarget,

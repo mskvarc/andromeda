@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 /// The broker-minted identifier column's content, when the row uses it.
 #[must_use]
-pub const fn generated_instance_uuid(instance: &InstanceIdentity) -> Option<Uuid> {
+pub const fn generated_instance_id(instance: &InstanceIdentity) -> Option<Uuid> {
     match instance {
         InstanceIdentity::Generated(uuid) => Some(*uuid),
         InstanceIdentity::Verbatim(_) => None,
@@ -33,21 +33,21 @@ pub fn verbatim_instance_id(instance: &InstanceIdentity) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::stored_instance_columns::{generated_instance_uuid, verbatim_instance_id};
+    use crate::stored_instance_columns::{generated_instance_id, verbatim_instance_id};
     use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
     use uuid::Uuid;
 
     #[test]
-    fn a_broker_minted_identity_populates_only_the_uuid_column() {
+    fn a_broker_minted_identity_populates_only_the_generated_column() {
         let identity = InstanceIdentity::Generated(Uuid::from_u128(7));
-        pretty_assertions::assert_eq!(generated_instance_uuid(&identity), Some(Uuid::from_u128(7)));
+        pretty_assertions::assert_eq!(generated_instance_id(&identity), Some(Uuid::from_u128(7)));
         assert!(verbatim_instance_id(&identity).is_none());
     }
 
     #[test]
     fn a_client_supplied_identity_populates_only_the_verbatim_column() {
         let identity = InstanceIdentity::Verbatim("https://example.com/instances/1".parse().expect("a valid URI"));
-        assert!(generated_instance_uuid(&identity).is_none());
+        assert!(generated_instance_id(&identity).is_none());
         pretty_assertions::assert_eq!(verbatim_instance_id(&identity), Some("https://example.com/instances/1"));
     }
 }

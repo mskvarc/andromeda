@@ -5,15 +5,15 @@
 //!
 //! * numbers land in `value_number` (`numeric`) and bind directly as an exact
 //!   decimal, so every supported operand uses the typed numeric index,
-//! * booleans in `value_bool`,
-//! * date-times in `value_datetime`,
+//! * booleans in `value_boolean`,
+//! * date-times in `value_date_time`,
 //! * strings in `value_string` for Properties and single-term
 //!   `VocabProperties` -- or, past the B-tree bound, in `value_long_text`, which
 //!   [`ProjectedStringColumn::of`] decides from the byte length alone -- and,
 //!   under the equality operators only, in `value_uri` for Relationship objects,
 //!   which is what [`relationship_object_is_comparable`] decides,
 //! * plain dates and times in `value_string`, because only full
-//!   `DateTime`-typed values are projected to `value_datetime`. Both are stored
+//!   `DateTime`-typed values are projected to `value_date_time`. Both are stored
 //!   in the one canonical, fixed-width form their clause 4.6.3 types define, so
 //!   byte-wise order over the column is chronological order and an ordering
 //!   comparison against the bound canonical text is a temporal comparison. Their
@@ -34,7 +34,7 @@ use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 /// Every arm names exactly one typed column and compares it to a bound value, so
 /// each comparison is the shape the partial index over that column is predicated
 /// on: `value_number > $1` implies `value_number IS NOT NULL`, which is what
-/// makes `(attribute_name_id, value_number) WHERE value_number IS NOT NULL`
+/// makes `(attribute_name_key, value_number) WHERE value_number IS NOT NULL`
 /// applicable. Nothing tests `value_kind`, deliberately: the projection's check
 /// constraint already ties the kind to the populated column, so the column being
 /// non-NULL *is* the kind test.
@@ -57,7 +57,7 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
         // SeaQuery owns every value in its AST, so this is the one necessary
         // clone between the borrowed query domain value and the NUMERIC bind.
         Scalar::Number(number) => compare(probe_column(CurrentAttributeValues::ValueNumber), op, SeaExpr::val(number.decimal().clone())),
-        Scalar::Bool(value) => compare(probe_column(CurrentAttributeValues::ValueBool), op, SeaExpr::val(*value)),
+        Scalar::Bool(value) => compare(probe_column(CurrentAttributeValues::ValueBoolean), op, SeaExpr::val(*value)),
         Scalar::Str(value) => {
             let string_test = string_condition(value.as_str(), op);
             match relationship_object_is_comparable(op) {
@@ -68,7 +68,7 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
                 RelationshipObjects::NonMatching => string_test,
             }
         }
-        Scalar::DateTime(value) => compare(probe_column(CurrentAttributeValues::ValueDatetime), op, SeaExpr::val(*value)),
+        Scalar::DateTime(value) => compare(probe_column(CurrentAttributeValues::ValueDateTime), op, SeaExpr::val(*value)),
         Scalar::Date(value) => compare(
             probe_column(CurrentAttributeValues::ValueString),
             op,
@@ -154,7 +154,7 @@ mod tests {
     fn each_operand_kind_names_the_column_the_write_path_projects_it_into() {
         for (scalar, column) in [
             (Scalar::Number(1.into()), "value_number"),
-            (Scalar::Bool(true), "value_bool"),
+            (Scalar::Bool(true), "value_boolean"),
             (Scalar::Str("red".to_owned()), "value_string"),
         ] {
             let sql = render(typed_column_condition(&scalar, CmpOp::Equal));

@@ -2,7 +2,7 @@
 //!
 //! An `entity_maps` row is the map's control record; `entity_map_entries` holds
 //! one row per (entity, source) and `entity_map_links` the `EntityMap` each
-//! contributing context source created. The surrogate `map_key` is never
+//! contributing context source created. The surrogate `entity_map_key` is never
 //! rendered: every statement that starts from the map's URI resolves it with a
 //! scalar subquery on the unique `id`.
 
@@ -14,7 +14,7 @@ pub enum EntityMaps {
     /// Table name: `entity_maps`
     Table,
     /// The database-issued surrogate the child tables reference.
-    MapKey,
+    EntityMapKey,
     /// Creation instant.
     CreatedAt,
     /// Expiry instant, after which the map is gone.
@@ -33,7 +33,7 @@ pub enum EntityMapEntries {
     /// Table name: `entity_map_entries`
     Table,
     /// Foreign key to the owning `entity_maps` row's surrogate.
-    MapKey,
+    EntityMapKey,
     /// The order the query produced the pair in.
     Position,
     /// The matched entity's URI identifier.
@@ -48,7 +48,7 @@ pub enum EntityMapLinks {
     /// Table name: `entity_map_links`
     Table,
     /// Foreign key to the owning `entity_maps` row's surrogate.
-    MapKey,
+    EntityMapKey,
     /// The contributing registration's URI identifier.
     RegistrationId,
     /// The `EntityMap` the context source created for the same query.
@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn entity_map_relation_and_column_names() {
         assert_eq!(EntityMaps::Table.to_string(), "entity_maps");
-        assert_eq!(EntityMaps::MapKey.to_string(), "map_key");
+        assert_eq!(EntityMaps::EntityMapKey.to_string(), "entity_map_key");
         assert_eq!(EntityMaps::ExpiresAt.to_string(), "expires_at");
         assert_eq!(EntityMaps::RequestFingerprint.to_string(), "request_fingerprint");
         assert_eq!(EntityMapEntries::Table.to_string(), "entity_map_entries");

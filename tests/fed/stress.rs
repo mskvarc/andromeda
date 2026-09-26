@@ -47,6 +47,7 @@ async fn fed_stress_current_query_4000_entities_64_clients() {
             assert_status(
                 &hub.client()
                     .create_registration(&registration(
+                        topology.tenant(),
                         &topology.id(&format!("registration:stress:{prefix}")),
                         domain.peer_url(),
                         &btype,
@@ -112,7 +113,7 @@ async fn fed_stress_temporal_20000_observations_64_clients() {
         let hub = broker(&topology, FedRole::Hub);
         for (role, prefix) in [(FedRole::Madrid, "MAD"), (FedRole::Berlin, "BER"), (FedRole::Nordic, "NOR"), (FedRole::North, "NORTH")] {
             let domain = broker(&topology, role);
-            assert_status(&hub.client().create_registration(&json!({"id": topology.id(&format!("registration:temporal-stress:{prefix}")), "type": "ContextSourceRegistration", "endpoint": domain.peer_url(), "information": [{"entities": [{"type": btype}]}], "operations": ["queryTemporal"], "observationInterval": {"startAt": "2024-01-01T00:00:00Z", "endAt": "2025-01-01T00:00:00Z"}, "@context": COMPOUND_CONTEXT.as_str()})).await.expect("temporal stress registration"), 201);
+            assert_status(&hub.client().create_registration(&json!({"id": topology.id(&format!("registration:temporal-stress:{prefix}")), "type": "ContextSourceRegistration", "endpoint": domain.peer_url(), "tenant": topology.tenant(), "information": [{"entities": [{"type": btype}]}], "operations": ["queryTemporal"], "observationInterval": {"startAt": "2024-01-01T00:00:00Z", "endAt": "2025-01-01T00:00:00Z"}, "@context": COMPOUND_CONTEXT.as_str()})).await.expect("temporal stress registration"), 201);
             for value in 0..250 {
                 assert_status(&domain.client().create_temporal_entity(&temporal_stress_entity(&topology.id(&format!("{prefix}:{value}")), &btype)).await.expect("temporal stress seed"), 201);
             }
@@ -139,7 +140,7 @@ async fn fed_stress_64_cross_domain_subscriptions() {
         let btype = topology.id("Building");
         let hub = broker(&topology, FedRole::Hub);
         let madrid = broker(&topology, FedRole::Madrid);
-        assert_status(&hub.client().create_registration(&registration(&topology.id("registration:subscription-stress"), madrid.peer_url(), &btype, None, "inclusive", Some(&["queryEntity", "createSubscription", "updateSubscription", "deleteSubscription"]))).await.expect("subscription stress registration"), 201);
+        assert_status(&hub.client().create_registration(&registration(topology.tenant(), &topology.id("registration:subscription-stress"), madrid.peer_url(), &btype, None, "inclusive", Some(&["queryEntity", "createSubscription", "updateSubscription", "deleteSubscription"]))).await.expect("subscription stress registration"), 201);
         let endpoint = "http://host.docker.internal:0/notifications";
         let ids: Vec<_> = (0..64).map(|value| topology.id(&format!("subscription:stress:{value}"))).collect();
         for id in &ids {

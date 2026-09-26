@@ -17,15 +17,15 @@ use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
-/// The `AS input(write_id, entity_id, base, intent)` column-list alias the
+/// The `AS input(write_id, entity_id, base_ordinal, payload)` column-list alias the
 /// enqueue's `UNNEST` set-write projects, in the order the parallel arrays are
 /// bound and the insert's columns are named.
 pub(super) fn intent_unnest_columns() -> [UnnestColumn; 4] {
     [
         UnnestColumn::new(Alias::new("write_id"), PostgresType::UuidArray),
         UnnestColumn::new(Alias::new("entity_id"), PostgresType::TextArray),
-        UnnestColumn::new(Alias::new("base"), PostgresType::IntegerArray),
-        UnnestColumn::new(Alias::new("intent"), PostgresType::JsonbArray),
+        UnnestColumn::new(Alias::new("base_ordinal"), PostgresType::IntegerArray),
+        UnnestColumn::new(Alias::new("payload"), PostgresType::JsonbArray),
     ]
 }
 
@@ -38,11 +38,11 @@ pub(super) fn intent_unnest_columns() -> [UnnestColumn; 4] {
 /// entity's tombstones and later replays that same entity's deferred
 /// side-effect job under the same write identity, producing a second intent
 /// for the same entity whose entries occupy a different ordinal range. The
-/// deduplicating key is therefore `(write_id, entity_id, base)`, matching
-/// `uq_temporal_append_intents_write`, rather than `(write_id, entity_id)`.
+/// deduplicating key is therefore `(write_id, entity_id, base_ordinal)`, matching
+/// `uq_temporal_append_intents_write_identity`, rather than `(write_id, entity_id)`.
 /// `ON CONFLICT ... DO NOTHING` is what makes a commit replayed under its
 /// original identity enqueue no second copy of any entity's intent at a given
-/// base.
+/// base ordinal.
 pub(super) fn enqueue_statement(
     target: &ContextTarget,
     ids: Vec<Uuid>,
@@ -61,8 +61,8 @@ pub(super) fn enqueue_statement(
     let source = Query::select()
         .expr(Expr::col((input.clone(), Alias::new("write_id"))))
         .expr(Expr::col((input.clone(), Alias::new("entity_id"))))
-        .expr(Expr::col((input.clone(), Alias::new("base"))))
-        .expr(Expr::col((input.clone(), Alias::new("intent"))))
+        .expr(Expr::col((input.clone(), Alias::new("base_ordinal"))))
+        .expr(Expr::col((input.clone(), Alias::new("payload"))))
         .from_function(call, input)
         .to_owned();
     let mut statement = Query::insert();
@@ -71,14 +71,18 @@ pub(super) fn enqueue_statement(
         .columns([
             TemporalAppendIntents::WriteId,
             TemporalAppendIntents::EntityId,
-            TemporalAppendIntents::Base,
-            TemporalAppendIntents::Intent,
+            TemporalAppendIntents::BaseOrdinal,
+            TemporalAppendIntents::Payload,
         ])
         .select_from(source)?
         .on_conflict(
-            OnConflict::columns([TemporalAppendIntents::WriteId, TemporalAppendIntents::EntityId, TemporalAppendIntents::Base])
-                .do_nothing()
-                .to_owned(),
+            OnConflict::columns([
+                TemporalAppendIntents::WriteId,
+                TemporalAppendIntents::EntityId,
+                TemporalAppendIntents::BaseOrdinal,
+            ])
+            .do_nothing()
+            .to_owned(),
         );
     Ok(statement.clone())
 }
@@ -102,9 +106,9 @@ impl PostgresTemporalIntentStore {
             entity_ids.push(intent.entity_id.as_str());
             bases.push(
                 intent
-                    .base
+                    .base_ordinal
                     .as_i32()
-                    .map_err(|error| TemporalError::internal(format!("temporal append intent base is out of range: {error}")))?,
+                    .map_err(|error| TemporalError::internal(format!("temporal append intent base ordinal is out of range: {error}")))?,
             );
             payloads.push(serde_json::to_value(intent).map_err(|error| TemporalError::internal(format!("failed to encode temporal append intent: {error}")))?);
         }
@@ -139,14 +143,14 @@ mod tests {
     #[test]
     fn a_commit_replayed_under_its_original_identity_enqueues_no_second_intent_per_entity_and_base() {
         let sql = enqueue_sql();
-        assert!(sql.contains(r#"ON CONFLICT ("write_id", "entity_id", "base") DO NOTHING"#), "{sql}");
+        assert!(sql.contains(r#"ON CONFLICT ("write_id", "entity_id", "base_ordinal") DO NOTHING"#), "{sql}");
     }
 
     #[test]
     fn the_deduplicating_key_names_the_write_the_entity_and_the_ordinal_base() {
         let sql = enqueue_sql();
         assert!(
-            sql.contains(r#"INTO "temporal_append_intents" ("write_id", "entity_id", "base", "intent")"#),
+            sql.contains(r#"INTO "temporal_append_intents" ("write_id", "entity_id", "base_ordinal", "payload")"#),
             "{sql}"
         );
     }
@@ -156,12 +160,12 @@ mod tests {
     #[test]
     fn the_enqueue_projects_the_four_parallel_arrays_as_named_columns() {
         let sql = enqueue_sql();
-        assert!(sql.contains("AS input(write_id, entity_id, base, intent)"), "{sql}");
+        assert!(sql.contains("AS input(write_id, entity_id, base_ordinal, payload)"), "{sql}");
         assert!(sql.contains("::uuid[]") && sql.contains("::jsonb[]"), "{sql}");
         assert!(!sql.contains("WITH ORDINALITY"), "{sql}");
     }
 
-    /// A batch commit in `BatchSideEffectMode::Enqueue` mode keys on `base` as
+    /// A batch commit in `BatchSideEffectMode::Enqueue` mode keys on `base_ordinal` as
     /// well as `(write_id, entity_id)` so two intents for the same write and
     /// entity at different ordinals are not collided.
     #[test]

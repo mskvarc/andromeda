@@ -99,7 +99,7 @@ impl PostgresTemporalHistorySink {
                 let delta = u32::try_from(position)
                     .map_err(|error| TemporalStoreError::Validation(format!("temporal intent entry position {position} is out of range: {error}")))?;
                 let ordinal = intent
-                    .base
+                    .base_ordinal
                     .advanced_by(delta)
                     .map_err(|error| TemporalStoreError::Validation(format!("temporal intent entry ordinal at position {position} overflowed: {error}")))?;
                 let identity = TemporalObservationIdentity {
@@ -350,7 +350,7 @@ mod tests {
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
         TemporalAppendIntent {
             record: WriteRecord::restored(WriteId::mint(), recorded_at),
-            base: WriteOrdinal::at(0),
+            base_ordinal: WriteOrdinal::at(0),
             entity_id: "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity URI"),
             entity_types: Vec::new(),
             entries,

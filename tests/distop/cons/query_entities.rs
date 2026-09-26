@@ -303,6 +303,7 @@ async fn distop_query_entities_merges_arrays_per_4_5_5() {
         let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons31-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+            .tenant(topology.tenant())
             .mode("inclusive")
             .entity_type(&vtype)
             .operations(&["queryEntity"])

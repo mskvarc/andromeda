@@ -47,8 +47,8 @@ pub async fn history_unit_identities(pool: &PgPool, entity_id: &str, attribute_i
         "SELECT ah.unit_code_id \
          FROM attribute_history ah \
          JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key \
-         JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key \
-         JOIN attribute_names an ON an.id = s.attribute_name_id \
+         JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key \
+         JOIN attribute_names an ON an.attribute_name_key = s.attribute_name_key \
          WHERE te.id = $1 AND an.name = $2 \
          ORDER BY ah.recorded_at, ah.write_ordinal",
     )
@@ -68,8 +68,8 @@ pub async fn history_metadata(pool: &PgPool, entity_id: &str, attribute_iri: &st
         "SELECT ah.metadata \
          FROM attribute_history ah \
          JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key \
-         JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key \
-         JOIN attribute_names an ON an.id = s.attribute_name_id \
+         JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key \
+         JOIN attribute_names an ON an.attribute_name_key = s.attribute_name_key \
          WHERE te.id = $1 AND an.name = $2 \
          ORDER BY ah.recorded_at, ah.write_ordinal",
     )

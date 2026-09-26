@@ -92,8 +92,8 @@ async fn the_tombstone_code_stays_zero_and_names_rows_carrying_no_typed_value() 
 
     let typed_tombstones: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM attribute_history \
-         WHERE value_kind = 0 AND (value_number IS NOT NULL OR value_string IS NOT NULL OR value_bool IS NOT NULL \
-             OR value_datetime IS NOT NULL OR value_geo IS NOT NULL OR value_object IS NOT NULL OR value_uri IS NOT NULL)",
+         WHERE value_kind = 0 AND (value_number IS NOT NULL OR value_string IS NOT NULL OR value_boolean IS NOT NULL \
+             OR value_date_time IS NOT NULL OR value_geometry IS NOT NULL OR value_object IS NOT NULL OR value_uri IS NOT NULL)",
     )
     .fetch_one(scope.database_pool())
     .await

@@ -40,6 +40,7 @@ async fn distop_entity_inclusive_distributes_despite_local_data_and_integrates()
     assert_status(&peer.client().post_entity(&remote).with_ld_json().send().await.expect("peer create"), 201);
 
     let registration = CsrBuilder::new(&topology.id("registration:inclusive-merge"), peer.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_id(&entity_id)
         .property_names(&["fuel"])

@@ -37,8 +37,13 @@ const DELIVERY_ACKNOWLEDGE: StatementName = StatementName("notification-delivery
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the statement fails.
-pub async fn mark_delivered(pool: &PgPool, id: i64, worker_id: LeaseHolder, target: &ContextTarget) -> Result<LeaseAcknowledgement, ContextStoreError> {
-    let (sql, values) = mark_delivered_statement(id, worker_id, target).build_sqlx(PostgresQueryBuilder);
+pub async fn mark_delivered(
+    pool: &PgPool,
+    delivery_key: i64,
+    worker_id: LeaseHolder,
+    target: &ContextTarget,
+) -> Result<LeaseAcknowledgement, ContextStoreError> {
+    let (sql, values) = mark_delivered_statement(delivery_key, worker_id, target).build_sqlx(PostgresQueryBuilder);
     let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
     Ok(acknowledgement(result.rows_affected()))
 }
@@ -50,13 +55,13 @@ pub async fn mark_delivered(pool: &PgPool, id: i64, worker_id: LeaseHolder, targ
 /// Returns [`ContextStoreError::Database`] when the statement fails.
 pub async fn mark_failed(
     pool: &PgPool,
-    id: i64,
+    delivery_key: i64,
     worker_id: LeaseHolder,
     failure: &str,
     next_attempt_at: DateTime<Utc>,
     target: &ContextTarget,
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
-    let (sql, values) = mark_failed_statement(id, worker_id, failure, next_attempt_at, target).build_sqlx(PostgresQueryBuilder);
+    let (sql, values) = mark_failed_statement(delivery_key, worker_id, failure, next_attempt_at, target).build_sqlx(PostgresQueryBuilder);
     let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
     Ok(acknowledgement(result.rows_affected()))
 }
@@ -73,37 +78,37 @@ pub async fn mark_failed(
 /// Returns [`ContextStoreError::Database`] when the statement fails.
 pub async fn mark_exhausted(
     pool: &PgPool,
-    id: i64,
+    delivery_key: i64,
     worker_id: LeaseHolder,
     failure: &str,
     target: &ContextTarget,
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
-    let (sql, values) = mark_exhausted_statement(id, worker_id, failure, target).build_sqlx(PostgresQueryBuilder);
+    let (sql, values) = mark_exhausted_statement(delivery_key, worker_id, failure, target).build_sqlx(PostgresQueryBuilder);
     let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
     Ok(acknowledgement(result.rows_affected()))
 }
 
 /// Every acknowledgement is scoped to the row this worker still holds the lease
-/// on: the delivery's own id, the recorded owner, and a lease that has not yet
+/// on: the delivery's own key, the recorded owner, and a lease that has not yet
 /// expired. The predicate matches at most one row.
-fn lease_guard(id: i64, worker_id: LeaseHolder) -> SimpleExpr {
-    Expr::col(NotificationDeliveries::Id)
-        .eq(id)
+fn lease_guard(delivery_key: i64, worker_id: LeaseHolder) -> SimpleExpr {
+    Expr::col(NotificationDeliveries::DeliveryKey)
+        .eq(delivery_key)
         .and(Expr::col(NotificationDeliveries::ClaimedBy).eq(worker_id.as_uuid()))
         .and(Expr::col(NotificationDeliveries::LeaseUntil).gt(Expr::current_timestamp()))
 }
 
 /// Mark the delivery sent without disturbing the claim triple.
-fn mark_delivered_statement(id: i64, worker_id: LeaseHolder, target: &ContextTarget) -> UpdateStatement {
+fn mark_delivered_statement(delivery_key: i64, worker_id: LeaseHolder, target: &ContextTarget) -> UpdateStatement {
     Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
         .value(NotificationDeliveries::DeliveredAt, Expr::current_timestamp())
-        .and_where(lease_guard(id, worker_id))
+        .and_where(lease_guard(delivery_key, worker_id))
         .to_owned()
 }
 
 /// Count the attempt, record its diagnostic, and release the lease for a retry.
-fn mark_failed_statement(id: i64, worker_id: LeaseHolder, failure: &str, next_attempt_at: DateTime<Utc>, target: &ContextTarget) -> UpdateStatement {
+fn mark_failed_statement(delivery_key: i64, worker_id: LeaseHolder, failure: &str, next_attempt_at: DateTime<Utc>, target: &ContextTarget) -> UpdateStatement {
     Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
         .value(NotificationDeliveries::AttemptCount, Expr::col(NotificationDeliveries::AttemptCount).add(1))
@@ -112,7 +117,7 @@ fn mark_failed_statement(id: i64, worker_id: LeaseHolder, failure: &str, next_at
         .value(NotificationDeliveries::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(NotificationDeliveries::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .value(NotificationDeliveries::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
-        .and_where(lease_guard(id, worker_id))
+        .and_where(lease_guard(delivery_key, worker_id))
         .to_owned()
 }
 
@@ -122,7 +127,7 @@ fn mark_failed_statement(id: i64, worker_id: LeaseHolder, failure: &str, next_at
 /// The claim triple is cleared in the same statement because
 /// `chk_notification_deliveries_exhausted_state` forbids an exhausted row that
 /// still holds a claim.
-fn mark_exhausted_statement(id: i64, worker_id: LeaseHolder, failure: &str, target: &ContextTarget) -> UpdateStatement {
+fn mark_exhausted_statement(delivery_key: i64, worker_id: LeaseHolder, failure: &str, target: &ContextTarget) -> UpdateStatement {
     Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
         .value(NotificationDeliveries::AttemptCount, Expr::col(NotificationDeliveries::AttemptCount).add(1))
@@ -131,7 +136,7 @@ fn mark_exhausted_statement(id: i64, worker_id: LeaseHolder, failure: &str, targ
         .value(NotificationDeliveries::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(NotificationDeliveries::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .value(NotificationDeliveries::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
-        .and_where(lease_guard(id, worker_id))
+        .and_where(lease_guard(delivery_key, worker_id))
         .to_owned()
 }
 
@@ -173,7 +178,7 @@ mod tests {
             mark_failed_statement(1, LeaseHolder::from(Uuid::nil()), "boom", Utc::now(), &ContextTarget::Live).to_string(PostgresQueryBuilder),
             mark_exhausted_statement(1, LeaseHolder::from(Uuid::nil()), "boom", &ContextTarget::Live).to_string(PostgresQueryBuilder),
         ] {
-            assert!(sql.contains(r#""id" = 1"#), "{sql}");
+            assert!(sql.contains(r#""delivery_key" = 1"#), "{sql}");
             assert!(sql.contains(r#""claimed_by" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
             assert!(sql.contains(r#""lease_until" > CURRENT_TIMESTAMP"#), "{sql}");
         }

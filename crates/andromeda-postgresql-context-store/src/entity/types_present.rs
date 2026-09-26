@@ -14,7 +14,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 /// The name of the database check constraint that carries this invariant.
-pub const ENTITY_TYPES_PRESENT_CONSTRAINT: &str = "chk_entity_search_types_present";
+pub const ENTITY_TYPES_PRESENT_CONSTRAINT: &str = "chk_entity_search_entity_type_name_keys_present";
 
 /// An entity write carried no type.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -43,7 +43,7 @@ pub fn types_present(columns: &PreparedEntityColumns) -> Result<(), EntityTypesM
     match columns
         .ids
         .iter()
-        .zip(&columns.type_ids_json)
+        .zip(&columns.entity_type_name_keys_json)
         .find(|(_, types)| !matches!(types, Value::Array(types) if !types.is_empty()))
     {
         Some((id, _)) => Err(EntityTypesMissing::Rejected(Uri::clone(id))), // clone: the error outlives the borrowed column set.
@@ -76,7 +76,7 @@ mod tests {
     fn columns_with_types(types: serde_json::Value) -> PreparedEntityColumns {
         let mut columns = PreparedEntityColumns::with_capacity(1);
         columns.ids.push("urn:ngsi-ld:Building:1".parse().expect("entity URI"));
-        columns.type_ids_json.push(types);
+        columns.entity_type_name_keys_json.push(types);
         columns
     }
 

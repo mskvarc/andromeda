@@ -230,7 +230,7 @@ impl EntityRepository {
     /// `GeoProperty`, which is read from the same projection (clauses 4.10 and
     /// 4.23). The type selection of every selector
     /// (clause 4.17) and the type guard of every traversal hop are tested
-    /// against the interned `type_ids` column, so they resolve through the type
+    /// against the interned `entity_type_name_keys` column, so they resolve through the type
     /// dictionary.
     ///
     /// The lookups need no barrier in front of them. Dictionary rows and the

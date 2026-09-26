@@ -9,7 +9,7 @@
 //! to `location`. The default one has dedicated `PostGIS` columns on
 //! `entity_search` and is read directly. Every other `GeoProperty` — `observationSpace` and
 //! `operationSpace` as much as a custom one — is read from the
-//! `current_attribute_values` projection, which holds one `value_geo` row per attribute
+//! `current_attribute_values` projection, which holds one `value_geometry` row per attribute
 //! instance keyed by the `attribute_names` dictionary. Reading the instance rows
 //! rather than a single column is also what gives clause 4.10 its multi-instance
 //! rule: where a `GeoProperty` has several `datasetId` instances, one of them
@@ -49,7 +49,7 @@ pub enum GeometrySource<'a> {
     /// One entity's current-state rows, addressed through the names the
     /// enclosing statement knows them by.
     ///
-    /// The default `location` reads the `location` / `location_geo` columns of
+    /// The default `location` reads the `location` / `location_geography` columns of
     /// the search row and is additionally guarded against expiry through the
     /// `location_expires_at` column beside them. Any other `GeoProperty` is
     /// reached through its `current_attribute_values` instance rows, correlated
@@ -206,18 +206,18 @@ fn subject_geometry(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names:
         }),
         GeometrySource::Entity { rows } if geo.geoproperty.as_str() == LOCATION.as_str() => Some(SubjectGeometry {
             planar: rows.search_column(EntitySearch::Location),
-            geographic: rows.search_column(EntitySearch::LocationGeo),
+            geographic: rows.search_column(EntitySearch::LocationGeography),
             envelope: Envelope::EntityColumn {
                 expiry_guard: location_expiry_guard(rows.search_column(EntitySearch::LocationExpiresAt)),
             },
         }),
         GeometrySource::Entity { rows } => {
-            let attribute_id = attribute_names.get(&geo.geoproperty)?;
+            let attribute_name_key = attribute_names.get(&geo.geoproperty)?;
             Some(SubjectGeometry {
                 planar: instance_geometry_column(INSTANCE_ALIAS),
                 geographic: cast(instance_geometry_column(INSTANCE_ALIAS), PostgresType::Geography),
                 envelope: Envelope::Instances {
-                    correlation: Box::new(geometry_instances_of(rows, INSTANCE_ALIAS, attribute_id)),
+                    correlation: Box::new(geometry_instances_of(rows, INSTANCE_ALIAS, attribute_name_key)),
                 },
             })
         }
@@ -271,7 +271,7 @@ fn location_expiry_guard(location_expires_at: SimpleExpr) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{attribute_name_id::AttributeNameId, entity_row_refs::DocumentsRef};
+    use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::DocumentsRef};
     use andromeda_ngsi_ld_geometry::dimension::GeometryDimension;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_postgresql_schema::current::Entities;
@@ -340,7 +340,7 @@ mod tests {
     /// A dictionary in which the default `location` is deliberately absent: it
     /// is read from its own column and must never need resolving.
     fn resolved_custom() -> ResolvedNames<AttributeName> {
-        ResolvedNames::from_pairs([(name(CUSTOM_GEOPROPERTY), AttributeNameId::from(CUSTOM_GEOPROPERTY_ID))])
+        ResolvedNames::from_pairs([(name(CUSTOM_GEOPROPERTY), AttributeNameKey::from(CUSTOM_GEOPROPERTY_ID))])
     }
 
     /// A dictionary that knows nothing.
@@ -443,9 +443,9 @@ mod tests {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
         let sql = render(condition(&geo, entity_source(), &resolved_custom()).unwrap());
         assert!(sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""), "{sql}");
-        assert!(sql.contains("\"geo_instance\".\"value_geo\""), "{sql}");
+        assert!(sql.contains("\"geo_instance\".\"value_geometry\""), "{sql}");
         assert!(
-            sql.contains(&format!("\"attribute_name_id\" = {CUSTOM_GEOPROPERTY_ID}")),
+            sql.contains(&format!("\"attribute_name_key\" = {CUSTOM_GEOPROPERTY_ID}")),
             "the dictionary key selects the attribute: {sql}"
         );
         assert!(
@@ -484,11 +484,11 @@ mod tests {
     #[test]
     fn a_spec_defined_geoproperty_takes_the_same_route_as_a_custom_one() {
         for iri in ["https://uri.etsi.org/ngsi-ld/observationSpace", "https://uri.etsi.org/ngsi-ld/operationSpace"] {
-            let names = ResolvedNames::from_pairs([(name(iri), AttributeNameId::from(7_i32))]);
+            let names = ResolvedNames::from_pairs([(name(iri), AttributeNameKey::from(7_i32))]);
             let geo = point_query(GeoRel::Within, iri);
             let sql = render(condition(&geo, entity_source(), &names).unwrap());
             assert!(sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""), "{iri}: {sql}");
-            assert!(sql.contains("\"attribute_name_id\" = 7"), "{iri}: {sql}");
+            assert!(sql.contains("\"attribute_name_key\" = 7"), "{iri}: {sql}");
         }
     }
 
@@ -528,7 +528,7 @@ mod tests {
             CUSTOM_GEOPROPERTY,
         );
         let sql = render(condition(&geo, entity_source(), &resolved_custom()).unwrap());
-        assert!(sql.contains("\"geo_instance\".\"value_geo\"::geography"), "{sql}");
+        assert!(sql.contains("\"geo_instance\".\"value_geometry\"::geography"), "{sql}");
         assert!(sql.contains("ST_DWithin"), "{sql}");
     }
 

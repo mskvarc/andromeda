@@ -35,6 +35,7 @@ async fn distop_retrieve_entity_auxiliary_added_only_when_absent() {
 
     let registration_id = topology.id("registration:cons12");
     let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("auxiliary")
         .entity_id(&entity_id)
         .property_names(&["speed", "fuelLevel"])
@@ -114,6 +115,7 @@ async fn distop_retrieve_entity_datasetid_keeps_matching_instances() {
 
     let registration_id = topology.id("registration:cons15");
     let registration = CsrBuilder::new(&registration_id, holder.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
@@ -176,6 +178,7 @@ async fn distop_retrieve_entity_datasetid_no_match_omits_attribute() {
 
     let registration_id = topology.id("registration:cons16");
     let registration = CsrBuilder::new(&registration_id, holder.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_id(&entity_id)
         .property_names(&["location"])
@@ -217,6 +220,7 @@ async fn distop_retrieve_entity_projection_lacking_all_attrs_404_after_aggregati
 
     let registration_id = topology.id("registration:cons17");
     let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_id(&entity_id)
         .property_names(&["fuelLevel"])

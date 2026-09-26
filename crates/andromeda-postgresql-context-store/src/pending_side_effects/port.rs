@@ -144,15 +144,15 @@ fn leased_effect(id: SideEffectJobId, target: ContextTarget, row: &PgRow) -> Res
     let write_id = WriteId::from_uuid(row.get("write_id"));
     let recorded_at: DateTime<Utc> = row.get("recorded_at");
     let record = WriteRecord::restored(write_id, recorded_at);
-    let stored_base: i32 = row.get("consequence_base");
-    let consequence_base =
+    let stored_base: i32 = row.get("base_ordinal");
+    let base_ordinal =
         WriteOrdinal::try_from(stored_base).map_err(|error| EntityError::internal(format!("pending side-effect consequence base is unreadable: {error}")))?;
     Ok(LeasedSideEffect {
         id,
         attempts: row.get("attempt_count"),
         job,
         record,
-        consequence_base,
+        base_ordinal,
     })
 }
 
@@ -201,7 +201,7 @@ fn lease_batch_statement(owner: LeaseHolder, batch_size: i32, lease_seconds: f64
             PendingSideEffects::Payload,
             PendingSideEffects::WriteId,
             PendingSideEffects::RecordedAt,
-            PendingSideEffects::ConsequenceBase,
+            PendingSideEffects::BaseOrdinal,
         ]))
         .to_owned()
 }
@@ -225,7 +225,7 @@ fn ack_statement(id: Uuid, owner: LeaseHolder) -> DeleteStatement {
 
 /// Count the attempt, record its diagnostic, and release the lease for a retry.
 ///
-/// The diagnostic is cut to the bound `chk_pse_last_error_bound` states, so the
+/// The diagnostic is cut to the bound `chk_pse_last_error_length` states, so the
 /// retry never fails on its own bookkeeping.
 ///
 /// All three claim columns are released together: `chk_pse_claim_coherent`
@@ -252,7 +252,7 @@ fn nack_statement(id: Uuid, owner: LeaseHolder, error: &str, next_attempt_at: Da
 /// An exhausted row holds no lease: `chk_pse_exhausted_state` rejects a row that
 /// carries `exhausted_at` together with any claim column, so the lease is
 /// released here rather than in a later statement. The diagnostic is cut to the
-/// bound `chk_pse_last_error_bound` states.
+/// bound `chk_pse_last_error_length` states.
 fn mark_dead_statement(id: Uuid, owner: LeaseHolder, error: &str) -> UpdateStatement {
     Query::update()
         .table(PendingSideEffects::Table)
@@ -273,7 +273,7 @@ fn mark_dead_statement(id: Uuid, owner: LeaseHolder, error: &str) -> UpdateState
 ///
 /// The retention clock is `exhausted_at`, the instant the job was dead-lettered:
 /// a job that retried for longer than the retention window is still kept for
-/// that window once it gives up. `idx_pse_exhausted` is the partial index on
+/// that window once it gives up. `idx_pse_exhausted_at` is the partial index on
 /// `exhausted_at WHERE exhausted_at IS NOT NULL` this range scan runs on; an
 /// exhausted row holds no lease (`chk_pse_exhausted_state`), so no worker can be
 /// mid-flight on a row this removes.

@@ -29,6 +29,7 @@ const DELIVER: Duration = Duration::from_secs(12);
 async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, role: BrokerRole, entity_type: &str, registration_local: &str) {
     let peer = topology.broker(role).expect("topology broker for role");
     let registration = CsrBuilder::new(&topology.id(registration_local), peer.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(entity_type)
         .operations(&["federationOps"])

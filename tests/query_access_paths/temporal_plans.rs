@@ -6,7 +6,7 @@
 //! has no anchor to range over and must reach the trigram index instead of
 //! scanning the whole catalogue.
 
-use crate::seeded_corpus::{SEED_PREFIX, explain, type_dictionary_id};
+use crate::seeded_corpus::{SEED_PREFIX, explain, type_dictionary_key};
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use sqlx::PgPool;
 
@@ -22,16 +22,16 @@ const TEMPORAL_TYPE: &str = "https://example.test/query-access-paths/Instrument"
 /// a pattern naming the sensors is selective enough that an index path is the
 /// cheaper plan.
 async fn seed_temporal_entities(pool: &PgPool, prefix: &str) {
-    let type_id = type_dictionary_id(pool, TEMPORAL_TYPE).await;
+    let type_key = type_dictionary_key(pool, TEMPORAL_TYPE).await;
     sqlx::query(
-        "INSERT INTO temporal_entities (created_at, modified_at, id, type_ids) \
+        "INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
          SELECT now(), now(), \
                 $1::text || ':' || CASE WHEN g % 1000 = 0 THEN 'sensor' ELSE 'device' END || ':' || lpad(g::text, 6, '0'), \
                 ARRAY[$2::integer] \
          FROM generate_series(1, $3::bigint) AS g",
     )
     .bind(prefix)
-    .bind(type_id)
+    .bind(type_key)
     .bind(SEEDED_TEMPORAL_ENTITIES)
     .execute(pool)
     .await
@@ -48,7 +48,7 @@ async fn temporal_plans_an_unanchored_id_pattern_uses_the_trigram_index() {
 
     // The stage 1 shape: the selector's pattern against the `e` alias the
     // temporal query selects `temporal_entities` under.
-    let plan = explain(pool, "SELECT e.entity_key, e.id FROM temporal_entities AS e WHERE e.id ~ '.*sensor.*'").await;
+    let plan = explain(pool, "SELECT e.temporal_entity_key, e.id FROM temporal_entities AS e WHERE e.id ~ '.*sensor.*'").await;
     assert!(
         plan.contains("idx_temporal_entities_id_trgm"),
         "an unanchored temporal idPattern must use the trigram index: {plan}"

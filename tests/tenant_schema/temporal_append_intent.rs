@@ -42,17 +42,17 @@ async fn temporal_append_intents_exposes_write_identity_and_preserves_its_dedupl
          CROSS JOIN LATERAL unnest(constraint_definition.conkey) WITH ORDINALITY AS key(attnum, ordinality) \
          JOIN pg_attribute AS attribute ON attribute.attrelid = constraint_definition.conrelid AND attribute.attnum = key.attnum \
          WHERE constraint_definition.conrelid = 'temporal_append_intents'::regclass \
-           AND constraint_definition.conname = 'uq_temporal_append_intents_write' \
+           AND constraint_definition.conname = 'uq_temporal_append_intents_write_identity' \
          GROUP BY constraint_definition.oid",
     )
     .fetch_one(pool)
     .await
     .expect("the temporal append intent uniqueness constraint must exist");
-    assert_eq!(constraint_columns, ["write_id", "entity_id", "base"]);
+    assert_eq!(constraint_columns, ["write_id", "entity_id", "base_ordinal"]);
 
     let bounded_error: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pg_constraint \
-         WHERE conrelid = 'temporal_append_intents'::regclass AND conname = 'chk_temporal_append_intents_last_error_bound'",
+         WHERE conrelid = 'temporal_append_intents'::regclass AND conname = 'chk_temporal_append_intents_last_error_length'",
     )
     .fetch_one(pool)
     .await

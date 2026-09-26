@@ -25,13 +25,13 @@ const GLOBAL_LOCK_KEY: &str = "andromeda-postgresql-maintenance";
 
 /// Stable primary key of one platform tenant row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TenantId(i64);
+pub(crate) struct TenantKey(i64);
 
 /// One registered database selected independently of the runtime cache.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RegisteredTenant {
     /// Platform row identity used by durable state.
-    pub(crate) id: TenantId,
+    pub(crate) key: TenantKey,
     /// Absent only for the unnamed default tenant.
     pub(crate) name: Option<TenantName>,
     /// PostgreSQL database name.
@@ -73,9 +73,9 @@ pub(crate) async fn select_least_recently_inspected(connection: &mut PgConnectio
     row.map(|row| {
         let raw_name = row.try_get::<Option<String>, _>(Tenants::Name.to_string().as_str())?;
         Ok(RegisteredTenant {
-            id: TenantId(row.try_get(Tenants::Id.to_string().as_str())?),
+            key: TenantKey(row.try_get(Tenants::TenantKey.to_string().as_str())?),
             name: raw_name.map(TenantName::try_from).transpose()?,
-            database: TenantDatabaseName::from(row.try_get::<String, _>(Tenants::DbName.to_string().as_str())?),
+            database: TenantDatabaseName::from(row.try_get::<String, _>(Tenants::DatabaseName.to_string().as_str())?),
         })
     })
     .transpose()
@@ -85,15 +85,15 @@ pub(crate) async fn select_least_recently_inspected(connection: &mut PgConnectio
 fn least_recently_inspected_statement() -> SelectStatement {
     Query::select()
         .columns([
-            (Tenants::Table, Tenants::Id),
+            (Tenants::Table, Tenants::TenantKey),
             (Tenants::Table, Tenants::Name),
-            (Tenants::Table, Tenants::DbName),
+            (Tenants::Table, Tenants::DatabaseName),
         ])
         .from(Tenants::Table)
         .join(
             JoinType::LeftJoin,
             PostgresqlMaintenanceTenants::Table,
-            Expr::col((PostgresqlMaintenanceTenants::Table, PostgresqlMaintenanceTenants::TenantId)).equals((Tenants::Table, Tenants::Id)),
+            Expr::col((PostgresqlMaintenanceTenants::Table, PostgresqlMaintenanceTenants::TenantKey)).equals((Tenants::Table, Tenants::TenantKey)),
         )
         .and_where(Expr::col((Tenants::Table, Tenants::Status)).eq(TenantStatusCode::Active.code()))
         .order_by_with_nulls(
@@ -101,7 +101,7 @@ fn least_recently_inspected_statement() -> SelectStatement {
             Order::Asc,
             NullOrdering::First,
         )
-        .order_by((Tenants::Table, Tenants::Id), Order::Asc)
+        .order_by((Tenants::Table, Tenants::TenantKey), Order::Asc)
         .limit(1)
         .to_owned()
 }
@@ -115,7 +115,7 @@ pub(crate) async fn execute_update(connection: &mut PgConnection, statement: Upd
 
 #[cfg(test)]
 mod tests {
-    use crate::state::{RegisteredTenant, TenantId, least_recently_inspected_statement};
+    use crate::state::{RegisteredTenant, TenantKey, least_recently_inspected_statement};
     use andromeda_tenancy::database_name::TenantDatabaseName;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn unnamed_default_has_an_explicit_log_label() {
         let tenant = RegisteredTenant {
-            id: TenantId(1),
+            key: TenantKey(1),
             name: None,
             database: TenantDatabaseName::from("postgres".to_owned()),
         };

@@ -9,8 +9,8 @@
 //! when the record itself was written, which a replay does not change.
 //!
 //! The upsert is pure bookkeeping, not a gate. Deduplication of the write's
-//! actual effects happens at the row level, on the `uq_attribute_history_write`
-//! and `uq_scope_history_write` constraints those rows insert under with `ON
+//! actual effects happens at the row level, on the `uq_attribute_history_write_identity`
+//! and `uq_scope_history_write_identity` constraints those rows insert under with `ON
 //! CONFLICT ... DO NOTHING`: a caller persists this record and then always
 //! appends every entry, never skipping an intent because its record was
 //! already present.

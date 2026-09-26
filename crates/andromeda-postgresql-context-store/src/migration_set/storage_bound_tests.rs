@@ -7,7 +7,7 @@
 //! literal disagrees with the constant fails the build rather than surfacing as
 //! a constraint violation on a request the parser admitted.
 
-use crate::migration_set::{platform::platform_migrations, tenant::tenant_migrator};
+use crate::migration_set::declared_schema::every_migration_sql;
 use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
 use andromeda_postgresql_schema::projected_string_column::INDEXED_STRING_BYTE_LIMIT;
 use pretty_assertions::assert_eq;
@@ -27,7 +27,7 @@ const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 34] = [
     "chk_jsonld_contexts_id_length",
     "chk_jsonld_contexts_url_length",
     "chk_context_source_registrations_id_length",
-    "chk_csr_delivery_state_registration_id_length",
+    "chk_registration_delivery_state_registration_id_length",
     "chk_registration_information_registration_id_length",
     "chk_registration_information_entity_id_length",
     "chk_registration_information_entity_id_pattern_length",
@@ -66,15 +66,6 @@ struct OctetLengthBound {
     operator: String,
     /// The literal bound.
     bound: usize,
-}
-
-/// The text of every embedded migration: platform, tenant and branch.
-fn every_migration_sql() -> Vec<&'static str> {
-    platform_migrations()
-        .iter()
-        .chain(tenant_migrator().migrations.iter())
-        .map(|migration| migration.sql.as_str())
-        .collect()
 }
 
 /// Every `octet_length(<column>) <op> <bound>` clause in `sql`.

@@ -8,7 +8,7 @@ pub enum PostgresqlMaintenanceTenants {
     /// Table name: `postgresql_maintenance_tenants`.
     Table,
     /// Foreign key to the platform tenant registry.
-    TenantId,
+    TenantKey,
     /// Most recent bounded inspection pass.
     LastInspectedAt,
     /// Consecutive database-reachability failures.
@@ -23,7 +23,7 @@ pub enum PostgresqlMaintenanceTargets {
     /// Table name: `postgresql_maintenance_targets`.
     Table,
     /// Foreign key to the platform tenant registry.
-    TenantId,
+    TenantKey,
     /// Closed-set relation (`MaintenanceTargetCode`).
     Target,
     /// Most recent cheap or detailed sample instant.
@@ -41,7 +41,7 @@ pub enum PostgresqlMaintenanceTargets {
     /// Consecutive samples meeting every degradation threshold.
     ConsecutiveBreaches,
     /// Whether a later pass should execute the qualified operation.
-    PendingAction,
+    IsActionPending,
     /// Successful-action cooldown deadline.
     CooldownUntil,
     /// Consecutive action failures.
@@ -67,7 +67,7 @@ mod tests {
         assert_eq!(PostgresqlMaintenanceTenants::Table.to_string(), "postgresql_maintenance_tenants");
         assert_eq!(PostgresqlMaintenanceTenants::LastInspectedAt.to_string(), "last_inspected_at");
         assert_eq!(PostgresqlMaintenanceTargets::Table.to_string(), "postgresql_maintenance_targets");
-        assert_eq!(PostgresqlMaintenanceTargets::PendingAction.to_string(), "pending_action");
+        assert_eq!(PostgresqlMaintenanceTargets::IsActionPending.to_string(), "is_action_pending");
         assert_eq!(PostgresqlMaintenanceTargets::LastReclaimableBytes.to_string(), "last_reclaimable_bytes");
         assert_eq!(PostgresqlMaintenanceTargets::LastBeforeBytes.to_string(), "last_before_bytes");
     }

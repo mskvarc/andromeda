@@ -91,6 +91,7 @@ async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
                 .client()
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
+                        .tenant(topology.tenant())
                         .mode("inclusive")
                         .entity_type(&vtype)
                         .operations(&["queryEntity"])
@@ -260,6 +261,7 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
                 .client()
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
+                        .tenant(topology.tenant())
                         .mode("inclusive")
                         .entity_type(&vtype)
                         .operations(&["queryEntity"])
@@ -338,6 +340,7 @@ async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_rec
                 .client()
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
+                        .tenant(topology.tenant())
                         .mode("inclusive")
                         .entity_type(&vtype)
                         .operations(&["queryEntity"])

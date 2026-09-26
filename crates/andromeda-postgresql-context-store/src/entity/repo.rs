@@ -2,7 +2,7 @@
 //!
 //! Holds the tenant pool plus the two things a pushed-down predicate needs:
 //! the attribute-name dictionary the current-value projection is keyed on and
-//! the entity-type-name dictionary the `type_ids` column is keyed on. Those
+//! the entity-type-name dictionary the `entity_type_name_keys` column is keyed on. Those
 //! are properties of this store, not of the policy above it, which is why they
 //! live here and not in the port.
 //!

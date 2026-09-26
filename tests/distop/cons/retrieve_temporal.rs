@@ -128,6 +128,7 @@ async fn distop_retrieve_temporal_local_evolution_is_base_s() {
 
     let registration_id = topology.id("registration:cons40");
     let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_id(&entity_id)
         .property_names(&["fuelLevel"])
@@ -270,6 +271,7 @@ async fn distop_retrieve_temporal_merges_modes_into_s1() {
         let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons46-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+            .tenant(topology.tenant())
             .mode("inclusive")
             .entity_id(&entity_id)
             .property_names(names)

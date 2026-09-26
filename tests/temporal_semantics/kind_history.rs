@@ -86,7 +86,7 @@ async fn temporal_semantics_a_later_kind_change_does_not_reinterpret_recorded_hi
     assert_eq!(rows[0].attribute_kind, original.attribute_kind, "the recorded family is not reinterpreted");
     assert_eq!(rows[0].value_kind, original.value_kind, "the recorded value shape is not reinterpreted");
     assert_eq!(rows[0].value_number, original.value_number, "the recorded value is unchanged");
-    assert_eq!(rows[0].generated_instance_uuid, original.generated_instance_uuid);
+    assert_eq!(rows[0].generated_instance_id, original.generated_instance_id);
 
     // Each later row carries its own codes rather than the catalogue's newest.
     assert_eq!(rows[1].attribute_kind, RELATIONSHIP_KIND);

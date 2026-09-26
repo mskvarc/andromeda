@@ -1,6 +1,6 @@
 //! The statements over the `entity_maps` control record: create, read, touch
 //! the expiry, delete, and sweep. Everything here names a map by its URI; the
-//! surrogate `map_key` is issued by the database and resolved in-statement.
+//! surrogate `entity_map_key` is issued by the database and resolved in-statement.
 
 use crate::entity_map::persistence_error;
 use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
@@ -23,26 +23,26 @@ pub(crate) struct MapControlRecord {
 }
 
 /// The `SELECT` resolving a map's URI to the surrogate the child tables carry.
-fn map_key_lookup(id: SimpleExpr) -> SelectStatement {
+fn entity_map_key_lookup(id: SimpleExpr) -> SelectStatement {
     let mut lookup = Query::select();
     lookup
-        .column((EntityMaps::Table, EntityMaps::MapKey))
+        .column((EntityMaps::Table, EntityMaps::EntityMapKey))
         .from(EntityMaps::Table)
         .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id));
     lookup
 }
 
-/// `(SELECT entity_maps.map_key FROM entity_maps WHERE entity_maps.id = <id>)`.
-pub(crate) fn map_key_of(id: SimpleExpr) -> SimpleExpr {
-    SimpleExpr::SubQuery(None, Box::new(map_key_lookup(id).into_sub_query_statement()))
+/// `(SELECT entity_maps.entity_map_key FROM entity_maps WHERE entity_maps.id = <id>)`.
+pub(crate) fn entity_map_key_of(id: SimpleExpr) -> SimpleExpr {
+    SimpleExpr::SubQuery(None, Box::new(entity_map_key_lookup(id).into_sub_query_statement()))
 }
 
 /// The same lookup restricted to a map that is still live at the database
 /// clock: an expired map resolves to NULL, so a statement keyed on it matches
 /// nothing rather than reaching into a map clause 5.5.14 says yields no
 /// inference.
-pub(crate) fn live_map_key_of(id: SimpleExpr) -> SimpleExpr {
-    let mut lookup = map_key_lookup(id);
+pub(crate) fn live_entity_map_key_of(id: SimpleExpr) -> SimpleExpr {
+    let mut lookup = entity_map_key_lookup(id);
     lookup.and_where(live());
     SimpleExpr::SubQuery(None, Box::new(lookup.into_sub_query_statement()))
 }
@@ -158,7 +158,7 @@ pub(crate) async fn delete_expired(pool: &PgPool, cutoff: DateTime<Utc>) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_map::lifecycle::{map_key_of, mutation_outcome};
+    use crate::entity_map::lifecycle::{entity_map_key_of, mutation_outcome};
     use andromeda_entity_map::store::EntityMapMutation;
     use andromeda_postgresql_seaquery::placeholder::external_placeholder;
     use pretty_assertions::assert_eq;
@@ -169,10 +169,10 @@ mod tests {
         let sql = Query::select()
             .expr(Expr::col(Alias::new("entity_id")))
             .from(Alias::new("entity_map_entries"))
-            .and_where(Expr::col(Alias::new("map_key")).eq(map_key_of(external_placeholder(1))))
+            .and_where(Expr::col(Alias::new("entity_map_key")).eq(entity_map_key_of(external_placeholder(1))))
             .to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#"(SELECT "entity_maps"."map_key" FROM "entity_maps" WHERE "entity_maps"."id" = ($1))"#),
+            sql.contains(r#"(SELECT "entity_maps"."entity_map_key" FROM "entity_maps" WHERE "entity_maps"."id" = ($1))"#),
             "{sql}"
         );
     }

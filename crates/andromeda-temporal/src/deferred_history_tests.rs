@@ -1,5 +1,5 @@
 use crate::{
-    append_intent::{SequencedTemporalAppendIntent, TemporalAppendEntry, TemporalAppendIntent, TemporalIntentSequence, TemporalObservationIdentity},
+    append_intent::{KeyedTemporalAppendIntent, TemporalAppendEntry, TemporalAppendIntent, TemporalIntentKey, TemporalObservationIdentity},
     error::TemporalError,
     intent_drain::{TemporalIntentClaim, TemporalIntentDrain},
     intent_retry_policy::TemporalIntentRetryPolicy,
@@ -72,7 +72,7 @@ struct RecordingQueue {
 }
 
 impl RecordingQueue {
-    async fn insert(&self, pending: SequencedTemporalAppendIntent) {
+    async fn insert(&self, pending: KeyedTemporalAppendIntent) {
         self.state.lock().await.pending.push(ClaimedTemporalAppendIntent { pending, attempts: 0 });
     }
 
@@ -99,7 +99,7 @@ impl RecordingQueue {
 
 #[async_trait]
 impl PendingTemporalIntentReader for RecordingQueue {
-    async fn pending_for_entity(&self, _target: &ContextTarget, entity_id: &Uri) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
+    async fn pending_for_entity(&self, _target: &ContextTarget, entity_id: &Uri) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
         Ok(self
             .state
             .lock()
@@ -111,7 +111,7 @@ impl PendingTemporalIntentReader for RecordingQueue {
             .collect())
     }
 
-    async fn pending_intents(&self, _target: &ContextTarget) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
+    async fn pending_intents(&self, _target: &ContextTarget) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
         Ok(self.state.lock().await.pending.iter().map(|claim| claim.pending.clone()).collect())
     }
 }
@@ -154,7 +154,7 @@ impl TemporalIntentQueue for RecordingQueue {
         &self,
         _target: &ContextTarget,
         _owner: LeaseHolder,
-        intent: &SequencedTemporalAppendIntent,
+        intent: &KeyedTemporalAppendIntent,
     ) -> Result<LeaseAcknowledgement, TemporalError> {
         let mut state = self.state.lock().await;
         if state.lease_lapsed {
@@ -171,7 +171,7 @@ impl TemporalIntentQueue for RecordingQueue {
         &self,
         _target: &ContextTarget,
         _owner: LeaseHolder,
-        intent: &SequencedTemporalAppendIntent,
+        intent: &KeyedTemporalAppendIntent,
         retry: TemporalIntentRetry,
     ) -> Result<LeaseAcknowledgement, TemporalError> {
         let mut state = self.state.lock().await;
@@ -342,7 +342,7 @@ impl TemporalHistoryReader for RecordingSink {
     }
 }
 
-fn fixture() -> (SequencedTemporalAppendIntent, Uri) {
+fn fixture() -> (KeyedTemporalAppendIntent, Uri) {
     let entity_id = "urn:ngsi-ld:Vehicle:deferred".parse::<Uri>().expect("valid entity ID");
     let record = WriteRecord::mint(instant());
     let row = TemporalHistoryRow {
@@ -358,11 +358,11 @@ fn fixture() -> (SequencedTemporalAppendIntent, Uri) {
         metadata: None,
         partition_total: None,
     };
-    let pending = SequencedTemporalAppendIntent {
-        sequence: TemporalIntentSequence::new(1).expect("positive sequence"),
+    let pending = KeyedTemporalAppendIntent {
+        key: TemporalIntentKey::new(1).expect("positive key"),
         intent: TemporalAppendIntent {
             record,
-            base: WriteOrdinal::at(0),
+            base_ordinal: WriteOrdinal::at(0),
             entity_id: entity_id.clone(), // clone: fixture returns the identifier separately from the intent.
             entity_types: Vec::new(),
             entries: vec![TemporalAppendEntry::Observation { row }],

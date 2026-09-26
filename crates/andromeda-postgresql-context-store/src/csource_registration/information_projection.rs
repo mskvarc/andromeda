@@ -43,8 +43,8 @@
 //!     entity_types           TEXT[] COLLATE "C" NOT NULL,   -- {'*'} = any
 //!     entity_id              TEXT COLLATE "C" NOT NULL,     -- '' = any
 //!     entity_id_pattern      TEXT,
-//!     property_name_ids      INTEGER[] NOT NULL,            -- {0} = any, {} = none
-//!     relationship_name_ids  INTEGER[] NOT NULL             -- {0} = any, {} = none
+//!     property_name_keys      INTEGER[] NOT NULL,            -- {0} = any, {} = none
+//!     relationship_name_keys  INTEGER[] NOT NULL             -- {0} = any, {} = none
 //! );
 //! ```
 //!
@@ -73,7 +73,7 @@
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity_info::EntityInfo, registration::info::RegistrationInfo};
 use andromeda_ngsi_ld_query::pattern::Pattern;
-use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use std::{collections::HashMap, hash::BuildHasher};
 
 /// The type-axis sentinel stored where a row admits every type.
@@ -142,9 +142,9 @@ pub enum AttributeRouting {
     /// overlaps nothing.
     Declared {
         /// Keys of the item's `propertyNames`.
-        properties: Vec<AttributeNameId>,
+        properties: Vec<AttributeNameKey>,
         /// Keys of the item's `relationshipNames`.
-        relationships: Vec<AttributeNameId>,
+        relationships: Vec<AttributeNameKey>,
     },
 }
 
@@ -256,7 +256,7 @@ pub fn projected_attribute_names(information: &[RegistrationInfo]) -> Vec<Attrib
 #[must_use]
 pub fn derive_routing<'info, S: BuildHasher>(
     information: &'info [RegistrationInfo],
-    ids: &HashMap<AttributeName, AttributeNameId, S>,
+    ids: &HashMap<AttributeName, AttributeNameKey, S>,
 ) -> RegistrationRouting<'info> {
     let mut rows = Vec::new();
     for entry in information {
@@ -275,7 +275,7 @@ pub fn derive_routing<'info, S: BuildHasher>(
 /// constrains no axis and so makes the whole registration unconstrained.
 fn entry_rows<'info, S: BuildHasher>(
     entry: &'info RegistrationInfo,
-    ids: &HashMap<AttributeName, AttributeNameId, S>,
+    ids: &HashMap<AttributeName, AttributeNameKey, S>,
 ) -> Option<Vec<RegistrationInformationRow<'info>>> {
     let attributes = entry_attributes(entry, ids);
     let selectors = entry.entities.as_deref().filter(|selectors| !selectors.is_empty());
@@ -317,13 +317,13 @@ enum DeclaredNames {
     /// The entry declared no name on this axis.
     Absent,
     /// Every declared name resolved to a dictionary key.
-    Interned(Vec<AttributeNameId>),
+    Interned(Vec<AttributeNameKey>),
     /// At least one declared name is not in the dictionary.
     Unresolved,
 }
 
 /// The attribute routing of an entry's `propertyNames` and `relationshipNames`.
-fn entry_attributes<S: BuildHasher>(entry: &RegistrationInfo, ids: &HashMap<AttributeName, AttributeNameId, S>) -> AttributeRouting {
+fn entry_attributes<S: BuildHasher>(entry: &RegistrationInfo, ids: &HashMap<AttributeName, AttributeNameKey, S>) -> AttributeRouting {
     let properties = interned_names(entry.property_names.as_deref(), ids);
     let relationships = interned_names(entry.relationship_names.as_deref(), ids);
     match (properties, relationships) {
@@ -337,7 +337,7 @@ fn entry_attributes<S: BuildHasher>(entry: &RegistrationInfo, ids: &HashMap<Attr
 
 /// The keys one resolved axis stores beside a declared sibling axis: an absent
 /// axis is the empty set, which overlaps nothing.
-fn declared_keys(names: DeclaredNames) -> Vec<AttributeNameId> {
+fn declared_keys(names: DeclaredNames) -> Vec<AttributeNameKey> {
     match names {
         DeclaredNames::Absent | DeclaredNames::Unresolved => Vec::new(),
         DeclaredNames::Interned(keys) => keys,
@@ -345,7 +345,7 @@ fn declared_keys(names: DeclaredNames) -> Vec<AttributeNameId> {
 }
 
 /// The dictionary keys of a declared attribute-name list.
-fn interned_names<S: BuildHasher>(names: Option<&[AttributeName]>, ids: &HashMap<AttributeName, AttributeNameId, S>) -> DeclaredNames {
+fn interned_names<S: BuildHasher>(names: Option<&[AttributeName]>, ids: &HashMap<AttributeName, AttributeNameKey, S>) -> DeclaredNames {
     match names.filter(|names| !names.is_empty()) {
         None => DeclaredNames::Absent,
         Some(names) => match names.iter().map(|name| ids.get(name).copied()).collect() {
@@ -372,7 +372,7 @@ mod tests {
         registration::info::RegistrationInfo,
     };
     use andromeda_ngsi_ld_query::pattern::Pattern;
-    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 
@@ -385,8 +385,8 @@ mod tests {
         iri.parse().expect("valid attribute name")
     }
 
-    fn dictionary() -> HashMap<AttributeName, AttributeNameId> {
-        HashMap::from([(name(SPEED), AttributeNameId::from(11)), (name(DRIVER), AttributeNameId::from(12))])
+    fn dictionary() -> HashMap<AttributeName, AttributeNameKey> {
+        HashMap::from([(name(SPEED), AttributeNameKey::from(11)), (name(DRIVER), AttributeNameKey::from(12))])
     }
 
     fn single_type(raw_type: &str) -> EntityTypeSelection {
@@ -414,15 +414,15 @@ mod tests {
         matches!(routing, RegistrationRouting::Unconstrained)
     }
 
-    fn rows_of<'info>(information: &'info [RegistrationInfo], ids: &HashMap<AttributeName, AttributeNameId>) -> Vec<RegistrationInformationRow<'info>> {
+    fn rows_of<'info>(information: &'info [RegistrationInfo], ids: &HashMap<AttributeName, AttributeNameKey>) -> Vec<RegistrationInformationRow<'info>> {
         match derive_routing(information, ids) {
             RegistrationRouting::Unconstrained => panic!("the fixture constrains at least one axis"),
             RegistrationRouting::Selective(rows) => rows,
         }
     }
 
-    fn keys(ids: &[i32]) -> Vec<AttributeNameId> {
-        ids.iter().copied().map(AttributeNameId::from).collect()
+    fn keys(ids: &[i32]) -> Vec<AttributeNameKey> {
+        ids.iter().copied().map(AttributeNameKey::from).collect()
     }
 
     fn type_names<'info>(row: &RegistrationInformationRow<'info>) -> Vec<&'info str> {

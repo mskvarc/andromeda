@@ -50,7 +50,7 @@ const LZ4_COLUMNS: &[(&str, &str)] = &[
     ("pending_side_effects", "payload"),
     ("pending_side_effects", "last_error"),
     ("temporal_append_intents", "entity_id"),
-    ("temporal_append_intents", "intent"),
+    ("temporal_append_intents", "payload"),
     ("temporal_append_intents", "last_error"),
 ];
 

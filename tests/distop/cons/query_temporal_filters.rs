@@ -78,6 +78,7 @@ async fn distop_query_temporal_datasetid_filters_s7_empty_removed() {
     );
     let registration_id = topology.id("registration:cons67");
     let registration = CsrBuilder::new(&registration_id, holder.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryTemporal"])
@@ -161,6 +162,7 @@ async fn distop_query_temporal_no_datasetid_s8_equals_s7() {
     );
     let registration_id = topology.id("registration:cons68");
     let registration = CsrBuilder::new(&registration_id, holder.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryTemporal"])
@@ -256,6 +258,7 @@ async fn distop_query_temporal_csf_forwarded_unchanged() {
 
     let hop_id = topology.id("registration:cons72-hop");
     let hop = CsrBuilder::new(&hop_id, middle.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryTemporal"])

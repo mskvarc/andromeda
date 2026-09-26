@@ -147,6 +147,7 @@ async fn distop_query_temporal_merges_modes_into_s4() {
         let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons63-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+            .tenant(topology.tenant())
             .mode("inclusive")
             .entity_type(&vtype)
             .operations(&["queryTemporal"])
@@ -206,6 +207,7 @@ async fn distop_query_temporal_auxiliary_merged_into_s4_only_if_absent() {
 
     let registration_id = topology.id("registration:cons64");
     let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("auxiliary")
         .entity_type(&vtype)
         .operations(&["queryTemporal"])
@@ -287,6 +289,7 @@ async fn distop_query_temporal_lastn_limits_projected_post_aggregation() {
         let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons69-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+            .tenant(topology.tenant())
             .mode("inclusive")
             .entity_type(&vtype)
             .operations(&["queryTemporal"])

@@ -305,6 +305,7 @@ async fn append_pair_inclusive_end_to_end() {
     assert_status(&seeded, 201);
 
     let registration = CsrBuilder::new(&reg_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_id(&entity_id)
         .operations(&["appendAttrs", "retrieveEntity", "queryEntity"])

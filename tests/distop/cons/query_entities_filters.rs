@@ -65,6 +65,7 @@ async fn distop_query_entities_auxiliary_added_only_where_attr_absent() {
 
     let registration_id = topology.id("registration:cons32");
     let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("auxiliary")
         .entity_id(&entity_id)
         .entity_type(&vtype)
@@ -168,6 +169,7 @@ async fn distop_query_entities_csf_forwarded_unchanged_to_discovery() {
 
     let hop_id = topology.id("registration:cons35-hop");
     let hop = CsrBuilder::new(&hop_id, middle.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryEntity"])
@@ -229,6 +231,7 @@ async fn distop_query_entities_datasetid_per_attribute_filtering() {
     );
     let registration_id = topology.id("registration:cons36");
     let registration = CsrBuilder::new(&registration_id, holder.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryEntity"])
@@ -301,6 +304,7 @@ async fn distop_query_entities_datasetid_no_match_omits_attribute() {
     );
     let registration_id = topology.id("registration:cons37");
     let registration = CsrBuilder::new(&registration_id, holder.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryEntity"])

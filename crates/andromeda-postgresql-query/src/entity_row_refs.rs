@@ -179,7 +179,7 @@ mod tests {
         let rows = EntityRowRefs::unaliased(None);
         assert!(render(rows.entity_key_column()).contains(r#""entities"."entity_key""#));
         assert!(render(rows.identity_column(Entities::Id)).contains(r#""entities"."id""#));
-        assert!(render(rows.search_column(EntitySearch::TypeIds)).contains(r#""entity_search"."type_ids""#));
+        assert!(render(rows.search_column(EntitySearch::EntityTypeNameKeys)).contains(r#""entity_search"."entity_type_name_keys""#));
         assert!(render(rows.payload_column()).contains(r#""entity_documents"."payload""#));
     }
 

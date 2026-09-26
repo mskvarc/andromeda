@@ -178,8 +178,8 @@ async fn locate_temporal_entity(
         return Err(TemporalStoreError::NotFound(format!("Temporal evolution of {entity_id} not found")));
     };
     let stored: i64 = row
-        .try_get("entity_key")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.entity_key: {error}")))?;
+        .try_get("temporal_entity_key")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.temporal_entity_key: {error}")))?;
     TemporalEntityKey::try_from(stored).map_err(|error| TemporalStoreError::Decode(error.to_string()))
 }
 
@@ -198,7 +198,7 @@ async fn delete_returning_write_ids(tx: &mut Transaction<'_, Postgres>, statemen
 /// Lock the addressed temporal entity before anything is removed.
 fn lock_temporal_entity_statement(schema: Option<&DynIden>, id: &str) -> SelectStatement {
     Query::select()
-        .column(TemporalEntities::EntityKey)
+        .column(TemporalEntities::TemporalEntityKey)
         .from(qualified(schema, TemporalEntities::Table))
         .and_where(Expr::col(TemporalEntities::Id).eq(id))
         .lock(LockType::Update)
@@ -244,7 +244,7 @@ fn delete_attribute_streams_statement(schema: Option<&DynIden>, entity_key: Temp
 fn delete_temporal_entity_statement(schema: Option<&DynIden>, entity_key: TemporalEntityKey) -> DeleteStatement {
     Query::delete()
         .from_table(qualified(schema, TemporalEntities::Table))
-        .and_where(Expr::col(TemporalEntities::EntityKey).eq(entity_key.get()))
+        .and_where(Expr::col(TemporalEntities::TemporalEntityKey).eq(entity_key.get()))
         .to_owned()
 }
 
@@ -275,9 +275,9 @@ fn audit_orphaned_statement() -> SelectStatement {
             JoinType::LeftJoin,
             TemporalEntities::Table,
             Te,
-            Expr::col((Te, TemporalEntities::EntityKey)).equals((Sh, ScopeHistory::TemporalEntityKey)),
+            Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((Sh, ScopeHistory::TemporalEntityKey)),
         )
-        .and_where(Expr::col((Te, TemporalEntities::EntityKey)).is_null())
+        .and_where(Expr::col((Te, TemporalEntities::TemporalEntityKey)).is_null())
         .to_owned();
     let orphaned_streams = Query::select()
         .expr(count_all())
@@ -286,9 +286,9 @@ fn audit_orphaned_statement() -> SelectStatement {
             JoinType::LeftJoin,
             TemporalEntities::Table,
             Te,
-            Expr::col((Te, TemporalEntities::EntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
+            Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
         )
-        .and_where(Expr::col((Te, TemporalEntities::EntityKey)).is_null())
+        .and_where(Expr::col((Te, TemporalEntities::TemporalEntityKey)).is_null())
         .to_owned();
     Query::select()
         .expr_as(orphan_count(orphaned_history), OrphanedAttributeHistoryRows)

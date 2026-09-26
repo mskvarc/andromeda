@@ -123,8 +123,8 @@ const PREFIX_DELETES: &[&str] = &[
     "DELETE FROM snapshots WHERE id LIKE $1",
     "DELETE FROM entities WHERE id LIKE $1",
     "DELETE FROM attribute_history WHERE stream_key IN (SELECT s.stream_key FROM temporal_attribute_streams s \
-     JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key WHERE te.id LIKE $1)",
-    "DELETE FROM scope_history WHERE temporal_entity_key IN (SELECT entity_key FROM temporal_entities WHERE id LIKE $1)",
+     JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key WHERE te.id LIKE $1)",
+    "DELETE FROM scope_history WHERE temporal_entity_key IN (SELECT temporal_entity_key FROM temporal_entities WHERE id LIKE $1)",
     "DELETE FROM temporal_entities WHERE id LIKE $1",
 ];
 
@@ -241,7 +241,7 @@ mod tests {
             "subscriptions",
             "subscription_delivery_state",
             "context_source_registrations",
-            "csr_delivery_state",
+            "registration_delivery_state",
             "registration_information",
             "subscription_companions",
             "forwarded_subscriptions",

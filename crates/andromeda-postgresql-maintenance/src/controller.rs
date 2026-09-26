@@ -139,7 +139,7 @@ impl MaintenanceController {
             return Ok(PassOutcome::NoTenant);
         };
         tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::Started).await?;
-        let tenant_url = self.direct_url.with_db_name(&tenant.database);
+        let tenant_url = self.direct_url.with_database_name(&tenant.database);
         let pool_result = tokio::select! {
             () = cancellation.cancelled() => return Ok(PassOutcome::Cancelled),
             result = configure_pool_options(1, self.acquire_timeout).connect(tenant_url.as_str()) => result,
@@ -337,17 +337,17 @@ mod tests {
         let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
         let sizes = [
             IndexSize {
-                target: IndexTarget::IdxCavAttrStringTrgm,
+                target: IndexTarget::IdxCavValueStringTrgm,
                 bytes: profile.minimum_relation_bytes * 10,
             },
             IndexSize {
-                target: IndexTarget::IdxCavAttrString,
+                target: IndexTarget::IdxCavValueString,
                 bytes: profile.minimum_relation_bytes,
             },
         ];
         assert_eq!(
             highest_priority_probe_candidate(&sizes, &[], profile, Utc::now()).map(|size| size.target),
-            Some(IndexTarget::IdxCavAttrString)
+            Some(IndexTarget::IdxCavValueString)
         );
     }
 
@@ -357,38 +357,38 @@ mod tests {
         let now = Utc::now();
         let sizes = [
             IndexSize {
-                target: IndexTarget::IdxCavAttrNumber,
+                target: IndexTarget::IdxCavValueNumber,
                 bytes: profile.minimum_relation_bytes * 2,
             },
             IndexSize {
-                target: IndexTarget::IdxCavAttrString,
+                target: IndexTarget::IdxCavValueString,
                 bytes: profile.minimum_relation_bytes,
             },
             IndexSize {
-                target: IndexTarget::IdxCavAttrBool,
+                target: IndexTarget::IdxCavValueBoolean,
                 bytes: profile.minimum_relation_bytes,
             },
         ];
         let states = [
             IndexProbeState {
-                target: IndexTarget::IdxCavAttrNumber,
+                target: IndexTarget::IdxCavValueNumber,
                 last_sampled_at: None,
                 cooldown_until: Some(now + Duration::hours(1)),
             },
             IndexProbeState {
-                target: IndexTarget::IdxCavAttrString,
+                target: IndexTarget::IdxCavValueString,
                 last_sampled_at: Some(now - Duration::minutes(1)),
                 cooldown_until: None,
             },
             IndexProbeState {
-                target: IndexTarget::IdxCavAttrBool,
+                target: IndexTarget::IdxCavValueBoolean,
                 last_sampled_at: Some(now - Duration::minutes(2)),
                 cooldown_until: None,
             },
         ];
         assert_eq!(
             highest_priority_probe_candidate(&sizes, &states, profile, now).map(|size| size.target),
-            Some(IndexTarget::IdxCavAttrBool)
+            Some(IndexTarget::IdxCavValueBoolean)
         );
     }
 }

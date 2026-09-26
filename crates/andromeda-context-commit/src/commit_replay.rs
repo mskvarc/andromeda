@@ -10,7 +10,7 @@ use crate::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
 /// [`ContextCommitter::commit_replayed`](crate::committer::ContextCommitter::commit_replayed).
 /// Reusing the original [`WriteRecord`] keeps every row the replay produces
 /// under the identity the original commit's other consequences already share;
-/// resuming the ordinal counter at `consequence_base` rather than at zero is
+/// resuming the ordinal counter at `base_ordinal` rather than at zero is
 /// what keeps a replayed history entry or notification event from colliding
 /// with an ordinal the original commit already spent on one of its own
 /// consequences. Together the two are what makes a crash-retried delivery of
@@ -23,14 +23,14 @@ pub struct CommitReplay {
     /// Identity and ingestion instant every consequence of the original commit shares.
     pub record: WriteRecord,
     /// First ordinal not yet used by the original commit's own consequences.
-    pub consequence_base: WriteOrdinal,
+    pub base_ordinal: WriteOrdinal,
 }
 
 impl CommitReplay {
     /// Construct a replay continuation from its record and next free ordinal.
     #[must_use]
-    pub const fn new(record: WriteRecord, consequence_base: WriteOrdinal) -> CommitReplay {
-        CommitReplay { record, consequence_base }
+    pub const fn new(record: WriteRecord, base_ordinal: WriteOrdinal) -> CommitReplay {
+        CommitReplay { record, base_ordinal }
     }
 }
 
@@ -45,6 +45,6 @@ mod tests {
         let record = WriteRecord::restored(WriteId::mint(), recorded_at);
         let replay = CommitReplay::new(record, WriteOrdinal::at(4));
         pretty_assertions::assert_eq!(replay.record, record);
-        pretty_assertions::assert_eq!(replay.consequence_base, WriteOrdinal::at(4));
+        pretty_assertions::assert_eq!(replay.base_ordinal, WriteOrdinal::at(4));
     }
 }

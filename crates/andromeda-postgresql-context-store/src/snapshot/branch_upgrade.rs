@@ -141,7 +141,7 @@ fn upgraded_statement(key: SnapshotKey, current: BranchSchemaVersion) -> UpdateS
 
 /// Record a failed upgrade, leaving the version behind.
 ///
-/// The failure is cut to the bound `chk_snapshot_preparation_branch_upgrade_error_bound`
+/// The failure is cut to the bound `chk_snapshot_preparation_branch_upgrade_error_length`
 /// states, so the quarantine never fails on its own diagnostic.
 fn quarantined_statement(key: SnapshotKey, error: &str) -> UpdateStatement {
     Query::update()

@@ -92,7 +92,7 @@ fn code_is_undefined_database(code: Option<&str>) -> bool {
 #[async_trait]
 impl PendingWorkProbe for PostgresPendingWorkProbe {
     async fn earliest_pending_work(&self, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
-        let url = self.request_url.with_db_name(database);
+        let url = self.request_url.with_database_name(database);
         let pool = configure_pool_options(1, self.acquire_timeout)
             .connect(url.as_str())
             .await

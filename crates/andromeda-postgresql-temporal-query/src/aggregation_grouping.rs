@@ -113,11 +113,11 @@ fn history_value_as_text(history: &Alias) -> SimpleExpr {
     Func::coalesce([
         Expr::col((history.clone(), AttributeHistory::ValueString)),
         cast(Expr::col((history.clone(), AttributeHistory::ValueNumber)), PostgresType::Text),
-        cast(Expr::col((history.clone(), AttributeHistory::ValueBool)), PostgresType::Text),
-        cast(Expr::col((history.clone(), AttributeHistory::ValueDatetime)), PostgresType::Text),
+        cast(Expr::col((history.clone(), AttributeHistory::ValueBoolean)), PostgresType::Text),
+        cast(Expr::col((history.clone(), AttributeHistory::ValueDateTime)), PostgresType::Text),
         Expr::col((history.clone(), AttributeHistory::ValueUri)),
         cast(Expr::col((history.clone(), AttributeHistory::ValueObject)), PostgresType::Text),
-        cast(Expr::col((history.clone(), AttributeHistory::ValueGeo)), PostgresType::Text),
+        cast(Expr::col((history.clone(), AttributeHistory::ValueGeometry)), PostgresType::Text),
     ])
     .into()
 }
@@ -190,7 +190,7 @@ fn project_value_in_effect(select: &mut SelectStatement, index: usize, attribute
             JoinType::Join,
             AttributeNames::Table,
             name.clone(),
-            Expr::col((name.clone(), AttributeNames::Id)).equals((stream.clone(), TemporalAttributeStreams::AttributeNameId)),
+            Expr::col((name.clone(), AttributeNames::AttributeNameKey)).equals((stream.clone(), TemporalAttributeStreams::AttributeNameKey)),
         )
         .and_where(Expr::col((stream, TemporalAttributeStreams::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)))
         .and_where(Expr::col((name, AttributeNames::Name)).eq(attribute_iri))

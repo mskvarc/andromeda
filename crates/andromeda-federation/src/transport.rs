@@ -256,15 +256,16 @@ impl FederationService {
             request = request.body(body.clone()); // clone: reqwest owns the body it sends
         }
 
-        // Clause 4.3.6.4: each tenant is federated separately, so the forwarded
-        // request runs in the registration's tenant, or else in the tenant the
-        // triggering request ran in (clause 6.3.4 `NGSILD-Tenant`).
-        let tenant = registration
-            .tenant
-            .clone() // clone: the header owns the tenant name
-            .map(NgsiLdTenant::new)
-            .or_else(|| triggering.headers.and_then(headers::HeaderMapExt::typed_get::<NgsiLdTenant>));
-        if let Some(tenant) = tenant {
+        // Clause 4.14: "When contacting the respective Context Sources, the
+        // Tenant information from the Context Source Registration has to be
+        // used. If no Tenant information is present in the Context Source
+        // Registration, no Tenant information is to be used and thus the
+        // default Tenant is targeted" (Table 5.2.9-1 `tenant`). The tenant the
+        // triggering request ran in is never carried over.
+        if let Some(tenant) = registration.tenant.clone()
+        // clone: the header owns the tenant name
+        {
+            let tenant = NgsiLdTenant::new(tenant);
             let mut request_headers = HeaderMap::new();
             request_headers.typed_insert(tenant);
             request = request.headers(request_headers);
@@ -376,10 +377,101 @@ fn protected_header(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::{apply_custom_headers, conformance_preference, protected_header};
-    use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, key_value_pair::KeyValuePair};
+    use crate::{
+        FederationService,
+        config::FederationConfig,
+        fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
+        forwarded_payload::ForwardedPayload,
+        request::TriggeringRequest,
+        transport::{ForwardedRequest, apply_custom_headers, conformance_preference, protected_header},
+    };
+    use andromeda_http_headers::media_type::ResponseMediaType;
+    use andromeda_jsonld::engine::processor::JsonLdEngine;
+    use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
+    use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, key_value_pair::KeyValuePair, registration::ContextSourceRegistration};
     use headers::Header;
     use http::{HeaderMap, HeaderValue};
+    use serde_json::json;
+    use std::sync::Arc;
+    use url::Url;
+
+    /// A forwarding service with no registrations of its own, offline.
+    fn service() -> FederationService {
+        FederationService::new(
+            Arc::new(FixedRegistrationStore::new(Vec::new())),
+            Arc::new(NoLocalEntities),
+            JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"),
+            ContextSourcePseudonym::new("andromeda-test").expect("a valid alias"),
+            &FederationConfig::default(),
+        )
+        .expect("the service builds")
+    }
+
+    /// A registration naming `tenant`, or no tenant at all.
+    fn registration(tenant: Option<&str>) -> ContextSourceRegistration {
+        let mut document = json!({
+            "id": "urn:ngsi-ld:csr:1",
+            "type": "ContextSourceRegistration",
+            "endpoint": "https://peer.example.org",
+            "information": [{"entities": [{"type": "https://example.org/Vehicle"}]}],
+            "status": "ok",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        });
+        if let Some(tenant) = tenant {
+            document["tenant"] = json!(tenant);
+        }
+        serde_json::from_value(document).expect("valid registration")
+    }
+
+    /// The `NGSILD-Tenant` a request forwarded to `registration` carries when
+    /// the triggering request ran in the tenant `triggering_tenant`.
+    fn forwarded_tenant(registration: &ContextSourceRegistration, triggering_tenant: Option<&'static str>) -> Option<String> {
+        let mut incoming = HeaderMap::new();
+        if let Some(tenant) = triggering_tenant {
+            incoming.insert("ngsild-tenant", HeaderValue::from_static(tenant));
+        }
+        let payload = ForwardedPayload {
+            media_type: ResponseMediaType::Json,
+            link_contexts: Vec::new(),
+            body: None,
+        };
+        let request = service()
+            .build_request(ForwardedRequest {
+                method: reqwest::Method::GET,
+                url: Url::parse("https://peer.example.org/ngsi-ld/v1/entities").expect("valid URL"),
+                payload: &payload,
+                registration,
+                triggering: TriggeringRequest {
+                    via: None,
+                    headers: Some(&incoming),
+                },
+                linked_map: None,
+            })
+            .expect("the request builds");
+        headers_of(request)
+            .get("ngsild-tenant")
+            .map(|value| value.to_str().expect("a valid header value").to_owned())
+    }
+
+    /// Clause 4.14 and Table 5.2.9-1: the forwarded request targets the tenant
+    /// the registration names, whatever tenant the triggering request ran in.
+    #[test]
+    fn a_registration_tenant_is_the_forwarded_tenant() {
+        let registration = registration(Some("domain-tenant"));
+        pretty_assertions::assert_eq!(forwarded_tenant(&registration, None).as_deref(), Some("domain-tenant"));
+        pretty_assertions::assert_eq!(forwarded_tenant(&registration, Some("client-tenant")).as_deref(), Some("domain-tenant"));
+    }
+
+    /// Clause 4.14: "If no Tenant information is present in the Context Source
+    /// Registration, no Tenant information is to be used and thus the default
+    /// Tenant is targeted" -- the triggering request's tenant is not inherited.
+    #[test]
+    fn a_registration_without_a_tenant_targets_the_default_tenant() {
+        let registration = registration(None);
+        pretty_assertions::assert_eq!(forwarded_tenant(&registration, None), None);
+        pretty_assertions::assert_eq!(forwarded_tenant(&registration, Some("client-tenant")), None);
+    }
 
     fn pair(key: &str, value: &str) -> KeyValuePair {
         KeyValuePair {

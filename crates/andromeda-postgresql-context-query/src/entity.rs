@@ -237,7 +237,7 @@ fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows
         let mut attr_cond = Condition::any();
         for attr in &query.selection.attrs {
             attr_cond = attr_cond.add(match names.attributes.get_str(attr.as_str()) {
-                Some(id) => array_contains_key(rows.search_column(EntitySearch::AttributeNameIds), id.get()),
+                Some(id) => array_contains_key(rows.search_column(EntitySearch::AttributeNameKeys), id.get()),
                 None => false_literal(),
             });
         }
@@ -283,7 +283,7 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
         condition = condition.add(regex_match(rows.identity_column(Entities::Id), SeaExpr::val(pattern.as_str())));
     }
     if let Some(type_expr) = &selector.type_expr {
-        condition = condition.add(type_condition(type_expr, &rows.search_column(EntitySearch::TypeIds), types));
+        condition = condition.add(type_condition(type_expr, &rows.search_column(EntitySearch::EntityTypeNameKeys), types));
     }
     condition
 }
@@ -315,7 +315,7 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, entity_type_id::EntityTypeId};
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::{PostgresQueryBuilder, Value};
@@ -359,7 +359,10 @@ mod tests {
             attributes: ResolvedNames::default(),
             types: ResolvedNames::from_pairs(["Vehicle", "Home", "Motorhome", "T1", "T2"].into_iter().enumerate().map(|(index, name)| {
                 let key = i32::try_from(index + 1).expect("a handful of test types");
-                (format!("https://example.com/{name}").parse().expect("valid type name"), EntityTypeId::from(key))
+                (
+                    format!("https://example.com/{name}").parse().expect("valid type name"),
+                    EntityTypeNameKey::from(key),
+                )
             })),
         }
     }
@@ -447,13 +450,13 @@ mod tests {
         let mut q = empty_query();
         q.selection.attrs = vec![iri("https://example.com/speed"), iri("https://example.com/neverWritten")];
         let names = QueryNames {
-            attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameId::from(11))]),
+            attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(11))]),
             types: ResolvedNames::default(),
         };
         let built = build(&q, &names);
         assert!(built.sql.contains(r#"JOIN "entity_search" ON"#), "{}", built.sql);
         assert!(
-            built.sql.contains(r#""entity_search"."attribute_name_ids" @> (ARRAY[11])"#),
+            built.sql.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[11])"#),
             "the key is inlined so the planner can estimate it: {}",
             built.sql
         );
@@ -568,7 +571,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("\"type_ids\" @> (ARRAY[1])"), "{}", built.sql);
+        assert!(built.sql.contains("\"entity_type_name_keys\" @> (ARRAY[1])"), "{}", built.sql);
         assert!(
             !built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(1)))),
             "the resolved key is inlined, not bound: {:?}",
@@ -588,7 +591,11 @@ mod tests {
         ];
         let built = build(&q, &known_types());
         assert!(built.sql.contains("WHERE FALSE"), "{}", built.sql);
-        assert!(!built.sql.contains("type_ids"), "no probe is rendered for an unresolved type: {}", built.sql);
+        assert!(
+            !built.sql.contains("entity_type_name_keys"),
+            "no probe is rendered for an unresolved type: {}",
+            built.sql
+        );
     }
 
     #[test]
@@ -607,7 +614,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("\"type_ids\" @> (ARRAY["));
+        assert!(built.sql.contains("\"entity_type_name_keys\" @> (ARRAY["));
         assert!(built.sql.contains("AND"));
         assert!(built.sql.contains("OR"));
     }
@@ -655,7 +662,7 @@ mod tests {
             built.sql
         );
         assert_eq!(
-            built.sql.matches("\"type_ids\" @> (ARRAY[").count(),
+            built.sql.matches("\"entity_type_name_keys\" @> (ARRAY[").count(),
             2,
             "each selector keeps its own type filter: {}",
             built.sql
@@ -670,7 +677,7 @@ mod tests {
     fn temperature_is_known() -> QueryNames {
         attributes_only(ResolvedNames::from_pairs([(
             "https://example.com/temperature".parse().expect("valid attribute name"),
-            AttributeNameId::from(12),
+            AttributeNameKey::from(12),
         )]))
     }
 
@@ -1132,11 +1139,11 @@ mod tests {
         });
         let names = attributes_only(ResolvedNames::from_pairs([(
             "https://example.com/customGeo".parse().expect("valid attribute name"),
-            AttributeNameId::from(42_i32),
+            AttributeNameKey::from(42_i32),
         )]));
         let built = build(&q, &names);
         assert!(built.sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""), "{}", built.sql);
-        assert!(built.sql.contains("\"attribute_name_id\" = "), "{}", built.sql);
+        assert!(built.sql.contains("\"attribute_name_key\" = "), "{}", built.sql);
         assert!(
             built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(42)))),
             "the dictionary key selects the attribute: {:?}",
@@ -1187,7 +1194,7 @@ mod tests {
     fn a_geoproperty_iri_containing_an_apostrophe_never_reaches_the_statement_text() {
         let names = attributes_only(ResolvedNames::from_pairs([(
             "https://example.com/o'brien".parse().expect("valid attribute name"),
-            AttributeNameId::from(9_i32),
+            AttributeNameKey::from(9_i32),
         )]));
         let relations = [
             GeoRel::Within,
@@ -1243,12 +1250,12 @@ mod tests {
         }];
         let names = attributes_only(ResolvedNames::from_pairs([(
             "https://example.com/o'brien".parse().expect("valid attribute name"),
-            AttributeNameId::from(9_i32),
+            AttributeNameKey::from(9_i32),
         )]));
         let built = build(&q, &names);
         assert!(built.sql.contains("MIN(ST_DistanceSphere("), "the nearest instance decides: {}", built.sql);
         assert!(
-            built.sql.contains("\"attribute_name_id\" = $"),
+            built.sql.contains("\"attribute_name_key\" = $"),
             "the geometry is reached by dictionary key: {}",
             built.sql
         );

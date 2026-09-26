@@ -37,7 +37,7 @@ impl DatabaseUrl {
     ///
     /// Returns [`ContextStoreError::Internal`] when the URL carries no path
     /// segment, so it names no database.
-    pub fn db_name(&self) -> Result<TenantDatabaseName, ContextStoreError> {
+    pub fn database_name(&self) -> Result<TenantDatabaseName, ContextStoreError> {
         let path = self.0.path().trim_start_matches('/');
         if path.is_empty() {
             return Err(ContextStoreError::Internal("Database URL must include database name".to_string()));
@@ -47,10 +47,10 @@ impl DatabaseUrl {
 
     /// Build a full URL with a replaced database name.
     #[must_use]
-    pub fn with_db_name(&self, db_name: &TenantDatabaseName) -> Url {
+    pub fn with_database_name(&self, database_name: &TenantDatabaseName) -> Url {
         // clone: `Url::set_path` mutates, and the base URL is reused per tenant
         let mut url = self.0.clone();
-        url.set_path(&format!("/{db_name}"));
+        url.set_path(&format!("/{database_name}"));
         url
     }
 }
@@ -75,7 +75,7 @@ const POSTGRES_IDENT_MAX: usize = 63;
 /// Postgres's identifier length limit. Uniqueness is preserved by the
 /// fixed-length hash suffix even when the sanitized label is truncated.
 #[must_use]
-pub fn generate_db_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -> TenantDatabaseName {
+pub fn generate_database_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -> TenantDatabaseName {
     let prefix = prefix.as_str();
     let sanitized = sanitize_identifier(tenant_name.as_str());
     let mut hasher = DefaultHasher::new();
@@ -111,25 +111,25 @@ pub fn generate_db_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -> Tena
 /// `ALTER DATABASE` fails, or when the connection cannot be closed cleanly.
 pub async fn create_database_if_missing(
     base_url: &DatabaseUrl,
-    db_name: &TenantDatabaseName,
+    database_name: &TenantDatabaseName,
     synchronous_commit_setting: &str,
 ) -> Result<(), ContextStoreError> {
     let admin_database = TenantDatabaseName::from("postgres".to_owned());
-    let admin_url = base_url.with_db_name(&admin_database);
-    let db_name = db_name.as_str();
+    let admin_url = base_url.with_database_name(&admin_database);
+    let database_name = database_name.as_str();
     let mut conn = PgConnection::connect(admin_url.as_str()).await?;
-    let (sql, values) = database_exists_statement(db_name).build_sqlx(PostgresQueryBuilder);
+    let (sql, values) = database_exists_statement(database_name).build_sqlx(PostgresQueryBuilder);
     let exists = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(&mut conn)
         .await?
         .is_some();
     if !exists {
-        let sql = create_database(db_name);
+        let sql = create_database(database_name);
         create_database_with_retry(&mut conn, &sql).await?;
         // `ALTER DATABASE ... SET` records the durability default on the new
         // database. It runs from the admin connection, targeting the database by
         // name, and takes effect for every session opened against it afterwards.
-        let alter = set_database_synchronous_commit(db_name, synchronous_commit_setting);
+        let alter = set_database_synchronous_commit(database_name, synchronous_commit_setting);
         conn.execute(sqlx::AssertSqlSafe(alter)).await?;
     }
     conn.close().await?;
@@ -195,11 +195,11 @@ fn is_duplicate_database_sqlstate(code: Option<&str>) -> bool {
 ///
 /// `pg_database` is a PostgreSQL system catalog, not part of the application
 /// schema, so it is named by aliases; the database name is a bound value.
-fn database_exists_statement(db_name: &str) -> sea_query::SelectStatement {
+fn database_exists_statement(database_name: &str) -> sea_query::SelectStatement {
     Query::select()
         .expr(Expr::val(1))
         .from(Alias::new("pg_database"))
-        .and_where(Expr::col(Alias::new("datname")).eq(db_name))
+        .and_where(Expr::col(Alias::new("datname")).eq(database_name))
         .to_owned()
 }
 
@@ -223,13 +223,13 @@ mod tests {
         let raw = "postgres://postgres:postgres@localhost:5432/postgres";
         let parsed = DatabaseUrl::new(raw.parse().expect("database URL"));
 
-        let db_name = match parsed.db_name() {
+        let database_name = match parsed.database_name() {
             Ok(value) => value,
             Err(err) => panic!("unexpected db name error: {err}"),
         };
-        pretty_assertions::assert_eq!(db_name.as_str(), "postgres");
+        pretty_assertions::assert_eq!(database_name.as_str(), "postgres");
 
-        let rebuilt = parsed.with_db_name(&TenantDatabaseName::from("tenant_db".to_owned()));
+        let rebuilt = parsed.with_database_name(&TenantDatabaseName::from("tenant_db".to_owned()));
         assert!(rebuilt.as_str().ends_with("/tenant_db"));
     }
 
@@ -237,7 +237,7 @@ mod tests {
     fn database_url_rejects_missing_db() {
         let raw = "postgres://postgres:postgres@localhost:5432";
         let parsed = DatabaseUrl::new(raw.parse().expect("database URL"));
-        assert!(parsed.db_name().is_err());
+        assert!(parsed.database_name().is_err());
     }
 
     #[test]

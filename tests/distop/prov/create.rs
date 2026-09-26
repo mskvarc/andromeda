@@ -440,6 +440,7 @@ async fn create_pair_exclusive_end_to_end() {
     let reg_id = topology.id("registration:prov-create-pair");
 
     let registration = CsrBuilder::new(&reg_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])

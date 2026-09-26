@@ -27,7 +27,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;
 
@@ -134,7 +134,7 @@ async fn resolve_dictionary(
     tx: &mut Transaction<'_, Postgres>,
     groups: &[EventGroup<'_>],
     attribute_names: &dyn NameLookup<AttributeName>,
-) -> Result<HashMap<AttributeName, AttributeNameId>, CommitError> {
+) -> Result<HashMap<AttributeName, AttributeNameKey>, CommitError> {
     let mut names: Vec<AttributeName> = groups
         .iter()
         .flat_map(|group| group.change.changed_attrs.iter())
@@ -151,7 +151,7 @@ fn event<'a>(
     base: WriteOrdinal,
     position: usize,
     group: EventGroup<'a>,
-    dictionary: &HashMap<AttributeName, AttributeNameId>,
+    dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<NewNotificationEvent<'a>, CommitError> {
     let delta = u32::try_from(position).map_err(|error| CommitError::Invariant {
         detail: format!("notification event position {position}: {error}"),
@@ -159,7 +159,7 @@ fn event<'a>(
     let ordinal = base.advanced_by(delta).map_err(|error| CommitError::Invariant {
         detail: format!("notification event ordinal overflowed at position {position}: {error}"),
     })?;
-    let changed_attribute_name_ids = group
+    let changed_attribute_name_keys = group
         .change
         .changed_attrs
         .iter()
@@ -168,12 +168,12 @@ fn event<'a>(
                 detail: format!("attribute name dictionary returned no key for {name}"),
             })
         })
-        .collect::<Result<Vec<AttributeNameId>, CommitError>>()?;
+        .collect::<Result<Vec<AttributeNameKey>, CommitError>>()?;
     Ok(NewNotificationEvent {
         ordinal,
         trigger: group.change.trigger,
         entity_id: &group.change.entity_id,
-        changed_attribute_name_ids,
+        changed_attribute_name_keys,
         changed_dataset_id: group.change.changed_dataset_id.as_ref(),
         entity_snapshot: group.change.entity_snapshot.as_ref(),
         previous_snapshot: group.change.previous_snapshot.as_ref(),

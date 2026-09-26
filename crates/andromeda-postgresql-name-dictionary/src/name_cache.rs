@@ -3,7 +3,7 @@
 //! `attribute_names` maps expanded attribute IRIs to the `INTEGER` key used by
 //! the temporal catalogue, the history hypertable, and the
 //! `current_attribute_values` projection; `entity_type_names` maps expanded
-//! type IRIs to the key the `type_ids` arrays carry. Both the write path
+//! type IRIs to the key the `entity_type_name_keys` arrays carry. Both the write path
 //! (which must create missing entries) and the read path (which must not)
 //! resolve through this one cache, so a tenant holds a single copy of each
 //! dictionary rather than one per repository. The cache is generic over the
@@ -427,14 +427,16 @@ fn names_not_yet_held<'a, N: InternedName>(wanted: &[&'a str], held: &[(N, N::Ke
 /// back to the name that produced it; it is parsed instead because `preload`
 /// reads rows nobody asked for, and one decoding serves both.
 fn decode<N: DictionaryRelation>(rows: &[PgRow]) -> Result<Vec<(N, N::Key)>, NameLookupError> {
+    let key_column = N::key_column().to_string();
+    let name_column = N::name_column().to_string();
     let mut decoded = Vec::with_capacity(rows.len());
     for row in rows {
-        let stored: String = row.try_get("name")?;
+        let stored: String = row.try_get(name_column.as_str())?;
         let name = match stored.parse::<N>() {
             Ok(name) => name,
             Err(source) => return Err(stored_name_error::<N>(stored, source)),
         };
-        decoded.push((name, N::Key::from(row.try_get::<i32, _>("id")?)));
+        decoded.push((name, N::Key::from(row.try_get::<i32, _>(key_column.as_str())?)));
     }
     Ok(decoded)
 }
@@ -454,7 +456,7 @@ fn statement_error(error: &SeaQueryError) -> NameLookupError {
 
 /// Every mapping the dictionary holds, for warming the cache.
 fn preload_query<N: DictionaryRelation>() -> SelectStatement {
-    Query::select().columns([N::id_column(), N::name_column()]).from(N::table()).to_owned()
+    Query::select().columns([N::key_column(), N::name_column()]).from(N::table()).to_owned()
 }
 
 /// The dictionary's size, as the growth bound is decided against it.
@@ -497,7 +499,7 @@ fn held_publication(rows: &[PgRow]) -> Result<CachePublication, NameLookupError>
 /// batch cannot exhaust the protocol's parameter space.
 fn name_select_query<N: DictionaryRelation>(names: &[&str]) -> SelectStatement {
     Query::select()
-        .columns([N::id_column(), N::name_column()])
+        .columns([N::key_column(), N::name_column()])
         .from(N::table())
         .and_where(Expr::col(N::name_column()).eq(any(text_array(names))))
         .to_owned()
@@ -544,7 +546,7 @@ mod tests {
         name_lookup::NameLookup,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, dictionary::interned_name::InternedName, entity_type_id::EntityTypeId};
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::interned_name::InternedName, entity_type_name_key::EntityTypeNameKey};
     use sea_query::PostgresQueryBuilder;
     use sea_query_sqlx::SqlxBinder;
     use sqlx::postgres::{PgConnectOptions, PgPool};
@@ -757,7 +759,7 @@ mod tests {
     name_cache_tests!(
         attribute_names,
         AttributeName,
-        AttributeNameId,
+        AttributeNameKey,
         "https://example.com/speed",
         "https://example.com/brand",
         "attribute_names"
@@ -765,7 +767,7 @@ mod tests {
     name_cache_tests!(
         entity_type_names,
         EntityTypeName,
-        EntityTypeId,
+        EntityTypeNameKey,
         "https://example.com/Vehicle",
         "https://example.com/Building",
         "entity_type_names"

@@ -146,7 +146,7 @@ impl TemporalRepository {
 /// Lock the addressed temporal entities before any history is removed.
 fn lock_entities_statement(schema: Option<&DynIden>, entity_ids: &[Uri]) -> SelectStatement {
     Query::select()
-        .column(TemporalEntities::EntityKey)
+        .column(TemporalEntities::TemporalEntityKey)
         .from(qualified(schema, TemporalEntities::Table))
         .and_where(Expr::col(TemporalEntities::Id).is_in(entity_ids.iter().map(Uri::as_str)))
         .lock(LockType::Update)
@@ -157,7 +157,7 @@ fn lock_entities_statement(schema: Option<&DynIden>, entity_ids: &[Uri]) -> Sele
 /// targeted attribute and a selected `datasetId`.
 fn matching_streams_subquery(schema: Option<&DynIden>, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> SelectStatement {
     let owning_entities = Query::select()
-        .column((Te, TemporalEntities::EntityKey))
+        .column((Te, TemporalEntities::TemporalEntityKey))
         .from(qualified(schema, TemporalEntities::Table).alias(Te))
         .and_where(Expr::col((Te, TemporalEntities::Id)).is_in(entity_ids.iter().map(Uri::as_str)))
         .to_owned();
@@ -170,7 +170,7 @@ fn matching_streams_subquery(schema: Option<&DynIden>, entity_ids: &[Uri], scope
             JoinType::Join,
             AttributeNames::Table,
             An,
-            Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
         )
         .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).in_subquery(owning_entities));
 

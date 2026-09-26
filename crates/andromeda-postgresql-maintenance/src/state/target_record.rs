@@ -9,7 +9,7 @@ use crate::{
         target_code::{stored_target, target_of},
     },
     policy::{DeferralReason, DegradationSample, PolicyDecision, TargetState},
-    state::{RegisteredTenant, TenantId, execute_update},
+    state::{RegisteredTenant, TenantKey, execute_update},
 };
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
@@ -38,11 +38,11 @@ pub(crate) async fn load_target_state(
     let statement = Query::select()
         .columns([
             PostgresqlMaintenanceTargets::ConsecutiveBreaches,
-            PostgresqlMaintenanceTargets::PendingAction,
+            PostgresqlMaintenanceTargets::IsActionPending,
             PostgresqlMaintenanceTargets::CooldownUntil,
         ])
         .from(PostgresqlMaintenanceTargets::Table)
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantId).eq(tenant.id.0))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()))
         .to_owned();
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -54,7 +54,7 @@ pub(crate) async fn load_target_state(
                 field: "consecutive_breaches",
                 value: i64::from(breaches),
             })?,
-            pending_action: row.try_get(PostgresqlMaintenanceTargets::PendingAction.to_string().as_str())?,
+            is_action_pending: row.try_get(PostgresqlMaintenanceTargets::IsActionPending.to_string().as_str())?,
             cooldown_until: row.try_get(PostgresqlMaintenanceTargets::CooldownUntil.to_string().as_str())?,
         })
     })
@@ -65,8 +65,8 @@ pub(crate) async fn pending_action(connection: &mut PgConnection, tenant: &Regis
     let statement = Query::select()
         .column(PostgresqlMaintenanceTargets::Target)
         .from(PostgresqlMaintenanceTargets::Table)
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantId).eq(tenant.id.0))
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::PendingAction).eq(true))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::IsActionPending).eq(true))
         .order_by(PostgresqlMaintenanceTargets::Target, Order::Asc)
         .to_owned();
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -80,12 +80,12 @@ pub(crate) async fn pending_action(connection: &mut PgConnection, tenant: &Regis
     Ok(targets
         .iter()
         .copied()
-        .find(|target| matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCavAttrString)))
+        .find(|target| matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCavValueString)))
         .or_else(|| {
             targets
                 .iter()
                 .copied()
-                .find(|target| !matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCavAttrStringTrgm)))
+                .find(|target| !matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCavValueStringTrgm)))
         })
         .or_else(|| targets.first().copied()))
 }
@@ -99,7 +99,7 @@ pub(crate) async fn index_probe_states(connection: &mut PgConnection, tenant: &R
             PostgresqlMaintenanceTargets::CooldownUntil,
         ])
         .from(PostgresqlMaintenanceTargets::Table)
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantId).eq(tenant.id.0))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(
             Expr::col(PostgresqlMaintenanceTargets::Target).is_in(IndexTarget::PROBEABLE.map(|target| stored_target(MaintenanceTarget::Index(target)).code())),
         )
@@ -134,7 +134,7 @@ pub(crate) async fn record_decision(
     statement
         .table(PostgresqlMaintenanceTargets::Table)
         .value(PostgresqlMaintenanceTargets::LastDecision, RecordedDecision::Policy(decision).code().code())
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantId).eq(tenant.id.0))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()));
     if let Some(sample) = sample {
         statement
@@ -152,7 +152,7 @@ pub(crate) async fn record_decision(
     }
     match decision {
         PolicyDecision::Act => {
-            statement.value(PostgresqlMaintenanceTargets::PendingAction, true);
+            statement.value(PostgresqlMaintenanceTargets::IsActionPending, true);
         }
         PolicyDecision::Queued => {
             statement
@@ -160,7 +160,7 @@ pub(crate) async fn record_decision(
                     PostgresqlMaintenanceTargets::ConsecutiveBreaches,
                     Expr::col(PostgresqlMaintenanceTargets::ConsecutiveBreaches).add(1),
                 )
-                .value(PostgresqlMaintenanceTargets::PendingAction, true);
+                .value(PostgresqlMaintenanceTargets::IsActionPending, true);
         }
         PolicyDecision::WouldAct => {
             if sample.is_some() {
@@ -188,14 +188,14 @@ pub(crate) async fn record_decision(
         ) => {}
     }
     execute_update(connection, statement.clone()).await?;
-    if decision == PolicyDecision::Queued && matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCavAttrString)) {
-        let trigram = MaintenanceTarget::Index(IndexTarget::IdxCavAttrStringTrgm);
+    if decision == PolicyDecision::Queued && matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCavValueString)) {
+        let trigram = MaintenanceTarget::Index(IndexTarget::IdxCavValueStringTrgm);
         ensure_target_state(connection, tenant, trigram).await?;
         let paired = Query::update()
             .table(PostgresqlMaintenanceTargets::Table)
-            .value(PostgresqlMaintenanceTargets::PendingAction, true)
+            .value(PostgresqlMaintenanceTargets::IsActionPending, true)
             .value(PostgresqlMaintenanceTargets::LastDecision, RecordedDecision::PairedQueued.code().code())
-            .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantId).eq(tenant.id.0))
+            .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
             .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(trigram).code()))
             .to_owned();
         execute_update(connection, paired).await?;
@@ -215,14 +215,14 @@ pub(crate) async fn record_action_success(
     let statement = Query::update()
         .table(PostgresqlMaintenanceTargets::Table)
         .value(PostgresqlMaintenanceTargets::ConsecutiveBreaches, 0)
-        .value(PostgresqlMaintenanceTargets::PendingAction, false)
+        .value(PostgresqlMaintenanceTargets::IsActionPending, false)
         .value(PostgresqlMaintenanceTargets::CooldownUntil, cooldown_until)
         .value(PostgresqlMaintenanceTargets::ConsecutiveFailures, 0)
         .value(PostgresqlMaintenanceTargets::LastActionAt, Expr::current_timestamp())
         .value(PostgresqlMaintenanceTargets::LastActionResult, ActionResult::Succeeded.code().code())
         .value(PostgresqlMaintenanceTargets::LastBeforeBytes, persisted_bytes(before_bytes, "before bytes")?)
         .value(PostgresqlMaintenanceTargets::LastAfterBytes, persisted_bytes(after_bytes, "after bytes")?)
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantId).eq(tenant.id.0))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()))
         .to_owned();
     execute_update(connection, statement).await
@@ -238,7 +238,7 @@ pub(crate) async fn record_action_failure(connection: &mut PgConnection, tenant:
         )
         .value(PostgresqlMaintenanceTargets::LastActionAt, Expr::current_timestamp())
         .value(PostgresqlMaintenanceTargets::LastActionResult, ActionResult::Failed.code().code())
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantId).eq(tenant.id.0))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()))
         .to_owned();
     execute_update(connection, statement).await
@@ -246,20 +246,20 @@ pub(crate) async fn record_action_failure(connection: &mut PgConnection, tenant:
 
 /// Insert a target-state row if this is its first sample.
 async fn ensure_target_state(connection: &mut PgConnection, tenant: &RegisteredTenant, target: MaintenanceTarget) -> Result<(), MaintenanceError> {
-    let (sql, values) = target_state_insert(tenant.id, target)?.build_sqlx(PostgresQueryBuilder);
+    let (sql, values) = target_state_insert(tenant.key, target)?.build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(connection).await?;
     Ok(())
 }
 
 /// Build the idempotent target-state insert.
-fn target_state_insert(tenant: TenantId, target: MaintenanceTarget) -> Result<InsertStatement, SeaQueryError> {
+fn target_state_insert(tenant: TenantKey, target: MaintenanceTarget) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(PostgresqlMaintenanceTargets::Table)
-        .columns([PostgresqlMaintenanceTargets::TenantId, PostgresqlMaintenanceTargets::Target])
+        .columns([PostgresqlMaintenanceTargets::TenantKey, PostgresqlMaintenanceTargets::Target])
         .values([tenant.0.into(), stored_target(target).code().into()])?
         .on_conflict(
-            OnConflict::columns([PostgresqlMaintenanceTargets::TenantId, PostgresqlMaintenanceTargets::Target])
+            OnConflict::columns([PostgresqlMaintenanceTargets::TenantKey, PostgresqlMaintenanceTargets::Target])
                 .do_nothing()
                 .to_owned(),
         );

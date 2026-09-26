@@ -50,8 +50,8 @@ pub(super) fn staged(column: CurrentAttributeValues) -> SimpleExpr {
 /// the last position in the batch wins, which is the order the caller's
 /// operations were applied to the entity payload in.
 ///
-/// The `value_geo` column is wrapped as
-/// `CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END`:
+/// The `value_geometry` column is wrapped as
+/// `CASE WHEN d.value_geometry IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geometry)) ELSE NULL END`:
 /// the EWKB already carries its SRID, so no re-SRID is applied, and a NULL EWKB
 /// projects to a NULL geometry rather than a call on a NULL argument.
 pub(super) fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
@@ -59,8 +59,8 @@ pub(super) fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
 
     let geometry: SimpleExpr = CaseStatement::new()
         .case(
-            Expr::col((Staging, CurrentAttributeValues::ValueGeo)).is_not_null(),
-            validated_geom_from_ewkb(staged(CurrentAttributeValues::ValueGeo)),
+            Expr::col((Staging, CurrentAttributeValues::ValueGeometry)).is_not_null(),
+            validated_geom_from_ewkb(staged(CurrentAttributeValues::ValueGeometry)),
         )
         .finally(Keyword::Null)
         .into();
@@ -69,16 +69,16 @@ pub(super) fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
     select
         .distinct_on([
             (Staging, CurrentAttributeValues::EntityKey),
-            (Staging, CurrentAttributeValues::AttributeNameId),
+            (Staging, CurrentAttributeValues::AttributeNameKey),
             (Staging, CurrentAttributeValues::DatasetId),
         ])
         .expr(staged(CurrentAttributeValues::EntityKey))
-        .expr(staged(CurrentAttributeValues::AttributeNameId))
+        .expr(staged(CurrentAttributeValues::AttributeNameKey))
         .expr(staged(CurrentAttributeValues::AttributeKind))
         .expr(staged(CurrentAttributeValues::ValueKind))
-        .expr(staged(CurrentAttributeValues::ValueDatetime))
+        .expr(staged(CurrentAttributeValues::ValueDateTime))
         .expr(staged(CurrentAttributeValues::UnitCodeId))
-        .expr(staged(CurrentAttributeValues::ValueBool))
+        .expr(staged(CurrentAttributeValues::ValueBoolean))
         .expr(staged(CurrentAttributeValues::DatasetId))
         .expr(staged(CurrentAttributeValues::ValueNumber))
         .expr(staged(CurrentAttributeValues::ValueString))
@@ -89,7 +89,7 @@ pub(super) fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
         .expr(Expr::col((Staging, Ordinality)))
         .from_function(call, Staging)
         .order_by((Staging, CurrentAttributeValues::EntityKey), Order::Asc)
-        .order_by((Staging, CurrentAttributeValues::AttributeNameId), Order::Asc)
+        .order_by((Staging, CurrentAttributeValues::AttributeNameKey), Order::Asc)
         .order_by((Staging, CurrentAttributeValues::DatasetId), Order::Asc)
         .order_by((Staging, Ordinality), Order::Desc);
     let select = select;

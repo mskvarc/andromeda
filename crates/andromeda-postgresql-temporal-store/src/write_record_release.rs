@@ -87,7 +87,7 @@ fn base_release() -> DeleteStatement {
 /// clause 5.6.16 deletion and every retention sweep probed every chunk. Leading
 /// with `recorded_at` seeks that index and lets the planner exclude every other
 /// chunk. An append intent's protection needs no instant:
-/// `uq_temporal_append_intents_write` already leads with `write_id`.
+/// `uq_temporal_append_intents_write_identity` already leads with `write_id`.
 fn unprotected() -> Cond {
     Cond::all()
         .add(no_history_reference(

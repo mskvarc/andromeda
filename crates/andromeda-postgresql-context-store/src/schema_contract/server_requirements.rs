@@ -13,7 +13,7 @@ use sqlx::{PgPool, Row};
 /// The PostgreSQL version the tenant schema requires.
 ///
 /// `temporal_attribute_streams` identifies a multi-attribute instance with
-/// `UNIQUE NULLS NOT DISTINCT (temporal_entity_key, attribute_name_id, dataset_id)`,
+/// `UNIQUE NULLS NOT DISTINCT (temporal_entity_key, attribute_name_key, dataset_id)`,
 /// which is how ETSI GS CIM 009 v1.9.1 clause 4.5.5 is modelled — an absent
 /// `datasetId` is the one default instance — and `NULLS NOT DISTINCT` is a
 /// PostgreSQL 15 feature. The floor rises to 18 when the schema adopts

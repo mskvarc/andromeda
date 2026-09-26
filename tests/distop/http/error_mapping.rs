@@ -34,6 +34,7 @@ async fn dist_http_single_source_loop_back_returns_508() {
     let reg_id = topology.id("registration:loop");
 
     let loop_back = CsrBuilder::new(&reg_id, front.peer_url())
+        .tenant(topology.tenant())
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
@@ -74,6 +75,7 @@ async fn dist_http_single_source_redirect_loop_back_returns_508() {
     let reg_id = topology.id("registration:redirect-loop");
 
     let loop_back = CsrBuilder::new(&reg_id, front.peer_url())
+        .tenant(topology.tenant())
         .mode("redirect")
         .entity_id(&entity_id)
         .property_names(&["speed"])
@@ -241,6 +243,7 @@ async fn dist_http_get_loop_back_returns_199_warning_not_508() {
     let reg_id = topology.id("registration:get-loop");
 
     let loop_back = CsrBuilder::new(&reg_id, front.peer_url())
+        .tenant(topology.tenant())
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])

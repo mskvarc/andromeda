@@ -1,15 +1,11 @@
--- generated - never hand-edited
 -- ============================================================================
--- 0010: UN/CEFACT unit-code catalogue seed
+-- 0010: Unit-code catalog seed
 -- ============================================================================
--- Rendered by the generation test of `crates/andromeda-unit-catalog` from the
--- same identity assignment the broker compiles in, so an identifier written
--- by the broker names the same row the database holds. The assignment is
--- append-only: an identity is never reassigned and a row is never deleted,
--- because stored attributes point at these numbers.
+-- Generated from the unit-code assignment every broker carries; never edited
+-- by hand.
 --
--- Regenerate with:
---   ANDROMEDA_UNIT_CATALOG_BLESS=1 cargo test -p andromeda-unit-catalog
+-- The assignment is append-only: an identity is never reassigned and a row
+-- is never deleted, because stored attributes point at these numbers.
 -- ============================================================================
 
 INSERT INTO unit_codes (id, code, first_revision, retired_revision) VALUES

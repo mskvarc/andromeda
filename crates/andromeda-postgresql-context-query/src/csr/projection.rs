@@ -24,7 +24,7 @@
 //! wildcard row carrying every sentinel. That is what lets each dimension be a
 //! *single* predicate that names the sentinel beside the requested value —
 //! `entity_types && ARRAY[$1, '*']`, `entity_id IN ($1, '')`,
-//! `property_name_ids && array_append(ARRAY(<keys>), 0)` — with one index
+//! `property_name_keys && array_append(ARRAY(<keys>), 0)` — with one index
 //! behind it, and it is what removes the emptiness test the earlier NULL-based
 //! projection forced on every dimension: `NOT EXISTS (SELECT 1 FROM
 //! registration_information …)` was a predicate *of the registration*, so the
@@ -170,7 +170,7 @@ pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
         let names: Vec<&str> = attribute_names.iter().map(iri_rs::Iri::as_str).collect();
         let mut dictionary = Query::select();
         dictionary
-            .expr(SeaExpr::col((Alias::new("an"), AttributeNames::Id)))
+            .expr(SeaExpr::col((Alias::new("an"), AttributeNames::AttributeNameKey)))
             .from_as(AttributeNames::Table, Alias::new("an"))
             // One bound `text[]` rather than a placeholder per name, so a large
             // requested-attribute set cannot exhaust the parameter ceiling.
@@ -178,9 +178,9 @@ pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
         array_append(cast(array_of_subquery(dictionary), PostgresType::IntegerArray), SeaExpr::val(ANY_ATTRIBUTE_KEY))
     };
     any_row(
-        ri_col(RegistrationInformation::PropertyNameIds)
+        ri_col(RegistrationInformation::PropertyNameKeys)
             .array_overlaps(requested_keys())
-            .or(ri_col(RegistrationInformation::RelationshipNameIds).array_overlaps(requested_keys())),
+            .or(ri_col(RegistrationInformation::RelationshipNameKeys).array_overlaps(requested_keys())),
     )
 }
 
@@ -271,8 +271,8 @@ mod tests {
         );
         assert!(sql.contains("'https://example.com/speed'"), "{sql}");
         assert!(sql.contains("'https://example.com/temp'"), "{sql}");
-        assert!(sql.contains("\"ri\".\"property_name_ids\" && array_append(ARRAY((SELECT"), "{sql}");
-        assert!(sql.contains("\"ri\".\"relationship_name_ids\" && array_append(ARRAY((SELECT"), "{sql}");
+        assert!(sql.contains("\"ri\".\"property_name_keys\" && array_append(ARRAY((SELECT"), "{sql}");
+        assert!(sql.contains("\"ri\".\"relationship_name_keys\" && array_append(ARRAY((SELECT"), "{sql}");
         assert!(sql.contains("::integer[], 0)"), "the sentinel is appended to the resolved keys: {sql}");
         assert!(!sql.contains("IS NULL"), "{sql}");
     }

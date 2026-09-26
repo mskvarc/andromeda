@@ -6,7 +6,7 @@ use crate::{
     copy::insert_history_batch_via_copy_in_tx,
     error::TemporalStoreError,
     repo::TemporalRepository,
-    stored_instance_columns::{generated_instance_uuid, verbatim_instance_id},
+    stored_instance_columns::{generated_instance_id, verbatim_instance_id},
     verbatim_instance_claim::{claim_verbatim_instances, run_history_dedup_deletes, verbatim_instance_targets},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -64,13 +64,13 @@ enum HistoryStaged {
     /// Deletion instant, present only on a tombstone.
     DeletedAt,
     /// Timestamp value.
-    ValueDatetime,
+    ValueDateTime,
     /// Broker-minted instance identifier.
-    GeneratedInstanceUuid,
+    GeneratedInstanceId,
     /// Catalog identity of the instance's unit.
     UnitCodeId,
     /// Boolean value.
-    ValueBool,
+    ValueBoolean,
     /// Instance identifier stored exactly as received.
     VerbatimInstanceId,
     /// Arbitrary-precision value bound directly as `NUMERIC`.
@@ -78,7 +78,7 @@ enum HistoryStaged {
     /// String value.
     ValueString,
     /// Geometry value as EWKB.
-    ValueGeo,
+    ValueGeometry,
     /// Structured value.
     ValueObject,
     /// URI value.
@@ -138,13 +138,13 @@ struct AttributeHistoryBinds<'a> {
     /// Deletion instants, present only on tombstones.
     deleted_ats: Vec<Option<DateTime<Utc>>>,
     /// Timestamp values.
-    value_datetimes: Vec<Option<DateTime<Utc>>>,
+    value_date_times: Vec<Option<DateTime<Utc>>>,
     /// Broker-minted instance identifiers.
-    generated_instance_uuids: Vec<Option<Uuid>>,
+    generated_instance_ids: Vec<Option<Uuid>>,
     /// Catalog identities of the instances' units.
     unit_code_ids: Vec<Option<i16>>,
     /// Boolean values.
-    value_bools: Vec<Option<bool>>,
+    value_booleans: Vec<Option<bool>>,
     /// Instance identifiers stored exactly as received.
     verbatim_instance_ids: Vec<Option<&'a str>>,
     /// Arbitrary-precision values bound directly as `numeric[]`.
@@ -152,7 +152,7 @@ struct AttributeHistoryBinds<'a> {
     /// String values.
     value_strings: Vec<Option<&'a str>>,
     /// Geometry values as EWKB, projected server-side.
-    value_geos: Vec<Option<Vec<u8>>>,
+    value_geometries: Vec<Option<Vec<u8>>>,
     /// Structured values.
     value_objects: Vec<Option<&'a Value>>,
     /// URI values, which is how a relationship object is stored.
@@ -174,14 +174,14 @@ fn attribute_history_binds(rows: &[AttributeHistoryRow]) -> Result<AttributeHist
         created_ats: Vec::with_capacity(rows.len()),
         modified_ats: Vec::with_capacity(rows.len()),
         deleted_ats: Vec::with_capacity(rows.len()),
-        value_datetimes: Vec::with_capacity(rows.len()),
-        generated_instance_uuids: Vec::with_capacity(rows.len()),
+        value_date_times: Vec::with_capacity(rows.len()),
+        generated_instance_ids: Vec::with_capacity(rows.len()),
         unit_code_ids: Vec::with_capacity(rows.len()),
-        value_bools: Vec::with_capacity(rows.len()),
+        value_booleans: Vec::with_capacity(rows.len()),
         verbatim_instance_ids: Vec::with_capacity(rows.len()),
         value_numbers: Vec::with_capacity(rows.len()),
         value_strings: Vec::with_capacity(rows.len()),
-        value_geos: Vec::with_capacity(rows.len()),
+        value_geometries: Vec::with_capacity(rows.len()),
         value_objects: Vec::with_capacity(rows.len()),
         value_uris: Vec::with_capacity(rows.len()),
         metadatas: Vec::with_capacity(rows.len()),
@@ -197,16 +197,16 @@ fn attribute_history_binds(rows: &[AttributeHistoryRow]) -> Result<AttributeHist
         binds.created_ats.push(row.axes.created_at);
         binds.modified_ats.push(row.axes.modified_at);
         binds.deleted_ats.push(row.value.deleted_at());
-        binds.value_datetimes.push(row.value.date_time());
-        binds.generated_instance_uuids.push(generated_instance_uuid(&row.instance));
+        binds.value_date_times.push(row.value.date_time());
+        binds.generated_instance_ids.push(generated_instance_id(&row.instance));
         binds.unit_code_ids.push(row.unit_code_id.map(UnitCodeId::get));
-        binds.value_bools.push(row.value.boolean());
+        binds.value_booleans.push(row.value.boolean());
         binds.verbatim_instance_ids.push(verbatim_instance_id(&row.instance));
         // SQLx owns the array values. Clone the decimal itself so the bind is
         // exact and never passes through text or binary64.
         binds.value_numbers.push(row.value.number().cloned());
         binds.value_strings.push(row.value.string());
-        binds.value_geos.push(geometry_bytes(row.value.geometry())?);
+        binds.value_geometries.push(geometry_bytes(row.value.geometry())?);
         binds.value_objects.push(row.value.object());
         binds.value_uris.push(row.value.uri().map(Uri::as_str));
         binds.metadatas.push(row.metadata.as_ref());
@@ -227,14 +227,14 @@ fn history_staging_columns() -> [UnnestColumn; 21] {
         UnnestColumn::new(HistoryStaged::CreatedAt, PostgresType::TimestamptzArray),
         UnnestColumn::new(HistoryStaged::ModifiedAt, PostgresType::TimestamptzArray),
         UnnestColumn::new(HistoryStaged::DeletedAt, PostgresType::TimestamptzArray),
-        UnnestColumn::new(HistoryStaged::ValueDatetime, PostgresType::TimestamptzArray),
-        UnnestColumn::new(HistoryStaged::GeneratedInstanceUuid, PostgresType::UuidArray),
+        UnnestColumn::new(HistoryStaged::ValueDateTime, PostgresType::TimestamptzArray),
+        UnnestColumn::new(HistoryStaged::GeneratedInstanceId, PostgresType::UuidArray),
         UnnestColumn::new(HistoryStaged::UnitCodeId, PostgresType::SmallintArray),
-        UnnestColumn::new(HistoryStaged::ValueBool, PostgresType::BooleanArray),
+        UnnestColumn::new(HistoryStaged::ValueBoolean, PostgresType::BooleanArray),
         UnnestColumn::new(HistoryStaged::VerbatimInstanceId, PostgresType::TextArray),
         UnnestColumn::new(HistoryStaged::ValueNumber, PostgresType::NumericArray),
         UnnestColumn::new(HistoryStaged::ValueString, PostgresType::TextArray),
-        UnnestColumn::new(HistoryStaged::ValueGeo, PostgresType::ByteaArray),
+        UnnestColumn::new(HistoryStaged::ValueGeometry, PostgresType::ByteaArray),
         UnnestColumn::new(HistoryStaged::ValueObject, PostgresType::JsonbArray),
         UnnestColumn::new(HistoryStaged::ValueUri, PostgresType::TextArray),
         UnnestColumn::new(HistoryStaged::Metadata, PostgresType::JsonbArray),
@@ -251,7 +251,7 @@ fn staged(column: HistoryStaged) -> SimpleExpr {
 /// The value number reaches the arbitrary-precision column through a native
 /// `numeric[]` bind, never widened to a double; the geometry is
 /// validated from its embedded-SRID EWKB, with a NULL EWKB projecting to a NULL
-/// geometry. The conflict target names the columns `uq_attribute_history_write`
+/// geometry. The conflict target names the columns `uq_attribute_history_write_identity`
 /// covers, so a row replayed under its original write identity is a no-op.
 fn attribute_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalStoreError> {
     let columns = history_staging_columns();
@@ -259,8 +259,8 @@ fn attribute_history_insert_sql(target: &ContextTarget) -> Result<String, Tempor
 
     let geometry: SimpleExpr = CaseStatement::new()
         .case(
-            Expr::col((D, HistoryStaged::ValueGeo)).is_not_null(),
-            validated_geom_from_ewkb(staged(HistoryStaged::ValueGeo)),
+            Expr::col((D, HistoryStaged::ValueGeometry)).is_not_null(),
+            validated_geom_from_ewkb(staged(HistoryStaged::ValueGeometry)),
         )
         .finally(Keyword::Null)
         .into();
@@ -277,10 +277,10 @@ fn attribute_history_insert_sql(target: &ContextTarget) -> Result<String, Tempor
         .expr(staged(HistoryStaged::CreatedAt))
         .expr(staged(HistoryStaged::ModifiedAt))
         .expr(staged(HistoryStaged::DeletedAt))
-        .expr(staged(HistoryStaged::ValueDatetime))
-        .expr(staged(HistoryStaged::GeneratedInstanceUuid))
+        .expr(staged(HistoryStaged::ValueDateTime))
+        .expr(staged(HistoryStaged::GeneratedInstanceId))
         .expr(staged(HistoryStaged::UnitCodeId))
-        .expr(staged(HistoryStaged::ValueBool))
+        .expr(staged(HistoryStaged::ValueBoolean))
         .expr(staged(HistoryStaged::VerbatimInstanceId))
         .expr(staged(HistoryStaged::ValueNumber))
         .expr(staged(HistoryStaged::ValueString))
@@ -303,14 +303,14 @@ fn attribute_history_insert_sql(target: &ContextTarget) -> Result<String, Tempor
         AttributeHistory::CreatedAt,
         AttributeHistory::ModifiedAt,
         AttributeHistory::DeletedAt,
-        AttributeHistory::ValueDatetime,
-        AttributeHistory::GeneratedInstanceUuid,
+        AttributeHistory::ValueDateTime,
+        AttributeHistory::GeneratedInstanceId,
         AttributeHistory::UnitCodeId,
-        AttributeHistory::ValueBool,
+        AttributeHistory::ValueBoolean,
         AttributeHistory::VerbatimInstanceId,
         AttributeHistory::ValueNumber,
         AttributeHistory::ValueString,
-        AttributeHistory::ValueGeo,
+        AttributeHistory::ValueGeometry,
         AttributeHistory::ValueObject,
         AttributeHistory::ValueUri,
         AttributeHistory::Metadata,
@@ -347,14 +347,14 @@ async fn insert_history_batch_unnest_in_tx(
         .bind(&binds.created_ats)
         .bind(&binds.modified_ats)
         .bind(&binds.deleted_ats)
-        .bind(&binds.value_datetimes)
-        .bind(&binds.generated_instance_uuids)
+        .bind(&binds.value_date_times)
+        .bind(&binds.generated_instance_ids)
         .bind(&binds.unit_code_ids)
-        .bind(&binds.value_bools)
+        .bind(&binds.value_booleans)
         .bind(&binds.verbatim_instance_ids)
         .bind(&binds.value_numbers)
         .bind(&binds.value_strings)
-        .bind(&binds.value_geos)
+        .bind(&binds.value_geometries)
         .bind(&binds.value_objects)
         .bind(&binds.value_uris)
         .bind(&binds.metadatas)

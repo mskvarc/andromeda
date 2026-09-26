@@ -67,7 +67,7 @@ impl PostgresTenantUsageProbe {
 #[async_trait]
 impl TenantUsageProbe for PostgresTenantUsageProbe {
     async fn usage(&self, database: &TenantDatabaseName) -> Result<TenantUsage, TenancyError> {
-        let url = self.request_url.with_db_name(database);
+        let url = self.request_url.with_database_name(database);
         let pool = configure_pool_options(1, self.acquire_timeout)
             .connect(url.as_str())
             .await

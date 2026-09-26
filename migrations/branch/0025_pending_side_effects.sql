@@ -1,103 +1,30 @@
 -- ============================================================================
--- 0025: Durable side-effect queue for opt-in async batch processing
+-- 0025: Pending side effects
 -- ============================================================================
--- When a client requests `Prefer: respond-async` on an /entityOperations batch
--- endpoint, the broker persists the side-effect job (temporal history writes,
--- change events) into this queue in the same transaction as the entity write.
--- A background worker drains the queue with at-least-once semantics.
---
--- Crash safety: because enqueue and entity INSERT share a single transaction,
--- the only durable combinations are "both committed" or "both rolled back".
--- The worker is safe to restart: FOR UPDATE SKIP LOCKED coupled with the
--- `lease_until` lease lets concurrent workers reclaim rows whose previous
--- lease expired (e.g., after a worker crash).
---
--- The lease and dead-letter columns are the schema-wide claimable-queue
--- contract shared with the other durable queues: `claimed_at`, `claimed_by`
--- (the schema-wide UUID lease holder), `lease_until` are the renewable claim, `attempt_count` the attempt counter,
--- `next_attempt_at` the next-due instant, `last_error` the latest failure --
--- bounded at 2048 characters, the failure-summary bound every claimable queue
--- in this schema shares -- and `exhausted_at` the dead-letter door. Only the
--- claim ordering and its index differ between queues, on the measured grounds
--- below.
---
--- `id` carries no default: it is minted by the broker as a version-7 UUID
--- (`andromeda-context-commit` `SideEffectJobId`), so the enqueueing code
--- knows the identity of the row before its statement runs and re-runs that
--- statement with the same value.
---
--- `write_id` carries the identity of the atomic write that produced the job.
--- One commit merges every landed write's consequences into exactly one
--- queued job, so the column is unique and the enqueue is
--- `ON CONFLICT (write_id) DO NOTHING`: a commit replayed under its original
--- identity finds its job already queued and adds no second copy, which is
--- what keeps the at-least-once drain from executing one batch's side effects
--- twice.
---
--- `recorded_at` and `consequence_base` are the commit's own `recorded_at` and
--- the first ordinal free in its consequence numbering after temporal history
--- and notification events already drew from it. A worker that leases and
--- replays this job resumes the commit's write identity and ordinal counter
--- from exactly these two values, rather than minting a new identity or
--- restarting the counter at zero, which is what keeps a crash-retried
--- delivery from duplicating the commit's consequences.
---
--- Invariants:
---   * `attempt_count` never goes below zero
---   * `claimed_at`, `lease_until` and `claimed_by` are all present or all absent
---   * an exhausted row holds no lease (dead-lettering clears the claim first)
---
--- An exhausted row is kept as evidence of a batch whose deferred side effects
--- never landed, not forever: the drain's reaper removes rows exhausted longer
--- ago than the configured dead-letter retention
--- (`entity.pending_side_effects_dead_letter_after`). The retention clock is
--- `exhausted_at`, the instant the job was dead-lettered, not `created_at`: a
--- job that retried for longer than the retention window must still be kept
--- for that window once it gives up, exactly as the notification queue ages
--- its dead letters. `idx_pse_exhausted` on `exhausted_at` is the range scan
--- that reap runs -- partial, so live rows cost it nothing.
---
--- Storage parameters. This relation is queue-shaped: high insert rate, every
--- row updated once or twice, every row eventually deleted. Default
--- autovacuum thresholds are proportional to table size and let that churn
--- accumulate dead tuples faster than they are reclaimed, so it gets an
--- absolute-ish threshold, a small scale factor and no vacuum cost delay.
--- `fillfactor` is 50 because the claim's update -- `claimed_at`, `lease_until`,
--- `claimed_by` -- names no indexed column (the claim index is led by
--- `next_attempt_at` alone), so it is heap-only whenever the page has room,
--- and a row that carries a JSONB payload needs a full second copy's worth of
--- room for that to hold. Every varlena column is LZ4-compressed: the payload
--- is written once and read once, so decompression speed matters more than
--- ratio.
---
--- Claim-path note. The claim predicate is `exhausted_at IS NULL AND
--- next_attempt_at <= now AND (lease_until IS NULL OR lease_until <= now)`,
--- served by `idx_pse_claim_candidates` on `next_attempt_at`; leased rows are
--- filtered after the index. The single-key `GREATEST(next_attempt_at,
--- COALESCE(lease_until, '-infinity'))` expression the notification queue
--- indexes is measured and not adopted here: the claim's filter depth was
--- measured at 0.69 rows removed per row returned (database-performance
--- decision records, Wave 3), far under the threshold of 3 that would justify
--- folding `lease_until` into the index. Keeping it out is what lets the claim
--- update -- which writes `claimed_at`, `lease_until` and `claimed_by`, no
--- indexed column -- stay heap-only, so the `next_attempt_at`-led partial index
--- is kept as is.
---
--- Branch relation: this file is in `migrations/branch/`, so it creates the live
--- relations in `public` as part of the tenant migration set and creates and
--- upgrades the same relations inside every Snapshot schema under the branch
--- ledger. Dictionary, unit-code and function references resolve to `public`
--- through the search path; every other reference resolves to the branch. A
--- branch file declares no foreign key into `public`: the dictionary
--- references of the live relations are added by the live-only 0029.
+-- When a batch entity operation asks for `Prefer: respond-async`, the broker
+-- queues the write's side effects (temporal history, change events) here in
+-- the same transaction as the Entity write, so either both commit or neither
+-- does. A background worker drains the queue at least once per job, and a
+-- worker that crashes leaves its lease to lapse for another to reclaim.
 -- ============================================================================
 
 CREATE TABLE pending_side_effects (
+    -- Minted by the broker before the statement runs, so a retried statement
+    -- carries the same identity.
     id UUID NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- With `base_ordinal`, what a replay resumes from: the commit's recorded
+    -- instant, and the first ordinal left free after its history and events
+    -- drew from the commit's numbering. A crash-retried job reuses both
+    -- rather than minting a new identity or restarting at zero, so it never
+    -- duplicates the commit's consequences.
     recorded_at TIMESTAMPTZ NOT NULL,
+    -- One commit queues exactly one job, so the enqueue does nothing on a
+    -- conflict here: a commit replayed under its original identity finds its
+    -- job already queued, and the drain never runs one batch's side effects
+    -- twice.
     write_id UUID NOT NULL,
-    consequence_base INTEGER NOT NULL,
+    base_ordinal INTEGER NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0,
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     claimed_at TIMESTAMPTZ,
@@ -107,11 +34,11 @@ CREATE TABLE pending_side_effects (
     last_error TEXT COMPRESSION lz4,
     payload JSONB COMPRESSION lz4 NOT NULL,
     CONSTRAINT pk_pending_side_effects PRIMARY KEY (id),
-    CONSTRAINT chk_pse_consequence_base_non_negative CHECK (consequence_base >= 0),
+    CONSTRAINT chk_pse_base_ordinal_non_negative CHECK (base_ordinal >= 0),
     CONSTRAINT chk_pse_attempt_count_non_negative CHECK (attempt_count >= 0),
     CONSTRAINT chk_pse_claim_coherent CHECK (num_nonnulls(claimed_at, lease_until, claimed_by) IN (0, 3)),
     CONSTRAINT chk_pse_exhausted_state CHECK (exhausted_at IS NULL OR num_nonnulls(claimed_at, lease_until, claimed_by) = 0),
-    CONSTRAINT chk_pse_last_error_bound CHECK (last_error IS NULL OR char_length(last_error) <= 2048),
+    CONSTRAINT chk_pse_last_error_length CHECK (last_error IS NULL OR char_length(last_error) <= 2048),
     CONSTRAINT uq_pse_write_identity UNIQUE (write_id)
 ) WITH (
     fillfactor = 50,
@@ -122,10 +49,13 @@ CREATE TABLE pending_side_effects (
     autovacuum_vacuum_cost_delay = 0
 );
 
-CREATE INDEX idx_pse_claim_candidates
+-- The claim. Leased rows are filtered after the scan, which keeps the lease
+-- columns out of every index, so a claim stays a heap-only update.
+CREATE INDEX idx_pse_claim
     ON pending_side_effects (next_attempt_at)
     WHERE exhausted_at IS NULL;
 
-CREATE INDEX idx_pse_exhausted
+-- The reap of dead-lettered jobs.
+CREATE INDEX idx_pse_exhausted_at
     ON pending_side_effects (exhausted_at)
     WHERE exhausted_at IS NOT NULL;

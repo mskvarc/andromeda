@@ -5,7 +5,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::entity_key::EntityKey;
-use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -57,19 +57,19 @@ pub async fn delete_instances_in_tx(
     }
 
     let mut entity_keys = Vec::with_capacity(keys.len());
-    let mut attribute_name_ids = Vec::with_capacity(keys.len());
+    let mut attribute_name_keys = Vec::with_capacity(keys.len());
     let mut dataset_ids = Vec::with_capacity(keys.len());
     for key in keys {
         entity_keys.push(EntityKey::get(key.entity_key));
-        attribute_name_ids.push(AttributeNameId::get(key.attribute_name_id));
+        attribute_name_keys.push(AttributeNameKey::get(key.attribute_name_key));
         dataset_ids.push(key.dataset_id.as_ref().map(Uri::as_str));
     }
-    let (entity_keys, attribute_name_ids, dataset_ids) = (entity_keys, attribute_name_ids, dataset_ids);
+    let (entity_keys, attribute_name_keys, dataset_ids) = (entity_keys, attribute_name_keys, dataset_ids);
 
     let sql = delete_instances_sql(target);
     sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(&entity_keys)
-        .bind(&attribute_name_ids)
+        .bind(&attribute_name_keys)
         .bind(&dataset_ids)
         .execute(&mut **tx)
         .await?;
@@ -119,7 +119,7 @@ fn entity_delete_statement(target: &ContextTarget, keys: Vec<i64>) -> sea_query:
 fn staging_columns() -> [UnnestColumn; 3] {
     [
         UnnestColumn::new(CurrentAttributeValues::EntityKey, PostgresType::BigintArray),
-        UnnestColumn::new(CurrentAttributeValues::AttributeNameId, PostgresType::IntegerArray),
+        UnnestColumn::new(CurrentAttributeValues::AttributeNameKey, PostgresType::IntegerArray),
         UnnestColumn::new(CurrentAttributeValues::DatasetId, PostgresType::TextArray),
     ]
 }
@@ -144,7 +144,7 @@ fn delete_instances_sql(target: &ContextTarget) -> String {
         .from_function(call, Staging)
         .and_where(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::EntityKey)).equals((Staging, CurrentAttributeValues::EntityKey)))
         .and_where(
-            Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::AttributeNameId)).equals((Staging, CurrentAttributeValues::AttributeNameId)),
+            Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::AttributeNameKey)).equals((Staging, CurrentAttributeValues::AttributeNameKey)),
         )
         .and_where(
             SimpleExpr::from(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::DatasetId)))
@@ -183,7 +183,7 @@ mod tests {
         assert!(sql.contains(r#"DELETE FROM "current_attribute_values" WHERE EXISTS"#), "{sql}");
         assert!(sql.contains(r#""current_attribute_values"."entity_key" = "d"."entity_key""#), "{sql}");
         assert!(
-            sql.contains(r#""current_attribute_values"."attribute_name_id" = "d"."attribute_name_id""#),
+            sql.contains(r#""current_attribute_values"."attribute_name_key" = "d"."attribute_name_key""#),
             "{sql}"
         );
     }
@@ -194,7 +194,7 @@ mod tests {
         for cast in ["$1::bigint[]", "$2::integer[]", "$3::text[]"] {
             assert!(sql.contains(cast), "missing {cast} in {sql}");
         }
-        assert!(sql.contains("AS d(entity_key, attribute_name_id, dataset_id)"), "{sql}");
+        assert!(sql.contains("AS d(entity_key, attribute_name_key, dataset_id)"), "{sql}");
         assert!(!sql.contains("$4"), "only the three grain arrays are bound: {sql}");
     }
 

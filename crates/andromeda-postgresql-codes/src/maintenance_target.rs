@@ -9,26 +9,26 @@ compact_code_registry! {
     /// operator recognises a target in the platform tables.
     MaintenanceTargetCode {
         frozen_prefix: 12,
-        frozen_digest: 0x5ef9_4d6f_5234_154d,
+        frozen_digest: 0x6480_3517_f211_3d84,
         codes: {
             /// The current projection's grain constraint index.
             UqCurrentAttributeValuesGrain = 1, "uq_current_attribute_values_grain";
             /// The current projection's number index.
-            IdxCavAttrNumber = 2, "idx_cav_attr_number";
+            IdxCavValueNumber = 2, "idx_cav_value_number";
             /// The current projection's string index.
-            IdxCavAttrString = 3, "idx_cav_attr_string";
+            IdxCavValueString = 3, "idx_cav_value_string";
             /// The current projection's trigram index.
-            IdxCavAttrStringTrgm = 4, "idx_cav_attr_string_trgm";
+            IdxCavValueStringTrgm = 4, "idx_cav_value_string_trgm";
             /// The current projection's boolean index.
-            IdxCavAttrBool = 5, "idx_cav_attr_bool";
+            IdxCavValueBoolean = 5, "idx_cav_value_boolean";
             /// The current projection's date-time index.
-            IdxCavAttrDatetime = 6, "idx_cav_attr_datetime";
+            IdxCavValueDateTime = 6, "idx_cav_value_date_time";
             /// The current projection's URI index.
-            IdxCavAttrUri = 7, "idx_cav_attr_uri";
+            IdxCavValueUri = 7, "idx_cav_value_uri";
             /// The current projection's geometry index.
-            IdxCavAttrGeo = 8, "idx_cav_attr_geo";
+            IdxCavValueGeometry = 8, "idx_cav_value_geometry";
             /// The current projection's entity-geometry index.
-            IdxCavAttrEntityGeo = 9, "idx_cav_attr_entity_geo";
+            IdxCavEntityGeometry = 9, "idx_cav_entity_geometry";
             /// The current projection's heap.
             CurrentAttributeValues = 10, "current_attribute_values";
             /// The entity payload heap.

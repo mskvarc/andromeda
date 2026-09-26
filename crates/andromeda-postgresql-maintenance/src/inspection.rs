@@ -430,7 +430,7 @@ mod tests {
     fn catalog_queries_are_seaquery_statements_with_closed_filters() {
         let index_sql = index_sizes_statement().to_string(PostgresQueryBuilder);
         assert!(index_sql.contains("pg_stat_user_indexes"), "{index_sql}");
-        assert!(index_sql.contains("idx_cav_attr_string_trgm"), "{index_sql}");
+        assert!(index_sql.contains("idx_cav_value_string_trgm"), "{index_sql}");
         let invalid_sql = invalid_indexes_statement().to_string(PostgresQueryBuilder);
         assert!(invalid_sql.contains("pg_index"), "{invalid_sql}");
         assert!(invalid_sql.contains("indisvalid"), "{invalid_sql}");

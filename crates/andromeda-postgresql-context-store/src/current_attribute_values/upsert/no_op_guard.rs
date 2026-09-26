@@ -34,7 +34,7 @@ where
 pub(super) fn concurrent_insert_conflict() -> OnConflict {
     OnConflict::columns([
         CurrentAttributeValues::EntityKey,
-        CurrentAttributeValues::AttributeNameId,
+        CurrentAttributeValues::AttributeNameKey,
         CurrentAttributeValues::DatasetId,
     ])
     .update_columns(REFRESHED_COLUMNS)

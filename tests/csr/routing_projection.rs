@@ -26,7 +26,7 @@ const SUITE: &str = "csr";
 /// The routing rows one registration projects, ordered so two runs compare.
 async fn routing_rows(pool: &PgPool, registration_id: &str) -> Vec<Value> {
     sqlx::query(
-        "SELECT entity_types, entity_id, entity_id_pattern, property_name_ids, relationship_name_ids \
+        "SELECT entity_types, entity_id, entity_id_pattern, property_name_keys, relationship_name_keys \
          FROM registration_information WHERE registration_id = $1 \
          ORDER BY entity_types, entity_id, entity_id_pattern",
     )
@@ -40,10 +40,10 @@ async fn routing_rows(pool: &PgPool, registration_id: &str) -> Vec<Value> {
             "entity_types": row.get::<Vec<String>, _>("entity_types"),
             "entity_id": row.get::<String, _>("entity_id"),
             "entity_id_pattern": row.get::<Option<String>, _>("entity_id_pattern"),
-            "property_name_ids": row.get::<Vec<i32>, _>("property_name_ids").len(),
-            "relationship_name_ids": row.get::<Vec<i32>, _>("relationship_name_ids").len(),
-            "property_wildcard": row.get::<Vec<i32>, _>("property_name_ids") == vec![0],
-            "relationship_wildcard": row.get::<Vec<i32>, _>("relationship_name_ids") == vec![0],
+            "property_name_keys": row.get::<Vec<i32>, _>("property_name_keys").len(),
+            "relationship_name_keys": row.get::<Vec<i32>, _>("relationship_name_keys").len(),
+            "property_wildcard": row.get::<Vec<i32>, _>("property_name_keys") == vec![0],
+            "relationship_wildcard": row.get::<Vec<i32>, _>("relationship_name_keys") == vec![0],
         })
     })
     .collect()
@@ -107,8 +107,8 @@ async fn a_registration_projects_every_dimension_its_information_declares() {
     );
     assert_eq!(row["entity_id"], json!(entity_id), "the identifier axis carries the exact identifier: {row}");
     assert_eq!(row["entity_id_pattern"], Value::Null, "the item declared no pattern: {row}");
-    assert_eq!(row["property_name_ids"], json!(1), "the declared property name is interned: {row}");
-    assert_eq!(row["relationship_name_ids"], json!(1), "the declared relationship name is interned: {row}");
+    assert_eq!(row["property_name_keys"], json!(1), "the declared property name is interned: {row}");
+    assert_eq!(row["relationship_name_keys"], json!(1), "the declared relationship name is interned: {row}");
     assert_eq!(row["property_wildcard"], json!(false), "a declared name is not the sentinel: {row}");
     // Operations stay on the registration: the group token of Table 4.20-2 is
     // a member in its own right rather than being expanded into the operations
@@ -191,7 +191,7 @@ async fn an_item_leaving_an_axis_unconstrained_projects_its_sentinel_and_stays_a
     assert_eq!(row["entity_types"], json!(["*"]), "the type axis carries the wildcard sentinel: {row}");
     assert_eq!(row["entity_id"], json!(""), "the identifier axis carries the empty sentinel: {row}");
     assert_eq!(row["entity_id_pattern"], Value::Null, "{row}");
-    assert_eq!(row["property_name_ids"], json!(1), "the declared property name is interned: {row}");
+    assert_eq!(row["property_name_keys"], json!(1), "the declared property name is interned: {row}");
     assert_eq!(row["property_wildcard"], json!(false), "a declared name is not the sentinel: {row}");
 
     let attribute_open = json!({
@@ -329,7 +329,7 @@ async fn updating_and_deleting_a_registration_moves_its_payload_and_its_routing_
     );
     assert_eq!(rows[0]["entity_id"], json!(""), "the replaced item declares no identifier: {rows:?}");
     assert_eq!(
-        rows[0]["relationship_name_ids"],
+        rows[0]["relationship_name_keys"],
         json!(0),
         "a name declared on one axis leaves the other empty, not wildcarded: {rows:?}"
     );

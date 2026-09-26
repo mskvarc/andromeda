@@ -46,6 +46,7 @@ pub struct CsrBuilder {
     context_source_info: Vec<Value>,
     management: Option<Value>,
     alias: Option<String>,
+    tenant: Option<String>,
     context: Option<Value>,
 }
 
@@ -66,6 +67,7 @@ impl CsrBuilder {
             context_source_info: Vec::new(),
             management: None,
             alias: None,
+            tenant: None,
             context: None,
         }
     }
@@ -130,6 +132,14 @@ impl CsrBuilder {
         self
     }
 
+    /// Set the `tenant` the registered Context Source holds the data in. Clause
+    /// 4.14 and Table 5.2.9-1: the broker contacts the source in that tenant,
+    /// and in the default tenant when the registration names none.
+    pub fn tenant(mut self, tenant: &str) -> CsrBuilder {
+        self.tenant = Some(tenant.to_owned());
+        self
+    }
+
     /// Override the `@context` the registration is created under, replacing the
     /// compound test context default. Accepts a single context URL as a string
     /// or an array of context references.
@@ -176,6 +186,9 @@ impl CsrBuilder {
         }
         if let Some(alias) = self.alias {
             body.insert("contextSourceAlias".to_owned(), json!(alias));
+        }
+        if let Some(tenant) = self.tenant {
+            body.insert("tenant".to_owned(), json!(tenant));
         }
         body.insert("@context".to_owned(), self.context.unwrap_or_else(|| json!(COMPOUND_CONTEXT.as_str())));
         Value::Object(body)

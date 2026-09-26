@@ -24,7 +24,7 @@ use andromeda_postgresql_context_store::current_attribute_values::{
     row::{ProjectedAttributeKey, ProjectedAttributeRow, ProjectedAttributeValue},
     upsert::upsert_projection_in_tx,
 };
-use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_temporal_store::{attribute_kind_code::stored_attribute_kind, unit_code_metadata::unit_code_in};
 use andromeda_temporal::append_intent::{TemporalAppendEntry, TemporalAppendIntent};
 use sqlx::{Postgres, Transaction};
@@ -54,7 +54,7 @@ pub(crate) async fn apply(
     target: &ContextTarget,
     intents: &[TemporalAppendIntent],
     keys: &HashMap<Uri, EntityKey>,
-    dictionary: &HashMap<AttributeName, AttributeNameId>,
+    dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<(), CommitError> {
     let projected: Vec<(&TemporalAppendIntent, EntityKey)> = intents
         .iter()
@@ -83,7 +83,7 @@ fn collect(
     work: &mut ProjectionWork,
     intent: &TemporalAppendIntent,
     entity_key: EntityKey,
-    dictionary: &HashMap<AttributeName, AttributeNameId>,
+    dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<(), CommitError> {
     for entry in &intent.entries {
         match entry {
@@ -116,14 +116,14 @@ fn grain(
     entity_key: EntityKey,
     attribute_name: &AttributeName,
     dataset_id: Option<&Uri>,
-    dictionary: &HashMap<AttributeName, AttributeNameId>,
+    dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<ProjectedAttributeKey, CommitError> {
-    let attribute_name_id = dictionary.get(attribute_name).copied().ok_or_else(|| CommitError::Invariant {
+    let attribute_name_key = dictionary.get(attribute_name).copied().ok_or_else(|| CommitError::Invariant {
         detail: format!("attribute name dictionary returned no key for {attribute_name}"),
     })?;
     Ok(ProjectedAttributeKey {
         entity_key,
-        attribute_name_id,
+        attribute_name_key,
         dataset_id: dataset_id.cloned(), // clone: the projection grain owns its dataset identity.
     })
 }
@@ -142,7 +142,7 @@ mod tests {
     use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::{entity_key::EntityKey, value_kind::ValueKind};
-    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use andromeda_temporal::{
         append_intent::{TemporalAppendEntry, TemporalAppendIntent},
         scope_observation::ScopeObservation,
@@ -155,8 +155,8 @@ mod tests {
         "https://example.com/speed".parse().expect("a valid attribute name")
     }
 
-    fn dictionary() -> HashMap<AttributeName, AttributeNameId> {
-        HashMap::from([(speed(), AttributeNameId::from(7))])
+    fn dictionary() -> HashMap<AttributeName, AttributeNameKey> {
+        HashMap::from([(speed(), AttributeNameKey::from(7))])
     }
 
     fn entity_key() -> EntityKey {
@@ -166,7 +166,7 @@ mod tests {
     fn intent(entries: Vec<TemporalAppendEntry>) -> TemporalAppendIntent {
         TemporalAppendIntent {
             record: WriteRecord::mint(Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant")),
-            base: WriteOrdinal::at(0),
+            base_ordinal: WriteOrdinal::at(0),
             entity_id: "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("a valid entity URI"),
             entity_types: Vec::new(),
             entries,
@@ -200,7 +200,7 @@ mod tests {
         pretty_assertions::assert_eq!(work.upserts.len(), 1);
         assert!(work.removals.is_empty(), "a projectable observation removes nothing: {:?}", work.removals);
         pretty_assertions::assert_eq!(work.upserts[0].value.kind(), ValueKind::Number);
-        pretty_assertions::assert_eq!(work.upserts[0].key.attribute_name_id, AttributeNameId::from(7));
+        pretty_assertions::assert_eq!(work.upserts[0].key.attribute_name_key, AttributeNameKey::from(7));
     }
 
     /// A String past the B-tree bound is still one upsert under the String

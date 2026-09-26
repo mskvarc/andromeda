@@ -75,12 +75,12 @@ impl TemporalRepository {
                 .map_err(|error| TemporalStoreError::Decode(format!("temporal_entities.id '{raw_id}': {error}")))?;
             let raw_types: Vec<String> = row
                 .try_get("types")
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.type_ids names: {error}")))?;
+                .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.entity_type_name_keys names: {error}")))?;
             let types = raw_types
                 .into_iter()
                 .map(|raw| {
                     raw.parse::<EntityTypeName>()
-                        .map_err(|error| TemporalStoreError::Decode(format!("temporal_entities.type_ids name '{raw}': {error}")))
+                        .map_err(|error| TemporalStoreError::Decode(format!("temporal_entities.entity_type_name_keys name '{raw}': {error}")))
                 })
                 .collect::<Result<Vec<EntityTypeName>, TemporalStoreError>>()?;
             types_by_entity.insert(entity_id, types);
@@ -214,13 +214,13 @@ pub(crate) fn stream_catalog_join(statement: &mut SelectStatement, schema: Optio
             JoinType::Join,
             qualified(schema, TemporalEntities::Table),
             Te,
-            Expr::col((Te, TemporalEntities::EntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
+            Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
         )
         .join_as(
             JoinType::Join,
             AttributeNames::Table,
             An,
-            Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
         );
 }
 
@@ -251,7 +251,7 @@ fn stored_attribute_shapes_query(schema: Option<&DynIden>, names: &[&str]) -> Se
             JoinType::Join,
             AttributeNames::Table,
             An,
-            Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
         )
         .and_where(Expr::col((An, AttributeNames::Name)).eq(any(text_array(names))))
         .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()))
@@ -275,7 +275,7 @@ fn temporal_entity_exists_query(schema: Option<&DynIden>, entity_id: &str) -> Se
 fn temporal_entity_types_query(schema: Option<&DynIden>, ids: &[&str]) -> SelectStatement {
     Query::select()
         .column(TemporalEntities::Id)
-        .expr_as(type_names_of(Expr::col(TemporalEntities::TypeIds)), Alias::new("types"))
+        .expr_as(type_names_of(Expr::col(TemporalEntities::EntityTypeNameKeys)), Alias::new("types"))
         .from(qualified(schema, TemporalEntities::Table))
         .and_where(Expr::col(TemporalEntities::Id).eq(any(text_array(ids))))
         .to_owned()

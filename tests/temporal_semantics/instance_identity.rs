@@ -14,7 +14,7 @@ use crate::{
     delete_temporal_instance,
     get_temporal_entity,
     rendered_instances,
-    seeded_temporal::{SeededHistoryRow, attribute_name_id, seed_history_row, seed_stream, seed_temporal_entity},
+    seeded_temporal::{SeededHistoryRow, attribute_name_key, seed_history_row, seed_stream, seed_temporal_entity},
     stored_history::stored_attribute_history,
 };
 use andromeda_test_harness::environment::TestEnvironment;
@@ -75,15 +75,15 @@ async fn temporal_semantics_generated_and_verbatim_instance_identities_stay_apar
     assert_eq!(rows.len(), 4, "one row per submitted instance");
     for row in &rows {
         assert_eq!(
-            i32::from(row.generated_instance_uuid.is_some()) + i32::from(row.verbatim_instance_id.is_some()),
+            i32::from(row.generated_instance_id.is_some()) + i32::from(row.verbatim_instance_id.is_some()),
             1,
             "exactly one instance-identity column is populated"
         );
     }
 
-    let minted = rows.iter().filter(|row| row.generated_instance_uuid.is_some()).collect::<Vec<_>>();
+    let minted = rows.iter().filter(|row| row.generated_instance_id.is_some()).collect::<Vec<_>>();
     assert_eq!(minted.len(), 1, "only the unnamed instance is broker-minted");
-    let minted_uuid = minted[0].generated_instance_uuid.expect("a minted identifier is a UUID");
+    let minted_uuid = minted[0].generated_instance_id.expect("a minted identifier is a UUID");
     assert_eq!(minted_uuid.get_version_num(), 7, "minted instance identifiers are version 7");
 
     let verbatim = rows.iter().filter_map(|row| row.verbatim_instance_id.clone()).collect::<Vec<String>>();
@@ -160,15 +160,15 @@ async fn temporal_semantics_mixed_instance_uuid_versions_read_and_join_without_r
     let migrated_instance = Uuid::new_v4();
     assert_eq!(migrated_instance.get_version_num(), 4);
     let entity_key = seed_temporal_entity(&pool, &migrated_id, "Vehicle").await;
-    let name_id = attribute_name_id(&pool, &attribute_iri("speed")).await;
-    let migrated_stream = seed_stream(&pool, entity_key, name_id).await;
+    let name_key = attribute_name_key(&pool, &attribute_iri("speed")).await;
+    let migrated_stream = seed_stream(&pool, entity_key, name_key).await;
     seed_history_row(
         &pool,
         &SeededHistoryRow {
             stream_key: migrated_stream,
             recorded_at: Utc::now() - TimeDelta::minutes(1),
             write_id: Uuid::new_v4(),
-            generated_instance_uuid: migrated_instance,
+            generated_instance_id: migrated_instance,
             observed_at: "2021-01-01T00:00:00Z".parse().expect("a valid fixture instant"),
             value_number: 4,
         },
@@ -180,13 +180,13 @@ async fn temporal_semantics_mixed_instance_uuid_versions_read_and_join_without_r
     assert_eq!(migrated_rows.len(), 1, "the seeded stream joins its catalogue row");
     assert_eq!(migrated_rows[0].stream_key, migrated_stream, "the row carries the key the catalogue generated");
     assert_eq!(
-        migrated_rows[0].generated_instance_uuid,
+        migrated_rows[0].generated_instance_id,
         Some(migrated_instance),
         "the migrated instance identifier is not rewritten"
     );
 
     let current_rows = stored_attribute_history(&pool, &current_id, &attribute_iri("speed")).await;
-    let current_instance = current_rows[0].generated_instance_uuid.expect("a minted identifier");
+    let current_instance = current_rows[0].generated_instance_id.expect("a minted identifier");
     assert_eq!(current_instance.get_version_num(), 7, "a new instance identifier is version 7");
     assert_ne!(current_rows[0].stream_key, migrated_stream, "the two entities record on two streams");
 

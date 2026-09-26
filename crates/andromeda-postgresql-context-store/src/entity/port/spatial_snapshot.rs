@@ -57,7 +57,7 @@ fn locations_statement(filter: LocationFilter) -> SelectStatement {
     entities
         .expr(typed_null(PostgresType::Bigint))
         .column((Entities::Table, Entities::Id))
-        .expr(type_names_of(Expr::col((EntitySearch::Table, EntitySearch::TypeIds))))
+        .expr(type_names_of(Expr::col((EntitySearch::Table, EntitySearch::EntityTypeNameKeys))))
         .expr(cast(Expr::col((EntitySearch::Table, EntitySearch::Location)), PostgresType::Bytea))
         .from(Entities::Table)
         .join(
@@ -172,7 +172,7 @@ mod tests {
     fn assert_spatial_source<T: EntitySpatialSnapshotSource>() {}
 
     /// The dictionary lookup every read projects the type IRIs through.
-    const TYPE_NAMES: &str = r#"ARRAY(SELECT "entity_type_names"."name" FROM "entity_type_names" WHERE "entity_type_names"."id" = ANY("entity_search"."type_ids") ORDER BY array_position("entity_search"."type_ids", "entity_type_names"."id") ASC)"#;
+    const TYPE_NAMES: &str = r#"ARRAY(SELECT "entity_type_names"."name" FROM "entity_type_names" WHERE "entity_type_names"."entity_type_name_key" = ANY("entity_search"."entity_type_name_keys") ORDER BY array_position("entity_search"."entity_type_name_keys", "entity_type_names"."entity_type_name_key") ASC)"#;
 
     #[test]
     fn entity_repository_directly_implements_the_spatial_snapshot_source() {

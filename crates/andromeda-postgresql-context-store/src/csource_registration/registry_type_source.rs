@@ -40,7 +40,8 @@ pub struct RegisteredPair {
 
 /// `SELECT ri.entity_types, an.name FROM registration_information ri JOIN
 /// context_source_registrations c ON c.id = ri.registration_id LEFT JOIN
-/// attribute_names an ON an.id = ANY(ri.property_name_ids || ri.relationship_name_ids)
+/// attribute_names an ON an.attribute_name_key = ANY(ri.property_name_keys ||
+/// ri.relationship_name_keys)
 /// WHERE c.expires_at IS NULL OR c.expires_at > NOW()`.
 ///
 /// The `{0}` attribute sentinel and the `{}` empty axis match no dictionary
@@ -48,8 +49,8 @@ pub struct RegisteredPair {
 fn registered_pairs_sql() -> SelectStatement {
     let ri = Alias::new("ri");
     let an = Alias::new("an");
-    let declared_keys = SeaExpr::col((ri.clone(), RegistrationInformation::PropertyNameIds))
-        .concatenate(SeaExpr::col((ri.clone(), RegistrationInformation::RelationshipNameIds)));
+    let declared_keys = SeaExpr::col((ri.clone(), RegistrationInformation::PropertyNameKeys))
+        .concatenate(SeaExpr::col((ri.clone(), RegistrationInformation::RelationshipNameKeys)));
     let mut select = Query::select();
     select
         .column((ri.clone(), RegistrationInformation::EntityTypes))
@@ -64,7 +65,7 @@ fn registered_pairs_sql() -> SelectStatement {
             JoinType::LeftJoin,
             AttributeNames::Table,
             an.clone(),
-            SeaExpr::col((an, AttributeNames::Id)).eq(any(declared_keys)),
+            SeaExpr::col((an, AttributeNames::AttributeNameKey)).eq(any(declared_keys)),
         )
         .cond_where(
             Cond::any()
@@ -224,7 +225,7 @@ mod tests {
         let sql: &str = &rendered;
         assert!(sql.contains("FROM \"registration_information\" AS \"ri\""), "{sql}");
         assert!(
-            sql.contains("LEFT JOIN \"attribute_names\" AS \"an\" ON \"an\".\"id\" = ANY(\"ri\".\"property_name_ids\" || \"ri\".\"relationship_name_ids\")"),
+            sql.contains("LEFT JOIN \"attribute_names\" AS \"an\" ON \"an\".\"attribute_name_key\" = ANY(\"ri\".\"property_name_keys\" || \"ri\".\"relationship_name_keys\")"),
             "{sql}"
         );
         assert!(

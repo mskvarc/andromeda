@@ -52,7 +52,7 @@ async fn event_bytes(pool: &PgPool, record: &WriteRecord) -> i64 {
 /// Stored bytes of every delivery a write's events owe.
 async fn delivery_bytes(pool: &PgPool, record: &WriteRecord) -> i64 {
     sqlx::query_scalar(
-        "SELECT sum(pg_column_size(d.*))::bigint FROM notification_deliveries d JOIN notification_events e ON e.id = d.event_id WHERE e.write_id = $1",
+        "SELECT sum(pg_column_size(d.*))::bigint FROM notification_deliveries d JOIN notification_events e ON e.event_key = d.event_key WHERE e.write_id = $1",
     )
     .bind(record.write_id().as_uuid())
     .fetch_one(pool)
@@ -98,7 +98,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
             ordinal: WriteOrdinal::at(0),
             trigger: NotificationTrigger::AttributeUpdated,
             entity_id: &entity,
-            changed_attribute_name_ids: vec![temperature, speed],
+            changed_attribute_name_keys: vec![temperature, speed],
             changed_dataset_id: None,
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
@@ -124,7 +124,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
             ordinal: WriteOrdinal::at(0),
             trigger: NotificationTrigger::AttributeUpdated,
             entity_id: &entity,
-            changed_attribute_name_ids: vec![temperature, speed],
+            changed_attribute_name_keys: vec![temperature, speed],
             changed_dataset_id: None,
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
@@ -136,7 +136,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
 
     assert_eq!(events_of(&pool, &high_fan_out).await, 1, "a hundred subscribers still store one payload");
     let owed: i64 = sqlx::query_scalar(
-        "SELECT count(DISTINCT d.subscription_key) FROM notification_deliveries d JOIN notification_events e ON e.id = d.event_id WHERE e.write_id = $1",
+        "SELECT count(DISTINCT d.subscription_key) FROM notification_deliveries d JOIN notification_events e ON e.event_key = d.event_key WHERE e.write_id = $1",
     )
     .bind(high_fan_out.write_id().as_uuid())
     .fetch_one(&pool)
@@ -199,7 +199,7 @@ async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_absorbs_a_r
             ordinal: WriteOrdinal::at(u32::try_from(index).expect("a representable ordinal")),
             trigger: NotificationTrigger::EntityUpdated,
             entity_id: entity,
-            changed_attribute_name_ids: Vec::new(),
+            changed_attribute_name_keys: Vec::new(),
             changed_dataset_id: None,
             entity_snapshot: Some(snapshot),
             previous_snapshot: None,
@@ -250,7 +250,7 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
             ordinal: WriteOrdinal::at(0),
             trigger: NotificationTrigger::EntityCreated,
             entity_id: &entity,
-            changed_attribute_name_ids: Vec::new(),
+            changed_attribute_name_keys: Vec::new(),
             changed_dataset_id: None,
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,

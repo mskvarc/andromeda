@@ -119,12 +119,13 @@ async fn a_paused_pooler_stalls_then_resumes_requests() {
     tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 16).await;
     let console = PoolerConsole::new(endpoints::pgbouncer_admin_url());
 
-    // The pause stays well inside the pooler's four-second query_wait_timeout,
-    // so every stalled transaction resumes rather than being shed.
+    // The pause stays well inside the pooler's fifteen-second
+    // query_wait_timeout, so every stalled transaction resumes rather than being
+    // shed.
     let report = load_with(&client, &broker, &tenants, 12, async {
         sleep(Duration::from_secs(2)).await;
         let _ = console.pause().await;
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_secs(3)).await;
         let _ = console.resume().await;
     })
     .await;

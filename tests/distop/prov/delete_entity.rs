@@ -262,6 +262,7 @@ async fn delete_entity_pair_redirect_end_to_end() {
     assert_status(&created, 201);
 
     let registration = CsrBuilder::new(&reg_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("redirect")
         .entity_id(&entity_id)
         .operations(&["deleteEntity", "retrieveEntity"])

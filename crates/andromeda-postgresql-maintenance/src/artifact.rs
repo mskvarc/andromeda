@@ -82,8 +82,8 @@ mod tests {
 
     #[test]
     fn documented_artifacts_for_allowlisted_indexes_are_recognized() {
-        let new = RecoveryArtifact::parse("idx_cav_attr_number_ccnew1");
-        let old = RecoveryArtifact::parse("idx_cav_attr_geo_ccold");
+        let new = RecoveryArtifact::parse("idx_cav_value_number_ccnew1");
+        let old = RecoveryArtifact::parse("idx_cav_value_geometry_ccold");
         assert!(matches!(new, Some(RecoveryArtifact { kind: ArtifactKind::New, .. })));
         assert!(matches!(old, Some(RecoveryArtifact { kind: ArtifactKind::Old, .. })));
     }
@@ -92,9 +92,9 @@ mod tests {
     fn arbitrary_and_malformed_identifiers_never_enter_drop_sql() {
         for name in [
             "unrelated_ccnew",
-            "idx_cav_attr_number_ccnew_x",
-            "idx_cav_attr_number_ccnew1;DROP TABLE entities",
-            "idx_cav_attr_number",
+            "idx_cav_value_number_ccnew_x",
+            "idx_cav_value_number_ccnew1;DROP TABLE entities",
+            "idx_cav_value_number",
         ] {
             assert!(RecoveryArtifact::parse(name).is_none(), "{name}");
         }
@@ -102,12 +102,12 @@ mod tests {
 
     #[test]
     fn recognized_identifier_is_quoted_in_the_fixed_drop_shape() {
-        let Some(RecoveryArtifact { name, kind: ArtifactKind::Old }) = RecoveryArtifact::parse("idx_cav_attr_string_ccold2") else {
+        let Some(RecoveryArtifact { name, kind: ArtifactKind::Old }) = RecoveryArtifact::parse("idx_cav_value_string_ccold2") else {
             panic!("a well-formed ccold artifact of an allowlisted index is recognized");
         };
         assert_eq!(
             name.drop_statement().as_sql(),
-            "DROP INDEX CONCURRENTLY \"public\".\"idx_cav_attr_string_ccold2\""
+            "DROP INDEX CONCURRENTLY \"public\".\"idx_cav_value_string_ccold2\""
         );
     }
 }

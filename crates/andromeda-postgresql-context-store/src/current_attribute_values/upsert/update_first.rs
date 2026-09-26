@@ -51,8 +51,8 @@ pub(super) fn matched_cte(target: &ContextTarget) -> CommonTableExpression {
             Condition::all()
                 .add(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::EntityKey)).equals((Input, CurrentAttributeValues::EntityKey)))
                 .add(
-                    Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::AttributeNameId))
-                        .equals((Input, CurrentAttributeValues::AttributeNameId)),
+                    Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::AttributeNameKey))
+                        .equals((Input, CurrentAttributeValues::AttributeNameKey)),
                 )
                 .add(
                     SimpleExpr::from(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::DatasetId)))

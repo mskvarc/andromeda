@@ -29,9 +29,9 @@ use std::slice::from_ref;
 
 /// Prepare one typed intent from the history consequences of an atomic write.
 ///
-/// `record` and `base` are the commit's, not minted here: every entity a
+/// `record` and `base_ordinal` are the commit's, not minted here: every entity a
 /// commit lands shares the commit's single write identity, and this intent's
-/// entries are numbered starting at `base` in the commit's one running
+/// entries are numbered starting at `base_ordinal` in the commit's one running
 /// ordinal counter rather than each entity restarting its own count at zero.
 ///
 /// `entity_types` is likewise the write's, not the history's: clause 4.5.6
@@ -43,7 +43,7 @@ pub(crate) fn prepare(
     entity_types: &[EntityTypeName],
     history: &[HistoryRecord],
     record: WriteRecord,
-    base: WriteOrdinal,
+    base_ordinal: WriteOrdinal,
 ) -> Result<Option<TemporalAppendIntent>, TemporalError> {
     if history.is_empty() {
         return Ok(None);
@@ -78,7 +78,7 @@ pub(crate) fn prepare(
     }
     Ok(Some(TemporalAppendIntent {
         record,
-        base,
+        base_ordinal,
         entity_id: entity_id.clone(), // clone: the durable intent owns the validated identifier.
         entity_types: entity_types.to_vec(),
         entries,

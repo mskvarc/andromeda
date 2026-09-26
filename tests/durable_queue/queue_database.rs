@@ -15,7 +15,7 @@ use andromeda_postgresql_context_store::{
     tenant_database::{DatabaseUrl, create_database_if_missing},
     tenant_migration::migrate_tenant_db,
 };
-use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_reset::reset_owned_tenant};
 use serde_json::json;
@@ -39,7 +39,7 @@ pub async fn queue_database() -> PgPool {
         .expect("queue verification database");
     let pool = PgPoolOptions::new()
         .max_connections(8)
-        .connect(base.with_db_name(&name).as_str())
+        .connect(base.with_database_name(&name).as_str())
         .await
         .expect("queue verification database connection");
     migrate_tenant_db(&pool).await.expect("queue verification database migrations");
@@ -80,15 +80,15 @@ pub fn subscription_key(stored: i64) -> SubscriptionKey {
 }
 
 /// Seed one dictionary entry and return the four-byte key an event stores.
-pub async fn attribute_name(pool: &PgPool, name: &str) -> AttributeNameId {
-    let id: i32 = sqlx::query_scalar(
-        "INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT ON CONSTRAINT uq_attribute_names_name DO UPDATE SET name = EXCLUDED.name RETURNING id",
+pub async fn attribute_name(pool: &PgPool, name: &str) -> AttributeNameKey {
+    let key: i32 = sqlx::query_scalar(
+        "INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT ON CONSTRAINT uq_attribute_names_name DO UPDATE SET name = EXCLUDED.name RETURNING attribute_name_key",
     )
     .bind(name)
     .fetch_one(pool)
     .await
     .expect("seeded attribute name");
-    AttributeNameId::from(id)
+    AttributeNameKey::from(key)
 }
 
 /// Write one write's notification events and the deliveries they owe.

@@ -12,7 +12,7 @@
 use crate::subscription_store::failure::persistence_error;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields};
 use sqlx::PgConnection;
 use std::collections::HashMap;
@@ -55,7 +55,7 @@ pub(super) async fn intern_attribute_lists(
 }
 
 /// One list as keys, in its own order.
-fn keys_of(list: Option<&[AttributeName]>, keys: &HashMap<AttributeName, AttributeNameId>) -> Result<Option<Vec<i32>>, SubscriptionError> {
+fn keys_of(list: Option<&[AttributeName]>, keys: &HashMap<AttributeName, AttributeNameKey>) -> Result<Option<Vec<i32>>, SubscriptionError> {
     list.map(|names| {
         names
             .iter()
@@ -73,7 +73,7 @@ fn keys_of(list: Option<&[AttributeName]>, keys: &HashMap<AttributeName, Attribu
 mod tests {
     use crate::subscription_store::interned_attributes::keys_of;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 
@@ -84,8 +84,8 @@ mod tests {
     #[test]
     fn a_list_keeps_the_order_it_was_written_in() {
         let keys = HashMap::from([
-            (name("https://example.org/b"), AttributeNameId::from(2)),
-            (name("https://example.org/a"), AttributeNameId::from(7)),
+            (name("https://example.org/b"), AttributeNameKey::from(2)),
+            (name("https://example.org/a"), AttributeNameKey::from(7)),
         ]);
         let list = [name("https://example.org/b"), name("https://example.org/a")];
         assert_eq!(keys_of(Some(&list), &keys).expect("every name is interned"), Some(vec![2, 7]));

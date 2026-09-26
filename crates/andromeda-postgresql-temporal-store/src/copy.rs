@@ -16,7 +16,7 @@
 use crate::{
     attribute_history_row::AttributeHistoryRow,
     error::TemporalStoreError,
-    stored_instance_columns::{generated_instance_uuid, verbatim_instance_id},
+    stored_instance_columns::{generated_instance_id, verbatim_instance_id},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -59,14 +59,14 @@ CREATE TEMP TABLE stage_attribute_history (
     created_at              timestamptz,
     modified_at             timestamptz,
     deleted_at              timestamptz,
-    value_datetime          timestamptz,
-    generated_instance_uuid uuid,
+    value_date_time          timestamptz,
+    generated_instance_id uuid,
     unit_code_id            smallint,
-    value_bool              boolean,
+    value_boolean              boolean,
     verbatim_instance_id    text,
     value_number            text,
     value_string            text,
-    value_geo               bytea,
+    value_geometry               bytea,
     value_object            jsonb,
     value_uri               text,
     metadata                jsonb
@@ -74,8 +74,8 @@ CREATE TEMP TABLE stage_attribute_history (
 ";
 
 const COPY_INTO_STAGE_SQL: &str = "COPY stage_attribute_history (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, \
-     value_kind, observed_at, created_at, modified_at, deleted_at, value_datetime, generated_instance_uuid, unit_code_id, \
-     value_bool, verbatim_instance_id, value_number, value_string, value_geo, value_object, value_uri, metadata) \
+     value_kind, observed_at, created_at, modified_at, deleted_at, value_date_time, generated_instance_id, unit_code_id, \
+     value_boolean, verbatim_instance_id, value_number, value_string, value_geometry, value_object, value_uri, metadata) \
      FROM STDIN WITH (FORMAT binary)";
 
 /// Materialise the staged history rows into the target branch's
@@ -89,17 +89,17 @@ fn insert_from_stage_sql(schema: &str) -> String {
         r"
 INSERT INTO {schema}attribute_history (
     recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
-    observed_at, created_at, modified_at, deleted_at, value_datetime,
-    generated_instance_uuid, unit_code_id, value_bool, verbatim_instance_id,
-    value_number, value_string, value_geo, value_object, value_uri, metadata
+    observed_at, created_at, modified_at, deleted_at, value_date_time,
+    generated_instance_id, unit_code_id, value_boolean, verbatim_instance_id,
+    value_number, value_string, value_geometry, value_object, value_uri, metadata
 )
 SELECT
     s.recorded_at, s.write_id, s.stream_key, s.write_ordinal, s.attribute_kind, s.value_kind,
-    s.observed_at, s.created_at, s.modified_at, s.deleted_at, s.value_datetime,
-    s.generated_instance_uuid, s.unit_code_id, s.value_bool, s.verbatim_instance_id,
+    s.observed_at, s.created_at, s.modified_at, s.deleted_at, s.value_date_time,
+    s.generated_instance_id, s.unit_code_id, s.value_boolean, s.verbatim_instance_id,
     s.value_number::numeric, s.value_string,
-    CASE WHEN s.value_geo IS NOT NULL
-         THEN ST_MakeValid(ST_GeomFromEWKB(s.value_geo))
+    CASE WHEN s.value_geometry IS NOT NULL
+         THEN ST_MakeValid(ST_GeomFromEWKB(s.value_geometry))
          ELSE NULL END,
     s.value_object, s.value_uri, s.metadata
 FROM stage_attribute_history s
@@ -163,7 +163,7 @@ pub(crate) fn encode_history_copy_stream(rows: &[AttributeHistoryRow]) -> Result
         write_timestamptz_opt(&mut buf, row.axes.modified_at);
         write_timestamptz_opt(&mut buf, row.value.deleted_at());
         write_timestamptz_opt(&mut buf, row.value.date_time());
-        write_uuid_opt(&mut buf, generated_instance_uuid(&row.instance));
+        write_uuid_opt(&mut buf, generated_instance_id(&row.instance));
         write_i16_opt(&mut buf, row.unit_code_id.map(UnitCodeId::get));
         write_bool_opt(&mut buf, row.value.boolean());
         write_text_opt(&mut buf, verbatim_instance_id(&row.instance))?;
@@ -335,8 +335,8 @@ mod tests {
         let deleted_offset = HEADER_BYTES + 2 + (4 + 8) + (4 + 16) + (4 + 8) + (4 + 4) + (4 + 2) + (4 + 2) + 3 * NULL_FIELD_BYTES;
         pretty_assertions::assert_eq!(field_length(&buf, deleted_offset), 8);
         // Every typed value column that follows the deletion instant is NULL:
-        // value_datetime, then value_bool, value_number, value_string,
-        // value_geo, value_object and value_uri further along the tuple.
+        // value_date_time, then value_boolean, value_number, value_string,
+        // value_geometry, value_object and value_uri further along the tuple.
         pretty_assertions::assert_eq!(field_length(&buf, deleted_offset + 4 + 8), -1);
     }
 

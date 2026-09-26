@@ -66,6 +66,7 @@ async fn distop_available_types_reflects_registrations_system_wide() {
             .client()
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
+                    .tenant(topology.tenant())
                     .mode("inclusive")
                     .entity_type(&atype)
                     .operations(&["retrieveEntity", "queryEntity"])
@@ -103,6 +104,7 @@ async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty()
             .client()
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
+                    .tenant(topology.tenant())
                     .mode("inclusive")
                     .entity_type(&atype)
                     .operations(&["retrieveEntity"])
@@ -144,6 +146,7 @@ async fn distop_entity_type_info_count_may_be_estimate() {
             .client()
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
+                    .tenant(topology.tenant())
                     .mode("inclusive")
                     .entity_type(&atype)
                     .operations(&["retrieveEntity", "queryEntity"])
@@ -182,6 +185,7 @@ async fn distop_available_attributes_system_wide() {
             .client()
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
+                    .tenant(topology.tenant())
                     .mode("inclusive")
                     .entity_type(&atype)
                     .property_names(&[attr.as_str()])
@@ -220,6 +224,7 @@ async fn distop_attribute_details_system_wide_may_be_empty() {
             .client()
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
+                    .tenant(topology.tenant())
                     .mode("inclusive")
                     .without_entity()
                     .property_names(&[attr.as_str()])
@@ -261,6 +266,7 @@ async fn distop_attribute_info_count_may_be_estimate() {
             .client()
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
+                    .tenant(topology.tenant())
                     .mode("inclusive")
                     .entity_type(&atype)
                     .property_names(&[attr.as_str()])
@@ -348,6 +354,7 @@ async fn distop_available_types_possibly_available_semantics() {
             .client()
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
+                    .tenant(topology.tenant())
                     .mode("inclusive")
                     .entity_type(&atype)
                     .operations(&["retrieveEntity", "queryEntity"])
@@ -385,6 +392,7 @@ async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_d
             .client()
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
+                    .tenant(topology.tenant())
                     .mode("inclusive")
                     .entity_type(&atype)
                     .operations(&["retrieveEntity"])

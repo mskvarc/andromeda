@@ -123,16 +123,16 @@ mod tests {
         [
             ("entity_key", PostgresType::BigintArray),
             ("modified_at", PostgresType::TimestamptzArray),
-            ("attribute_name_id", PostgresType::IntegerArray),
+            ("attribute_name_key", PostgresType::IntegerArray),
             ("attribute_kind", PostgresType::SmallintArray),
             ("value_kind", PostgresType::SmallintArray),
-            ("value_datetime", PostgresType::TimestamptzArray),
+            ("value_date_time", PostgresType::TimestamptzArray),
             ("unit_code_id", PostgresType::SmallintArray),
-            ("value_bool", PostgresType::BooleanArray),
+            ("value_boolean", PostgresType::BooleanArray),
             ("dataset_id", PostgresType::TextArray),
             ("value_number", PostgresType::TextArray),
             ("value_string", PostgresType::TextArray),
-            ("value_geo", PostgresType::ByteaArray),
+            ("value_geometry", PostgresType::ByteaArray),
             ("value_object", PostgresType::JsonbArray),
             ("value_uri", PostgresType::TextArray),
         ]
@@ -189,7 +189,7 @@ mod tests {
         assert!(!rewritten.contains("AS \"d\""), "{rewritten}");
         assert!(
             rewritten.contains(
-                "WITH ORDINALITY AS d(entity_key, modified_at, attribute_name_id, attribute_kind, value_kind, value_datetime, unit_code_id, value_bool, dataset_id, value_number, value_string, value_geo, value_object, value_uri, ordinality)"
+                "WITH ORDINALITY AS d(entity_key, modified_at, attribute_name_key, attribute_kind, value_kind, value_date_time, unit_code_id, value_boolean, dataset_id, value_number, value_string, value_geometry, value_object, value_uri, ordinality)"
             ),
             "{rewritten}"
         );
@@ -199,7 +199,7 @@ mod tests {
     fn a_column_alias_names_every_column_without_an_ordinality() {
         let columns = [
             UnnestColumn::new(Alias::new("write_id"), PostgresType::UuidArray),
-            UnnestColumn::new(Alias::new("base"), PostgresType::IntegerArray),
+            UnnestColumn::new(Alias::new("base_ordinal"), PostgresType::IntegerArray),
         ];
         let call = unnest_call([(&columns[0], SimpleExpr::from(Expr::val("a"))), (&columns[1], SimpleExpr::from(Expr::val("b")))]);
         let source = Query::select()
@@ -209,7 +209,7 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         let rewritten = apply_column_alias(source, &Alias::new("input"), &columns);
         assert!(!rewritten.contains("AS \"input\""), "{rewritten}");
-        assert!(rewritten.contains("AS input(write_id, base)"), "{rewritten}");
+        assert!(rewritten.contains("AS input(write_id, base_ordinal)"), "{rewritten}");
         assert!(!rewritten.contains("WITH ORDINALITY"), "{rewritten}");
     }
 

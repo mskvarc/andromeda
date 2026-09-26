@@ -153,8 +153,8 @@ impl SeededEssays {
 /// Resolve, creating if necessary, the dictionary identifier of an attribute
 /// IRI. The dictionary is deliberately never truncated by the harness, so a
 /// repeated run reuses the same identifier.
-pub async fn dictionary_id(pool: &PgPool, name: &str) -> i32 {
-    sqlx::query_scalar("INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id")
+pub async fn dictionary_key(pool: &PgPool, name: &str) -> i32 {
+    sqlx::query_scalar("INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING attribute_name_key")
         .bind(name)
         .fetch_one(pool)
         .await
@@ -164,8 +164,8 @@ pub async fn dictionary_id(pool: &PgPool, name: &str) -> i32 {
 /// Resolve, creating if necessary, the type dictionary identifier of an entity
 /// type IRI. Like the attribute dictionary, it is never truncated by the
 /// harness, so a repeated run reuses the same identifier.
-pub async fn type_dictionary_id(pool: &PgPool, name: &str) -> i32 {
-    sqlx::query_scalar("INSERT INTO entity_type_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id")
+pub async fn type_dictionary_key(pool: &PgPool, name: &str) -> i32 {
+    sqlx::query_scalar("INSERT INTO entity_type_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING entity_type_name_key")
         .bind(name)
         .fetch_one(pool)
         .await
@@ -180,12 +180,12 @@ pub async fn type_dictionary_id(pool: &PgPool, name: &str) -> i32 {
 /// the attribute keys, the location and the scope. The projection receives a
 /// numeric reading, a `GeoProperty` entrance and the city string per Entity.
 pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
-    let reading = dictionary_id(pool, READING_ATTRIBUTE).await;
-    let entrance = dictionary_id(pool, ENTRANCE_ATTRIBUTE).await;
-    let city = dictionary_id(pool, CITY_ATTRIBUTE).await;
-    let alarm = dictionary_id(pool, ALARM_ATTRIBUTE).await;
-    let rare_type = type_dictionary_id(pool, RARE_TYPE).await;
-    let common_type = type_dictionary_id(pool, COMMON_TYPE).await;
+    let reading = dictionary_key(pool, READING_ATTRIBUTE).await;
+    let entrance = dictionary_key(pool, ENTRANCE_ATTRIBUTE).await;
+    let city = dictionary_key(pool, CITY_ATTRIBUTE).await;
+    let alarm = dictionary_key(pool, ALARM_ATTRIBUTE).await;
+    let rare_type = type_dictionary_key(pool, RARE_TYPE).await;
+    let common_type = type_dictionary_key(pool, COMMON_TYPE).await;
 
     sqlx::query(
         "WITH seeded AS ( \
@@ -198,7 +198,7 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
                     jsonb_build_array(jsonb_build_object('@id', ins.id, $7::text, to_jsonb('city-' || (seeded.g % 1000)::text)) \
                                       || CASE WHEN seeded.g % 1000 = 0 THEN jsonb_build_object($8::text, to_jsonb(true)) ELSE '{}'::jsonb END) \
              FROM ins JOIN seeded ON seeded.id = ins.id) \
-         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids, scope_paths, location) \
+         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, scope_paths, location) \
          SELECT ins.entity_key, \
                 ARRAY[CASE WHEN seeded.g % 997 = 0 THEN $2::integer ELSE $3::integer END], \
                 CASE WHEN seeded.g % 1000 = 0 THEN ARRAY[$5::integer, $6::integer] ELSE ARRAY[$5::integer] END, \
@@ -221,7 +221,7 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     let like = format!("{prefix}:seed:%");
     sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_number) \
+         (entity_key, attribute_name_key, attribute_kind, value_kind, value_number) \
          SELECT e.entity_key, $1, 1, 1, (e.entity_key % 20000)::numeric \
          FROM entities AS e WHERE e.id LIKE $2::text",
     )
@@ -233,7 +233,7 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
 
     sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_geo) \
+         (entity_key, attribute_name_key, attribute_kind, value_kind, value_geometry) \
          SELECT e.entity_key, $1, 3, 4, \
                 ST_SetSRID(ST_MakePoint(13.0 + (e.entity_key % 1000) * 0.001, 52.0 + (e.entity_key % 1000) * 0.001), 4326) \
          FROM entities AS e WHERE e.id LIKE $2::text",
@@ -246,7 +246,7 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
 
     sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_string) \
+         (entity_key, attribute_name_key, attribute_kind, value_kind, value_string) \
          SELECT e.entity_key, $1, 1, 2, 'city-' || (e.entity_key % 1000)::text \
          FROM entities AS e WHERE e.id LIKE $2::text",
     )
@@ -276,7 +276,7 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
 /// writer gives every String longer than 2048 UTF-8 octets, so the overflow
 /// indexes hold exactly these rows.
 pub async fn seed_essays(pool: &PgPool, corpus: &SeededCorpus) -> SeededEssays {
-    let attribute = dictionary_id(pool, ESSAY_ATTRIBUTE).await;
+    let attribute = dictionary_key(pool, ESSAY_ATTRIBUTE).await;
     let essays: Vec<String> = (0..SEEDED_ESSAYS).map(|seed| high_entropy_text(ESSAY_LENGTH, seed)).collect();
     let probe = essays
         .get(PROBED_ESSAY)
@@ -286,7 +286,7 @@ pub async fn seed_essays(pool: &PgPool, corpus: &SeededCorpus) -> SeededEssays {
 
     sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_long_text) \
+         (entity_key, attribute_name_key, attribute_kind, value_kind, value_long_text) \
          SELECT e.entity_key, $1, 1, 2, essay.body \
          FROM unnest($2::text[]) WITH ORDINALITY AS essay(body, ordinal) \
          JOIN entities AS e ON e.id = $3::text || ':seed:' || lpad(essay.ordinal::text, 6, '0')",

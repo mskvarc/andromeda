@@ -12,7 +12,7 @@ use crate::{
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_notification::{delivery_entry::DeliveryId, delivery_store::DeliveryStore};
+use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore};
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
@@ -28,7 +28,7 @@ const MAX_ATTEMPTS: i32 = 5;
 
 /// Attempts recorded against one delivery, and how many of the claim columns it holds.
 async fn attempts_and_claim_columns(pool: &PgPool, delivery: i64) -> (i32, i32) {
-    sqlx::query_as("SELECT attempt_count, num_nonnulls(claimed_at, claimed_by, lease_until) FROM notification_deliveries WHERE id = $1")
+    sqlx::query_as("SELECT attempt_count, num_nonnulls(claimed_at, claimed_by, lease_until) FROM notification_deliveries WHERE delivery_key = $1")
         .bind(delivery)
         .fetch_one(pool)
         .await
@@ -37,7 +37,7 @@ async fn attempts_and_claim_columns(pool: &PgPool, delivery: i64) -> (i32, i32) 
 
 /// Whether the delivery has been stamped exhausted.
 async fn is_exhausted(pool: &PgPool, delivery: i64) -> bool {
-    sqlx::query_scalar("SELECT exhausted_at IS NOT NULL FROM notification_deliveries WHERE id = $1")
+    sqlx::query_scalar("SELECT exhausted_at IS NOT NULL FROM notification_deliveries WHERE delivery_key = $1")
         .bind(delivery)
         .fetch_one(pool)
         .await
@@ -64,7 +64,7 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
         let next_attempt_at = Utc::now() - Duration::seconds(1);
         queue
             .mark_failed(
-                DeliveryId::from(delivery),
+                DeliveryKey::from(delivery),
                 &worker,
                 "endpoint refused the notification",
                 next_attempt_at,
@@ -85,7 +85,7 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
     assert_eq!(still_offered.len(), 1, "the queue keeps offering a delivery the worker has not exhausted");
     assert_eq!(still_offered[0].attempt_count, MAX_ATTEMPTS);
     queue
-        .mark_terminal(DeliveryId::from(delivery), &worker, "attempt ceiling reached", &ContextTarget::Live)
+        .mark_terminal(DeliveryKey::from(delivery), &worker, "attempt ceiling reached", &ContextTarget::Live)
         .await
         .expect("record the exhausting attempt");
     assert!(is_exhausted(&pool, delivery).await, "the worker's decision is recorded as exhausted_at");
@@ -111,7 +111,7 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
     assert_eq!(claimed.len(), 1);
 
     queue
-        .mark_terminal(DeliveryId::from(delivery), &worker, "the endpoint rejected the payload", &ContextTarget::Live)
+        .mark_terminal(DeliveryKey::from(delivery), &worker, "the endpoint rejected the payload", &ContextTarget::Live)
         .await
         .expect("record the terminal failure");
 
@@ -126,7 +126,7 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
         .expect("claim after the terminal failure");
     assert!(retired.is_empty(), "a retired delivery is permanently unclaimable");
 
-    let undelivered: i64 = sqlx::query_scalar("SELECT count(*) FROM notification_deliveries WHERE id = $1 AND delivered_at IS NULL")
+    let undelivered: i64 = sqlx::query_scalar("SELECT count(*) FROM notification_deliveries WHERE delivery_key = $1 AND delivered_at IS NULL")
         .bind(delivery)
         .fetch_one(&pool)
         .await

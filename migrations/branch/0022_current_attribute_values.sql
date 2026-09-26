@@ -1,201 +1,93 @@
 -- ============================================================================
--- 0022: The current attribute-value projection, keyed on the entity surrogate
+-- 0022: Current attribute values
 -- ============================================================================
--- One row per (Entity, attribute name, datasetId) -- the identity clause 4.5.5
--- defines -- holding the value that attribute currently has.
+-- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.5.5, 4.6.3, 4.9, 4.10, 4.23, 5.6.6
 --
---   * Keyed on `entity_key`. The projection is current Entity state, so its
---     only ownership edge is to `entities`. It has no foreign key to anything
---     temporal: Core Entity deletion (clause 5.6.6) leaves history standing,
---     and the temporal catalogue is independent in the other direction.
---   * `attribute_kind` and `value_kind` are compact migration-owned codes,
---     the same registries `attribute_history` carries:
+-- The value each attribute instance of each Entity currently has, one row per
+-- Entity, attribute name and `datasetId` (clause 4.5.5), in one typed column
+-- per value shape so a `q` comparison reads a single indexed column. The only
+-- ownership edge is to `entities`: Core Entity deletion (clause 5.6.6) leaves
+-- history standing, so nothing here references the temporal catalog.
 --
---       attribute_kind: 1 Property, 2 Relationship, 3 GeoProperty,
---                       4 VocabProperty, 5 LanguageProperty, 6 JsonProperty,
---                       7 ListProperty, 8 ListRelationship
---       value_kind:     1 Number, 2 String, 3 Boolean, 4 Geometry, 5 Object,
---                       6 DateTime, 7 Uri
+-- Codes:
 --
---     Value kind 0, the tombstone, is permanently reserved and NEVER appears
---     here. A deleted attribute is an absent row, not a row carrying a
---     sentinel. `chk_current_attribute_values_value_kind_column` makes both
---     halves of that unrepresentable: it pins the kind to the populated
---     column and admits no arm for 0.
+--   attribute_kind: 1 Property, 2 Relationship, 3 GeoProperty,
+--     4 VocabProperty, 5 LanguageProperty, 6 JsonProperty, 7 ListProperty,
+--     8 ListRelationship
+--   value_kind: 1 number, 2 string, 3 boolean, 4 geometry, 5 object,
+--     6 date-time, 7 uri
 --
---     Clause 4.6.3 names three data types -- DateTime, Date and Time -- whose
---     whole representation IS the string, so a Property carrying one declares
---     no JSON-LD `@type` and the broker reads the data type off the literal:
---     a value written in one of those three lexical forms and satisfying it
---     is projected as that data type. A DateTime lands in `value_datetime`
---     under value kind 6. A Date or a Time lands in `value_string` under value
---     kind 2 in its canonical fixed-width form (`YYYY-MM-DD`,
---     `HH:MM:SS.ffffffZ`), so byte order is chronological order and the clause
---     4.9 `q` compiler compares it as that data type.
---   * String overflow. A B-tree refuses an entry past 2704 bytes (SQLSTATE
---     54000), and `idx_cav_attr_string` keys on `value_string`, so a String
---     longer than 2048 UTF-8 octets is held in `value_long_text` under value
---     kind 2 instead. The bound is `INDEXED_STRING_BYTE_LIMIT` in
---     `andromeda-postgresql-schema`, whose one placement function both the
---     writer and the `q` compiler call; a unit test in `migration_set` pins
---     the literal below to that constant. The two length checks make the
---     placement canonical -- every string has exactly one column it may sit
---     in -- which is what lets an equality read only the column its operand
---     would occupy. `value_uri` never overflows: it holds a Relationship
---     object, an identifier bounded at 1024 UTF-8 octets by
---     `IDENTIFIER_BYTE_LIMIT` in `andromeda-ngsi-ld-lexicon`, and so does
---     `dataset_id`.
---   * `value_number` is `NUMERIC`, not `DOUBLE PRECISION`. JSONB stores
---     numbers as exact numerics, and a comparison beyond 2^53 stays correct
---     without falling back to an unindexed payload scan.
+-- Value kind 0, the tombstone, never appears here: a deleted attribute is an
+-- absent row, not a row carrying a marker.
 --
--- No primary key, deliberately. The natural grain contains a nullable
--- `dataset_id` -- clause 4.5.5 makes the default instance the one with no
--- datasetId -- so the identity is a `UNIQUE NULLS NOT DISTINCT` constraint,
--- which a primary key cannot be. Consequence: under logical replication or
--- change data capture this table needs `REPLICA IDENTITY FULL` or a synthetic
--- key. Neither is set now -- nothing replicates this schema logically today.
+-- Clause 4.6.3 names three data types, DateTime, Date and Time, whose whole
+-- representation is the string, so a value written in one of their lexical
+-- forms is projected as that data type. A DateTime lands in
+-- `value_date_time`. A Date or a Time lands in `value_string` in its
+-- canonical fixed-width form (`YYYY-MM-DD`, `HH:MM:SS.ffffffZ`), so byte order
+-- is chronological order and a clause 4.9 comparison orders it correctly.
 --
--- Column order is alignment order: not-null fixed-width descending, then
--- nullable fixed-width, then varlena, LZ4 on each varlena column.
---
--- No `modified_at`. The projection records what an instance holds now, and
--- nothing reads when it was last written: `entity_documents.modified_at`
--- carries the entity's own instant. A per-row instant here would make every
--- restatement of an unchanged value a genuine row rewrite, which is the one
--- write the no-op suppression below exists to avoid.
---
--- No-op suppression. The upsert's `ON CONFLICT ... DO UPDATE` carries a
--- `WHERE ROW(stored columns) IS DISTINCT FROM ROW(excluded columns)` guard
--- over every non-grain column, so an instance whose projection is
--- value-identical is not rewritten at all: no new heap tuple, no index
--- tuples, no WAL beyond the conflict probe. A telemetry stream that restates
--- the same reading is therefore free here. Equality is the column type's own:
--- PostGIS geometry `=` is exact geometry equality, jsonb `=` is structural,
--- and `NUMERIC` `=` ignores scale (`1.0 = 1.00`) -- acceptable because no
--- reader renders a projected number, only compares it.
---
--- fillfactor and autovacuum. Every update to a value column also updates a
--- partial index keyed on it, so heap-only-tuple updates are disqualified for
--- exactly the updates this table receives. The fillfactor keeps the new
--- tuple version on its own page more often, and the aggressive vacuum
--- cadence is the primary defence.
---
--- Every text column here is `COLLATE "C"`, `value_string` and
--- `value_long_text` included. Clause
--- 4.9 orders string values with `<`, `>`, `<=` and `>=` and clause 4.5.19
--- takes `min` and `max` over them, so under a locale collation the same `q`
--- predicate would select different Entities on two clusters holding
--- identical data, and current state would disagree with the
--- `attribute_history.value_string` aggregation that answers the temporal
--- form of the same question. `docs/text-collation-invariant.md` states the
--- invariant for the whole schema.
---
--- Index set, one named consumer each:
---
---   * the grain constraint -- the upsert conflict target of the synchronous
---     write, the cascade check behind the `entity_key` foreign key, and the
---     driving access path of every entity-correlated `q` probe.
---   * one partial B-tree per typed column, led by `attribute_name_id`, for
---     the direction the planner drives from the attribute side.
---   * NO pattern-operator opclass anywhere. `value_string` and `value_uri`
---     are `COLLATE "C"`, so the default B-tree opclass already compares
---     byte-wise and already serves anchored `LIKE` and anchored regex
---     prefixes.
---   * one attribute-aware trigram GIN on `(attribute_name_id, value_string)`,
---     for the unanchored POSIX patterns `~=` / `!~=` compile to (clause
---     4.9), which no B-tree can serve. `btree_gin` supplies the `int4_ops`
---     opclass so the attribute key is a GIN entry alongside the trigrams:
---     the planner intersects the two posting lists, and a pattern that is
---     common across attributes stops producing candidates from every
---     attribute that happens to share its trigrams. It declares
---     `fastupdate = off`: the projection is written inside the Entity
---     transaction, and an unbounded GIN pending list turns into
---     unpredictable flush latency on the request path. The `fastupdate = on`
---     alternative was measured against this (database-performance decision
---     records, Wave 2) and rejected: it cut the CAV upsert mean 27 % but the
---     pass wall only 1 %, grew the index 12 %, and cost every read of the index
---     19 % on the probe while the pending list was non-empty (unbounded in
---     general, since the flush is tied to autovacuum and
---     `gin_pending_list_limit`). `fastupdate = off` is the final decision;
---     rollback is one `ALTER INDEX ... SET (fastupdate = on)` for a
---     write-dominated tenant that ever needs it.
---   * no trigram on `value_uri` -- a second trigram index would be written
---     on every Relationship write to serve a disjunct nothing drives from.
---   * the overflow pair on `value_long_text`: a partial B-tree on
---     `attribute_name_id` alone, for the attribute-driven path of a `q`
---     comparison over long strings, which filters the value on the heap (the
---     value itself is too long to key a B-tree on); and an attribute-aware
---     trigram GIN on `(attribute_name_id, value_long_text)`, for `~=` / `!~=`
---     over long strings and for their equality, which `gin_trgm_ops` serves
---     too. It takes `fastupdate = off` for the same reason as its sibling. The
---     overflow indexes are not maintenance targets: they cover the rare
---     strings past 2048 octets, and heap vacuum of this relation reclaims
---     their dead entries.
---   * one composite GiST on `(attribute_name_id, value_geo)` for clause 4.10
---     geo-queries against a named GeoProperty, and one partial B-tree on
---     `(attribute_name_id, entity_key)` for the correlated instance lookup
---     and the clause 4.23 distance ordering.
---   * NO GIN on `value_object`. Nothing compiles a containment or
---     key-existence predicate against it: `q` routes every compound value
---     path and every sub-attribute to the payload fallback, and the
---     projection is only ever compared against a scalar.
---
--- Extended statistics. The planner assumes `attribute_name_id`, `value_kind`
--- and `entity_key` are independent. They are strongly correlated -- an
--- attribute name has one value shape in practice, and an Entity carries a
--- stable set of attribute names -- so a compiled `q` predicate is
--- misestimated in the direction that picks the wrong join order. Dependency
--- and n-distinct statistics on both pairs are what correct it.
---
--- Branch relation: this file is in `migrations/branch/`, so it creates the live
--- relations in `public` as part of the tenant migration set and creates and
--- upgrades the same relations inside every Snapshot schema under the branch
--- ledger. Dictionary, unit-code and function references resolve to `public`
--- through the search path; every other reference resolves to the branch. A
--- branch file declares no foreign key into `public`: the dictionary
--- references of the live relations are added by the live-only 0029.
+-- There is no `modified_at`: nothing reads when a projected value was last
+-- written, since `entity_documents.modified_at` carries the Entity's instant.
+-- A per-row instant would turn every restatement of an unchanged value into a
+-- real row rewrite, which is the write the upsert's no-op guard avoids: an
+-- instance whose projection is value-identical is not rewritten at all. The
+-- guard compares with each column type's own equality, under which `NUMERIC`
+-- ignores scale (`1.0 = 1.00`); no reader renders a projected number, it only
+-- compares it.
 -- ============================================================================
 
 CREATE TABLE current_attribute_values (
     entity_key BIGINT NOT NULL,
-    attribute_name_id INTEGER NOT NULL,
+    -- `attribute_names` key.
+    attribute_name_key INTEGER NOT NULL,
     attribute_kind SMALLINT NOT NULL,
     value_kind SMALLINT NOT NULL,
-    value_datetime TIMESTAMPTZ,
+    value_date_time TIMESTAMPTZ,
     unit_code_id SMALLINT,
-    value_bool BOOLEAN,
+    value_boolean BOOLEAN,
     dataset_id TEXT COMPRESSION lz4 COLLATE "C",
+    -- `NUMERIC`, not `DOUBLE PRECISION`: JSON numbers are stored exactly, and
+    -- a comparison beyond 2^53 stays correct without falling back to the
+    -- payload.
     value_number NUMERIC COMPRESSION lz4,
     value_string TEXT COMPRESSION lz4 COLLATE "C",
-    value_geo geometry COMPRESSION lz4,
+    value_geometry geometry COMPRESSION lz4,
     value_object JSONB COMPRESSION lz4,
+    -- A Relationship object, an identifier, so it never needs an overflow
+    -- column.
     value_uri TEXT COMPRESSION lz4 COLLATE "C",
+    -- A String too long for the B-tree on `value_string`. The two length
+    -- checks give every String exactly one column, so an equality reads only
+    -- the column its operand would occupy.
     value_long_text TEXT COMPRESSION lz4 COLLATE "C",
     CONSTRAINT fk_current_attribute_values_entity
         FOREIGN KEY (entity_key)
         REFERENCES entities(entity_key) ON DELETE CASCADE,
+    -- The grain has a nullable `dataset_id`, so it is a unique constraint and
+    -- the table has no primary key. It is the upsert's conflict target and the
+    -- access path of every Entity-correlated `q` probe.
     CONSTRAINT uq_current_attribute_values_grain
-        UNIQUE NULLS NOT DISTINCT (entity_key, attribute_name_id, dataset_id),
+        UNIQUE NULLS NOT DISTINCT (entity_key, attribute_name_key, dataset_id),
     CONSTRAINT chk_current_attribute_values_attribute_kind
         CHECK (attribute_kind BETWEEN 1 AND 8),
-    CONSTRAINT chk_current_attribute_values_single_value CHECK (
-        num_nonnulls(value_number, value_string, value_bool, value_geo,
-                     value_object, value_datetime, value_uri, value_long_text) = 1),
+    CONSTRAINT chk_current_attribute_values_value_presence CHECK (
+        num_nonnulls(value_number, value_string, value_boolean, value_geometry,
+                     value_object, value_date_time, value_uri, value_long_text) = 1),
     CONSTRAINT chk_current_attribute_values_value_kind_column CHECK (
         (value_kind = 1 AND value_number IS NOT NULL)
         OR (value_kind = 2 AND num_nonnulls(value_string, value_long_text) = 1)
-        OR (value_kind = 3 AND value_bool IS NOT NULL)
-        OR (value_kind = 4 AND value_geo IS NOT NULL)
+        OR (value_kind = 3 AND value_boolean IS NOT NULL)
+        OR (value_kind = 4 AND value_geometry IS NOT NULL)
         OR (value_kind = 5 AND value_object IS NOT NULL)
-        OR (value_kind = 6 AND value_datetime IS NOT NULL)
+        OR (value_kind = 6 AND value_date_time IS NOT NULL)
         OR (value_kind = 7 AND value_uri IS NOT NULL)),
-    CONSTRAINT chk_current_attribute_values_value_geo_valid
-        CHECK (value_geo IS NULL OR ST_IsValid(value_geo)),
-    CONSTRAINT chk_current_attribute_values_value_geo_srid
-        CHECK (value_geo IS NULL OR ST_SRID(value_geo) = 4326),
-    CONSTRAINT chk_current_attribute_values_value_geo_zm
-        CHECK (value_geo IS NULL OR ST_Zmflag(value_geo) IN (0, 2)),
+    CONSTRAINT chk_current_attribute_values_value_geometry_valid
+        CHECK (value_geometry IS NULL OR ST_IsValid(value_geometry)),
+    CONSTRAINT chk_current_attribute_values_value_geometry_srid
+        CHECK (value_geometry IS NULL OR ST_SRID(value_geometry) = 4326),
+    CONSTRAINT chk_current_attribute_values_value_geometry_zm
+        CHECK (value_geometry IS NULL OR ST_Zmflag(value_geometry) IN (0, 2)),
     CONSTRAINT chk_current_attribute_values_value_string_length
         CHECK (octet_length(value_string) <= 2048),
     CONSTRAINT chk_current_attribute_values_value_long_text_length
@@ -213,52 +105,64 @@ CREATE TABLE current_attribute_values (
     autovacuum_vacuum_cost_delay = 0
 );
 
-CREATE INDEX idx_cav_attr_number
-    ON current_attribute_values (attribute_name_id, value_number)
+-- One partial B-tree per typed column, led by the attribute key, for plans
+-- that drive from the attribute side.
+CREATE INDEX idx_cav_value_number
+    ON current_attribute_values (attribute_name_key, value_number)
     WHERE value_number IS NOT NULL;
 
-CREATE INDEX idx_cav_attr_string
-    ON current_attribute_values (attribute_name_id, value_string)
+CREATE INDEX idx_cav_value_string
+    ON current_attribute_values (attribute_name_key, value_string)
     WHERE value_string IS NOT NULL;
 
-CREATE INDEX idx_cav_attr_string_trgm
-    ON current_attribute_values USING GIN (attribute_name_id int4_ops, value_string gin_trgm_ops)
+-- Unanchored `~=` and `!~=` patterns (clause 4.9). `fastupdate = off`: the
+-- projection is written inside the Entity's transaction, and a GIN pending
+-- list would put its flush latency on the request path.
+CREATE INDEX idx_cav_value_string_trgm
+    ON current_attribute_values USING GIN (attribute_name_key int4_ops, value_string gin_trgm_ops)
     WITH (fastupdate = off)
     WHERE value_string IS NOT NULL;
 
-CREATE INDEX idx_cav_attr_bool
-    ON current_attribute_values (attribute_name_id, value_bool)
-    WHERE value_bool IS NOT NULL;
+CREATE INDEX idx_cav_value_boolean
+    ON current_attribute_values (attribute_name_key, value_boolean)
+    WHERE value_boolean IS NOT NULL;
 
-CREATE INDEX idx_cav_attr_datetime
-    ON current_attribute_values (attribute_name_id, value_datetime)
-    WHERE value_datetime IS NOT NULL;
+CREATE INDEX idx_cav_value_date_time
+    ON current_attribute_values (attribute_name_key, value_date_time)
+    WHERE value_date_time IS NOT NULL;
 
-CREATE INDEX idx_cav_attr_uri
-    ON current_attribute_values (attribute_name_id, value_uri)
+CREATE INDEX idx_cav_value_uri
+    ON current_attribute_values (attribute_name_key, value_uri)
     WHERE value_uri IS NOT NULL;
 
-CREATE INDEX idx_cav_attr_long_text
-    ON current_attribute_values (attribute_name_id)
+-- A long String is too long to key a B-tree on, so a `q` comparison over it
+-- drives from the attribute key alone and filters the value on the heap.
+CREATE INDEX idx_cav_value_long_text
+    ON current_attribute_values (attribute_name_key)
     WHERE value_long_text IS NOT NULL;
 
-CREATE INDEX idx_cav_attr_long_text_trgm
-    ON current_attribute_values USING GIN (attribute_name_id int4_ops, value_long_text gin_trgm_ops)
+-- Patterns over long Strings, and their equality, which `gin_trgm_ops` also
+-- serves. Neither long-text index is a maintenance target: they cover rare
+-- values, and vacuuming the table reclaims their dead entries.
+CREATE INDEX idx_cav_value_long_text_trgm
+    ON current_attribute_values USING GIN (attribute_name_key int4_ops, value_long_text gin_trgm_ops)
     WITH (fastupdate = off)
     WHERE value_long_text IS NOT NULL;
 
-CREATE INDEX idx_cav_attr_geo
-    ON current_attribute_values USING GIST (attribute_name_id, value_geo)
-    WHERE value_geo IS NOT NULL;
+-- Geo-queries against a named GeoProperty (clause 4.10).
+CREATE INDEX idx_cav_value_geometry
+    ON current_attribute_values USING GIST (attribute_name_key, value_geometry)
+    WHERE value_geometry IS NOT NULL;
 
-CREATE INDEX idx_cav_attr_entity_geo
-    ON current_attribute_values (attribute_name_id, entity_key)
-    WHERE value_geo IS NOT NULL;
+-- The correlated instance lookup and the distance ordering of clause 4.23.
+CREATE INDEX idx_cav_entity_geometry
+    ON current_attribute_values (attribute_name_key, entity_key)
+    WHERE value_geometry IS NOT NULL;
 
 CREATE STATISTICS stx_cav_attribute_value_kind (dependencies, ndistinct)
-    ON attribute_name_id, value_kind
+    ON attribute_name_key, value_kind
     FROM current_attribute_values;
 
 CREATE STATISTICS stx_cav_entity_attribute (dependencies, ndistinct)
-    ON entity_key, attribute_name_id
+    ON entity_key, attribute_name_key
     FROM current_attribute_values;

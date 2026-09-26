@@ -97,7 +97,7 @@ async fn delivery_insert_waits_out_a_concurrent_subscription_deletion_and_owes_i
         ordinal: WriteOrdinal::at(0),
         trigger: NotificationTrigger::EntityCreated,
         entity_id: &entity_id,
-        changed_attribute_name_ids: Vec::new(),
+        changed_attribute_name_keys: Vec::new(),
         changed_dataset_id: None,
         entity_snapshot: None,
         previous_snapshot: None,
@@ -107,12 +107,13 @@ async fn delivery_insert_waits_out_a_concurrent_subscription_deletion_and_owes_i
     let insert = insert_events_in_tx(&mut write, &ContextTarget::Live, &record, &events);
     let (inserted, ()) = tokio::join!(insert, commit_once_the_insert_waits(pool, writer_pid, deletion));
     assert!(inserted.is_ok(), "the write must not fail on a subscription deleted under it: {inserted:?}");
-    let owed: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM notification_deliveries AS d JOIN notification_events AS e ON e.id = d.event_id WHERE e.write_id = $1")
-            .bind(record.write_id().as_uuid())
-            .fetch_one(&mut *write)
-            .await
-            .expect("delivery count");
+    let owed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notification_deliveries AS d JOIN notification_events AS e ON e.event_key = d.event_key WHERE e.write_id = $1",
+    )
+    .bind(record.write_id().as_uuid())
+    .fetch_one(&mut *write)
+    .await
+    .expect("delivery count");
     pretty_assertions::assert_eq!(owed, 0, "the deleted subscription is owed no delivery");
     write.rollback().await.expect("discard the probe event");
     racing.close().await;

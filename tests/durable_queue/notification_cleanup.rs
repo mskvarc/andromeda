@@ -12,7 +12,7 @@ use crate::{
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_notification::{delivery_entry::DeliveryId, delivery_store::DeliveryStore};
+use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore};
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
@@ -65,16 +65,16 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     // Four dispositions over one shared event: delivered, obsolete (which the
     // drain acknowledges the same way), retry-exhausted, and retained pending.
     queue
-        .mark_delivered(DeliveryId::from(deliveries[0]), &worker, &ContextTarget::Live)
+        .mark_delivered(DeliveryKey::from(deliveries[0]), &worker, &ContextTarget::Live)
         .await
         .expect("completed delivery");
     queue
-        .mark_delivered(DeliveryId::from(deliveries[1]), &worker, &ContextTarget::Live)
+        .mark_delivered(DeliveryKey::from(deliveries[1]), &worker, &ContextTarget::Live)
         .await
         .expect("obsolete delivery");
     queue
         .mark_terminal(
-            DeliveryId::from(deliveries[2]),
+            DeliveryKey::from(deliveries[2]),
             &worker,
             "the endpoint rejected the payload",
             &ContextTarget::Live,
@@ -83,7 +83,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
         .expect("retry-exhausted delivery");
     queue
         .mark_failed(
-            DeliveryId::from(deliveries[3]),
+            DeliveryKey::from(deliveries[3]),
             &worker,
             "endpoint unavailable",
             Utc::now() + Duration::hours(1),
@@ -120,7 +120,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
         .expect("orphan-event reap");
     assert_eq!(orphaned, 0, "an event a live delivery still references is not orphaned");
 
-    sqlx::query("UPDATE notification_deliveries SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE id = $1")
+    sqlx::query("UPDATE notification_deliveries SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE delivery_key = $1")
         .bind(deliveries[3])
         .execute(&pool)
         .await
@@ -133,7 +133,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
         "the last delivery still carries the shared payload"
     );
     queue
-        .mark_delivered(DeliveryId::from(deliveries[3]), &worker, &ContextTarget::Live)
+        .mark_delivered(DeliveryKey::from(deliveries[3]), &worker, &ContextTarget::Live)
         .await
         .expect("last delivery");
 
@@ -170,7 +170,7 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
         if attempt + 1 < MAX_ATTEMPTS {
             queue
                 .mark_failed(
-                    DeliveryId::from(deliveries[0]),
+                    DeliveryKey::from(deliveries[0]),
                     &worker,
                     "endpoint unavailable",
                     Utc::now() - Duration::seconds(1),
@@ -180,7 +180,7 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
                 .unwrap_or_else(|_| panic!("retry failure {attempt}"));
         } else {
             queue
-                .mark_terminal(DeliveryId::from(deliveries[0]), &worker, "endpoint unavailable", &ContextTarget::Live)
+                .mark_terminal(DeliveryKey::from(deliveries[0]), &worker, "endpoint unavailable", &ContextTarget::Live)
                 .await
                 .unwrap_or_else(|_| panic!("exhausting failure {attempt}"));
         }

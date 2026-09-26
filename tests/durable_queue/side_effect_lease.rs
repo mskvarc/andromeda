@@ -132,7 +132,7 @@ async fn durable_queue_a_replayed_commit_enqueues_no_second_side_effect_job() {
 #[serial(durable_queue)]
 async fn durable_queue_a_side_effect_payload_that_cannot_be_decoded_reaches_a_coherent_dead_state() {
     let pool = queue_database().await;
-    sqlx::query("INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5)")
+    sqlx::query("INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, payload) VALUES ($1, $2, $3, $4, $5)")
         .bind(SideEffectJobId::mint().as_uuid())
         .bind(WriteId::mint().as_uuid())
         .bind(Utc::now())
@@ -174,7 +174,7 @@ async fn durable_queue_a_side_effect_payload_that_cannot_be_decoded_reaches_a_co
 #[serial(durable_queue)]
 async fn durable_queue_the_dead_letter_reap_removes_only_dead_jobs_older_than_the_cutoff() {
     let pool = queue_database().await;
-    sqlx::query("INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5)")
+    sqlx::query("INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, payload) VALUES ($1, $2, $3, $4, $5)")
         .bind(SideEffectJobId::mint().as_uuid())
         .bind(WriteId::mint().as_uuid())
         .bind(Utc::now())
@@ -234,7 +234,7 @@ async fn durable_queue_a_job_exhausted_after_the_retention_window_survives_the_r
         (&long_exhausted, now - RetentionDuration::days(30), now - RetentionDuration::days(8)),
     ] {
         sqlx::query(
-            "INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload, created_at, exhausted_at) \
+            "INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, payload, created_at, exhausted_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(job.as_uuid())

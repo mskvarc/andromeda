@@ -39,7 +39,7 @@ impl EntityRepository {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<Value>, ContextStoreError> {
-        let Some(type_id) = self.type_id(entity_type).await? else {
+        let Some(type_key) = self.type_key(entity_type).await? else {
             return Ok(Vec::new());
         };
         let mut statement = identity_with_documents(target);
@@ -50,7 +50,10 @@ impl EntityRepository {
                 table_of(target, EntitySearch::Table),
                 Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
             )
-            .and_where(array_contains_key(Expr::col((EntitySearch::Table, EntitySearch::TypeIds)), type_id.get()))
+            .and_where(array_contains_key(
+                Expr::col((EntitySearch::Table, EntitySearch::EntityTypeNameKeys)),
+                type_key.get(),
+            ))
             .order_by((Entities::Table, Entities::Id), Order::Asc)
             .offset(page_bound(offset.unwrap_or(0)));
         if let Some(limit) = limit {

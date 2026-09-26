@@ -60,15 +60,15 @@ impl<N: InternedName> ResolvedNames<N> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{attribute_name_id::AttributeNameId, dictionary::resolved_names::ResolvedNames, entity_type_id::EntityTypeId};
+    use crate::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 
     #[test]
     fn a_resolved_name_answers_by_value_and_by_text() {
         let name: EntityTypeName = "https://example.com/Vehicle".parse().expect("valid name");
-        let resolved = ResolvedNames::from_pairs([(name.clone(), EntityTypeId::from(4))]);
-        pretty_assertions::assert_eq!(resolved.get(&name), Some(EntityTypeId::from(4)));
-        pretty_assertions::assert_eq!(resolved.get_str("https://example.com/Vehicle"), Some(EntityTypeId::from(4)));
+        let resolved = ResolvedNames::from_pairs([(name.clone(), EntityTypeNameKey::from(4))]);
+        pretty_assertions::assert_eq!(resolved.get(&name), Some(EntityTypeNameKey::from(4)));
+        pretty_assertions::assert_eq!(resolved.get_str("https://example.com/Vehicle"), Some(EntityTypeNameKey::from(4)));
         assert!(!resolved.is_empty());
     }
 
@@ -76,7 +76,7 @@ mod tests {
     fn an_unresolved_name_answers_nothing() {
         let resolved: ResolvedNames<AttributeName> = ResolvedNames::default();
         let name: AttributeName = "https://example.com/speed".parse().expect("valid name");
-        pretty_assertions::assert_eq!(resolved.get(&name), None::<AttributeNameId>);
+        pretty_assertions::assert_eq!(resolved.get(&name), None::<AttributeNameKey>);
         assert!(resolved.is_empty());
     }
 }

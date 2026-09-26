@@ -15,47 +15,47 @@ pub enum IndexTarget {
     /// Natural entity/attribute/dataset grain.
     UqCurrentAttributeValuesGrain,
     /// Numeric predicate index.
-    IdxCavAttrNumber,
+    IdxCavValueNumber,
     /// String B-tree and bloat canary for the paired trigram rebuild.
-    IdxCavAttrString,
+    IdxCavValueString,
     /// Attribute-aware string trigram GIN, queued only through its canary.
-    IdxCavAttrStringTrgm,
+    IdxCavValueStringTrgm,
     /// Boolean predicate index.
-    IdxCavAttrBool,
+    IdxCavValueBoolean,
     /// Date-time predicate index.
-    IdxCavAttrDatetime,
+    IdxCavValueDateTime,
     /// URI predicate index.
-    IdxCavAttrUri,
+    IdxCavValueUri,
     /// Attribute-aware geometry `GiST`.
-    IdxCavAttrGeo,
+    IdxCavValueGeometry,
     /// Entity/attribute geometry correlation index.
-    IdxCavAttrEntityGeo,
+    IdxCavEntityGeometry,
 }
 
 impl IndexTarget {
     /// Every index that may be rebuilt or recognized during recovery.
     pub const ALL: [IndexTarget; 9] = [
         IndexTarget::UqCurrentAttributeValuesGrain,
-        IndexTarget::IdxCavAttrNumber,
-        IndexTarget::IdxCavAttrString,
-        IndexTarget::IdxCavAttrStringTrgm,
-        IndexTarget::IdxCavAttrBool,
-        IndexTarget::IdxCavAttrDatetime,
-        IndexTarget::IdxCavAttrUri,
-        IndexTarget::IdxCavAttrGeo,
-        IndexTarget::IdxCavAttrEntityGeo,
+        IndexTarget::IdxCavValueNumber,
+        IndexTarget::IdxCavValueString,
+        IndexTarget::IdxCavValueStringTrgm,
+        IndexTarget::IdxCavValueBoolean,
+        IndexTarget::IdxCavValueDateTime,
+        IndexTarget::IdxCavValueUri,
+        IndexTarget::IdxCavValueGeometry,
+        IndexTarget::IdxCavEntityGeometry,
     ];
 
     /// Indexes eligible for direct physical bloat probing.
     pub const PROBEABLE: [IndexTarget; 8] = [
         IndexTarget::UqCurrentAttributeValuesGrain,
-        IndexTarget::IdxCavAttrNumber,
-        IndexTarget::IdxCavAttrString,
-        IndexTarget::IdxCavAttrBool,
-        IndexTarget::IdxCavAttrDatetime,
-        IndexTarget::IdxCavAttrUri,
-        IndexTarget::IdxCavAttrGeo,
-        IndexTarget::IdxCavAttrEntityGeo,
+        IndexTarget::IdxCavValueNumber,
+        IndexTarget::IdxCavValueString,
+        IndexTarget::IdxCavValueBoolean,
+        IndexTarget::IdxCavValueDateTime,
+        IndexTarget::IdxCavValueUri,
+        IndexTarget::IdxCavValueGeometry,
+        IndexTarget::IdxCavEntityGeometry,
     ];
 
     /// The exact database identifier created by tenant migrations.
@@ -63,14 +63,14 @@ impl IndexTarget {
     pub const fn relation_name(self) -> &'static str {
         match self {
             IndexTarget::UqCurrentAttributeValuesGrain => "uq_current_attribute_values_grain",
-            IndexTarget::IdxCavAttrNumber => "idx_cav_attr_number",
-            IndexTarget::IdxCavAttrString => "idx_cav_attr_string",
-            IndexTarget::IdxCavAttrStringTrgm => "idx_cav_attr_string_trgm",
-            IndexTarget::IdxCavAttrBool => "idx_cav_attr_bool",
-            IndexTarget::IdxCavAttrDatetime => "idx_cav_attr_datetime",
-            IndexTarget::IdxCavAttrUri => "idx_cav_attr_uri",
-            IndexTarget::IdxCavAttrGeo => "idx_cav_attr_geo",
-            IndexTarget::IdxCavAttrEntityGeo => "idx_cav_attr_entity_geo",
+            IndexTarget::IdxCavValueNumber => "idx_cav_value_number",
+            IndexTarget::IdxCavValueString => "idx_cav_value_string",
+            IndexTarget::IdxCavValueStringTrgm => "idx_cav_value_string_trgm",
+            IndexTarget::IdxCavValueBoolean => "idx_cav_value_boolean",
+            IndexTarget::IdxCavValueDateTime => "idx_cav_value_date_time",
+            IndexTarget::IdxCavValueUri => "idx_cav_value_uri",
+            IndexTarget::IdxCavValueGeometry => "idx_cav_value_geometry",
+            IndexTarget::IdxCavEntityGeometry => "idx_cav_entity_geometry",
         }
     }
 
@@ -83,7 +83,7 @@ impl IndexTarget {
     /// Whether qualification also queues the unsupported trigram probe target.
     #[must_use]
     pub const fn queues_trigram_pair(self) -> bool {
-        matches!(self, IndexTarget::IdxCavAttrString)
+        matches!(self, IndexTarget::IdxCavValueString)
     }
 }
 
@@ -154,14 +154,14 @@ impl MaintenanceTarget {
         match self {
             MaintenanceTarget::Index(
                 IndexTarget::UqCurrentAttributeValuesGrain
-                | IndexTarget::IdxCavAttrNumber
-                | IndexTarget::IdxCavAttrString
-                | IndexTarget::IdxCavAttrStringTrgm
-                | IndexTarget::IdxCavAttrBool
-                | IndexTarget::IdxCavAttrDatetime
-                | IndexTarget::IdxCavAttrUri
-                | IndexTarget::IdxCavAttrGeo
-                | IndexTarget::IdxCavAttrEntityGeo,
+                | IndexTarget::IdxCavValueNumber
+                | IndexTarget::IdxCavValueString
+                | IndexTarget::IdxCavValueStringTrgm
+                | IndexTarget::IdxCavValueBoolean
+                | IndexTarget::IdxCavValueDateTime
+                | IndexTarget::IdxCavValueUri
+                | IndexTarget::IdxCavValueGeometry
+                | IndexTarget::IdxCavEntityGeometry,
             ) => "current_attribute_values",
             MaintenanceTarget::Heap(target) => target.relation_name(),
         }
@@ -183,9 +183,9 @@ mod tests {
 
     #[test]
     fn only_the_string_btree_queues_the_trigram_pair() {
-        assert!(IndexTarget::IdxCavAttrString.queues_trigram_pair());
-        assert!(!IndexTarget::IdxCavAttrStringTrgm.queues_trigram_pair());
-        assert!(!IndexTarget::IdxCavAttrNumber.queues_trigram_pair());
+        assert!(IndexTarget::IdxCavValueString.queues_trigram_pair());
+        assert!(!IndexTarget::IdxCavValueStringTrgm.queues_trigram_pair());
+        assert!(!IndexTarget::IdxCavValueNumber.queues_trigram_pair());
     }
 
     #[test]

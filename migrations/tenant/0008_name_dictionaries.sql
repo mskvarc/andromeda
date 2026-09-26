@@ -1,68 +1,34 @@
 -- ============================================================================
--- 0008: Name dictionaries -- attribute names and entity type names
+-- 0008: Name dictionaries
 -- ============================================================================
--- Two normalization layers between expanded IRIs and every relation that
--- carries one. `attribute_names` sits between attribute IRIs and the relations
--- that carry an attribute identity (temporal streams, current-value
--- projection, registration routing, the attribute arrays of a subscription);
--- `entity_type_names` sits between entity
--- type IRIs and the relations that carry an entity's types (`entities`,
--- `temporal_entities`, both as an `INTEGER[]` of keys). Instead of repeating a
--- 60+ char IRI on every row of those relations, each stores a compact INTEGER
--- reference into the dictionary. For the type arrays the saving compounds: the
--- GIN index that serves a clause 4.17 type selection indexes four-byte keys
--- instead of IRIs, and stays a fraction of the size.
+-- Spec: ETSI GS CIM 009 v1.9.1 clause 4.17
 --
--- `id` is INTEGER rather than SMALLINT in both: attribute and type IRIs are
--- open-world domain values and NGSI-LD sets no corresponding limit, so a
--- 32,767-key ceiling would be a capacity accident rather than a modelled
--- constraint.
+-- The dictionaries that intern expanded attribute IRIs and expanded entity
+-- type IRIs. Every relation that names an attribute or an entity type stores
+-- the dictionary key instead of the IRI, and a set of them as an array of
+-- keys, so a clause 4.17 type selection is served by a GIN index over
+-- four-byte keys rather than over IRIs.
 --
--- `name` is `TEXT COLLATE "C"` in both. The IRIs are identifiers, not prose --
--- nothing about them has linguistic ordering semantics, every comparison the
--- broker makes on them is equality or an anchored prefix, and they are looked
--- up through a unique btree on every write of a new name. `COLLATE "C"` gives
--- that btree byte-wise comparison, makes anchored patterns compile to range
--- scans without a pattern-operator index, and removes the standing hazard of a
--- libc or ICU collation change invalidating the index across an
--- operating-system upgrade.
+-- Keys are `INTEGER`: attribute and type IRIs are open-world values the
+-- specification does not limit, so a 32,767-key ceiling would be an accident
+-- rather than a modelled constraint.
 --
--- `name` is bounded at 1024 UTF-8 octets, the identifier bound
--- (`IDENTIFIER_BYTE_LIMIT` in `andromeda-ngsi-ld-lexicon`) every attribute
--- name and entity type name is parsed under, compact and expanded alike. The
--- unique btree refuses an entry past 2704 bytes (SQLSTATE 54000), so the name
--- types refuse an over-long name as `BadRequestData` before it reaches either
--- table, and the check states the same bound here; a unit test in
--- `migration_set` pins the literal to the Rust constant. Capping the *rate* of
--- new names is an API-layer concern and is not attempted here.
---
--- Both dictionaries stay append-only and therefore open to inflation: any
--- client can mint unbounded distinct IRIs. Rate limiting new-name creation
--- and observing dictionary growth are API-layer concerns and are deliberately
--- absent from this migration; the broker bounds each dictionary's size per
--- tenant before it mints.
---
--- The key arrays carry no foreign key to either dictionary: an array element
--- cannot be a foreign key in PostgreSQL, and the broker mints every key inside
--- the transaction that writes the row referencing it.
---
--- Both dictionaries are tenant-global and live in `public`; the live branch and
--- every Snapshot branch intern into the same keys, which is what lets a
--- Snapshot branch be cloned from the live one row for row.
+-- Neither dictionary ever deletes or re-keys a row, so a key, once minted,
+-- names the same IRI for the life of the tenant.
 -- ============================================================================
 
 CREATE TABLE attribute_names (
-    id INTEGER GENERATED ALWAYS AS IDENTITY,
-    name TEXT COLLATE "C" NOT NULL,
-    CONSTRAINT pk_attribute_names PRIMARY KEY (id),
+    attribute_name_key INTEGER GENERATED ALWAYS AS IDENTITY,
+    name TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+    CONSTRAINT pk_attribute_names PRIMARY KEY (attribute_name_key),
     CONSTRAINT uq_attribute_names_name UNIQUE (name),
     CONSTRAINT chk_attribute_names_name_length CHECK (char_length(name) >= 1 AND octet_length(name) <= 1024)
 );
 
 CREATE TABLE entity_type_names (
-    id INTEGER GENERATED ALWAYS AS IDENTITY,
-    name TEXT COLLATE "C" NOT NULL,
-    CONSTRAINT pk_entity_type_names PRIMARY KEY (id),
+    entity_type_name_key INTEGER GENERATED ALWAYS AS IDENTITY,
+    name TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+    CONSTRAINT pk_entity_type_names PRIMARY KEY (entity_type_name_key),
     CONSTRAINT uq_entity_type_names_name UNIQUE (name),
     CONSTRAINT chk_entity_type_names_name_length CHECK (char_length(name) >= 1 AND octet_length(name) <= 1024)
 );

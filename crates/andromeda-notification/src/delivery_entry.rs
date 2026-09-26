@@ -14,11 +14,11 @@ use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
 use typed_builder::TypedBuilder;
 
-/// Unique identifier for a persisted notification delivery.
+/// Database-generated key of a persisted notification delivery.
 #[derive(Clone, Copy, Debug, Display, Eq, From, Hash, Ord, PartialEq, PartialOrd)]
-pub struct DeliveryId(i64);
+pub struct DeliveryKey(i64);
 
-impl DeliveryId {
+impl DeliveryKey {
     /// Returns the raw `i64` value.
     #[must_use]
     pub const fn into_inner(self) -> i64 {
@@ -31,8 +31,8 @@ impl DeliveryId {
 pub struct DeliveryEntry {
     /// Context branch whose subscription and entity state the event belongs to.
     pub target: ContextTarget,
-    /// Auto-generated delivery identifier, the subject of every acknowledgement.
-    pub id: DeliveryId,
+    /// Database-generated delivery key, the subject of every acknowledgement.
+    pub key: DeliveryKey,
     /// Subscription that matched the change and must be notified.
     pub subscription_id: Uri,
     /// Number of delivery attempts already made for this subscription.
@@ -45,16 +45,16 @@ pub struct DeliveryEntry {
 
 #[cfg(test)]
 mod tests {
-    use crate::delivery_entry::DeliveryId;
+    use crate::delivery_entry::DeliveryKey;
     use pretty_assertions::assert_eq;
 
     #[test]
     fn a_delivery_id_reports_its_raw_value() {
-        assert_eq!(DeliveryId::from(7_i64).into_inner(), 7);
+        assert_eq!(DeliveryKey::from(7_i64).into_inner(), 7);
     }
 
     #[test]
     fn a_delivery_id_displays_as_its_raw_value() {
-        assert_eq!(DeliveryId::from(7_i64).to_string(), "7");
+        assert_eq!(DeliveryKey::from(7_i64).to_string(), "7");
     }
 }

@@ -45,22 +45,24 @@ use url::Url;
 ///
 /// Returns [`ContextStoreError::Database`] when the transaction, the lock or
 /// the `ALTER DATABASE` fails.
-pub async fn configure_platform_database(pool: &PgPool, platform_db_name: &str, synchronous_commit_setting: &str) -> Result<(), ContextStoreError> {
+pub async fn configure_platform_database(pool: &PgPool, platform_database_name: &str, synchronous_commit_setting: &str) -> Result<(), ContextStoreError> {
     let mut transaction = pool.begin().await?;
-    let (lock_sql, lock_values) = platform_configuration_lock(platform_db_name).build_sqlx(PostgresQueryBuilder);
+    let (lock_sql, lock_values) = platform_configuration_lock(platform_database_name).build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(lock_sql.as_str()), lock_values)
         .execute(&mut *transaction)
         .await?;
-    let alter = set_database_synchronous_commit(platform_db_name, synchronous_commit_setting);
+    let alter = set_database_synchronous_commit(platform_database_name, synchronous_commit_setting);
     transaction.execute(sqlx::AssertSqlSafe(alter)).await?;
     transaction.commit().await?;
     Ok(())
 }
 
 /// The transaction advisory lock that serializes configuring one platform database.
-fn platform_configuration_lock(platform_db_name: &str) -> SelectStatement {
+fn platform_configuration_lock(platform_database_name: &str) -> SelectStatement {
     Query::select()
-        .expr(advisory_xact_lock(Expr::val(format!("andromeda:platform-configuration:{platform_db_name}"))))
+        .expr(advisory_xact_lock(Expr::val(format!(
+            "andromeda:platform-configuration:{platform_database_name}"
+        ))))
         .to_owned()
 }
 

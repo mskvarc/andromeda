@@ -122,13 +122,13 @@ async fn claim_branch(
 
     let (sql, values) = claim_statement(target, worker_id, batch_size, f64::from(lease.seconds())).build_sqlx(PostgresQueryBuilder);
     let claim = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx);
-    let claimed_ids: Vec<i64> = observe_statement(DELIVERY_CLAIM, claim).await?;
-    if claimed_ids.is_empty() {
+    let claimed_keys: Vec<i64> = observe_statement(DELIVERY_CLAIM, claim).await?;
+    if claimed_keys.is_empty() {
         tx.commit().await?;
         return Ok(Vec::new());
     }
 
-    let (sql, values) = claimed_projection_statement(target, &claimed_ids).build_sqlx(PostgresQueryBuilder);
+    let (sql, values) = claimed_projection_statement(target, &claimed_keys).build_sqlx(PostgresQueryBuilder);
     let (unnest_alias, unnest_columns, ordinality) = ordinality_alias();
     let sql = apply_with_ordinality(sql, &unnest_alias, &unnest_columns, &ordinality);
     let rows: Vec<RawClaimedDeliveryRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
@@ -172,16 +172,16 @@ fn snapshot_record_lock_statement(snapshot: &SnapshotTarget) -> SelectStatement 
         .to_owned()
 }
 
-/// The `UNNEST … WITH ORDINALITY AS k(name_id, position)` names that
+/// The `UNNEST … WITH ORDINALITY AS k(name_key, position)` names that
 /// [`apply_with_ordinality`] rewrites the projection's set-returning source to.
 ///
-/// The one row's `name_id` is the dictionary key `UNNEST` yields and `position`
+/// The one row's `name_key` is the dictionary key `UNNEST` yields and `position`
 /// is the ordinality that preserves the order the event recorded its attributes
 /// in; both must match the names the projection's aggregate reads.
 fn ordinality_alias() -> (Alias, [UnnestColumn; 1], Alias) {
     (
         Alias::new("k"),
-        [UnnestColumn::new(Alias::new("name_id"), PostgresType::IntegerArray)],
+        [UnnestColumn::new(Alias::new("name_key"), PostgresType::IntegerArray)],
         Alias::new("position"),
     )
 }
@@ -192,7 +192,7 @@ fn ordinality_alias() -> (Alias, [UnnestColumn; 1], Alias) {
 /// carries: still queued (neither delivered nor exhausted) and claimable — the
 /// later of its due instant and its lease expiry has passed. That instant is
 /// the index's expression, spelled through the one shared helper so the
-/// statement and the index match structurally; ordering by it, then by `id`,
+/// statement and the index match structurally; ordering by it, then by `delivery_key`,
 /// is the index's own key order, so the claim is one bounded range scan whose
 /// depth is the batch size. `FOR UPDATE SKIP LOCKED` in the candidate subquery
 /// steps over a row another worker holds instead of waiting on it.
@@ -202,13 +202,13 @@ fn ordinality_alias() -> (Alias, [UnnestColumn; 1], Alias) {
 /// attempt, so the queue never needs to know the configured maximum.
 fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: i32, lease_seconds: f64) -> UpdateStatement {
     let candidates = Query::select()
-        .column(NotificationDeliveries::Id)
+        .column(NotificationDeliveries::DeliveryKey)
         .from(table_of(target, NotificationDeliveries::Table))
         .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_null())
         .and_where(Expr::col(NotificationDeliveries::ExhaustedAt).is_null())
         .and_where(delivery_claimable_at().lte(Expr::current_timestamp()))
         .order_by_expr(delivery_claimable_at(), Order::Asc)
-        .order_by(NotificationDeliveries::Id, Order::Asc)
+        .order_by(NotificationDeliveries::DeliveryKey, Order::Asc)
         // A negative batch size is an absent bound, not a narrower one, so it
         // clamps to zero rather than wrapping into an enormous unsigned width.
         .limit(u64::try_from(batch_size).unwrap_or(0))
@@ -223,12 +223,12 @@ fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: i
             NotificationDeliveries::LeaseUntil,
             Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
         )
-        .and_where(Expr::col(NotificationDeliveries::Id).in_subquery(candidates))
-        .returning_col(NotificationDeliveries::Id)
+        .and_where(Expr::col(NotificationDeliveries::DeliveryKey).in_subquery(candidates))
+        .returning_col(NotificationDeliveries::DeliveryKey)
         .to_owned()
 }
 
-/// The instant a delivery row becomes claimable, as `idx_notification_deliveries_claimable` indexes it.
+/// The instant a delivery row becomes claimable, as `idx_notification_deliveries_claim` indexes it.
 fn delivery_claimable_at() -> SimpleExpr {
     claimable_at(Expr::col(NotificationDeliveries::NextAttemptAt), Expr::col(NotificationDeliveries::LeaseUntil))
 }
@@ -239,9 +239,9 @@ fn delivery_claimable_at() -> SimpleExpr {
 /// a live lease held by this transaction, so no other worker can have altered
 /// them between the claim and this read. The changed attributes are resolved
 /// back through the tenant-global `attribute_names` dictionary in event-recorded
-/// order by a lateral aggregate over the event's `changed_attribute_name_ids`,
+/// order by a lateral aggregate over the event's `changed_attribute_name_keys`,
 /// defaulting to an empty array when the event touched none.
-fn claimed_projection_statement(target: &ContextTarget, claimed_ids: &[i64]) -> SelectStatement {
+fn claimed_projection_statement(target: &ContextTarget, claimed_keys: &[i64]) -> SelectStatement {
     let (delivery, event, subscription) = (Alias::new("c"), Alias::new("e"), Alias::new("s"));
     let (unnest_alias, unnest_columns, position) = ordinality_alias();
     let dictionary = Alias::new("n");
@@ -252,25 +252,25 @@ fn claimed_projection_statement(target: &ContextTarget, claimed_ids: &[i64]) -> 
             Expr::col((unnest_alias.clone(), position)),
         ))
         .from_function(
-            unnest_call([(&unnest_columns[0], Expr::col((event.clone(), NotificationEvents::ChangedAttributeNameIds)))]),
+            unnest_call([(&unnest_columns[0], Expr::col((event.clone(), NotificationEvents::ChangedAttributeNameKeys)))]),
             unnest_alias.clone(),
         )
         .join_as(
             JoinType::Join,
             AttributeNames::Table,
             dictionary.clone(),
-            Expr::col((dictionary, AttributeNames::Id)).equals((unnest_alias, Alias::new("name_id"))),
+            Expr::col((dictionary, AttributeNames::AttributeNameKey)).equals((unnest_alias, Alias::new("name_key"))),
         )
         .to_owned();
 
     let changed_attributes = Func::coalesce([SimpleExpr::SubQuery(None, Box::new(ordered_names.into_sub_query_statement())), text_array(&[])]);
 
     Query::select()
-        .column((delivery.clone(), NotificationDeliveries::Id))
+        .column((delivery.clone(), NotificationDeliveries::DeliveryKey))
         .expr_as(Expr::col((subscription.clone(), Subscriptions::Id)), Alias::new("subscription_id"))
         .column((delivery.clone(), NotificationDeliveries::AttemptCount))
         .column((delivery.clone(), NotificationDeliveries::NextAttemptAt))
-        .expr_as(Expr::col((event.clone(), NotificationEvents::Id)), Alias::new("event_id"))
+        .expr_as(Expr::col((event.clone(), NotificationEvents::EventKey)), Alias::new("event_key"))
         .column((event.clone(), NotificationEvents::WriteId))
         .column((event.clone(), NotificationEvents::EventOrdinal))
         .column((event.clone(), NotificationEvents::Trigger))
@@ -285,7 +285,7 @@ fn claimed_projection_statement(target: &ContextTarget, claimed_ids: &[i64]) -> 
             JoinType::InnerJoin,
             table_of(target, NotificationEvents::Table),
             event.clone(),
-            Expr::col((event, NotificationEvents::Id)).equals((delivery.clone(), NotificationDeliveries::EventId)),
+            Expr::col((event, NotificationEvents::EventKey)).equals((delivery.clone(), NotificationDeliveries::EventKey)),
         )
         .join_as(
             JoinType::InnerJoin,
@@ -293,7 +293,7 @@ fn claimed_projection_statement(target: &ContextTarget, claimed_ids: &[i64]) -> 
             subscription.clone(),
             Expr::col((subscription, Subscriptions::SubscriptionKey)).equals((delivery.clone(), NotificationDeliveries::SubscriptionKey)),
         )
-        .and_where(Expr::col((delivery, NotificationDeliveries::Id)).eq(any(bigint_array(claimed_ids))))
+        .and_where(Expr::col((delivery, NotificationDeliveries::DeliveryKey)).eq(any(bigint_array(claimed_keys))))
         .to_owned()
 }
 
@@ -363,7 +363,7 @@ mod tests {
     fn the_candidates_are_ordered_by_the_claimable_instant_then_identifier() {
         let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#"ORDER BY GREATEST("next_attempt_at", COALESCE("lease_until", '-infinity'::timestamptz)) ASC, "id" ASC LIMIT 10"#),
+            sql.contains(r#"ORDER BY GREATEST("next_attempt_at", COALESCE("lease_until", '-infinity'::timestamptz)) ASC, "delivery_key" ASC LIMIT 10"#),
             "{sql}"
         );
     }
@@ -386,13 +386,13 @@ mod tests {
     fn the_changed_attributes_keep_the_order_the_event_recorded_them_in() {
         let sql = projection_sql(&ContextTarget::Live);
         assert!(sql.contains(r#"array_agg("n"."name" ORDER BY "k"."position")"#), "{sql}");
-        assert!(sql.contains("WITH ORDINALITY AS k(name_id, position)"), "{sql}");
+        assert!(sql.contains("WITH ORDINALITY AS k(name_key, position)"), "{sql}");
     }
 
     #[test]
     fn the_projection_reads_only_the_rows_this_worker_claimed() {
         let sql = projection_sql(&ContextTarget::Live);
-        assert!(sql.contains(r#""c"."id" = ANY("#), "{sql}");
+        assert!(sql.contains(r#""c"."delivery_key" = ANY("#), "{sql}");
         assert!(sql.contains("COALESCE"), "{sql}");
     }
 
@@ -415,7 +415,7 @@ mod tests {
     fn the_projection_names_each_column_the_row_mapper_reads() {
         let sql = projection_sql(&ContextTarget::Live);
         assert!(sql.contains(r#"AS "subscription_id""#), "{sql}");
-        assert!(sql.contains(r#"AS "event_id""#), "{sql}");
+        assert!(sql.contains(r#"AS "event_key""#), "{sql}");
         assert!(sql.contains(r#"AS "changed_attributes""#), "{sql}");
     }
 }

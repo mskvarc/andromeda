@@ -18,21 +18,21 @@ use serde_json::Value;
 /// Monotonic anchor-assigned order of committed intents within one tenant.
 #[derive(Clone, Copy, Debug, Deserialize, Display, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[display("{_0}")]
-pub struct TemporalIntentSequence(i64);
+pub struct TemporalIntentKey(i64);
 
-impl TemporalIntentSequence {
-    /// Construct a positive sequence decoded from durable storage.
+impl TemporalIntentKey {
+    /// Construct a positive key decoded from durable storage.
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidTemporalIntentSequence`] when `value` is not strictly
+    /// Returns [`InvalidTemporalIntentKey`] when `value` is not strictly
     /// positive: the queue numbers its commits from one, so zero or a negative
     /// value names no committed intent.
-    pub const fn new(value: i64) -> Result<TemporalIntentSequence, InvalidTemporalIntentSequence> {
+    pub const fn new(value: i64) -> Result<TemporalIntentKey, InvalidTemporalIntentKey> {
         if value > 0 {
-            Ok(TemporalIntentSequence(value))
+            Ok(TemporalIntentKey(value))
         } else {
-            Err(InvalidTemporalIntentSequence)
+            Err(InvalidTemporalIntentKey)
         }
     }
 
@@ -43,10 +43,10 @@ impl TemporalIntentSequence {
     }
 }
 
-/// A durable store contained a non-positive temporal intent sequence.
+/// A durable store contained a non-positive temporal intent key.
 #[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
-#[error("temporal intent sequence must be positive")]
-pub struct InvalidTemporalIntentSequence;
+#[error("temporal intent key must be positive")]
+pub struct InvalidTemporalIntentKey;
 
 /// Identity of one observation within an idempotent append intent.
 ///
@@ -107,9 +107,9 @@ pub enum TemporalAppendEntry {
 /// so it owns the write identity and ingestion instant its rows are stored
 /// under. Every entry shares them: they are consequences of one accepted write.
 ///
-/// `base` is the first ordinal this intent's entries occupy in its commit's
+/// `base_ordinal` is the first ordinal this intent's entries occupy in its commit's
 /// global consequence numbering. One commit's temporal consequences span every
-/// landed entity, not just this one, so entries are numbered from `base` rather
+/// landed entity, not just this one, so entries are numbered from `base_ordinal` rather
 /// than from zero: that is what keeps two entities landed by the same commit
 /// from ever numbering an entry with the same `(write_id, ordinal)` pair.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -117,7 +117,7 @@ pub struct TemporalAppendIntent {
     /// Identity and ingestion instant every entry of this intent is stored under.
     pub record: WriteRecord,
     /// First ordinal this intent's entries occupy in the commit's numbering.
-    pub base: WriteOrdinal,
+    pub base_ordinal: WriteOrdinal,
     /// Entity whose temporal evolution receives the entries.
     pub entity_id: Uri,
     /// Entity types the receiving Temporal Evolution is recorded under.
@@ -140,7 +140,7 @@ pub struct TemporalAppendIntent {
 impl TemporalAppendIntent {
     /// Interpret one landed atomic write's history consequences exactly once.
     ///
-    /// `record` and `base` come from the commit, not from this call: every
+    /// `record` and `base_ordinal` come from the commit, not from this call: every
     /// entity a commit lands shares the commit's one write identity, and draws
     /// its entries' ordinals from the commit's single running counter.
     ///
@@ -164,9 +164,9 @@ impl TemporalAppendIntent {
         entity_types: &[EntityTypeName],
         history: &[HistoryRecord],
         record: WriteRecord,
-        base: WriteOrdinal,
+        base_ordinal: WriteOrdinal,
     ) -> Result<Option<TemporalAppendIntent>, TemporalError> {
-        prepare(entity_id, entity_types, history, record, base)
+        prepare(entity_id, entity_types, history, record, base_ordinal)
     }
 
     /// What this intent's entries are for.
@@ -201,7 +201,7 @@ impl TemporalAppendIntent {
     /// Iterate only attribute-history entries with their stable intent ordinals.
     pub fn history_entries(&self) -> impl Iterator<Item = (TemporalObservationIdentity, &TemporalAppendEntry)> {
         self.entries.iter().enumerate().filter_map(move |(position, entry)| {
-            let ordinal = u32::try_from(position).ok().and_then(|delta| self.base.advanced_by(delta).ok())?;
+            let ordinal = u32::try_from(position).ok().and_then(|delta| self.base_ordinal.advanced_by(delta).ok())?;
             match entry {
                 TemporalAppendEntry::Observation { .. } | TemporalAppendEntry::Tombstone { .. } => Some((
                     TemporalObservationIdentity {
@@ -218,9 +218,9 @@ impl TemporalAppendIntent {
 
 /// One committed intent together with its durable tenant-local order.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct SequencedTemporalAppendIntent {
-    /// Monotonic commit sequence.
-    pub sequence: TemporalIntentSequence,
+pub struct KeyedTemporalAppendIntent {
+    /// Database-generated intent key, monotonic in commit order.
+    pub key: TemporalIntentKey,
     /// Idempotent append command.
     pub intent: TemporalAppendIntent,
 }
@@ -400,7 +400,7 @@ mod tests {
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let intent = TemporalAppendIntent {
             record: WriteRecord::restored(WriteId::mint(), recorded_at),
-            base: WriteOrdinal::at(0),
+            base_ordinal: WriteOrdinal::at(0),
             entity_types: Vec::new(),
             entity_id,
             entries: vec![TemporalAppendEntry::Scope {

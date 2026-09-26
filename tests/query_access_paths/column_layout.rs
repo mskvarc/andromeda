@@ -106,11 +106,11 @@ async fn alignment_order_is_no_wider_than_a_naive_declaration_order() {
     // once in the order a schema author would naturally type them.
     for statement in [
         "CREATE TEMPORARY TABLE layout_aligned (\
-             entity_key BIGINT NOT NULL, modified_at TIMESTAMPTZ NOT NULL, attribute_name_id INTEGER NOT NULL, \
-             attribute_kind SMALLINT NOT NULL, value_kind SMALLINT NOT NULL, value_bool BOOLEAN, value_string TEXT) ON COMMIT DROP",
+             entity_key BIGINT NOT NULL, modified_at TIMESTAMPTZ NOT NULL, attribute_name_key INTEGER NOT NULL, \
+             attribute_kind SMALLINT NOT NULL, value_kind SMALLINT NOT NULL, value_boolean BOOLEAN, value_string TEXT) ON COMMIT DROP",
         "CREATE TEMPORARY TABLE layout_naive (\
-             attribute_kind SMALLINT NOT NULL, entity_key BIGINT NOT NULL, value_bool BOOLEAN, \
-             attribute_name_id INTEGER NOT NULL, modified_at TIMESTAMPTZ NOT NULL, value_string TEXT, \
+             attribute_kind SMALLINT NOT NULL, entity_key BIGINT NOT NULL, value_boolean BOOLEAN, \
+             attribute_name_key INTEGER NOT NULL, modified_at TIMESTAMPTZ NOT NULL, value_string TEXT, \
              value_kind SMALLINT NOT NULL) ON COMMIT DROP",
         "INSERT INTO layout_aligned SELECT g, now(), g % 1000, 1, 2, true, 'value-' || g::text FROM generate_series(1, 20000) AS g",
         "INSERT INTO layout_naive SELECT 1, g, true, g % 1000, now(), 'value-' || g::text, 2 FROM generate_series(1, 20000) AS g",

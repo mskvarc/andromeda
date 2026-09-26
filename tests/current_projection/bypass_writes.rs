@@ -12,9 +12,9 @@ use sqlx::PgConnection;
 /// its search row, and return its surrogate key.
 pub async fn insert_typed_entity(connection: &mut PgConnection, entity_id: &str, type_iri: &str) -> i64 {
     let payload = json!([{ "@id": entity_id, "@type": [type_iri] }]);
-    let type_id: i32 = sqlx::query_scalar(
+    let type_key: i32 = sqlx::query_scalar(
         "INSERT INTO entity_type_names (name) VALUES ($1) \
-         ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+         ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING entity_type_name_key",
     )
     .bind(type_iri)
     .fetch_one(&mut *connection)
@@ -23,10 +23,10 @@ pub async fn insert_typed_entity(connection: &mut PgConnection, entity_id: &str,
     sqlx::query_scalar(
         "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key), \
               doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, $3 FROM ins) \
-         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids) SELECT entity_key, ARRAY[$2], ARRAY[]::integer[] FROM ins RETURNING entity_key",
+         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys) SELECT entity_key, ARRAY[$2], ARRAY[]::integer[] FROM ins RETURNING entity_key",
     )
     .bind(entity_id)
-    .bind(type_id)
+    .bind(type_key)
     .bind(&payload)
     .fetch_one(&mut *connection)
     .await
@@ -34,11 +34,11 @@ pub async fn insert_typed_entity(connection: &mut PgConnection, entity_id: &str,
 }
 
 /// Register one expanded attribute IRI in the attribute-name dictionary and
-/// return its identifier, reusing the entry when it already exists.
+/// return its key, reusing the entry when it already exists.
 pub async fn insert_attribute_name(connection: &mut PgConnection, attribute_iri: &str) -> i32 {
     sqlx::query_scalar(
         "INSERT INTO attribute_names (name) VALUES ($1) \
-         ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+         ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING attribute_name_key",
     )
     .bind(attribute_iri)
     .fetch_one(connection)

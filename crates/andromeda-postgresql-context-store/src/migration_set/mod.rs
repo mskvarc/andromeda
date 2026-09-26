@@ -32,6 +32,15 @@ pub mod platform;
 /// The tenant migration set: `tenant/` together with `branch/`.
 pub mod tenant;
 
+/// The comment rules every migration's text keeps.
+#[cfg(test)]
+mod comment_tests;
+/// The schema objects the embedded migrations declare, read from their text.
+#[cfg(test)]
+mod declared_schema;
+/// The naming and storage conventions, checked against the declared schema.
+#[cfg(test)]
+mod naming_tests;
 /// The byte bounds the migrations state, tied to the Rust constants.
 #[cfg(test)]
 mod storage_bound_tests;

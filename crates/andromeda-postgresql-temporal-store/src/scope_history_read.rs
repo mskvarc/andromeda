@@ -202,8 +202,8 @@ fn decode_scope_value(row: &PgRow) -> Result<ScopeHistoryValue, TemporalStoreErr
 /// reported instead of being resolved by precedence.
 fn decode_instance_identity(row: &PgRow) -> Result<InstanceIdentity, TemporalStoreError> {
     let generated: Option<Uuid> = row
-        .try_get("generated_instance_uuid")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.generated_instance_uuid: {error}")))?;
+        .try_get("generated_instance_id")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.generated_instance_id: {error}")))?;
     let verbatim: Option<String> = row
         .try_get("verbatim_instance_id")
         .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.verbatim_instance_id: {error}")))?;

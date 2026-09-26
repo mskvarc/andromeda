@@ -33,7 +33,7 @@ async fn ledger_rows(pool: &PgPool, ledger: &str) -> i64 {
 
 /// Drop the scratch database, whatever a previous run left behind.
 async fn drop_ledger_database(base: &DatabaseUrl) {
-    let admin = base.with_db_name(&TenantDatabaseName::from("postgres".to_owned()));
+    let admin = base.with_database_name(&TenantDatabaseName::from("postgres".to_owned()));
     let mut connection = PgConnection::connect(admin.as_str()).await.expect("administrative connection");
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {LEDGER_DATABASE} WITH (FORCE)")))
         .execute(&mut connection)
@@ -51,7 +51,7 @@ async fn fresh_platform_database(base: &DatabaseUrl) -> PgPool {
         .expect("scratch database");
     let pool = PgPoolOptions::new()
         .max_connections(2)
-        .connect(base.with_db_name(&name).as_str())
+        .connect(base.with_database_name(&name).as_str())
         .await
         .expect("scratch database connection");
     migrate_platform_db(&pool).await.expect("a fresh platform database migrates");

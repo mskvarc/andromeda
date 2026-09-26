@@ -280,7 +280,7 @@ impl PostgresAtomicCommitter {
     /// `record`, and draws its ordinals from the one running counter that
     /// starts at `base`. `commit` mints a fresh record and starts that counter
     /// at zero; `commit_replayed` reuses a durably stored record and resumes
-    /// the counter at its stored `consequence_base`. A side-effect job retried
+    /// the counter at its stored `base_ordinal`. A side-effect job retried
     /// after a crash therefore reproduces exactly the identity and ordinals its
     /// first attempt would have produced, so the replay's rows collide with the
     /// first attempt's on their row-level `ON CONFLICT ... DO NOTHING`
@@ -359,7 +359,7 @@ impl ContextCommitter for PostgresAtomicCommitter {
 
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
-        Box::pin(async move { rerun_while_contended(|| self.commit_under(&target, replay.record, replay.consequence_base, &writes)).await })
+        Box::pin(async move { rerun_while_contended(|| self.commit_under(&target, replay.record, replay.base_ordinal, &writes)).await })
     }
 }
 
@@ -449,8 +449,8 @@ mod tests {
         let (intents, next) = interpret(&landed, &record, WriteOrdinal::at(0)).expect("both entities interpret cleanly");
 
         pretty_assertions::assert_eq!(intents.len(), 2);
-        pretty_assertions::assert_eq!(intents[0].base, WriteOrdinal::at(0));
-        pretty_assertions::assert_eq!(intents[1].base, WriteOrdinal::at(1));
+        pretty_assertions::assert_eq!(intents[0].base_ordinal, WriteOrdinal::at(0));
+        pretty_assertions::assert_eq!(intents[1].base_ordinal, WriteOrdinal::at(1));
         pretty_assertions::assert_eq!(next, WriteOrdinal::at(2));
     }
 
@@ -465,7 +465,7 @@ mod tests {
 
         let (intents, next) = interpret(&landed, &record, WriteOrdinal::at(5)).expect("the entity interprets cleanly");
 
-        pretty_assertions::assert_eq!(intents[0].base, WriteOrdinal::at(5));
+        pretty_assertions::assert_eq!(intents[0].base_ordinal, WriteOrdinal::at(5));
         pretty_assertions::assert_eq!(next, WriteOrdinal::at(6));
     }
 }

@@ -41,7 +41,7 @@ const BOUNDED_COLUMNS: &[BoundedColumn] = &[
     BoundedColumn {
         column: "temporal_entities.id",
         constraint: "chk_temporal_entities_id_length",
-        insert: "INSERT INTO temporal_entities (created_at, modified_at, id, type_ids) VALUES (now(), now(), $1, ARRAY[1])",
+        insert: "INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) VALUES (now(), now(), $1, ARRAY[1])",
     },
     BoundedColumn {
         column: "attribute_names.name",

@@ -66,7 +66,10 @@ fn only_when_aggregable(operand: SimpleExpr) -> SimpleExpr {
 /// which is what makes every arithmetic method of the JSON Number column carry
 /// over to the JSON Boolean column beside it.
 fn boolean_as_numeric() -> SimpleExpr {
-    cast(cast(Expr::col((Ah, AttributeHistory::ValueBool)), PostgresType::Integer), PostgresType::Numeric)
+    cast(
+        cast(Expr::col((Ah, AttributeHistory::ValueBoolean)), PostgresType::Integer),
+        PostgresType::Numeric,
+    )
 }
 
 /// The size of an array value, and nothing for a value that is not an array.
@@ -126,7 +129,7 @@ pub fn ordered_text_expr() -> SimpleExpr {
 /// that have a `min` and a `max` at all.
 #[must_use]
 pub fn ordered_instant_expr() -> SimpleExpr {
-    only_when_aggregable(Expr::col((Ah, AttributeHistory::ValueDatetime)))
+    only_when_aggregable(Expr::col((Ah, AttributeHistory::ValueDateTime)))
 }
 
 /// The mean time of day of a `Time`-valued Property, in canonical form.
@@ -165,8 +168,8 @@ pub fn distinct_value_expr() -> SimpleExpr {
     Func::coalesce([
         cast(Expr::col((Ah, AttributeHistory::ValueNumber)), PostgresType::Text),
         Expr::col((Ah, AttributeHistory::ValueString)),
-        cast(Expr::col((Ah, AttributeHistory::ValueBool)), PostgresType::Text),
-        cast(Expr::col((Ah, AttributeHistory::ValueDatetime)), PostgresType::Text),
+        cast(Expr::col((Ah, AttributeHistory::ValueBoolean)), PostgresType::Text),
+        cast(Expr::col((Ah, AttributeHistory::ValueDateTime)), PostgresType::Text),
         Expr::col((Ah, AttributeHistory::ValueUri)),
         cast(Expr::col((Ah, AttributeHistory::ValueObject)), PostgresType::Text),
     ])
@@ -228,7 +231,7 @@ mod tests {
     #[test]
     fn both_numeric_operands_read_a_boolean_as_its_zero_or_one() {
         for sql in [rendered(sized_numeric_expr()), rendered(arithmetic_numeric_expr())] {
-            assert!(sql.contains("\"ah\".\"value_bool\"::integer::numeric"), "{sql}");
+            assert!(sql.contains("\"ah\".\"value_boolean\"::integer::numeric"), "{sql}");
         }
     }
 
@@ -290,7 +293,7 @@ mod tests {
     #[test]
     fn the_distinct_operand_folds_every_typed_value_column_for_every_family() {
         let sql = rendered(distinct_value_expr());
-        for column in ["value_number", "value_string", "value_bool", "value_datetime", "value_uri", "value_object"] {
+        for column in ["value_number", "value_string", "value_boolean", "value_date_time", "value_uri", "value_object"] {
             assert!(sql.contains(column), "{column} missing: {sql}");
         }
         assert!(!sql.contains("attribute_kind"), "counting must not be gated on the family: {sql}");

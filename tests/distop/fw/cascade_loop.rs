@@ -189,6 +189,7 @@ async fn distop_entity_via_chain_appends_alias_and_excludes_loop() {
     );
 
     let front_registration = CsrBuilder::new(&topology.id("registration:chain-front"), middle.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryEntity"])
@@ -229,6 +230,7 @@ async fn distop_entity_loop_single_exclusive_returns_199_warning() {
     let entity_id = topology.id("Vehicle:loop-508");
 
     let front_registration = CsrBuilder::new(&topology.id("registration:loop-front"), peer.peer_url())
+        .tenant(topology.tenant())
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
@@ -237,6 +239,7 @@ async fn distop_entity_loop_single_exclusive_returns_199_warning() {
     assert_status(&front.client().create_registration(&front_registration).await.expect("front registration"), 201);
 
     let peer_registration = CsrBuilder::new(&topology.id("registration:loop-peer"), front.peer_url())
+        .tenant(topology.tenant())
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
@@ -286,6 +289,7 @@ async fn distop_entity_loop_multi_source_returns_199_warning() {
     );
 
     let front_registration = CsrBuilder::new(&topology.id("registration:loop-multi-front"), peer.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryEntity"])
@@ -293,6 +297,7 @@ async fn distop_entity_loop_multi_source_returns_199_warning() {
     assert_status(&front.client().create_registration(&front_registration).await.expect("front registration"), 201);
 
     let peer_registration = CsrBuilder::new(&topology.id("registration:loop-multi-peer"), front.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryEntity"])
@@ -310,9 +315,15 @@ async fn distop_entity_loop_multi_source_returns_199_warning() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Each tenant is federated separately: a query under a tenant forwards with
-/// that tenant's `NGSILD-Tenant` header, matching per (source, tenant) (clause
-/// 4.3.6). Confirms REQ-FW-32.
+/// Each tenant is federated separately (clause 4.3.6.4) and a forwarded
+/// request runs in the tenant its registration names (clause 4.14: "the Tenant
+/// information from the Context Source Registration has to be used. If no
+/// Tenant information is present in the Context Source Registration, no Tenant
+/// information is to be used and thus the default Tenant is targeted"). Two
+/// tenants hold a registration with the same id: the first names a tenant at the
+/// source and is forwarded with it, the second names none and is forwarded
+/// without `NGSILD-Tenant`, although both queries ran under a tenant of their
+/// own. Confirms REQ-FW-32.
 #[tokio::test]
 async fn distop_entity_via_multi_tenant_each_tenant_considered_separately() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -322,20 +333,30 @@ async fn distop_entity_via_multi_tenant_each_tenant_considered_separately() {
 
     let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
-    let registration = CsrBuilder::new(&topology.id("registration:tenant-federation"), &endpoint)
-        .mode("inclusive")
-        .entity_type(&vtype)
-        .operations(&["queryEntity"])
-        .build();
+    let registration = || {
+        CsrBuilder::new(&topology.id("registration:tenant-federation"), &endpoint)
+            .mode("inclusive")
+            .entity_type(&vtype)
+            .operations(&["queryEntity"])
+    };
 
     let first_tenant = TenantName::parse("distopTenantAlpha").expect("valid tenant name");
     let second_tenant = TenantName::parse("distopTenantBeta").expect("valid tenant name");
     let first_client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(first_tenant);
     let second_client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(second_tenant);
 
-    assert_status(&first_client.create_registration(&registration).await.expect("first tenant registration"), 201);
     assert_status(
-        &second_client.create_registration(&registration).await.expect("second tenant registration"),
+        &first_client
+            .create_registration(&registration().tenant("distopRemoteAlpha").build())
+            .await
+            .expect("first tenant registration"),
+        201,
+    );
+    assert_status(
+        &second_client
+            .create_registration(&registration().build())
+            .await
+            .expect("second tenant registration"),
         201,
     );
 
@@ -347,8 +368,8 @@ async fn distop_entity_via_multi_tenant_each_tenant_considered_separately() {
     let first_forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
     assert_eq!(
         forwarded_header(&first_forwarded, "ngsild-tenant").as_deref(),
-        Some("distopTenantAlpha"),
-        "the first tenant's query carries its own NGSILD-Tenant"
+        Some("distopRemoteAlpha"),
+        "the first tenant's registration names the tenant the source is contacted in"
     );
 
     let second_query = second_client
@@ -358,9 +379,9 @@ async fn distop_entity_via_multi_tenant_each_tenant_considered_separately() {
     assert_status(&second_query, 200);
     let second_forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
     assert_eq!(
-        forwarded_header(&second_forwarded, "ngsild-tenant").as_deref(),
-        Some("distopTenantBeta"),
-        "the second tenant's query carries its own NGSILD-Tenant"
+        forwarded_header(&second_forwarded, "ngsild-tenant"),
+        None,
+        "a registration naming no tenant targets the source's default tenant, whatever tenant the query ran in"
     );
 
     // Tenant-scoped registrations are reclaimed explicitly: prefix cleanup runs on the leased and the default tenant only.

@@ -152,8 +152,8 @@ impl TenantStateFactory for BrokerTenantFactory {
     type Runtime = BrokerTenantRuntime;
 
     async fn build(&self, tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<AndromedaState>, BrokerTenantRuntime), TenancyError> {
-        let serving_url = self.request_url.with_db_name(database);
-        let migration_url = self.direct_url.with_db_name(database);
+        let serving_url = self.request_url.with_database_name(database);
+        let migration_url = self.direct_url.with_database_name(database);
         let (state, runtime) = build_tenant_state(
             &self.config,
             &serving_url,

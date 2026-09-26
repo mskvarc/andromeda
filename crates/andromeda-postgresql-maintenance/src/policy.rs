@@ -78,7 +78,7 @@ pub struct TargetState {
     /// Number of immediately preceding qualifying samples.
     pub consecutive_breaches: u32,
     /// Work already qualified on an earlier pass.
-    pub pending_action: bool,
+    pub is_action_pending: bool,
     /// Successful-action cooldown deadline.
     pub cooldown_until: Option<DateTime<Utc>>,
 }
@@ -201,7 +201,7 @@ pub fn decide(
     if gates.waiting_relation_lock {
         return PolicyDecision::Deferred(DeferralReason::WaitingRelationLock);
     }
-    if state.pending_action {
+    if state.is_action_pending {
         return match mode {
             MaintenanceMode::Disabled | MaintenanceMode::Observe => PolicyDecision::WouldAct,
             MaintenanceMode::Automatic => PolicyDecision::Act,
@@ -302,7 +302,7 @@ mod tests {
         let now = Utc::now();
         let sample = qualifying(profile);
         let cooldown = TargetState {
-            pending_action: true,
+            is_action_pending: true,
             cooldown_until: Some(now + ChronoDuration::hours(1)),
             ..TargetState::default()
         };
@@ -345,7 +345,7 @@ mod tests {
                     MaintenanceMode::Automatic,
                     profile,
                     TargetState {
-                        pending_action: true,
+                        is_action_pending: true,
                         ..TargetState::default()
                     },
                     sample,

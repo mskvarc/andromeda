@@ -171,14 +171,14 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
     match target {
         MaintenanceTarget::Index(
             IndexTarget::UqCurrentAttributeValuesGrain
-            | IndexTarget::IdxCavAttrNumber
-            | IndexTarget::IdxCavAttrString
-            | IndexTarget::IdxCavAttrStringTrgm
-            | IndexTarget::IdxCavAttrBool
-            | IndexTarget::IdxCavAttrDatetime
-            | IndexTarget::IdxCavAttrUri
-            | IndexTarget::IdxCavAttrGeo
-            | IndexTarget::IdxCavAttrEntityGeo,
+            | IndexTarget::IdxCavValueNumber
+            | IndexTarget::IdxCavValueString
+            | IndexTarget::IdxCavValueStringTrgm
+            | IndexTarget::IdxCavValueBoolean
+            | IndexTarget::IdxCavValueDateTime
+            | IndexTarget::IdxCavValueUri
+            | IndexTarget::IdxCavValueGeometry
+            | IndexTarget::IdxCavEntityGeometry,
         ) => MaintenanceAction::Reindex,
         MaintenanceTarget::Heap(HeapTarget::CurrentAttributeValues | HeapTarget::EntityDocuments | HeapTarget::SubscriptionDeliveryState) => {
             MaintenanceAction::Vacuum

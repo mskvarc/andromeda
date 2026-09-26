@@ -1,4 +1,4 @@
-//! The number `csr_delivery_state.status` stores a registration's health as.
+//! The number `registration_delivery_state.status` stores a registration's health as.
 //!
 //! Written as exhaustive matches in both directions, so a status a later
 //! revision of clause 5.2.9 adds fails to compile here, where its persisted

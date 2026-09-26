@@ -425,7 +425,7 @@ mod tests {
         for method in [AggrMethod::StdDev, AggrMethod::SumSq] {
             let sql = sql_of(&aggregated(vec![method], None));
             assert!(!sql.contains("jsonb_array_length"), "{method}: {sql}");
-            assert!(sql.contains("\"ah\".\"value_bool\"::integer::numeric"), "{method}: {sql}");
+            assert!(sql.contains("\"ah\".\"value_boolean\"::integer::numeric"), "{method}: {sql}");
         }
     }
 
@@ -453,7 +453,7 @@ mod tests {
     fn numeric_values_are_aggregated_without_a_float_cast() {
         let sql = sql_of(&aggregated(vec![AggrMethod::Min, AggrMethod::Max, AggrMethod::Avg], None));
         assert!(!sql.contains("float8"), "{sql}");
-        assert!(sql.contains("\"ah\".\"value_bool\"::integer::numeric"), "{sql}");
+        assert!(sql.contains("\"ah\".\"value_boolean\"::integer::numeric"), "{sql}");
     }
 
     /// Clause 4.5.19: an empty or zero period aggregates the whole range into one

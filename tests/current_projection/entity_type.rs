@@ -1,7 +1,7 @@
 //! Verification-matrix row "Empty Entity type".
 //!
 //! An Entity always has at least one type (clause 4.5.1). Rust rejects the
-//! empty array at the API boundary, and `chk_entity_search_types_present`
+//! empty array at the API boundary, and `chk_entity_search_entity_type_name_keys_present`
 //! refuses it again for any writer that bypasses the API.
 
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
@@ -45,7 +45,7 @@ async fn current_projection_database_refuses_a_typeless_entity_row() {
     let failure = sqlx::query(
         "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key), \
               doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, $2 FROM ins) \
-         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids) SELECT entity_key, ARRAY[]::integer[], ARRAY[]::integer[] FROM ins",
+         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys) SELECT entity_key, ARRAY[]::integer[], ARRAY[]::integer[] FROM ins",
     )
     .bind(&id)
     .bind(&payload)
@@ -79,7 +79,7 @@ async fn current_projection_persists_every_type_of_a_multi_type_entity() {
 
     let types: Vec<String> = sqlx::query_scalar(
         "SELECT n.name FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key \
-         CROSS JOIN unnest(s.type_ids) AS t(id) JOIN entity_type_names n ON n.id = t.id WHERE e.id = $1 ORDER BY 1",
+         CROSS JOIN unnest(s.entity_type_name_keys) AS t(key) JOIN entity_type_names n ON n.entity_type_name_key = t.key WHERE e.id = $1 ORDER BY 1",
     )
     .bind(&id)
     .fetch_all(scope.database_pool())

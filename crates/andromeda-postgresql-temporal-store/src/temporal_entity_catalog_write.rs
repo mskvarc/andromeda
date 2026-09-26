@@ -16,7 +16,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
-use andromeda_postgresql_query::entity_type_id::EntityTypeId;
+use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_postgresql_schema::temporal::TemporalEntities;
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -47,7 +47,7 @@ enum EntityStaged {
     /// Write clock, read for both `created_at` and `modified_at`.
     RecordedAt,
     /// Type dictionary-key array as JSONB, expanded to `integer[]` in the insert.
-    TypeIdsJson,
+    EntityTypeNameKeysJson,
 }
 
 impl TemporalRepository {
@@ -104,7 +104,7 @@ impl TemporalRepository {
             let rows: Vec<(i64, String)> = sqlx::query_as(AssertSqlSafe(sql))
                 .bind(&binds.ids)
                 .bind(&binds.recorded_ats)
-                .bind(&binds.type_ids_json)
+                .bind(&binds.entity_type_name_keys_json)
                 .fetch_all(&mut **tx)
                 .await?;
             harvest_keys(&mut entity_keys, rows)?;
@@ -209,22 +209,22 @@ struct EntityUpsertBinds<'a> {
     /// Write clock of each creating entity, one per entity so the array stays square.
     recorded_ats: Vec<DateTime<Utc>>,
     /// Type dictionary keys of each creating entity, as a JSON array of integers.
-    type_ids_json: Vec<Value>,
+    entity_type_name_keys_json: Vec<Value>,
 }
 
 /// Spread every creating entity into column-major binds, one row per entity.
 fn entity_upsert_binds<'a>(
     creating: &[&'a TemporalCatalogUpsert],
     recorded_at: DateTime<Utc>,
-    type_keys: &HashMap<EntityTypeName, EntityTypeId>,
+    type_keys: &HashMap<EntityTypeName, EntityTypeNameKey>,
 ) -> Result<EntityUpsertBinds<'a>, TemporalStoreError> {
     let mut binds = EntityUpsertBinds {
         ids: Vec::with_capacity(creating.len()),
         recorded_ats: Vec::with_capacity(creating.len()),
-        type_ids_json: Vec::with_capacity(creating.len()),
+        entity_type_name_keys_json: Vec::with_capacity(creating.len()),
     };
     for upsert in creating {
-        let type_ids = upsert
+        let entity_type_name_keys = upsert
             .types
             .iter()
             .map(|entity_type| {
@@ -236,7 +236,7 @@ fn entity_upsert_binds<'a>(
             .collect::<Result<Vec<i32>, TemporalStoreError>>()?;
         binds.ids.push(upsert.entity_id.as_str());
         binds.recorded_ats.push(recorded_at);
-        binds.type_ids_json.push(Value::from(type_ids));
+        binds.entity_type_name_keys_json.push(Value::from(entity_type_name_keys));
     }
     Ok(binds)
 }
@@ -246,7 +246,7 @@ fn entity_staging_columns() -> [UnnestColumn; 3] {
     [
         UnnestColumn::new(EntityStaged::Id, PostgresType::TextArray),
         UnnestColumn::new(EntityStaged::RecordedAt, PostgresType::TimestamptzArray),
-        UnnestColumn::new(EntityStaged::TypeIdsJson, PostgresType::JsonbArray),
+        UnnestColumn::new(EntityStaged::EntityTypeNameKeysJson, PostgresType::JsonbArray),
     ]
 }
 
@@ -257,7 +257,7 @@ fn entity_staging_columns() -> [UnnestColumn; 3] {
 /// Evolution began survives every later write (clause 4.8). The write clock is
 /// staged once per entity and read for both `created_at` and `modified_at`; the
 /// type keys arrive as a JSONB array per entity and are expanded to `integer[]`
-/// in the insert, the same interning `temporal_entities.type_ids` carries. Every
+/// in the insert, the same interning `temporal_entities.entity_type_name_keys` carries. Every
 /// minted key is harvested with `RETURNING`, so no read-back is needed.
 fn temporal_entity_upsert_batch_sql(target: &ContextTarget) -> Result<String, TemporalStoreError> {
     let columns = entity_staging_columns();
@@ -266,10 +266,10 @@ fn temporal_entity_upsert_batch_sql(target: &ContextTarget) -> Result<String, Te
         (&columns[1], external_placeholder(2)),
         (&columns[2], external_placeholder(3)),
     ]);
-    let type_ids = array_subquery(
+    let entity_type_name_keys = array_subquery(
         &Query::select()
             .expr(cast(
-                jsonb_array_elements_text(Expr::col((D, EntityStaged::TypeIdsJson))).into(),
+                jsonb_array_elements_text(Expr::col((D, EntityStaged::EntityTypeNameKeysJson))).into(),
                 PostgresType::Integer,
             ))
             .to_owned(),
@@ -280,7 +280,7 @@ fn temporal_entity_upsert_batch_sql(target: &ContextTarget) -> Result<String, Te
         .expr(Expr::col((D, EntityStaged::Id)))
         .expr(Expr::col((D, EntityStaged::RecordedAt)))
         .expr(Expr::col((D, EntityStaged::RecordedAt)))
-        .expr(type_ids)
+        .expr(entity_type_name_keys)
         .from_function(call, D);
     let select = select;
 
@@ -289,17 +289,17 @@ fn temporal_entity_upsert_batch_sql(target: &ContextTarget) -> Result<String, Te
         TemporalEntities::Id,
         TemporalEntities::CreatedAt,
         TemporalEntities::ModifiedAt,
-        TemporalEntities::TypeIds,
+        TemporalEntities::EntityTypeNameKeys,
     ]);
     insert
         .select_from(select)
         .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
         .on_conflict(
             OnConflict::column(TemporalEntities::Id)
-                .update_columns([TemporalEntities::ModifiedAt, TemporalEntities::TypeIds])
+                .update_columns([TemporalEntities::ModifiedAt, TemporalEntities::EntityTypeNameKeys])
                 .to_owned(),
         )
-        .returning(Query::returning().columns([TemporalEntities::EntityKey, TemporalEntities::Id]));
+        .returning(Query::returning().columns([TemporalEntities::TemporalEntityKey, TemporalEntities::Id]));
 
     let sql = insert.to_string(PostgresQueryBuilder);
     Ok(apply_column_alias(sql, &D, &columns))
@@ -311,7 +311,7 @@ fn temporal_entity_upsert_batch_sql(target: &ContextTarget) -> Result<String, Te
 /// read does not return has no temporal evolution to extend.
 fn temporal_entity_keys_lookup_sql(target: &ContextTarget) -> String {
     Query::select()
-        .columns([TemporalEntities::EntityKey, TemporalEntities::Id])
+        .columns([TemporalEntities::TemporalEntityKey, TemporalEntities::Id])
         .from(table_of(target, TemporalEntities::Table))
         .and_where(Expr::col(TemporalEntities::Id).eq(any(cast(external_placeholder(1), PostgresType::TextArray))))
         .to_owned()
@@ -334,7 +334,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
-    use andromeda_postgresql_query::entity_type_id::EntityTypeId;
+    use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
     use andromeda_temporal::write_purpose::TemporalWritePurpose;
     use chrono::{TimeZone, Utc};
     use std::collections::HashMap;
@@ -373,29 +373,31 @@ mod tests {
     #[test]
     fn the_batched_entity_upsert_returns_every_chunk_key() {
         let sql = temporal_entity_upsert_batch_sql(&ContextTarget::Live).expect("the batched entity upsert builds");
-        assert!(sql.contains(r#"RETURNING "entity_key", "id""#), "{sql}");
+        assert!(sql.contains(r#"RETURNING "temporal_entity_key", "id""#), "{sql}");
         assert!(
             sql.contains("$1::text[]") && sql.contains("$2::timestamptz[]") && sql.contains("$3::jsonb[]"),
             "{sql}"
         );
-        assert!(sql.contains("AS d(id, recorded_at, type_ids_json)"), "{sql}");
+        assert!(sql.contains("AS d(id, recorded_at, entity_type_name_keys_json)"), "{sql}");
     }
 
     #[test]
     fn the_batched_entity_upsert_expands_the_type_keys_to_an_integer_array() {
         let sql = temporal_entity_upsert_batch_sql(&ContextTarget::Live).expect("the batched entity upsert builds");
         assert!(
-            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."type_ids_json")::integer)"#),
+            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."entity_type_name_keys_json")::integer)"#),
             "{sql}"
         );
-        assert!(!sql.contains("text[]) AS \"type_ids\""), "{sql}");
+        assert!(!sql.contains("text[]) AS \"entity_type_name_keys\""), "{sql}");
     }
 
     #[test]
     fn a_repeated_write_never_moves_the_instant_the_evolution_began() {
         let sql = temporal_entity_upsert_batch_sql(&ContextTarget::Live).expect("the batched entity upsert builds");
         assert!(
-            sql.contains(r#"ON CONFLICT ("id") DO UPDATE SET "modified_at" = "excluded"."modified_at", "type_ids" = "excluded"."type_ids""#),
+            sql.contains(
+                r#"ON CONFLICT ("id") DO UPDATE SET "modified_at" = "excluded"."modified_at", "entity_type_name_keys" = "excluded"."entity_type_name_keys""#
+            ),
             "{sql}"
         );
         assert!(!sql.contains(r#""created_at" = "excluded""#), "{sql}");
@@ -405,7 +407,7 @@ mod tests {
     fn the_typeless_lookup_matches_every_requested_identifier_in_one_array() {
         let sql = temporal_entity_keys_lookup_sql(&ContextTarget::Live);
         assert!(
-            sql.starts_with(r#"SELECT "entity_key", "id" FROM "temporal_entities" WHERE "id" = ANY($1::text[])"#),
+            sql.starts_with(r#"SELECT "temporal_entity_key", "id" FROM "temporal_entities" WHERE "id" = ANY($1::text[])"#),
             "{sql}"
         );
     }
@@ -455,14 +457,14 @@ mod tests {
     #[test]
     fn the_upsert_binds_only_the_typed_entities_and_squares_the_arrays() {
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
-        let type_keys = HashMap::from([(VEHICLE.parse::<EntityTypeName>().expect("valid entity type"), EntityTypeId::from(4_i32))]);
+        let type_keys = HashMap::from([(VEHICLE.parse::<EntityTypeName>().expect("valid entity type"), EntityTypeNameKey::from(4_i32))]);
         let typed = [typed("urn:ngsi-ld:Vehicle:1", &[VEHICLE]), typed("urn:ngsi-ld:Vehicle:2", &[VEHICLE])];
         let refs: Vec<&TemporalCatalogUpsert> = typed.iter().collect();
         let binds = entity_upsert_binds(&refs, recorded_at, &type_keys).expect("known types");
         pretty_assertions::assert_eq!(binds.ids, vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]);
         pretty_assertions::assert_eq!(binds.recorded_ats, vec![recorded_at, recorded_at]);
-        pretty_assertions::assert_eq!(binds.type_ids_json.len(), 2);
-        pretty_assertions::assert_eq!(binds.type_ids_json[0], serde_json::json!([4]));
+        pretty_assertions::assert_eq!(binds.entity_type_name_keys_json.len(), 2);
+        pretty_assertions::assert_eq!(binds.entity_type_name_keys_json[0], serde_json::json!([4]));
     }
 
     /// Clause 4.5.1 makes at least one type part of what an Entity is, so an

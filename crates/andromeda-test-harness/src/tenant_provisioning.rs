@@ -4,16 +4,9 @@
 //! implicitly creating it has run there, and each broker keeps the tenant in a
 //! database of its own that its platform registry names. A topology reads its
 //! peers under the leased tenant before it writes to all of them, so the
-//! tenant is created on every broker up front, once per process, and its
-//! database is reset then, which clears whatever an earlier run of the suite
-//! left in it.
+//! tenant is created on every broker up front, once per process.
 
-use crate::{
-    configuration::DatabaseEndpoint,
-    database_isolation::{DatabaseIsolationError, connect_pool},
-    database_reset::{DatabaseResetError, reset_owned_tenant},
-    tenant_lease::LeaseSlot,
-};
+use crate::configuration::DatabaseEndpoint;
 use andromeda_test_client::{entity::EntityRequestError, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use dashmap::DashMap;
@@ -31,20 +24,30 @@ use url::Url;
 struct ProvisionedTenant {
     /// The platform database of the broker store.
     platform: Url,
-    /// The leased tenant.
-    slot: LeaseSlot,
+    /// The tenant's name as the platform registry records it.
+    tenant: String,
 }
 
-/// The tenant databases this process has provisioned and reset, each exactly
-/// once however many topologies lease the tenant.
+/// The tenant databases this process has located, each exactly once however
+/// many topologies lease the tenant.
 static PROVISIONED: LazyLock<DashMap<ProvisionedTenant, Arc<OnceCell<DatabaseEndpoint>>>> = LazyLock::new(DashMap::new);
 
 /// The entity whose creation brings a leased tenant into existence; it is
-/// deleted at once and the reset that follows clears what it left.
+/// deleted at once.
 const PROBE_ENTITY_ID: &str = "urn:ngsi-ld:TenantLease:provisioning-probe";
 
-/// The database holding `slot`'s tenant on the broker behind `client`, created
-/// and reset the first time this process names it.
+/// Whether this process located a tenant database for the first time, in which
+/// case it may still hold what an earlier run of the suite left in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProvisioningHistory {
+    /// This process had not used the tenant database before.
+    FirstUse,
+    /// This process has used the tenant database before.
+    Known,
+}
+
+/// The database holding `tenant` on the broker behind `client`, created the
+/// first time this process names it.
 ///
 /// `client` runs under the leased tenant; `platform` is the broker's platform
 /// database, reached through `platform_endpoint`.
@@ -52,45 +55,41 @@ const PROBE_ENTITY_ID: &str = "urn:ngsi-ld:TenantLease:provisioning-probe";
 /// # Errors
 ///
 /// Returns [`TenantProvisioningError`] when the tenant cannot be created on the
-/// broker, when the platform registry cannot be read or never names the
-/// tenant's database, or when that database cannot be opened or reset.
+/// broker, or when the platform registry cannot be read or never names the
+/// tenant's database.
 pub async fn provisioned_tenant_database(
     client: &TestClient,
     platform: &PgPool,
     platform_endpoint: &DatabaseEndpoint,
-    slot: &LeaseSlot,
-) -> Result<DatabaseEndpoint, TenantProvisioningError> {
+    tenant: &str,
+) -> Result<(DatabaseEndpoint, ProvisioningHistory), TenantProvisioningError> {
     let key = ProvisionedTenant {
         platform: platform_endpoint.url().clone(), // clone: the registry key owns the store it names
-        slot: slot.clone(),                        // clone: same as the store
+        tenant: tenant.to_owned(),
     };
     let cell = Arc::clone(PROVISIONED.entry(key).or_default().value());
+    let mut history = ProvisioningHistory::Known;
     let endpoint = cell
         .get_or_try_init(|| async {
-            let label = slot.label();
-            let database = if let Some(database) = tenant_database_name(platform, &label).await? {
+            history = ProvisioningHistory::FirstUse;
+            let database = if let Some(database) = tenant_database_name(platform, tenant).await? {
                 database
             } else {
                 create_tenant(client).await?;
-                tenant_database_name(platform, &label)
+                tenant_database_name(platform, tenant)
                     .await?
-                    .ok_or(TenantProvisioningError::NotRegistered { tenant: label })?
+                    .ok_or_else(|| TenantProvisioningError::NotRegistered { tenant: tenant.to_owned() })?
             };
-            let endpoint = platform_endpoint.with_database(&database);
-            let pool = connect_pool(&endpoint).await?;
-            let reset = reset_owned_tenant(&pool).await;
-            pool.close().await;
-            reset?;
-            Ok::<DatabaseEndpoint, TenantProvisioningError>(endpoint)
+            Ok::<DatabaseEndpoint, TenantProvisioningError>(platform_endpoint.with_database(&database))
         })
         .await?;
-    Ok(endpoint.clone()) // clone: every topology leasing the tenant owns its endpoint
+    Ok((endpoint.clone(), history)) // clone: every topology leasing the tenant owns its endpoint
 }
 
 /// The database the platform registry holds `tenant` in, or `None` before the
 /// broker has created the tenant.
 async fn tenant_database_name(platform: &PgPool, tenant: &str) -> Result<Option<String>, TenantProvisioningError> {
-    sqlx::query_scalar("SELECT db_name FROM tenants WHERE name = $1")
+    sqlx::query_scalar("SELECT database_name FROM tenants WHERE name = $1")
         .bind(tenant)
         .fetch_optional(platform)
         .await
@@ -131,7 +130,8 @@ pub enum TenantProvisioningError {
     },
     /// The platform registry could not be read.
     ///
-    /// Boxed for the same reason as [`DatabaseIsolationError::Sqlx`].
+    /// Boxed for the same reason as
+    /// [`crate::database_isolation::DatabaseIsolationError::Sqlx`].
     #[error("the platform tenant registry could not be read: {0}")]
     Registry(#[source] Box<sqlx::Error>),
     /// The broker created the tenant but its registry names no database for it.
@@ -140,12 +140,6 @@ pub enum TenantProvisioningError {
         /// The tenant the registry was asked about.
         tenant: String,
     },
-    /// The tenant's database could not be opened.
-    #[error(transparent)]
-    Database(#[from] DatabaseIsolationError),
-    /// The tenant's database could not be reset.
-    #[error(transparent)]
-    Reset(#[from] DatabaseResetError),
 }
 
 impl TenantProvisioningError {

@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
-use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::projected_string_column::ProjectedStringColumn;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
@@ -79,17 +79,17 @@ pub struct ProjectionBinds<'a> {
     /// Surrogate key of the entity each row belongs to.
     pub entity_keys: Vec<i64>,
     /// Dictionary key of each row's attribute IRI.
-    pub attribute_name_ids: Vec<i32>,
+    pub attribute_name_keys: Vec<i32>,
     /// Attribute family each row was written as.
     pub attribute_kinds: Vec<i16>,
     /// Stored value shape of each row.
     pub value_kinds: Vec<i16>,
     /// Timestamp values.
-    pub value_datetimes: Vec<Option<DateTime<Utc>>>,
+    pub value_date_times: Vec<Option<DateTime<Utc>>>,
     /// Catalog identities of the instances' units.
     pub unit_code_ids: Vec<Option<i16>>,
     /// Boolean values.
-    pub value_bools: Vec<Option<bool>>,
+    pub value_booleans: Vec<Option<bool>>,
     /// `datasetId` of each row, absent on a default instance.
     pub dataset_ids: Vec<Option<&'a str>>,
     /// Arbitrary-precision values bound as a `numeric[]`.
@@ -97,7 +97,7 @@ pub struct ProjectionBinds<'a> {
     /// String values.
     pub value_strings: Vec<Option<&'a str>>,
     /// Geometry values as EWKB, projected server-side.
-    pub value_geos: Vec<Option<Vec<u8>>>,
+    pub value_geometries: Vec<Option<Vec<u8>>>,
     /// Structured values.
     pub value_objects: Vec<Option<&'a Value>>,
     /// URI values, which is how a relationship object is projected.
@@ -116,16 +116,16 @@ impl<'a> ProjectionBinds<'a> {
     pub fn from_rows(rows: &'a [ProjectedAttributeRow]) -> Result<ProjectionBinds<'a>, ContextStoreError> {
         let mut binds = ProjectionBinds {
             entity_keys: Vec::with_capacity(rows.len()),
-            attribute_name_ids: Vec::with_capacity(rows.len()),
+            attribute_name_keys: Vec::with_capacity(rows.len()),
             attribute_kinds: Vec::with_capacity(rows.len()),
             value_kinds: Vec::with_capacity(rows.len()),
-            value_datetimes: Vec::with_capacity(rows.len()),
+            value_date_times: Vec::with_capacity(rows.len()),
             unit_code_ids: Vec::with_capacity(rows.len()),
-            value_bools: Vec::with_capacity(rows.len()),
+            value_booleans: Vec::with_capacity(rows.len()),
             dataset_ids: Vec::with_capacity(rows.len()),
             value_numbers: Vec::with_capacity(rows.len()),
             value_strings: Vec::with_capacity(rows.len()),
-            value_geos: Vec::with_capacity(rows.len()),
+            value_geometries: Vec::with_capacity(rows.len()),
             value_objects: Vec::with_capacity(rows.len()),
             value_uris: Vec::with_capacity(rows.len()),
             value_long_texts: Vec::with_capacity(rows.len()),
@@ -133,18 +133,18 @@ impl<'a> ProjectionBinds<'a> {
         for row in rows {
             let value = typed_value_columns(&row.value);
             binds.entity_keys.push(EntityKey::get(row.key.entity_key));
-            binds.attribute_name_ids.push(AttributeNameId::get(row.key.attribute_name_id));
+            binds.attribute_name_keys.push(AttributeNameKey::get(row.key.attribute_name_key));
             binds.attribute_kinds.push(AttributeKind::code(row.attribute_kind));
             binds.value_kinds.push(ValueKind::code(row.value.kind()));
-            binds.value_datetimes.push(value.datetime);
+            binds.value_date_times.push(value.datetime);
             binds.unit_code_ids.push(row.unit_code_id.map(UnitCodeId::get));
-            binds.value_bools.push(value.boolean);
+            binds.value_booleans.push(value.boolean);
             binds.dataset_ids.push(row.key.dataset_id.as_ref().map(Uri::as_str));
             // SQLx owns array elements for the duration of the query. Clone the
             // decimal itself, preserving its exact value without formatting it.
             binds.value_numbers.push(value.number.cloned());
             binds.value_strings.push(value.text);
-            binds.value_geos.push(geometry_bytes(value.geometry)?);
+            binds.value_geometries.push(geometry_bytes(value.geometry)?);
             binds.value_objects.push(value.object);
             binds.value_uris.push(value.uri);
             binds.value_long_texts.push(value.long_text);
@@ -169,7 +169,7 @@ mod tests {
         ProjectedAttributeRow {
             key: ProjectedAttributeKey {
                 entity_key: EntityKey::try_from(1).expect("a positive key"),
-                attribute_name_id: 7_i32.into(),
+                attribute_name_key: 7_i32.into(),
                 dataset_id: None,
             },
             attribute_kind: AttributeKind::Property,
@@ -217,10 +217,10 @@ mod tests {
         let rows = [row(ProjectedAttributeValue::Boolean(true))];
         let binds = ProjectionBinds::from_rows(&rows).expect("no geometry to encode");
         pretty_assertions::assert_eq!(binds.value_kinds, vec![ValueKind::code(ValueKind::Boolean)]);
-        pretty_assertions::assert_eq!(binds.value_bools, vec![Some(true)]);
+        pretty_assertions::assert_eq!(binds.value_booleans, vec![Some(true)]);
         pretty_assertions::assert_eq!(binds.value_numbers, vec![None]);
         pretty_assertions::assert_eq!(binds.entity_keys, vec![1_i64]);
-        pretty_assertions::assert_eq!(binds.attribute_name_ids, vec![7_i32]);
+        pretty_assertions::assert_eq!(binds.attribute_name_keys, vec![7_i32]);
     }
 
     #[test]

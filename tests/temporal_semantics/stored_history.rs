@@ -38,7 +38,7 @@ pub struct StoredHistoryRow {
     /// `deletedAt` axis, present exactly on a tombstone.
     pub deleted_at: Option<DateTime<Utc>>,
     /// Broker-minted instance identifier, when the row carries one.
-    pub generated_instance_uuid: Option<Uuid>,
+    pub generated_instance_id: Option<Uuid>,
     /// Client-supplied instance identifier, kept byte for byte.
     pub verbatim_instance_id: Option<String>,
     /// Exact decimal spelling of the numeric value column.
@@ -74,7 +74,7 @@ pub async fn stored_history(pool: &PgPool, entity_id: &str) -> Vec<StoredHistory
             created_at: row.get("created_at"),
             modified_at: row.get("modified_at"),
             deleted_at: row.get("deleted_at"),
-            generated_instance_uuid: row.get("generated_instance_uuid"),
+            generated_instance_id: row.get("generated_instance_id"),
             verbatim_instance_id: row.get("verbatim_instance_id"),
             value_number: row.get("value_number"),
             value_string: row.get("value_string"),
@@ -140,18 +140,18 @@ SELECT an.name AS attribute_name,
        ah.created_at,
        ah.modified_at,
        ah.deleted_at,
-       ah.generated_instance_uuid,
+       ah.generated_instance_id,
        ah.verbatim_instance_id,
        ah.value_number::text AS value_number,
        ah.value_string,
        ah.value_uri,
        ah.unit_code_id,
-       num_nonnulls(ah.value_number, ah.value_string, ah.value_bool, ah.value_geo,
-                    ah.value_object, ah.value_datetime, ah.value_uri)::int AS populated_value_columns
+       num_nonnulls(ah.value_number, ah.value_string, ah.value_boolean, ah.value_geometry,
+                    ah.value_object, ah.value_date_time, ah.value_uri)::int AS populated_value_columns
 FROM attribute_history ah
 JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key
-JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
-JOIN attribute_names an ON an.id = s.attribute_name_id
+JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key
+JOIN attribute_names an ON an.attribute_name_key = s.attribute_name_key
 WHERE te.id = $1
 ORDER BY ah.recorded_at, ah.write_id, ah.write_ordinal
 ";
@@ -166,7 +166,7 @@ WHERE e.id = $1
 const TEMPORAL_CATALOG_ROWS_SQL: &str = r"
 SELECT (SELECT count(*)::bigint FROM temporal_entities WHERE id = $1) AS entities,
        (SELECT count(*)::bigint FROM temporal_attribute_streams s
-        JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
+        JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key
         WHERE te.id = $1) AS streams
 ";
 
@@ -176,9 +176,9 @@ SELECT
         LEFT JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key
         WHERE s.stream_key IS NULL) AS orphaned_attribute_history_rows,
     (SELECT count(*)::bigint FROM scope_history sh
-        LEFT JOIN temporal_entities te ON te.entity_key = sh.temporal_entity_key
-        WHERE te.entity_key IS NULL) AS orphaned_scope_history_rows,
+        LEFT JOIN temporal_entities te ON te.temporal_entity_key = sh.temporal_entity_key
+        WHERE te.temporal_entity_key IS NULL) AS orphaned_scope_history_rows,
     (SELECT count(*)::bigint FROM temporal_attribute_streams s
-        LEFT JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
-        WHERE te.entity_key IS NULL) AS orphaned_streams
+        LEFT JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key
+        WHERE te.temporal_entity_key IS NULL) AS orphaned_streams
 ";

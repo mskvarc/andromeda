@@ -207,7 +207,7 @@ async fn every_hot_update_relation_still_declares_the_maintenance_settings_it_wa
 /// production shape: it rewrites a column no index key contains
 /// (`unit_code_id`), which is the only update the reserved `fillfactor` space
 /// can keep heap-only, and it measures that the reservation does so. A write
-/// that changes the value touches `value_number`, which `idx_cav_attr_number`
+/// that changes the value touches `value_number`, which `idx_cav_value_number`
 /// contains, so it cannot: every typed-value index disqualifies HOT for its own
 /// column, which is why the proposal makes vacuum cadence rather than fillfactor
 /// the primary defence. Both are measured so the tuning is judged on what it
@@ -224,9 +224,9 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
     let pool = scope.database_pool();
     let prefix = PROJECTION_CHURN_PREFIX;
 
-    let attribute_name_id: i32 = sqlx::query_scalar(
+    let attribute_name_key: i32 = sqlx::query_scalar(
         "INSERT INTO attribute_names (name) VALUES ('https://example.test/tenant-schema/churn') \
-         ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+         ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING attribute_name_key",
     )
     .fetch_one(pool)
     .await
@@ -235,11 +235,11 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
     let entity_key = churn_entity(pool, prefix).await;
 
     sqlx::query(
-        "INSERT INTO current_attribute_values (entity_key, attribute_name_id, attribute_kind, value_kind, value_number) \
+        "INSERT INTO current_attribute_values (entity_key, attribute_name_key, attribute_kind, value_kind, value_number) \
          VALUES ($1, $2, 1, 1, 0::numeric)",
     )
     .bind(entity_key)
-    .bind(attribute_name_id)
+    .bind(attribute_name_key)
     .execute(pool)
     .await
     .expect("the churn projection row must be writable");
@@ -277,7 +277,7 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
     .await;
 
     assert_eq!(revaluation.updated, CHURN_UPDATES, "every value-changing update must be counted");
-    // `idx_cav_attr_number` contains `value_number`, so none of these can be
+    // `idx_cav_value_number` contains `value_number`, so none of these can be
     // heap-only. Recorded as an assertion because the day that index goes, the
     // proposal's "vacuum cadence is the primary defence" reasoning changes with
     // it and the row has to be re-measured.
@@ -311,11 +311,11 @@ async fn churn_entity(pool: &PgPool, prefix: &str) -> i64 {
     sqlx::query_scalar(
         "WITH type_name AS ( \
              INSERT INTO entity_type_names (name) VALUES ('https://example.test/tenant-schema/Churn') \
-             ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id), \
+             ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING entity_type_name_key), \
          ins AS (INSERT INTO entities (id) VALUES ($1::text || ':churn') RETURNING entity_key), \
          doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, '[]'::jsonb FROM ins) \
-         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids) \
-         SELECT ins.entity_key, ARRAY[type_name.id], ARRAY[]::integer[] FROM ins, type_name \
+         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys) \
+         SELECT ins.entity_key, ARRAY[type_name.entity_type_name_key], ARRAY[]::integer[] FROM ins, type_name \
          RETURNING entity_key",
     )
     .bind(prefix)
@@ -464,7 +464,7 @@ async fn the_delivery_claim_index_is_the_claimable_expression_so_vacuum_cadence_
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
 
     let claim_index: String = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = $1")
-        .bind("idx_notification_deliveries_claimable")
+        .bind("idx_notification_deliveries_claim")
         .fetch_one(scope.database_pool())
         .await
         .expect("the claim index must exist");
@@ -473,7 +473,10 @@ async fn the_delivery_claim_index_is_the_claimable_expression_so_vacuum_cadence_
         claim_index.contains("GREATEST(next_attempt_at, COALESCE(lease_until,"),
         "the claim index must be led by the claimable-instant expression: {claim_index}"
     );
-    assert!(claim_index.contains(", id)"), "the claim index must break ties on id: {claim_index}");
+    assert!(
+        claim_index.contains(", delivery_key)"),
+        "the claim index must break ties on delivery_key: {claim_index}"
+    );
     for excluded in ["delivered_at IS NULL", "exhausted_at IS NULL"] {
         assert!(
             claim_index.contains(excluded),
@@ -490,8 +493,8 @@ async fn the_delivery_claim_index_is_the_claimable_expression_so_vacuum_cadence_
 
 /// The side-effect claim writes `claimed_at`, `lease_until` and `claimed_by`
 /// together (the coherence constraint admits all three or none), and none of
-/// them is carried by any index of `pending_side_effects` (`idx_pse_claim_candidates`
-/// is led by `next_attempt_at`, `idx_pse_exhausted` by `exhausted_at`), so with the
+/// them is carried by any index of `pending_side_effects` (`idx_pse_claim`
+/// is led by `next_attempt_at`, `idx_pse_exhausted_at` by `exhausted_at`), so with the
 /// fillfactor of 50 the migration declares the claim must stay heap-only.
 #[tokio::test]
 async fn sustained_side_effect_claims_stay_heap_only() {
@@ -499,7 +502,7 @@ async fn sustained_side_effect_claims_stay_heap_only() {
     let pool = scope.database_pool();
 
     sqlx::query(
-        "INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload) \
+        "INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, payload) \
          VALUES (gen_random_uuid(), gen_random_uuid(), NOW(), 0, '{\"temporal_entities\": [], \"change_events\": []}'::jsonb)",
     )
     .execute(pool)
@@ -510,7 +513,7 @@ async fn sustained_side_effect_claims_stay_heap_only() {
         pool,
         "pending_side_effects",
         "UPDATE pending_side_effects SET claimed_at = NOW(), lease_until = NOW() + make_interval(secs => $2), claimed_by = gen_random_uuid() \
-         WHERE consequence_base = $1::integer",
+         WHERE base_ordinal = $1::integer",
         0,
     )
     .await;

@@ -86,16 +86,16 @@ pub async fn upsert_projection_in_tx(
     let sql = projection_upsert_sql(target)?;
     let statement = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(&binds.entity_keys)
-        .bind(&binds.attribute_name_ids)
+        .bind(&binds.attribute_name_keys)
         .bind(&binds.attribute_kinds)
         .bind(&binds.value_kinds)
-        .bind(&binds.value_datetimes)
+        .bind(&binds.value_date_times)
         .bind(&binds.unit_code_ids)
-        .bind(&binds.value_bools)
+        .bind(&binds.value_booleans)
         .bind(&binds.dataset_ids)
         .bind(&binds.value_numbers)
         .bind(&binds.value_strings)
-        .bind(&binds.value_geos)
+        .bind(&binds.value_geometries)
         .bind(&binds.value_objects)
         .bind(&binds.value_uris)
         .bind(&binds.value_long_texts)
@@ -182,11 +182,11 @@ mod tests {
     fn the_upsert_collapses_repeats_of_the_instance_grain_before_inserting() {
         let sql = rendered();
         assert!(
-            sql.contains(r#"DISTINCT ON ("d"."entity_key", "d"."attribute_name_id", "d"."dataset_id")"#),
+            sql.contains(r#"DISTINCT ON ("d"."entity_key", "d"."attribute_name_key", "d"."dataset_id")"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"ORDER BY "d"."entity_key" ASC, "d"."attribute_name_id" ASC, "d"."dataset_id" ASC, "d"."ordinality" DESC"#),
+            sql.contains(r#"ORDER BY "d"."entity_key" ASC, "d"."attribute_name_key" ASC, "d"."dataset_id" ASC, "d"."ordinality" DESC"#),
             "the last operation in a batch must be the one that survives: {sql}"
         );
     }
@@ -195,7 +195,7 @@ mod tests {
     fn the_upsert_conflicts_on_the_instance_grain() {
         let sql = rendered();
         assert!(
-            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
+            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_id") DO UPDATE SET"#),
             "{sql}"
         );
     }
@@ -244,7 +244,7 @@ mod tests {
             "matched changes and matched no-ops must both bypass insertion: {sql}"
         );
         assert!(
-            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
+            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_id") DO UPDATE SET"#),
             "a concurrent creator of an unmatched grain still requires an atomic fallback: {sql}"
         );
     }
@@ -262,7 +262,7 @@ mod tests {
     fn a_geometry_is_validated_from_its_embedded_srid_and_a_null_stays_null() {
         let sql = rendered();
         assert!(sql.contains("ST_MakeValid(ST_GeomFromEWKB("), "{sql}");
-        assert!(sql.contains(r#"WHEN ("d"."value_geo" IS NOT NULL)"#), "{sql}");
+        assert!(sql.contains(r#"WHEN ("d"."value_geometry" IS NOT NULL)"#), "{sql}");
         assert!(sql.contains("ELSE NULL END"), "{sql}");
         assert!(!sql.contains("ST_SetSRID"), "{sql}");
         assert!(!sql.contains("ST_GeomFromGeoJSON"), "{sql}");
@@ -274,7 +274,7 @@ mod tests {
         assert!(!sql.contains(r#"AS "d""#), "the closed table-source alias must be rewritten: {sql}");
         assert!(
             sql.contains(
-                "WITH ORDINALITY AS d(entity_key, attribute_name_id, attribute_kind, value_kind, value_datetime, unit_code_id, value_bool, dataset_id, value_number, value_string, value_geo, value_object, value_uri, value_long_text, ordinality)"
+                "WITH ORDINALITY AS d(entity_key, attribute_name_key, attribute_kind, value_kind, value_date_time, unit_code_id, value_boolean, dataset_id, value_number, value_string, value_geometry, value_object, value_uri, value_long_text, ordinality)"
             ),
             "{sql}"
         );
@@ -286,12 +286,12 @@ mod tests {
         for column in [
             "attribute_kind",
             "value_kind",
-            "value_datetime",
+            "value_date_time",
             "unit_code_id",
-            "value_bool",
+            "value_boolean",
             "value_number",
             "value_string",
-            "value_geo",
+            "value_geometry",
             "value_object",
             "value_uri",
             "value_long_text",
@@ -322,7 +322,7 @@ mod tests {
         assert!(guard.starts_with("(\"current_attribute_values\".\"attribute_kind\", "), "{guard}");
         assert!(guard.contains(") IS DISTINCT FROM (\"excluded\".\"attribute_kind\", "), "{guard}");
         assert!(guard.trim_end().ends_with("\"excluded\".\"value_long_text\")"), "{guard}");
-        for grain in ["entity_key", "attribute_name_id", "dataset_id"] {
+        for grain in ["entity_key", "attribute_name_key", "dataset_id"] {
             assert!(
                 !guard.contains(grain),
                 "a grain column is equal on conflict by construction and must not be compared: {guard}"
@@ -331,12 +331,12 @@ mod tests {
         for column in [
             "attribute_kind",
             "value_kind",
-            "value_datetime",
+            "value_date_time",
             "unit_code_id",
-            "value_bool",
+            "value_boolean",
             "value_number",
             "value_string",
-            "value_geo",
+            "value_geometry",
             "value_object",
             "value_uri",
             "value_long_text",

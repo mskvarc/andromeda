@@ -15,7 +15,7 @@
 //! the instant they declare.
 
 use crate::{
-    append_intent::{SequencedTemporalAppendIntent, TemporalAppendEntry, TemporalObservationIdentity},
+    append_intent::{KeyedTemporalAppendIntent, TemporalAppendEntry, TemporalObservationIdentity},
     error::TemporalError,
     port::history_reader::TemporalHistoryObservation,
     scope_observation::ScopeObservation,
@@ -41,7 +41,7 @@ use chrono::{DateTime, Utc};
 /// carries an `@id` or `@type` the selection cannot read: the write that
 /// queued the intent admitted both.
 pub(crate) fn intent_matches_query(
-    sequenced: &SequencedTemporalAppendIntent,
+    sequenced: &KeyedTemporalAppendIntent,
     compiled: &CompiledTemporalQuery,
     selection: &ResidualFilter,
 ) -> Result<bool, TemporalError> {
@@ -58,7 +58,7 @@ pub(crate) fn intent_matches_query(
 /// Entity at most one instance of the scope Property, so however many Scopes one
 /// write named it recorded one instance, and the intent carries one entry per
 /// path only because storage does.
-pub(crate) fn pending_observations(sequenced: &SequencedTemporalAppendIntent, compiled: &CompiledTemporalQuery) -> Vec<TemporalHistoryObservation> {
+pub(crate) fn pending_observations(sequenced: &KeyedTemporalAppendIntent, compiled: &CompiledTemporalQuery) -> Vec<TemporalHistoryObservation> {
     let recorded_at = sequenced.intent.record.recorded_at();
     let mut observations: Vec<TemporalHistoryObservation> = Vec::new();
     let mut event: Vec<(TemporalObservationIdentity, &TemporalAppendEntry)> = Vec::new();

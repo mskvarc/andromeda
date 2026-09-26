@@ -91,8 +91,8 @@ pub struct NotificationDeliveryDrain {
 /// Record what a claimed delivery carries before it is attempted.
 fn trace_entry(entry: &DeliveryEntry) {
     debug!(
-        delivery_id = %entry.id,
-        event_id = %entry.event.id,
+        delivery_key = %entry.key,
+        event_key = %entry.event.key,
         subscription_id = %entry.subscription_id,
         entity_id = %entry.event.entity_id,
         trigger = %entry.event.trigger,
@@ -209,7 +209,7 @@ impl NotificationDeliveryDrain {
     async fn advance(&self, entry: &DeliveryEntry, now: DateTime<Utc>) -> Result<LeaseAcknowledgement, NotificationError> {
         let (acknowledgement, outcome) = match self.transport.deliver(entry).await? {
             DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete => (
-                classify_acknowledgement(self.store.mark_delivered(entry.id, &self.worker_id, &entry.target).await)?,
+                classify_acknowledgement(self.store.mark_delivered(entry.key, &self.worker_id, &entry.target).await)?,
                 QueueOutcome::Completed,
             ),
             DeliveryDisposition::RetryableFailure { detail } if !self.attempt_ceiling.is_final_attempt(entry.attempt_count) => {
@@ -217,14 +217,14 @@ impl NotificationDeliveryDrain {
                 let next_attempt = now + Duration::seconds(backoff);
                 let detail = self.error_bound.truncate(&detail);
                 (
-                    classify_acknowledgement(self.store.mark_failed(entry.id, &self.worker_id, &detail, next_attempt, &entry.target).await)?,
+                    classify_acknowledgement(self.store.mark_failed(entry.key, &self.worker_id, &detail, next_attempt, &entry.target).await)?,
                     QueueOutcome::Retried,
                 )
             }
             DeliveryDisposition::RetryableFailure { detail } | DeliveryDisposition::TerminalFailure { detail } => {
                 let detail = self.error_bound.truncate(&detail);
                 (
-                    classify_acknowledgement(self.store.mark_terminal(entry.id, &self.worker_id, &detail, &entry.target).await)?,
+                    classify_acknowledgement(self.store.mark_terminal(entry.key, &self.worker_id, &detail, &entry.target).await)?,
                     QueueOutcome::Exhausted,
                 )
             }
@@ -274,11 +274,11 @@ mod tests {
     use crate::{
         delivery_config::{DeliveryConfig, DeliveryMode},
         delivery_drain::{DeliveryDisposition, NotificationDeliveryDrain, NotificationDeliveryTransport},
-        delivery_entry::{DeliveryEntry, DeliveryId},
+        delivery_entry::{DeliveryEntry, DeliveryKey},
         delivery_lease::{DeliveryLeaseError, LeaseTerm},
         delivery_store::DeliveryStore,
         error::NotificationError,
-        notification_event::{NotificationEvent, NotificationEventId},
+        notification_event::{NotificationEvent, NotificationEventKey},
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
     use andromeda_context_commit::{lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
@@ -313,9 +313,9 @@ mod tests {
     #[derive(Default)]
     struct RecordingStore {
         entries: Mutex<VecDeque<DeliveryEntry>>,
-        delivered: Mutex<Vec<DeliveryId>>,
-        failed: Mutex<Vec<(DeliveryId, String, DateTime<Utc>)>>,
-        terminal: Mutex<Vec<(DeliveryId, String)>>,
+        delivered: Mutex<Vec<DeliveryKey>>,
+        failed: Mutex<Vec<(DeliveryKey, String, DateTime<Utc>)>>,
+        terminal: Mutex<Vec<(DeliveryKey, String)>>,
         claimed_with: Mutex<Vec<LeaseTerm>>,
         lease_state: LeaseState,
     }
@@ -339,10 +339,10 @@ mod tests {
             }
         }
 
-        fn lease_check(&self, id: DeliveryId, worker_id: &LeaseHolder) -> Result<(), DeliveryLeaseError> {
+        fn lease_check(&self, key: DeliveryKey, worker_id: &LeaseHolder) -> Result<(), DeliveryLeaseError> {
             match self.lease_state {
                 LeaseState::Held => Ok(()),
-                LeaseState::Expired => Err(DeliveryLeaseError::lease_lost(id, worker_id)),
+                LeaseState::Expired => Err(DeliveryLeaseError::lease_lost(key, worker_id)),
             }
         }
     }
@@ -363,28 +363,28 @@ mod tests {
             Ok(entries.drain(..).collect())
         }
 
-        async fn mark_delivered(&self, id: DeliveryId, worker_id: &LeaseHolder, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
-            self.lease_check(id, worker_id)?;
-            self.delivered.lock().map_err(poisoned)?.push(id);
+        async fn mark_delivered(&self, key: DeliveryKey, worker_id: &LeaseHolder, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+            self.lease_check(key, worker_id)?;
+            self.delivered.lock().map_err(poisoned)?.push(key);
             Ok(())
         }
 
         async fn mark_failed(
             &self,
-            id: DeliveryId,
+            key: DeliveryKey,
             worker_id: &LeaseHolder,
             error: &str,
             next_attempt_at: DateTime<Utc>,
             _target: &ContextTarget,
         ) -> Result<(), DeliveryLeaseError> {
-            self.lease_check(id, worker_id)?;
-            self.failed.lock().map_err(poisoned)?.push((id, error.to_owned(), next_attempt_at));
+            self.lease_check(key, worker_id)?;
+            self.failed.lock().map_err(poisoned)?.push((key, error.to_owned(), next_attempt_at));
             Ok(())
         }
 
-        async fn mark_terminal(&self, id: DeliveryId, worker_id: &LeaseHolder, error: &str, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
-            self.lease_check(id, worker_id)?;
-            self.terminal.lock().map_err(poisoned)?.push((id, error.to_owned()));
+        async fn mark_terminal(&self, key: DeliveryKey, worker_id: &LeaseHolder, error: &str, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+            self.lease_check(key, worker_id)?;
+            self.terminal.lock().map_err(poisoned)?.push((key, error.to_owned()));
             Ok(())
         }
 
@@ -462,7 +462,7 @@ mod tests {
     fn entry() -> Result<DeliveryEntry, NotificationError> {
         let parse = |value: &str| value.parse::<Uri>().map_err(|error| NotificationError::representation(error.to_string()));
         let event = NotificationEvent::builder()
-            .id(NotificationEventId::from(1))
+            .key(NotificationEventKey::from(1))
             .write_id(WriteId::mint())
             .event_ordinal(WriteOrdinal::at(0))
             .trigger(NotificationTrigger::EntityUpdated)
@@ -471,7 +471,7 @@ mod tests {
             .build();
         Ok(DeliveryEntry::builder()
             .target(live_target())
-            .id(DeliveryId::from(1))
+            .key(DeliveryKey::from(1))
             .subscription_id(parse("urn:ngsi-ld:Subscription:1")?)
             .attempt_count(0)
             .next_attempt_at(Utc::now())
@@ -493,7 +493,7 @@ mod tests {
             let entries = (1..=10_i64)
                 .map(|id| {
                     entry().map(|template| DeliveryEntry {
-                        id: DeliveryId::from(id),
+                        key: DeliveryKey::from(id),
                         ..template
                     })
                 })
@@ -527,7 +527,7 @@ mod tests {
                 .delivered
                 .lock()
                 .map_err(|error| NotificationError::invariant(format!("delivered result lock was poisoned: {error}")))?;
-            pretty_assertions::assert_eq!(delivered.as_slice(), &[DeliveryId::from(1)]);
+            pretty_assertions::assert_eq!(delivered.as_slice(), &[DeliveryKey::from(1)]);
             Ok(())
         })
     }
@@ -565,7 +565,7 @@ mod tests {
                 .lock()
                 .map_err(|error| NotificationError::invariant(format!("terminal result lock was poisoned: {error}")))?;
             pretty_assertions::assert_eq!(terminal.len(), 1);
-            pretty_assertions::assert_eq!(terminal.first().map(|(id, _)| *id), Some(DeliveryId::from(1)));
+            pretty_assertions::assert_eq!(terminal.first().map(|(id, _)| *id), Some(DeliveryKey::from(1)));
             Ok(())
         })
     }
@@ -596,7 +596,7 @@ mod tests {
                 .map_err(|error| NotificationError::invariant(format!("terminal result lock was poisoned: {error}")))?;
             pretty_assertions::assert_eq!(
                 terminal.first().map(|(id, detail)| (*id, detail.as_str())),
-                Some((DeliveryId::from(1), "transien"))
+                Some((DeliveryKey::from(1), "transien"))
             );
             Ok(())
         })

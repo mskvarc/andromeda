@@ -8,19 +8,23 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 
 /// Each broker in the compose stack answers `GET /info/sourceIdentity` with its
-/// own distinct `contextSourceAlias` — a direct check that the three federation
-/// identities are wired as configured (clause 5.2.40).
+/// own distinct `contextSourceAlias` -- a direct check that the federation
+/// identities are wired as configured (clause 5.2.40). Under the default tenant
+/// the alias is the configured one; under the leased tenant it is a different
+/// alias, since Table 5.2.40-1 makes the alias identify "a specific Tenant
+/// within a registered Context Source".
 #[tokio::test]
 async fn topology_pair_reports_distinct_source_identities() {
     let topology = topology::pair().await.expect("two-broker topology is available");
 
+    let mut tenant_aliases = Vec::new();
     for role in [BrokerRole::A, BrokerRole::B] {
         let broker = topology.broker(role).expect("topology broker for role");
         let response = broker
-            .client()
+            .default_tenant_client()
             .source_identity(Some("application/ld+json"))
             .await
             .expect("source identity request");
@@ -28,10 +32,17 @@ async fn topology_pair_reports_distinct_source_identities() {
         let body = json_body(&response);
         assert_eq!(
             body["contextSourceAlias"].as_str(),
-            Some(broker.alias()),
-            "broker {role:?} must report its configured alias"
+            Some(broker.configured_alias()),
+            "broker {role:?} must report its configured alias under the default tenant"
         );
+        assert_ne!(
+            broker.alias(),
+            broker.configured_alias(),
+            "broker {role:?} names the leased tenant by an alias of its own"
+        );
+        tenant_aliases.push(broker.alias().to_owned());
     }
+    assert_ne!(tenant_aliases[0], tenant_aliases[1], "the two brokers' tenant aliases are distinct");
 
     topology.finish().await.expect("topology cleanup");
 }
@@ -59,6 +70,7 @@ async fn topology_pair_exclusive_retrieve_forwards_to_peer() {
     assert_status(&created, 201);
 
     let registration = CsrBuilder::new(&registration_id, peer.peer_url())
+        .tenant(topology.tenant())
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])

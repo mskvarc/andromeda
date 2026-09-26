@@ -23,9 +23,9 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteName
         let projection = &record.projection;
         columns.ids.push(write.entity_id.as_ref().clone()); // clone: the SQL column set owns identifiers borrowed from the writes.
         columns
-            .type_ids_json
+            .entity_type_name_keys_json
             .push(key_array(&projection.types, &names.types, |key| key.get(), "entity type", &write.entity_id)?);
-        columns.attribute_name_ids_json.push(key_array(
+        columns.attribute_name_keys_json.push(key_array(
             &projection.attribute_names,
             &names.attributes,
             |key| key.get(),
@@ -89,7 +89,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath, uri::Uri};
-    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, entity_type_id::EntityTypeId};
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use chrono::Utc;
     use serde_json::{Value, json};
     use std::{collections::HashMap, sync::Arc};
@@ -107,8 +107,8 @@ mod tests {
 
     fn resolved() -> ResolvedWriteNames {
         ResolvedWriteNames {
-            types: HashMap::from([(vehicle(), EntityTypeId::from(7))]),
-            attributes: HashMap::from([(speed(), AttributeNameId::from(11))]),
+            types: HashMap::from([(vehicle(), EntityTypeNameKey::from(7))]),
+            attributes: HashMap::from([(speed(), AttributeNameKey::from(11))]),
         }
     }
 
@@ -144,8 +144,8 @@ mod tests {
         let writes = [scoped_write("urn:ngsi-ld:A", Vec::new(), None)];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &resolved()).expect("valid columns");
-        pretty_assertions::assert_eq!(columns.type_ids_json[0], json!([7]));
-        pretty_assertions::assert_eq!(columns.attribute_name_ids_json[0], json!([11]));
+        pretty_assertions::assert_eq!(columns.entity_type_name_keys_json[0], json!([7]));
+        pretty_assertions::assert_eq!(columns.attribute_name_keys_json[0], json!([11]));
     }
 
     /// The keys were minted from these very writes, so a name without one is
@@ -199,8 +199,8 @@ mod tests {
         let columns = columns_for(&indexed, &resolved()).expect("valid columns");
         for length in [
             columns.ids.len(),
-            columns.type_ids_json.len(),
-            columns.attribute_name_ids_json.len(),
+            columns.entity_type_name_keys_json.len(),
+            columns.attribute_name_keys_json.len(),
             columns.scope_paths_json.len(),
             columns.payload_json.len(),
             columns.locations.len(),

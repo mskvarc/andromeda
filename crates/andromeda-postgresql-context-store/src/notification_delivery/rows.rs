@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_postgresql_codes::{notification_trigger::NotificationTriggerCode, registry::UnknownCompactCode};
-use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use thiserror::Error;
@@ -30,16 +30,16 @@ use uuid::Uuid;
 pub struct ClaimedDelivery {
     /// Context branch that owns the event and subscription.
     pub target: ContextTarget,
-    /// Identifier of the claimed delivery row.
-    pub id: i64,
+    /// Key of the claimed delivery row.
+    pub delivery_key: i64,
     /// Subscription this delivery answers.
     pub subscription_id: Uri,
     /// Delivery attempts already made.
     pub attempt_count: i32,
     /// Earliest instant a further attempt may be made.
     pub next_attempt_at: DateTime<Utc>,
-    /// Identifier of the event this delivery carries.
-    pub event_id: i64,
+    /// Key of the event this delivery carries.
+    pub event_key: i64,
     /// Write that produced the event.
     pub write_id: WriteId,
     /// Position of the event within that write.
@@ -134,16 +134,16 @@ pub enum ClaimedDeliveryError {
 /// boundary.
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct RawClaimedDeliveryRow {
-    /// Database-generated delivery identifier.
-    id: i64,
+    /// Database-generated delivery key.
+    delivery_key: i64,
     /// Raw subscription identifier decoded by the row mapper.
     subscription_id: String,
     /// Delivery attempts already made.
     attempt_count: i32,
     /// Earliest instant a further attempt may be made.
     next_attempt_at: DateTime<Utc>,
-    /// Database-generated event identifier.
-    event_id: i64,
+    /// Database-generated event key.
+    event_key: i64,
     /// Raw write identity decoded by the row mapper.
     write_id: Uuid,
     /// Raw event ordinal decoded by the row mapper.
@@ -182,7 +182,7 @@ impl ClaimedDelivery {
     /// Returns [`ClaimedDeliveryError`] when a stored identifier, trigger,
     /// ordinal, attribute name or dataset id is not a valid domain value.
     pub(crate) fn from_row(row: RawClaimedDeliveryRow, target: ContextTarget) -> Result<ClaimedDelivery, ClaimedDeliveryError> {
-        let delivery = row.id;
+        let delivery = row.delivery_key;
         let subscription_id = row.subscription_id.parse().map_err(|source| ClaimedDeliveryError::InvalidSubscriptionId {
             delivery,
             value: row.subscription_id,
@@ -216,11 +216,11 @@ impl ClaimedDelivery {
             .transpose()?;
         Ok(ClaimedDelivery {
             target,
-            id: delivery,
+            delivery_key: delivery,
             subscription_id,
             attempt_count: row.attempt_count,
             next_attempt_at: row.next_attempt_at,
-            event_id: row.event_id,
+            event_key: row.event_key,
             write_id: WriteId::from_uuid(row.write_id),
             event_ordinal,
             trigger,
@@ -249,7 +249,7 @@ pub struct NewNotificationEvent<'a> {
     /// Entity whose change the event records.
     pub entity_id: &'a Uri,
     /// Dictionary keys of the attributes the change touched.
-    pub changed_attribute_name_ids: Vec<AttributeNameId>,
+    pub changed_attribute_name_keys: Vec<AttributeNameKey>,
     /// Dataset discriminator of the changed Attribute instance.
     pub changed_dataset_id: Option<&'a Uri>,
     /// Expanded entity state after the change.
@@ -271,11 +271,11 @@ mod tests {
 
     fn row() -> RawClaimedDeliveryRow {
         RawClaimedDeliveryRow {
-            id: 7,
+            delivery_key: 7,
             subscription_id: "urn:ngsi-ld:Subscription:1".to_owned(),
             attempt_count: 2,
             next_attempt_at: Utc::now(),
-            event_id: 3,
+            event_key: 3,
             write_id: Uuid::nil(),
             event_ordinal: 1,
             trigger: 2,

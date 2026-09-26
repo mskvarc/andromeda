@@ -12,8 +12,8 @@ impl DictionaryRelation for EntityTypeName {
         EntityTypeNames::Table.into_iden()
     }
 
-    fn id_column() -> DynIden {
-        EntityTypeNames::Id.into_iden()
+    fn key_column() -> DynIden {
+        EntityTypeNames::EntityTypeNameKey.into_iden()
     }
 
     fn name_column() -> DynIden {
@@ -31,7 +31,7 @@ mod tests {
     fn entity_type_names_are_interned_in_the_entity_type_names_relation() {
         assert_eq!(<EntityTypeName as DictionaryRelation>::KIND, DictionaryKind::EntityTypeNames);
         assert_eq!(<EntityTypeName as DictionaryRelation>::table().to_string(), "entity_type_names");
-        assert_eq!(<EntityTypeName as DictionaryRelation>::id_column().to_string(), "id");
+        assert_eq!(<EntityTypeName as DictionaryRelation>::key_column().to_string(), "entity_type_name_key");
         assert_eq!(<EntityTypeName as DictionaryRelation>::name_column().to_string(), "name");
     }
 }

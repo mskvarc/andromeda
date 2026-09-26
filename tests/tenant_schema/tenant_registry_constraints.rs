@@ -17,11 +17,12 @@ async fn a_tenant_row_whose_name_and_default_flag_disagree_is_refused() {
 
     for (name, is_unnamed_default) in [(None, false), (Some("verification-named-default"), true)] {
         let mut transaction = pool.begin().await.expect("transaction");
-        let refused = sqlx::query("INSERT INTO tenants (status, is_unnamed_default, name, db_name) VALUES (1, $1, $2, 'andromeda_verification_never_created')")
-            .bind(is_unnamed_default)
-            .bind(name)
-            .execute(&mut *transaction)
-            .await;
+        let refused =
+            sqlx::query("INSERT INTO tenants (status, is_unnamed_default, name, database_name) VALUES (1, $1, $2, 'andromeda_verification_never_created')")
+                .bind(is_unnamed_default)
+                .bind(name)
+                .execute(&mut *transaction)
+                .await;
         let violation = refused.expect_err("a tenant row whose name and default flag disagree must be refused");
         let code = violation.as_database_error().and_then(|error| error.code().map(std::borrow::Cow::into_owned));
         assert_eq!(code.as_deref(), Some(CHECK_VIOLATION), "the refusal must be a check violation: {violation}");

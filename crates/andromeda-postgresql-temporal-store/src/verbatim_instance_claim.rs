@@ -111,7 +111,7 @@ pub(crate) fn verbatim_instance_targets(rows: &[AttributeHistoryRow]) -> Verbati
 /// observation at the same instant is an update rather than a duplicate. That
 /// reasoning depended on the append being reached only once per write, which a
 /// claim gate on the write record used to guarantee. Now that idempotency is
-/// row-level (`uq_attribute_history_write` plus the verbatim-instance pass
+/// row-level (`uq_attribute_history_write_identity` plus the verbatim-instance pass
 /// above), the append is reached again on every replay of a durable intent,
 /// and an `observedAt`-keyed delete cannot distinguish "this is my own row
 /// from a previous attempt" from "this is a different write's row that
@@ -200,7 +200,7 @@ fn history_verbatim_dedup_sql(target: &ContextTarget) -> String {
         .column((S2, TemporalAttributeStreams::StreamKey))
         .from(table_of(target, TemporalAttributeStreams::Table).alias(S2))
         .and_where(Expr::col((S2, TemporalAttributeStreams::TemporalEntityKey)).equals((S1, TemporalAttributeStreams::TemporalEntityKey)))
-        .and_where(Expr::col((S2, TemporalAttributeStreams::AttributeNameId)).equals((S1, TemporalAttributeStreams::AttributeNameId)))
+        .and_where(Expr::col((S2, TemporalAttributeStreams::AttributeNameKey)).equals((S1, TemporalAttributeStreams::AttributeNameKey)))
         .to_owned();
     let matches = Query::select()
         .expr(Expr::val(1))
@@ -242,8 +242,8 @@ fn claim_verbatim_dedup_delete_sql(target: &ContextTarget) -> String {
                 .equals((S1, TemporalAttributeStreams::TemporalEntityKey)),
         )
         .and_where(
-            Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::AttributeNameId))
-                .equals((S1, TemporalAttributeStreams::AttributeNameId)),
+            Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::AttributeNameKey))
+                .equals((S1, TemporalAttributeStreams::AttributeNameKey)),
         )
         .to_owned();
     let sql = Query::delete()
@@ -260,7 +260,7 @@ fn claim_verbatim_dedup_delete_sql(target: &ContextTarget) -> String {
 fn claim_verbatim_instances_sql(target: &ContextTarget) -> Result<String, TemporalStoreError> {
     let select = Query::select()
         .expr(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)))
-        .expr(Expr::col((S, TemporalAttributeStreams::AttributeNameId)))
+        .expr(Expr::col((S, TemporalAttributeStreams::AttributeNameKey)))
         .expr(Expr::col((D, DedupStaged::VerbatimInstanceId)))
         .from_function(dedup_unnest(), D)
         .join_as(
@@ -273,7 +273,7 @@ fn claim_verbatim_instances_sql(target: &ContextTarget) -> Result<String, Tempor
     let mut insert = Query::insert();
     insert.into_table(table_of(target, AttributeHistoryInstanceClaims::Table)).columns([
         AttributeHistoryInstanceClaims::TemporalEntityKey,
-        AttributeHistoryInstanceClaims::AttributeNameId,
+        AttributeHistoryInstanceClaims::AttributeNameKey,
         AttributeHistoryInstanceClaims::VerbatimInstanceId,
     ]);
     insert.select_from(select).map_err(|error| TemporalStoreError::Validation(error.to_string()))?;
@@ -293,7 +293,7 @@ mod tests {
             sql.contains(r#""attribute_history"."verbatim_instance_id" = "d"."verbatim_instance_id""#),
             "{sql}"
         );
-        assert!(!sql.contains("generated_instance_uuid"), "{sql}");
+        assert!(!sql.contains("generated_instance_id"), "{sql}");
     }
 
     #[test]
@@ -305,7 +305,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""attribute_history_instance_claims"."attribute_name_id" = "s1"."attribute_name_id""#),
+            sql.contains(r#""attribute_history_instance_claims"."attribute_name_key" = "s1"."attribute_name_key""#),
             "{sql}"
         );
     }
@@ -314,7 +314,10 @@ mod tests {
     fn the_claim_insert_lets_a_duplicate_triple_fail_the_statement() {
         let sql = claim_verbatim_instances_sql(&ContextTarget::Live).expect("the fixed claim insert builds");
         assert!(sql.starts_with(r#"INSERT INTO "attribute_history_instance_claims""#), "{sql}");
-        assert!(sql.contains(r#"("temporal_entity_key", "attribute_name_id", "verbatim_instance_id")"#), "{sql}");
+        assert!(
+            sql.contains(r#"("temporal_entity_key", "attribute_name_key", "verbatim_instance_id")"#),
+            "{sql}"
+        );
         assert!(!sql.contains("ON CONFLICT"), "{sql}");
     }
 
@@ -322,7 +325,7 @@ mod tests {
     fn deduplication_is_widened_to_every_sibling_stream_of_the_entity_and_attribute() {
         let sql = history_verbatim_dedup_sql(&ContextTarget::Live);
         assert!(sql.contains(r#""s2"."temporal_entity_key" = "s1"."temporal_entity_key""#), "{sql}");
-        assert!(sql.contains(r#""s2"."attribute_name_id" = "s1"."attribute_name_id""#), "{sql}");
+        assert!(sql.contains(r#""s2"."attribute_name_key" = "s1"."attribute_name_key""#), "{sql}");
     }
 
     #[test]

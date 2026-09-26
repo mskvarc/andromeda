@@ -24,9 +24,9 @@ pub struct PreparedEntityColumns {
     /// Entity identifiers.
     pub ids: Vec<Uri>,
     /// Type dictionary-key arrays as JSON arrays of integers.
-    pub type_ids_json: Vec<Value>,
+    pub entity_type_name_keys_json: Vec<Value>,
     /// Attribute-name dictionary-key arrays as JSON arrays of integers.
-    pub attribute_name_ids_json: Vec<Value>,
+    pub attribute_name_keys_json: Vec<Value>,
     /// Scope arrays as JSON, already in `ltree` dot notation.
     pub scope_paths_json: Vec<Value>,
     /// Pre-serialised JSON text for each payload.
@@ -52,8 +52,8 @@ impl PreparedEntityColumns {
     pub fn with_capacity(len: usize) -> PreparedEntityColumns {
         PreparedEntityColumns {
             ids: Vec::with_capacity(len),
-            type_ids_json: Vec::with_capacity(len),
-            attribute_name_ids_json: Vec::with_capacity(len),
+            entity_type_name_keys_json: Vec::with_capacity(len),
+            attribute_name_keys_json: Vec::with_capacity(len),
             scope_paths_json: Vec::with_capacity(len),
             payload_json: Vec::with_capacity(len),
             locations: Vec::with_capacity(len),

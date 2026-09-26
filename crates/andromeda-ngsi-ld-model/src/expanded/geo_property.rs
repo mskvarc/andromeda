@@ -89,7 +89,7 @@ pub fn extract_geo_property_geometry(expanded: &Value, iri: &str) -> Option<Geom
 /// them meeting a geo restriction is enough, so a matcher reads all of them
 /// rather than the default one. Instances that carry no decodable geometry are
 /// skipped, exactly as the SQL rendering skips `current_attribute_values` rows whose
-/// `value_geo` is null.
+/// `value_geometry` is null.
 pub fn geo_property_instance_geometries<'a>(expanded: &'a Value, iri: &str) -> impl Iterator<Item = Geometry> + 'a {
     geo_property_instances(expanded, iri)
         .unwrap_or_default()
@@ -771,7 +771,7 @@ mod tests {
 
     /// An instance whose value is not a geometry is skipped rather than
     /// stopping the walk, exactly as the SQL rendering skips an
-    /// `current_attribute_values` row with a null `value_geo`.
+    /// `current_attribute_values` row with a null `value_geometry`.
     #[test]
     fn an_instance_carrying_no_geometry_does_not_hide_the_instances_after_it() {
         let entity = json!([{

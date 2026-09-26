@@ -68,7 +68,7 @@ pub async fn suspend_tenants_on(client: &Client, broker_bases: &[&str]) {
 /// Returns the [`sqlx::Error`] the delete reported.
 pub async fn deprovision_registry(pool: &PgPool, prefix: &str) -> Result<(), sqlx::Error> {
     let pattern = format!("{prefix}%");
-    sqlx::query("DELETE FROM tenants WHERE is_unnamed_default = FALSE AND db_name LIKE $1")
+    sqlx::query("DELETE FROM tenants WHERE is_unnamed_default = FALSE AND database_name LIKE $1")
         .bind(&pattern)
         .execute(pool)
         .await?;

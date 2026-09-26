@@ -185,12 +185,12 @@ fn collect_empty_temporal_entities() -> DeleteStatement {
     let no_stream = Query::select()
         .expr(Expr::val(1))
         .from_as(TemporalAttributeStreams::Table, S)
-        .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((TemporalEntities::Table, TemporalEntities::EntityKey)))
+        .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((TemporalEntities::Table, TemporalEntities::TemporalEntityKey)))
         .to_owned();
     let no_scope = Query::select()
         .expr(Expr::val(1))
         .from_as(ScopeHistory::Table, Sh)
-        .and_where(Expr::col((Sh, ScopeHistory::TemporalEntityKey)).equals((TemporalEntities::Table, TemporalEntities::EntityKey)))
+        .and_where(Expr::col((Sh, ScopeHistory::TemporalEntityKey)).equals((TemporalEntities::Table, TemporalEntities::TemporalEntityKey)))
         .to_owned();
     Query::delete()
         .from_table(TemporalEntities::Table)
@@ -262,11 +262,11 @@ mod tests {
         );
         let entities = collect_empty_temporal_entities().to_string(PostgresQueryBuilder);
         assert!(
-            entities.contains(r#""s"."temporal_entity_key" = "temporal_entities"."entity_key""#),
+            entities.contains(r#""s"."temporal_entity_key" = "temporal_entities"."temporal_entity_key""#),
             "{entities}"
         );
         assert!(
-            entities.contains(r#""sh"."temporal_entity_key" = "temporal_entities"."entity_key""#),
+            entities.contains(r#""sh"."temporal_entity_key" = "temporal_entities"."temporal_entity_key""#),
             "{entities}"
         );
         assert_eq!(entities.matches("NOT EXISTS").count(), 2, "{entities}");

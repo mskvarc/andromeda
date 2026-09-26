@@ -118,9 +118,9 @@ impl EntitySideEffectDrain {
             attempts,
             job,
             record,
-            consequence_base,
+            base_ordinal,
         } = lease;
-        match self.deliver(job, record, consequence_base).await {
+        match self.deliver(job, record, base_ordinal).await {
             Ok(committed) => match self.queue.ack(id, &self.config.lease_holder).await? {
                 LeaseAcknowledgement::Applied => {
                     // The commit is durably owned by this worker, so its live
@@ -168,7 +168,7 @@ impl EntitySideEffectDrain {
 
     /// Replay the job's durable consequences and hand back the live change
     /// events to publish only once the acknowledgement is confirmed applied.
-    async fn deliver(&self, job: BatchSideEffectJob, record: WriteRecord, consequence_base: WriteOrdinal) -> Result<CommittedSideEffect, EntityError> {
+    async fn deliver(&self, job: BatchSideEffectJob, record: WriteRecord, base_ordinal: WriteOrdinal) -> Result<CommittedSideEffect, EntityError> {
         let BatchSideEffectJob {
             target,
             temporal_entities,
@@ -184,9 +184,7 @@ impl EntitySideEffectDrain {
                     .build()
             })
             .collect();
-        self.writes
-            .commit_replayed(&target, CommitReplay::new(record, consequence_base), writes)
-            .await?;
+        self.writes.commit_replayed(&target, CommitReplay::new(record, base_ordinal), writes).await?;
         Ok(CommittedSideEffect { target, change_events })
     }
 
@@ -455,7 +453,7 @@ mod tests {
                 change_events: Vec::new(),
             },
             record: fixed_record(),
-            consequence_base: WriteOrdinal::at(3),
+            base_ordinal: WriteOrdinal::at(3),
         }
     }
 
@@ -517,7 +515,7 @@ mod tests {
                 change_events: vec![event],
             },
             record: fixed_record(),
-            consequence_base: WriteOrdinal::at(3),
+            base_ordinal: WriteOrdinal::at(3),
         })
     }
 
@@ -562,10 +560,10 @@ mod tests {
     /// through `commit_replayed`, not mint a fresh identity through `commit`:
     /// that is what keeps a crash-retried delivery of the same job idempotent.
     #[tokio::test]
-    async fn delivery_replays_under_the_leased_jobs_stored_record_and_consequence_base() -> Result<(), EntityError> {
+    async fn delivery_replays_under_the_leased_jobs_stored_record_and_base_ordinal() -> Result<(), EntityError> {
         let leased = lease(0);
         let expected_record = leased.record;
-        let expected_base = leased.consequence_base;
+        let expected_base = leased.base_ordinal;
         let queue = Arc::new(RecordingQueue::with_lease(leased));
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
         drain_with_committer(queue, Arc::clone(&committer)).execute(Utc::now()).await?;

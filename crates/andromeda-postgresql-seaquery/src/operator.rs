@@ -102,9 +102,9 @@ mod tests {
     /// has to carry that element type for the GIN operator class to apply.
     #[test]
     fn array_membership_casts_the_element_to_the_columns_element_type() {
-        let expr = array_contains(Expr::col("type_ids"), Expr::val(7_i32), PostgresType::Integer);
+        let expr = array_contains(Expr::col("entity_type_name_keys"), Expr::val(7_i32), PostgresType::Integer);
         let sql = Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
-        assert!(sql.contains("\"type_ids\" @> ARRAY(SELECT 7::integer)"), "{sql}");
+        assert!(sql.contains("\"entity_type_name_keys\" @> ARRAY(SELECT 7::integer)"), "{sql}");
     }
 
     /// A dictionary key is inlined so the planner can estimate the containment
@@ -112,9 +112,9 @@ mod tests {
     /// the operator's default selectivity.
     #[test]
     fn dictionary_key_membership_renders_the_key_as_an_inline_array_literal() {
-        let expr = array_contains_key(Expr::col("type_ids"), 7);
+        let expr = array_contains_key(Expr::col("entity_type_name_keys"), 7);
         let (sql, values) = Query::select().expr(expr).to_owned().build(PostgresQueryBuilder);
-        assert!(sql.contains("\"type_ids\" @> (ARRAY[7])"), "{sql}");
+        assert!(sql.contains("\"entity_type_name_keys\" @> (ARRAY[7])"), "{sql}");
         assert!(values.0.is_empty(), "the key must not be bound: {sql}");
     }
 

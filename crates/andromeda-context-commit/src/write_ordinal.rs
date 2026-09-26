@@ -50,7 +50,7 @@ impl WriteOrdinal {
     ///
     /// A commit draws every consequence's ordinal from one running counter that
     /// starts at zero (or, for a replay, at the durably stored
-    /// [`CommitReplay::consequence_base`](crate::commit_replay::CommitReplay))
+    /// [`CommitReplay::base_ordinal`](crate::commit_replay::CommitReplay))
     /// and advances by the number of consequences each phase consumes. Checked
     /// arithmetic is what keeps a pathological write from wrapping the counter
     /// back into a range an earlier consequence already claimed.

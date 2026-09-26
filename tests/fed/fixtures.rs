@@ -273,12 +273,21 @@ pub fn entity_with_scope(id: &str, entity_type: &str, value: i64, scope: &str) -
     value
 }
 
-/// Create a registration for one domain footprint.
-pub fn registration(id: &str, endpoint: &str, entity_type: &str, scope: Option<&str>, mode: &str, operations: Option<&[&str]>) -> Value {
+/// Create a registration for one domain footprint, held by the domain broker
+/// under `tenant`.
+///
+/// Clause 4.14: "When contacting the respective Context Sources, the Tenant
+/// information from the Context Source Registration has to be used. If no
+/// Tenant information is present in the Context Source Registration, no Tenant
+/// information is to be used and thus the default Tenant is targeted". Every
+/// federation registration points at a broker of the topology, so it names the
+/// tenant the test's data lives in there.
+pub fn registration(tenant: &str, id: &str, endpoint: &str, entity_type: &str, scope: Option<&str>, mode: &str, operations: Option<&[&str]>) -> Value {
     let mut body = json!({
         "id": id,
         "type": "ContextSourceRegistration",
         "endpoint": endpoint,
+        "tenant": tenant,
         "information": [{"entities": [{"type": entity_type}]}],
         "mode": mode,
         "@context": COMPOUND_CONTEXT.as_str()
@@ -293,8 +302,8 @@ pub fn registration(id: &str, endpoint: &str, entity_type: &str, scope: Option<&
 }
 
 /// Create a registration constrained to one exact entity id.
-pub fn registration_for_entity(id: &str, endpoint: &str, entity_id: &str, entity_type: &str, mode: &str, operations: Option<&[&str]>) -> Value {
-    let mut body = registration(id, endpoint, entity_type, None, mode, operations);
+pub fn registration_for_entity(tenant: &str, id: &str, endpoint: &str, entity_id: &str, entity_type: &str, mode: &str, operations: Option<&[&str]>) -> Value {
+    let mut body = registration(tenant, id, endpoint, entity_type, None, mode, operations);
     body["information"][0]["entities"][0]["id"] = json!(entity_id);
     body
 }

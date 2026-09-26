@@ -6,7 +6,7 @@
 //! `OR` around them. A type the dictionary has never recorded has no key, and
 //! no entity can carry a type that was never interned, so its leaf renders as
 //! constant `FALSE`. The only thing that varies between callers is which
-//! relation's `type_ids` column is read.
+//! relation's `entity_type_name_keys` column is read.
 
 use crate::dictionary::resolved_names::ResolvedNames;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
@@ -14,27 +14,27 @@ use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
 use andromeda_postgresql_seaquery::{literal::false_literal, operator::array_contains_key};
 use sea_query::{Condition, SimpleExpr};
 
-/// Render a type expression against the given `type_ids` column.
+/// Render a type expression against the given `entity_type_name_keys` column.
 #[must_use]
-pub fn condition(expr: &TypeExpr, type_ids: &SimpleExpr, types: &ResolvedNames<EntityTypeName>) -> Condition {
+pub fn condition(expr: &TypeExpr, entity_type_name_keys: &SimpleExpr, types: &ResolvedNames<EntityTypeName>) -> Condition {
     match expr {
         TypeExpr::Wildcard => Condition::all(),
         TypeExpr::Type(iri) => Condition::all().add(match types.get_str(iri.as_str()) {
-            Some(id) => array_contains_key(type_ids.clone(), id.get()), // clone: each leaf names the same column
+            Some(id) => array_contains_key(entity_type_name_keys.clone(), id.get()), // clone: each leaf names the same column
             None => false_literal(),
         }),
         TypeExpr::And(children) => children
             .iter()
-            .fold(Condition::all(), |cond, child| cond.add(condition(child, type_ids, types))),
+            .fold(Condition::all(), |cond, child| cond.add(condition(child, entity_type_name_keys, types))),
         TypeExpr::Or(children) => children
             .iter()
-            .fold(Condition::any(), |cond, child| cond.add(condition(child, type_ids, types))),
+            .fold(Condition::any(), |cond, child| cond.add(condition(child, entity_type_name_keys, types))),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{dictionary::resolved_names::ResolvedNames, entity_type_id::EntityTypeId, type_predicate::condition};
+    use crate::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey, type_predicate::condition};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
     use andromeda_postgresql_schema::{
@@ -53,12 +53,12 @@ mod tests {
         ResolvedNames::from_pairs(
             pairs
                 .iter()
-                .map(|(name, id)| (name.parse::<EntityTypeName>().expect("valid type name"), EntityTypeId::from(*id))),
+                .map(|(name, id)| (name.parse::<EntityTypeName>().expect("valid type name"), EntityTypeNameKey::from(*id))),
         )
     }
 
     fn unaliased() -> SimpleExpr {
-        Expr::col(EntitySearch::TypeIds)
+        Expr::col(EntitySearch::EntityTypeNameKeys)
     }
 
     fn render(condition: Condition) -> String {
@@ -70,7 +70,7 @@ mod tests {
     }
 
     /// Clause 4.17 selects on membership, and the containment spelling over
-    /// the resolved key is the one the `type_ids` GIN index can answer.
+    /// the resolved key is the one the `entity_type_name_keys` GIN index can answer.
     #[test]
     fn a_known_type_renders_an_array_containment_test_on_its_key() {
         let sql = render(condition(
@@ -78,7 +78,10 @@ mod tests {
             &unaliased(),
             &known(&[("https://example.com/Vehicle", 7)]),
         ));
-        assert!(sql.contains("\"type_ids\" @> (ARRAY[7])"), "the key is inlined for the planner: {sql}");
+        assert!(
+            sql.contains("\"entity_type_name_keys\" @> (ARRAY[7])"),
+            "the key is inlined for the planner: {sql}"
+        );
         assert!(!sql.contains("= ANY"), "{sql}");
         assert!(!sql.contains("Vehicle"), "the type IRI itself never reaches the statement: {sql}");
     }
@@ -135,7 +138,7 @@ mod tests {
             &known(&[("https://example.com/Home", 1), ("https://example.com/Vehicle", 2)]),
         ));
         assert!(
-            sql.contains("((\"type_ids\" @> (ARRAY[1])) AND (\"type_ids\" @> (ARRAY[2]))) OR (FALSE)"),
+            sql.contains("((\"entity_type_name_keys\" @> (ARRAY[1])) AND (\"entity_type_name_keys\" @> (ARRAY[2]))) OR (FALSE)"),
             "{sql}"
         );
     }
@@ -147,7 +150,7 @@ mod tests {
         let expr = TypeExpr::Type(iri("https://example.com/Vehicle"));
         let names = known(&[("https://example.com/Vehicle", 7)]);
         let unaliased = render(condition(&expr, &unaliased(), &names));
-        let aliased = render(condition(&expr, &Expr::col((E, TemporalEntities::TypeIds)), &names));
-        assert_eq!(unaliased.replace("\"type_ids\"", "\"e\".\"type_ids\""), aliased);
+        let aliased = render(condition(&expr, &Expr::col((E, TemporalEntities::EntityTypeNameKeys)), &names));
+        assert_eq!(unaliased.replace("\"entity_type_name_keys\"", "\"e\".\"entity_type_name_keys\""), aliased);
     }
 }

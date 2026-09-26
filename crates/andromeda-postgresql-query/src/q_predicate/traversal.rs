@@ -20,7 +20,7 @@
 //! change for unrelated reasons.
 
 use crate::{
-    attribute_name_id::AttributeNameId,
+    attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::{DocumentsRef, EntityRowRefs},
 };
@@ -79,7 +79,7 @@ impl LinkedHop {
     /// The probe is an `EXISTS` over the Relationship's instances in
     /// `current_attribute_values`, joined to the entity each one names,
     /// correlated against `outer`. Reading the object from `value_uri` rather
-    /// than the payload keeps the probe on the `(attribute_name_id, value_uri)`
+    /// than the payload keeps the probe on the `(attribute_name_key, value_uri)`
     /// index, and the join to `entities.id` is that table's unique external key.
     ///
     /// A deleted Relationship needs no exclusion: the projection holds no
@@ -89,7 +89,7 @@ impl LinkedHop {
     /// `value_long_text`.
     pub(crate) fn probe(
         &self,
-        relationship_id: AttributeNameId,
+        relationship_id: AttributeNameKey,
         guard_types: &[AttributeName],
         types: &ResolvedNames<EntityTypeName>,
         outer: &EntityRowRefs,
@@ -113,7 +113,7 @@ impl LinkedHop {
             // Relationship's dictionary key is still the probe's first bound
             // value, ahead of the guard's types and the inner predicate's operands.
             .and_where(SeaExpr::col((hop(), CurrentAttributeValues::EntityKey)).eq(outer.entity_key_column()))
-            .and_where(SeaExpr::col((hop(), CurrentAttributeValues::AttributeNameId)).eq(relationship_id.get()));
+            .and_where(SeaExpr::col((hop(), CurrentAttributeValues::AttributeNameKey)).eq(relationship_id.get()));
         // A multi-type guard is a disjunction; adding it as one condition keeps it
         // parenthesised so a second alternative cannot escape the correlation and
         // the attribute-name test to match any entity in the tenant that carries it.
@@ -137,7 +137,7 @@ impl LinkedHop {
     }
 }
 
-/// The hop's entity-type constraint against the linked entity's `type_ids`
+/// The hop's entity-type constraint against the linked entity's `entity_type_name_keys`
 /// column.
 ///
 /// Clause 4.9 lists the guard's types as alternatives, so the constraint is a
@@ -152,15 +152,15 @@ impl LinkedHop {
 /// placeholders inside square brackets, and sea-query's tokeniser reads a
 /// bracketed span as a quoted identifier and copies it out verbatim, leaving the
 /// markers unsubstituted and silently aliased onto other binds. Each arm is
-/// still a containment test the `type_ids` GIN index answers, so the cost of
+/// still a containment test the `entity_type_name_keys` GIN index answers, so the cost of
 /// the disjunction is an extra index probe per type rather than a scan.
 fn type_guard(guard_types: &[AttributeName], types: &ResolvedNames<EntityTypeName>, linked_search_alias: &str) -> SimpleExpr {
-    let type_ids: SimpleExpr = SeaExpr::col((Alias::new(linked_search_alias), EntitySearch::TypeIds));
+    let entity_type_name_keys: SimpleExpr = SeaExpr::col((Alias::new(linked_search_alias), EntitySearch::EntityTypeNameKeys));
     guard_types
         .iter()
         .fold(Condition::any(), |guard, guard_type| match types.get_str(guard_type.as_str()) {
             // clone: every arm names the same column
-            Some(id) => guard.add(array_contains_key(type_ids.clone(), id.get())),
+            Some(id) => guard.add(array_contains_key(entity_type_name_keys.clone(), id.get())),
             None => guard.add(false_literal()),
         })
         .into()

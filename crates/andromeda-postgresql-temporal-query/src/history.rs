@@ -98,7 +98,7 @@ fn stage2_conditions(schema: Option<&DynIden>, entity_id: &Uri, compiled: &Compi
     // event in force there.
     if let Some(scope_q) = &compiled.entities.scope_q {
         let target = ScopeTarget::valid_at(
-            (Te, TemporalEntities::EntityKey),
+            (Te, TemporalEntities::TemporalEntityKey),
             compiled.window.timeproperty,
             Expr::col((Ah, axis)),
             schema.cloned(),
@@ -125,13 +125,13 @@ pub(crate) fn base_history_source(select: &mut SelectStatement, schema: Option<&
             JoinType::Join,
             qualified(schema, TemporalEntities::Table),
             Te,
-            Expr::col((Te, TemporalEntities::EntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
+            Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
         )
         .join_as(
             JoinType::Join,
             AttributeNames::Table,
             An,
-            Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
         );
 }
 
@@ -152,13 +152,13 @@ fn project_base_columns(select: &mut SelectStatement) {
         AttributeHistory::CreatedAt,
         AttributeHistory::ModifiedAt,
         AttributeHistory::DeletedAt,
-        AttributeHistory::GeneratedInstanceUuid,
+        AttributeHistory::GeneratedInstanceId,
         AttributeHistory::VerbatimInstanceId,
         AttributeHistory::ValueNumber,
         AttributeHistory::ValueString,
-        AttributeHistory::ValueBool,
+        AttributeHistory::ValueBoolean,
         AttributeHistory::ValueObject,
-        AttributeHistory::ValueDatetime,
+        AttributeHistory::ValueDateTime,
         AttributeHistory::ValueUri,
         AttributeHistory::UnitCodeId,
         AttributeHistory::Metadata,
@@ -169,7 +169,7 @@ fn project_base_columns(select: &mut SelectStatement) {
     }
     // The geometry is serialised back to EWKB in the statement; the store
     // decodes that wire form into a GeoJSON value in Rust.
-    select.expr_as(st_as_ewkb(Expr::col((Ah, AttributeHistory::ValueGeo))), Alias::new("value_geo_ewkb"));
+    select.expr_as(st_as_ewkb(Expr::col((Ah, AttributeHistory::ValueGeometry))), Alias::new("value_geometry_ewkb"));
     select.expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"));
     select.expr(Expr::col((S, TemporalAttributeStreams::DatasetId)));
 }
@@ -288,7 +288,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains("JOIN \"temporal_entities\" AS \"te\" ON \"te\".\"entity_key\" = \"s\".\"temporal_entity_key\""),
+            sql.contains("JOIN \"temporal_entities\" AS \"te\" ON \"te\".\"temporal_entity_key\" = \"s\".\"temporal_entity_key\""),
             "{sql}"
         );
         assert!(!sql.contains("temporal_entity_attributes"), "{sql}");
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn both_halves_of_the_instance_identity_are_projected() {
         let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains("\"ah\".\"generated_instance_uuid\""), "{sql}");
+        assert!(sql.contains("\"ah\".\"generated_instance_id\""), "{sql}");
         assert!(sql.contains("\"ah\".\"verbatim_instance_id\""), "{sql}");
         assert!(!sql.contains("\"instance_id\""), "{sql}");
     }

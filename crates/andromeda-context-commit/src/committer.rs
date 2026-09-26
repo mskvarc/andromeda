@@ -24,7 +24,7 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// Every consequence lands under `replay.record`'s identity instead of a
     /// freshly minted one, and the ordinal counter that numbers temporal,
     /// notification and side-effect consequences resumes at
-    /// `replay.consequence_base` instead of zero. A durable side-effect job
+    /// `replay.base_ordinal` instead of zero. A durable side-effect job
     /// retried after a crash therefore reproduces exactly the identity and
     /// ordinals its first attempt would have produced, so the replay's rows
     /// collide with the first attempt's on their row-level `ON CONFLICT ... DO

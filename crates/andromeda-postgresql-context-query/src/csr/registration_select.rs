@@ -13,7 +13,7 @@
 //! not require one. No column name repeats between the two relations, so the
 //! predicates callers add on registration columns stay unambiguous.
 
-use andromeda_postgresql_schema::csr::{Csr, CsrDeliveryState};
+use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState};
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType, postgis::geometry_as_geojson};
 use sea_query::{Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement};
 
@@ -47,16 +47,16 @@ pub fn registration_select() -> SelectStatement {
         .column((Csr::Table, Csr::CreatedAt))
         .column((Csr::Table, Csr::ModifiedAt))
         .column((Csr::Table, Csr::AdditionalProperties))
-        .column((CsrDeliveryState::Table, CsrDeliveryState::Status))
-        .column((CsrDeliveryState::Table, CsrDeliveryState::TimesSent))
-        .column((CsrDeliveryState::Table, CsrDeliveryState::TimesFailed))
-        .column((CsrDeliveryState::Table, CsrDeliveryState::LastSuccess))
-        .column((CsrDeliveryState::Table, CsrDeliveryState::LastFailure))
+        .column((RegistrationDeliveryState::Table, RegistrationDeliveryState::Status))
+        .column((RegistrationDeliveryState::Table, RegistrationDeliveryState::TimesSent))
+        .column((RegistrationDeliveryState::Table, RegistrationDeliveryState::TimesFailed))
+        .column((RegistrationDeliveryState::Table, RegistrationDeliveryState::LastSuccess))
+        .column((RegistrationDeliveryState::Table, RegistrationDeliveryState::LastFailure))
         .from(Csr::Table)
         .join(
             JoinType::LeftJoin,
-            CsrDeliveryState::Table,
-            SeaExpr::col((CsrDeliveryState::Table, CsrDeliveryState::RegistrationId)).equals((Csr::Table, Csr::Id)),
+            RegistrationDeliveryState::Table,
+            SeaExpr::col((RegistrationDeliveryState::Table, RegistrationDeliveryState::RegistrationId)).equals((Csr::Table, Csr::Id)),
         )
         .to_owned()
 }
@@ -71,13 +71,13 @@ mod tests {
         let sql = registration_select().to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(
-                "FROM \"context_source_registrations\" LEFT JOIN \"csr_delivery_state\" ON \"csr_delivery_state\".\"registration_id\" = \"context_source_registrations\".\"id\""
+                "FROM \"context_source_registrations\" LEFT JOIN \"registration_delivery_state\" ON \"registration_delivery_state\".\"registration_id\" = \"context_source_registrations\".\"id\""
             ),
             "{sql}"
         );
         for health in ["status", "times_sent", "times_failed", "last_success", "last_failure"] {
             assert!(
-                sql.contains(&format!("\"csr_delivery_state\".\"{health}\"")),
+                sql.contains(&format!("\"registration_delivery_state\".\"{health}\"")),
                 "{health} is read from the delivery state: {sql}"
             );
         }

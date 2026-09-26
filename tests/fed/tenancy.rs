@@ -5,6 +5,10 @@ use andromeda_test_client::{header::jsonld_link_header, tenant_name::TenantName}
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use pretty_assertions::assert_eq;
 
+/// Each hub tenant holds a registration naming the domain tenant it federates
+/// (clause 4.14: the forwarded request runs in the registration's tenant, and in
+/// the default tenant when the registration names none), so each hub tenant
+/// reads only its own domain tenant.
 #[tokio::test]
 async fn fed_tenant_isolation_preserves_domain_boundaries() {
     let topology = topology().await;
@@ -44,6 +48,7 @@ async fn fed_tenant_isolation_preserves_domain_boundaries() {
     assert_status(
         &hub_one
             .create_registration(&registration(
+                "tenant-fed-one",
                 &topology.id("registration:tenant-one"),
                 "http://fed-domain-madrid:1072",
                 "Building",
@@ -58,6 +63,7 @@ async fn fed_tenant_isolation_preserves_domain_boundaries() {
     assert_status(
         &hub_two
             .create_registration(&registration(
+                "tenant-fed-two",
                 &topology.id("registration:tenant-two"),
                 "http://fed-domain-madrid:1072",
                 "Building",

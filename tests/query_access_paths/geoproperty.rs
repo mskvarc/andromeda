@@ -164,14 +164,14 @@ async fn arbitrary_geoproperty_topological_queries_use_the_projection_geometry_i
         pool,
         &format!(
             "SELECT c.entity_key FROM current_attribute_values AS c \
-             WHERE c.attribute_name_id = {} \
-               AND ST_Intersects(c.value_geo, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326))",
+             WHERE c.attribute_name_key = {} \
+               AND ST_Intersects(c.value_geometry, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326))",
             corpus.entrance()
         ),
     )
     .await;
     assert!(
-        plan.contains("idx_cav_attr_geo"),
+        plan.contains("idx_cav_value_geometry"),
         "a topological query over a named GeoProperty must use the composite geometry index: {plan}"
     );
 

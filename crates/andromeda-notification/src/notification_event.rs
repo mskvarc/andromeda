@@ -20,11 +20,11 @@ use derive_more::{Display, From};
 use serde_json::Value;
 use typed_builder::TypedBuilder;
 
-/// Unique identifier for a persisted notification event.
+/// Database-generated key of a persisted notification event.
 #[derive(Clone, Copy, Debug, Display, Eq, From, Hash, Ord, PartialEq, PartialOrd)]
-pub struct NotificationEventId(i64);
+pub struct NotificationEventKey(i64);
 
-impl NotificationEventId {
+impl NotificationEventKey {
     /// Returns the raw `i64` value.
     #[must_use]
     pub const fn into_inner(self) -> i64 {
@@ -35,8 +35,8 @@ impl NotificationEventId {
 /// One immutable record of an Entity change that at least one subscription matched.
 #[derive(Clone, Debug, TypedBuilder)]
 pub struct NotificationEvent {
-    /// Auto-generated event identifier.
-    pub id: NotificationEventId,
+    /// Database-generated event key.
+    pub key: NotificationEventKey,
     /// The write that produced this event.
     pub write_id: WriteId,
     /// Deterministic position of this event within its write, unique across the
@@ -64,16 +64,16 @@ pub struct NotificationEvent {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_event::NotificationEventId;
+    use crate::notification_event::NotificationEventKey;
     use pretty_assertions::assert_eq;
 
     #[test]
     fn a_notification_event_id_reports_its_raw_value() {
-        assert_eq!(NotificationEventId::from(42_i64).into_inner(), 42);
+        assert_eq!(NotificationEventKey::from(42_i64).into_inner(), 42);
     }
 
     #[test]
     fn a_notification_event_id_displays_as_its_raw_value() {
-        assert_eq!(NotificationEventId::from(123_i64).to_string(), "123");
+        assert_eq!(NotificationEventKey::from(123_i64).to_string(), "123");
     }
 }

@@ -12,8 +12,8 @@ impl DictionaryRelation for AttributeName {
         AttributeNames::Table.into_iden()
     }
 
-    fn id_column() -> DynIden {
-        AttributeNames::Id.into_iden()
+    fn key_column() -> DynIden {
+        AttributeNames::AttributeNameKey.into_iden()
     }
 
     fn name_column() -> DynIden {
@@ -31,7 +31,7 @@ mod tests {
     fn attribute_names_are_interned_in_the_attribute_names_relation() {
         assert_eq!(<AttributeName as DictionaryRelation>::KIND, DictionaryKind::AttributeNames);
         assert_eq!(<AttributeName as DictionaryRelation>::table().to_string(), "attribute_names");
-        assert_eq!(<AttributeName as DictionaryRelation>::id_column().to_string(), "id");
+        assert_eq!(<AttributeName as DictionaryRelation>::key_column().to_string(), "attribute_name_key");
         assert_eq!(<AttributeName as DictionaryRelation>::name_column().to_string(), "name");
     }
 }

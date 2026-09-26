@@ -34,8 +34,8 @@ fn insert_rows_statement(registration: &Uri, rows: &[RegistrationInformationRow<
         RegistrationInformation::EntityTypes,
         RegistrationInformation::EntityId,
         RegistrationInformation::EntityIdPattern,
-        RegistrationInformation::PropertyNameIds,
-        RegistrationInformation::RelationshipNameIds,
+        RegistrationInformation::PropertyNameKeys,
+        RegistrationInformation::RelationshipNameKeys,
     ]);
     for row in rows {
         let (properties, relationships) = row.attributes.stored();
@@ -109,7 +109,7 @@ mod tests {
         entity_info::{EntityInfo, EntityTypeSelection},
         registration::info::RegistrationInfo,
     };
-    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 
@@ -122,7 +122,7 @@ mod tests {
     fn the_insert_writes_one_values_row_per_routing_row_with_typed_array_binds() {
         let registration: Uri = "urn:ngsi-ld:ContextSourceRegistration:1".parse().expect("valid URI");
         let speed: AttributeName = SPEED.parse().expect("valid attribute name");
-        let dictionary = HashMap::from([(speed.clone(), AttributeNameId::from(11))]); // clone: the dictionary key is owned beside the declared name.
+        let dictionary = HashMap::from([(speed.clone(), AttributeNameKey::from(11))]); // clone: the dictionary key is owned beside the declared name.
         let information = vec![RegistrationInfo {
             entities: Some(vec![EntityInfo {
                 id: None,
@@ -140,7 +140,7 @@ mod tests {
         let (sql, values) = insert_rows_statement(&registration, &rows).expect("the insert builds");
         assert!(
             sql.starts_with(
-                r#"INSERT INTO "registration_information" ("registration_id", "entity_types", "entity_id", "entity_id_pattern", "property_name_ids", "relationship_name_ids") VALUES ($1, $2, $3, $4, $5, $6), ($7, $8, $9, $10, $11, $12)"#
+                r#"INSERT INTO "registration_information" ("registration_id", "entity_types", "entity_id", "entity_id_pattern", "property_name_keys", "relationship_name_keys") VALUES ($1, $2, $3, $4, $5, $6), ($7, $8, $9, $10, $11, $12)"#
             ),
             "{sql}"
         );

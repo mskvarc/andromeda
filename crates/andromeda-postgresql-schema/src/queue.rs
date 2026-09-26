@@ -35,7 +35,7 @@ pub enum PendingSideEffects {
     /// Instant the enqueueing write stamped, reused when the job resumes
     RecordedAt,
     /// Ordinal base the enqueueing write's consequences resume from
-    ConsequenceBase,
+    BaseOrdinal,
     /// Serialised batch side-effect job
     Payload,
     /// Number of drain attempts already made (shared claimable-queue contract)
@@ -60,15 +60,15 @@ pub enum TemporalAppendIntents {
     /// Table name: `temporal_append_intents`
     Table,
     /// Monotonic queue sequence, the row identity workers order and claim by
-    Sequence,
+    IntentKey,
     /// Identity of the write that produced the intent
     WriteId,
     /// Entity the intent appends temporal history for
     EntityId,
     /// Ordinal base the intent's entries start at, part of the dedup key
-    Base,
+    BaseOrdinal,
     /// Serialised temporal append intent
-    Intent,
+    Payload,
     /// Earliest instant the intent may next be claimed (shared claimable-queue contract)
     NextAttemptAt,
     /// Instant the current lease was acquired
@@ -92,11 +92,11 @@ mod tests {
     #[test]
     fn temporal_append_intents_table_and_columns() {
         assert_eq!(TemporalAppendIntents::Table.to_string(), "temporal_append_intents");
-        assert_eq!(TemporalAppendIntents::Sequence.to_string(), "sequence");
+        assert_eq!(TemporalAppendIntents::IntentKey.to_string(), "intent_key");
         assert_eq!(TemporalAppendIntents::WriteId.to_string(), "write_id");
         assert_eq!(TemporalAppendIntents::EntityId.to_string(), "entity_id");
-        assert_eq!(TemporalAppendIntents::Base.to_string(), "base");
-        assert_eq!(TemporalAppendIntents::Intent.to_string(), "intent");
+        assert_eq!(TemporalAppendIntents::BaseOrdinal.to_string(), "base_ordinal");
+        assert_eq!(TemporalAppendIntents::Payload.to_string(), "payload");
         assert_eq!(TemporalAppendIntents::NextAttemptAt.to_string(), "next_attempt_at");
         assert_eq!(TemporalAppendIntents::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(TemporalAppendIntents::LeaseUntil.to_string(), "lease_until");
@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(PendingSideEffects::CreatedAt.to_string(), "created_at");
         assert_eq!(PendingSideEffects::WriteId.to_string(), "write_id");
         assert_eq!(PendingSideEffects::RecordedAt.to_string(), "recorded_at");
-        assert_eq!(PendingSideEffects::ConsequenceBase.to_string(), "consequence_base");
+        assert_eq!(PendingSideEffects::BaseOrdinal.to_string(), "base_ordinal");
         assert_eq!(PendingSideEffects::Payload.to_string(), "payload");
         assert_eq!(PendingSideEffects::AttemptCount.to_string(), "attempt_count");
         assert_eq!(PendingSideEffects::ExhaustedAt.to_string(), "exhausted_at");

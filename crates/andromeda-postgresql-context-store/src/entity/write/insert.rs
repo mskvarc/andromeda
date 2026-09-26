@@ -88,8 +88,8 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
         .columns([
             EntitySearch::EntityKey,
             EntitySearch::LocationExpiresAt,
-            EntitySearch::TypeIds,
-            EntitySearch::AttributeNameIds,
+            EntitySearch::EntityTypeNameKeys,
+            EntitySearch::AttributeNameKeys,
             EntitySearch::ScopePaths,
             EntitySearch::Location,
             EntitySearch::ObservationSpace,
@@ -99,8 +99,8 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
             from_inserted()
                 .expr(Expr::col((Ins, Entities::EntityKey)))
                 .expr(projected(EntitySearch::LocationExpiresAt))
-                .expr(projected(EntitySearch::TypeIds))
-                .expr(projected(EntitySearch::AttributeNameIds))
+                .expr(projected(EntitySearch::EntityTypeNameKeys))
+                .expr(projected(EntitySearch::AttributeNameKeys))
                 .expr(projected(EntitySearch::ScopePaths))
                 .expr(projected(EntitySearch::Location))
                 .expr(projected(EntitySearch::ObservationSpace))
@@ -154,8 +154,8 @@ impl EntityRepository {
         let sql = entity_insert_sql(target)?;
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&ids)
-            .bind(&entities.type_ids_json)
-            .bind(&entities.attribute_name_ids_json)
+            .bind(&entities.entity_type_name_keys_json)
+            .bind(&entities.attribute_name_keys_json)
             .bind(&entities.scope_paths_json)
             .bind(&entities.payload_json)
             .bind(&entities.locations)
@@ -188,7 +188,7 @@ mod tests {
         pretty_assertions::assert_eq!(placeholders(&sql), (1..=11).collect::<BTreeSet<u32>>());
         assert!(
             sql.contains(
-                "AS d(id, type_ids_json, attribute_name_ids_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at)"
+                "AS d(id, entity_type_name_keys_json, attribute_name_keys_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at)"
             ),
             "{sql}"
         );
@@ -203,7 +203,7 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""docs" AS (INSERT INTO "entity_documents" ("entity_key", "payload")"#), "{sql}");
-        assert!(sql.contains(r#""srch" AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "type_ids", "attribute_name_ids", "scope_paths", "location", "observation_space", "operation_space")"#), "{sql}");
+        assert!(sql.contains(r#""srch" AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "scope_paths", "location", "observation_space", "operation_space")"#), "{sql}");
         assert!(sql.ends_with(r#"SELECT "entity_key", "id" FROM "ins""#), "{sql}");
         pretty_assertions::assert_eq!(
             sql.matches("ST_MakeValid").count(),
@@ -216,11 +216,11 @@ mod tests {
     fn the_insert_expands_the_key_and_scope_arrays_and_casts_each_to_its_element_type() {
         let sql = insert();
         assert!(
-            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."type_ids_json")::integer) AS "type_ids""#),
+            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."entity_type_name_keys_json")::integer) AS "entity_type_name_keys""#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."attribute_name_ids_json")::integer) AS "attribute_name_ids""#),
+            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."attribute_name_keys_json")::integer) AS "attribute_name_keys""#),
             "{sql}"
         );
         assert!(
@@ -243,7 +243,7 @@ mod tests {
         let sql = insert();
         assert!(sql.contains(r#"ON CONFLICT ("id") DO NOTHING RETURNING "entity_key", "id""#), "{sql}");
         assert!(!sql.contains("modified_at"), "the token defaults in the database: {sql}");
-        assert!(!sql.contains("location_geo"), "the geography is generated: {sql}");
+        assert!(!sql.contains("location_geography"), "the geography is generated: {sql}");
     }
 
     #[test]

@@ -19,7 +19,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::{stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
-use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::TemporalAttributeStreams};
 use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
@@ -58,7 +58,7 @@ enum StreamStaged {
     /// Narrow key of the temporal entity the stream belongs to.
     TemporalEntityKey,
     /// Dictionary identity of the stream's attribute name.
-    AttributeNameId,
+    AttributeNameKey,
     /// Multi-attribute discriminator of the stream.
     DatasetId,
 }
@@ -109,14 +109,14 @@ impl TemporalRepository {
         let insert_sql = stream_insert_batch_sql(target)?;
         sqlx::query(AssertSqlSafe(insert_sql))
             .bind(&binds.temporal_entity_keys)
-            .bind(&binds.attribute_name_ids)
+            .bind(&binds.attribute_name_keys)
             .bind(&binds.dataset_ids)
             .execute(&mut **tx)
             .await?;
         let read_sql = stream_read_batch_sql(target);
         let rows = sqlx::query(AssertSqlSafe(read_sql))
             .bind(&binds.temporal_entity_keys)
-            .bind(&binds.attribute_name_ids)
+            .bind(&binds.attribute_name_keys)
             .bind(&binds.dataset_ids)
             .fetch_all(&mut **tx)
             .await?;
@@ -143,7 +143,7 @@ struct StreamBinds<'a> {
     /// Narrow entity key each stream belongs to.
     temporal_entity_keys: Vec<i64>,
     /// Dictionary identity of each stream's attribute name.
-    attribute_name_ids: Vec<i32>,
+    attribute_name_keys: Vec<i32>,
     /// Multi-attribute discriminator of each stream.
     dataset_ids: Vec<Option<&'a str>>,
 }
@@ -169,14 +169,14 @@ fn distinct_attribute_names(upserts: &[TemporalCatalogUpsert]) -> Vec<AttributeN
 fn stream_binds<'a>(
     upserts: &'a [TemporalCatalogUpsert],
     entity_keys: &HashMap<Uri, TemporalEntityKey>,
-    name_to_id: &HashMap<AttributeName, AttributeNameId>,
+    name_to_id: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<StreamBinds<'a>, TemporalStoreError> {
     let mut binds = StreamBinds {
         temporal_entity_keys: Vec::new(),
-        attribute_name_ids: Vec::new(),
+        attribute_name_keys: Vec::new(),
         dataset_ids: Vec::new(),
     };
-    let mut seen: HashSet<(i64, AttributeNameId, Option<&'a str>)> = HashSet::new();
+    let mut seen: HashSet<(i64, AttributeNameKey, Option<&'a str>)> = HashSet::new();
     for upsert in upserts {
         // An upsert that may create always comes back from the entity upsert's
         // `RETURNING`, and a typeless observation for a nonexistent evolution
@@ -188,15 +188,15 @@ fn stream_binds<'a>(
         };
         let entity_key = entity_key.get();
         for grain in &upsert.streams {
-            let attribute_name_id = *name_to_id
+            let attribute_name_key = *name_to_id
                 .get(&grain.attribute_name)
                 .ok_or_else(|| TemporalStoreError::NameLookup(format!("Attribute name '{}' not found in dictionary after resolve", grain.attribute_name)))?;
             let dataset_id = grain.dataset_id.as_ref().map(Uri::as_str);
-            if !seen.insert((entity_key, attribute_name_id, dataset_id)) {
+            if !seen.insert((entity_key, attribute_name_key, dataset_id)) {
                 continue;
             }
             binds.temporal_entity_keys.push(entity_key);
-            binds.attribute_name_ids.push(attribute_name_id.get());
+            binds.attribute_name_keys.push(attribute_name_key.get());
             binds.dataset_ids.push(dataset_id);
         }
     }
@@ -235,7 +235,7 @@ fn decode_stream_row(row: &PgRow) -> Result<((TemporalEntityKey, TemporalStreamK
 fn stream_staging_columns() -> [UnnestColumn; 3] {
     [
         UnnestColumn::new(StreamStaged::TemporalEntityKey, PostgresType::BigintArray),
-        UnnestColumn::new(StreamStaged::AttributeNameId, PostgresType::IntegerArray),
+        UnnestColumn::new(StreamStaged::AttributeNameKey, PostgresType::IntegerArray),
         UnnestColumn::new(StreamStaged::DatasetId, PostgresType::TextArray),
     ]
 }
@@ -262,7 +262,7 @@ fn stream_insert_batch_sql(target: &ContextTarget) -> Result<String, TemporalSto
     let mut select = Query::select();
     select
         .expr(Expr::col((D, StreamStaged::TemporalEntityKey)))
-        .expr(Expr::col((D, StreamStaged::AttributeNameId)))
+        .expr(Expr::col((D, StreamStaged::AttributeNameKey)))
         .expr(Expr::col((D, StreamStaged::DatasetId)))
         .from_function(call, D);
     let select = select;
@@ -270,7 +270,7 @@ fn stream_insert_batch_sql(target: &ContextTarget) -> Result<String, TemporalSto
     let mut insert = Query::insert();
     insert.into_table(table_of(target, TemporalAttributeStreams::Table)).columns([
         TemporalAttributeStreams::TemporalEntityKey,
-        TemporalAttributeStreams::AttributeNameId,
+        TemporalAttributeStreams::AttributeNameKey,
         TemporalAttributeStreams::DatasetId,
     ]);
     insert
@@ -279,7 +279,7 @@ fn stream_insert_batch_sql(target: &ContextTarget) -> Result<String, TemporalSto
         .on_conflict(
             OnConflict::columns([
                 TemporalAttributeStreams::TemporalEntityKey,
-                TemporalAttributeStreams::AttributeNameId,
+                TemporalAttributeStreams::AttributeNameKey,
                 TemporalAttributeStreams::DatasetId,
             ])
             .do_nothing()
@@ -301,7 +301,7 @@ fn stream_read_batch_sql(target: &ContextTarget) -> String {
 
     let stream_match = Cond::all()
         .add(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((D, StreamStaged::TemporalEntityKey)))
-        .add(Expr::col((S, TemporalAttributeStreams::AttributeNameId)).equals((D, StreamStaged::AttributeNameId)))
+        .add(Expr::col((S, TemporalAttributeStreams::AttributeNameKey)).equals((D, StreamStaged::AttributeNameKey)))
         .add(SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))).not_distinct_from(Expr::col((D, StreamStaged::DatasetId))));
 
     let mut select = Query::select();
@@ -316,7 +316,7 @@ fn stream_read_batch_sql(target: &ContextTarget) -> String {
             JoinType::InnerJoin,
             AttributeNames::Table,
             An,
-            Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
         );
     let select = select;
 
@@ -333,7 +333,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
-    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use andromeda_temporal::write_purpose::TemporalWritePurpose;
     use std::collections::HashMap;
 
@@ -356,10 +356,10 @@ mod tests {
         }
     }
 
-    fn name_ids() -> HashMap<AttributeName, AttributeNameId> {
+    fn name_keys() -> HashMap<AttributeName, AttributeNameKey> {
         HashMap::from([
-            (SPEED.parse().expect("valid speed name"), AttributeNameId::from(1_i32)),
-            (BRAND.parse().expect("valid brand name"), AttributeNameId::from(2_i32)),
+            (SPEED.parse().expect("valid speed name"), AttributeNameKey::from(1_i32)),
+            (BRAND.parse().expect("valid brand name"), AttributeNameKey::from(2_i32)),
         ])
     }
 
@@ -378,7 +378,7 @@ mod tests {
     fn the_batched_stream_insert_carries_the_entity_key_as_an_array_column() {
         let sql = stream_insert_batch_sql(&ContextTarget::Live).expect("the batched stream insert builds");
         assert!(
-            sql.contains(r#"INSERT INTO "temporal_attribute_streams" ("temporal_entity_key", "attribute_name_id", "dataset_id")"#),
+            sql.contains(r#"INSERT INTO "temporal_attribute_streams" ("temporal_entity_key", "attribute_name_key", "dataset_id")"#),
             "{sql}"
         );
         assert!(
@@ -386,7 +386,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"ON CONFLICT ("temporal_entity_key", "attribute_name_id", "dataset_id") DO NOTHING"#),
+            sql.contains(r#"ON CONFLICT ("temporal_entity_key", "attribute_name_key", "dataset_id") DO NOTHING"#),
             "{sql}"
         );
         assert!(!sql.contains("stream_key") && !sql.contains("uuid"), "{sql}");
@@ -400,7 +400,7 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains("IS NOT DISTINCT FROM"), "{sql}");
-        assert!(sql.contains("AS d(temporal_entity_key, attribute_name_id, dataset_id)"), "{sql}");
+        assert!(sql.contains("AS d(temporal_entity_key, attribute_name_key, dataset_id)"), "{sql}");
     }
 
     #[test]
@@ -410,9 +410,9 @@ mod tests {
             upsert("urn:ngsi-ld:Vehicle:2", vec![grain(SPEED, None)]),
         ];
         let keys = entity_keys(&[("urn:ngsi-ld:Vehicle:1", 1), ("urn:ngsi-ld:Vehicle:2", 2)]);
-        let binds = stream_binds(&upserts, &keys, &name_ids()).expect("known names");
+        let binds = stream_binds(&upserts, &keys, &name_keys()).expect("known names");
         pretty_assertions::assert_eq!(binds.temporal_entity_keys, vec![1_i64, 2_i64]);
-        pretty_assertions::assert_eq!(binds.attribute_name_ids, vec![1_i32, 1_i32]);
+        pretty_assertions::assert_eq!(binds.attribute_name_keys, vec![1_i32, 1_i32]);
         pretty_assertions::assert_eq!(binds.dataset_ids, vec![None, None]);
     }
 
@@ -423,9 +423,9 @@ mod tests {
             vec![grain(SPEED, None), grain(SPEED, Some("urn:ngsi-ld:Dataset:a"))],
         )];
         let keys = entity_keys(&[("urn:ngsi-ld:Vehicle:1", 7)]);
-        let binds = stream_binds(&upserts, &keys, &name_ids()).expect("known names");
+        let binds = stream_binds(&upserts, &keys, &name_keys()).expect("known names");
         pretty_assertions::assert_eq!(binds.temporal_entity_keys, vec![7_i64, 7_i64]);
-        pretty_assertions::assert_eq!(binds.attribute_name_ids, vec![1_i32, 1_i32]);
+        pretty_assertions::assert_eq!(binds.attribute_name_keys, vec![1_i32, 1_i32]);
         pretty_assertions::assert_eq!(binds.dataset_ids, vec![None, Some("urn:ngsi-ld:Dataset:a")]);
     }
 

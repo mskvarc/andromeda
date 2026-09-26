@@ -44,7 +44,7 @@ async fn seed_registrations(pool: &PgPool, prefix: &str) {
     .await
     .expect("the common registrations must be seeded");
     sqlx::query(
-        "INSERT INTO registration_information (registration_id, entity_types, entity_id, property_name_ids, relationship_name_ids) \
+        "INSERT INTO registration_information (registration_id, entity_types, entity_id, property_name_keys, relationship_name_keys) \
          SELECT $1 || ':ContextSourceRegistration:common-' || n, ARRAY[$2::text], '', ARRAY[]::integer[], ARRAY[]::integer[] \
          FROM generate_series(1, $3) AS n",
     )
@@ -67,7 +67,7 @@ async fn seed_registrations(pool: &PgPool, prefix: &str) {
         .await
         .expect("the registration must be seeded");
         sqlx::query(
-            "INSERT INTO registration_information (registration_id, entity_types, entity_id, property_name_ids, relationship_name_ids) \
+            "INSERT INTO registration_information (registration_id, entity_types, entity_id, property_name_keys, relationship_name_keys) \
              VALUES ($1 || ':ContextSourceRegistration:' || $2, $3::text[], '', ARRAY[0], ARRAY[0])",
         )
         .bind(prefix)

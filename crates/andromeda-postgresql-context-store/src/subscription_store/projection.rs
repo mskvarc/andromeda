@@ -212,7 +212,7 @@ mod tests {
         for column in ["watched_attributes", "expand_values", "json_keys"] {
             assert!(
                 sql.contains(&format!(
-                    r#"(CASE WHEN ("subscriptions"."{column}" IS NULL) THEN NULL ELSE ARRAY(SELECT "attribute_names"."name" FROM "attribute_names" WHERE "attribute_names"."id" = ANY("subscriptions"."{column}") ORDER BY array_position("subscriptions"."{column}", "attribute_names"."id") ASC) END) AS "{column}""#
+                    r#"(CASE WHEN ("subscriptions"."{column}" IS NULL) THEN NULL ELSE ARRAY(SELECT "attribute_names"."name" FROM "attribute_names" WHERE "attribute_names"."attribute_name_key" = ANY("subscriptions"."{column}") ORDER BY array_position("subscriptions"."{column}", "attribute_names"."attribute_name_key") ASC) END) AS "{column}""#
                 )),
                 "{column}: {sql}"
             );

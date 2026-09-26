@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, source: BrokerRole, entity_type: &str, registration_local: &str, property_name: &str) {
     let peer = topology.broker(source).expect("topology source broker");
     let registration = CsrBuilder::new(&topology.id(registration_local), peer.peer_url())
+        .tenant(topology.tenant())
         .mode("inclusive")
         .entity_type(entity_type)
         .property_names(&[property_name])

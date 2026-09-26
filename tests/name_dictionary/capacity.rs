@@ -54,7 +54,8 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
     );
 
     let row = sqlx::query(
-        "SELECT COUNT(*) AS interned, COUNT(DISTINCT id) AS distinct_keys, MIN(id) AS lowest, MAX(id) AS highest \
+        "SELECT COUNT(*) AS interned, COUNT(DISTINCT attribute_name_key) AS distinct_keys, \
+         MIN(attribute_name_key) AS lowest, MAX(attribute_name_key) AS highest \
          FROM attribute_names WHERE name LIKE $1",
     )
     .bind(format!("{GENERATED_NAME_PREFIX}%"))
@@ -78,14 +79,14 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
     // rather than a placeholder per name, which is what keeps a large batch
     // from exhausting the protocol's parameter space.
     let batch: Vec<String> = (1..=LOOKUP_BATCH).map(|position| format!("{GENERATED_NAME_PREFIX}{position}")).collect();
-    let resolved = sqlx::query("SELECT id, name FROM attribute_names WHERE name = ANY($1)")
+    let resolved = sqlx::query("SELECT attribute_name_key, name FROM attribute_names WHERE name = ANY($1)")
         .bind(&batch)
         .fetch_all(&pool)
         .await
         .expect("an array-bound lookup of a large batch must not fail");
     assert_eq!(resolved.len(), batch.len(), "every requested name resolves to exactly one key");
     for resolved_row in &resolved {
-        let key: i32 = resolved_row.get("id");
+        let key: i32 = resolved_row.get("attribute_name_key");
         let name: String = resolved_row.get("name");
         assert!(key > 0, "{name} resolved to a non-positive key");
     }
@@ -101,7 +102,7 @@ async fn the_dictionary_key_is_declared_wide_enough_to_number_more_than_a_two_by
 
     let declared: String = sqlx::query_scalar(
         "SELECT data_type FROM information_schema.columns \
-         WHERE table_schema = 'public' AND table_name = 'attribute_names' AND column_name = 'id'",
+         WHERE table_schema = 'public' AND table_name = 'attribute_names' AND column_name = 'attribute_name_key'",
     )
     .fetch_one(&pool)
     .await

@@ -125,7 +125,10 @@ async fn distop_entity_csi_urn_request_copies_from_triggering_request() {
 }
 
 /// The tenant is conveyed only via `NGSILD-Tenant`, never inside
-/// `contextSourceInfo` (clause 4.3.6.6). Confirms REQ-FW-35.
+/// `contextSourceInfo` (clause 4.3.6.5: "As Tenant information, if applicable,
+/// is directly specified in the `CSourceRegistration`, it shall not be part of
+/// contextSourceInfo"). The header carries the registration's `tenant` (clause
+/// 4.14), not the tenant the triggering query ran in. Confirms REQ-FW-35.
 #[tokio::test]
 async fn distop_entity_csi_tenant_never_placed_inside_context_source_info() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -140,6 +143,7 @@ async fn distop_entity_csi_tenant_never_placed_inside_context_source_info() {
         .mode("inclusive")
         .entity_type(&vtype)
         .operations(&["queryEntity"])
+        .tenant("distopRemoteCsi")
         .build();
     assert_status(&tenant_client.create_registration(&registration).await.expect("create registration"), 201);
 
@@ -152,8 +156,8 @@ async fn distop_entity_csi_tenant_never_placed_inside_context_source_info() {
     let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
     assert_eq!(
         forwarded_header(&forwarded, "ngsild-tenant").as_deref(),
-        Some("distopTenantCsi"),
-        "the tenant is carried in the NGSILD-Tenant header"
+        Some("distopRemoteCsi"),
+        "the registration's tenant is carried in the NGSILD-Tenant header"
     );
 
     let registration_id = topology.id("registration:csi-tenant");

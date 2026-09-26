@@ -63,7 +63,11 @@ async fn matching_loop_prevention_excludes_csr_with_alias_in_encountered_listing
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
     let vtype = topology.id("LoopType");
     let id = topology.id("registration:loop");
-    let body = CsrBuilder::new(&id, peer.peer_url()).entity_type(&vtype).alias(peer.alias()).build();
+    let body = CsrBuilder::new(&id, peer.peer_url())
+        .tenant(topology.tenant())
+        .entity_type(&vtype)
+        .alias(peer.alias())
+        .build();
     register(&topology, &body).await;
 
     // A discovery whose encountered listing already names the peer's alias must
