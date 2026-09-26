@@ -332,6 +332,7 @@ impl TemporalService {
             .map(|(id, payload)| Ok((id, extract_types(payload).map_err(TemporalError::internal)?)))
             .collect::<Result<_, TemporalError>>()?;
 
+        let compactor = self.engine.compactor(context);
         let mut level = IndexMap::with_capacity(candidates.len());
         let mut named: Vec<TemporalLinkedCandidate> = Vec::new();
         for candidate in candidates {
@@ -340,7 +341,7 @@ impl TemporalService {
             let Some(entity_types) = types.get(&candidate.id) else {
                 continue;
             };
-            match self.render_one_temporal_entity(target, &candidate.id, entity_types, compiled, context).await {
+            match self.render_one_temporal_entity(target, &candidate.id, entity_types, compiled, &compactor).await {
                 Ok(rendered) => {
                     if rendered.presence == HistoryPresence::Present {
                         level.insert(candidate.id.clone(), rendered.value); // clone: the result map owns its keys

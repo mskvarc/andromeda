@@ -1027,6 +1027,7 @@ dependencies = [
  "backon",
  "contextual",
  "dashmap",
+ "derive_more",
  "headers",
  "iri-rs",
  "jsonld",

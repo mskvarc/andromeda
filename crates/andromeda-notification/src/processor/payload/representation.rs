@@ -11,7 +11,7 @@ use crate::processor::payload::{
 };
 use andromeda_jsonld::{
     context_spec::ContextSpec,
-    engine::{options::ContextStripping, processor::JsonLdEngine},
+    engine::{context_compactor::ContextCompactor, options::ContextStripping},
     error::JsonLdError,
 };
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -21,8 +21,9 @@ use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::Res
 use serde_json::Value;
 use tracing::debug;
 
-/// Compact an expanded entity under the subscription's context, falling back
-/// to the core context when that context cannot be applied.
+/// Compact an expanded entity under the subscription's context, the one
+/// `compactor` compacts against, falling back to the core context when that
+/// context cannot be applied.
 ///
 /// The `@context` is always stripped from the entity: a notification carries
 /// one context for the whole document (clauses 5.2.13 and 6.3.5), which the
@@ -33,16 +34,16 @@ use tracing::debug;
 /// Returns the core-context failure when neither context can compact the
 /// entity, which leaves nothing to deliver.
 pub(crate) async fn compact_for_notification(
-    engine: &JsonLdEngine,
+    compactor: &ContextCompactor<'_>,
     entity: &Value,
-    context: &ContextSpec,
     compaction_cache: Option<&NotificationCompactionCache>,
 ) -> Result<Value, JsonLdError> {
-    let compacted = match compact_entity_with_cache(engine, entity, context, ContextStripping::Strip, compaction_cache).await {
+    let compacted = match compact_entity_with_cache(compactor, entity, ContextStripping::Strip, compaction_cache).await {
         Ok(value) => value,
         Err(error) => {
             debug!(%error, "Failed to compact notification entity with subscription context; falling back to the core context");
-            compact_entity_with_cache(engine, entity, &ContextSpec::core_only(), ContextStripping::Strip, compaction_cache).await?
+            let core_only = ContextSpec::core_only();
+            compact_entity_with_cache(&compactor.engine().compactor(&core_only), entity, ContextStripping::Strip, compaction_cache).await?
         }
     };
     Ok(normalize_compacted_entity(compacted))

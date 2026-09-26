@@ -206,12 +206,13 @@ impl EntityQueryService {
             SysAttrsInclusion::Strip => HashMap::new(),
         };
 
+        let compactor = self.engine().compactor(context);
         let mut level = IndexMap::with_capacity(payloads.len());
         for candidate in candidates {
             let Some(expanded) = payloads.remove(&candidate.id) else {
                 continue;
             };
-            match self.compact_to_entity(expanded, context, Some(candidate.id.as_str()), sys_attrs).await {
+            match self.compact_to_entity(expanded, &compactor, Some(candidate.id.as_str()), sys_attrs).await {
                 Ok(mut entity) => {
                     if let Some(snapshot) = sys_attr_snapshots.get(&candidate.id) {
                         entity = entity.with_sys_attrs(snapshot);

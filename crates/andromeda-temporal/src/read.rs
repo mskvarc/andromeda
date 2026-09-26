@@ -12,7 +12,11 @@ use crate::{
     temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec, engine::options::CompactOptions};
+use andromeda_jsonld::{
+    compaction::compact_attr_iri,
+    context_spec::ContextSpec,
+    engine::{context_compactor::ContextCompactor, options::CompactOptions},
+};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{
@@ -74,7 +78,9 @@ impl TemporalService {
                 .remove(entity_id)
                 .unwrap_or_default();
 
-            let rendered = self.render_one_temporal_entity(target, entity_id, &entity_types, &compiled, context).await?;
+            let rendered = self
+                .render_one_temporal_entity(target, entity_id, &entity_types, &compiled, &self.engine.compactor(context))
+                .await?;
 
             // Clause 5.7.2: an `attrs` filter that selects nothing leaves no
             // temporal representation to return, which is a 404 rather than an
@@ -159,9 +165,10 @@ impl TemporalService {
             let mut overall_min: Option<DateTime<Utc>> = None;
             let mut overall_max: Option<DateTime<Utc>> = None;
             let mut overall_partition_total: Option<i64> = None;
+            let compactor = self.engine.compactor(context);
             for entity_id in entity_ids {
                 let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
-                match self.render_one_temporal_entity(target, &entity_id, entity_types, &compiled, context).await {
+                match self.render_one_temporal_entity(target, &entity_id, entity_types, &compiled, &compactor).await {
                     // An entity the window selects no history for is simply not part
                     // of the result set.
                     Ok(rendered) if rendered.presence == HistoryPresence::Absent => {}
@@ -233,7 +240,7 @@ impl TemporalService {
         entity_types: &[EntityTypeName],
         rows: &[TemporalAggregationRow],
         compiled: &CompiledTemporalQuery,
-        context: &ContextSpec,
+        compactor: &ContextCompactor<'_>,
     ) -> Result<Value, TemporalError> {
         // Build aggregation data keyed by attribute IRI
         let aggr_data = TemporalAggregationRenderer::new(rows, compiled).render();
@@ -244,7 +251,7 @@ impl TemporalService {
             let mut skeleton = serde_json::Map::new();
             skeleton.insert("@id".to_string(), json!(entity_id));
             skeleton.insert(attr_iri.to_string(), json!([{"@type": [expanded_classes::PROPERTY]}]));
-            if let Ok(compacted) = self.engine.compact(Value::Object(skeleton), context, CompactOptions::default()).await
+            if let Ok(compacted) = compactor.compact(Value::Object(skeleton), CompactOptions::default()).await
                 && let Some(obj) = compacted.as_object()
             {
                 for key in obj.keys() {
@@ -261,7 +268,7 @@ impl TemporalService {
                 // declares, or the full IRI verbatim when none does (clause
                 // 5.7.3): an undeclared attribute is not truncated to a bare
                 // fragment the client could not expand back.
-                let short = compact_attr_iri(&self.engine, attr_iri.as_str(), context).await;
+                let short = compact_attr_iri(&self.engine, attr_iri.as_str(), compactor.context()).await;
                 if short != attr_iri.as_str()
                     && let Ok(short) = short.parse()
                 {
@@ -274,7 +281,7 @@ impl TemporalService {
         let type_skeleton = json!({"@id": entity_id, "@type": entity_types});
         // The type is compacted against the request @context; an undeclared
         // type stays a full IRI rather than a bare fragment (clause 5.7.3).
-        let compacted_type = if let Ok(compacted) = self.engine.compact(type_skeleton, context, CompactOptions::default()).await {
+        let compacted_type = if let Ok(compacted) = compactor.compact(type_skeleton, CompactOptions::default()).await {
             compacted.as_object().and_then(|o| o.get("type")).cloned().unwrap_or(json!(entity_types)) // clone: need owned Value from borrowed compacted object
         } else {
             json!(entity_types)

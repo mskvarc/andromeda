@@ -6,8 +6,8 @@ use andromeda_entity::query::EntityQueryService;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
+        context_compactor::ContextCompactor,
         options::{CompactOptions, ContextStripping},
-        processor::JsonLdEngine,
     },
     error::JsonLdError,
 };
@@ -121,23 +121,24 @@ fn linked_entities_as_values(linked_map: &IndexMap<Uri, Entity>) -> Vec<Value> {
 }
 
 pub(super) async fn compact_entity_with_cache(
-    engine: &JsonLdEngine,
+    compactor: &ContextCompactor<'_>,
     entity: &Value,
-    context: &ContextSpec,
     strip_context: ContextStripping,
     cache: Option<&NotificationCompactionCache>,
 ) -> Result<Value, JsonLdError> {
     let Some(cache) = cache else {
-        return engine.compact(entity.clone(), context, CompactOptions { strip_context }).await;
+        // clone: compaction consumes the document while the notification keeps the entity
+        return compactor.compact(entity.clone(), CompactOptions { strip_context }).await;
     };
-    let key = compaction_cache_key(entity, context, strip_context);
+    let key = compaction_cache_key(entity, compactor.context(), strip_context);
     // As in the linked resolution above, the entry guard never spans the
     // compaction await: a miss compacts outside the map, and two notifications
     // that miss together each compact and one insert wins.
     if let Some(hit) = cache.entries.get(&key) {
         return Ok(hit.clone()); // clone: the caller owns its payload, the cache keeps serving the entry
     }
-    let compacted = engine.compact(entity.clone(), context, CompactOptions { strip_context }).await?;
+    // clone: compaction consumes the document while the notification keeps the entity
+    let compacted = compactor.compact(entity.clone(), CompactOptions { strip_context }).await?;
     // clone: the cached entry stays behind for the notifications still to come
     Ok(cache.entries.entry(key).or_insert(compacted).clone())
 }

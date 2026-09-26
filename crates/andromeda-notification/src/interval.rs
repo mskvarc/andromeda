@@ -308,6 +308,7 @@ impl IntervalNotificationOperation {
         let projection = notification_projection(&sub.notification, sub.id.as_ref());
         let context = ContextSpec::for_subscription_context(sub.delivery.jsonld_context.as_ref());
         let format = sub.notification.format.unwrap_or_default();
+        let compactor = self.engine.compactor(&context);
         let mut results = Vec::with_capacity(entities.len());
         for mut entity in entities {
             if sub.notification.sys_attrs.is_some_and(|include| include)
@@ -324,9 +325,7 @@ impl IntervalNotificationOperation {
             };
             apply_notification_projection(&mut narrowed, &projection);
 
-            let compacted = compact_for_notification(&self.engine, &narrowed, &context, None)
-                .await
-                .map_err(NotificationError::from)?;
+            let compacted = compact_for_notification(&compactor, &narrowed, None).await.map_err(NotificationError::from)?;
 
             results.push(render_format(compacted, format, sub.notification.join));
         }

@@ -137,28 +137,11 @@ fn resolve_relative_entry(value: &mut Value) {
     }
 }
 
-/// Remove `@context` from a compacted document, or from each of its members.
-pub(crate) fn strip_context(value: &mut Value) {
-    match value {
-        Value::Object(object) => {
-            object.remove("@context");
-        }
-        Value::Array(items) => {
-            for item in items {
-                if let Value::Object(object) = item {
-                    object.remove("@context");
-                }
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
-        engine::context_url::{canonical_context_urls, context_urls_of, is_absolute_iri, is_full_iri, resolve_relative_context_urls, strip_context},
+        engine::context_url::{canonical_context_urls, context_urls_of, is_absolute_iri, is_full_iri, resolve_relative_context_urls},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
@@ -233,16 +216,5 @@ mod tests {
         resolve_relative_context_urls(&mut document);
 
         pretty_assertions::assert_eq!(document["@context"], json!(["urn:ngsi-ld:Context:abc", "https://example.com/keep"]));
-    }
-
-    #[test]
-    fn stripping_removes_the_context_from_an_object_and_from_every_array_member() {
-        let mut object = json!({"@context": "https://example.com/a", "id": "urn:x:1"});
-        strip_context(&mut object);
-        assert!(object.get("@context").is_none());
-
-        let mut array = json!([{"@context": "https://example.com/a", "id": "urn:x:1"}]);
-        strip_context(&mut array);
-        assert!(array[0].get("@context").is_none());
     }
 }

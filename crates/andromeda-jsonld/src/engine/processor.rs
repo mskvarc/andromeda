@@ -1,15 +1,16 @@
-//! Expanding and compacting a whole document.
+//! Expanding a whole document.
 //!
 //! [`JsonLdEngine`] is the crate's public surface. Cloning it is cheap: the
-//! loader and both caches are shared.
+//! loader and every cache are shared. Compacting is
+//! [`crate::engine::context_compactor`]'s.
 
 use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},
     document_context::apply_context,
     engine::{
         builder::JsonLdEngineBuilder,
-        context_url::{canonical_context_urls, context_urls_of, resolve_relative_context_urls, strip_context},
-        options::{CompactOptions, ContextStripping},
+        compaction_context_cache::CompactionContextCache,
+        context_url::{canonical_context_urls, context_urls_of, resolve_relative_context_urls},
         term_lookup::TermCache,
         term_map::{user_term::UserTermTableCache, vocabulary::CoreVocabulary},
     },
@@ -19,12 +20,7 @@ use crate::{
 };
 use contextual::WithContext;
 use iri_rs::IriBuf;
-use jsonld::{
-    JsonLdProcessor,
-    RemoteContextReference,
-    RemoteDocument,
-    syntax::{Context as JsonLdContext, IntoJson, TryFromJson},
-};
+use jsonld::{JsonLdProcessor, RemoteDocument, syntax::IntoJson};
 use rdfx::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
 use serde_json::Value;
 use std::sync::Arc;
@@ -40,6 +36,8 @@ pub struct JsonLdEngine {
     hit_counter: Option<Arc<HitCounter>>,
     /// Parsed request contexts, kept per URL for the life of the engine.
     user_term_tables: Arc<UserTermTableCache>,
+    /// Processed compaction contexts built only from embedded documents.
+    compaction_contexts: CompactionContextCache,
     /// The released core context a versionless reference expands against
     /// (clause 4.4). The fastpath term table is derived from this version,
     /// so two engines built with different pins expand a versionless request
@@ -64,6 +62,7 @@ impl JsonLdEngine {
             term_cache,
             hit_counter,
             user_term_tables: Arc::new(UserTermTableCache::default()),
+            compaction_contexts: CompactionContextCache::new(),
             default_core_url,
             core_vocabulary: Arc::new(core_vocabulary),
         }
@@ -103,6 +102,11 @@ impl JsonLdEngine {
     /// The context loader, for the batch term table.
     pub(crate) fn loader(&self) -> &HttpContextLoader {
         &self.loader
+    }
+
+    /// The processed compaction contexts kept on this engine.
+    pub(crate) const fn compaction_contexts(&self) -> &CompactionContextCache {
+        &self.compaction_contexts
     }
 
     /// The parsed request contexts kept on this engine.
@@ -178,72 +182,6 @@ impl JsonLdEngine {
         ))
     }
 
-    /// Compact a document against a context.
-    ///
-    /// IRIs become the short names the context declares. A compaction that
-    /// fails because a request context redefines a protected core term is
-    /// retried against the core context alone, which is the one failure a
-    /// retry can fix.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`JsonLdError::Compaction`] when compaction fails for any
-    /// other reason, or a context-loading variant when a context did not
-    /// resolve.
-    pub async fn compact(&self, document: Value, context: &ContextSpec, options: CompactOptions) -> Result<Value, JsonLdError> {
-        let mut vocabulary: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
-        let context_ref = context_reference(context)?;
-
-        // Taken before the conversion consumes the document, and read only on
-        // the failure path.
-        let document_id = document
-            .as_object()
-            .and_then(|object| object.get("@id").or_else(|| object.get("id")))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-
-        // One copy is unavoidable: compaction consumes the document, and the
-        // protected-term retry needs the original back.
-        let remote: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, jsonld_syntax::Value::from_serde_json(document.clone()));
-
-        let compacted = match remote.compact_with(&mut vocabulary, context_ref, &*self.loader).await {
-            Ok(compacted) => compacted,
-            Err(error) if JsonLdError::is_protected_term_error(&error) => {
-                tracing::warn!(
-                    "Compaction failed with a protected-term redefinition: {}. Retrying with the core context alone; \
-                     the request's own context is dropped, so short names may differ from what it declared.",
-                    error
-                );
-                self.compact_with_core_context_only(document).await?
-            }
-            Err(error) => {
-                tracing::error!(
-                    error = %error,
-                    document_id = document_id.as_deref().unwrap_or("<unknown>"),
-                    "Compaction failed"
-                );
-                return Err(error.into());
-            }
-        };
-
-        let mut compacted = jsonld_syntax::Value::into_serde_json(compacted);
-        if options.strip_context == ContextStripping::Strip {
-            strip_context(&mut compacted);
-        }
-        Ok(compacted)
-    }
-
-    /// The protected-term fallback: compact against the core context alone.
-    async fn compact_with_core_context_only(&self, document: Value) -> Result<jsonld_syntax::Value, JsonLdError> {
-        let core_ref = context_reference(&ContextSpec::core_only())?;
-        let mut vocabulary: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
-        let remote: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, jsonld_syntax::Value::from_serde_json(document));
-        remote.compact_with(&mut vocabulary, core_ref, &*self.loader).await.map_err(|error| {
-            tracing::error!("Compaction failed even against the core context: {}", error);
-            JsonLdError::from(error)
-        })
-    }
-
     /// Resolve a context URL to its payload through the full pipeline.
     ///
     /// # Errors
@@ -267,18 +205,6 @@ impl JsonLdEngine {
         let value = self.loader.fetch_remote_value(url).await.map_err(|error| JsonLdError::from(&error))?;
         Ok(jsonld_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
     }
-}
-
-/// The context reference the processor compacts against.
-fn context_reference(context: &ContextSpec) -> Result<RemoteContextReference<IriIndex>, JsonLdError> {
-    let jsonld_context = match context.to_context_value() {
-        Some(value) => {
-            let syntax_value = jsonld_syntax::Value::from_serde_json(value);
-            JsonLdContext::try_from_json(&syntax_value).map_err(|error| JsonLdError::InlineContextInvalid(error.to_string()))?
-        }
-        None => JsonLdContext::default(),
-    };
-    Ok(RemoteContextReference::Loaded(RemoteDocument::new(None, None, jsonld_context)))
 }
 
 #[cfg(test)]
@@ -337,7 +263,8 @@ mod tests {
         assert!(!expanded_json.contains("$serde_json::private::Number"), "{expanded_json}");
 
         let compacted = engine
-            .compact(expanded, &context, CompactOptions::default())
+            .compactor(&context)
+            .compact(expanded, CompactOptions::default())
             .await
             .expect("compaction succeeds");
         let compacted_json = serde_json::to_string(&compacted).expect("compacted JSON");

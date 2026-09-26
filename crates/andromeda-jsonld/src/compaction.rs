@@ -94,7 +94,7 @@ async fn compact_name(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -
 async fn vocabulary_position_term(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -> Option<String> {
     let document = serde_json::json!([{ "@id": PROBE_ID.as_str(), NAME_CARRIER.as_str(): [{ "@id": iri }] }]);
 
-    let compacted = match engine.compact(document, context, TERM_ONLY).await {
+    let compacted = match engine.compactor(context).compact(document, TERM_ONLY).await {
         Ok(compacted) => compacted,
         Err(error) => {
             tracing::debug!(error = %error, iri, "name did not compact; answering it verbatim");

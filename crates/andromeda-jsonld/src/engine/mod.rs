@@ -1,7 +1,9 @@
 //! Expanding and compacting NGSI-LD documents.
 //!
 //! [`processor::JsonLdEngine`] is the whole of the public surface;
-//! [`builder::JsonLdEngineBuilder`] constructs it. Everything else here is one
+//! [`builder::JsonLdEngineBuilder`] constructs it, and
+//! [`context_compactor::ContextCompactor`] compacts the documents of one
+//! operation against the context it processed once. Everything else here is one
 //! of two things it does behind that surface.
 //!
 //! The first is the ordinary path: hand the document to the JSON-LD
@@ -15,6 +17,9 @@
 
 pub mod batch_context;
 pub mod builder;
+pub mod compaction_context;
+pub mod compaction_context_cache;
+pub mod context_compactor;
 pub mod context_url;
 pub mod core_term_semantics;
 pub mod fast_attribute;

@@ -18,6 +18,7 @@ use andromeda_entity::{
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
+        context_compactor::ContextCompactor,
         options::{CompactOptions, ContextStripping},
         processor::JsonLdEngine,
     },
@@ -121,7 +122,8 @@ pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>
     }
 
     let context = ContextSpec::for_subscription_context(params.sub.jsonld_context.as_ref());
-    let Ok(mut compacted) = compact_for_notification(params.engine, &entity, &context, params.compaction_cache).await else {
+    let compactor = params.engine.compactor(&context);
+    let Ok(mut compacted) = compact_for_notification(&compactor, &entity, params.compaction_cache).await else {
         return vec![];
     };
     // Clause 4.21, the `id` / `type` / `scope` half: the attribute half of the
@@ -138,7 +140,7 @@ pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>
     if let (Some(id), Some(map)) = (notified_id, compacted.as_object_mut()) {
         map.entry(ProjectionTerm::ID_KEYWORD.to_owned()).or_insert(id);
     }
-    apply_show_changes(&mut compacted, params, &context).await;
+    apply_show_changes(&mut compacted, params, &compactor).await;
 
     let payload = apply_join(compacted, params, &context).await;
     render_notification_entities(payload, params.sub)
@@ -255,7 +257,7 @@ fn apply_notification_selection(entity: &mut Value, sub: &CompiledSubscription) 
 ///
 /// A previous representation that cannot be compacted leaves the notification
 /// with its current values alone rather than failing the delivery.
-async fn apply_show_changes(compacted: &mut Value, params: &NotificationBuildParams<'_>, context: &ContextSpec) {
+async fn apply_show_changes(compacted: &mut Value, params: &NotificationBuildParams<'_>, compactor: &ContextCompactor<'_>) {
     if !params.sub.notification_show_changes {
         return;
     }
@@ -265,11 +267,9 @@ async fn apply_show_changes(compacted: &mut Value, params: &NotificationBuildPar
     let Some(previous) = params.previous_attributes else {
         return;
     };
-    let Ok(previous_compacted) = params
-        .engine
+    let Ok(previous_compacted) = compactor
         .compact(
             expanded_entity_node(previous),
-            context,
             CompactOptions {
                 strip_context: ContextStripping::Strip,
             },
@@ -290,7 +290,7 @@ async fn apply_show_changes(compacted: &mut Value, params: &NotificationBuildPar
         params.changed_dataset_id,
         exact_attribute_instance,
         params.engine,
-        context,
+        compactor.context(),
     )
     .await;
 }

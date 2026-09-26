@@ -3,7 +3,11 @@
 //! [`Entity`]: andromeda_ngsi_ld_model::entity::Entity
 
 use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, query::EntityQueryService};
-use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions, term_expansion::ContextualExpander};
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    engine::{context_compactor::ContextCompactor, options::CompactOptions},
+    term_expansion::ContextualExpander,
+};
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::attribute_system_time::strip_attribute_instants};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_query::term_expander::TermExpander;
@@ -12,8 +16,8 @@ use iri_rs::IriBuf;
 use serde_json::Value;
 
 impl EntityQueryService {
-    /// Compact one expanded payload against the active context and parse it as
-    /// an [`Entity`].
+    /// Compact one expanded payload against the compactor's context and parse
+    /// it as an [`Entity`].
     ///
     /// `id_override` names the entity when the payload's own `@id` is not the
     /// one the caller asked about, which happens on a batch read keyed by
@@ -21,7 +25,7 @@ impl EntityQueryService {
     pub(super) async fn compact_to_entity(
         &self,
         expanded: Value,
-        context: &ContextSpec,
+        compactor: &ContextCompactor<'_>,
         id_override: Option<&str>,
         sys_attrs: SysAttrsInclusion,
     ) -> Result<Entity, EntityError> {
@@ -33,7 +37,7 @@ impl EntityQueryService {
         if sys_attrs == SysAttrsInclusion::Strip {
             strip_attribute_instants(&mut expanded);
         }
-        let compacted = self.engine().compact(expanded, context, CompactOptions::default()).await?;
+        let compacted = compactor.compact(expanded, CompactOptions::default()).await?;
 
         let mut obj = match compacted {
             Value::Array(mut arr) if !arr.is_empty() => match arr.swap_remove(0) {

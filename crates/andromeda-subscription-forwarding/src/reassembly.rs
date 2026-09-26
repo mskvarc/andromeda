@@ -20,7 +20,10 @@ use andromeda_federation::{
 };
 use andromeda_jsonld::{
     context_spec::ContextSpec,
-    engine::options::{CompactOptions, ContextStripping},
+    engine::{
+        context_compactor::ContextCompactor,
+        options::{CompactOptions, ContextStripping},
+    },
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{
@@ -106,15 +109,14 @@ impl SubscriptionForwardingService {
     }
 
     /// One entity of the inbound notification, re-spelled from the sender's
-    /// context (`inbound`) into the local subscription's (`local`).
-    async fn received_under(&self, value: &Value, inbound: &ContextSpec, local: &ContextSpec) -> Result<Entity, SubscriptionForwardingError> {
+    /// context (`inbound`) into the local subscription's, the one `local`
+    /// compacts against.
+    async fn received_under(&self, value: &Value, inbound: &ContextSpec, local: &ContextCompactor<'_>) -> Result<Entity, SubscriptionForwardingError> {
         // clone: expansion consumes the value while the notification stays borrowed
         let expanded = self.engine.expand(value.clone(), inbound).await?;
-        let compacted = self
-            .engine
+        let compacted = local
             .compact(
                 expanded,
-                local,
                 CompactOptions {
                     strip_context: ContextStripping::Strip,
                 },
@@ -188,9 +190,10 @@ impl SubscriptionForwardingService {
         let local_context = ContextSpec::for_subscription_context(subscription.delivery.jsonld_context.as_ref());
 
         let format = subscription.notification.format.unwrap_or_default();
+        let local_compactor = self.engine.compactor(&local_context);
         let mut data = Vec::with_capacity(notification.data.len());
         for value in &notification.data {
-            let received = match self.received_under(value, context, &local_context).await {
+            let received = match self.received_under(value, context, &local_compactor).await {
                 Ok(entity) => entity,
                 Err(error) => {
                     warn!(subscription = %local, %error, "inbound notification carried an entity that does not parse");

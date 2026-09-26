@@ -162,9 +162,8 @@ pub(crate) async fn build_forwarded_payload(
             // Clause 4.3.6.6: compaction against the configured context is
             // mandatory, and the forwarded body carries no `@context` member.
             let expanded = engine.expand(value, inbound).await?;
-            let compacted = engine
-                .compact(expanded, &ContextSpec::from_links(vec![url.clone()]), CompactOptions::default()) // clone: the Link header names the same IRI
-                .await?;
+            let configured = ContextSpec::from_links(vec![url.clone()]); // clone: the Link header names the same IRI
+            let compacted = engine.compactor(&configured).compact(expanded, CompactOptions::default()).await?;
             (vec![url], compacted)
         }
         TargetContext::InboundUrls(urls) => (urls, value),
