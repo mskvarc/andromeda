@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
     mutation::{attribute::partial_update_attr, error::ExpandedEntityError},
+    written_observation::AddressedInstances,
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_attribute_node;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
@@ -92,7 +93,12 @@ impl EntityService {
                 let types = written_entity_types(&merged)?;
                 let groups = attribute_change_groups(previous, &merged)?;
                 let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
-                let history = mutation_history(&expanded, previous, &merged)?;
+                let addressed = AddressedInstances::AttributeFragment {
+                    attribute: &attr_iri,
+                    dataset_id,
+                    fragment: unwrap_expanded_ref(&expanded),
+                };
+                let history = mutation_history(addressed, previous, &merged)?;
 
                 let write = payload_write(&entity_uri, &merged, history, plan.matches)?;
                 Ok((write, MutatedEntity { events: plan.events }))

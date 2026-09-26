@@ -1,0 +1,245 @@
+//! Every attribute-level write records, for the Temporal Evolution and the
+//! current-value projection derived from it, the instances it left in the
+//! Entity rather than the Fragment that asked for them (clauses 4.5.7 and
+//! 4.5.8), proven without a live broker.
+//!
+//! The fixture Building holds `category` = "office" with an `accuracy`
+//! sub-Property, so a write that recorded its Fragment would lose that
+//! sub-Property from history even where the stored Entity kept it.
+
+use crate::{
+    history_recording_assertions::{assert_observes_stored_instances, observed_attributes, observed_default_instance, recorded_observation},
+    notification_recording_harness::{
+        ACCURACY_IRI,
+        CATEGORY_IRI,
+        NAME_IRI,
+        attribute_name,
+        core_context,
+        entity_uri,
+        live_target,
+        recording_service,
+        single_recorded_write,
+    },
+};
+use andromeda_context_commit::history_record::HistoryRecord;
+use andromeda_ngsi_ld_model::expanded::mutation::selection::OverwritePolicy;
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use pretty_assertions::assert_eq;
+use serde_json::json;
+
+/// Clause 5.5.8 EXAMPLE 1: a partial update leaves the sub-attributes the
+/// Fragment omits in place, and the recorded instance is the patched one.
+#[tokio::test]
+async fn partial_update_attr_records_the_patched_instance_keeping_its_untouched_sub_property() {
+    let (service, recorded) = recording_service().await;
+    service
+        .partial_update_attr(
+            &live_target(),
+            &entity_uri(),
+            &attribute_name("category"),
+            None,
+            json!({"type": "Property", "value": "retail"}),
+            &core_context(),
+        )
+        .await
+        .expect("the partial update lands");
+
+    let write = single_recorded_write(&recorded);
+    assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
+    let category = observed_default_instance(recorded_observation(&write).expect("an observation"), CATEGORY_IRI);
+    assert_eq!(category[properties::VALUE.as_str()][0]["@value"], json!("retail"));
+    assert_eq!(
+        category[ACCURACY_IRI][0][properties::VALUE.as_str()][0]["@value"],
+        json!("high"),
+        "the recorded instance keeps the sub-Property the Fragment left out"
+    );
+}
+
+/// A sub-Property of the Attribute Fragment belongs to the instance; it is
+/// never recorded as an attribute of the Entity in its own right.
+#[tokio::test]
+async fn partial_update_attr_does_not_record_a_fragment_sub_property_as_an_entity_attribute() {
+    let (service, recorded) = recording_service().await;
+    service
+        .partial_update_attr(
+            &live_target(),
+            &entity_uri(),
+            &attribute_name("category"),
+            None,
+            json!({"type": "Property", "value": "retail", "name": {"type": "Property", "value": "annotated"}}),
+            &core_context(),
+        )
+        .await
+        .expect("the partial update lands");
+
+    let write = single_recorded_write(&recorded);
+    let observation = recorded_observation(&write).expect("an observation");
+    assert_eq!(observed_attributes(observation).into_iter().collect::<Vec<_>>(), vec![CATEGORY_IRI.to_owned()]);
+    assert!(
+        observed_default_instance(observation, CATEGORY_IRI).get(NAME_IRI).is_some(),
+        "the sub-Property is recorded inside the instance it belongs to"
+    );
+}
+
+/// Clause 5.5.8 hands an NGSI-LD Null Fragment to clause 5.6.5: the instance
+/// ends, which history records as a tombstone and never as an observed value.
+#[tokio::test]
+async fn partial_update_attr_to_the_null_sentinel_records_only_the_tombstone() {
+    let (service, recorded) = recording_service().await;
+    service
+        .partial_update_attr(
+            &live_target(),
+            &entity_uri(),
+            &attribute_name("category"),
+            None,
+            json!({"type": "Property", "value": "urn:ngsi-ld:null"}),
+            &core_context(),
+        )
+        .await
+        .expect("the deleting partial update lands");
+
+    let write = single_recorded_write(&recorded);
+    assert!(recorded_observation(&write).is_none(), "a deletion observes no value");
+    let [HistoryRecord::Tombstone(removed)] = write.history.as_slice() else {
+        panic!("the deletion records exactly one tombstone: {:?}", write.history);
+    };
+    assert_eq!(removed.key.attr, attribute_name(CATEGORY_IRI));
+    assert_eq!(removed.key.dataset_id, None);
+}
+
+/// Clause 5.6.19.4 replaces the instance whole: the recorded instance is the
+/// replacement as stored, without the sub-Property it dropped.
+#[tokio::test]
+async fn replace_attr_records_the_stored_replacement() {
+    let (service, recorded) = recording_service().await;
+    service
+        .replace_attr(
+            &live_target(),
+            &entity_uri(),
+            &attribute_name("category"),
+            None,
+            json!({"type": "Property", "value": "retail"}),
+            &core_context(),
+        )
+        .await
+        .expect("the replace lands");
+
+    let write = single_recorded_write(&recorded);
+    assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
+    let category = observed_default_instance(recorded_observation(&write).expect("an observation"), CATEGORY_IRI);
+    assert_eq!(category[properties::VALUE.as_str()][0]["@value"], json!("retail"));
+    assert!(category.get(ACCURACY_IRI).is_none(), "the replacement drops the sub-Property");
+    assert!(
+        category.get(properties::CREATED_AT.as_str()).is_some(),
+        "the recorded instance carries the system times the stored one does"
+    );
+}
+
+/// Clause 5.5.8 EXAMPLE 2: Update Attributes overwrites the whole instance.
+#[tokio::test]
+async fn update_attrs_records_the_whole_instance_it_wrote() {
+    let (service, recorded) = recording_service().await;
+    service
+        .update_attrs(
+            &live_target(),
+            &entity_uri(),
+            json!({"category": {"type": "Property", "value": "retail"}}),
+            &core_context(),
+        )
+        .await
+        .expect("the update lands");
+
+    let write = single_recorded_write(&recorded);
+    assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
+    let category = observed_default_instance(recorded_observation(&write).expect("an observation"), CATEGORY_IRI);
+    assert!(category.get(ACCURACY_IRI).is_none(), "the whole-instance overwrite drops the sub-Property");
+}
+
+/// Clause 5.6.2.4 ignores a `scope` the target Entity does not hold, so the
+/// write records no Scope.
+#[tokio::test]
+async fn update_attrs_records_no_scope_it_ignored() {
+    let (service, recorded) = recording_service().await;
+    service
+        .update_attrs(
+            &live_target(),
+            &entity_uri(),
+            json!({"scope": "/Madrid", "category": {"type": "Property", "value": "retail"}}),
+            &core_context(),
+        )
+        .await
+        .expect("the update lands");
+
+    let write = single_recorded_write(&recorded);
+    let observation = recorded_observation(&write).expect("an observation");
+    assert!(
+        observation[0].get(properties::SCOPE.as_str()).is_none(),
+        "an ignored Scope is not recorded: {observation}"
+    );
+    assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
+}
+
+/// Clause 5.6.3.4: with overwriting disabled an attribute the Entity already
+/// holds is left untouched, so it is not recorded; an appended one is.
+#[tokio::test]
+async fn append_attrs_without_overwrite_records_only_the_attributes_it_appended() {
+    let (service, recorded) = recording_service().await;
+    service
+        .append_attrs(
+            &live_target(),
+            &entity_uri(),
+            json!({
+                "category": {"type": "Property", "value": "retail"},
+                "name": {"type": "Property", "value": "lobby"}
+            }),
+            OverwritePolicy::Preserve,
+            &core_context(),
+        )
+        .await
+        .expect("the append lands");
+
+    let write = single_recorded_write(&recorded);
+    assert_observes_stored_instances(&write, &[NAME_IRI]);
+}
+
+/// A no-overwrite append that appended nothing records no observation at all,
+/// so the current-value projection keeps the value the Entity still holds.
+#[tokio::test]
+async fn append_attrs_without_overwrite_that_appended_nothing_records_no_observation() {
+    let (service, recorded) = recording_service().await;
+    service
+        .append_attrs(
+            &live_target(),
+            &entity_uri(),
+            json!({"category": {"type": "Property", "value": "retail"}}),
+            OverwritePolicy::Preserve,
+            &core_context(),
+        )
+        .await
+        .expect("the append lands");
+
+    let write = single_recorded_write(&recorded);
+    assert!(recorded_observation(&write).is_none(), "the skipped value is not recorded: {:?}", write.history);
+}
+
+/// Clause 5.6.3.4: an append that overwrites records the stored instances.
+#[tokio::test]
+async fn append_attrs_with_overwrite_records_the_stored_instances() {
+    let (service, recorded) = recording_service().await;
+    service
+        .append_attrs(
+            &live_target(),
+            &entity_uri(),
+            json!({
+                "category": {"type": "Property", "value": "retail"},
+                "name": {"type": "Property", "value": "lobby"}
+            }),
+            OverwritePolicy::Overwrite,
+            &core_context(),
+        )
+        .await
+        .expect("the append lands");
+
+    let write = single_recorded_write(&recorded);
+    assert_observes_stored_instances(&write, &[CATEGORY_IRI, NAME_IRI]);
+}

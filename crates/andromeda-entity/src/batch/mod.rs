@@ -26,6 +26,9 @@ mod delete;
 mod durable_match_recording;
 /// How much of a batch runs where.
 pub mod execution;
+/// History-recording tests for the batch operations.
+#[cfg(test)]
+mod history_recording;
 /// Batch merge-patch.
 mod merge;
 /// Turning request entities into expanded, validated payloads.

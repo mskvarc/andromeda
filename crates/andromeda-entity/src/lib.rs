@@ -40,6 +40,9 @@ pub mod expanded_member;
 pub mod expiry;
 
 pub mod geo_property_geometry;
+/// Assertions over the Temporal Evolution a recorded write carries.
+#[cfg(test)]
+mod history_recording_assertions;
 /// Coalescing concurrent writers by entity identifier.
 pub mod id_lock;
 /// The fragment rewrite a merge performs for the target's attribute types.
@@ -51,6 +54,9 @@ pub mod mutation;
 /// Durable-match recording tests for the whole-entity merge and replace paths.
 #[cfg(test)]
 mod mutation_durable_match_recording;
+/// History-recording tests for the whole-entity merge and replace paths.
+#[cfg(test)]
+mod mutation_history_recording;
 /// Turning one mutation into the subscriptions it matched.
 pub mod notification_fanout;
 /// Planning both notification channels from one mutation's per-trigger groups.

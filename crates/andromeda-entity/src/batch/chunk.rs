@@ -26,7 +26,7 @@ use andromeda_context_commit::{
     change_event::ChangeEvent,
     entity_mutation::EntityMutation,
     entity_record::EntityRecord,
-    history_record::HistoryRecord,
+    history_record::{HistoryRecord, mutation_history},
     precondition::{AfterAttempt, Precondition, after_attempt},
     write_outcome::WriteOutcome,
     write_retry::WRITE_ATTEMPTS,
@@ -34,12 +34,7 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::{
-        attribute_system_time::stamp_attribute_instants,
-        mutation::error::ExpandedEntityError,
-        null_sentinel::without_null_sentinels,
-        removed_instance::removed_attribute_instances,
-    },
+    expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError, written_observation::AddressedInstances},
     notification::NotificationTrigger,
 };
 use chrono::{DateTime, Utc};
@@ -53,34 +48,33 @@ pub(super) struct ChunkWrite {
     pub id: Uri,
     /// What happens to the entity row.
     pub entity: EntityMutation,
-    /// The payload whose attributes were observed. For a partial update this
-    /// is the request fragment, not the entity the fragment produced.
-    pub observed: Arc<Value>,
+    /// What the write records in the Temporal Evolution: the observation of
+    /// the instances it wrote, as the stored Entity holds them, and the ends
+    /// of the instances and Scope it removed.
+    pub history: Vec<HistoryRecord>,
     /// What the write assumes about the entity it was computed from.
     pub precondition: Precondition,
-    /// Tombstones the write implies beyond its observations.
-    pub tombstones: Vec<HistoryRecord>,
     /// Both notification channels this write owes, planned to mirror its
     /// single-entity sibling's triggers.
     pub plan: NotificationPlan,
 }
 
-/// The three payloads one entity update is described by.
+/// The two states one entity update moves between, and what it addressed.
 ///
 /// They belong together because each is read against the others: the tombstones
 /// clause 5.6.6 requires and the per-attribute triggers of clause 5.2.12 both
 /// come from the difference between the stored state and the state replacing
-/// it, and the observation is the payload whose attributes that difference was
-/// requested by.
+/// it, and the observation is the resulting state of the instances the request
+/// addressed.
 pub(super) struct UpdatedPayloads<'a> {
     /// The entity as the store holds it before the write. It is also the state
     /// a deletion filter and `showChanges` are evaluated against.
     pub previous: &'a Value,
     /// The entity the write stores in its place.
     pub merged: Arc<Value>,
-    /// The payload whose attributes were observed. For a partial update this
-    /// is the request fragment, not the entity the fragment produced.
-    pub observed: Arc<Value>,
+    /// The instances the request addressed, whose resulting state the
+    /// Temporal Evolution records.
+    pub addressed: AddressedInstances<'a>,
 }
 
 /// What one chunk reports back to its batch.
@@ -155,9 +149,8 @@ impl EntityService {
                 expires_at,
                 min_attribute_expires_at,
             )),
-            observed: payload,
+            history: vec![HistoryRecord::Observations(payload)],
             precondition,
-            tombstones: Vec::new(),
             plan,
         })
     }
@@ -200,9 +193,8 @@ impl EntityService {
         Ok(ChunkWrite {
             id,
             entity: EntityMutation::Insert(record),
-            observed: payload,
+            history: vec![HistoryRecord::Observations(payload)],
             precondition,
-            tombstones: Vec::new(),
             plan,
         })
     }
@@ -226,7 +218,7 @@ impl EntityService {
         precondition: Precondition,
         now: DateTime<Utc>,
     ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
-        let UpdatedPayloads { previous, merged, observed } = payloads;
+        let UpdatedPayloads { previous, merged, addressed } = payloads;
         // Clause 4.8: an updated instance takes `now` for modifiedAt and keeps
         // its createdAt; an untouched one keeps both. Stamped before the columns
         // and the notification plan read the payload, so both see it.
@@ -235,19 +227,13 @@ impl EntityService {
             return Err(Box::new((id, ExpandedEntityError::from(error).into())));
         }
         let merged = Arc::new(merged_value);
-        // Clause 4.5.0 makes an NGSI-LD Null an encoding of `null` rather than a
-        // value, so it is an instruction to this write and not something the
-        // Temporal Evolution observed; what it removed is recorded by the
-        // tombstones below. Clause 5.6.20.4 runs the merge behaviour of clause
-        // 5.6.17 per entity, so a batch carries exactly the same instructions a
-        // single-entity merge does.
-        let observed = match without_null_sentinels(&observed) {
-            Some(stripped) => Arc::new(stripped),
-            None => observed,
-        };
-        let tombstones = match removed_attribute_instances(previous, &merged) {
-            Ok(removed) => removed.into_iter().map(HistoryRecord::Tombstone).collect(),
-            Err(error) => return Err(Box::new((id, ExpandedEntityError::from(error).into()))),
+        // Clauses 5.6.8, 5.6.9 and 5.6.20 run the single-entity behaviours per
+        // entity, so the batch records exactly what its single-entity sibling
+        // records: the resulting instances it addressed and the ends of what it
+        // removed.
+        let history = match mutation_history(addressed, previous, &merged) {
+            Ok(history) => history,
+            Err(error) => return Err(Box::new((id, error.into()))),
         };
         let types = match written_entity_types(&merged) {
             Ok(types) => types,
@@ -261,9 +247,8 @@ impl EntityService {
         Ok(ChunkWrite {
             id,
             entity: EntityMutation::Update(record),
-            observed,
+            history,
             precondition,
-            tombstones,
             plan,
         })
     }
@@ -304,9 +289,8 @@ impl EntityService {
             let ChunkWrite {
                 id,
                 entity,
-                observed,
+                history,
                 precondition,
-                tombstones,
                 plan,
             } = entry;
             let NotificationPlan { matches, events } = plan;
@@ -320,23 +304,26 @@ impl EntityService {
                 .precondition(precondition);
 
             let (write, inline_events) = match mode {
-                BatchSideEffectMode::Inline => {
-                    let mut history = Vec::with_capacity(tombstones.len() + 1);
-                    history.push(HistoryRecord::Observations(observed));
-                    history.extend(tombstones);
-                    (builder.history(history).build(), events)
-                }
+                BatchSideEffectMode::Inline => (builder.history(history).build(), events),
                 BatchSideEffectMode::Enqueue => {
                     // Tombstones stay inline in both modes: they describe what
                     // the payload just stopped saying, and deferring them would
                     // leave `current_attribute_values` answering `q` filters with a
                     // value the entity no longer has.
+                    let (observations, endings): (Vec<HistoryRecord>, Vec<HistoryRecord>) = history.into_iter().partition(HistoryRecord::is_observations);
+                    let temporal_entities = observations
+                        .into_iter()
+                        .filter_map(|record| match record {
+                            HistoryRecord::Observations(observed) => Some((Arc::clone(&entity_id), observed)), // clone: Arc ref-count bump
+                            HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
+                        })
+                        .collect();
                     let job = BatchSideEffectJob {
                         target: target.clone(), // clone: durable replay owns the immutable branch selection.
-                        temporal_entities: vec![(entity_id, observed)],
+                        temporal_entities,
                         change_events: events,
                     };
-                    (builder.history(tombstones).side_effects(Some(job)).build(), Vec::new())
+                    (builder.history(endings).side_effects(Some(job)).build(), Vec::new())
                 }
             };
 

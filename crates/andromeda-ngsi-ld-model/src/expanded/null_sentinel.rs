@@ -1,11 +1,9 @@
 //! The NGSI-LD Null in expanded form: recognising the sentinel a patch deletes
-//! a member with, building the one a deletion is encoded by, and stripping the
-//! instructions back out of a payload that is about to be recorded as an
-//! observation.
+//! a member with, and building the one a deletion is encoded by.
 
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_vocabulary::{NULL_IRI, NULL_URI, expanded::properties};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 /// Returns `true` when an expanded first-level member is the bare NGSI-LD Null.
 ///
@@ -111,86 +109,6 @@ pub fn expanded_null_value(attribute_type: AttributeType) -> Value {
         AttributeType::Property | AttributeType::GeoProperty | AttributeType::LanguageProperty => json!([{"@value": NULL_URI.as_str()}]),
         AttributeType::ListProperty | AttributeType::ListRelationship => json!([{"@list": [{"@value": NULL_URI.as_str()}]}]),
     }
-}
-
-/// The same payload with every NGSI-LD Null deletion instruction removed, or
-/// `None` when it carries none.
-///
-/// Clause 4.5.0 introduces the sentinel "to nevertheless allow deletions as
-/// part of NGSI-LD operations that update NGSI-LD data": it is an instruction,
-/// not a value. Clause 4.5.6 makes the Temporal Evolution of an Entity a record
-/// of what was observed, and what a deletion left behind is recorded instead by
-/// the tombstone clauses 4.5.7 and 4.5.8 prescribe. An observation built
-/// straight from a patch Fragment would therefore record `urn:ngsi-ld:null` as
-/// the value of the very member the Fragment asked to remove -- and for a
-/// closed-vocabulary member such as `unitCode` it is not even a well-formed
-/// one, so the write would be refused rather than merely misrecorded.
-///
-/// A member is dropped when its value is the NGSI-LD Null in either spelling
-/// clause 4.5.0 gives it: the bare URI a non-reified member takes, and the
-/// value-position sentinel of a reified attribute. `datasetId` is never
-/// dropped, because clauses 5.5.8 and 5.5.12 both state it "cannot be deleted
-/// by setting it to the value urn:ngsi-ld:null", so a sentinel standing there
-/// is refused on admission rather than obeyed here.
-#[must_use]
-pub fn without_null_sentinels(payload: &Value) -> Option<Value> {
-    match payload {
-        Value::Array(nodes) => {
-            let stripped: Vec<Option<Value>> = nodes.iter().map(without_null_sentinels).collect();
-            stripped.iter().any(Option::is_some).then(|| {
-                Value::Array(
-                    nodes
-                        .iter()
-                        .zip(stripped)
-                        // clone: an unchanged node is borrowed and the rebuilt array owns its elements.
-                        .map(|(node, replacement)| replacement.unwrap_or_else(|| node.clone()))
-                        .collect(),
-                )
-            })
-        }
-        Value::Object(members) => strip_node_members(members),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    }
-}
-
-/// Strip the deletion instructions out of one expanded node's members.
-fn strip_node_members(members: &Map<String, Value>) -> Option<Value> {
-    let mut stripped = Map::with_capacity(members.len());
-    let mut changed = false;
-    for (member, value) in members {
-        if member.starts_with('@') || member == properties::DATASET_ID.as_str() {
-            // clone: the keyword or identity member is borrowed and the rebuilt node owns it.
-            stripped.insert(member.clone(), value.clone());
-            continue;
-        }
-        if member_value_is_null_sentinel(value) {
-            changed = true;
-            continue;
-        }
-        match without_null_sentinels(value) {
-            Some(replacement) => {
-                changed = true;
-                stripped.insert(member.clone(), replacement); // clone: the rebuilt node owns its member name.
-            }
-            // clone: an unchanged member is borrowed and the rebuilt node owns it.
-            None => {
-                stripped.insert(member.clone(), value.clone());
-            }
-        }
-    }
-    changed.then_some(Value::Object(stripped))
-}
-
-/// Whether an expanded member's value is the NGSI-LD Null of clause 4.5.0.
-///
-/// Expansion array-wraps every member, and clause 4.5.0 admits exactly one
-/// NGSI-LD Null where an array is required, so a member holding more than one
-/// node is data even when one of them is the sentinel.
-fn member_value_is_null_sentinel(member: &Value) -> bool {
-    let Some(nodes) = member.as_array() else {
-        return member_is_null_sentinel(member) || instance_is_null_sentinel(member);
-    };
-    nodes.len() == 1 && nodes.iter().all(|node| member_is_null_sentinel(node) || instance_is_null_sentinel(node))
 }
 
 #[cfg(test)]

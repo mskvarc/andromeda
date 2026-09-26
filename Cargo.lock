@@ -265,6 +265,7 @@ dependencies = [
  "chrono",
  "derive_more",
  "fastrand",
+ "iri-rs",
  "pretty_assertions",
  "serde",
  "serde_json",

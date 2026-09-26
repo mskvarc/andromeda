@@ -115,3 +115,22 @@ pub async fn attribute_name_id(pool: &PgPool, entity_id: &str, local_name: &str)
     .await
     .expect("the attribute must be present in the dictionary")
 }
+
+/// Read the `unitCode` projected for one instance of one attribute, matched by
+/// the local name at the end of its expanded IRI, absent when the projected
+/// instance carries none.
+pub async fn unit_code_of(pool: &PgPool, entity_id: &str, local_name: &str, dataset_id: Option<&str>) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT u.code FROM current_attribute_values AS c \
+         JOIN entities AS e ON e.entity_key = c.entity_key \
+         JOIN attribute_names AS an ON an.id = c.attribute_name_id \
+         LEFT JOIN unit_codes AS u ON u.id = c.unit_code_id \
+         WHERE e.id = $1 AND an.name LIKE '%' || $2 AND c.dataset_id IS NOT DISTINCT FROM $3",
+    )
+    .bind(entity_id)
+    .bind(local_name)
+    .bind(dataset_id)
+    .fetch_one(pool)
+    .await
+    .expect("the instance of the attribute must be projected")
+}

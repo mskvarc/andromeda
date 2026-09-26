@@ -26,3 +26,6 @@ pub mod update;
 
 #[cfg(test)]
 mod durable_match_recording;
+/// History-recording tests for the attribute-level writes.
+#[cfg(test)]
+mod history_recording;

@@ -4,7 +4,10 @@
 use crate::expanded::{
     dataset_id::{get_instance_dataset_id, position_of_dataset},
     merge::remove_instances_by_dataset,
-    mutation::{error::ExpandedEntityError, selection::DatasetSelection},
+    mutation::{
+        error::ExpandedEntityError,
+        selection::{DatasetSelection, addressed_dataset},
+    },
     node::expanded_object_mut,
     null_sentinel::instance_is_null_sentinel,
     partial_update_patch::patch_attribute_instance,
@@ -18,10 +21,7 @@ use serde_json::Value;
 ///
 /// The instance the patch lands on is the one clause 5.6.4.4 names: "as an
 /// instance with the specified datasetId if present", otherwise the default
-/// instance. Table 6.7.3.1-1 gives the operation no `datasetId` URL parameter,
-/// so the `datasetId` clause 5.5.8 matches on is the Fragment's own; the
-/// parameter Andromeda additionally accepts selects ahead of it when a client
-/// sends one.
+/// instance, resolved by [`addressed_dataset`].
 ///
 /// A `fragment` that is the NGSI-LD Null of clause 4.5.0 deletes the selected
 /// instance, which clause 5.5.8 hands to clause 5.6.5: the attribute itself is
@@ -44,8 +44,8 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Op
         return Err(ExpandedEntityError::AttributeNotFound { attribute: attr_iri.clone() });
     }
 
-    let fragment_dataset = get_instance_dataset_id(fragment)?;
-    let effective_ds = dataset_id.or(fragment_dataset.as_ref());
+    let addressed = addressed_dataset(dataset_id, fragment)?;
+    let effective_ds = addressed.as_ref();
 
     if instance_is_null_sentinel(fragment) {
         return delete_selected_instance(entity_obj, attr_iri, effective_ds);
@@ -198,9 +198,9 @@ pub fn delete_attr(entity: &mut Value, attr_iri: &IriBuf, selection: DatasetSele
 
 /// Replace a single attribute (clause 5.6.19): fully replaces the attribute value.
 ///
-/// When `dataset_id` is provided (from query parameter), it specifies which instance to replace.
-/// Otherwise, the datasetId from `value` is used to match. If neither specifies a datasetId,
-/// the default instance (without datasetId) is replaced.
+/// The instance replaced is the one [`addressed_dataset`] resolves from the
+/// `dataset_id` URL parameter and the `datasetId` of `value`; when neither
+/// names one, it is the default instance (clause 4.5.5).
 ///
 /// # Errors
 ///
@@ -216,12 +216,7 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&U
         .get(attr_iri.as_str())
         .ok_or_else(|| ExpandedEntityError::AttributeNotFound { attribute: attr_iri.clone() })?;
 
-    // Query param datasetId takes precedence over value's datasetId. Matching is
-    // by the raw `@id` the document records, so the target URI is rendered to it.
-    let target_ds: Option<Uri> = match dataset_id {
-        Some(ds) => Some(ds.clone()),
-        None => get_instance_dataset_id(value)?,
-    };
+    let target_ds = addressed_dataset(dataset_id, value)?;
 
     let existing_instances = existing.as_array();
 

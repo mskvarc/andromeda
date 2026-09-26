@@ -41,9 +41,13 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    expanded::mutation::{
-        deletion_sentinel::{DroppedSentinels, drop_deletion_sentinels},
-        entity::update_entity_attrs,
+    expanded::{
+        mutation::{
+            deletion_sentinel::{DroppedSentinels, drop_deletion_sentinels},
+            entity::update_entity_attrs,
+            selection::OverwritePolicy,
+        },
+        written_observation::AddressedInstances,
     },
 };
 use chrono::{DateTime, Utc};
@@ -104,9 +108,11 @@ impl EntityService {
             };
             match write {
                 Ok(write) => {
-                    // clone: an `Arc` handle kept for a possible retry, which must not
-                    // re-expand the request payload.
-                    payloads.insert(write.id.clone(), Arc::clone(&write.observed));
+                    // An `Arc` handle to the payload the write stores is kept for a
+                    // possible retry, which must not re-expand the request payload.
+                    if let Some(record) = write.entity.record() {
+                        payloads.insert(write.id.clone(), Arc::clone(&record.payload)); // clone: the retry map owns its key and a shared payload handle.
+                    }
                     writes.push(write);
                 }
                 Err(failure) => errors.push(*failure),
@@ -247,7 +253,10 @@ impl EntityService {
                 UpdatedPayloads {
                     previous: existing,
                     merged: Arc::new(merged),
-                    observed: Arc::new(entity.expanded),
+                    addressed: AddressedInstances::EntityFragment {
+                        fragment: &entity.expanded,
+                        overwrite: OverwritePolicy::Overwrite,
+                    },
                 },
                 &groups,
                 Precondition::MustExist,
@@ -325,9 +334,11 @@ impl EntityService {
             id,
             UpdatedPayloads {
                 previous,
-                // clone: `Arc` ref-count bumps; the same payload is stored and observed.
-                merged: Arc::clone(payload),
-                observed: Arc::clone(payload),
+                merged: Arc::clone(payload), // clone: Arc ref-count bump; the payload is reused on a retry.
+                addressed: AddressedInstances::EntityFragment {
+                    fragment: payload,
+                    overwrite: OverwritePolicy::Overwrite,
+                },
             },
             &groups,
             Precondition::UnchangedSince(modified_at),

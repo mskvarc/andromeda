@@ -22,7 +22,13 @@ use andromeda_context_commit::precondition::Precondition;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::entity::merge_entity};
+use andromeda_ngsi_ld_model::{
+    entity::Entity,
+    expanded::{
+        mutation::{entity::merge_entity, selection::OverwritePolicy},
+        written_observation::AddressedInstances,
+    },
+};
 use chrono::Utc;
 use std::sync::Arc;
 
@@ -77,7 +83,10 @@ impl EntityService {
                 UpdatedPayloads {
                     previous,
                     merged: Arc::new(existing),
-                    observed: Arc::new(prepared_entity.expanded),
+                    addressed: AddressedInstances::EntityFragment {
+                        fragment: &prepared_entity.expanded,
+                        overwrite: OverwritePolicy::Overwrite,
+                    },
                 },
                 &groups,
                 Precondition::MustExist,

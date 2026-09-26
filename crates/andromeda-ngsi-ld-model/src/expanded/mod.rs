@@ -23,3 +23,4 @@ pub mod removed_instance;
 pub mod reserved_member;
 pub mod scope_member;
 pub mod unit_code_admission;
+pub mod written_observation;

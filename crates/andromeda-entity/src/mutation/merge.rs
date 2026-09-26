@@ -24,8 +24,9 @@ use andromeda_ngsi_ld_model::{
     entity::EntityPatch,
     expanded::{
         attribute_system_time::stamp_attribute_instants,
-        mutation::{entity::merge_entity, error::ExpandedEntityError},
+        mutation::{entity::merge_entity, error::ExpandedEntityError, selection::OverwritePolicy},
         node::expanded_object_ref,
+        written_observation::AddressedInstances,
     },
 };
 use andromeda_ngsi_ld_query::type_selection::{expansion::expand_type_expression, grammar::TypeExpr};
@@ -121,7 +122,11 @@ impl EntityService {
                     let groups = attribute_change_groups(previous, &merged)?;
                     let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
-                    let history = mutation_history(&patch_expanded, previous, &merged)?;
+                    let addressed = AddressedInstances::EntityFragment {
+                        fragment: &patch_expanded,
+                        overwrite: OverwritePolicy::Overwrite,
+                    };
+                    let history = mutation_history(addressed, previous, &merged)?;
 
                     let write = AtomicWrite::builder()
                         .entity_id(Arc::new(entity_uri.clone())) // clone: the computed write owns its validated identifier.

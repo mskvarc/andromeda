@@ -27,9 +27,12 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    expanded::mutation::{
-        entity::{append_entity_attrs, update_entity_attrs},
-        selection::OverwritePolicy,
+    expanded::{
+        mutation::{
+            entity::{append_entity_attrs, update_entity_attrs},
+            selection::OverwritePolicy,
+        },
+        written_observation::AddressedInstances,
     },
 };
 use chrono::Utc;
@@ -154,7 +157,10 @@ impl EntityService {
                 UpdatedPayloads {
                     previous,
                     merged: Arc::new(existing),
-                    observed: Arc::new(prepared_entity.expanded),
+                    addressed: AddressedInstances::EntityFragment {
+                        fragment: &prepared_entity.expanded,
+                        overwrite,
+                    },
                 },
                 &groups,
                 Precondition::MustExist,

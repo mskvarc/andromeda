@@ -14,7 +14,11 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity::EntityPatch,
-    expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError},
+    expanded::{
+        attribute_system_time::stamp_attribute_instants,
+        mutation::{error::ExpandedEntityError, selection::OverwritePolicy},
+        written_observation::AddressedInstances,
+    },
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use andromeda_telemetry::entity::{self, EntityOperation};
@@ -72,7 +76,11 @@ impl EntityService {
                     stamp_attribute_instants(&mut replaced, previous, now).map_err(ExpandedEntityError::from)?;
                     let payload = Arc::new(replaced);
                     let types = written_entity_types(&payload)?;
-                    let history = mutation_history(&payload, previous, &payload)?;
+                    let addressed = AddressedInstances::EntityFragment {
+                        fragment: &payload,
+                        overwrite: OverwritePolicy::Overwrite,
+                    };
+                    let history = mutation_history(addressed, previous, &payload)?;
                     let groups = attribute_change_groups(previous, &payload)?;
                     let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&payload), Some(previous));
                     let write = AtomicWrite::builder()

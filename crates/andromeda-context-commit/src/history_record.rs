@@ -4,9 +4,9 @@ use crate::error::CommitError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     instance_key::{AttributeInstanceKey, attribute_instance_families},
-    null_sentinel::without_null_sentinels,
     removed_instance::{RemovedAttributeInstance, removed_attribute_instances},
     scope_member::extract_scopes,
+    written_observation::{AddressedInstances, written_observation},
 };
 use derive_more::IsVariant;
 use serde_json::Value;
@@ -55,6 +55,16 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Uri>, attribute_type:
 
 /// Build the observations and exact instance tombstones produced by a payload mutation.
 ///
+/// `previous` is the Entity before the write and `current` the Entity it
+/// stored. The observation is the [`written_observation`] of the instances
+/// `addressed` names: each as `current` holds it, never the request Fragment
+/// that produced it. Clauses 4.5.7 and 4.5.8 make every entry of the Temporal
+/// Evolution an instance "as mandated by clause 4.5.2", and a Fragment is only
+/// the part of one a request restated -- recording it would lose a `unitCode`
+/// clause 5.5.8 EXAMPLE 1 keeps, the value members clause 5.5.12 merges into,
+/// and the NGSI-LD Null deletion instructions would read as values. No
+/// observation is recorded when the write applied no instance and no Scope.
+///
 /// A Scope the mutation left behind is recorded too. Clause 4.18 keeps a Scope
 /// valid "until the time it has been explicitly removed by an update or delete
 /// operation", and a Replace Entity that omits `scope` is such an operation:
@@ -63,26 +73,16 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Uri>, attribute_type:
 /// A mutation that names a different Scope needs no record of its own — the
 /// event it writes is itself what ends the interval before it.
 ///
-/// The observation is the payload the write carried, minus its NGSI-LD Null
-/// deletion instructions: clause 4.5.0 introduces the sentinel to encode a
-/// deletion rather than a value, and what it deleted is already recorded by the
-/// tombstones below it. Keeping it would write `urn:ngsi-ld:null` into history
-/// as the value of the member the write removed.
-///
 /// # Errors
 ///
-/// Returns [`CommitError::Invariant`] when either state carries an instance
-/// whose `datasetId` cannot be read, since its tombstone would name no
-/// instance.
-pub fn mutation_history(observed: &Arc<Value>, previous: &Value, current: &Value) -> Result<Vec<HistoryRecord>, CommitError> {
+/// Returns [`CommitError::Invariant`] when the Fragment or either state
+/// carries an instance whose `datasetId` cannot be read, since neither its
+/// observation nor its tombstone would name an instance.
+pub fn mutation_history(addressed: AddressedInstances<'_>, previous: &Value, current: &Value) -> Result<Vec<HistoryRecord>, CommitError> {
     let removed = removed_attribute_instances(previous, current).map_err(CommitError::invariant)?;
+    let observation = written_observation(addressed, previous, current).map_err(CommitError::invariant)?;
     let mut history = Vec::with_capacity(removed.len() + 2);
-    let observation = match without_null_sentinels(observed) {
-        Some(stripped) => Arc::new(stripped),
-        // clone: history and change-event paths share an unchanged observed payload.
-        None => Arc::clone(observed),
-    };
-    history.push(HistoryRecord::Observations(observation));
+    history.extend(observation.map(|observed| HistoryRecord::Observations(Arc::new(observed))));
     history.extend(removed.into_iter().map(HistoryRecord::Tombstone));
     if scope_was_cleared(previous, current) {
         history.push(HistoryRecord::ScopeRemoval);
@@ -140,8 +140,9 @@ pub fn deletion_history(previous: &Value) -> Result<Vec<HistoryRecord>, CommitEr
 mod tests {
     use crate::history_record::{HistoryRecord, deletion_history, mutation_history};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use serde_json::json;
-    use std::sync::Arc;
+    use andromeda_ngsi_ld_model::expanded::{mutation::selection::OverwritePolicy, written_observation::AddressedInstances};
+    use iri_rs::IriBuf;
+    use serde_json::{Value, json};
 
     #[test]
     fn a_replacement_tombstones_a_dropped_attribute() {
@@ -154,8 +155,11 @@ mod tests {
             "@id": "urn:ngsi-ld:A",
             "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}]
         }]);
-        let observed = Arc::new(replacement.clone()); // clone: the test compares the replacement after sharing it.
-        let history = mutation_history(&observed, &previous, &replacement).expect("readable datasetIds");
+        let addressed = AddressedInstances::EntityFragment {
+            fragment: &replacement,
+            overwrite: OverwritePolicy::Overwrite,
+        };
+        let history = mutation_history(addressed, &previous, &replacement).expect("readable datasetIds");
         assert!(history[0].is_observations());
         assert!(history.iter().any(HistoryRecord::is_tombstone));
     }
@@ -179,23 +183,98 @@ mod tests {
             "@id": "urn:ngsi-ld:Vehicle:1",
             "https://example.com/speed": [instance(dataset_b)]
         }]);
-        let observed = Arc::new(json!([{
+        let fragment = json!([{
             "https://example.com/speed": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}],
                 "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_a}]
             }]
-        }]));
+        }]);
+        let addressed = AddressedInstances::EntityFragment {
+            fragment: &fragment,
+            overwrite: OverwritePolicy::Overwrite,
+        };
 
-        let history = mutation_history(&observed, &previous, &current).expect("readable datasetIds");
+        let history = mutation_history(addressed, &previous, &current).expect("readable datasetIds");
 
-        pretty_assertions::assert_eq!(history.len(), 2);
-        assert!(history[1].is_tombstone());
-        let HistoryRecord::Tombstone(removed) = &history[1] else {
-            return;
+        // The deletion is recorded by its tombstone alone: the NGSI-LD Null is
+        // an instruction, and the instance it removed is not in current state.
+        pretty_assertions::assert_eq!(history.len(), 1);
+        let HistoryRecord::Tombstone(removed) = &history[0] else {
+            panic!("the only record is the tombstone: {history:?}");
         };
         pretty_assertions::assert_eq!(removed.key.attr.as_str(), "https://example.com/speed");
         pretty_assertions::assert_eq!(removed.key.dataset_id.as_ref().map(Uri::as_str), Some(dataset_a));
+    }
+
+    /// Clause 5.5.8 EXAMPLE 1: a partial update keeps the `unitCode` the
+    /// Fragment left out, so the recorded observation is the resulting instance
+    /// carrying it rather than the Fragment.
+    #[test]
+    fn a_partial_update_records_the_resulting_instance_rather_than_the_fragment() {
+        let temperature = |value: i64| {
+            json!({
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}],
+                "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "CEL"}]
+            })
+        };
+        let previous = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/temperature": [temperature(25)]}]);
+        let current = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/temperature": [temperature(100)]}]);
+        let fragment = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 100}]
+        });
+        let attribute = IriBuf::new("https://example.org/temperature".to_owned()).expect("a valid IRI");
+        let addressed = AddressedInstances::AttributeFragment {
+            attribute: &attribute,
+            dataset_id: None,
+            fragment: &fragment,
+        };
+
+        let history = mutation_history(addressed, &previous, &current).expect("readable datasetIds");
+
+        pretty_assertions::assert_eq!(history.len(), 1);
+        let HistoryRecord::Observations(observed) = &history[0] else {
+            panic!("the only record is the observation: {history:?}");
+        };
+        pretty_assertions::assert_eq!(**observed, current);
+    }
+
+    /// A write that applied nothing -- a no-overwrite append of an attribute the
+    /// Entity already holds -- records no observation at all.
+    #[test]
+    fn a_write_that_applied_no_instance_records_no_observation() {
+        let state = json!([{
+            "@id": "urn:ngsi-ld:A",
+            "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
+        }]);
+        let fragment = json!([{
+            "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 2}]}]
+        }]);
+        let addressed = AddressedInstances::EntityFragment {
+            fragment: &fragment,
+            overwrite: OverwritePolicy::Preserve,
+        };
+
+        let history = mutation_history(addressed, &state, &state).expect("readable datasetIds");
+
+        assert!(history.is_empty(), "{history:?}");
+    }
+
+    /// Clause 4.18: a replacement that omits `scope` ends the Scope's interval.
+    #[test]
+    fn a_replacement_without_scope_records_the_scope_removal() {
+        let previous = json!([{"@id": "urn:ngsi-ld:A", "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}]}]);
+        let replacement: Value = json!([{"@id": "urn:ngsi-ld:A"}]);
+        let addressed = AddressedInstances::EntityFragment {
+            fragment: &replacement,
+            overwrite: OverwritePolicy::Overwrite,
+        };
+
+        let history = mutation_history(addressed, &previous, &replacement).expect("readable datasetIds");
+
+        assert!(matches!(history.as_slice(), [HistoryRecord::ScopeRemoval]), "{history:?}");
     }
 
     #[test]

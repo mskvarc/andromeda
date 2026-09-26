@@ -14,7 +14,8 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
-    mutation::{entity::update_entity_attrs, error::ExpandedEntityError},
+    mutation::{entity::update_entity_attrs, error::ExpandedEntityError, selection::OverwritePolicy},
+    written_observation::AddressedInstances,
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use chrono::Utc;
@@ -90,7 +91,11 @@ impl EntityService {
                 let groups = attribute_change_groups(previous, &merged)?;
                 let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
-                let history = mutation_history(&expanded, previous, &merged)?;
+                let addressed = AddressedInstances::EntityFragment {
+                    fragment: &expanded,
+                    overwrite: OverwritePolicy::Overwrite,
+                };
+                let history = mutation_history(addressed, previous, &merged)?;
                 let write = payload_write(&entity_uri, &merged, history, plan.matches)?;
                 Ok((write, (plan.events, not_updated)))
             })

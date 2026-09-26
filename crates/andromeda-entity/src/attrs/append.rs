@@ -8,13 +8,14 @@ use crate::{
     notification_plan::attribute_change_groups,
     write_admission::{EntityWrite, admit_expanded_entity},
 };
-use andromeda_context_commit::history_record::HistoryRecord;
+use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
     mutation::{entity::append_entity_attrs, error::ExpandedEntityError, selection::OverwritePolicy},
+    written_observation::AddressedInstances,
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use chrono::Utc;
@@ -85,7 +86,12 @@ impl EntityService {
                 let groups = attribute_change_groups(previous, &merged)?;
                 let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
-                let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))], plan.matches)?; // clone: Arc ref-count bump
+                let addressed = AddressedInstances::EntityFragment {
+                    fragment: &expanded,
+                    overwrite,
+                };
+                let history = mutation_history(addressed, previous, &merged)?;
+                let write = payload_write(&entity_uri, &merged, history, plan.matches)?;
                 Ok((write, (not_appended, plan.events)))
             })
             .await?;
