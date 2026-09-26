@@ -22,42 +22,74 @@
 -- the row it hangs off, and each is named here so the reset does not depend on
 -- that edge.
 
-TRUNCATE
-    write_records,
-    temporal_append_intents,
-    pending_side_effects,
-    current_attribute_values,
-    notification_deliveries,
-    notification_events,
-    scope_history,
-    snapshot_notification_outbox,
-    snapshot_preparation,
-    snapshots,
-    forwarded_subscriptions,
-    subscription_companions,
-    registration_information,
-    csr_delivery_state,
-    context_source_registrations,
-    subscription_delivery_state,
-    subscriptions,
-    attribute_history_instance_claims,
-    attribute_history,
-    temporal_attribute_streams,
-    temporal_entities,
-    entity_search,
-    entity_documents,
-    entities,
-    jsonld_contexts
-RESTART IDENTITY CASCADE;
-
--- The live branch is the default schema, reset by the truncation above. Each
+-- The whole reset is one statement, so every lock it takes is held until it
+-- commits, and it takes all of them before it changes anything: the reset
+-- relations, every relation `TRUNCATE ... CASCADE` reaches from them through a
+-- foreign key, and every table of every Snapshot branch schema, in one
+-- `LOCK TABLE ... NOWAIT`. A broker transaction still open on any of them makes
+-- the statement fail at once with `lock_not_available` (55P03) while holding
+-- nothing, and the harness runs it again once that transaction has finished.
+-- The reset therefore never waits for a lock while holding another, so it can
+-- never form a deadlock with a broker's expiry sweep or notification drain --
+-- and never makes PostgreSQL abort a broker transaction as the victim of one.
+--
+-- The live branch is the default schema, reset by the truncation. Each
 -- Snapshot branch is its own schema `snap_<key>` (and `snap_<key>_stg` while
 -- preparing), test-owned and unreachable from the control tables, so every such
 -- schema is dropped after the control rows that named them are gone.
+
 DO $$
 DECLARE
+    reset_relations CONSTANT regclass[] := ARRAY[
+        'write_records',
+        'temporal_append_intents',
+        'pending_side_effects',
+        'current_attribute_values',
+        'notification_deliveries',
+        'notification_events',
+        'scope_history',
+        'snapshot_notification_outbox',
+        'snapshot_preparation',
+        'snapshots',
+        'forwarded_subscriptions',
+        'subscription_companions',
+        'registration_information',
+        'csr_delivery_state',
+        'context_source_registrations',
+        'subscription_delivery_state',
+        'subscriptions',
+        'attribute_history_instance_claims',
+        'attribute_history',
+        'temporal_attribute_streams',
+        'temporal_entities',
+        'entity_search',
+        'entity_documents',
+        'entities',
+        'jsonld_contexts'
+    ]::regclass[];
+    locked text;
     branch text;
 BEGIN
+    WITH RECURSIVE reached(relation) AS (
+        SELECT unnest(reset_relations)::oid
+        UNION
+        SELECT constraint_row.conrelid
+        FROM pg_constraint AS constraint_row
+        JOIN reached ON constraint_row.confrelid = reached.relation
+        WHERE constraint_row.contype = 'f'
+    ),
+    branch_tables(relation) AS (
+        SELECT class_row.oid
+        FROM pg_class AS class_row
+        JOIN pg_namespace AS namespace_row ON namespace_row.oid = class_row.relnamespace
+        WHERE namespace_row.nspname LIKE 'snap\_%' AND class_row.relkind IN ('r', 'p')
+    )
+    SELECT string_agg(relation::regclass::text, ', ')
+    INTO locked
+    FROM (SELECT relation FROM reached UNION SELECT relation FROM branch_tables) AS every_relation;
+
+    EXECUTE format('LOCK TABLE %s IN ACCESS EXCLUSIVE MODE NOWAIT', locked);
+    EXECUTE format('TRUNCATE %s RESTART IDENTITY CASCADE', array_to_string(reset_relations, ', '));
     FOR branch IN SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'snap\_%' LOOP
         EXECUTE format('DROP SCHEMA %I CASCADE', branch);
     END LOOP;

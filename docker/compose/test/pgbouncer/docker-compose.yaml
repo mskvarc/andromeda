@@ -148,6 +148,11 @@ services:
       ANDROMEDA__SERVER__PORT: "1069"
       PGAPPNAME: "broker-wide"
       ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "1000"
+      # Every touched tenant stays resident for the whole idle-cost scenario:
+      # touching 300 tenants one after another takes longer than the shared
+      # 120s idle TTL, which would otherwise evict the earliest before the
+      # cache is measured.
+      ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL: "900s"
     ports:
       - "1069:1069"
     healthcheck:

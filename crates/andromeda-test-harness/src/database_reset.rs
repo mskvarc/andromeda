@@ -7,7 +7,7 @@ use crate::{
 use sqlx::{Executor, PgPool, Postgres, Transaction};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::time::sleep;
+use tokio::time::{Instant, sleep};
 
 /// Authoritative tenant reset SQL maintained alongside the test harness.
 pub const RESET_TENANT_SQL: &str = include_str!("../sql/reset-tenant.sql");
@@ -16,24 +16,14 @@ pub const RESET_TENANT_SQL: &str = include_str!("../sql/reset-tenant.sql");
 ///
 /// # Errors
 ///
-/// Returns [`DatabaseResetError::Isolation`] when the exclusive lease no longer holds its connection, and [`DatabaseResetError::Sqlx`] when the reset script fails for any reason other than a deadlock, or when it still deadlocks after the bounded deadlock retries are exhausted.
+/// Returns [`DatabaseResetError::Isolation`] when the exclusive lease no longer holds its connection, and [`DatabaseResetError::Sqlx`] when the reset script fails for any reason other than a busy table, or when a table stays busy past [`RESET_BUSY_DEADLINE`].
 pub async fn reset_tenant(lease: &mut SerializedLease) -> Result<(), DatabaseResetError> {
-    let mut attempt = 0;
+    let busy = BusyTables::starting_now();
     loop {
         let connection = lease.connection()?;
         match connection.execute(RESET_TENANT_SQL).await {
             Ok(_) => return Ok(()),
-            Err(error) if is_deadlock(&error) && attempt < RESET_DEADLOCK_RETRIES => {
-                // The brokers' background tasks (expiry sweeps, notification
-                // drains) keep short transactions open against the same tables;
-                // the reset's TRUNCATE racing one of them is reported as a
-                // deadlock rather than waiting, so it is retried once that
-                // transaction has finished. This is the same race, and the same
-                // remedy, as `reset_owned_tenant`.
-                attempt += 1;
-                sleep(RESET_DEADLOCK_BACKOFF).await;
-            }
-            Err(error) => return Err(DatabaseResetError::from_sqlx(error)),
+            Err(error) => busy.wait_out(error).await?,
         }
     }
 }
@@ -47,41 +37,65 @@ pub async fn reset_tenant(lease: &mut SerializedLease) -> Result<(), DatabaseRes
 ///
 /// # Errors
 ///
-/// Returns [`DatabaseResetError::Sqlx`] when the reset script fails for any reason other than a deadlock, or when it still deadlocks after the bounded deadlock retries are exhausted.
+/// Returns [`DatabaseResetError::Sqlx`] when the reset script fails for any reason other than a busy table, or when a table stays busy past [`RESET_BUSY_DEADLINE`].
 pub async fn reset_owned_tenant(pool: &PgPool) -> Result<(), DatabaseResetError> {
-    let mut attempt = 0;
+    let busy = BusyTables::starting_now();
     loop {
         match pool.execute(RESET_TENANT_SQL).await {
             Ok(_) => return Ok(()),
-            Err(error) if is_deadlock(&error) && attempt < RESET_DEADLOCK_RETRIES => {
-                // The brokers' background tasks (expiry sweeps, notification
-                // drains) keep short transactions open against the same
-                // tables; a TRUNCATE racing one of them is reported as a
-                // deadlock rather than waiting, so the reset is simply tried
-                // again once that transaction has finished.
-                attempt += 1;
-                sleep(RESET_DEADLOCK_BACKOFF).await;
-            }
-            Err(error) => return Err(DatabaseResetError::from_sqlx(error)),
+            Err(error) => busy.wait_out(error).await?,
         }
     }
 }
 
-/// How many times a reset is retried after PostgreSQL reports a deadlock.
-const RESET_DEADLOCK_RETRIES: u32 = 20;
+/// How long a reset keeps retrying while a broker transaction holds one of its
+/// tables. The brokers' background transactions (expiry sweeps, notification
+/// drains) are short, so a free moment comes far sooner than this.
+const RESET_BUSY_DEADLINE: Duration = Duration::from_secs(30);
 
-/// Pause between deadlock retries, long enough for a broker's short
-/// maintenance transaction to complete.
-const RESET_DEADLOCK_BACKOFF: Duration = Duration::from_millis(200);
+/// Pause before a reset that found a table busy is run again.
+const RESET_BUSY_BACKOFF: Duration = Duration::from_millis(20);
 
-/// PostgreSQL SQLSTATE for `deadlock_detected`.
-const DEADLOCK_SQLSTATE: &str = "40P01";
+/// PostgreSQL SQLSTATE for `lock_not_available`, which the reset script's
+/// `LOCK TABLE ... NOWAIT` raises when a broker transaction holds a table.
+const LOCK_NOT_AVAILABLE_SQLSTATE: &str = "55P03";
 
-/// Whether a database error is PostgreSQL's deadlock report.
-fn is_deadlock(error: &sqlx::Error) -> bool {
+/// The retry policy of one reset: the script takes every lock it needs at once
+/// and without waiting, so a broker transaction still open on a table fails it
+/// before it has changed or locked anything, and it is simply run again.
+///
+/// Only that failure is retried. A deadlock cannot involve a script that never
+/// waits for a lock while holding one, so it is reported rather than retried,
+/// as is every other failure.
+struct BusyTables {
+    /// When the reset stops waiting for its tables to become free.
+    deadline: Instant,
+}
+
+impl BusyTables {
+    /// A retry policy whose deadline runs from now.
+    fn starting_now() -> BusyTables {
+        BusyTables {
+            deadline: Instant::now() + RESET_BUSY_DEADLINE,
+        }
+    }
+
+    /// Wait out `error` when it is a busy table and the deadline has not
+    /// passed, so the caller runs the reset again; otherwise return it.
+    async fn wait_out(&self, error: sqlx::Error) -> Result<(), DatabaseResetError> {
+        if is_lock_not_available(&error) && Instant::now() < self.deadline {
+            sleep(RESET_BUSY_BACKOFF).await;
+            return Ok(());
+        }
+        Err(DatabaseResetError::from_sqlx(error))
+    }
+}
+
+/// Whether a database error is `LOCK TABLE ... NOWAIT` finding a table busy.
+fn is_lock_not_available(error: &sqlx::Error) -> bool {
     error
         .as_database_error()
-        .is_some_and(|database| database.code().is_some_and(|code| code == DEADLOCK_SQLSTATE))
+        .is_some_and(|database| database.code().is_some_and(|code| code == LOCK_NOT_AVAILABLE_SQLSTATE))
 }
 
 /// Every prefix-scoped delete a cleanup runs, in dependency order.
@@ -173,22 +187,44 @@ impl DatabaseResetError {
 
 #[cfg(test)]
 mod tests {
-    use crate::database_reset::is_deadlock;
+    use crate::database_reset::{PREFIX_DELETES, RESET_TENANT_SQL, is_lock_not_available};
 
     #[test]
-    fn a_non_database_error_is_not_treated_as_a_deadlock() {
-        assert!(!is_deadlock(&sqlx::Error::PoolClosed));
+    fn a_non_database_error_is_not_treated_as_a_busy_table() {
+        assert!(!is_lock_not_available(&sqlx::Error::PoolClosed));
+        assert!(!is_lock_not_available(&sqlx::Error::RowNotFound));
     }
-    use crate::database_reset::{PREFIX_DELETES, RESET_TENANT_SQL};
 
-    /// The relation list of the reset script's `TRUNCATE`, without the header
-    /// comment that explains which relations are deliberately absent from it.
+    /// The reset relation list of the script, without the header comment that
+    /// explains which relations are deliberately absent from it.
     fn truncated_relations() -> &'static str {
-        let (_, statement) = RESET_TENANT_SQL.split_once("TRUNCATE").unwrap_or_else(|| panic!("the reset script truncates"));
-        let (relations, _) = statement
-            .split_once("RESTART IDENTITY")
-            .unwrap_or_else(|| panic!("the truncation restarts identities"));
+        let (_, declaration) = RESET_TENANT_SQL
+            .split_once("reset_relations CONSTANT regclass[] := ARRAY[")
+            .unwrap_or_else(|| panic!("the reset script declares its relations"));
+        let (relations, _) = declaration.split_once("]::regclass[]").unwrap_or_else(|| panic!("the relation list is closed"));
         relations
+    }
+
+    /// The script must take every lock before it changes anything, and never
+    /// wait for one: that is what keeps it out of every deadlock with the
+    /// brokers' own transactions.
+    #[test]
+    fn reset_script_locks_everything_it_touches_without_waiting_before_it_truncates() {
+        let lock = RESET_TENANT_SQL
+            .find("IN ACCESS EXCLUSIVE MODE NOWAIT")
+            .unwrap_or_else(|| panic!("the script locks without waiting"));
+        let truncate = RESET_TENANT_SQL
+            .find("EXECUTE format('TRUNCATE")
+            .unwrap_or_else(|| panic!("the script truncates"));
+        let drop = RESET_TENANT_SQL
+            .find("DROP SCHEMA")
+            .unwrap_or_else(|| panic!("the script drops the branch schemas"));
+        assert!(lock < truncate && lock < drop, "the locks must precede every change");
+        assert!(
+            RESET_TENANT_SQL.contains("constraint_row.contype = 'f'"),
+            "the lock covers what the cascade reaches"
+        );
+        assert!(RESET_TENANT_SQL.contains("TRUNCATE %s RESTART IDENTITY CASCADE"));
     }
 
     #[test]
