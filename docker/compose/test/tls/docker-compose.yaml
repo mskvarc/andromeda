@@ -1,25 +1,3 @@
-# One Andromeda broker behind a TLS-terminating reverse proxy.
-#
-# ETSI GS CIM 009 v1.9.1 clause 6.2 requires the API to support HTTP over TLS
-# with at least TLS 1.2 (IETF RFC 5246). Andromeda serves plaintext HTTP and
-# meets the clause at the deployment: nginx holds the certificate, terminates
-# the client's TLS connection, and forwards to the broker's plaintext listener
-# over the compose network. See docs/tls-deployment.md.
-#
-# The broker publishes NO host port. That is the point: only the terminator is
-# reachable, which is the precondition that makes trusting the forwarded fields
-# safe. Publishing the broker would both make the TLS requirement vacuous and
-# hand any client control of the scheme in the broker's persisted @context URLs.
-#
-# Certificate (not committed -- key material does not belong in a repository):
-#   mkdir -p docker/compose/test/tls/certs
-#   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
-#     -keyout docker/compose/test/tls/certs/broker.key -out docker/compose/test/tls/certs/broker.crt \
-#     -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-#
-# Bring up:
-#   docker compose -f docker/compose/test/tls/docker-compose.yaml up -d --build
-#   curl -k https://127.0.0.1:8443/ngsi-ld/v1/info/sourceIdentity
 name: andromeda-tls
 
 services:
@@ -52,11 +30,8 @@ services:
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
       ANDROMEDA__TENANCY__ENABLED: "true"
       ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
-      # Safe here only because this service publishes no host port, so nothing
-      # but the terminator can set these fields, and because nginx.conf REPLACES
-      # them rather than appending to whatever a client sent.
+      # Safe only because no host port is published and nginx replaces these headers.
       ANDROMEDA__HTTP__FORWARDED_HEADERS: "trusted"
-      # The origin peers reach this broker at, which is the terminator's.
       ANDROMEDA__IDENTITY__ADVERTISED_URL: "https://127.0.0.1:8443"
       ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-broker"
       ANDROMEDA__IDENTITY__SOURCE_ALIAS: "tls-broker"

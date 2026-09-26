@@ -1,21 +1,5 @@
 name: integration
 
-# Every integration stack in one workflow. A change to the harness once fanned
-# out to a per-stack workflow each of which rebuilt the identical broker image;
-# now the broker image is built exactly once by `build-broker` and every stack
-# leg loads that one artifact. `setup` decides, from the triggering event, which
-# stacks run and where the broker image comes from:
-#
-#   - pull_request / push to master (harness paths): build the broker once from
-#     the branch under test and run the release-gate stacks against it, so a
-#     regression is caught before it ships. pgbouncer is excluded -- it is heavy
-#     and, like before, has no on-change trigger.
-#   - schedule (weekly): run every stack, pgbouncer included, against the
-#     published GHCR image -- a smoke test of the shipped artifact.
-#   - workflow_dispatch: build once from the current branch and run every stack.
-#
-# The single weekly cron replaces the six staggered ones: there is only one
-# broker build per run now, so there is no gha-cache contention to stagger around.
 on:
   schedule:
     - cron: "3 3 * * 0"
@@ -41,9 +25,6 @@ permissions:
   packages: read
 
 jobs:
-  # Resolve, from the event, the stack matrix and where the broker image comes
-  # from. The matrix legs and the build-broker gate both read these outputs, so
-  # the event-to-plan mapping lives in exactly one place.
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -60,28 +41,19 @@ jobs:
           all='["base","distributed","federation","snapshot","http3","extensions","pgbouncer"]'
           case "$EVENT" in
             schedule)
-              # Weekly: smoke-test every stack against the published image.
               echo "stacks=$all" >> "$GITHUB_OUTPUT"
               echo "image-source=ghcr" >> "$GITHUB_OUTPUT"
               ;;
             workflow_dispatch)
-              # Manual: build the current branch once and run every stack.
               echo "stacks=$all" >> "$GITHUB_OUTPUT"
               echo "image-source=preloaded" >> "$GITHUB_OUTPUT"
               ;;
             *)
-              # On change: build once, run the release-gate stacks (no pgbouncer).
               echo "stacks=$gate" >> "$GITHUB_OUTPUT"
               echo "image-source=preloaded" >> "$GITHUB_OUTPUT"
               ;;
           esac
 
-  # Compile every integration-test suite exactly once and package the binaries,
-  # the xtask runner, and their manifest as one artifact. Every stack leg then
-  # executes its prebuilt binaries instead of recompiling the identical suites,
-  # so the workspace is built once per run rather than once per leg. The suites
-  # always come from the branch under test, so this runs in both image-source
-  # modes (a ghcr smoke run still tests the current branch's suites).
   build-tests:
     needs: setup
     runs-on: ubuntu-latest
@@ -98,9 +70,6 @@ jobs:
         with:
           out: ${{ runner.temp }}/test-suite
 
-  # Build the broker image exactly once for the whole run and hand it to every
-  # stack leg as an artifact. Skipped when the run tests the published GHCR image
-  # instead of a source build.
   build-broker:
     needs: setup
     if: ${{ needs.setup.outputs.image-source == 'preloaded' }}
@@ -109,15 +78,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/free-disk-space
 
-      # Build with the shared gha cache scope and save a gzip tarball. Every stack
-      # leg loads this one image, so the identical broker is never rebuilt per leg.
       - uses: ./.github/actions/build-broker-image
         with:
           tag: andromeda-ci:broker
           archive: ${{ runner.temp }}/broker/broker.tar.gz
 
-      # compression-level 0: the tarball is already gzipped, so re-zipping it in
-      # the artifact upload only burns CPU on both ends for no size gain.
       - uses: actions/upload-artifact@v7
         with:
           name: broker-image
@@ -126,10 +91,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # One leg per stack, all in parallel (fail-fast off, no max-parallel), each
-  # loading the one broker image and the one prebuilt test-suite artifact. Runs
-  # after build-broker, but also when that job was skipped in ghcr mode, so `if`
-  # accepts both success and skipped; build-tests always runs, so it must succeed.
+  # build-broker is skipped in ghcr mode.
   itest:
     needs: [setup, build-tests, build-broker]
     if: ${{ always() && needs.setup.result == 'success' && needs.build-tests.result == 'success' && (needs.build-broker.result == 'success' || needs.build-broker.result == 'skipped') }}

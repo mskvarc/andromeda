@@ -1,25 +1,6 @@
 name: etsi
 
-# Weekly run of the official ETSI NGSI-LD Robot Framework conformance suite against
-# the single-broker tree, as a hard gate. It is heavy (it clones the pinned suite
-# from forge.etsi.org, provisions a robot virtualenv, builds and spawns the broker,
-# and runs the whole single-broker suite), so it is weekly and manual only, with no
-# on-change trigger -- a change to the ETSI harness (crates/andromeda-xtask/etsi or
-# the xtask etsi code) will not fire this job automatically; catch it via
-# workflow_dispatch. It is deliberately after the itest stacks on Sunday.
-#
-# Hard gate, single-broker only: `--scope base` runs the whole suite minus the
-# distributed tree, and `--strict` makes `cargo xtask etsi run` return non-zero when
-# any case fails, so a broker regression against the single-broker conformance
-# surface turns the job red. The distributed tree is deliberately excluded here: its
-# ETSI pass runs against the suite's in-process mock context source, which tops out
-# well short of the full count for reasons that are not broker defects, so the
-# authoritative distributed verdict stays the four-broker `distributed` itest stack,
-# not this job.
-#
-# ETSI always builds the broker from source: it spawns a host `target/release/
-# andromeda`, not a container, so the itest composite's `image-source` selector does
-# not apply here.
+# Single-broker only; distributed conformance is the distributed itest stack.
 on:
   schedule:
     - cron: "0 5 * * 0"
@@ -41,33 +22,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/free-disk-space
 
-      # The dev compose stack builds the PostgreSQL image from context.
       - uses: docker/setup-buildx-action@v4
 
-      # rust-toolchain.toml pins the nightly the broker builds on.
       - name: Install pinned toolchain
         shell: bash
         run: rustup toolchain install --profile minimal
 
       - uses: Swatinem/rust-cache@v2
 
-      # python3 with venv and pip, from which xtask provisions the suite's robot
-      # virtualenv against its requirements.txt.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # Builds the broker via host cargo, brings up the dev compose stack, clones the
-      # pinned suite from forge.etsi.org, provisions the venv, applies the patch sets,
-      # and runs the single-broker tree against the one broker. `--strict` makes the
-      # command exit non-zero when any case fails, so a conformance regression fails
-      # the job.
       - name: Run the ETSI conformance suite
         run: cargo xtask etsi run --scope base --strict --output "$RUNNER_TEMP/etsi-out"
 
-      # The single-broker/ subdirectory's output.xml/report.html/log.html and
-      # broker.log. Uploaded even when a step failed -- including a strict conformance
-      # failure -- so the report is always available to inspect what failed.
       - name: Upload the ETSI report
         if: always()
         uses: actions/upload-artifact@v7

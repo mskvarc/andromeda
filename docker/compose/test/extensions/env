@@ -1,30 +1,10 @@
-# Broker environment for the extensions integration suite (`cargo test --test extensions`).
-#
-# Source this before launching the host-run broker so it starts with the opt-in
-# extensions enabled. Pair it with the PG-only stack from the host-broker recipe
-# (docker compose -f docker/docker-compose.yaml up -d postgres) and a broker on
-# 127.0.0.1:1056.
-#
-#   set -a && . docker/extensions/extensions.env && set +a
-#   cargo run --bin andromeda        # broker picks up the ANDROMEDA__EXTENSIONS__* vars
-#
-# The temporal delete-by-query, the entity-Purge dataset scope, and the temporal
-# aggregation grouping are all on.
+# set -a && . docker/compose/test/extensions/env && set +a
 ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY=enabled
 ANDROMEDA__EXTENSIONS__PURGE_DATASET_SCOPE=enabled
 ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING=enabled
 
-# A deliberately small bound so the TooManyResults case is drillable: the suite
-# seeds three history instants per entity and expects an unbounded delete of all
-# three to be refused.
+# Small bounds make TooManyResults reachable.
 ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY_MAX_MATCHES=2
-
-# A deliberately small group bound so the grouped-aggregation TooManyResults case
-# is drillable.
 ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING_MAX_GROUPS=3
 
-# Conformance mode stays off here; the gate module runs against a *separate*
-# broker started with ANDROMEDA__EXTENSIONS__CONFORMANCE_MODE=enabled (and the
-# flags above also on, to prove the override wins), reachable at
-# ANDROMEDA_TEST_CONFORMANCE_BROKER_URL.
 ANDROMEDA__EXTENSIONS__CONFORMANCE_MODE=disabled

@@ -1,15 +1,5 @@
 name: Integration test stack
-description: >
-  Provide the broker image -- loaded from the shared build artifact or pulled
-  from GHCR -- tag it and the PostgreSQL image into the named stack's compose
-  `image:` targets, then drive the stack through `cargo xtask itest` with
-  rebuilding disabled. Shared by the integration workflow's matrix legs and the
-  release gate. The broker image is built once per run by a preceding
-  `build-broker` job and fanned out here, so a matrix of stacks never rebuilds
-  the identical image per leg. The suite binaries are likewise compiled once by a
-  preceding `build-tests` job and downloaded here as the `test-suite` artifact, so
-  a leg runs them without a Rust toolchain. `image-source` selects only where the
-  broker image comes from.
+description: Run one integration stack against a prebuilt broker image and test suite.
 
 inputs:
   stack:
@@ -17,29 +7,16 @@ inputs:
     required: true
   image-source:
     description: >
-      Where the broker image comes from. `preloaded` (default) downloads the
-      `broker-image` artifact built once by the run's `build-broker` job and
-      loads it, so no leg rebuilds it; `ghcr` pulls the published
-      `ghcr.io/mskvarc/andromeda:latest` and, since that mode produces no build
-      artifact, falls back to building the broker from the Dockerfile when the
-      pull 404s (the published image does not exist until the first clean
-      release, and weekly smoke runs still need a broker to test).
+      `preloaded`: build-broker artifact. `ghcr`: published image, built from source if missing.
     required: false
     default: preloaded
 
 runs:
   using: composite
   steps:
-    # The caller checks the repository out before `uses: ./.github/actions/itest`
-    # -- a local action cannot resolve otherwise -- so this composite does not
-    # repeat the checkout.
     - uses: ./.github/actions/free-disk-space
 
-    # Authenticate to GHCR before the image steps so the published PostgreSQL image
-    # and, in `ghcr` mode, the published broker image can be pulled even while the
-    # repository (and thus its packages) is private. github.token is the job's
-    # GITHUB_TOKEN, available to composite steps without a secrets reference; it
-    # needs only the default `packages: read` scope.
+    # Packages are private.
     - name: Log in to GHCR
       uses: docker/login-action@v4
       with:
@@ -47,11 +24,6 @@ runs:
         username: ${{ github.actor }}
         password: ${{ github.token }}
 
-    # The broker image is built once per run by the `build-broker` job and saved
-    # as the `broker-image` artifact. Download it here so `preloaded` mode can load
-    # it instead of rebuilding the identical image per matrix leg. In `ghcr` mode no
-    # artifact is produced (the published image is pulled instead), so the download
-    # is skipped.
     - name: Download broker image
       if: ${{ inputs.image-source == 'preloaded' }}
       uses: actions/download-artifact@v8
@@ -59,11 +31,7 @@ runs:
         name: broker-image
         path: ${{ runner.temp }}/broker
 
-    # The broker image must end up under the stack's compose `image:` tag
-    # (andromeda-<stack>) exactly, so `docker compose up` under
-    # ANDROMEDA_XTASK_NO_BUILD reuses it instead of rebuilding. In `preloaded` mode
-    # the artifact tarball built once by `build-broker` is loaded and retagged -- no
-    # leg rebuilds it.
+    # Must match the compose image tag or compose rebuilds.
     - name: Load broker image
       if: ${{ inputs.image-source == 'preloaded' }}
       shell: bash
@@ -71,15 +39,9 @@ runs:
         BROKER_ARCHIVE: ${{ runner.temp }}/broker/broker.tar.gz
       run: |
         set -euo pipefail
-        # docker load auto-detects the gzip stream written by `build-broker`.
         docker load -i "$BROKER_ARCHIVE"
         docker tag andromeda-ci:broker "andromeda-${{ inputs.stack }}:latest"
 
-    # In `ghcr` mode the published `latest` image is pulled and retagged. There is
-    # no build artifact in that mode, so until the first clean release publishes the
-    # image the pull 404s and the next step builds the broker from the Dockerfile (a
-    # rare one-time path, self-healing once a release exists), mirroring the
-    # PostgreSQL fallback below.
     - name: Pull published broker image
       id: published-broker
       if: ${{ inputs.image-source == 'ghcr' }}
@@ -95,8 +57,6 @@ runs:
           echo "found=false" >> "$GITHUB_OUTPUT"
         fi
 
-    # read-only: a one-off fallback build should not churn the shared `broker`
-    # layer scope the build-broker jobs maintain.
     - name: Build broker image
       if: ${{ inputs.image-source == 'ghcr' && steps.published-broker.outputs.found == 'false' }}
       uses: ./.github/actions/build-broker-image
@@ -104,11 +64,6 @@ runs:
         tag: andromeda-${{ inputs.stack }}:latest
         cache-mode: read-only
 
-    # The PostgreSQL image is published by postgresql.yaml; its `latest` tag is
-    # the tsl edition, matching the compose files' default build. Pull and retag
-    # it into the stack's postgres `image:`. On a fresh repository where
-    # postgresql.yaml has never published, the pull 404s and the image is built
-    # from context instead so the gate still runs.
     - name: Provide PostgreSQL image
       shell: bash
       run: |
@@ -122,25 +77,17 @@ runs:
           docker build -t "$postgres_tag" docker/images/postgresql
         fi
 
-    # The suites are compiled once per run by the `build-tests` job and packaged,
-    # with the xtask runner, as the `test-suite` artifact. Download it so this leg
-    # executes the prebuilt binaries instead of recompiling the workspace: no Rust
-    # toolchain and no cargo cache are needed on a stack leg.
     - name: Download test suite
       uses: actions/download-artifact@v8
       with:
         name: test-suite
         path: ${{ runner.temp }}/test-suite
 
-    # upload-artifact does not preserve the executable bit, so restore it on the
-    # runner and every packaged suite binary before they are run.
+    # upload-artifact drops the executable bit.
     - name: Restore executable bits
       shell: bash
       run: chmod +x "${{ runner.temp }}/test-suite/xtask" "${{ runner.temp }}/test-suite/bin/"*
 
-    # The shipped xtask runner brings the stack up reusing the tagged images, runs
-    # each suite from its prebuilt binary (ANDROMEDA_XTASK_TEST_MANIFEST), and tears
-    # the stack down via its Drop guard even when a suite fails.
     - name: Run integration suites
       shell: bash
       env:

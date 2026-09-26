@@ -1,17 +1,5 @@
 absolute-paths-allowed-crates = ["typed_builder"]
 
-# `expect_used`, `unwrap_used` and `panic` are denied for production code, where
-# a failed assumption is a 500. A test asserts by panicking, so the same denial
-# there buys nothing and was being bought off with a per-module `#[allow]` —
-# which this project's CLAUDE.md forbids. Configuring the exemption once here is
-# what lets those attributes be deleted.
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-unwrap-in-tests = true
-
-# Repo-layer contract (no `Value` inspection, no `serde_json::from_value`,
-# no `format!`-built SQL with user values) is enforced by the grep audit in
-# `docs/repo-contract.md` rather than a crate-wide clippy denylist: clippy's
-# `disallowed-methods` has no per-path scope and would require a crate-wide
-# `#[allow]` to suppress legitimate service-layer usage, which is disallowed
-# by this project's CLAUDE.md.

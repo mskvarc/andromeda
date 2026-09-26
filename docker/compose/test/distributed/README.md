@@ -6,7 +6,7 @@ See [`docs/distributed-operations-test-plan.md`](../../docs/distributed-operatio
 
 ## Topology
 
-Three broker identities, each backed by its own TimescaleDB/PostGIS Postgres server (`postgres-a`, `postgres-b`, `postgres-c`, one database each, created by `initdb/<role>/10-create-broker-database.sql`). The stores are fully isolated: nothing broker-b persists is reachable from broker-a's server, so any state that shows up on a peer got there over NGSI-LD, never through a shared table. Each identity has a distinct `INFO_SOURCE_ID` / `INFO_SOURCE_ALIAS`, which is what makes `Via` / `contextSourceAlias` loop detection meaningful across instances.
+Three broker identities, each backed by its own TimescaleDB/PostGIS Postgres server (`postgres-a`, `postgres-b`, `postgres-c`, one database each, created by `initdb/<role>/10-create-broker-database.sql`). The stores are fully isolated: nothing broker-b persists is reachable from broker-a's server, so any state that shows up on a peer got there over NGSI-LD, never through a shared table. Each identity has a distinct `ANDROMEDA__IDENTITY__SOURCE_ID` / `ANDROMEDA__IDENTITY__SOURCE_ALIAS`, which is what makes `Via` / `contextSourceAlias` loop detection meaningful across instances.
 
 broker-a additionally runs as a **replica pair**: `broker-a2` is a second instance of the same identity (same source id, alias and database on `postgres-a`). It exists to prove that durable state - EntityMaps, registrations, platform routing - is shared across the instances of one broker and only across those: a map minted on broker-a is `200` on broker-a2 and `404` on broker-b.
 
@@ -39,7 +39,7 @@ docker compose -f docker/compose/test/distributed/docker-compose.yaml logs -f br
 docker compose -f docker/compose/test/distributed/docker-compose.yaml down -v
 ```
 
-The broker image (`docker/images/andromeda/Dockerfile`) builds a debug binary and ships no config file - every setting comes from `ANDROMEDA_*` env vars, which all have defaults. The Postgres image (`docker/images/postgresql/Dockerfile`) provides TimescaleDB + PostGIS, required by the tenant migrations.
+The broker image (`docker/images/andromeda/Dockerfile`) builds a release binary and ships no config file - every setting comes from `ANDROMEDA_*` env vars, which all have defaults. The Postgres image (`docker/images/postgresql/Dockerfile`) provides TimescaleDB + PostGIS, required by the tenant migrations.
 
 ## Notes
 

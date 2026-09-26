@@ -1,112 +1,33 @@
-# Supply-chain policy gate for the Andromeda dependency graph, run by
-# `.github/workflows/deny.yaml`. Four independent checks: `advisories` (RustSec
-# vulnerabilities, unmaintained crates, yanked versions), `bans` (duplicate
-# versions, unpinned requirements), `licences` and `sources`.
-#
-# The licence allow list is permissive only: the intersection of licences that
-# are both EUPL-redistributable and safe to relicense into proprietary work.
-# Copyleft of any strength - strong (GPL, AGPL, SSPL) or file-level weak
-# (MPL-2.0, LGPL) - is left off on purpose, so a dependency carrying one fails
-# the build and gets a legal review instead of shipping unnoticed.
-#
-# A crate whose licence is not on the allow list but is still acceptable gets an
-# explicit [[licenses.exceptions]] entry with the reason stated, so the exception
-# stays scoped to that one crate instead of widening the allow list for the whole
-# graph.
+# Permissive-only allow list.
 
 [graph]
-# Resolve every optional dependency, so a feature enabled by one consumer cannot
-# smuggle an unreviewed transitive dependency past the gate.
 all-features = true
 
 [licenses]
 confidence-threshold = 0.93
-allow = [
-    # General permissive licences
-    "MIT",
-    "Apache-2.0",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "Zlib",
-    "Unicode-3.0",
-    # Andromeda's own licence
-    "EUPL-1.2",
-]
+allow = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0", "EUPL-1.2"]
 
-# CDLA-Permissive-2.0 covers data, not code, and this crate is the Mozilla root
-# certificate bundle. Permissive, no copyleft, no obligation on our own sources.
+# Mozilla root-cert bundle; CDLA covers data, not code.
 [[licenses.exceptions]]
 name = "webpki-root-certs"
 allow = ["CDLA-Permissive-2.0"]
 
 [advisories]
 db-urls = ["https://github.com/rustsec/advisory-db"]
-# A yanked version in the lockfile is a supply-chain smell, not a warning.
 yanked = "deny"
-# Every entry names the advisory, why the broker is not exposed, and what would
-# remove the dependency. Vulnerabilities are never silenced here - they are fixed
-# by moving the lockfile or the dependency.
 ignore = [
-    # Build-time only, and pulled in twice by way of `langtag`: through
-    # str-newtype -> str-newtype-derive, and through static-automata ->
-    # static-automata-macros. Also reached by `static-regular-grammar`, which
-    # generates the lexicon's grammar types. Nothing of it survives into the
-    # broker binary, and no upstream release has dropped it yet.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, build-time only, no upstream upgrade path" },
-    # The broker's own direct use is gone: the HTTP/3 listener now parses PEM with
-    # `rustls_pki_types::pem::PemObject`, so the crate enters the graph only through
-    # `rumqttc`, which still pulls it for MQTT-over-TLS. rustls-pemfile is a thin
-    # wrapper around PEM parsing that has since moved into rustls-pki-types; the
-    # migration has to land in rumqttc, tracked upstream at
-    # https://github.com/bytebeamio/rumqtt/pull/1073. Lift this the moment a
-    # rumqttc release drops the dependency.
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained, now transitive only through rumqttc, blocked on rumqtt#1073" },
-    # rustls-webpki 0.102.8, also from `rumqttc`, which requires `^0.102.8`. That
-    # is the last release of the 0.102 line and every fix landed in 0.103, so no
-    # lockfile move reaches a patched version: rumqttc has to bump first, tracked
-    # upstream at https://github.com/bytebeamio/rumqtt/issues/1067. Lift these four
-    # the moment a rumqttc release carries rustls-webpki 0.103.
-    #
-    # Reachability, as the code stands: the crate is linked only for MQTT-over-TLS
-    # notification delivery, and nothing in the workspace configures certificate
-    # revocation lists, so the two CRL defects have no reachable call path. The two
-    # name-constraint defects sit behind signature verification and need a
-    # misissued certificate from an already-trusted authority.
+    # rumqttc pins ^0.102; fixes only in 0.103. Lift on rumqtt#1067.
     { id = "RUSTSEC-2026-0049", reason = "rustls-webpki CRL distribution-point matching, no CRLs configured, blocked on rumqtt#1067" },
     { id = "RUSTSEC-2026-0098", reason = "rustls-webpki URI name constraints, blocked on rumqtt#1067" },
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki wildcard-name constraints, blocked on rumqtt#1067" },
     { id = "RUSTSEC-2026-0104", reason = "rustls-webpki CRL parsing panic, no CRLs configured, blocked on rumqtt#1067" },
-    # `cargo audit` additionally reports two advisories this gate does not surface,
-    # so neither gets an ignore here (an unmatched ignore is itself flagged by
-    # `cargo deny` as `advisory-not-detected`). Both are accepted:
-    #   - RUSTSEC-2023-0089 (atomic-polyfill, unmaintained): reached only through the
-    #     geometry stack, geozero -> wkt -> geo-types -> rstar 0.8 -> heapless 0.7.
-    #     heapless 0.8 dropped it, but geozero still pins the 0.7-era line, so no
-    #     lockfile move reaches a version without it until geozero bumps its stack.
-    #   - RUSTSEC-2026-0183 / -0184 (git2, unsound, not a vulnerability): build-time
-    #     only, reached solely through `shadow-rs` (latest release 2.0.0) reading git
-    #     metadata to stamp the binary version. Nothing of git2 survives into the
-    #     broker binary, and the affected `Remote::list` / `BlameHunk` paths are not
-    #     on shadow-rs's build-info call graph.
 ]
 
 [bans]
-# Duplicate versions are hygiene, not a licensing or security concern, and in a
-# tree this size they appear and disappear with upstream releases. Warn so they
-# stay visible without turning an upstream bump into a red build.
 multiple-versions = "warn"
-# Every wildcard in this workspace is an in-tree crate depending on a sibling by
-# path, which Cargo records as a wildcard version. That is not the unpinned
-# registry dependency this check exists to catch. `allow-wildcard-paths` does not
-# help: it exempts only crates marked `publish = false`, and these are
-# publishable. Warn so a genuine unpinned registry dependency is still visible
-# without every workspace crate permanently failing the gate.
-#
-# The stricter alternative, if these crates are ever published to crates.io: give
-# each workspace dependency an explicit `version` beside its `path`, then set this
-# back to "deny". crates.io rejects path-only dependencies anyway, so that work is
-# a prerequisite for publishing rather than something this gate should force now.
+# Workspace path deps read as wildcards.
 wildcards = "warn"
 
 [sources]

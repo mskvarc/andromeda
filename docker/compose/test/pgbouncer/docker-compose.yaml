@@ -1,49 +1,20 @@
-# Transaction-pooling test tier: one PostgreSQL, one PgBouncer, and four brokers
-# that all serve the same set of tenant databases through (or, for one, around)
-# the pooler. The tier proves that in pooled mode an idle cached tenant costs
-# next to no PostgreSQL backend, that a hard global backend cap holds, that a
-# working set larger than the runtime cache is served without a failed request,
-# that dormant tenants still meet their spec obligations, and that saturation is
-# a 503 with Retry-After rather than a 500 -- and it measures all of it against
-# an un-pooled baseline on the same PostgreSQL.
-#
-#   cargo xtask itest --stack pgbouncer
-#
-# drives the whole lifecycle. To run a suite by hand, bring the stack up with the
-# `broker` profile and point the suite's env at the four broker ports and the
-# pooler admin console (see crates/andromeda-xtask/src/stack.rs for the keys).
+# 3 pooled brokers + 1 direct baseline.
 name: andromeda-pgbouncer
 
-# Common broker environment. Per-broker services override the port, the runtime
-# cache cap, and whether the request path runs through the pooler.
 x-broker-env: &broker-env
   ANDROMEDA__SERVER__HOST: "0.0.0.0"
-  # Direct PostgreSQL endpoint: provisioning, migration and maintenance always
-  # use this, bypassing the pooler, because each keeps session state a
-  # per-transaction backend would break.
+  # Provisioning, migration and maintenance bypass the pooler.
   ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
   ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
   ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "4"
-  # A short idle TTL and a brisk janitor so eviction and the dormant-tenant
-  # behaviour are exercised within a test's lifetime.
   ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL: "120s"
   ANDROMEDA__TENANCY__JANITOR_INTERVAL: "5s"
-  # A short dormancy floor so a dormant tenant with an imminent obligation (a
-  # five-second interval notification, an outbox retry) is re-woken promptly
-  # enough to be observed within a test's lifetime. Production keeps the longer
-  # default as an anti-thrash floor; a deployment with sub-30s obligations lowers
-  # it just as this tier does.
+  # Re-wake must be observable within a test.
   ANDROMEDA__TENANCY__MIN_DORMANCY: "3s"
-  # The tenant-management extension (non-standard) backs the suspend-based cleanup
-  # and the pgbouncer_dormant suspend assertions (a suspend closes a tenant's
-  # backends synchronously and keeps a suspended tenant inert).
   ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT: "enabled"
   ANDROMEDA__OBSERVABILITY__METRICS: "prometheus"
   ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
 
-# The two full-feature brokers additionally exercise the transaction-pooling-
-# sensitive paths: COPY staging, the durable notification outbox, and direct
-# maintenance.
 x-broker-features: &broker-features
   ANDROMEDA__ATOMIC_WRITE__BULK_MODE: "copy-staging"
   ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
@@ -59,13 +30,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
-      # The internal test network trusts every connection: the brokers (directly
-      # and through the pooler) and the harness all connect as `postgres`.
       POSTGRES_HOST_AUTH_METHOD: trust
-    # max_connections is the whole-server backend budget the pooler multiplexes
-    # the request path under; max_worker_processes is sized for a TimescaleDB
-    # scheduler per tenant database at the default tenant count, which is the
-    # database-per-tenant limit the study measures at the 1000-tenant push.
+    # One Timescale scheduler per tenant database.
     command:
       - "postgres"
       - "-c"
@@ -82,12 +48,7 @@ services:
       timeout: 3s
       retries: 40
 
-  # Transaction pooler in front of PostgreSQL. The official image regenerates its
-  # config from environment variables and exposes no knob for
-  # max_prepared_statements, so the entrypoint is overridden to run the bundled
-  # binary against the mounted pgbouncer.ini verbatim. The admin console (db
-  # `pgbouncer`) is published on host port 6467 for SHOW POOLS/SERVERS and
-  # PAUSE/RESUME/RECONNECT/KILL.
+  # Image env config lacks max_prepared_statements.
   pgbouncer:
     image: pgbouncer/pgbouncer:1.25.2
     entrypoint: ["/opt/pgbouncer/pgbouncer"]
@@ -101,15 +62,12 @@ services:
     ports:
       - "6467:6432"
     healthcheck:
-      # 127.0.0.1, not localhost: pgbouncer listens on IPv4 0.0.0.0, but localhost
-      # resolves to IPv6 ::1 first in the image, giving a false failure.
+      # localhost resolves to ::1 first.
       test: ["CMD-SHELL", "nc -z 127.0.0.1 6432 || exit 1"]
       interval: 2s
       timeout: 3s
       retries: 30
 
-  # Pooled broker under test on 1067, full feature set. Request path through the
-  # pooler; provisioning, migration and maintenance direct to PostgreSQL.
   broker:
     build:
       context: ../../../..
@@ -138,9 +96,7 @@ services:
       retries: 40
       start_period: 5s
 
-  # Second pooled replica on 1068, same config and same databases as `broker`:
-  # two brokers multiplexing onto one pooler, for read-your-writes across
-  # replicas and the shared-backend-budget assertion.
+  # Pooled replica: shared backend budget.
   broker-replica:
     image: andromeda-pgbouncer:latest
     restart: unless-stopped
@@ -166,9 +122,7 @@ services:
       retries: 40
       start_period: 5s
 
-  # Wide-cache pooled broker on 1069: a runtime cache large enough to hold every
-  # tenant resident, so the tier can show that an idle cached tenant costs next
-  # to no PostgreSQL backend.
+  # Every tenant resident: idle-tenant cost.
   broker-wide:
     image: andromeda-pgbouncer:latest
     restart: unless-stopped
@@ -194,9 +148,7 @@ services:
       retries: 40
       start_period: 5s
 
-  # Un-pooled baseline broker on 1070: no pooler, request path straight to the
-  # same PostgreSQL. Measures the backend count the pooled brokers are compared
-  # against.
+  # Un-pooled baseline.
   broker-direct:
     image: andromeda-pgbouncer:latest
     restart: unless-stopped

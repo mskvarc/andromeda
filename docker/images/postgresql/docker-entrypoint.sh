@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# docker-library/postgres entrypoint + timescaledb-tune + apply_andromeda_overrides.
 set -Eeo pipefail
 # TODO swap to -Eeuo pipefail above (after handling all potentially-unset variables)
 
@@ -380,12 +381,7 @@ _main() {
 	exec "$@"
 }
 
-# Append Andromeda-specific overrides to postgresql.conf after timescaledb-tune.
-# Settings here either fix bottlenecks observed in batch-ingest load tests
-# (WAL fsync waits, autovacuum throttling, sort spills) or align the cluster
-# with the EnterpriseDB tuning guide referenced in docs/postgresql.md.
-# Idempotent: each start strips the prior block (between markers) before
-# rewriting it, so the conf does not grow across restarts.
+# Idempotent: replaces the marked block each start.
 apply_andromeda_overrides() {
 	local conf="$PGDATA/postgresql.conf"
 	local begin="# --- andromeda overrides BEGIN ---"

@@ -4,11 +4,7 @@ description: Removes preinstalled SDKs the workspace does not use, so linking ha
 runs:
   using: composite
   steps:
-    # A full debug build of this workspace is around 13 GB of target artifacts,
-    # against roughly 21 GB free on a stock runner. When the filesystem fills, the
-    # linker dies with SIGBUS rather than a disk-full message, because rust-lld
-    # writes its output through an mmap. Reclaiming the toolchains no Rust build
-    # touches keeps that headroom.
+    # Full disk kills rust-lld with SIGBUS, not ENOSPC.
     - name: Remove unused preinstalled toolchains
       shell: bash
       run: |

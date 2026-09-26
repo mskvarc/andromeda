@@ -1,17 +1,3 @@
-# Isolated topology for the extensions integration suite (`cargo test --test extensions`).
-#
-# Two brokers over one Postgres:
-#   - extensions-enabled  (host :1091): both extensions on, a small delete bound
-#   - extensions-conformance (host :1092): conformance_mode on AND the flags on,
-#     to prove the hard override wins (the gate module targets it)
-#
-#   docker compose -f docker/compose/test/extensions/docker-compose.yaml up --build -d
-#   ANDROMEDA_TEST_BROKER_URL=http://127.0.0.1:1091/ngsi-ld/v1 \
-#   ANDROMEDA_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5491/postgres \
-#   ANDROMEDA_TEST_CALLBACK_HOST=127.0.0.1 \
-#   ANDROMEDA_TEST_CONFORMANCE_BROKER_URL=http://127.0.0.1:1092/ngsi-ld/v1 \
-#   cargo test --test extensions -- --test-threads=1
-#   docker compose -f docker/compose/test/extensions/docker-compose.yaml down -v
 name: andromeda-extensions
 
 x-broker-base: &broker-base
@@ -53,8 +39,7 @@ services:
       timeout: 3s
       retries: 40
 
-  # Both extensions enabled; a deliberately small delete bound so the
-  # TooManyResults case is drillable (the suite seeds three history instants).
+  # Small bounds make TooManyResults reachable.
   extensions-enabled:
     <<: *broker-base
     environment:
@@ -64,16 +49,13 @@ services:
       ANDROMEDA__EXTENSIONS__PURGE_DATASET_SCOPE: "enabled"
       ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING: "enabled"
       ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY_MAX_MATCHES: "2"
-      # A deliberately small group bound so the TooManyResults case is drillable.
       ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING_MAX_GROUPS: "3"
       ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:extensions-enabled"
       ANDROMEDA__IDENTITY__SOURCE_ALIAS: "extensions-enabled"
     ports:
       - "1091:1091"
 
-  # conformance_mode forces every extension off even though the flags are on:
-  # the gate module asserts the route is absent, datasetId is rejected, and
-  # nothing is advertised.
+  # conformance_mode must override the flags.
   extensions-conformance:
     <<: *broker-base
     environment:

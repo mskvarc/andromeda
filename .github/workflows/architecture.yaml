@@ -13,10 +13,6 @@ permissions:
   contents: read
 
 env:
-  # Test binaries are run, not debugged, and full debug info is the single
-  # largest consumer of runner disk. Line tables keep backtraces readable at a
-  # fraction of the size. Incremental artifacts are pure overhead for a job that
-  # compiles each commit exactly once.
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
@@ -28,14 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/free-disk-space
-      # rust-toolchain.toml pins the nightly the workspace builds on.
       - name: Install pinned toolchain
         run: rustup toolchain install --profile minimal
       - uses: Swatinem/rust-cache@v2
-      # The trailing `architecture` filter selects only the generated
-      # architecture-check modules (`architecture_dependency_boundary`,
-      # `architecture_sql_boundary`, `workspace_architecture_checks`). `--lib`
-      # keeps the tier fast and excludes the root package's `tests/fed` target,
-      # which also carries an `architecture` module.
+      # --lib: tests/fed also has an architecture module.
       - name: Architecture checks
         run: cargo test --workspace --exclude andromeda --lib --all-features --locked architecture

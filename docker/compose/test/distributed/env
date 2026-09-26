@@ -1,48 +1,25 @@
-# Environment for the distributed-operations conformance test harness.
-# Copy to distributed.env (gitignored) or `export` before running the suite.
-#
-# Two URL families per broker:
-#   *_URL       — how the TEST CLIENT (running on the host) reaches the broker.
-#   *_PEER_URL  — how ANOTHER BROKER reaches it over the compose network; this is the
-#                 value that goes into a Context Source Registration `endpoint`.
+# set -a && . docker/compose/test/distributed/env && set +a
+# *_URL: from host. *_PEER_URL: from other brokers (CSR endpoint).
 
-# --- Broker A (default "front"/distribution broker under test) ---
+# Broker A
 ANDROMEDA_DIST_A_URL=http://127.0.0.1:1061/ngsi-ld/v1/
 ANDROMEDA_DIST_A_PEER_URL=http://broker-a:1056
 ANDROMEDA_DIST_A_ALIAS=broker-a
-# Second instance of the SAME broker-a identity (shares postgres-a). Used to
-# prove durable state (EntityMaps, registrations, routing) is visible across
-# the instances of one broker and nowhere else.
 ANDROMEDA_DIST_A_REPLICA_URL=http://127.0.0.1:1064/ngsi-ld/v1/
 ANDROMEDA_DIST_A_REPLICA_PEER_URL=http://broker-a2:1056
 
-# --- Broker B (peer / context source) ---
+# Broker B
 ANDROMEDA_DIST_B_URL=http://127.0.0.1:1062/ngsi-ld/v1/
 ANDROMEDA_DIST_B_PEER_URL=http://broker-b:1056
 ANDROMEDA_DIST_B_ALIAS=broker-b
 
-# --- Broker C (peer / context source, for redirect fan-out and A->B->C chains) ---
+# Broker C
 ANDROMEDA_DIST_C_URL=http://127.0.0.1:1063/ngsi-ld/v1/
 ANDROMEDA_DIST_C_PEER_URL=http://broker-c:1056
 ANDROMEDA_DIST_C_ALIAS=broker-c
 
-# One Postgres server per broker identity (postgres-a/b/c, host ports
-# 5442/5443/5444). The test harness reclaims each broker's prefix-owned rows on
-# teardown, so it needs to reach every broker's database directly. The replica
-# broker-a2 shares ANDROMEDA_DIST_A_DATABASE_URL with broker-a by construction.
 ANDROMEDA_DIST_A_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5442/broker_a
 ANDROMEDA_DIST_B_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5443/broker_b
 ANDROMEDA_DIST_C_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5444/broker_c
 
-# Host that the brokers use to call mock Context Sources / notification receivers
-# started inside the test process. host.docker.internal on Docker Desktop; on Linux
-# the compose file maps it via host-gateway.
 ANDROMEDA_TEST_CALLBACK_HOST=host.docker.internal
-
-# Subscription forwarding (clauses 5.8.1.4 / 5.8.6) needs each broker to know
-# the origin peers can call back; the compose file sets
-# ANDROMEDA__IDENTITY__ADVERTISED_URL per broker to its compose-network address
-# (http://broker-a:1056 and so on). Forwarded-request deadlines default to
-# ANDROMEDA__FEDERATION__CONNECT_TIMEOUT="3s" and
-# ANDROMEDA__FEDERATION__REQUEST_TIMEOUT="5s" unless a registration's
-# management.timeout overrides them.

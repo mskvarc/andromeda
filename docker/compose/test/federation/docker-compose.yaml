@@ -1,9 +1,4 @@
-# Five independent brokers for the federation acceptance suite.
-#
-# The published broker port is deliberately the same port used on the compose
-# network. This makes a discovered endpoint such as
-# http://fed-domain-madrid:1072 usable unchanged by a client with the test
-# harness DNS override.
+# Published port == internal port, so discovered endpoints work from the host.
 name: andromeda-federation
 
 x-postgres-base: &postgres-base

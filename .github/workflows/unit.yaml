@@ -13,10 +13,6 @@ permissions:
   contents: read
 
 env:
-  # Test binaries are run, not debugged, and full debug info is the single
-  # largest consumer of runner disk. Line tables keep backtraces readable at a
-  # fraction of the size. Incremental artifacts are pure overhead for a job that
-  # compiles each commit exactly once.
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
@@ -28,20 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/free-disk-space
-      # rust-toolchain.toml pins the nightly the workspace builds on.
       - name: Install pinned toolchain
         run: rustup toolchain install --profile minimal
       - uses: Swatinem/rust-cache@v2
-      # Everything below the root package: in-crate `#[cfg(test)]` modules plus the
-      # self-contained `tests/` targets of andromeda-http-extraction and
-      # andromeda-unit-catalog. None of these need a broker or a database. The
-      # `--skip architecture` filter hands the generated architecture-check
-      # modules to their own `architecture` workflow, so this tier never
-      # duplicates them.
+      # Covered by architecture.yaml.
       - name: Workspace crates
         run: cargo test --workspace --exclude andromeda --lib --bins --tests --all-features --locked -- --skip architecture
-      # The root package's `tests/` directory is the end-to-end suite: it needs a
-      # running broker and Postgres, and belongs to a separate workflow. Only the
-      # binary's own unit tests run here.
+      # Root tests/ need a live stack.
       - name: Broker binary
         run: cargo test --package andromeda --bins --all-features --locked

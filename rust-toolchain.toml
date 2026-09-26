@@ -1,12 +1,4 @@
-# Pinned rather than floating "nightly": nightly-2026-08-22 regressed the
-# higher-ranked lifetime assumptions that `-Zhigher-ranked-assumptions` (set in
-# `.cargo/config.toml`) exists to supply, and the RPITIT signatures in
-# andromeda-jsonld's term expansion and compaction stopped compiling. 2026-08-21
-# is the last nightly that builds the workspace. Revisit once the regression is
-# fixed upstream.
-#
-# CI installs the toolchain straight from this file, so the components listed
-# here are the ones the fmt and clippy workflows get.
+# nightly-2026-08-22 breaks -Zhigher-ranked-assumptions.
 [toolchain]
 channel = "nightly-2026-08-21"
 components = ["clippy", "rustfmt"]
