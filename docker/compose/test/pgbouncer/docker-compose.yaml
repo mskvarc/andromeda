@@ -64,7 +64,7 @@ services:
 
   # Image env config lacks max_prepared_statements.
   pgbouncer:
-    image: pgbouncer/pgbouncer:1.25.2
+    image: pgbouncer/pgbouncer:1.25.2-20260911.206
     entrypoint: ["/opt/pgbouncer/pgbouncer"]
     command: ["/etc/pgbouncer/pgbouncer.ini"]
     volumes:
