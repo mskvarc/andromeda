@@ -1,7 +1,7 @@
 //! The stored temporal rows one verification test reads back from the tenant.
 //!
-//! The matrix states most temporal guarantees as properties of storage — which
-//! column a timestamp landed in, which of the two instance-identity columns is
+//! Most temporal guarantees are properties of storage — which column a
+//! timestamp landed in, which of the two instance-identity columns is
 //! populated, whether a tombstone carries a typed value — so the suite reads
 //! the rows themselves rather than inferring them from a rendering that could
 //! agree with the specification while the stored row does not.

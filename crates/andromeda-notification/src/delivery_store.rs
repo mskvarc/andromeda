@@ -19,7 +19,8 @@
 //! [`ContextTarget`] to name the branch its row lives in.
 
 use crate::{
-    delivery_entry::{DeliveryEntry, DeliveryKey},
+    delivery_claim::DeliveryClaim,
+    delivery_entry::DeliveryKey,
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     error::NotificationError,
 };
@@ -39,15 +40,22 @@ pub trait DeliveryStore: Send + Sync + 'static {
     /// the final failed attempt through [`DeliveryStore::mark_terminal`], which
     /// is what takes a delivery out of the claimable set.
     ///
-    /// Deliveries whose stored shape cannot be read back are skipped by the
-    /// implementation rather than failing the claim: one unreadable row must
-    /// not stall every other pending notification.
+    /// A delivery whose stored row cannot be read back is returned as
+    /// [`DeliveryClaim::Unreadable`], still leased, rather than failing the
+    /// claim or being left out of it: one unreadable row must not stall every
+    /// other pending notification, and the worker must be able to acknowledge
+    /// it so it is not claimed again at every lease expiry.
+    ///
+    /// # Errors
+    ///
+    /// An `Err` means the queue itself could not be claimed from -- the
+    /// database unreachable, a statement refused -- and ends the worker's pass.
     fn claim_pending<'life0, 'life1, 'async_trait>(
         &'life0 self,
         worker_id: &'life1 LeaseHolder,
         lease: LeaseTerm,
         batch_size: i32,
-    ) -> BoxFuture<'async_trait, Result<Vec<DeliveryEntry>, NotificationError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<DeliveryClaim>, NotificationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

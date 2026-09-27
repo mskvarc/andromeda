@@ -9,6 +9,8 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-tenancy.workspace = true
 andromeda-test-client.workspace = true
 andromeda-test-fixtures.workspace = true
 dashmap = { version = "6.2.1", features = ["inline"] }

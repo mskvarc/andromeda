@@ -1,4 +1,5 @@
-//! Verification matrix row "Code registry stability".
+//! Code registry stability: the codes a migrated tenant stores agree with the
+//! registries that assigned them.
 //!
 //! The compact code domains are numbers a migration writes into `SMALLINT`
 //! columns on rows nobody will rewrite, so their meaning is fixed by the

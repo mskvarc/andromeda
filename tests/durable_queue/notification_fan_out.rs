@@ -1,6 +1,6 @@
 //! One immutable event per changed Entity, one delivery per matching Subscription.
 //!
-//! Verification-matrix row "Notification event fan-out": a commit matching
+//! Notification event fan-out: a commit matching
 //! zero, one and one hundred Subscriptions, and a batch commit affecting
 //! several Entities. Zero matches create no event; positive fan-out creates one
 //! immutable event per affected Entity and exactly one delivery per matching
@@ -10,7 +10,7 @@
 //! stored bytes show the single-payload saving the split exists for.
 
 use crate::{
-    notification_fixture::{entity_id, entity_snapshot, subscription_id},
+    notification_fixture::{entity_id, entity_snapshot, readable, subscription_id},
     queue_database::{attribute_name, deliveries_of, events_of, queue_database, record_events, subscription, subscription_key},
     queue_workers::{delivery_worker, holding_lease},
 };
@@ -160,7 +160,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
 
     let queue = NotificationDeliveryQueue::new(&pool);
     let worker = delivery_worker();
-    let claimed = queue.claim_pending(&worker, holding_lease(), 200).await.expect("claim the whole fan-out");
+    let claimed = readable(queue.claim_pending(&worker, holding_lease(), 200).await.expect("claim the whole fan-out"));
     assert_eq!(claimed.len(), HIGH_FAN_OUT + 1, "every owed delivery is claimable");
     let rendered = claimed.first().expect("a claimed delivery");
     assert_eq!(
@@ -271,7 +271,7 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
 
     let queue = NotificationDeliveryQueue::new(&pool);
     let worker = delivery_worker();
-    let claimed = queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim");
+    let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim"));
     assert_eq!(claimed.len(), 1);
 
     let after: (String, Value) = sqlx::query_as("SELECT xmin::text, entity_snapshot FROM notification_events WHERE write_id = $1")

@@ -1,4 +1,4 @@
-//! Verification matrix row "Explicit constraint names".
+//! Explicit constraint names: no constraint keeps a generated name.
 //!
 //! Every constraint a migration declares carries an explicit name (`pk_`,
 //! `fk_`, `uq_`, `chk_`), because a later migration that alters or drops a

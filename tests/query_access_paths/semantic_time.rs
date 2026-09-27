@@ -1,4 +1,5 @@
-//! Verification-matrix row "Semantic-time plans".
+//! Semantic-time plans: each temporal axis is queried exactly and along its
+//! intended access path.
 //!
 //! Clause 5.2.21 admits four Temporal Properties and clause 4.11 makes
 //! `observedAt` the default, so a window on one axis has to be answered from
@@ -175,7 +176,7 @@ async fn a_narrow_observed_window_reaches_the_stream_led_observed_index() {
 /// stream-led index answers, and a per-row B-tree on each would cost what the
 /// stream-led ones already cost again. This records that decision as an
 /// assertion: the day an axis gains a B-tree or loses its summary, this test
-/// says so and the matrix row is re-measured.
+/// says so and the access path is re-measured.
 #[tokio::test]
 async fn every_semantic_axis_carries_exactly_one_brin_summary_and_no_btree() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");

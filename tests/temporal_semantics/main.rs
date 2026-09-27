@@ -1,8 +1,7 @@
 //! Verification tests for the redesigned temporal storage semantics.
 //!
-//! Every test here implements one row of the verification matrix in
-//! `docs/proposals/database-schema-redesign.md`: the four independent semantic
-//! time axes, the operational write clock and its ordinals, the split instance
+//! Every test here pins one property of temporal storage: the four independent
+//! semantic time axes, the operational write clock and its ordinals, the split instance
 //! identity, the tombstone encoding, the three deletion operations clauses
 //! 5.6.6, 5.6.15 and 5.6.16 define, operator retention, and the timestamp
 //! precision policy every stored instant is normalised under.
@@ -11,8 +10,8 @@
 //! the HTTP API, and what only storage can answer — which column a timestamp
 //! landed in, which instance-identity column is populated, whether a chunk was
 //! dropped — is asserted against the tenant database through the harness
-//! connection. A row that the matrix states as a storage property is checked in
-//! storage rather than inferred from a rendering.
+//! connection. A storage property is checked in storage rather than inferred
+//! from a rendering.
 //!
 //! Requests carry no `Link` header and use `application/json`, so every
 //! attribute term expands through the NGSI-LD Core Context alone and the suite
@@ -20,7 +19,7 @@
 //!
 //! Standalone test suite using `tokio::test` and `reqwest` directly.
 //!
-//! Naming convention: `temporal_semantics_<row>_<expected_outcome>`.
+//! Naming convention: `temporal_semantics_<property>_<expected_outcome>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

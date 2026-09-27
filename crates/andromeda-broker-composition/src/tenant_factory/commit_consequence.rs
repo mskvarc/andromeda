@@ -13,8 +13,8 @@ use andromeda_task_runtime::wake_trigger::{WakeHandle, WakeRequest};
 /// dropped: the drain's fallback still picks the work up, so a lost edge costs
 /// latency, never a delivery.
 pub(super) struct RuntimeCommitConsequencePublisher {
-    /// Wakes the durable notification-delivery drain, absent under live delivery
-    /// where no such drain exists and the commit writes no notification events.
+    /// Wakes the notification-delivery drain, absent under live delivery where
+    /// the commit queues no notification deliveries.
     notifications: Option<WakeHandle>,
     /// Wakes the entity side-effect drain.
     side_effects: WakeHandle,
@@ -90,12 +90,17 @@ mod tests {
     }
 
     #[test]
-    fn live_delivery_wakes_no_notification_drain() {
+    fn a_publisher_without_a_notification_handle_wakes_nothing() {
         let (side_effects, _side_effect_receiver) = wake_channel();
-        let publisher = RuntimeCommitConsequencePublisher::new(None, side_effects);
+        let publisher = RuntimeCommitConsequencePublisher::new(None, side_effects.clone()); // clone: the publisher and the test both hold the wake handle.
 
-        // Under live delivery there is no notification-delivery drain, so this is
-        // a silent no-op rather than a wake to a closed channel.
+        // Under live delivery a commit queues no notification deliveries, so
+        // the publisher holds no handle to the notification-delivery drain --
+        // which still runs, on its fallback timer, for deliveries the tenant
+        // database already holds. Announcing notifications is then a silent
+        // no-op, and it wakes no other drain in its place.
         publisher.notifications_available();
+
+        assert_eq!(side_effects.wake(), WakeRequest::Scheduled, "the side-effect drain was left untouched");
     }
 }

@@ -1,4 +1,4 @@
-//! Verification matrix row "Unit catalog completeness".
+//! Unit catalog completeness: compiled and seeded catalogues agree entirely.
 //!
 //! The compiled-in assignment and the seeded `unit_codes` rows are rendered
 //! from one generator, so a disagreement between them would mean an identity

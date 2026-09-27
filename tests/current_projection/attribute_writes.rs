@@ -1,4 +1,5 @@
-//! Verification-matrix row "Attribute write consequences".
+//! Attribute write consequences: attribute-level writes leave one consistent
+//! attribute instance everywhere it is stored.
 //!
 //! Each attribute-level Core API write (clauses 5.6.2, 5.6.3, 5.6.4 and
 //! 5.6.19) must leave the same attribute instance in the Entity, in its

@@ -1,4 +1,5 @@
-//! Verification matrix row "No database procedural logic".
+//! No database procedural logic: the migrated tenant carries no trigger or
+//! function acting on the broker's behalf.
 //!
 //! Every multi-step flow the broker performs is a Rust-sequenced transaction:
 //! nothing in the tenant schema derives, cascades or filters on the broker's

@@ -1,5 +1,5 @@
 use crate::{
-    change::SubscriptionChange,
+    change::{SubscriptionChange, UpsertKind},
     error::SubscriptionError,
     normalization,
     notification_context,
@@ -71,7 +71,9 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
         DatasetIdPolicy::Retain
     }
 
-    fn make_upserted(&self, target: ContextTarget, id: Uri) -> SubscriptionChange {
+    fn make_upserted(&self, target: ContextTarget, id: Uri, _kind: UpsertKind) -> SubscriptionChange {
+        // An entity subscription's cache is rebuilt the same way whether the
+        // subscription is new or replaced, so the change does not carry it.
         SubscriptionChange::Upserted { target, id }
     }
 

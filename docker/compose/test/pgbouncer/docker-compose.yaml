@@ -10,6 +10,10 @@ x-broker-env: &broker-env
   ANDROMEDA__TENANCY__JANITOR_INTERVAL: "5s"
   # Re-wake must be observable within a test.
   ANDROMEDA__TENANCY__MIN_DORMANCY: "3s"
+  # A failing delivery keeps retrying for ~42 min (5s x (2^9 - 1) at the 5s
+  # base backoff) instead of ~75s, so the dormant-retry tests still have a
+  # retry due after eviction pressure however slow the host.
+  ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_ATTEMPTS: "10"
   ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT: "enabled"
   # Suites scrape GET /metrics on the published data-plane port.
   ANDROMEDA__MANAGEMENT__MODE: "merged"

@@ -1,4 +1,4 @@
-//! Verification matrix row "Attribute dictionary capacity".
+//! Attribute dictionary capacity: the key space is not bounded by `SMALLINT`.
 //!
 //! The dictionary key is `INTEGER` (migration `0007_name_dictionaries`)
 //! precisely so that a tenant modelling an open world is not stopped at the

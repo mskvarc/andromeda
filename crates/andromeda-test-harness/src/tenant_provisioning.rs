@@ -7,6 +7,8 @@
 //! tenant is created on every broker up front, once per process.
 
 use crate::configuration::DatabaseEndpoint;
+use andromeda_ngsi_ld_lexicon::tenant::{InvalidTenantName, TenantName};
+use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_client::{entity::EntityRequestError, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use dashmap::DashMap;
@@ -72,28 +74,34 @@ pub async fn provisioned_tenant_database(
     let endpoint = cell
         .get_or_try_init(|| async {
             history = ProvisioningHistory::FirstUse;
-            let database = if let Some(database) = tenant_database_name(platform, tenant).await? {
+            let name: TenantName = tenant.parse().map_err(TenantProvisioningError::InvalidTenant)?;
+            let database = if let Some(database) = registered_tenant_database(platform, &name).await.map_err(TenantProvisioningError::registry)? {
                 database
             } else {
                 create_tenant(client).await?;
-                tenant_database_name(platform, tenant)
-                    .await?
+                registered_tenant_database(platform, &name)
+                    .await
+                    .map_err(TenantProvisioningError::registry)?
                     .ok_or_else(|| TenantProvisioningError::NotRegistered { tenant: tenant.to_owned() })?
             };
-            Ok::<DatabaseEndpoint, TenantProvisioningError>(platform_endpoint.with_database(&database))
+            Ok::<DatabaseEndpoint, TenantProvisioningError>(platform_endpoint.with_database(database.as_str()))
         })
         .await?;
     Ok((endpoint.clone(), history)) // clone: every topology leasing the tenant owns its endpoint
 }
 
-/// The database the platform registry holds `tenant` in, or `None` before the
-/// broker has created the tenant.
-async fn tenant_database_name(platform: &PgPool, tenant: &str) -> Result<Option<String>, TenantProvisioningError> {
-    sqlx::query_scalar("SELECT database_name FROM tenants WHERE name = $1")
-        .bind(tenant)
+/// The database the platform registry behind `platform` holds `tenant` in, or
+/// `None` before a broker has created the tenant.
+///
+/// # Errors
+///
+/// Returns the [`sqlx::Error`] the registry read reported.
+pub async fn registered_tenant_database(platform: &PgPool, tenant: &TenantName) -> Result<Option<TenantDatabaseName>, sqlx::Error> {
+    let database: Option<String> = sqlx::query_scalar("SELECT database_name FROM tenants WHERE name = $1")
+        .bind(tenant.as_str())
         .fetch_optional(platform)
-        .await
-        .map_err(TenantProvisioningError::registry)
+        .await?;
+    Ok(database.map(TenantDatabaseName::from))
 }
 
 /// Create the tenant on the broker through Create Entity, one of the operations
@@ -134,6 +142,9 @@ pub enum TenantProvisioningError {
     /// [`crate::database_isolation::DatabaseIsolationError::Sqlx`].
     #[error("the platform tenant registry could not be read: {0}")]
     Registry(#[source] Box<sqlx::Error>),
+    /// The leased tenant label is not a valid tenant name.
+    #[error("the leased tenant label is not a valid tenant name: {0}")]
+    InvalidTenant(#[source] InvalidTenantName),
     /// The broker created the tenant but its registry names no database for it.
     #[error("the platform registry names no database for tenant {tenant}")]
     NotRegistered {

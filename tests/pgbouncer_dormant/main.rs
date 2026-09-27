@@ -11,8 +11,18 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::pooler_probe::{backend_sampler, endpoints, metrics_scrape::Metrics, pooler_console::PoolerConsole, tenant_cleanup, tenant_load};
+use andromeda_test_harness::pooler_probe::{
+    backend_sampler,
+    endpoints,
+    metrics_scrape::Metrics,
+    pooler_console::PoolerConsole,
+    tenant_cleanup,
+    tenant_database::{connect_database, tenant_database_name},
+    tenant_load,
+};
 use andromeda_test_mocks::{
     callback_path::CallbackPath,
     callback_server::{CallbackServer, MockResponse, RequestMatcher},
@@ -21,13 +31,42 @@ use andromeda_test_mocks::{
 };
 use chrono::{SecondsFormat, Utc};
 use reqwest::{Client, Method, StatusCode};
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::{slice, time::Duration};
 use tokio::time::{Instant, sleep};
 
 /// How many other tenants to touch to force the target out of the cache of 32.
 const EVICTION_PRESSURE: usize = 40;
+
+/// The longest the target is watched for before it must have been evicted: the
+/// eviction pressure itself, plus the residency a runtime the wake loop loaded
+/// in the meantime is guaranteed (`tenancy.wake_residency`, 60 s) before the
+/// janitor lets it go again.
+const DORMANCY_DEADLINE: Duration = Duration::from_secs(150);
+
+/// How often the target's residency is read while it is watched.
+const DORMANCY_POLL: Duration = Duration::from_millis(100);
+
+/// How long after the target was seen dormant its callback count is taken. A
+/// delivery the evicted runtime had already sent lands within it, while a wake
+/// cannot load the tenant before `tenancy.min_dormancy` (3 s on this stack) has
+/// passed since the eviction.
+const IN_FLIGHT_GRACE: Duration = Duration::from_secs(1);
+
+/// The base retry backoff of a failed delivery on this stack
+/// (`notifications.delivery.base_backoff`, the 5 s default).
+const BASE_BACKOFF: Duration = Duration::from_secs(5);
+
+/// The longest the first delivery attempt of a change is waited for.
+const FIRST_ATTEMPT_DEADLINE: Duration = Duration::from_secs(30);
+
+/// What a due retry of a dormant tenant waits for beyond its due instant: the
+/// minimum dormancy (3 s), the janitor's wake cadence (5 s), the cold build,
+/// the drain's first pass and one HTTP round trip, with a wide margin.
+const WAKE_MARGIN: Duration = Duration::from_secs(30);
+
+mod snapshot_branch_retry;
 
 /// A client with a generous timeout.
 fn client() -> Client {
@@ -41,7 +80,9 @@ async fn control_pool() -> PgPool {
         .expect("connect to PostgreSQL control database")
 }
 
-/// Reset the tier before and after a test.
+/// Reset the tier before and after a test, failing the test when the tier
+/// cannot be brought back to no tenants: a scenario must never run over what
+/// another left behind.
 async fn reset(client: &Client, pool: &PgPool) {
     let brokers = [
         endpoints::broker(),
@@ -50,7 +91,9 @@ async fn reset(client: &Client, pool: &PgPool) {
         endpoints::broker_direct(),
     ];
     let refs: Vec<&str> = brokers.iter().map(String::as_str).collect();
-    let _ = tenant_cleanup::reset(client, &refs, pool).await;
+    tenant_cleanup::reset(client, &refs, pool)
+        .await
+        .expect("the tier resets to no provisioned tenant");
 }
 
 /// Provision and touch `EVICTION_PRESSURE` fresh tenants so the target, now the
@@ -79,12 +122,120 @@ async fn scrape(client: &Client, broker: &str) -> Metrics {
         .expect("an unreadable scrape must never pass as a zero")
 }
 
-/// The single provisioned tenant database's name.
-async fn only_tenant_database(pool: &PgPool) -> String {
-    sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' ORDER BY datname LIMIT 1")
-        .fetch_one(pool)
+/// The name of the database the platform registry holds `tenant` in.
+async fn tenant_database(pool: &PgPool, tenant: &str) -> TenantDatabaseName {
+    let tenant: TenantName = tenant.parse().expect("a provisioned tenant has a valid name");
+    tenant_database_name(pool, &tenant).await.expect("the provisioned tenant is registered")
+}
+
+/// Watch `tenant` on `broker` until its tenant-management resource reports it
+/// `dormant` -- in service, with no runtime resident. Reading the resource
+/// does not load the tenant.
+///
+/// Fails the test when the tenant is not seen dormant within
+/// [`DORMANCY_DEADLINE`]: a scenario about a dormant tenant must never pass on
+/// one that stayed resident.
+async fn wait_until_dormant(client: &Client, broker: &str, tenant: &str) {
+    let deadline = Instant::now() + DORMANCY_DEADLINE;
+    loop {
+        let resource: Value = client
+            .get(format!("{broker}tenants/{tenant}"))
+            .send()
+            .await
+            .expect("the tenant resource is answered")
+            .json()
+            .await
+            .expect("the tenant resource is JSON");
+        if resource["status"] == "dormant" {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{tenant} is evicted from {broker} before the deadline, last seen as {resource}"
+        );
+        sleep(DORMANCY_POLL).await;
+    }
+}
+
+/// When a failing delivery chain made its first attempt: the instant `server`
+/// received it.
+///
+/// The stack permits ten attempts (`notifications.delivery.max_attempts` in
+/// its compose file), and attempt `k` is made about `BASE_BACKOFF * (2^(k-1) -
+/// 1)` after the first, so the chain keeps retrying for about 42 minutes --
+/// far beyond [`DORMANCY_DEADLINE`], however slowly the eviction pressure
+/// runs.
+async fn first_attempt(server: &CallbackServer) -> Instant {
+    server
+        .next_request(FIRST_ATTEMPT_DEADLINE)
         .await
-        .expect("a tenant database exists")
+        .expect("the change's first delivery is attempted before the deadline");
+    Instant::now()
+}
+
+/// The target of a failing delivery chain, evicted and seen dormant.
+struct Dormancy {
+    /// The delivery attempts `server` had received once the tenant was seen
+    /// dormant and every delivery its evicted runtime had already sent landed.
+    attempts: usize,
+    /// When the tenant was seen dormant.
+    seen_at: Instant,
+}
+
+/// Evict `tenant` from `broker` by cache pressure and wait until it is seen
+/// dormant.
+///
+/// Every attempt `server` receives beyond [`Dormancy::attempts`] was made after
+/// the eviction by a runtime only the wake loop can have loaded: nothing here
+/// touches the tenant again.
+async fn evict_until_dormant(client: &Client, broker: &str, tenant: &str, server: &CallbackServer) -> Dormancy {
+    tokio::join!(wait_until_dormant(client, broker, tenant), evict_by_pressure(client, broker));
+    let seen_at = Instant::now();
+    sleep(IN_FLIGHT_GRACE).await;
+    Dormancy {
+        attempts: server.total_request_count(),
+        seen_at,
+    }
+}
+
+/// Wait until `server` has received an attempt beyond those counted in
+/// `dormancy` and return how many it received in all, or the count in
+/// `dormancy` when no further attempt arrived in time.
+///
+/// The wait is bounded by the retry chain itself rather than by a guess at how
+/// long the eviction took. Each retry interval doubles the one before, so the
+/// interval running when the tenant was seen dormant, `elapsed` after the first
+/// attempt, is at most `elapsed + BASE_BACKOFF`: the next retry falls due no
+/// later than that after dormancy, and a wake serves it within [`WAKE_MARGIN`].
+async fn attempts_after_dormancy(server: &CallbackServer, first_attempt: Instant, dormancy: &Dormancy) -> usize {
+    let elapsed = dormancy.seen_at.saturating_duration_since(first_attempt);
+    let deadline = dormancy.seen_at + elapsed + BASE_BACKOFF + WAKE_MARGIN;
+    while server.total_request_count() <= dormancy.attempts && Instant::now() < deadline {
+        let _next = server.next_request(deadline.saturating_duration_since(Instant::now())).await;
+    }
+    server.total_request_count()
+}
+
+/// Queue one repeating 500 on `path`: every delivery attempt fails and is
+/// retried.
+async fn fail_every_attempt(server: &CallbackServer, path: &CallbackPath) {
+    server
+        .enqueue(
+            RequestMatcher::new(Method::POST, path.clone()),
+            MockResponse::builder().status(StatusCode::INTERNAL_SERVER_ERROR).build(),
+        )
+        .await;
+}
+
+/// Assert that a failing delivery chain was attempted before its tenant's
+/// eviction and retried after it, naming `what` was retried.
+fn assert_retried_after_dormancy(what: &str, dormancy: &Dormancy, after: usize) {
+    println!("{what} after eviction: {} attempts before dormancy, {after} in all", dormancy.attempts);
+    assert!(
+        after > dormancy.attempts,
+        "{what} must be retried after its tenant was evicted, saw no attempt beyond the {} before",
+        dormancy.attempts
+    );
 }
 
 #[tokio::test]
@@ -138,6 +289,15 @@ async fn a_time_interval_subscription_keeps_notifying_after_its_tenant_is_evicte
     pool.close().await;
 }
 
+/// A delivery that failed is retried when due even after its tenant was
+/// evicted (clause 5.8.6: a notification is owed until it is delivered or
+/// retired): the wake loop reads the retry from the tenant database and loads
+/// the tenant for it.
+///
+/// Every attempt fails, so the retries keep coming at the stack's backoff for
+/// longer than any eviction can take; the test requires one made after the
+/// tenant was seen dormant. A wake that did not cover the delivery queue would
+/// never load the tenant again, and no attempt would follow.
 #[tokio::test]
 #[serial_test::serial]
 async fn a_failed_durable_delivery_is_retried_after_eviction() {
@@ -149,12 +309,7 @@ async fn a_failed_durable_delivery_is_retried_after_eviction() {
         .await
         .expect("callback server");
     let path = CallbackPath::parse("/dormant-retry").expect("callback path");
-    let matcher = RequestMatcher::new(Method::POST, path.clone());
-    // The first delivery fails, the retry succeeds.
-    server
-        .enqueue(matcher.clone(), MockResponse::builder().status(StatusCode::INTERNAL_SERVER_ERROR).build())
-        .await;
-    server.enqueue(matcher.clone(), MockResponse::builder().status(StatusCode::OK).build()).await;
+    fail_every_attempt(&server, &path).await;
     let callback = server.endpoint(&path).expect("callback endpoint").to_string();
 
     let tenant = tenant_load::tenant_names("pgbretry", 1).remove(0);
@@ -163,8 +318,8 @@ async fn a_failed_durable_delivery_is_retried_after_eviction() {
         .expect("every tenant is provisioned");
     subscribe_change(&client, &broker, &tenant, &callback).await;
 
-    // Trigger a change: the first delivery attempt gets a 500.
-    let _ = client
+    // A change: its first delivery attempt gets a 500.
+    let patched = client
         .patch(format!(
             "{broker}entities/{}/attrs",
             urlencoding::encode(&format!("urn:ngsi-ld:Device:provision:{tenant}")).into_owned()
@@ -173,32 +328,15 @@ async fn a_failed_durable_delivery_is_retried_after_eviction() {
         .header("Content-Type", "application/ld+json")
         .json(&json!({"value": {"type": "Property", "value": 7}, "@context": [CORE_CONTEXT]}))
         .send()
-        .await;
-    sleep(Duration::from_secs(2)).await;
-    evict_by_pressure(&client, &broker).await;
+        .await
+        .expect("the change is answered");
+    assert_eq!(patched.status(), StatusCode::NO_CONTENT, "the change lands");
 
-    // The durable retry must arrive after eviction, without touching the tenant.
-    // A failed delivery holds its claim lease for the full term (30s by default,
-    // preventing a second worker double-delivering), so the retry is gated by the
-    // lease, not the shorter backoff -- the dormant wake fires only once the lease
-    // lapses. The window therefore allows for the lease term plus the wake chain
-    // (probe cadence, admission, the drain's first pass), not merely the backoff.
-    let mut attempts = 0;
-    let deadline = Instant::now() + Duration::from_secs(75);
-    while Instant::now() < deadline {
-        if server.next_request(Duration::from_secs(6)).await.is_ok() {
-            attempts += 1;
-        }
-        if attempts >= 2 {
-            break;
-        }
-    }
-    println!("durable retry after eviction: {attempts} delivery attempts");
+    let first = first_attempt(&server).await;
+    let dormancy = evict_until_dormant(&client, &broker, &tenant, &server).await;
+    let after = attempts_after_dormancy(&server, first, &dormancy).await;
     server.shutdown().await.expect("shutdown");
-    assert!(
-        attempts >= 2,
-        "a failed durable delivery must be retried after the tenant is evicted, saw {attempts}"
-    );
+    assert_retried_after_dormancy("a failed durable delivery", &dormancy, after);
     reset(&client, &pool).await;
     pool.close().await;
 }
@@ -243,7 +381,7 @@ async fn an_entity_expires_on_a_dormant_tenant() {
         }))
         .send()
         .await;
-    let database = only_tenant_database(&pool).await;
+    let database = tenant_database(&pool, &tenant).await;
     let cold_before = scrape(&client, &broker).await.sum("andromeda_tenant_cold_builds_total");
 
     evict_by_pressure(&client, &broker).await;
@@ -263,15 +401,8 @@ async fn an_entity_expires_on_a_dormant_tenant() {
 }
 
 /// Count entities in a tenant database over a direct connection.
-async fn count_entities(database: &str) -> i64 {
-    // Swap only the trailing database segment; a blind replace of "/postgres"
-    // would also rewrite the "//postgres" user-info and connect as the wrong role.
-    let base = endpoints::database_url();
-    let url = match base.rsplit_once('/') {
-        Some((prefix, _)) => format!("{prefix}/{database}"),
-        None => base,
-    };
-    let tenant_pool = match PgPool::connect(&url).await {
+async fn count_entities(database: &TenantDatabaseName) -> i64 {
+    let tenant_pool = match connect_database(database).await {
         Ok(pool) => pool,
         Err(error) => {
             eprintln!("count_entities connect to {database} failed: {error}");
@@ -300,7 +431,7 @@ async fn a_tenant_with_nothing_due_stays_dormant() {
     tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
         .await
         .expect("every tenant is provisioned");
-    let database = only_tenant_database(&pool).await;
+    let database = tenant_database(&pool, &tenant).await;
 
     // A counter series appears only once its first increment is recorded, so an
     // absent `loaded` series in a readable exposition is a genuine zero.
@@ -314,7 +445,7 @@ async fn a_tenant_with_nothing_due_stays_dormant() {
         .await
         .value("andromeda_tenant_wakes_total", &[("outcome", "loaded")])
         .unwrap_or(0.0);
-    let backends = backend_sampler::client_backends_for(&pool, &database).await.unwrap_or(-1);
+    let backends = backend_sampler::client_backends_for(&pool, database.as_str()).await.unwrap_or(-1);
 
     println!(
         "nothing-due tenant: wakes(loaded) delta {}, backends for its database {backends}",
@@ -330,6 +461,14 @@ async fn a_tenant_with_nothing_due_stays_dormant() {
     pool.close().await;
 }
 
+/// A busy outbox -- several changes whose deliveries keep failing -- keeps its
+/// tenant serviced after eviction: the wake loop loads the tenant for the
+/// retries without any request touching it.
+///
+/// Every attempt fails, so the retries keep coming at the stack's backoff for
+/// longer than any eviction can take; the test requires one made after the
+/// tenant was seen dormant. A tenant idled out with its outbox still due would
+/// never be loaded again, and no attempt would follow.
 #[tokio::test]
 #[serial_test::serial]
 async fn a_busy_outbox_keeps_its_tenant_serviced_after_eviction() {
@@ -341,6 +480,7 @@ async fn a_busy_outbox_keeps_its_tenant_serviced_after_eviction() {
         .await
         .expect("callback server");
     let path = CallbackPath::parse("/dormant-busy").expect("callback path");
+    fail_every_attempt(&server, &path).await;
     let callback = server.endpoint(&path).expect("callback endpoint").to_string();
     let tenant = tenant_load::tenant_names("pgbbusy", 1).remove(0);
     tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
@@ -348,11 +488,8 @@ async fn a_busy_outbox_keeps_its_tenant_serviced_after_eviction() {
         .expect("every tenant is provisioned");
     subscribe_change(&client, &broker, &tenant, &callback).await;
 
-    // Every delivery fails, so the outbox keeps retrying: a busy outbox with no
-    // requests to the tenant. No responses are enqueued, so the server's default
-    // is used; the point is that delivery keeps being attempted.
     for value in 0..5 {
-        let _ = client
+        let patched = client
             .patch(format!(
                 "{broker}entities/{}/attrs",
                 urlencoding::encode(&format!("urn:ngsi-ld:Device:provision:{tenant}")).into_owned()
@@ -361,26 +498,16 @@ async fn a_busy_outbox_keeps_its_tenant_serviced_after_eviction() {
             .header("Content-Type", "application/ld+json")
             .json(&json!({"value": {"type": "Property", "value": value}, "@context": [CORE_CONTEXT]}))
             .send()
-            .await;
+            .await
+            .expect("the change is answered");
+        assert_eq!(patched.status(), StatusCode::NO_CONTENT, "change {value} lands");
     }
-    let _ = server.drain_requests().await;
-    evict_by_pressure(&client, &broker).await;
 
-    // After eviction, delivery attempts must keep arriving: the busy outbox kept
-    // the tenant serviced rather than being idled out.
-    let mut after_eviction = 0;
-    let deadline = Instant::now() + Duration::from_secs(40);
-    while Instant::now() < deadline {
-        if server.next_request(Duration::from_secs(6)).await.is_ok() {
-            after_eviction += 1;
-        }
-    }
-    println!("busy outbox after eviction: {after_eviction} delivery attempts");
+    let first = first_attempt(&server).await;
+    let dormancy = evict_until_dormant(&client, &broker, &tenant, &server).await;
+    let after = attempts_after_dormancy(&server, first, &dormancy).await;
     server.shutdown().await.expect("shutdown");
-    assert!(
-        after_eviction >= 1,
-        "a busy outbox must keep its tenant serviced after eviction, saw {after_eviction} attempts"
-    );
+    assert_retried_after_dormancy("a busy outbox", &dormancy, after);
     reset(&client, &pool).await;
     pool.close().await;
 }
@@ -400,7 +527,7 @@ async fn suspend(client: &Client, broker: &str, tenant: &str, is_active: bool) {
 
 /// Provision one tenant on `broker`, touch it so its runtime and pool are
 /// resident, and return its name and database.
-async fn resident_tenant(client: &Client, pool: &PgPool, broker: &str, prefix: &str) -> (String, String) {
+async fn resident_tenant(client: &Client, pool: &PgPool, broker: &str, prefix: &str) -> (String, TenantDatabaseName) {
     let tenant = tenant_load::tenant_names(prefix, 1).remove(0);
     tenant_load::provision_tenants(client, broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
         .await
@@ -414,7 +541,7 @@ async fn resident_tenant(client: &Client, pool: &PgPool, broker: &str, prefix: &
         .expect("touch the tenant")
         .status();
     assert!(touched.is_success(), "the provisioned tenant answers, got {touched}");
-    let database = only_tenant_database(pool).await;
+    let database = tenant_database(pool, &tenant).await;
     (tenant, database)
 }
 
@@ -423,13 +550,13 @@ async fn resident_tenant(client: &Client, pool: &PgPool, broker: &str, prefix: &
 ///
 /// Attributed by `application_name`, because every broker on the tier shares the
 /// tenant registry and another broker's wake probe may reach the same database.
-async fn pooler_clients(console: &PoolerConsole, database: &str) -> usize {
+async fn pooler_clients(console: &PoolerConsole, database: &TenantDatabaseName) -> usize {
     console
         .show_clients()
         .await
         .expect("read SHOW CLIENTS")
         .iter()
-        .filter(|row| row.database == database && row.application_name == endpoints::BROKER_APPLICATION_NAME)
+        .filter(|row| row.database == database.as_str() && row.application_name == endpoints::BROKER_APPLICATION_NAME)
         .count()
 }
 
@@ -476,16 +603,22 @@ async fn suspending_an_unpooled_tenant_closes_its_backends() {
     let broker = endpoints::broker_direct();
     let (tenant, database) = resident_tenant(&client, &pool, &broker, "pgbsuspdirect").await;
     let direct = [endpoints::BROKER_DIRECT_APPLICATION_NAME];
-    let before = backend_sampler::client_backends_of(&pool, &database, &direct).await.expect("count backends");
+    let before = backend_sampler::client_backends_of(&pool, database.as_str(), &direct)
+        .await
+        .expect("count backends");
     assert!(before > 0, "a resident un-pooled tenant holds backends, saw {before}");
 
     suspend(&client, &broker, &tenant, false).await;
 
-    let mut after = backend_sampler::client_backends_of(&pool, &database, &direct).await.expect("count backends");
+    let mut after = backend_sampler::client_backends_of(&pool, database.as_str(), &direct)
+        .await
+        .expect("count backends");
     let deadline = Instant::now() + Duration::from_secs(2);
     while after > 0 && Instant::now() < deadline {
         sleep(Duration::from_millis(50)).await;
-        after = backend_sampler::client_backends_of(&pool, &database, &direct).await.expect("count backends");
+        after = backend_sampler::client_backends_of(&pool, database.as_str(), &direct)
+            .await
+            .expect("count backends");
     }
     assert_eq!(after, 0, "a suspend closes the un-pooled tenant's backends, saw {after}");
 

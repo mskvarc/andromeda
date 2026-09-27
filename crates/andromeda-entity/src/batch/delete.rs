@@ -12,7 +12,7 @@ use crate::{
     error::EntityError,
     expanded_member::{stored_attribute_names, stored_entity_types},
     notification_fanout::{ChangedEntity, MutationSnapshots},
-    side_effect::BatchSideEffectMode,
+    side_effect::SideEffectPlacement,
     sys_attrs::snapshot_with_sys_attrs,
 };
 use andromeda_context_commit::{
@@ -83,7 +83,8 @@ impl EntityService {
         Ok(matches)
     }
 
-    pub(super) async fn batch_delete_chunk(&self, target: &ContextTarget, chunk: &[Uri], mode: BatchSideEffectMode) -> Result<DeleteChunkOutcome, EntityError> {
+    pub(super) async fn batch_delete_chunk(&self, placement: SideEffectPlacement<'_>, chunk: &[Uri]) -> Result<DeleteChunkOutcome, EntityError> {
+        let target = placement.target();
         let _id_guards = self.acquire_id_locks(target, chunk).await;
 
         // Both paths need the payloads and the system attributes up front:
@@ -97,24 +98,23 @@ impl EntityService {
         let mut writes = Vec::with_capacity(chunk.len());
         for id in chunk {
             let payload = payloads.get(id);
-            // The durable matches commit with the delete on both paths — the
-            // only notification channel a `Prefer: respond-async` batch delete
-            // has, since its deferred job carries the in-process events only.
+            // A durable-delivery broker commits the matches with the delete on
+            // both paths. A live-delivery broker records none, so a `Prefer:
+            // respond-async` delete defers its events to the job instead, for
+            // whichever broker drains it to notify.
             let matches = match payload {
                 Some(payload) => self.delete_subscription_matches(target, id, payload, sys_attrs.get(id))?,
                 None => Vec::new(),
             };
-            let side_effects = match mode {
-                BatchSideEffectMode::Inline => None,
-                BatchSideEffectMode::Enqueue => payload
-                    .map(|payload| {
-                        deletion_events(id, payload, sys_attrs.get(id)).map(|change_events| BatchSideEffectJob {
-                            target: target.clone(), // clone: durable replay owns the immutable branch selection.
-                            temporal_entities: Vec::new(),
-                            change_events,
-                        })
+            let side_effects = match (placement, payload) {
+                (SideEffectPlacement::Inline(_), _) | (SideEffectPlacement::DeferredOnLive, None) => None,
+                (SideEffectPlacement::DeferredOnLive, Some(payload)) => {
+                    let change_events = self.owed_change_events(deletion_events(id, payload, sys_attrs.get(id))?);
+                    (!change_events.is_empty()).then(|| BatchSideEffectJob {
+                        temporal_entities: Vec::new(),
+                        change_events,
                     })
-                    .transpose()?,
+                }
             };
             writes.push(
                 AtomicWrite::builder()
@@ -143,7 +143,7 @@ impl EntityService {
         for (id, outcome) in chunk.iter().zip(outcomes) {
             match outcome {
                 WriteOutcome::Deleted(deleted) => {
-                    if matches!(mode, BatchSideEffectMode::Inline) {
+                    if matches!(placement, SideEffectPlacement::Inline(_)) {
                         events.extend(inline_deletion_events(&deleted)?);
                     }
                     success.push(deleted.id);
@@ -160,11 +160,9 @@ impl EntityService {
             }
         }
 
-        self.apply_inline_side_effects(BatchSideEffectJob {
-            target: target.clone(), // clone: inline publication owns the target until all events are emitted.
-            temporal_entities: Vec::new(),
-            change_events: events,
-        });
+        for event in events {
+            self.emit_change(target, event);
+        }
 
         Ok((success, errors))
     }

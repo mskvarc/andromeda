@@ -1,4 +1,4 @@
-//! Verification-matrix row "Current projection atomicity".
+//! Current projection atomicity: the projection commits with its Entity.
 //!
 //! The projection is written inside the Entity transaction, so a committed
 //! write is visible to every later reader with no barrier, and a projection

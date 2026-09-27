@@ -3,7 +3,6 @@
 //!
 //! Registry-API-local validation and lifecycle run on `T-LOCAL` (broker A
 //! alone); the intrinsically multi-instance rows (`T-TENANT`, `T-MOCK`) say so.
-//! Concrete designs are in `docs/distributed-tests/reg.md`.
 
 mod csr_create;
 mod csr_delete;

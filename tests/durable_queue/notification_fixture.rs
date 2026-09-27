@@ -4,6 +4,7 @@ use crate::queue_database::{record_events, subscription, subscription_key};
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_notification::{delivery_claim::DeliveryClaim, delivery_entry::DeliveryEntry};
 use andromeda_postgresql_context_store::notification_delivery::rows::NewNotificationEvent;
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -77,4 +78,17 @@ pub fn entity_snapshot(entity: &Uri) -> Value {
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 120}]
         }]
     })
+}
+
+/// The deliveries a claim read back, failing the verification on any row the
+/// claim could not read: every fixture here writes only readable rows.
+pub fn readable(claims: Vec<DeliveryClaim>) -> Vec<DeliveryEntry> {
+    claims
+        .into_iter()
+        .map(|claim| match claim {
+            DeliveryClaim::Readable(entry) => Ok(*entry),
+            DeliveryClaim::Unreadable(unreadable) => Err(unreadable.diagnostic),
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .expect("every fixture row reads back")
 }

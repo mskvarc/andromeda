@@ -42,9 +42,11 @@
 //! | entity and context source periodic notifications | each active periodic subscription's next grid point |
 //! | cached-`@context` invalidation | the earliest expiration of a `"Cached"` `@context` |
 //!
-//! The table-size gauges serve no obligation: they report sizes, which move
-//! only when something writes. They sample when the tenant has been used or a
-//! background pass has run since their last sample, and rest otherwise.
+//! The table-size gauges and the notification-delivery cleanup serve no
+//! obligation: the gauges report sizes, and the cleanup reaps finished queue
+//! rows, and both move only when something writes. They run when the tenant has
+//! been used or a background pass has run since they last ran, and rest
+//! otherwise.
 
 use andromeda_postgresql_context_store::{error::ContextStoreError, pending_work::earliest_obligation};
 use andromeda_task_runtime::{control::DrainCause, drain_task::DrainPassOutcome, failure::TaskFailure};
@@ -178,12 +180,14 @@ impl BackgroundPacer {
         self.changes.fetch_add(1, Ordering::AcqRel);
     }
 
-    /// Run one sample of an observation of the tenant's tables if the tenant may
-    /// have changed since the observation last ran, and do nothing otherwise.
+    /// Run one pass of work only a write can create -- a sample of the tenant's
+    /// table sizes, a reap of finished queue rows -- if the tenant may have
+    /// changed since that work last ran, and do nothing otherwise.
     ///
-    /// `observed` is the change count the observation last ran under, owned by
-    /// the observation. The first sample always runs. A sample is not itself a
-    /// change: it only reads.
+    /// `observed` is the change count the work last ran under, owned by the
+    /// work. The first pass always runs. A pass is not itself a change: it
+    /// either only reads or only removes what no obligation depends on, so
+    /// counting it would have it run again on every tick.
     pub(crate) async fn run_when_written(&self, observed: &AtomicU64, sample: impl Future<Output = Result<(), TaskFailure>>) -> Result<(), TaskFailure> {
         // One more than the count, so a freshly created observation (holding
         // zero) samples once even before anything changes.

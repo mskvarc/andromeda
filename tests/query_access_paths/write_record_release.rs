@@ -1,4 +1,5 @@
-//! Verification-matrix row "Write-record release plans".
+//! Write-record release plans: releasing a write record seeks one index entry
+//! per history chunk.
 //!
 //! A `write_records` row may be released only once no attribute history row,
 //! no scope history row and no queued append intent references its write. Both

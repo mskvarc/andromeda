@@ -8,6 +8,16 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Default maximum serialised notification size, in bytes.
 const DEFAULT_MAX_PAYLOAD_SIZE: usize = 10 * 1024 * 1024;
 
+/// Default time an idle pooled connection is kept for reuse.
+///
+/// Shorter than the keep-alive timeout of common notification receivers (five
+/// seconds for Node.js), so the broker retires an idle connection before the
+/// receiver closes it. A POST written onto a connection the peer has already
+/// abandoned fails without a response and is not resent, since a POST is not
+/// idempotent; retiring the connection first avoids that failure instead of
+/// retrying into a possible duplicate.
+const DEFAULT_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(4);
+
 /// Configuration for the HTTP notification transport.
 #[derive(Debug, Clone)]
 pub struct HttpTransportConfig {
@@ -18,6 +28,8 @@ pub struct HttpTransportConfig {
     /// Whether to refuse endpoints that resolve into private or reserved
     /// address space.
     pub private_ip_blocking: PrivateIpBlocking,
+    /// How long an idle pooled connection is kept for reuse.
+    pub pool_idle_timeout: Duration,
 }
 
 /// Whether the SSRF guard is armed.
@@ -41,6 +53,7 @@ impl Default for HttpTransportConfig {
             timeout: DEFAULT_TIMEOUT,
             max_payload_size: DEFAULT_MAX_PAYLOAD_SIZE,
             private_ip_blocking: PrivateIpBlocking::Disabled,
+            pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
         }
     }
 }

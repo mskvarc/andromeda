@@ -1,4 +1,5 @@
-//! Verification-matrix row "Arbitrary `GeoProperty`".
+//! Arbitrary `GeoProperty`: a geo-query evaluates exactly the attribute it
+//! names.
 //!
 //! A geo-query names the `GeoProperty` it applies to (clause 4.10). Only that
 //! attribute may participate, any of its dataset instances matching is enough,

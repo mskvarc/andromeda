@@ -90,6 +90,7 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-notification",
+ "andromeda-postgresql-atomic-write",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-name-dictionary",
@@ -1908,6 +1909,8 @@ name = "andromeda-test-harness"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-tenancy",
  "andromeda-test-client",
  "andromeda-test-fixtures",
  "dashmap",

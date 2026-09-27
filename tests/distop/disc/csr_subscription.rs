@@ -100,8 +100,8 @@ pub async fn delete(client: &TestClient, id: &str) -> TestResponse {
 /// Declarative builder for a Context Source Subscription body targeting a
 /// notification endpoint, covering the matching inputs the DISC area exercises:
 /// the watched entity type, watched and notification attributes, the temporal,
-/// geo, context-source and scope filters, a periodic time interval, and the
-/// activation and expiry controls.
+/// geo, context-source and scope filters, a periodic time interval, the
+/// throttling, and the activation and expiry controls.
 pub struct CsrSubscriptionBuilder {
     id: String,
     endpoint: String,
@@ -113,6 +113,7 @@ pub struct CsrSubscriptionBuilder {
     csf: Option<String>,
     scope_q: Option<String>,
     time_interval: Option<u64>,
+    throttling: Option<u64>,
     is_active: Option<bool>,
 }
 
@@ -131,6 +132,7 @@ impl CsrSubscriptionBuilder {
             csf: None,
             scope_q: None,
             time_interval: None,
+            throttling: None,
             is_active: None,
         }
     }
@@ -177,6 +179,13 @@ impl CsrSubscriptionBuilder {
         self
     }
 
+    /// Set the `throttling` (seconds): the shortest period between two
+    /// consecutive notifications of the subscription.
+    pub const fn throttling(mut self, seconds: u64) -> CsrSubscriptionBuilder {
+        self.throttling = Some(seconds);
+        self
+    }
+
     /// Set the `isActive` flag (a `false` value creates the subscription paused).
     pub const fn active(mut self, is_active: bool) -> CsrSubscriptionBuilder {
         self.is_active = Some(is_active);
@@ -214,6 +223,9 @@ impl CsrSubscriptionBuilder {
         }
         if let Some(time_interval) = self.time_interval {
             body.insert("timeInterval".to_owned(), json!(time_interval));
+        }
+        if let Some(throttling) = self.throttling {
+            body.insert("throttling".to_owned(), json!(throttling));
         }
         if let Some(is_active) = self.is_active {
             body.insert("isActive".to_owned(), json!(is_active));

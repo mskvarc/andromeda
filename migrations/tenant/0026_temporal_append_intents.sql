@@ -9,6 +9,10 @@
 -- acknowledged, so it is never discarded: an intent that keeps failing stays
 -- claimable at a bounded retry cadence and is reported once its attempts pass
 -- an operator threshold.
+--
+-- The queue exists only in the live branch. Deferral buys live ingest
+-- throughput; a Snapshot branch records its history in the write's own
+-- transaction, and no worker drains a branch.
 -- ============================================================================
 
 CREATE TABLE temporal_append_intents (

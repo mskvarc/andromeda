@@ -1,8 +1,7 @@
 //! Compiled context-source-subscription cache.
 
-use crate::{compiled::CompiledCsrSubscription, csource_matching::matches_csource_subscription};
+use crate::compiled::CompiledCsrSubscription;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use dashmap::DashMap;
 use std::sync::Arc;
 
@@ -46,25 +45,62 @@ impl CsourceSubscriptionCache {
         self.inner.is_empty()
     }
 
-    /// Find compiled subscriptions matching one context-source registration.
+    /// Every cached subscription, in no particular order.
     #[must_use]
-    pub fn find_matching(&self, registration: &ContextSourceRegistration) -> Vec<Arc<CompiledCsrSubscription>> {
-        self.inner
-            .iter()
-            .filter_map(|entry| matches_csource_subscription(entry.value(), registration).then(|| Arc::clone(entry.value())))
-            .collect()
+    pub fn subscriptions(&self) -> Vec<Arc<CompiledCsrSubscription>> {
+        self.inner.iter().map(|entry| Arc::clone(entry.value())).collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::csource_cache::CsourceSubscriptionCache;
+    use crate::{compiled::CompiledCsrSubscription, csource_cache::CsourceSubscriptionCache};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
     use pretty_assertions::assert_eq;
+    use std::sync::Arc;
+    use url::Url;
+
+    fn subscription(id: &Uri) -> Arc<CompiledCsrSubscription> {
+        Arc::new(CompiledCsrSubscription {
+            id: id.clone(), // clone: the compiled subscription owns its identifier
+            status: SubscriptionStatus::Active,
+            endpoint_uri: Url::parse("http://example.com/notify").expect("valid URL"),
+            endpoint_accept: None,
+            endpoint_receiver_info: None,
+            endpoint_notifier_info: None,
+            endpoint_cooldown: None,
+            endpoint_timeout: None,
+            selectors: Vec::new(),
+            matching_attrs: Vec::new(),
+            temporal_q: None,
+            geo_q: None,
+            scope_q: None,
+            throttling_secs: None,
+            time_interval_secs: None,
+            jsonld_context: None,
+            expires_at: None,
+            compiled_csf: None,
+        })
+    }
 
     #[test]
     fn a_new_csource_subscription_cache_is_empty() {
         let cache = CsourceSubscriptionCache::new();
         assert!(cache.is_empty());
         assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn a_cached_subscription_is_listed_until_removed() {
+        let cache = CsourceSubscriptionCache::new();
+        let id: Uri = "urn:ngsi-ld:Subscription:csource".parse().expect("valid URI");
+        cache.insert(id.clone(), subscription(&id)); // clone: the cache owns its key
+
+        let listed: Vec<Uri> = cache.subscriptions().iter().map(|subscription| subscription.id.clone()).collect(); // clone: the assertion owns the listed identifiers
+        assert_eq!(listed, vec![id.clone()]); // clone: the expected list owns its member
+
+        cache.remove(&id);
+        assert!(cache.subscriptions().is_empty());
     }
 }

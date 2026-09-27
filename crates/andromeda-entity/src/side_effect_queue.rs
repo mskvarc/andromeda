@@ -6,7 +6,8 @@
 //! the same atomic write as the entities and drained afterwards.
 //!
 //! Leasing rather than reading is what makes the drain at-least-once: a lease
-//! that expires unacknowledged becomes claimable again.
+//! that expires before its job was settled by a replay or released for a retry
+//! becomes claimable again.
 
 use crate::error::EntityError;
 use andromeda_context_commit::{
@@ -23,9 +24,14 @@ use futures::future::BoxFuture;
 /// One side-effect job leased for execution.
 #[derive(Debug)]
 pub struct LeasedSideEffect {
-    /// Queue entry identifier, used to acknowledge or reschedule the job.
+    /// Queue entry identifier, used to settle or reschedule the job.
     pub id: SideEffectJobId,
     /// How many times this job has already been attempted.
+    ///
+    /// Counts every attempt that ended without settling the job: one that
+    /// failed and was released for a retry, and one that ended without a word
+    /// -- a crash, or a lease that lapsed before the replay could lock the job
+    /// -- which the claim that reclaimed the job counted.
     ///
     /// Decoded from `pending_side_effects.attempt_count`, an `INTEGER` column
     /// (migration 0025), so this is `i32` to match its SQL width; the sibling
@@ -37,25 +43,46 @@ pub struct LeasedSideEffect {
     /// with its other consequences.
     ///
     /// A worker delivering this job replays under `record` rather than minting
-    /// a fresh identity, so a crash-retried delivery reproduces exactly the
-    /// identity its first attempt would have produced.
+    /// a fresh identity, so the deferred consequences belong to the write that
+    /// caused them.
     pub record: WriteRecord,
     /// First ordinal free in the enqueueing commit's consequence numbering.
     ///
     /// A worker delivering this job resumes the commit's running ordinal
-    /// counter at this value rather than restarting it at zero, so a
-    /// crash-retried delivery reproduces exactly the ordinals its first
-    /// attempt would have produced.
+    /// counter at this value rather than restarting it at zero, so the deferred
+    /// consequences are numbered after the ones the commit already wrote.
     pub base_ordinal: WriteOrdinal,
+}
+
+/// Whether dead-lettering a job records an attempt of its own.
+///
+/// `pending_side_effects.attempt_count` counts every attempt a job received,
+/// and a dead letter keeps it as the evidence of how many that was, so the
+/// dead-lettering says whether it ends an attempt that is not counted yet.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeadLetterAttempt {
+    /// The job is dead-lettered by the attempt that just failed, which no
+    /// statement counted yet.
+    Failed,
+    /// The job is dead-lettered without a new attempt: every attempt it had was
+    /// already counted -- by the retries that released it and by the claims
+    /// that reclaimed its lapsed leases -- so the stored count is exact as it
+    /// stands.
+    AlreadyCounted,
 }
 
 /// Draining the durable side-effect queue.
 pub trait SideEffectQueue: Send + Sync + 'static {
     /// Lease up to `batch_size` due jobs for `lease_seconds`.
     ///
+    /// Reclaiming a job whose previous lease lapsed counts the attempt that
+    /// lease belonged to, since nothing else recorded it.
+    ///
     /// A job whose stored payload cannot be read back is dead-lettered by the
     /// implementation rather than returned, so one unreadable entry cannot
-    /// stall the queue behind it.
+    /// stall the queue behind it; the implementation claims again in its
+    /// place, so a result shorter than `batch_size` means the queue held no
+    /// more due jobs.
     fn lease_batch<'life0, 'life1, 'async_trait>(
         &'life0 self,
         worker_id: &'life1 LeaseHolder,
@@ -67,25 +94,20 @@ pub trait SideEffectQueue: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Acknowledge a completed job, removing it.
+    /// Release a failed job for another attempt at `next_attempt_at`, counting
+    /// the attempt.
     ///
-    /// Guarded by `owner` holding a still-live lease: an acknowledgement whose
-    /// lease has since expired and been reclaimed by another worker reports
-    /// [`LeaseAcknowledgement::Lost`] rather than deleting a row that worker
-    /// now owns.
-    fn ack<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        id: SideEffectJobId,
-        owner: &'life1 LeaseHolder,
-    ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait;
-
-    /// Release a failed job for another attempt at `next_attempt_at`.
-    ///
-    /// Guarded by `owner` holding a still-live lease, exactly as [`Self::ack`].
+    /// Guarded by `owner` still being the job's claimant, not by its lease
+    /// still being live. A replay may outlive its lease -- its settlement locks
+    /// the job for as long as it runs -- and one that fails afterwards still
+    /// owes the job its diagnostic and its backoff. Every claim rewrites the
+    /// claimant, so a job another worker reclaimed in the meantime is no longer
+    /// `owner`'s and the release reports [`LeaseAcknowledgement::Lost`] rather
+    /// than overwriting that worker's claim; `owner` itself reclaims nothing
+    /// until this release is done, because a drain holds a claimant identity of
+    /// its own and runs one pass at a time. A job that succeeded is not
+    /// released here: its replay commit removes it, under a live lease, as the
+    /// first statement of its own transaction.
     fn nack<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         id: SideEffectJobId,
@@ -99,14 +121,17 @@ pub trait SideEffectQueue: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Dead-letter a job that has exhausted its attempts.
+    /// Dead-letter a job that has exhausted its attempts, counting the attempt
+    /// that exhausted it when `attempt` says it is not counted yet.
     ///
-    /// Guarded by `owner` holding a still-live lease, exactly as [`Self::ack`].
+    /// Guarded by `owner` still being the job's claimant, exactly as
+    /// [`Self::nack`].
     fn mark_dead<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         id: SideEffectJobId,
         owner: &'life1 LeaseHolder,
         error: &'life2 str,
+        attempt: DeadLetterAttempt,
     ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
     where
         'life0: 'async_trait,

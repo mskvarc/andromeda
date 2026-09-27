@@ -36,6 +36,21 @@ use std::sync::Arc;
 use tracing::{debug, error};
 use uuid::Uuid;
 
+/// Whether a notification reached its endpoint's transport.
+///
+/// Clause 5.11.7 counts a notification that failed at the endpoint as sent --
+/// `timesSent` is incremented and only `lastFailure` tells it apart -- so the
+/// subscriber may have received it either way. One held back before it was
+/// sent, by the subscription's `throttling`, its endpoint's `cooldown` or a
+/// payload that could not be built, never reached the subscriber.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CsourceDeliveryOutcome {
+    /// The notification was handed to the endpoint's transport.
+    Sent,
+    /// The notification was held back before it was sent.
+    NotSent,
+}
+
 /// The delivery half of one tenant's context source notification policy.
 pub(crate) struct CsourceNotificationDelivery {
     /// The tenant branch the subscription's delivery state is recorded on.
@@ -105,7 +120,7 @@ impl CsourceNotificationDelivery {
     /// A `timeInterval` subscription carries no `throttling` -- Table 5.2.12-1
     /// gives the member cardinality 0 when `timeInterval` is present -- so the
     /// one gate serves both cadences without either having to know which it is.
-    pub(crate) async fn deliver(&self, subscription: &CompiledCsrSubscription, data: Vec<Value>, trigger_reason: CsrTriggerReason) {
+    pub(crate) async fn deliver(&self, subscription: &CompiledCsrSubscription, data: Vec<Value>, trigger_reason: CsrTriggerReason) -> CsourceDeliveryOutcome {
         let sub_id = &subscription.id;
 
         match self
@@ -118,16 +133,16 @@ impl CsourceNotificationDelivery {
             .await
         {
             Ok(NotificationSlot::Claimed) => {}
-            Ok(NotificationSlot::Suppressed) => return,
+            Ok(NotificationSlot::Suppressed) => return CsourceDeliveryOutcome::NotSent,
             Err(error) => {
                 debug!("Failed to claim CSR notification slot for {}: {}", sub_id, error);
-                return;
+                return CsourceDeliveryOutcome::NotSent;
             }
         }
 
         let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() else {
             error!("Failed to construct notification URN for {}", sub_id);
-            return;
+            return CsourceDeliveryOutcome::NotSent;
         };
         let notification = CsourceNotification::builder()
             .id(notification_id)
@@ -142,12 +157,12 @@ impl CsourceNotificationDelivery {
             Ok(payload) => payload,
             Err(error) => {
                 error!("Failed to serialize CsourceNotification for {}: {}", sub_id, error);
-                return;
+                return CsourceDeliveryOutcome::NotSent;
             }
         };
 
         let Some(endpoint_transport) = compiled_transport(subscription) else {
-            return;
+            return CsourceDeliveryOutcome::NotSent;
         };
         let request = self.request_for(subscription, &payload).assemble();
         let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
@@ -159,6 +174,7 @@ impl CsourceNotificationDelivery {
         } else if let Err(error) = self.sub_repo.mark_failure(&self.target, sub_id).await {
             debug!("Failed to mark CSR notification failure for {}: {}", sub_id, error);
         }
+        CsourceDeliveryOutcome::Sent
     }
 
     /// The delivery one CSR notification becomes.

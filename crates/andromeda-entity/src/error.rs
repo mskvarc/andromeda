@@ -135,6 +135,7 @@ impl From<CommitError> for EntityError {
             failure @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence { .. }
             | CommitError::Invariant { .. }
+            | CommitError::ReplayLeaseLost { .. }
             | CommitError::UnexpectedOutcomeCount { .. }) => EntityError::Commit(failure),
         }
     }

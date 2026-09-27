@@ -5,8 +5,7 @@
 //! the inclusive/exclusive/redirect/auxiliary distribution modes, cascade
 //! limiting via the `Via` header, `contextSourceInfo` forwarding, backwards
 //! compatible version negotiation, local scope, linked entity maps, and
-//! snapshot locality. Concrete per-test designs live in
-//! `docs/distributed-tests/fw.md`.
+//! snapshot locality.
 //!
 //! Real peers (`pair`/`chain`) exercise end-to-end federation semantics; the
 //! in-process mock Context Source (`ContextSourceAdapter`) captures the exact

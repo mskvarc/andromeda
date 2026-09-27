@@ -102,6 +102,7 @@ impl From<CommitError> for TemporalError {
             failure @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence { .. }
             | CommitError::Invariant { .. }
+            | CommitError::ReplayLeaseLost { .. }
             | CommitError::UnexpectedOutcomeCount { .. }) => TemporalError::Commit(failure),
         }
     }

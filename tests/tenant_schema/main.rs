@@ -1,6 +1,6 @@
 //! Verification of the properties a migrated tenant schema itself must hold.
 //!
-//! These are the verification matrix rows that are statements about the
+//! These are the properties that are statements about the
 //! database rather than about one request: the contract stamped on the tenant,
 //! the compact code registries the schema persists numbers from, the absence of
 //! procedural logic, the referential state the schema holds, the all-or-nothing

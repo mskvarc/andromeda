@@ -1,4 +1,5 @@
-//! Verification matrix row "Identifier storage bounds".
+//! Identifier storage bounds: every identifier column refuses a value past the
+//! identifier octet bound in the database itself.
 //!
 //! Every identifier column is held to the identifier bound the parsers refuse
 //! longer input with (`IDENTIFIER_BYTE_LIMIT`), measured in UTF-8 octets

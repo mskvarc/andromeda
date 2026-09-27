@@ -1,4 +1,5 @@
-//! Verification-matrix row "Registration routing plans".
+//! Registration routing plans: discovery stays sublinear in the number of
+//! registrations.
 //!
 //! The routing projection stores an axis a row does not constrain as a
 //! sentinel rather than as `NULL`, and a registration constraining nothing as

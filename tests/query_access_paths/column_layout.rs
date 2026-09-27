@@ -1,4 +1,4 @@
-//! Verification-matrix row "Physical column layout".
+//! Physical column layout: columns are declared in alignment order.
 //!
 //! The three entity relations, the projection and the temporal intent queue
 //! declare their columns in alignment order: not-null fixed-width first and widest-first, then nullable

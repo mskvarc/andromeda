@@ -1,4 +1,5 @@
-//! Verification matrix row "Commit contention".
+//! Commit contention: a create whose commit is chosen as a deadlock victim
+//! is run again rather than surfacing as a failure.
 //!
 //! PostgreSQL breaks a deadlock by rolling one contender's whole transaction
 //! back. When the victim is a live write's commit, nothing of it persisted and

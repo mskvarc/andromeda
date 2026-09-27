@@ -1,4 +1,4 @@
-//! Verification matrix row "Invalid unit".
+//! Invalid unit: a `unitCode` the catalogue does not register is refused.
 //!
 //! A `unitCode` the catalogue does not register has no identity to store, so
 //! the write is refused rather than silently stripped: an attribute persisted

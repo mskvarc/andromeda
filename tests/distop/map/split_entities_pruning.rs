@@ -13,7 +13,7 @@
 //!   still returned its fragment (page pruning).
 //!
 //! Topology `T-SPLIT` (A front, B supporting source), each holding part of the
-//! same entity. Concrete design in `docs/distributed-tests/map.md`.
+//! same entity.
 
 use crate::{
     entity::{attribute_fragment, entity, property},

@@ -18,11 +18,10 @@ use crate::{
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
     notification_plan::attribute_change_groups,
-    side_effect::BatchSideEffectMode,
+    side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
 use andromeda_context_commit::precondition::Precondition;
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::expanded::{
@@ -60,12 +59,12 @@ fn appends_nothing(entity: &Value, attrs: &Value) -> bool {
 impl EntityService {
     pub(super) async fn batch_update_chunk(
         &self,
-        target: &ContextTarget,
+        placement: SideEffectPlacement<'_>,
         chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
         overwrite: OverwritePolicy,
-        mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
+        let target = placement.target();
         // Clause 5.5.4 excepts only the fragments "used in partial update and
         // merge operations" from its NGSI-LD Null prohibitions, and clause 5.2.1
         // makes every other placement of the sentinel `BadRequestData`. A batch
@@ -168,7 +167,7 @@ impl EntityService {
             }
         }
 
-        let outcome = self.commit_chunk(target, writes, mode).await?.settled();
+        let outcome = self.commit_chunk(placement, writes).await?.settled();
         errors.extend(outcome.errors);
         Ok(BatchResult {
             success: outcome.success,

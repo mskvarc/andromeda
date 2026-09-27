@@ -65,6 +65,9 @@ impl EntityService {
     }
 
     /// Build durable matches for one precise attribute-instance change.
+    ///
+    /// Returns an empty vector when notification recording is not configured:
+    /// a live-delivery broker's notification worker evaluates the change itself.
     pub(crate) fn build_subscription_matches_for_instance(
         &self,
         entity: ChangedEntity<'_>,
@@ -73,9 +76,24 @@ impl EntityService {
         changed_dataset_id: Option<&Uri>,
         snapshots: MutationSnapshots<'_>,
     ) -> Vec<SubscriptionMatch> {
-        let Some(NotificationWriteConfig { subscription_cache }) = &self.notifications else {
-            return Vec::new();
-        };
+        self.notifications.as_ref().map_or_else(Vec::new, |recording| {
+            recording.subscription_matches(entity, trigger, changed_attrs, changed_dataset_id, snapshots)
+        })
+    }
+}
+
+impl NotificationWriteConfig {
+    /// Build one durable match for every subscription one precise change
+    /// satisfies (clause 5.8.6).
+    pub(crate) fn subscription_matches(
+        &self,
+        entity: ChangedEntity<'_>,
+        trigger: NotificationTrigger,
+        changed_attrs: &[AttributeName],
+        changed_dataset_id: Option<&Uri>,
+        snapshots: MutationSnapshots<'_>,
+    ) -> Vec<SubscriptionMatch> {
+        let NotificationWriteConfig { subscription_cache } = self;
         let ChangedEntity {
             target,
             id: entity_id,

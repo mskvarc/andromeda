@@ -1,4 +1,4 @@
-//! Verification-matrix row "Entity access-path plans".
+//! Entity access-path plans: each query shape reaches its intended index.
 //!
 //! Each representative query shape is planned against a seeded, analyzed corpus
 //! and must reach its intended index, every typed-value index must exclude the

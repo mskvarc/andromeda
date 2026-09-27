@@ -13,72 +13,110 @@ use crate::{
     processor::{NotificationProcessor, payload::EntitySurvival},
 };
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::instance_key::attribute_instance_family,
     notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use andromeda_subscription::error::SubscriptionError;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use serde_json::Value;
 use std::sync::Arc;
 
 impl NotificationDeliveryTransport for NotificationProcessor {
-    fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, Result<DeliveryDisposition, NotificationError>> {
+    fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, DeliveryDisposition> {
         Box::pin(async move {
-            let stored = &entry.event;
-            let survival = stored_entity_survival(stored)?;
-            let snapshot = stored.entity_snapshot.clone(); // clone: the change event owns the durable payload while the leased delivery remains available for acknowledgement.
-            // The deleted row is gone, so its system attributes are read back
-            // from the snapshot the delete write embedded them into, restoring
-            // the typed carrier the in-process path would have supplied. An
-            // Entity that survived its change still has a row to read them from.
-            let sys_attrs_snapshot = match survival {
-                EntitySurvival::Deleted => sys_attrs_from_snapshot(snapshot.as_ref()),
-                EntitySurvival::Survived => None,
+            let event = match queued_change_event(&entry.event) {
+                Ok(event) => event,
+                Err(unevaluable) => return unevaluable,
             };
-            let event = ChangeEvent::builder()
-                .entity_id(stored.entity_id.clone()) // clone: the change event and the stored event independently own the identifier.
-                .entity_types(entity_types_from_snapshot(snapshot.as_ref()))
-                .trigger_reason(stored.trigger)
-                .changed_attributes(stored.changed_attributes.clone()) // clone: the change event owns its attribute names through delivery.
-                .changed_dataset_id(stored.changed_dataset_id.clone()) // clone: the event owns the instance discriminator.
-                .occurred_at(stored.created_at)
-                // Which of the two members the stored snapshot fills is what
-                // tells the notification path whether the Entity is still
-                // there: `entity_snapshot` alone is the shape clause 5.8.6
-                // reduces to `deletedAt`, while `current_payload` is the Entity
-                // the change left behind.
-                .entity_snapshot(match survival {
-                    // clone: deletion evaluation consumes its own snapshot value.
-                    EntitySurvival::Deleted => snapshot.clone(),
-                    EntitySurvival::Survived => None,
-                })
-                .previous_attributes(stored.previous_snapshot.clone()) // clone: showChanges evaluation owns the prior representation.
-                .sys_attrs_snapshot(sys_attrs_snapshot)
-                .origin(ChangeOrigin::Local)
-                .current_payload(match survival {
-                    EntitySurvival::Deleted => None,
-                    EntitySurvival::Survived => snapshot.map(Arc::new),
-                })
-                .build();
+            if let Err(error) = self.refresh_cached_subscription(&entry.target, &entry.subscription_id).await {
+                return unreadable_subscription(&entry.subscription_id, &error);
+            }
             let outcome = self.apply_entity_change_for(entry.target.clone(), event, Some(&entry.subscription_id)).await;
             if outcome.delivered > 0 {
-                Ok(DeliveryDisposition::Delivered)
+                DeliveryDisposition::Delivered
             } else if outcome.retryable_failures > 0 {
-                Ok(DeliveryDisposition::RetryableFailure {
+                DeliveryDisposition::RetryableFailure {
                     detail: format!("{} endpoint attempt(s) failed transiently", outcome.retryable_failures),
-                })
+                }
             } else if outcome.terminal_failures > 0 {
-                Ok(DeliveryDisposition::TerminalFailure {
+                DeliveryDisposition::TerminalFailure {
                     detail: format!("{} endpoint attempt(s) failed permanently", outcome.terminal_failures),
-                })
+                }
             } else {
-                Ok(DeliveryDisposition::Obsolete)
+                DeliveryDisposition::Obsolete
             }
         })
     }
+}
+
+/// The disposition of a delivery whose subscription could not be read back.
+///
+/// Without the subscription as it now stands the change cannot be matched
+/// against it, and reading the failure as a subscription that is gone would
+/// acknowledge the delivery as obsolete -- losing a notification clause 5.8.6
+/// owes the subscriber. A store that could not answer may answer the next
+/// attempt, so the delivery is retried. No notification was attempted, so no
+/// subscription bookkeeping (clause 5.2.14.2 `timesSent`, `timesFailed`)
+/// records it.
+fn unreadable_subscription(subscription_id: &Uri, error: &SubscriptionError) -> DeliveryDisposition {
+    DeliveryDisposition::RetryableFailure {
+        detail: format!("subscription {subscription_id} could not be read back before its notification: {error}"),
+    }
+}
+
+/// Rebuild the change a durably queued delivery records, as the processor
+/// evaluates it.
+///
+/// # Errors
+///
+/// Returns the [`DeliveryDisposition::TerminalFailure`] of a delivery whose
+/// stored event cannot be evaluated. The stored event is immutable, so every
+/// later attempt would meet the same failure: retrying it would only hold its
+/// lease, and leaving it unacknowledged would have it claimed again at every
+/// lease expiry, forever. No notification was attempted, so no subscription
+/// bookkeeping (clause 5.2.14.2 `timesSent`, `timesFailed`) records it.
+fn queued_change_event(stored: &NotificationEvent) -> Result<ChangeEvent, DeliveryDisposition> {
+    let survival = stored_entity_survival(stored).map_err(|error| DeliveryDisposition::TerminalFailure {
+        detail: format!("the queued notification event cannot be evaluated: {error}"),
+    })?;
+    let snapshot = stored.entity_snapshot.clone(); // clone: the change event owns the durable payload while the leased delivery remains available for acknowledgement.
+    // The deleted row is gone, so its system attributes are read back from the
+    // snapshot the delete write embedded them into, restoring the typed carrier
+    // the in-process path would have supplied. An Entity that survived its
+    // change still has a row to read them from.
+    let sys_attrs_snapshot = match survival {
+        EntitySurvival::Deleted => sys_attrs_from_snapshot(snapshot.as_ref()),
+        EntitySurvival::Survived => None,
+    };
+    Ok(ChangeEvent::builder()
+        .entity_id(stored.entity_id.clone()) // clone: the change event and the stored event independently own the identifier.
+        .entity_types(entity_types_from_snapshot(snapshot.as_ref()))
+        .trigger_reason(stored.trigger)
+        .changed_attributes(stored.changed_attributes.clone()) // clone: the change event owns its attribute names through delivery.
+        .changed_dataset_id(stored.changed_dataset_id.clone()) // clone: the event owns the instance discriminator.
+        .occurred_at(stored.created_at)
+        // Which of the two members the stored snapshot fills is what tells the
+        // notification path whether the Entity is still there:
+        // `entity_snapshot` alone is the shape clause 5.8.6 reduces to
+        // `deletedAt`, while `current_payload` is the Entity the change left
+        // behind.
+        .entity_snapshot(match survival {
+            // clone: deletion evaluation consumes its own snapshot value.
+            EntitySurvival::Deleted => snapshot.clone(),
+            EntitySurvival::Survived => None,
+        })
+        .previous_attributes(stored.previous_snapshot.clone()) // clone: showChanges evaluation owns the prior representation.
+        .sys_attrs_snapshot(sys_attrs_snapshot)
+        .origin(ChangeOrigin::Local)
+        .current_payload(match survival {
+            EntitySurvival::Deleted => None,
+            EntitySurvival::Survived => snapshot.map(Arc::new),
+        })
+        .build())
 }
 
 /// Whether the Entity a durably queued delivery names outlived the change it
@@ -211,9 +249,10 @@ fn entity_types_from_snapshot(snapshot: Option<&Value>) -> Vec<EntityTypeName> {
 #[cfg(test)]
 mod tests {
     use crate::{
+        delivery_drain::DeliveryDisposition,
         notification_event::{NotificationEvent, NotificationEventKey},
         processor::{
-            durable_delivery::{entity_types_from_snapshot, stored_entity_survival, sys_attrs_from_snapshot},
+            durable_delivery::{entity_types_from_snapshot, queued_change_event, stored_entity_survival, sys_attrs_from_snapshot, unreadable_subscription},
             payload::EntitySurvival,
         },
     };
@@ -221,6 +260,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+    use andromeda_subscription::error::SubscriptionError;
     use chrono::Utc;
     use serde_json::{Value, json};
     use uuid::Uuid;
@@ -350,5 +390,56 @@ mod tests {
             vec!["https://example.com/Vehicle"]
         );
         assert_eq!(entity_types_from_snapshot(None), [] as [EntityTypeName; 0]);
+    }
+
+    /// A stored snapshot naming the deleted instance by a `datasetId` that is
+    /// not an identifier can never be placed, however often it is retried, so
+    /// the delivery is a terminal failure the drain retires rather than an
+    /// error that would leave it leased and claimed again at every lease
+    /// expiry.
+    #[test]
+    fn a_queued_event_whose_snapshot_cannot_be_evaluated_is_a_terminal_failure() {
+        let unreadable_dataset = json!([{
+            "@id": "urn:ngsi-ld:Building:1",
+            NAME: [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                expanded_properties::DATASET_ID.as_str(): [{"@id": "not a dataset identifier"}],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "Tower"}]
+            }]
+        }]);
+        let stored = queued(NotificationTrigger::AttributeDeleted, Some(unreadable_dataset));
+        match queued_change_event(&stored) {
+            Err(DeliveryDisposition::TerminalFailure { detail }) => assert!(detail.contains("not a dataset identifier"), "{detail}"),
+            Err(other) => panic!("an unevaluable event must be a terminal failure, got {other:?}"),
+            Ok(_) => panic!("an unevaluable event must not be rebuilt"),
+        }
+    }
+
+    /// An event that can be evaluated is rebuilt as the change it records.
+    #[test]
+    fn a_queued_event_that_can_be_evaluated_is_rebuilt_as_its_change() {
+        let stored = queued(NotificationTrigger::AttributeDeleted, Some(entity_without_name()));
+        let event = queued_change_event(&stored).expect("an evaluable event");
+        pretty_assertions::assert_eq!(event.entity_id.as_str(), "urn:ngsi-ld:Building:1");
+        pretty_assertions::assert_eq!(event.trigger_reason, NotificationTrigger::AttributeDeleted);
+        assert!(event.current_payload.is_some(), "the Entity survived the Attribute deletion");
+    }
+
+    /// A subscription the store could not read back is not a subscription that
+    /// is gone: the delivery is retried rather than acknowledged as obsolete,
+    /// which would lose the notification it owes.
+    #[test]
+    fn a_subscription_the_store_cannot_read_back_retries_the_delivery() {
+        let subscription_id = "urn:ngsi-ld:Subscription:1".parse().expect("valid subscription URI");
+        let disposition = unreadable_subscription(&subscription_id, &SubscriptionError::persistence("the subscription store is unreachable"));
+        match disposition {
+            DeliveryDisposition::RetryableFailure { detail } => {
+                assert!(detail.contains("urn:ngsi-ld:Subscription:1"), "{detail}");
+                assert!(detail.contains("the subscription store is unreachable"), "{detail}");
+            }
+            other @ (DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete | DeliveryDisposition::TerminalFailure { .. }) => {
+                panic!("an unreadable subscription must be retried, got {other:?}")
+            }
+        }
     }
 }

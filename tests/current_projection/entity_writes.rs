@@ -1,4 +1,5 @@
-//! Verification-matrix row "Entity write consequences".
+//! Entity write consequences: whole-entity and batch writes leave one
+//! consistent attribute instance everywhere it is stored.
 //!
 //! The whole-entity and batch Core API writes (clauses 5.6.8, 5.6.9, 5.6.17,
 //! 5.6.18 and 5.6.20) must leave the same attribute instance in the Entity, in

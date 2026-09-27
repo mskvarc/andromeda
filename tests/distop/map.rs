@@ -8,7 +8,7 @@
 //! EntityMap-query building run on `T-MOCK` against an in-process Context Source
 //! that captures the exact forwarded request. Inbound notification re-assembly
 //! runs on `T-SPLIT` (A -> B -> C, B and C each holding part of the same
-//! entity). Concrete designs are in `docs/distributed-tests/map.md`.
+//! entity).
 
 pub mod csr_subscription;
 mod data_shapes;

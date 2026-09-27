@@ -1,5 +1,6 @@
 //! Failures reported by the atomic context-commit boundary.
 
+use crate::side_effect_job_id::SideEffectJobId;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use std::{fmt::Display, sync::Arc};
 use thiserror::Error;
@@ -50,6 +51,17 @@ pub enum CommitError {
     /// malfunction earns.
     #[error("the commit was rolled back by a concurrent transaction; retry shortly")]
     TransactionContended,
+    /// A replayed commit found the side-effect job it settles no longer leased
+    /// to the replaying worker, and committed nothing.
+    ///
+    /// Not a fault: the lease lapsed before the replay could lock the job, and
+    /// the job may already be another worker's, so that worker's replay is the
+    /// one whose consequences land.
+    #[error("side-effect job {job} is no longer leased to the replaying worker; the replay committed nothing")]
+    ReplayLeaseLost {
+        /// The job whose lease was lost.
+        job: SideEffectJobId,
+    },
     /// An implementation violated the commit protocol's invariants.
     #[error("atomic context commit invariant failed: {detail}")]
     Invariant {

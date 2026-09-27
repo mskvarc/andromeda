@@ -8,7 +8,7 @@
 //! which change event the store broadcast carries. Naming those four is what
 //! lets `crate::lifecycle` be written once.
 
-use crate::error::SubscriptionError;
+use crate::{change::UpsertKind, error::SubscriptionError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -77,8 +77,9 @@ pub trait SubscriptionVariant: Send + Sync {
     /// Select how this subscription variant handles the `datasetId` field.
     fn dataset_id_policy(&self) -> DatasetIdPolicy;
 
-    /// Build an "upserted" change event.
-    fn make_upserted(&self, target: ContextTarget, id: Uri) -> Self::Change;
+    /// Build an "upserted" change event for a subscription that was created or
+    /// updated, as `kind` says.
+    fn make_upserted(&self, target: ContextTarget, id: Uri, kind: UpsertKind) -> Self::Change;
 
     /// Build a "deleted" change event.
     fn make_deleted(&self, target: ContextTarget, id: Uri) -> Self::Change;

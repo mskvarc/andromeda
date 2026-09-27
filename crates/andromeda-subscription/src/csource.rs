@@ -1,5 +1,5 @@
 use crate::{
-    change::CsourceSubscriptionChange,
+    change::{CsourceSubscriptionChange, UpsertKind},
     error::SubscriptionError,
     normalization,
     notification_context,
@@ -61,8 +61,8 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
         DatasetIdPolicy::Discard
     }
 
-    fn make_upserted(&self, target: ContextTarget, id: Uri) -> CsourceSubscriptionChange {
-        CsourceSubscriptionChange::Upserted { target, id }
+    fn make_upserted(&self, target: ContextTarget, id: Uri, kind: UpsertKind) -> CsourceSubscriptionChange {
+        CsourceSubscriptionChange::Upserted { target, id, kind }
     }
 
     fn make_deleted(&self, target: ContextTarget, id: Uri) -> CsourceSubscriptionChange {

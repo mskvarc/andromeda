@@ -1,4 +1,4 @@
-//! Verification-matrix row "Identifier bounds".
+//! Identifier bounds: every stored identifier shares one octet bound.
 //!
 //! Clause 4.6.2 sets no length on a URI, but every identifier the broker
 //! stores is a B-tree key, so Andromeda bounds each one -- an Entity id, an

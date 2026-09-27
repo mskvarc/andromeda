@@ -3,12 +3,16 @@
 //! transparent, snapshots run through the pooler under load, durable
 //! notifications are delivered exactly per change, `synchronous_commit` is a
 //! database default, a runtime-created tenant is routed with no reload,
-//! maintenance holds its session lock on a direct connection, and concurrent
-//! writes to one entity serialise correctly.
+//! maintenance holds its session lock on a direct connection, concurrent
+//! writes to one entity serialise correctly, and a durable-delivery broker
+//! notifies a live-delivery broker's deferred change exactly once.
 //!
 //! Everything drives the pooled `broker` on the `pgbouncer` stack.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
+
+/// Brokers in different notification delivery modes sharing one tenant.
+mod mixed_delivery_modes;
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::pooler_probe::{
@@ -44,7 +48,9 @@ async fn control_pool() -> PgPool {
         .expect("connect to PostgreSQL control database")
 }
 
-/// Reset the tier before and after a test.
+/// Reset the tier before and after a test, failing the test when the tier
+/// cannot be brought back to no tenants: a scenario must never run over what
+/// another left behind.
 async fn reset(client: &Client, pool: &PgPool) {
     let brokers = [
         endpoints::broker(),
@@ -53,7 +59,9 @@ async fn reset(client: &Client, pool: &PgPool) {
         endpoints::broker_direct(),
     ];
     let refs: Vec<&str> = brokers.iter().map(String::as_str).collect();
-    let _ = tenant_cleanup::reset(client, &refs, pool).await;
+    tenant_cleanup::reset(client, &refs, pool)
+        .await
+        .expect("the tier resets to no provisioned tenant");
 }
 
 /// The address PostgreSQL sees `PgBouncer` connect from, read over a pooled

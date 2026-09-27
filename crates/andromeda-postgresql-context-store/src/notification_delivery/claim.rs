@@ -21,7 +21,7 @@ use crate::{
     error::ContextStoreError,
     notification_delivery::{
         branches::{drainable_targets, is_reaped_branch},
-        rows::{ClaimedDelivery, ClaimedDeliveryError, RawClaimedDeliveryRow},
+        rows::{ClaimedDelivery, RawClaimedDeliveryRow, UnreadableClaimedDelivery},
     },
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
@@ -78,14 +78,14 @@ const DELIVERY_CLAIM: StatementName = StatementName("notification-delivery-claim
 /// Returns [`ContextStoreError::Database`] when a statement fails for a reason
 /// other than a reaped branch, or [`ContextStoreError::Internal`] when the
 /// branch enumeration cannot read back a stored Snapshot identity. A single
-/// unreadable row is reported inside the returned vector rather than as a
-/// failure of the claim.
+/// unreadable row is reported inside the returned vector, still leased and
+/// naming its branch and key, rather than as a failure of the claim.
 pub async fn claim_due(
     pool: &PgPool,
     worker_id: LeaseHolder,
     lease: LeaseTerm,
     batch_size: i32,
-) -> Result<Vec<Result<ClaimedDelivery, ClaimedDeliveryError>>, ContextStoreError> {
+) -> Result<Vec<Result<ClaimedDelivery, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
     let mut results = Vec::new();
     let mut remaining = batch_size;
     for target in drainable_targets(pool).await? {
@@ -111,7 +111,7 @@ async fn claim_branch(
     worker_id: LeaseHolder,
     lease: LeaseTerm,
     batch_size: i32,
-) -> Result<Vec<Result<ClaimedDelivery, ClaimedDeliveryError>>, ContextStoreError> {
+) -> Result<Vec<Result<ClaimedDelivery, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
     let mut tx = pool.begin().await?;
     if let Some(snapshot) = target.snapshot()
         && hold_snapshot_record(&mut tx, snapshot).await? == SnapshotRecord::Reaped
@@ -134,7 +134,7 @@ async fn claim_branch(
     let rows: Vec<RawClaimedDeliveryRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
 
     tx.commit().await?;
-    Ok(rows.into_iter().map(|row| ClaimedDelivery::from_row(row, target.clone())).collect())
+    Ok(rows.into_iter().map(|row| ClaimedDelivery::from_row(row, target)).collect())
 }
 
 /// Whether a Snapshot's control record still existed when a claim locked it.

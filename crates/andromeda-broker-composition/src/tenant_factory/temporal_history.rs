@@ -5,7 +5,6 @@ use crate::tenant_factory::{
     error::TenantAssemblyError,
     temporal_intent_task::{TemporalIntentRegistration, register_temporal_intent_drain},
 };
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_atomic_write::{history_mode::TemporalHistoryCommitMode, intent_store::PostgresTemporalIntentStore};
 use andromeda_postgresql_temporal_store::{intent_sink::PostgresTemporalHistorySink, recorder::TemporalRecorder, repo::TemporalRepository};
 use andromeda_task_runtime::supervisor::TaskSupervisor;
@@ -60,13 +59,11 @@ pub(super) fn compose_temporal_history(
     repository: &Arc<TemporalRepository>,
     config: &TemporalConfig,
     supervisor: &TaskSupervisor,
-    live_target: &ContextTarget,
     pacer: &Arc<BackgroundPacer>,
 ) -> Result<TemporalComposition, TenantAssemblyError> {
     let intent_store = Arc::new(PostgresTemporalIntentStore::new(pool));
     let sink = Arc::new(PostgresTemporalHistorySink::new(Arc::clone(repository))); // clone: the sink and the read path share one repository.
     let TemporalIntentRegistration { publisher, mutation_barrier } = register_temporal_intent_drain(
-        live_target.clone(), // clone: the resident deferred-history drain serves the live branch.
         config,
         supervisor,
         Arc::clone(&intent_store) as Arc<dyn TemporalIntentQueue>, // clone: one store answers both intent ports.
@@ -82,7 +79,12 @@ pub(super) fn compose_temporal_history(
             Arc::clone(repository) as Arc<dyn TemporalHistoryReader>, // clone: the repository answers reads directly.
         ),
         TemporalAppendMode::Deferred => (
-            TemporalHistoryCommitMode::Deferred { publisher },
+            // A Snapshot branch's history is still recorded in the write's
+            // transaction: nothing drains a branch's intent queue.
+            TemporalHistoryCommitMode::Deferred {
+                publisher,
+                recorder: Arc::new(TemporalRecorder::new(Arc::clone(repository))), // clone: the recorder and the read path share one repository.
+            },
             Arc::new(PendingTemporalHistoryOverlay::new(
                 Arc::clone(repository) as Arc<dyn TemporalHistoryReader>, // clone: the overlay reads through the repository.
                 intent_store as Arc<dyn PendingTemporalIntentReader>,

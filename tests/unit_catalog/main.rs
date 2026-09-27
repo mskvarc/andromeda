@@ -3,8 +3,8 @@
 //! The redesign moved `unitCode` (clause 5.2.5) out of every attribute
 //! instance's metadata document and into a two-byte identity resolved through
 //! the append-only catalogue `crates/andromeda-unit-catalog` compiles in and
-//! migration `0009_unit_codes_seed` loads. These tests are the verification
-//! matrix rows that can only be answered against a live broker and a migrated
+//! migration `0009_unit_codes_seed` loads. These tests cover the
+//! properties that can only be answered against a live broker and a migrated
 //! tenant: that the compiled catalogue and the seeded rows are the same
 //! assignment, that an unusable code is refused on both the API and the bypass
 //! path, that the member is reconstructed byte for byte on the way out, that

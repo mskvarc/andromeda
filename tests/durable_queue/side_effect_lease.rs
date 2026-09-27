@@ -1,26 +1,28 @@
 //! Exclusive ownership of a due side-effect job.
 //!
-//! Verification-matrix row "Side-effect exclusive lease": two workers run
-//! against one due row, the owner crashes, and the clock advances past
-//! `lease_until`. Only one initial lease exists, the row is reclaimed after
-//! expiry, acknowledgement removes it once, a payload that cannot be decoded
+//! Side-effect exclusive lease: two workers run against one due row, the owner
+//! crashes, and the clock advances past `lease_until`. Only one initial lease
+//! exists, the row is reclaimed after expiry, only the current holder's
+//! settlement removes it, and only once, a release by the worker whose lease
+//! passed on changes nothing, a payload that cannot be decoded
 //! reaches a coherent dead state, and a dead row is reaped once its retention
 //! has passed while a live row is not.
 
 use crate::{
-    queue_database::{live_target, queue_database},
+    queue_database::{enqueue_side_effect, queue_database, settle_side_effect},
     queue_workers::side_effect_worker,
 };
 use andromeda_context_commit::{
+    job_lease::JobLease,
     lease_acknowledgement::LeaseAcknowledgement,
     side_effect_job_id::SideEffectJobId,
     write_id::WriteId,
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
-use andromeda_entity::side_effect_queue::SideEffectQueue;
+use andromeda_entity::side_effect_queue::{DeadLetterAttempt, SideEffectQueue};
 use andromeda_postgresql_context_store::pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository};
-use chrono::{Duration as RetentionDuration, Utc};
+use chrono::{DateTime, Duration as RetentionDuration, Utc};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use serial_test::serial;
@@ -33,21 +35,6 @@ const BATCH_SIZE: i32 = 10;
 
 /// The shortest lease these verifications can wait out.
 const LEASE_SECONDS: i32 = 1;
-
-/// Enqueue one decodable job through the committer's own enqueue statement.
-async fn enqueue(pool: &PgPool) -> WriteId {
-    let record = WriteRecord::mint(Utc::now());
-    let payload = PersistedBatchSideEffectJob {
-        temporal_entities: Vec::new(),
-        change_events: Vec::new(),
-    };
-    let mut transaction = pool.begin().await.expect("enqueue transaction");
-    PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &live_target(), &record, WriteOrdinal::at(0), &payload)
-        .await
-        .expect("enqueue the job");
-    transaction.commit().await.expect("commit the enqueue");
-    record.write_id()
-}
 
 /// Identity of the single job the queue holds.
 async fn queued_job(pool: &PgPool) -> SideEffectJobId {
@@ -62,7 +49,7 @@ async fn queued_job(pool: &PgPool) -> SideEffectJobId {
 #[serial(durable_queue)]
 async fn durable_queue_a_due_side_effect_is_leased_once_and_reclaimed_after_its_lease_expires() {
     let pool = queue_database().await;
-    let write_id = enqueue(&pool).await;
+    let write_id = enqueue_side_effect(&pool).await;
     let repository = PendingSideEffectsRepository::new(&pool);
     let owner = side_effect_worker();
     let contender = side_effect_worker();
@@ -81,16 +68,26 @@ async fn durable_queue_a_due_side_effect_is_leased_once_and_reclaimed_after_its_
     let reclaimed = repository.lease_batch(&contender, BATCH_SIZE, LEASE_SECONDS).await.expect("reclaim");
     assert_eq!(reclaimed.len(), 1, "an expired lease makes the job claimable again");
     assert_eq!(reclaimed.first().expect("the reclaimed job").id, job);
+    assert_eq!(
+        reclaimed.first().expect("the reclaimed job").attempts,
+        1,
+        "the reclaim counts the attempt whose lease lapsed"
+    );
 
     assert_eq!(
-        repository.ack(job, &contender).await.expect("first acknowledgement"),
+        settle_side_effect(&pool, JobLease { job, holder: owner }).await,
+        LeaseAcknowledgement::Lost,
+        "the crashed owner's lease passed to the contender, so it can no longer settle the job"
+    );
+    assert_eq!(
+        settle_side_effect(&pool, JobLease { job, holder: contender }).await,
         LeaseAcknowledgement::Applied,
         "the job existed, was leased by the contender, and was removed"
     );
     assert_eq!(
-        repository.ack(job, &contender).await.expect("second acknowledgement"),
+        settle_side_effect(&pool, JobLease { job, holder: contender }).await,
         LeaseAcknowledgement::Lost,
-        "acknowledging a removed job reaches no row a second time"
+        "settling a removed job reaches no row a second time"
     );
 
     let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_side_effects WHERE write_id = $1")
@@ -99,6 +96,64 @@ async fn durable_queue_a_due_side_effect_is_leased_once_and_reclaimed_after_its_
         .await
         .expect("queue state after acknowledgement");
     assert_eq!(remaining, 0, "an acknowledged job leaves the queue");
+    pool.close().await;
+}
+
+/// The claim state of the job `write_id` queued: its claimant, attempts,
+/// recorded failure, when it is next due, and whether it is dead-lettered.
+async fn job_state(pool: &PgPool, write_id: WriteId) -> (Option<uuid::Uuid>, i32, Option<String>, DateTime<Utc>, bool) {
+    sqlx::query_as("SELECT claimed_by, attempt_count, last_error, next_attempt_at, exhausted_at IS NOT NULL FROM pending_side_effects WHERE write_id = $1")
+        .bind(write_id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .expect("job state")
+}
+
+/// Releases are guarded on the job's claimant, not on the lease's end: once
+/// another worker has reclaimed the lapsed job, the original worker is no
+/// longer its claimant, so neither its retry release nor its dead-lettering
+/// lands, and the reclaiming worker's claim is left exactly as it was.
+#[tokio::test]
+#[serial(durable_queue)]
+async fn durable_queue_a_release_by_a_worker_whose_lapsed_job_was_reclaimed_is_refused_and_changes_nothing() {
+    let pool = queue_database().await;
+    let write_id = enqueue_side_effect(&pool).await;
+    let repository = PendingSideEffectsRepository::new(&pool);
+    let owner = side_effect_worker();
+    let contender = side_effect_worker();
+    let leased = repository.lease_batch(&owner, BATCH_SIZE, LEASE_SECONDS).await.expect("first lease");
+    let job = leased.first().expect("the due job is leased").id;
+    sleep(Duration::from_millis(1_500)).await;
+    let reclaimed = repository.lease_batch(&contender, BATCH_SIZE, LEASE_SECONDS * 30).await.expect("reclaim");
+    assert_eq!(reclaimed.len(), 1, "the lapsed job is reclaimed");
+    let reclaimed_state = job_state(&pool, write_id).await;
+
+    assert_eq!(
+        repository
+            .nack(job, &owner, "the original worker's replay failed", Utc::now() + RetentionDuration::minutes(5))
+            .await
+            .expect("the retry release runs"),
+        LeaseAcknowledgement::Lost,
+        "the original worker no longer holds the job it would release"
+    );
+    assert_eq!(
+        repository
+            .mark_dead(job, &owner, "the original worker gave up", DeadLetterAttempt::Failed)
+            .await
+            .expect("the dead-lettering runs"),
+        LeaseAcknowledgement::Lost,
+        "nor may it dead-letter it"
+    );
+    assert_eq!(
+        job_state(&pool, write_id).await,
+        reclaimed_state,
+        "the refused releases left the reclaiming worker's claim untouched"
+    );
+    assert_eq!(
+        reclaimed_state.0,
+        Some(contender.as_uuid()),
+        "the job stays claimed by the worker that reclaimed it"
+    );
     pool.close().await;
 }
 
@@ -113,7 +168,7 @@ async fn durable_queue_a_replayed_commit_enqueues_no_second_side_effect_job() {
     };
     for _ in 0..2 {
         let mut transaction = pool.begin().await.expect("enqueue transaction");
-        PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &live_target(), &record, WriteOrdinal::at(0), &payload)
+        PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &record, WriteOrdinal::at(0), &payload)
             .await
             .expect("enqueue under the same write identity");
         transaction.commit().await.expect("commit the enqueue");
@@ -183,7 +238,7 @@ async fn durable_queue_the_dead_letter_reap_removes_only_dead_jobs_older_than_th
         .execute(&pool)
         .await
         .expect("seed an undecodable job");
-    enqueue(&pool).await;
+    enqueue_side_effect(&pool).await;
 
     let repository = PendingSideEffectsRepository::new(&pool);
     // Leasing retires the undecodable job; the decodable one is handed out and

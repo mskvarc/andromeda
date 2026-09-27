@@ -8,7 +8,8 @@ use crate::{
     deferred_history,
     entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
     history,
-    history_mode::TemporalHistoryCommitMode,
+    history_mode::{HistoryPlacement, TemporalHistoryCommitMode},
+    job_settlement::settle,
     name_resolution::{ResolvedWriteNames, resolve_attribute_names, resolve_write_names},
     projection,
 };
@@ -19,6 +20,7 @@ use andromeda_context_commit::{
     committer::{CommitFuture, ContextCommitter, consequences_land, validate_submission},
     deleted_entity::DeletedEntity,
     error::CommitError,
+    job_lease::JobLease,
     write_ordinal::WriteOrdinal,
     write_outcome::WriteOutcome,
     write_record::WriteRecord,
@@ -280,25 +282,31 @@ impl PostgresAtomicCommitter {
     /// `record`, and draws its ordinals from the one running counter that
     /// starts at `base`. `commit` mints a fresh record and starts that counter
     /// at zero; `commit_replayed` reuses a durably stored record and resumes
-    /// the counter at its stored `base_ordinal`. A side-effect job retried
-    /// after a crash therefore reproduces exactly the identity and ordinals its
-    /// first attempt would have produced, so the replay's rows collide with the
-    /// first attempt's on their row-level `ON CONFLICT ... DO NOTHING`
-    /// constraints instead of duplicating them.
+    /// the counter at its stored `base_ordinal`, so a replay's consequences
+    /// belong to the write that deferred them and follow the ones that write
+    /// already committed.
     ///
     /// One call is one transaction. A transaction the datastore rolls back as
     /// a deadlock or serialization victim ends in
     /// [`CommitError::TransactionContended`] having left nothing behind, which
     /// is what lets [`rerun_while_contended`] run the identical call again
     /// under the same record and base.
+    ///
+    /// A replay also removes the job it `settles` in that one transaction, as
+    /// the transaction's first statement and under the job's lease (see
+    /// [`settle`]): a replay whose lease had already lapsed ends in
+    /// [`CommitError::ReplayLeaseLost`] before it wrote anything, and one that
+    /// held it keeps the job row-locked until it commits, however long the
+    /// replay runs.
     async fn commit_under(
         &self,
         target: &ContextTarget,
         record: WriteRecord,
         base: WriteOrdinal,
         writes: &[AtomicWrite],
+        settles: Option<JobLease>,
     ) -> Result<Vec<WriteOutcome>, CommitError> {
-        if writes.is_empty() {
+        if writes.is_empty() && settles.is_none() {
             return Ok(Vec::new());
         }
         validate_submission(writes)?;
@@ -306,7 +314,14 @@ impl PostgresAtomicCommitter {
         // Every fallible phase below borrows this owned transaction. SQLx
         // rolls it back when an early `?` drops it, so no entity mutation
         // can survive a failed history, projection, notification or side-effect
-        // write.
+        // write, and a settled job is restored with its lease.
+        if let Some(lease) = settles {
+            settle(&mut tx, lease).await?;
+        }
+        if writes.is_empty() {
+            tx.commit().await.map_err(database)?;
+            return Ok(Vec::new());
+        }
         let EntityMutations { outcomes, keys } = self.apply_entities(&mut tx, target, writes).await?;
         let landed: Vec<&AtomicWrite> = writes
             .iter()
@@ -318,9 +333,10 @@ impl PostgresAtomicCommitter {
         // both the history phase and the projection phase, so the two can
         // never disagree about what the write said.
         let (intents, next) = interpret(&landed, &record, base)?;
-        match &self.history_mode {
-            TemporalHistoryCommitMode::Native { recorder } => history::apply(recorder, &mut tx, target, &record, &intents).await?,
-            TemporalHistoryCommitMode::Deferred { .. } => deferred_history::apply(&mut tx, target, &intents).await?,
+        let placement = self.history_mode.placement(target);
+        match placement {
+            HistoryPlacement::Inline(recorder) => history::apply(recorder, &mut tx, target, &record, &intents).await?,
+            HistoryPlacement::Queued(_) => deferred_history::apply(&mut tx, &intents).await?,
         }
         // Minted from the interpreted intents so the projection references
         // only keys this transaction holds.
@@ -332,7 +348,7 @@ impl PostgresAtomicCommitter {
         tx.commit().await.map_err(database)?;
         tracing::debug!(write_id = %record.write_id(), writes = writes.len(), "atomic context write committed");
         if !intents.is_empty()
-            && let TemporalHistoryCommitMode::Deferred { publisher } = &self.history_mode
+            && let HistoryPlacement::Queued(publisher) = placement
         {
             publisher.intents_available();
         }
@@ -353,13 +369,13 @@ impl ContextCommitter for PostgresAtomicCommitter {
         let target = target.clone();
         Box::pin(async move {
             let record = WriteRecord::mint(Utc::now());
-            rerun_while_contended(|| self.commit_under(&target, record, WriteOrdinal::at(0), &writes)).await
+            rerun_while_contended(|| self.commit_under(&target, record, WriteOrdinal::at(0), &writes, None)).await
         })
     }
 
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
-        Box::pin(async move { rerun_while_contended(|| self.commit_under(&target, replay.record, replay.base_ordinal, &writes)).await })
+        Box::pin(async move { rerun_while_contended(|| self.commit_under(&target, replay.record, replay.base_ordinal, &writes, Some(replay.lease))).await })
     }
 }
 

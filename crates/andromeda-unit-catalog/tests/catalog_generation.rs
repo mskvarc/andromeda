@@ -273,7 +273,8 @@ fn a_common_code_the_catalog_never_registered_fails_to_encode() -> Result<(), Ca
     Ok(())
 }
 
-/// Verification matrix row "Unit catalog completeness": the reverse direction.
+/// Unit catalog completeness in the reverse direction: every identity decodes
+/// back to its own code.
 ///
 /// Encoding is checked by the generation tests above; decoding is what a read
 /// path does, once per unit-bearing attribute, and it has to land back on the
@@ -299,7 +300,7 @@ fn every_identity_decodes_back_to_the_code_it_was_assigned_for() -> Result<(), C
     Ok(())
 }
 
-/// Verification matrix row "Unit ID stability".
+/// Unit ID stability: upgrading to a newer revision keeps every identity.
 ///
 /// A newer source revision is modelled as a fixture catalog upgraded against a
 /// code list that keeps two codes, retires one and adds one: the surviving

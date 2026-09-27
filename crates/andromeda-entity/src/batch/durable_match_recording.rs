@@ -11,18 +11,19 @@
 use crate::{
     admission_fixture::admitted_batch,
     batch::UpsertPolicy,
+    building_subscription_fixture::subscription_key,
     notification_recording_harness::{
         ACCURACY_IRI,
         CATEGORY_IRI,
         ENTITY_ID,
         attribute_name,
         entity_uri,
+        live_recording_service,
         live_target,
         recording_service,
         single_recorded_write,
-        subscription_key,
     },
-    side_effect::BatchSideEffectMode,
+    side_effect::SideEffectPlacement,
     write_kind::{BatchCreate, BatchMerge, BatchUpdate, BatchUpsert},
 };
 use andromeda_context_commit::atomic_write::AtomicWrite;
@@ -68,7 +69,7 @@ async fn batch_create_records_an_entity_created_match_inline() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_batch(&service, BatchCreate, vec![building_entity("office")], &ContextSpec::core_only()).await;
     service
-        .batch_create(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+        .batch_create(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
         .await
         .expect("the batch create lands");
 
@@ -87,29 +88,45 @@ async fn batch_create_records_an_entity_created_match_inline() {
 }
 
 #[tokio::test]
-async fn batch_create_records_the_match_and_defers_the_event_when_enqueued() {
+async fn batch_create_records_the_match_and_defers_no_event_when_enqueued() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_batch(&service, BatchCreate, vec![building_entity("office")], &ContextSpec::core_only()).await;
     service
-        .batch_create(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Enqueue)
+        .batch_create(SideEffectPlacement::DeferredOnLive, admitted, &ContextSpec::core_only())
         .await
         .expect("the batch create lands");
 
     let write = single_recorded_write(&recorded);
     // The durable match commits with the entity row even on the asynchronous
-    // path; only the in-process event is deferred to the worker.
+    // path, so the deferred job owes no notification: carrying the change as
+    // well would notify it again when a live-delivery broker drains the job.
     assert_eq!(
         match_triggers(&write),
         vec![NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated]
     );
     let job = write.side_effects.as_ref().expect("an enqueued write carries a deferred job");
-    assert_eq!(
-        job.change_events.len(),
-        2,
-        "the lifecycle and attribute-created events are deferred to the worker"
+    assert_eq!(job.temporal_entities.len(), 1, "the observation is still deferred to the worker");
+    assert!(job.change_events.is_empty(), "the notifications were queued at commit");
+}
+
+#[tokio::test]
+async fn a_live_delivery_batch_create_defers_its_changes_with_the_resulting_entity_when_enqueued() {
+    let (service, recorded) = live_recording_service();
+    let admitted = admitted_batch(&service, BatchCreate, vec![building_entity("office")], &ContextSpec::core_only()).await;
+    service
+        .batch_create(SideEffectPlacement::DeferredOnLive, admitted, &ContextSpec::core_only())
+        .await
+        .expect("the batch create lands");
+
+    let write = single_recorded_write(&recorded);
+    assert!(write.subscription_matches.is_empty(), "a live-delivery broker records no durable match");
+    let job = write.side_effects.as_ref().expect("an enqueued write carries a deferred job");
+    let deferred: Vec<NotificationTrigger> = job.change_events.iter().map(|event| event.trigger_reason).collect();
+    assert_eq!(deferred, vec![NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated]);
+    assert!(
+        job.change_events.iter().all(|event| event.current_payload.is_some()),
+        "each owed change carries the entity the write left behind"
     );
-    assert_eq!(job.change_events[0].trigger_reason, NotificationTrigger::EntityCreated);
-    assert_eq!(job.change_events[1].trigger_reason, NotificationTrigger::AttributeCreated);
 }
 
 #[tokio::test]
@@ -118,11 +135,10 @@ async fn batch_update_records_an_attribute_updated_match() {
     let admitted = admitted_batch(&service, BatchUpdate, vec![building_entity("retail")], &ContextSpec::core_only()).await;
     service
         .batch_update(
-            &live_target(),
+            SideEffectPlacement::Inline(&live_target()),
             admitted,
             &ContextSpec::core_only(),
             OverwritePolicy::Overwrite,
-            BatchSideEffectMode::Inline,
         )
         .await
         .expect("the batch update lands");
@@ -138,7 +154,7 @@ async fn batch_merge_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_batch(&service, BatchMerge, vec![building_entity("retail")], &ContextSpec::core_only()).await;
     service
-        .batch_merge(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+        .batch_merge(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
         .await
         .expect("the batch merge lands");
 
@@ -157,7 +173,7 @@ async fn batch_upsert_replace_of_an_existing_entity_records_an_attribute_updated
     )
     .await;
     service
-        .batch_upsert(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
         .await
         .expect("the batch upsert lands");
 
@@ -176,7 +192,7 @@ async fn batch_upsert_update_of_an_existing_entity_records_an_attribute_updated_
     )
     .await;
     service
-        .batch_upsert(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
         .await
         .expect("the batch upsert lands");
 
@@ -198,7 +214,7 @@ async fn batch_upsert_update_replaces_the_whole_instance_dropping_a_subattribute
     )
     .await;
     service
-        .batch_upsert(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
         .await
         .expect("the batch upsert lands");
 
@@ -216,7 +232,7 @@ async fn batch_upsert_update_replaces_the_whole_instance_dropping_a_subattribute
 async fn batch_delete_records_attribute_deleted_and_entity_deleted_matches() {
     let (service, recorded) = recording_service().await;
     service
-        .batch_delete(&live_target(), &[entity_uri()], BatchSideEffectMode::Inline)
+        .batch_delete(SideEffectPlacement::Inline(&live_target()), &[entity_uri()])
         .await
         .expect("the batch delete completes");
 
@@ -232,10 +248,10 @@ async fn batch_delete_records_attribute_deleted_and_entity_deleted_matches() {
 }
 
 #[tokio::test]
-async fn batch_delete_records_matches_and_defers_events_when_enqueued() {
+async fn batch_delete_records_matches_and_defers_nothing_when_enqueued() {
     let (service, recorded) = recording_service().await;
     service
-        .batch_delete(&live_target(), &[entity_uri()], BatchSideEffectMode::Enqueue)
+        .batch_delete(SideEffectPlacement::DeferredOnLive, &[entity_uri()])
         .await
         .expect("the batch delete completes");
 
@@ -245,7 +261,26 @@ async fn batch_delete_records_matches_and_defers_events_when_enqueued() {
         vec![NotificationTrigger::AttributeDeleted, NotificationTrigger::EntityDeleted],
         "the durable matches commit with the delete even on the asynchronous path"
     );
+    assert!(write.side_effects.is_none(), "a delete whose notifications are queued at commit owes no job");
+}
+
+#[tokio::test]
+async fn a_live_delivery_batch_delete_defers_its_events_when_enqueued() {
+    let (service, recorded) = live_recording_service();
+    service
+        .batch_delete(SideEffectPlacement::DeferredOnLive, &[entity_uri()])
+        .await
+        .expect("the batch delete completes");
+
+    let write = single_recorded_write(&recorded);
+    assert!(write.subscription_matches.is_empty(), "a live-delivery broker records no durable match");
     let job = write.side_effects.as_ref().expect("an enqueued delete carries a deferred job");
     let deferred: Vec<NotificationTrigger> = job.change_events.iter().map(|event| event.trigger_reason).collect();
     assert_eq!(deferred, vec![NotificationTrigger::AttributeDeleted, NotificationTrigger::EntityDeleted]);
+    assert!(
+        job.change_events
+            .iter()
+            .all(|event| event.entity_snapshot.is_some() && event.sys_attrs_snapshot.is_some()),
+        "a deferred deletion carries what was removed and its system attributes"
+    );
 }

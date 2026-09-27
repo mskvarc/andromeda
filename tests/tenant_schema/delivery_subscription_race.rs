@@ -1,5 +1,5 @@
-//! Verification matrix row "Delivery insert against a concurrent subscription
-//! deletion".
+//! Delivery insert against a concurrent subscription deletion: the insert waits
+//! the deletion out instead of failing the write.
 //!
 //! A write enqueues the notification deliveries it owes in its own
 //! transaction, joined against `subscriptions` so a subscription deleted since

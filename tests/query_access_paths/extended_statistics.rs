@@ -1,4 +1,4 @@
-//! Verification-matrix row "Extended statistics".
+//! Extended statistics: correlated columns carry statistics the planner uses.
 //!
 //! `attribute_name_key`, `value_kind` and `entity_key` are strongly correlated,
 //! and the planner assumes independence unless told otherwise. The declared

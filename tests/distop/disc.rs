@@ -9,8 +9,7 @@
 //! Context Source Subscription notifications are captured with the in-process
 //! [`crate::notification_adapter::NotificationAdapter`], whose endpoint the
 //! subscription targets, so a create/update/delete of a matching registration
-//! drives an assertable `ContextSourceNotification`. Concrete designs are in
-//! `docs/distributed-tests/disc.md`.
+//! drives an assertable `ContextSourceNotification`.
 
 /// A syntactically valid peer endpoint for registrations whose discovery and
 /// matching behaviour is under test on a single broker. Discovery and the
@@ -19,6 +18,7 @@ pub const PEER_ENDPOINT: &str = "http://broker-b:1056/ngsi-ld/v1";
 
 mod csr_discovery;
 mod csr_notification_delivery;
+mod csr_notification_exactly_once;
 mod csr_notification_periodic;
 mod csr_notification_trigger;
 mod csr_subscription;

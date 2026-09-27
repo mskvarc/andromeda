@@ -102,9 +102,9 @@ pub(crate) async fn batch_update(
 
     // Clause 5.6.9.4: the local phase updates what proxied registrations left.
     local_remainder(&mut admitted, &forwarded);
-    let mode = service.effective_side_effect_mode(async_preference(prefer), admitted.len());
+    let placement = service.side_effect_placement(&target, async_preference(prefer), admitted.len());
     let batch = service
-        .batch_update(&target, admitted, &context, overwrite, mode)
+        .batch_update(placement, admitted, &context, overwrite)
         .await
         .with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
@@ -112,8 +112,8 @@ pub(crate) async fn batch_update(
     merge_forwarded(&mut result, &forwarded);
 
     if result.errors.is_empty() {
-        Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
+        Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), placement))
     } else {
-        multi_status_response(&result, &context, &uri, mode)
+        multi_status_response(&result, &context, &uri, placement)
     }
 }

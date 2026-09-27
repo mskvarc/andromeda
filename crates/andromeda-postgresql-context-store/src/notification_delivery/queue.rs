@@ -5,10 +5,16 @@
 //! vocabularies meet: the statements below it know nothing of the port, and the
 //! delivery worker above it knows nothing of the join.
 
-use crate::notification_delivery::{acknowledge, claim, cleanup, rows::ClaimedDelivery};
+use crate::notification_delivery::{
+    acknowledge,
+    claim,
+    cleanup,
+    rows::{ClaimedDelivery, UnreadableClaimedDelivery},
+};
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{
+    delivery_claim::{DeliveryClaim, UnreadableDelivery},
     delivery_entry::{DeliveryEntry, DeliveryKey},
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     delivery_store::DeliveryStore,
@@ -18,8 +24,6 @@ use andromeda_notification::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
-use std::fmt::Display;
-use tracing::error;
 
 /// One tenant's notification delivery queue.
 #[derive(Debug)]
@@ -38,11 +42,11 @@ impl NotificationDeliveryQueue {
 
 #[async_trait]
 impl DeliveryStore for NotificationDeliveryQueue {
-    async fn claim_pending(&self, worker_id: &LeaseHolder, lease: LeaseTerm, batch_size: i32) -> Result<Vec<DeliveryEntry>, NotificationError> {
+    async fn claim_pending(&self, worker_id: &LeaseHolder, lease: LeaseTerm, batch_size: i32) -> Result<Vec<DeliveryClaim>, NotificationError> {
         let claimed = claim::claim_due(&self.pool, *worker_id, lease, batch_size)
             .await
             .map_err(|error| NotificationError::persistence(error.to_string()))?;
-        Ok(claimed.into_iter().filter_map(readable).collect())
+        Ok(claimed.into_iter().map(delivery_claim).collect())
     }
 
     async fn mark_delivered(&self, key: DeliveryKey, worker_id: &LeaseHolder, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
@@ -100,18 +104,23 @@ const fn held(outcome: LeaseAcknowledgement, key: DeliveryKey, worker_id: &Lease
     }
 }
 
-/// Keep a validated delivery and log an unreadable one without blocking its peers.
+/// Hand a claimed row to the worker as the delivery it reads back as, or as the
+/// leased row it could not be read back as.
 ///
-/// The delivery stays claimed until its lease expires and is then retried,
-/// which is the same treatment one that failed in flight receives: nothing here
-/// can repair a stored value, and refusing the whole batch over one of them
-/// would stall every other subscriber.
-fn readable(claimed: Result<ClaimedDelivery, impl Display>) -> Option<DeliveryEntry> {
+/// Nothing here can repair a stored value, and refusing the whole batch over
+/// one of them would stall every other subscriber; the worker acknowledges the
+/// unreadable row instead, so it leaves the claimable set rather than being
+/// claimed again at every lease expiry.
+fn delivery_claim(claimed: Result<ClaimedDelivery, Box<UnreadableClaimedDelivery>>) -> DeliveryClaim {
     match claimed {
-        Ok(delivery) => Some(entry(delivery)),
-        Err(error) => {
-            error!(error = %error, event = "notification_delivery_unreadable");
-            None
+        Ok(delivery) => DeliveryClaim::Readable(Box::new(entry(delivery))),
+        Err(unreadable) => {
+            let diagnostic = unreadable.to_string();
+            DeliveryClaim::Unreadable(UnreadableDelivery {
+                target: unreadable.target,
+                key: unreadable.delivery_key,
+                diagnostic,
+            })
         }
     }
 }
@@ -120,7 +129,7 @@ fn readable(claimed: Result<ClaimedDelivery, impl Display>) -> Option<DeliveryEn
 fn entry(delivery: ClaimedDelivery) -> DeliveryEntry {
     DeliveryEntry::builder()
         .target(delivery.target)
-        .key(DeliveryKey::from(delivery.delivery_key))
+        .key(delivery.delivery_key)
         .subscription_id(delivery.subscription_id)
         .attempt_count(delivery.attempt_count)
         .next_attempt_at(delivery.next_attempt_at)
@@ -144,20 +153,25 @@ fn entry(delivery: ClaimedDelivery) -> DeliveryEntry {
 #[cfg(test)]
 mod tests {
     use crate::notification_delivery::{
-        queue::{entry, held},
-        rows::ClaimedDelivery,
+        queue::{delivery_claim, entry, held},
+        rows::{ClaimedDelivery, ClaimedDeliveryError, UnreadableClaimedDelivery},
     };
     use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-    use andromeda_notification::{delivery_entry::DeliveryKey, delivery_lease::DeliveryLeaseError, notification_event::NotificationEventKey};
+    use andromeda_notification::{
+        delivery_claim::DeliveryClaim,
+        delivery_entry::DeliveryKey,
+        delivery_lease::DeliveryLeaseError,
+        notification_event::NotificationEventKey,
+    };
     use chrono::Utc;
     use uuid::Uuid;
 
     fn delivery() -> ClaimedDelivery {
         ClaimedDelivery {
             target: ContextTarget::Live,
-            delivery_key: 11,
+            delivery_key: DeliveryKey::from(11_i64),
             subscription_id: "urn:ngsi-ld:Subscription:1".parse().expect("a valid subscription URI"),
             attempt_count: 1,
             next_attempt_at: Utc::now(),
@@ -196,5 +210,35 @@ mod tests {
         pretty_assertions::assert_eq!(entry.event.key, NotificationEventKey::from(3_i64));
         pretty_assertions::assert_eq!(entry.event.event_ordinal, WriteOrdinal::at(2));
         pretty_assertions::assert_eq!(entry.event.trigger, NotificationTrigger::EntityCreated);
+    }
+
+    /// An unreadable row is still leased to the worker, so it reaches the
+    /// worker with the key, branch and reason its acknowledgement records
+    /// rather than being dropped from the claim.
+    #[test]
+    fn an_unreadable_claimed_row_reaches_the_worker_to_be_acknowledged() {
+        let unreadable = Box::new(UnreadableClaimedDelivery {
+            target: ContextTarget::Live,
+            delivery_key: DeliveryKey::from(11_i64),
+            reason: ClaimedDeliveryError::InvalidEventOrdinal {
+                source: WriteOrdinal::try_from(-1).expect_err("a negative ordinal"),
+            },
+        });
+        match delivery_claim(Err(unreadable)) {
+            DeliveryClaim::Unreadable(claim) => {
+                pretty_assertions::assert_eq!(claim.key, DeliveryKey::from(11_i64));
+                pretty_assertions::assert_eq!(claim.target, ContextTarget::Live);
+                pretty_assertions::assert_eq!(claim.diagnostic, "notification delivery 11 carries an unreadable event ordinal");
+            }
+            DeliveryClaim::Readable(entry) => panic!("an unreadable row must not be handed over as deliverable: {entry:?}"),
+        }
+    }
+
+    #[test]
+    fn a_readable_claimed_row_reaches_the_worker_as_its_delivery() {
+        match delivery_claim(Ok(delivery())) {
+            DeliveryClaim::Readable(entry) => pretty_assertions::assert_eq!(entry.key, DeliveryKey::from(11_i64)),
+            DeliveryClaim::Unreadable(claim) => panic!("a readable row must be deliverable: {claim:?}"),
+        }
     }
 }

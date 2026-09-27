@@ -9,12 +9,20 @@ mod csource_delivery;
 pub mod csource_interval;
 /// The registrations a context source registration subscription selects.
 mod csource_match_set;
+/// What each change-driven context source subscription has been told.
+mod csource_membership;
 /// Context-source event notification evaluation.
 pub mod csource_processor;
+/// The clause 5.3.3 transitions of a context source notification.
+mod csource_transition;
 /// Attempt ceiling after which a notification delivery is dead-lettered.
 pub mod delivery_attempt_ceiling;
 /// Retry wait for a failed notification delivery.
 pub mod delivery_backoff;
+/// What a claim hands the delivery drain for each delivery it leased.
+pub mod delivery_claim;
+/// How many more deliveries one delivery pass may claim.
+mod delivery_claim_budget;
 /// In-flight bound for one notification delivery pass.
 pub mod delivery_concurrency;
 /// Notification delivery runtime configuration.
@@ -37,6 +45,8 @@ pub mod interval;
 mod interval_match;
 /// The immutable notification event a write produces.
 pub mod notification_event;
+/// The registrations each context source subscription was notified of.
+pub mod notified_registration_store;
 /// Entity event notification evaluation.
 pub mod processor;
 

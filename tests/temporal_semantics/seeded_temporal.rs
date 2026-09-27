@@ -1,10 +1,11 @@
 //! Seeding temporal rows directly, for populations no API request can produce.
 //!
-//! Two matrix rows need storage the broker never writes today: instances whose
-//! broker-minted identifiers are migrated version-4 UUIDs, and history old
-//! enough for an operator retention horizon to age out. Both are properties of
-//! migrated tenants rather than of new writes, so the fixtures are inserted
-//! through the tenant connection and then read back through the ordinary paths.
+//! Two properties under test need storage the broker never writes today:
+//! instances whose broker-minted identifiers are migrated version-4 UUIDs, and
+//! history old enough for an operator retention horizon to age out. Both are
+//! properties of migrated tenants rather than of new writes, so the fixtures
+//! are inserted through the tenant connection and then read back through the
+//! ordinary paths.
 
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};

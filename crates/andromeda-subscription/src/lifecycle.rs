@@ -4,15 +4,15 @@
 //! `SubscriptionService<V>` owns create, retrieve, list, update, delete and
 //! expiry for entity subscriptions and Context Source Registration
 //! Subscriptions alike; what the two do differently is declared by
-//! `crate::variant::SubscriptionVariant` and nothing else.
+//! `crate::variant::SubscriptionVariant` and nothing else. Retrieval and
+//! listing live in `read`; this module holds the service and its mutations.
 
 use crate::{
-    change::SubscriptionChangeSink,
+    change::{SubscriptionChangeSink, UpsertKind},
     endpoint_admission::{SubscriptionEndpointValidator, validate_endpoint},
     error::SubscriptionError,
     fields,
     forwarding_hook::SubscriptionForwardingHook,
-    keyset_listing::KeysetListing,
     merged_validation::validate_merged_subscription,
     status::compute_updated_status,
     store::{StatusUpdateFields, SubscriptionStore},
@@ -22,7 +22,6 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{
-    compaction::NameCompactor,
     context_spec::ContextSpec,
     context_validation::{validate_context_spec, validate_jsonld_context_value},
     engine::processor::JsonLdEngine,
@@ -31,8 +30,7 @@ use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     uri::{NGSI_LD_URN_NID, Uri},
 };
-use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
-use andromeda_ngsi_ld_query::cursor::PageCursor;
+use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_telemetry::subscription_ops::{self, SubscriptionOperation};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -177,7 +175,8 @@ where
             );
 
             self.repo.create_subscription(target, &id, &fields, status).await?;
-            self.emit_change(self.variant.make_upserted(target.clone(), id.clone())).await; // clone: the caller and change event each own the branch and identifier.
+            self.emit_change(self.variant.make_upserted(target.clone(), id.clone(), UpsertKind::Created))
+                .await; // clone: the caller and change event each own the branch and identifier.
             if self.forwarding_hook.is_some() && target.permits_federation() {
                 let created = self.get(target, &id).await?;
                 self.run_hook(&id, |hook| hook.created(&created, context, encountered_sources)).await;
@@ -187,104 +186,6 @@ where
         .await;
         subscription_ops::record_result(SubscriptionOperation::Create, &result);
         result
-    }
-
-    /// Retrieve a subscription by its identifier.
-    ///
-    /// The store-assigned key is dropped here: every caller of this method
-    /// renders or edits the resource, and the resource is addressed by its URI.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SubscriptionError::NotFound`] when `target` holds no
-    /// subscription under `id`, and [`SubscriptionError::Persistence`] when
-    /// the store cannot be read.
-    pub async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Subscription, SubscriptionError> {
-        self.repo
-            .get(target, id)
-            .await?
-            .map(|stored| stored.subscription)
-            .ok_or_else(|| SubscriptionError::not_found(id))
-    }
-
-    /// Retrieve a subscription and serialize it for an HTTP response.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SubscriptionError::NotFound`] when `target` holds no
-    /// subscription under `id`, [`SubscriptionError::Persistence`] when the
-    /// store cannot be read, and [`SubscriptionError::JsonLd`] when `context`
-    /// cannot be resolved or the resource cannot be compacted against it.
-    pub async fn get_for_response(&self, target: &ContextTarget, id: &Uri, context: &ContextSpec) -> Result<Value, SubscriptionError> {
-        let subscription = self.get(target, id).await?;
-        self.variant
-            .serialize_for_response(&subscription, &NameCompactor::new(&self.engine, context))
-            .await
-    }
-
-    /// List subscriptions with pagination and serialize them for an HTTP response.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SubscriptionError::Persistence`] when the store cannot be
-    /// read, and [`SubscriptionError::JsonLd`] when `context` cannot be
-    /// resolved or one of the listed resources cannot be compacted against it.
-    pub async fn list_for_response(
-        &self,
-        target: &ContextTarget,
-        limit: Option<i64>,
-        offset: Option<i64>,
-        context: &ContextSpec,
-    ) -> Result<(Vec<Value>, i64), SubscriptionError> {
-        let (subscriptions, total) = self.repo.list(target, limit, offset).await?;
-        let names = NameCompactor::new(&self.engine, context);
-        let mut compacted = Vec::with_capacity(subscriptions.len());
-        for subscription in subscriptions {
-            compacted.push(self.variant.serialize_for_response(&subscription, &names).await?);
-        }
-        Ok((compacted, total))
-    }
-
-    /// List subscriptions by keyset for a stable-pagination response
-    /// (clause 5.5.9.1), serializing them and reporting the boundary the
-    /// neighbouring cursors are built from.
-    ///
-    /// `cursor` is the opaque position the request continued from, `None` on the
-    /// first page. The listing comes back in ascending identifier order (the
-    /// store reverses a backward or from-end page), so the first and last
-    /// identifiers are the page's boundary; they are captured before the
-    /// resources are serialized, which drops the typed identifier.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SubscriptionError::Persistence`] when the store cannot be
-    /// read, and [`SubscriptionError::JsonLd`] when `context` cannot be
-    /// resolved or one of the listed resources cannot be compacted against it.
-    pub async fn list_keyset_for_response(
-        &self,
-        target: &ContextTarget,
-        cursor: Option<&PageCursor>,
-        limit: i64,
-        context: &ContextSpec,
-    ) -> Result<KeysetListing, SubscriptionError> {
-        let (subscriptions, total) = self.repo.list_keyset(target, cursor, limit).await?;
-        // clone: the boundary owns the two identifiers the cursor pointers are
-        // built from, while the subscriptions themselves are consumed by the
-        // serialization below.
-        let boundary = subscriptions
-            .first()
-            .map(|subscription| subscription.id.clone())
-            .zip(subscriptions.last().map(|subscription| subscription.id.clone()));
-        let names = NameCompactor::new(&self.engine, context);
-        let mut compacted = Vec::with_capacity(subscriptions.len());
-        for subscription in subscriptions {
-            compacted.push(self.variant.serialize_for_response(&subscription, &names).await?);
-        }
-        Ok(KeysetListing {
-            subscriptions: compacted,
-            total,
-            boundary,
-        })
     }
 
     /// Update an existing subscription with the given fragment payload.
@@ -340,7 +241,8 @@ where
                 return Err(SubscriptionError::not_found(id));
             }
 
-            self.emit_change(self.variant.make_upserted(target.clone(), id.clone())).await; // clone: the change event owns the branch and identifier.
+            self.emit_change(self.variant.make_upserted(target.clone(), id.clone(), UpsertKind::Updated))
+                .await; // clone: the change event owns the branch and identifier.
             if self.forwarding_hook.is_some() && target.permits_federation() {
                 let merged = self.get(target, id).await?;
                 self.run_hook(id, |hook| hook.updated(&merged, context)).await;
@@ -398,5 +300,7 @@ where
     }
 }
 
+/// Retrieving and listing subscriptions.
+mod read;
 #[cfg(test)]
 mod tests;

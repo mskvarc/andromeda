@@ -1,13 +1,13 @@
 //! Retry accounting and the terminal state of a notification delivery.
 //!
-//! Verification-matrix row "Outbox retry/dead state": delivery fails through
+//! Outbox retry/dead state: delivery fails through
 //! the configured attempt limit; attempts increase monotonically, the claim
 //! fields clear on retry, the queue itself never stops offering the row (the
 //! ceiling is the worker's decision, recorded as `exhausted_at`), and the
 //! schema's state constraints hold after every transition.
 
 use crate::{
-    notification_fixture::{delivery_ids, queue_notification},
+    notification_fixture::{delivery_ids, queue_notification, readable},
     queue_database::queue_database,
     queue_workers::{delivery_worker, holding_lease},
 };
@@ -54,7 +54,7 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
     let worker = delivery_worker();
 
     for attempt in 1..=MAX_ATTEMPTS {
-        let claimed = queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim before the limit");
+        let claimed = readable(queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim before the limit"));
         assert_eq!(claimed.len(), 1, "attempt {attempt} must still find the delivery claimable");
         assert_eq!(claimed[0].attempt_count, attempt - 1, "the claim reports the attempts already made");
 
@@ -81,7 +81,7 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
     // The queue does not enforce the ceiling: after five recorded failures the
     // row is still offered, because the ceiling is delivery policy the worker
     // owns and records through a terminal acknowledgement.
-    let still_offered = queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim at the limit");
+    let still_offered = readable(queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim at the limit"));
     assert_eq!(still_offered.len(), 1, "the queue keeps offering a delivery the worker has not exhausted");
     assert_eq!(still_offered[0].attempt_count, MAX_ATTEMPTS);
     queue
@@ -90,7 +90,7 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
         .expect("record the exhausting attempt");
     assert!(is_exhausted(&pool, delivery).await, "the worker's decision is recorded as exhausted_at");
 
-    let exhausted = queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim after exhaustion");
+    let exhausted = readable(queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim after exhaustion"));
     assert!(exhausted.is_empty(), "an exhausted delivery is no longer claimable");
     pool.close().await;
 }
@@ -104,10 +104,12 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
     let queue = NotificationDeliveryQueue::new(&pool);
     let worker = delivery_worker();
 
-    let claimed = queue
-        .claim_pending(&worker, holding_lease(), BATCH_SIZE)
-        .await
-        .expect("claim before the terminal failure");
+    let claimed = readable(
+        queue
+            .claim_pending(&worker, holding_lease(), BATCH_SIZE)
+            .await
+            .expect("claim before the terminal failure"),
+    );
     assert_eq!(claimed.len(), 1);
 
     queue
@@ -120,10 +122,12 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
     assert_eq!(claim_columns, 0, "a retired delivery holds no lease");
     assert!(is_exhausted(&pool, delivery).await, "exhaustion is expressed as an instant of its own");
 
-    let retired = queue
-        .claim_pending(&worker, holding_lease(), BATCH_SIZE)
-        .await
-        .expect("claim after the terminal failure");
+    let retired = readable(
+        queue
+            .claim_pending(&worker, holding_lease(), BATCH_SIZE)
+            .await
+            .expect("claim after the terminal failure"),
+    );
     assert!(retired.is_empty(), "a retired delivery is permanently unclaimable");
 
     let undelivered: i64 = sqlx::query_scalar("SELECT count(*) FROM notification_deliveries WHERE delivery_key = $1 AND delivered_at IS NULL")

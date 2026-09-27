@@ -1,4 +1,4 @@
-//! Verification matrix row "Unit reconstruction".
+//! Unit reconstruction: a stored unit renders back exactly as it was written.
 //!
 //! What the write path takes out of the metadata document the read path has to
 //! put back exactly: the same code, in the same JSON-LD shape, on the same

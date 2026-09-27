@@ -1,4 +1,4 @@
-//! Verification-matrix row "Identifier collation".
+//! Identifier collation: every identifier column compares byte-wise.
 //!
 //! Every identifier column is `COLLATE "C"`, so comparison is byte-wise: an
 //! anchored `idPattern` (clause 4.9) becomes a plain B-tree range scan with no

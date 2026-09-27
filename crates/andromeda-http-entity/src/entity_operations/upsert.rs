@@ -102,8 +102,8 @@ pub(crate) async fn batch_upsert(
     // Clause 5.6.8.4: the local phase creates or updates what proxied
     // registrations left.
     local_remainder(&mut admitted, &forwarded);
-    let mode = service.effective_side_effect_mode(async_preference(prefer), admitted.len());
-    let (batch, mut created) = service.batch_upsert(&target, admitted, &context, mode).await.with_entity_instance(&uri)?;
+    let placement = service.side_effect_placement(&target, async_preference(prefer), admitted.len());
+    let (batch, mut created) = service.batch_upsert(placement, admitted, &context).await.with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     result.errors.append(&mut entity_errors);
     merge_forwarded(&mut result, &forwarded);
@@ -112,10 +112,10 @@ pub(crate) async fn batch_upsert(
     // Clause 5.6.8.5: nothing when every entity already existed, the created
     // identifiers when some were created, the full result on any failure.
     if !result.errors.is_empty() {
-        multi_status_response(&result, &context, &uri, mode)
+        multi_status_response(&result, &context, &uri, placement)
     } else if created.is_empty() {
-        Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
+        Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), placement))
     } else {
-        created_response(&created, accept, &context, &uri, mode)
+        created_response(&created, accept, &context, &uri, placement)
     }
 }

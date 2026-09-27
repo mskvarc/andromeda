@@ -1,4 +1,4 @@
-//! Verification-matrix row "Current projection delete".
+//! Current projection delete: deletions remove exactly the grains they name.
 //!
 //! Deleting one dataset instance removes exactly its clause 4.5.5 grain,
 //! deleting the Entity removes every remaining grain through the single

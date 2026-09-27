@@ -1,6 +1,6 @@
 //! The narrow key a delivery carries instead of a Subscription URI.
 //!
-//! Verification-matrix row "Subscription surrogate key": Subscriptions with
+//! Subscription surrogate key: Subscriptions with
 //! many pending deliveries, then one Subscription deleted. Delivery rows
 //! reference the narrow key, the cascade uses the delivery-side index rather
 //! than a sequential scan, and external Subscription URNs render unchanged.

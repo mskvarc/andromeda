@@ -18,7 +18,7 @@ use crate::{
     error::EntityError,
     expanded_member::written_entity_types,
     notification_plan::{NotificationGroup, NotificationPlan, attribute_change_groups},
-    side_effect::BatchSideEffectMode,
+    side_effect::SideEffectPlacement,
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -271,13 +271,16 @@ fn error_of(id: &Uri, outcome: &WriteOutcome) -> Option<EntityError> {
 impl EntityService {
     /// Submit one chunk's writes and settle what each entity did.
     ///
-    /// In `Inline` mode the observations ride the same transaction as the
-    /// entity rows and the change events are emitted once it commits. In
-    /// `Enqueue` mode both are persisted alongside the entity rows and a worker
-    /// replays them, which is what makes `Prefer: respond-async` crash-consistent
-    /// rather than merely faster. The durable subscription matches commit with
-    /// the entity row in either mode, never deferred to the worker.
-    pub(super) async fn commit_chunk(&self, target: &ContextTarget, entries: Vec<ChunkWrite>, mode: BatchSideEffectMode) -> Result<ChunkOutcome, EntityError> {
+    /// Placed inline, the observations ride the same transaction as the
+    /// entity rows and the change events are emitted once it commits. Deferred
+    /// on the live branch, both are persisted alongside the entity rows and a
+    /// worker replays them, which is what makes `Prefer: respond-async`
+    /// crash-consistent rather than merely faster. The durable subscription
+    /// matches commit with the entity row either way, never deferred to the
+    /// worker, and a job carries the change events only when no durable match
+    /// was recorded for them.
+    pub(super) async fn commit_chunk(&self, placement: SideEffectPlacement<'_>, entries: Vec<ChunkWrite>) -> Result<ChunkOutcome, EntityError> {
+        let target = placement.target();
         if entries.is_empty() {
             return Ok(ChunkOutcome::default());
         }
@@ -303,9 +306,9 @@ impl EntityService {
                 .subscription_matches(matches)
                 .precondition(precondition);
 
-            let (write, inline_events) = match mode {
-                BatchSideEffectMode::Inline => (builder.history(history).build(), events),
-                BatchSideEffectMode::Enqueue => {
+            let (write, inline_events) = match placement {
+                SideEffectPlacement::Inline(_) => (builder.history(history).build(), events),
+                SideEffectPlacement::DeferredOnLive => {
                     // Tombstones stay inline in both modes: they describe what
                     // the payload just stopped saying, and deferring them would
                     // leave `current_attribute_values` answering `q` filters with a
@@ -319,9 +322,8 @@ impl EntityService {
                         })
                         .collect();
                     let job = BatchSideEffectJob {
-                        target: target.clone(), // clone: durable replay owns the immutable branch selection.
                         temporal_entities,
-                        change_events: events,
+                        change_events: self.owed_change_events(events),
                     };
                     (builder.history(endings).side_effects(Some(job)).build(), Vec::new())
                 }

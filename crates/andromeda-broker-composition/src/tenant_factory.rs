@@ -229,14 +229,7 @@ async fn build_tenant_state(
         config.temporal.expiration_check_interval.duration(),
         Arc::new(TenantObligations::new(&storage.pool)),
     ));
-    let temporal = compose_temporal_history(
-        &storage.pool,
-        &storage.temporal_repo,
-        &config.temporal,
-        &task_supervisor,
-        &storage.live_target,
-        &pacer,
-    )?;
+    let temporal = compose_temporal_history(&storage.pool, &storage.temporal_repo, &config.temporal, &task_supervisor, &pacer)?;
     // Every write path reaches the `current_attribute_values` projection
     // through this complete atomic commit implementation, which writes it in
     // the transaction that mutates the entity.
@@ -248,15 +241,13 @@ async fn build_tenant_state(
     // are registered, so the committer can hold their wake handles while the
     // drains are still being assembled; a commit that races assembly and wakes
     // through a retained handle is not lost, and the drain reads it on its first
-    // pass. The receivers are handed to registration below. Live delivery has no
-    // notification-delivery drain, so its notification channel is absent.
+    // pass. The receivers are handed to registration below. The
+    // notification-delivery drain runs under either delivery mode, for the
+    // deliveries the tenant database already queues; only a durable commit
+    // queues new ones, so only a durable committer holds its wake handle.
     let (side_effect_wake, side_effect_receiver) = wake_channel();
-    let (notification_wake, notification_receiver) = if config.notifications.delivery.is_durable() {
-        let (handle, receiver) = wake_channel();
-        (Some(handle), Some(receiver))
-    } else {
-        (None, None)
-    };
+    let (notification_wake, notification_receiver) = wake_channel();
+    let committed_notification_wake = config.notifications.delivery.is_durable().then_some(notification_wake);
     // The Snapshot status-delivery drain's wake channel follows the same
     // pattern: created before the service and drain exist so the create-time and
     // update paths can hold a wake handle while the drain is still assembling. A
@@ -265,7 +256,8 @@ async fn build_tenant_state(
     // the drain's idle fallback.
     let (snapshot_status_wake, snapshot_status_receiver) = wake_channel();
     let snapshot_delivery_signal = snapshot_delivery_signal(snapshot_status_wake.clone()); // clone: the sweep keeps the handle while the service holds its own.
-    let consequence_publisher: Arc<dyn CommitConsequencePublisher> = Arc::new(RuntimeCommitConsequencePublisher::new(notification_wake, side_effect_wake));
+    let consequence_publisher: Arc<dyn CommitConsequencePublisher> =
+        Arc::new(RuntimeCommitConsequencePublisher::new(committed_notification_wake, side_effect_wake));
     let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
         &storage.pool,
         temporal.history_mode,

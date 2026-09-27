@@ -67,6 +67,7 @@ andromeda-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-notification.workspace = true
+andromeda-postgresql-atomic-write.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-name-dictionary.workspace = true

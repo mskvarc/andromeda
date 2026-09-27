@@ -26,6 +26,7 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), Configuratio
     config.management.validate().map_err(owner_configuration_error)?;
     config.extensions.validate().map_err(owner_configuration_error)?;
     validate_acquire_timeout_below_request_timeout(config)?;
+    validate_side_effect_lease_over_acquire_timeout(config)?;
     validate_build_admission_timeout_below_request_timeout(config)?;
     validate_management_port_distinct_from_server(config)?;
     Ok(())
@@ -62,6 +63,20 @@ fn validate_acquire_timeout_below_request_timeout(config: &RuntimeConfig) -> Res
         )));
     }
     Ok(())
+}
+
+/// The side-effect lease must outlast the connection acquire deadline by the
+/// entity policy's margin.
+///
+/// A cross-section invariant spanning `entity` and `database`: a job's lease has
+/// to last until its replay's first statement locks it, and acquiring that
+/// replay's connection may take up to `database.acquire_timeout`. The entity
+/// configuration owns the bound and its margin; this supplies the deadline.
+fn validate_side_effect_lease_over_acquire_timeout(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
+    config
+        .entity
+        .validate_side_effect_lease_over(config.database.acquire_timeout.duration())
+        .map_err(owner_configuration_error)
 }
 
 /// The tenant cold-build admission deadline must be strictly below the HTTP
@@ -102,6 +117,7 @@ mod tests {
             validate_acquire_timeout_below_request_timeout,
             validate_build_admission_timeout_below_request_timeout,
             validate_management_port_distinct_from_server,
+            validate_side_effect_lease_over_acquire_timeout,
         },
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
@@ -175,6 +191,23 @@ mod tests {
         assert!(
             validate_build_admission_timeout_below_request_timeout(&config).is_err(),
             "an admission deadline equal to the request timeout is rejected"
+        );
+    }
+
+    /// A side-effect lease that could lapse while its replay waits for a
+    /// connection is refused; the shipped defaults pass.
+    #[test]
+    fn a_side_effect_lease_must_outlast_the_acquire_deadline_by_its_margin() {
+        let mut config = RuntimeConfig::default();
+        assert!(validate_side_effect_lease_over_acquire_timeout(&config).is_ok(), "the defaults pass");
+        config.database.acquire_timeout = HumanDuration::from_secs(5);
+        config.entity.pending_side_effects_lease = HumanDuration::from_secs(9);
+        let refused = validate_side_effect_lease_over_acquire_timeout(&config).map_err(|error| error.to_string());
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|message| message.contains("entity.pending_side_effects_lease (9s) must exceed database.acquire_timeout (5s)")),
+            "{refused:?}"
         );
     }
 }

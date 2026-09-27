@@ -2,7 +2,6 @@
 
 use crate::tenant_factory::{background_pacer::BackgroundPacer, error::TenantAssemblyError};
 use andromeda_context_commit::lease_holder::LeaseHolder;
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
@@ -61,7 +60,6 @@ pub(super) struct TemporalIntentRegistration {
 
 /// Register temporal-intent delivery as the first managed drain operation.
 pub(super) fn register_temporal_intent_drain(
-    target: ContextTarget,
     config: &TemporalConfig,
     supervisor: &TaskSupervisor,
     queue: Arc<dyn TemporalIntentQueue>,
@@ -80,7 +78,6 @@ pub(super) fn register_temporal_intent_drain(
     let retry_policy = TemporalIntentRetryPolicy::new(config.intent_retry.duration(), config.intent_retry_max.duration(), stuck_after)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let drain = Arc::new(TemporalIntentDrain::new(
-        target,
         queue,
         pending,
         sink,

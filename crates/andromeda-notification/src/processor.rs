@@ -31,6 +31,7 @@ use andromeda_subscription::{
     cache::SubscriptionCache,
     change::SubscriptionChange,
     compiled::CompiledSubscription,
+    error::SubscriptionError,
     matching::matches_entity_filters,
     spatial_narrowing::narrow_by_spatial_index,
     store::SubscriptionStore,
@@ -177,10 +178,6 @@ impl NotificationProcessor {
             "Change event received: id={}, trigger={}, types={:?}, attrs={:?}",
             event.entity_id, event.trigger_reason, event.entity_types, event.changed_attributes
         );
-        if let Some(subscription_id) = subscription_id {
-            self.refresh_cached_subscription(&target, subscription_id).await;
-        }
-
         let candidates = self.candidate_subscriptions(&target, &event, subscription_id);
         if candidates.is_empty() {
             debug!("No matching subscriptions for event {} (trigger={})", event.entity_id, event.trigger_reason);
@@ -224,16 +221,13 @@ impl NotificationProcessor {
     /// subscription's own lifecycle changes refreshed. Reconciling first means
     /// a stale cache neither drops a subscription created elsewhere nor
     /// notifies one deleted there (clause 5.8.6).
-    async fn refresh_cached_subscription(&self, target: &ContextTarget, subscription_id: &Uri) {
-        self.cache
-            .handle_change(
-                &SubscriptionChange::Upserted {
-                    target: target.clone(),      // clone: the cache refresh and the delivery share the branch target.
-                    id: subscription_id.clone(), // clone: the change names the identifier the delivery carries.
-                },
-                self.sub_repo.as_ref(),
-            )
-            .await;
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's failure when the subscription cannot be read back;
+    /// the cache is then left as it was.
+    async fn refresh_cached_subscription(&self, target: &ContextTarget, subscription_id: &Uri) -> Result<(), SubscriptionError> {
+        self.cache.refresh(target, subscription_id, self.sub_repo.as_ref()).await
     }
 
     /// The compiled subscriptions the change reaches before entity filters are

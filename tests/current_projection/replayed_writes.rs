@@ -1,4 +1,5 @@
-//! Verification-matrix row "Current projection replayed writes".
+//! Current projection replayed writes: a replayed side-effect job still lands
+//! in the projection.
 //!
 //! Under `Prefer: respond-async` the batch request lands the Entity rows and
 //! enqueues its observations as a durable side-effect job; a worker later

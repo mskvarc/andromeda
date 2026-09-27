@@ -4,7 +4,7 @@
 use crate::{
     admission_fixture::{admitted_batch, admitted_entity},
     merge_options::MergeOptions,
-    side_effect::BatchSideEffectMode,
+    side_effect::SideEffectPlacement,
     spatial_acceleration::SpatialAcceleration,
     spatial_write_visibility::{
         geo_query::{create, narrowed_ids, near_origin, uri, vehicle_at, warm_index},
@@ -97,7 +97,7 @@ async fn under_commit_synchronous_an_enqueued_batch_create_is_a_candidate_before
     let entity: Entity = serde_json::from_value(vehicle_at("urn:ngsi-ld:Vehicle:batched", 0.001)).expect("a valid entity");
     let admitted = admitted_batch(&service, BatchCreate, vec![entity], &ContextSpec::core_only()).await;
     service
-        .batch_create(&ContextTarget::Live, admitted, &ContextSpec::core_only(), BatchSideEffectMode::Enqueue)
+        .batch_create(SideEffectPlacement::DeferredOnLive, admitted, &ContextSpec::core_only())
         .await
         .expect("the batch create lands");
 

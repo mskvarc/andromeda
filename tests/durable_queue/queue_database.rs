@@ -5,19 +5,28 @@
 //! database is a no-op, and every verification empties the queue relations
 //! before it seeds its own fixture.
 
-use andromeda_context_commit::{subscription_key::SubscriptionKey, write_record::WriteRecord};
+use andromeda_context_commit::{
+    job_lease::JobLease,
+    lease_acknowledgement::LeaseAcknowledgement,
+    subscription_key::SubscriptionKey,
+    write_id::WriteId,
+    write_ordinal::WriteOrdinal,
+    write_record::WriteRecord,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_context_store::{
     config::SynchronousCommit,
     error::ContextStoreError,
     notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent},
+    pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
     tenant_database::{DatabaseUrl, create_database_if_missing},
     tenant_migration::migrate_tenant_db,
 };
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_reset::reset_owned_tenant};
+use chrono::Utc;
 use serde_json::json;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
@@ -120,4 +129,31 @@ pub async fn events_of(pool: &PgPool, record: &WriteRecord) -> i64 {
         .fetch_one(pool)
         .await
         .expect("event count")
+}
+
+/// Enqueue one decodable side-effect job through the committer's own enqueue
+/// statement, returning the identity of the write it belongs to.
+pub async fn enqueue_side_effect(pool: &PgPool) -> WriteId {
+    let record = WriteRecord::mint(Utc::now());
+    let payload = PersistedBatchSideEffectJob {
+        temporal_entities: Vec::new(),
+        change_events: Vec::new(),
+    };
+    let mut transaction = pool.begin().await.expect("enqueue transaction");
+    PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &record, WriteOrdinal::at(0), &payload)
+        .await
+        .expect("enqueue the job");
+    transaction.commit().await.expect("commit the enqueue");
+    record.write_id()
+}
+
+/// Settle one side-effect job under `lease` in a transaction of its own, the
+/// way a replay commit settles it inside its own transaction.
+pub async fn settle_side_effect(pool: &PgPool, lease: JobLease) -> LeaseAcknowledgement {
+    let mut transaction = pool.begin().await.expect("settle transaction");
+    let settled = PendingSideEffectsRepository::settle_in_tx(&mut transaction, lease)
+        .await
+        .expect("settle the job");
+    transaction.commit().await.expect("commit the settlement");
+    settled
 }

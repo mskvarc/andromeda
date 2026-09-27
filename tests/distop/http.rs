@@ -15,9 +15,8 @@
 //! forwarded-request rows run on `T-MOCK` (broker A plus an in-process mock
 //! Context Source registered by the test). The loop row runs on `T-LOOP`
 //! (broker A registered back at itself) and the `Via`-append row on `T-CHAIN`.
-//! Concrete designs are in `docs/distributed-tests/http.md`; assertions that
-//! were reconciled to the specification are recorded in
-//! `docs/distributed-tests/spec-corrections.md`.
+//! Assertions that were reconciled to the specification are recorded in
+//! `docs/distributed-operations-spec-corrections.md`.
 
 mod contextsourceinfo_headers;
 mod csource_registration;

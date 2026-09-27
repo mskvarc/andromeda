@@ -14,7 +14,7 @@ use crate::{
 };
 use andromeda_entity::{
     batch::UpsertPolicy,
-    side_effect::{AsyncPreference, BatchSideEffectMode},
+    side_effect::{AsyncPreference, SideEffectPlacement},
 };
 use andromeda_federation::{provision_batch::BatchProvisionOperation, request::TriggeringRequest};
 use andromeda_http_extraction::{
@@ -50,8 +50,8 @@ use axum::{
 };
 use headers::HeaderMapExt;
 
-fn apply_preference_applied(mut response: Response, mode: BatchSideEffectMode) -> Response {
-    if matches!(mode, BatchSideEffectMode::Enqueue) {
+fn apply_preference_applied(mut response: Response, placement: SideEffectPlacement<'_>) -> Response {
+    if matches!(placement, SideEffectPlacement::DeferredOnLive) {
         response.headers_mut().typed_insert(PreferenceApplied::respond_async());
     }
     response
@@ -69,7 +69,12 @@ const fn async_preference(prefer: PreferHeader) -> AsyncPreference {
 ///
 /// Clause 6.3.6: the body is always `application/json`, regardless of the
 /// negotiated `Accept`, so it carries no JSON-LD context.
-fn multi_status_response(result: &BatchOperationResult, context: &ContextSpec, uri: &HttpUri, mode: BatchSideEffectMode) -> Result<Response, ProblemResponse> {
+fn multi_status_response(
+    result: &BatchOperationResult,
+    context: &ContextSpec,
+    uri: &HttpUri,
+    placement: SideEffectPlacement<'_>,
+) -> Result<Response, ProblemResponse> {
     let value = serde_json::to_value(result).with_entity_instance(uri)?;
     let rendered = start_rendering_normalized(ResponseMediaType::Json, context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Batch(value))
@@ -77,7 +82,7 @@ fn multi_status_response(result: &BatchOperationResult, context: &ContextSpec, u
         .with_entity_instance(uri)?;
     Ok(apply_preference_applied(
         NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response(),
-        mode,
+        placement,
     ))
 }
 
@@ -88,7 +93,7 @@ fn created_response(
     accept: AcceptFormatNoGeo,
     context: &ContextSpec,
     uri: &HttpUri,
-    mode: BatchSideEffectMode,
+    placement: SideEffectPlacement<'_>,
 ) -> Result<Response, ProblemResponse> {
     let value = serde_json::to_value(created).with_entity_instance(uri)?;
     let rendered = start_rendering_normalized(accept.media_type(), context, PreferHeader::default().rendering_preferences())
@@ -97,7 +102,7 @@ fn created_response(
         .with_entity_instance(uri)?;
     Ok(apply_preference_applied(
         NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response(),
-        mode,
+        placement,
     ))
 }
 

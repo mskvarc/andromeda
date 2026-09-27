@@ -12,7 +12,7 @@
 //! `T-MOCK`/`T-MOCK-N` rows register an in-process [`ContextSourceAdapter`] as the
 //! peer and assert the exact forwarded body, headers and path counts; `T-PAIR`
 //! rows register real broker B and assert the end-to-end split by reading each
-//! broker locally. Concrete designs are in `docs/distributed-tests/prov.md`.
+//! broker locally.
 
 mod append;
 mod batch_create;

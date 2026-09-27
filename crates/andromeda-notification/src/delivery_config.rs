@@ -13,6 +13,16 @@ use strum::{Display, EnumString};
 use thiserror::Error;
 use toml_comment::TomlComment;
 
+/// How much longer than `request_timeout` a delivery lease must run.
+///
+/// One lease covers one delivery attempt from its claim to its
+/// acknowledgement. The POST is bounded by `request_timeout`, but the attempt
+/// also re-reads its subscription and the entity it notifies before sending,
+/// and writes its acknowledgement after: three store round trips the timeout
+/// does not bound. This margin is what they may take together before a second
+/// worker could reclaim the delivery and send it again.
+pub const DELIVERY_LEASE_MARGIN: Duration = Duration::from_secs(5);
+
 /// Invalid notification delivery configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum DeliveryConfigError {
@@ -49,6 +59,19 @@ pub enum DeliveryConfigError {
     /// The claim lease term was outside the accepted range.
     #[error("notifications.delivery.lease is invalid: {0}")]
     LeaseTerm(#[from] LeaseTermError),
+    /// The claim lease term did not exceed the outbound notification request
+    /// timeout by [`DELIVERY_LEASE_MARGIN`], so a delivery still in flight
+    /// could be claimed and sent again by a second worker.
+    ///
+    /// A delivery is claimed only when a slot is free to send it, so one lease
+    /// covers one delivery attempt and the batch size does not enter this bound.
+    #[error(
+        "notifications.delivery.lease must exceed notifications.delivery.request_timeout by at least {margin_seconds}s, the store round trips around one delivery attempt"
+    )]
+    LeaseWithoutMarginOverRequestTimeout {
+        /// The margin the lease must leave over the request timeout, in seconds.
+        margin_seconds: u64,
+    },
     /// The stored-diagnostic bound was outside the accepted range.
     #[error("notifications.delivery.error_max_chars is invalid: {0}")]
     ErrorBound(#[from] DeliveryErrorBoundError),
@@ -68,7 +91,8 @@ pub enum DeliveryConfigError {
 pub enum DeliveryMode {
     /// Evaluate subscriptions and deliver notifications in-process, without
     /// persistence, retry, or dead-lettering. A crashed broker loses only the
-    /// notifications still in flight.
+    /// notifications still in flight. Deliveries a durable broker already
+    /// queued in the tenant database are still drained, with their retry.
     #[default]
     Live,
     /// Record every notification in a durable queue and deliver it through the
@@ -77,6 +101,16 @@ pub enum DeliveryMode {
 }
 
 /// Retry, polling, retention and diagnostic policy for notification delivery.
+///
+/// `mode` decides only how a commit's notifications reach their subscribers.
+/// The queue-draining settings -- `lease`, `max_attempts`, `base_backoff`,
+/// `poll_interval`, `poll_interval_max`, `batch_size`, `concurrency`,
+/// `error_max_chars`, `cleanup_after`, `cleanup_interval`, `dead_letter_after`
+/// and `orphan_event_after` -- govern the delivery drain, which runs under
+/// either mode: the queue lives in the tenant database, and a durable broker
+/// sharing it, or this broker before it was switched to live delivery, may
+/// have queued deliveries that are still due. `request_timeout` bounds every
+/// outbound notification, queued or live.
 #[derive(Clone, Deserialize, Serialize, TomlComment, Debug)]
 pub struct DeliveryConfig {
     /// Whether notifications are delivered live (in-process) or durably (queued).
@@ -86,7 +120,7 @@ pub struct DeliveryConfig {
     /// in human-readable form (`"10s"`).
     ///
     /// A subscription's own Table 5.2.15-1 `timeout` may only shorten this
-    /// system bound, never lengthen it. Applies to both delivery modes.
+    /// system bound, never lengthen it.
     #[toml_comment(inline)]
     pub request_timeout: HumanDuration,
     /// Maximum delivery attempts before dead-lettering.
@@ -110,9 +144,13 @@ pub struct DeliveryConfig {
     /// it, in human-readable form (`"30s"`).
     #[toml_comment(inline)]
     pub poll_interval_max: HumanDuration,
-    /// Deliveries claimed per poll.
+    /// Deliveries one pass sends at most.
+    ///
+    /// A pass claims them one slot at a time: one per slot to open, then one
+    /// more each time a delivery is acknowledged and frees its slot.
     pub batch_size: i32,
-    /// Claimed deliveries sent concurrently within one pass.
+    /// Claimed deliveries sent concurrently within one pass: the slots a pass
+    /// keeps busy.
     ///
     /// Bounded by [`DeliveryConcurrency::MAXIMUM`]; a pass never keeps more
     /// than this many transport calls in flight at once.
@@ -121,9 +159,12 @@ pub struct DeliveryConfig {
     /// human-readable form (`"30s"`).
     ///
     /// A claim that outlives its delivery attempt is what keeps a second worker
-    /// from sending the same notification, so this must exceed the longest
-    /// single delivery attempt the transport can take; a crashed worker's
-    /// deliveries stay unclaimable for the remainder of the term.
+    /// from sending the same notification. A delivery is claimed only when a
+    /// slot is free to send it, so one lease has to cover a single delivery
+    /// attempt, never the deliveries sent before it: this is refused unless it
+    /// exceeds `request_timeout` by [`DELIVERY_LEASE_MARGIN`], whatever
+    /// `batch_size` is. A crashed worker's deliveries stay unclaimable for the
+    /// remainder of the term.
     #[toml_comment(inline)]
     pub lease: HumanDuration,
     /// Characters of a failure diagnostic kept when a failed attempt is recorded.
@@ -137,6 +178,11 @@ pub struct DeliveryConfig {
     pub cleanup_after: HumanDuration,
     /// Cadence for physical cleanup of acknowledged deliveries, in human-readable
     /// form (`"5m"`).
+    ///
+    /// A tick runs only when the tenant may have written since the last
+    /// cleanup: a tenant nobody uses and no background pass touches acknowledges
+    /// nothing new, and whatever ages past retention meanwhile is removed by the
+    /// first cleanup after the tenant next changes.
     #[toml_comment(inline)]
     pub cleanup_interval: HumanDuration,
     /// Age after which a dead-lettered (exhausted) delivery is removed, in
@@ -183,9 +229,10 @@ impl DeliveryConfig {
     /// Returns the [`DeliveryConfigError`] naming the first setting that is out
     /// of range: a non-positive attempt ceiling or batch size, a zero retry
     /// backoff, poll interval, cleanup retention, cleanup interval,
-    /// dead-letter retention or orphan-event retention, or a claim lease term,
+    /// dead-letter retention or orphan-event retention, a claim lease term,
     /// stored-diagnostic bound or in-flight delivery bound its own newtype
-    /// rejects.
+    /// rejects, or a claim lease term that does not exceed the request timeout
+    /// by [`DELIVERY_LEASE_MARGIN`].
     pub fn validate(&self) -> Result<(), DeliveryConfigError> {
         self.attempt_ceiling()?;
         if self.batch_size <= 0 {
@@ -216,6 +263,11 @@ impl DeliveryConfig {
             return Err(DeliveryConfigError::ZeroOrphanEventRetention);
         }
         self.lease_term()?;
+        if self.lease.duration() < self.request_timeout.duration().saturating_add(DELIVERY_LEASE_MARGIN) {
+            return Err(DeliveryConfigError::LeaseWithoutMarginOverRequestTimeout {
+                margin_seconds: DELIVERY_LEASE_MARGIN.as_secs(),
+            });
+        }
         self.error_bound()?;
         self.delivery_concurrency()?;
         Ok(())
@@ -382,6 +434,60 @@ mod tests {
             ..valid_config()
         };
         assert_eq!(config.validate(), Err(DeliveryConfigError::ZeroRequestTimeout));
+    }
+
+    /// A lease that runs out while its delivery is still in flight -- its POST,
+    /// or the store round trips around it -- lets a second worker claim and
+    /// send the same notification.
+    #[test]
+    fn a_lease_without_the_margin_over_the_request_timeout_is_rejected() {
+        for lease in [5, 10, 11, 14] {
+            let config = DeliveryConfig {
+                lease: HumanDuration::from_secs(lease),
+                request_timeout: HumanDuration::from_secs(10),
+                ..valid_config()
+            };
+            assert_eq!(
+                config.validate(),
+                Err(DeliveryConfigError::LeaseWithoutMarginOverRequestTimeout { margin_seconds: 5 }),
+                "lease {lease}s"
+            );
+        }
+    }
+
+    #[test]
+    fn a_lease_covering_the_request_timeout_and_the_margin_is_accepted() {
+        let config = DeliveryConfig {
+            lease: HumanDuration::from_secs(15),
+            request_timeout: HumanDuration::from_secs(10),
+            ..valid_config()
+        };
+        assert_eq!(config.validate(), Ok(()));
+    }
+
+    /// A pass claims a delivery only when a slot is free to send it, so a
+    /// batch many slots wide needs no longer a lease than a single attempt.
+    #[test]
+    fn a_batch_many_slots_wide_needs_no_longer_a_lease_than_one_attempt() {
+        let config = DeliveryConfig {
+            batch_size: 1_000,
+            concurrency: 1,
+            lease: HumanDuration::from_secs(15),
+            request_timeout: HumanDuration::from_secs(10),
+            ..valid_config()
+        };
+        assert_eq!(config.validate(), Ok(()));
+    }
+
+    #[test]
+    fn the_margin_error_names_the_margin() {
+        let message = DeliveryConfigError::LeaseWithoutMarginOverRequestTimeout { margin_seconds: 5 }.to_string();
+        assert!(message.contains("by at least 5s"), "{message}");
+    }
+
+    #[test]
+    fn the_shipped_defaults_are_accepted() {
+        assert_eq!(DeliveryConfig::default().validate(), Ok(()));
     }
 
     #[test]

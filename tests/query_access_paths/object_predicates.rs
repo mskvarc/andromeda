@@ -1,4 +1,4 @@
-//! Verification-matrix row "Object GIN operator class".
+//! Object GIN operator class: no object predicate relies on an absent index.
 //!
 //! `jsonb_path_ops` indexes containment (`@>`) and nothing else; the default
 //! `jsonb_ops` class also serves key existence (`?`, `?|`, `?&`). The schema

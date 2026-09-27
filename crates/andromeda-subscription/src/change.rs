@@ -23,6 +23,21 @@ pub enum SubscriptionChange {
     },
 }
 
+/// Whether an upsert brought a subscription into existence or changed one
+/// that already existed.
+///
+/// A Context Source Registration Subscription is notified differently in the
+/// two cases: clause 5.11.2.4 owes a new one a notification "initially on
+/// subscription", while clause 5.11.3.4 owes an updated one a notification
+/// with "all currently matching Context Source Registrations".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpsertKind {
+    /// The subscription was created.
+    Created,
+    /// An existing subscription was updated.
+    Updated,
+}
+
 /// Signals context-source-subscription lifecycle changes.
 #[derive(Clone, Debug)]
 pub enum CsourceSubscriptionChange {
@@ -32,6 +47,8 @@ pub enum CsourceSubscriptionChange {
         target: ContextTarget,
         /// Subscription identifier within the branch.
         id: Uri,
+        /// Whether the subscription was created or updated.
+        kind: UpsertKind,
     },
     /// The subscription with this identifier was deleted.
     Deleted {

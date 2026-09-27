@@ -1,4 +1,4 @@
-//! Verification-matrix row "Narrow Entity keys".
+//! Narrow Entity keys: child rows reference a compact surrogate, not the URI.
 //!
 //! `entities.entity_key` is the internal identity every owned child row
 //! carries, while `entities.id` remains the external NGSI-LD URI clause 5.6.5
@@ -22,9 +22,9 @@ use serde_json::{Map, Value, json};
 
 /// Identifier lengths the surrogate has to carry: a short URN, a long one, and
 /// one at the identifier bound itself, the longest an Entity id may be. The
-/// short case is 128 rather than the proposal's 64 bytes because the harness
-/// prefix that makes a test's rows discoverable for cleanup is itself longer
-/// than 64 bytes.
+/// short case is 128 rather than 64 bytes because the harness prefix that
+/// makes a test's rows discoverable for cleanup is itself longer than 64
+/// bytes.
 const IDENTIFIER_LENGTHS: [usize; 3] = [128, 512, IDENTIFIER_BYTE_LIMIT];
 
 /// Attribute counts paired with those lengths.

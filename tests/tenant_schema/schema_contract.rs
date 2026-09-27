@@ -1,4 +1,5 @@
-//! Verification matrix row "Schema contract drift".
+//! Schema contract drift: a tenant whose schema stamp has drifted from the
+//! contract this binary requires is refused before it is served.
 //!
 //! Database-per-tenant means the tenant schema exists in as many copies as
 //! there are tenants and every copy can drift. `schema_metadata` is the stamp
@@ -174,11 +175,10 @@ async fn a_tenant_stamped_by_this_binary_is_accepted_and_reports_the_version_it_
     pool.close().await;
 }
 
-/// Verification matrix row "Schema contract drift": a stamp behind the
-/// contract is only ever advanced when the tenant's real applied migration
-/// history proves it; a decremented version whose digest was never a real
-/// prefix of that history is refused like any other drift, not restamped
-/// over.
+/// A stamp behind the contract is only ever advanced when the tenant's real
+/// applied migration history proves it; a decremented version whose digest was
+/// never a real prefix of that history is refused like any other drift, not
+/// restamped over.
 #[tokio::test]
 async fn ensure_schema_contract_refuses_a_tenant_stamped_behind_with_a_digest_that_does_not_match_its_real_history_and_leaves_the_drift_untouched() {
     let configuration = TestRunConfiguration::from_environment().expect("integration test configuration");
@@ -221,10 +221,10 @@ async fn ensure_schema_contract_refuses_a_tenant_stamped_behind_with_a_digest_th
     environment.finish().await.expect("releasing exclusive ownership failed");
 }
 
-/// Verification matrix row "Schema contract drift": a stamp left behind at an
-/// earlier binary's version is advanced, not refused, once the tenant's real
-/// applied migration history proves it was a completed upgrade -- the
-/// scenario a fleet upgrade produces on every tenant it migrates.
+/// A stamp left behind at an earlier binary's version is advanced, not
+/// refused, once the tenant's real applied migration history proves it was a
+/// completed upgrade -- the scenario a fleet upgrade produces on every tenant
+/// it migrates.
 #[tokio::test]
 async fn ensure_schema_contract_advances_a_stamp_that_is_behind_but_matches_the_tenants_real_migration_history() {
     let configuration = TestRunConfiguration::from_environment().expect("integration test configuration");
@@ -270,9 +270,8 @@ async fn ensure_schema_contract_advances_a_stamp_that_is_behind_but_matches_the_
     environment.finish().await.expect("releasing exclusive ownership failed");
 }
 
-/// Verification matrix row "Schema contract drift": the production entry
-/// point refuses a tenant migrated along a different path rather than
-/// restamping over it.
+/// The production entry point refuses a tenant migrated along a different
+/// path rather than restamping over it.
 #[tokio::test]
 async fn ensure_schema_contract_refuses_a_tenant_stamped_with_another_migration_set_and_leaves_the_drift_untouched() {
     let configuration = TestRunConfiguration::from_environment().expect("integration test configuration");
@@ -309,9 +308,9 @@ async fn ensure_schema_contract_refuses_a_tenant_stamped_with_another_migration_
     environment.finish().await.expect("releasing exclusive ownership failed");
 }
 
-/// Verification matrix row "Schema contract drift": the production entry
-/// point stamps a tenant that has genuinely never carried one, which is the
-/// only state `ensure_schema_contract` is allowed to write.
+/// The production entry point stamps a tenant that has genuinely never
+/// carried one, which is the only state `ensure_schema_contract` is allowed to
+/// write.
 #[tokio::test]
 async fn ensure_schema_contract_stamps_a_tenant_that_has_never_carried_a_stamp() {
     let configuration = TestRunConfiguration::from_environment().expect("integration test configuration");

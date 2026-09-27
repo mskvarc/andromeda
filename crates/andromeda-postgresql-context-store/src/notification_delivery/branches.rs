@@ -27,13 +27,16 @@ use sqlx::{Row, postgres::PgPool};
 /// The branches a per-branch drain sweeps: the live branch, then every
 /// current Snapshot branch published under `snap_<snapshot_key>`.
 ///
+/// The pending-work probe reads the same branches, so a dormant tenant is woken
+/// for exactly the deliveries its drain would claim.
+///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the Snapshot enumeration fails,
 /// [`ContextStoreError::BranchVersion`] when the embedded branch migration set
 /// has no version, or [`ContextStoreError::Internal`] when a stored Snapshot key or URI cannot
 /// be read back as its domain type.
-pub(super) async fn drainable_targets(pool: &PgPool) -> Result<Vec<ContextTarget>, ContextStoreError> {
+pub(crate) async fn drainable_targets(pool: &PgPool) -> Result<Vec<ContextTarget>, ContextStoreError> {
     let (sql, values) = drainable_snapshots_statement(current_branch_version()?).build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(pool).await?;
 
@@ -73,7 +76,7 @@ fn drainable_snapshots_statement(current: BranchSchemaVersion) -> SelectStatemen
 /// (`undefined_table`); either means the branch was dropped between the
 /// enumeration and the claim, so the drain moves on rather than failing.
 #[must_use]
-pub(super) fn is_reaped_branch(error: &ContextStoreError) -> bool {
+pub(crate) fn is_reaped_branch(error: &ContextStoreError) -> bool {
     let ContextStoreError::Database(sqlx::Error::Database(database_error)) = error else {
         return false;
     };

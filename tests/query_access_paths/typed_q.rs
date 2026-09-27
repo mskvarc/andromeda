@@ -1,4 +1,4 @@
-//! Verification-matrix row "Typed q predicates".
+//! Typed `q` predicates: pushed-down comparisons agree with the stored value.
 //!
 //! One Entity carries a fixture of every value shape the projection can hold,
 //! plus the shapes it cannot. Every predicate is compared against the residual

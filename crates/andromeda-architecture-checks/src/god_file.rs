@@ -32,7 +32,6 @@ pub const GOD_FILE_SIGNAL_LIMIT: usize = 400;
 /// removed from this list, which a stale-entry check enforces, so the baseline
 /// can only shrink toward empty.
 pub const GOD_FILE_BASELINE: &[&str] = &[
-    "crates/andromeda-entity/src/notification_recording_harness.rs",
     "crates/andromeda-http-temporal/src/temporal/query.rs",
     "crates/andromeda-postgresql-maintenance/src/inspection.rs",
     "crates/andromeda-postgresql-name-dictionary/src/name_cache.rs",

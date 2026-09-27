@@ -1,4 +1,4 @@
-//! Verification matrix row "Mixed-unit aggregation".
+//! Mixed-unit aggregation: no aggregate silently spans two units.
 //!
 //! Clause 5.2.5 attaches `unitCode` to the instance, so two instances of one
 //! attribute may differ in unit, and clause 4.5.19 says nothing about what an

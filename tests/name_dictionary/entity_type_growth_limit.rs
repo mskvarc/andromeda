@@ -1,4 +1,4 @@
-//! Verification matrix row "Dictionary growth limit", for entity types.
+//! Entity type dictionary growth limit: minting new type names is bounded.
 //!
 //! `entity_type_names` is append-only and entity type IRIs are open-world
 //! (clause 4.5.1), so any client can inflate the dictionary indefinitely

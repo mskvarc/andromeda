@@ -84,23 +84,37 @@ impl SubscriptionCache {
     }
 
     /// Handle a single subscription change event (upsert or removal).
+    ///
+    /// A subscription that cannot be re-read is logged and left as cached: the
+    /// change stream offers no retry, and the next change, reload or refresh
+    /// of the subscription reconciles it.
     pub async fn handle_change(&self, change: &SubscriptionChange, repo: &(impl SubscriptionStore + ?Sized)) {
         match change {
-            SubscriptionChange::Upserted { target, id } => match repo.get(target, id).await {
-                Ok(Some(stored)) => {
-                    if stored.subscription.lifecycle.status == SubscriptionStatus::Active {
-                        self.insert(target, compile_subscription(&stored));
-                    } else {
-                        self.remove(target, id);
-                    }
+            SubscriptionChange::Upserted { target, id } => {
+                if let Err(error) = self.refresh(target, id, repo).await {
+                    debug!("Failed to load subscription {} for cache update: {}", id, error);
                 }
-                Ok(None) => self.remove(target, id),
-                Err(e) => {
-                    debug!("Failed to load subscription {} for cache update: {}", id, e);
-                }
-            },
+            }
             SubscriptionChange::Deleted { target, id } => self.remove(target, id),
         }
+    }
+
+    /// Re-read one subscription from the store and index it as it now stands:
+    /// compiled while it is active, dropped once it is not or no longer exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's failure when the subscription cannot be read —
+    /// [`SubscriptionError::Persistence`] for an adapter failure,
+    /// [`SubscriptionError::Representation`] for a stored row that no longer
+    /// reads back as a subscription. The cached entry is left as it was, so a
+    /// caller can tell a subscription that is gone from one it could not see.
+    pub async fn refresh(&self, target: &ContextTarget, id: &Uri, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
+        match repo.get(target, id).await? {
+            Some(stored) if stored.subscription.lifecycle.status == SubscriptionStatus::Active => self.insert(target, compile_subscription(&stored)),
+            Some(_) | None => self.remove(target, id),
+        }
+        Ok(())
     }
 
     /// Index one compiled subscription, replacing any earlier entry with the
@@ -212,16 +226,127 @@ impl SubscriptionCache {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::error::SubscriptionError;
+    use crate::{
+        cache::SubscriptionCache,
+        compiled::CompiledSubscription,
+        error::SubscriptionError,
+        notification_slot::{NotificationSlot, NotificationSlotGate},
+        store::{SubscriptionFields, SubscriptionStore},
+        stored_subscription::StoredSubscription,
+    };
     use andromeda_context_commit::subscription_key::SubscriptionKey;
-    use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
-    use andromeda_ngsi_ld_query::projection::compiled::Projection;
+    use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_model::subscription::{EntitySelector, Subscription, SubscriptionStatus};
+    use andromeda_ngsi_ld_query::{cursor::PageCursor, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+    use andromeda_tenancy::tenant_ref::TenantRef;
+    use async_trait::async_trait;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
     use url::Url;
+
+    /// What the store double answers when a subscription is read back.
+    #[derive(Clone, Copy)]
+    enum StoredAnswer {
+        /// The store fails the read, as an unreachable database would.
+        Unreadable,
+        /// The store holds no such subscription.
+        Absent,
+    }
+
+    /// A subscription store that answers only `get`, as `answer` says.
+    struct AnsweringStore {
+        answer: StoredAnswer,
+    }
+
+    fn unused(method: &str) -> SubscriptionError {
+        SubscriptionError::internal(format!("AnsweringStore::{method} is not exercised by the cache refresh tests"))
+    }
+
+    #[async_trait]
+    impl SubscriptionStore for AnsweringStore {
+        async fn get(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
+            match self.answer {
+                StoredAnswer::Unreadable => Err(SubscriptionError::persistence("the subscription store is unreachable")),
+                StoredAnswer::Absent => Ok(None),
+            }
+        }
+
+        async fn list(&self, _target: &ContextTarget, _limit: Option<i64>, _offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+            Err(unused("list"))
+        }
+
+        async fn list_keyset(&self, _target: &ContextTarget, _cursor: Option<&PageCursor>, _limit: i64) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+            Err(unused("list_keyset"))
+        }
+
+        async fn delete(&self, _target: &ContextTarget, _id: &Uri) -> Result<u64, SubscriptionError> {
+            Err(unused("delete"))
+        }
+
+        async fn exists(&self, _target: &ContextTarget, _id: &Uri) -> Result<bool, SubscriptionError> {
+            Err(unused("exists"))
+        }
+
+        async fn list_active(&self, _target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
+            Err(unused("list_active"))
+        }
+
+        async fn claim_notification_slot(
+            &self,
+            _target: &ContextTarget,
+            _id: &Uri,
+            _gate: NotificationSlotGate,
+        ) -> Result<NotificationSlot, SubscriptionError> {
+            Err(unused("claim_notification_slot"))
+        }
+
+        async fn mark_success(&self, _target: &ContextTarget, _id: &Uri) -> Result<(), SubscriptionError> {
+            Err(unused("mark_success"))
+        }
+
+        async fn mark_failure(&self, _target: &ContextTarget, _id: &Uri) -> Result<(), SubscriptionError> {
+            Err(unused("mark_failure"))
+        }
+
+        async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+            Err(unused("expire_due"))
+        }
+
+        async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
+            Err(unused("find_due_interval_subscriptions"))
+        }
+
+        async fn next_interval_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Option<DateTime<Utc>>, SubscriptionError> {
+            Err(unused("next_interval_due"))
+        }
+
+        async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Uri, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
+            Err(unused("advance_interval_anchor"))
+        }
+
+        async fn create_subscription(
+            &self,
+            _target: &ContextTarget,
+            _id: &Uri,
+            _fields: &SubscriptionFields<'_>,
+            _status: SubscriptionStatus,
+        ) -> Result<(), SubscriptionError> {
+            Err(unused("create_subscription"))
+        }
+
+        async fn update_subscription(
+            &self,
+            _target: &ContextTarget,
+            _id: &Uri,
+            _fields: &SubscriptionFields<'_>,
+            _status: SubscriptionStatus,
+        ) -> Result<u64, SubscriptionError> {
+            Err(unused("update_subscription"))
+        }
+    }
 
     fn live_target() -> ContextTarget {
         ContextTarget::Live
@@ -305,6 +430,47 @@ mod tests {
         cache.insert(&target, subscription);
 
         assert_eq!(cache.get(&target, &id).map(|compiled| compiled.key), SubscriptionKey::try_from(7).ok());
+        Ok(())
+    }
+
+    /// A subscription the store could not be asked about is not a subscription
+    /// the store no longer holds: the failure is reported, and the cached entry
+    /// stays so a caller that retries still finds it.
+    #[tokio::test]
+    async fn a_refresh_the_store_cannot_answer_reports_the_failure_and_keeps_the_entry() -> Result<(), SubscriptionError> {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let target = live_target();
+        let subscription = make_compiled_sub("unreadable", 3, "Vehicle", vec!["entityCreated"])?;
+        let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
+        cache.insert(&target, subscription);
+
+        let refreshed = cache
+            .refresh(
+                &target,
+                &id,
+                &AnsweringStore {
+                    answer: StoredAnswer::Unreadable,
+                },
+            )
+            .await;
+
+        assert!(matches!(refreshed, Err(SubscriptionError::Persistence(_))), "{refreshed:?}");
+        assert!(cache.get(&target, &id).is_some(), "an unanswered refresh must not drop the cached subscription");
+        Ok(())
+    }
+
+    /// A subscription the store no longer holds is dropped from the cache.
+    #[tokio::test]
+    async fn a_refresh_that_finds_the_subscription_gone_drops_it() -> Result<(), SubscriptionError> {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let target = live_target();
+        let subscription = make_compiled_sub("gone", 4, "Vehicle", vec!["entityCreated"])?;
+        let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
+        cache.insert(&target, subscription);
+
+        cache.refresh(&target, &id, &AnsweringStore { answer: StoredAnswer::Absent }).await?;
+
+        assert!(cache.get(&target, &id).is_none());
         Ok(())
     }
 }

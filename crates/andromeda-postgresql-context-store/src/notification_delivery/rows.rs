@@ -13,6 +13,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::{Uri, UriParseError},
 };
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_notification::delivery_entry::DeliveryKey;
 use andromeda_postgresql_codes::{notification_trigger::NotificationTriggerCode, registry::UnknownCompactCode};
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use chrono::{DateTime, Utc};
@@ -31,7 +32,7 @@ pub struct ClaimedDelivery {
     /// Context branch that owns the event and subscription.
     pub target: ContextTarget,
     /// Key of the claimed delivery row.
-    pub delivery_key: i64,
+    pub delivery_key: DeliveryKey,
     /// Subscription this delivery answers.
     pub subscription_id: Uri,
     /// Delivery attempts already made.
@@ -60,14 +61,27 @@ pub struct ClaimedDelivery {
     pub created_at: DateTime<Utc>,
 }
 
+/// A claimed delivery whose row could not be read back as its domain record.
+///
+/// The claim leased the row before reading it, so the branch and key its
+/// acknowledgement addresses travel with the reason it could not be read.
+#[derive(Debug, Error)]
+#[error("notification delivery {delivery_key} {reason}")]
+pub struct UnreadableClaimedDelivery {
+    /// Context branch whose queue holds the row.
+    pub target: ContextTarget,
+    /// Key of the leased row.
+    pub delivery_key: DeliveryKey,
+    /// Why the row could not be read back.
+    pub reason: ClaimedDeliveryError,
+}
+
 /// Why a claimed delivery could not be read back as its domain record.
 #[derive(Debug, Error)]
 pub enum ClaimedDeliveryError {
     /// The subscription identifier is not a URI permitted by clause 4.6.2.
-    #[error("notification delivery {delivery} references invalid subscription URI `{value}`")]
+    #[error("references invalid subscription URI `{value}`")]
     InvalidSubscriptionId {
-        /// Delivery the unreadable value was read from.
-        delivery: i64,
         /// Invalid stored value.
         value: String,
         /// URI validation failure.
@@ -75,10 +89,8 @@ pub enum ClaimedDeliveryError {
         source: UriParseError,
     },
     /// The entity identifier is not a URI permitted by clause 4.6.2.
-    #[error("notification delivery {delivery} references invalid entity URI `{value}`")]
+    #[error("references invalid entity URI `{value}`")]
     InvalidEntityId {
-        /// Delivery the unreadable value was read from.
-        delivery: i64,
         /// Invalid stored value.
         value: String,
         /// URI validation failure.
@@ -87,28 +99,22 @@ pub enum ClaimedDeliveryError {
     },
     /// The stored number names no clause-5.3.3 trigger condition, which is what
     /// a row written by a release that knows more conditions looks like.
-    #[error("notification delivery {delivery} carries an unreadable trigger")]
+    #[error("carries an unreadable trigger")]
     UnknownTrigger {
-        /// Delivery the unreadable value was read from.
-        delivery: i64,
         /// Registry rejection naming the number.
         #[source]
         source: UnknownCompactCode,
     },
     /// The stored event ordinal is outside the range the write identity numbers.
-    #[error("notification delivery {delivery} carries an unreadable event ordinal")]
+    #[error("carries an unreadable event ordinal")]
     InvalidEventOrdinal {
-        /// Delivery the unreadable value was read from.
-        delivery: i64,
         /// Ordinal range failure.
         #[source]
         source: WriteOrdinalOutOfRange,
     },
     /// One changed attribute is not a valid NGSI-LD attribute name.
-    #[error("notification delivery {delivery} references invalid changed attribute `{value}`")]
+    #[error("references invalid changed attribute `{value}`")]
     InvalidAttributeName {
-        /// Delivery the unreadable value was read from.
-        delivery: i64,
         /// Invalid stored value.
         value: String,
         /// Attribute-name validation failure.
@@ -116,10 +122,8 @@ pub enum ClaimedDeliveryError {
         source: NgsiLdReferenceError,
     },
     /// The stored dataset discriminator is not a valid URI.
-    #[error("notification delivery {delivery} references invalid changed datasetId `{value}`")]
+    #[error("references invalid changed datasetId `{value}`")]
     InvalidDatasetId {
-        /// Delivery the unreadable value was read from.
-        delivery: i64,
         /// Invalid stored value.
         value: String,
         /// URI validation failure.
@@ -179,44 +183,47 @@ impl ClaimedDelivery {
     ///
     /// # Errors
     ///
-    /// Returns [`ClaimedDeliveryError`] when a stored identifier, trigger,
-    /// ordinal, attribute name or dataset id is not a valid domain value.
-    pub(crate) fn from_row(row: RawClaimedDeliveryRow, target: ContextTarget) -> Result<ClaimedDelivery, ClaimedDeliveryError> {
-        let delivery = row.delivery_key;
+    /// Returns [`UnreadableClaimedDelivery`] when a stored identifier, trigger,
+    /// ordinal, attribute name or dataset id is not a valid domain value,
+    /// carrying the branch and key the leased row's acknowledgement addresses.
+    /// It is boxed because it is rare and far wider than the success path.
+    pub(crate) fn from_row(row: RawClaimedDeliveryRow, target: &ContextTarget) -> Result<ClaimedDelivery, Box<UnreadableClaimedDelivery>> {
+        let delivery_key = DeliveryKey::from(row.delivery_key);
+        ClaimedDelivery::decode(row, target).map_err(|reason| {
+            Box::new(UnreadableClaimedDelivery {
+                target: target.clone(), // clone: the unreadable row answers for the branch every row of the claim shares.
+                delivery_key,
+                reason,
+            })
+        })
+    }
+
+    /// Validate every stored value of one claimed row.
+    fn decode(row: RawClaimedDeliveryRow, target: &ContextTarget) -> Result<ClaimedDelivery, ClaimedDeliveryError> {
         let subscription_id = row.subscription_id.parse().map_err(|source| ClaimedDeliveryError::InvalidSubscriptionId {
-            delivery,
             value: row.subscription_id,
             source,
         })?;
-        let entity_id = row.entity_id.parse().map_err(|source| ClaimedDeliveryError::InvalidEntityId {
-            delivery,
-            value: row.entity_id,
-            source,
-        })?;
+        let entity_id = row
+            .entity_id
+            .parse()
+            .map_err(|source| ClaimedDeliveryError::InvalidEntityId { value: row.entity_id, source })?;
         let trigger = NotificationTriggerCode::try_from(row.trigger)
             .map(trigger_of)
-            .map_err(|source| ClaimedDeliveryError::UnknownTrigger { delivery, source })?;
-        let event_ordinal = WriteOrdinal::try_from(row.event_ordinal).map_err(|source| ClaimedDeliveryError::InvalidEventOrdinal { delivery, source })?;
+            .map_err(|source| ClaimedDeliveryError::UnknownTrigger { source })?;
+        let event_ordinal = WriteOrdinal::try_from(row.event_ordinal).map_err(|source| ClaimedDeliveryError::InvalidEventOrdinal { source })?;
         let changed_attributes = row
             .changed_attributes
             .into_iter()
-            .map(|value| {
-                value
-                    .parse()
-                    .map_err(|source| ClaimedDeliveryError::InvalidAttributeName { delivery, value, source })
-            })
+            .map(|value| value.parse().map_err(|source| ClaimedDeliveryError::InvalidAttributeName { value, source }))
             .collect::<Result<Vec<_>, _>>()?;
         let changed_dataset_id = row
             .changed_dataset_id
-            .map(|value| {
-                value
-                    .parse()
-                    .map_err(|source| ClaimedDeliveryError::InvalidDatasetId { delivery, value, source })
-            })
+            .map(|value| value.parse().map_err(|source| ClaimedDeliveryError::InvalidDatasetId { value, source }))
             .transpose()?;
         Ok(ClaimedDelivery {
-            target,
-            delivery_key: delivery,
+            target: target.clone(), // clone: every row of the claim answers for the one branch it was drained from.
+            delivery_key: DeliveryKey::from(row.delivery_key),
             subscription_id,
             attempt_count: row.attempt_count,
             next_attempt_at: row.next_attempt_at,
@@ -262,10 +269,11 @@ pub struct NewNotificationEvent<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_delivery::rows::{ClaimedDelivery, ClaimedDeliveryError, RawClaimedDeliveryRow};
+    use crate::notification_delivery::rows::{ClaimedDelivery, ClaimedDeliveryError, RawClaimedDeliveryRow, UnreadableClaimedDelivery};
     use andromeda_context_commit::write_ordinal::WriteOrdinal;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+    use andromeda_notification::delivery_entry::DeliveryKey;
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -290,12 +298,13 @@ mod tests {
 
     #[test]
     fn a_valid_row_decodes_every_domain_value() {
-        let record = ClaimedDelivery::from_row(row(), ContextTarget::Live).expect("a valid claimed delivery");
+        let record = ClaimedDelivery::from_row(row(), &ContextTarget::Live).expect("a valid claimed delivery");
         pretty_assertions::assert_eq!(record.subscription_id.as_str(), "urn:ngsi-ld:Subscription:1");
         pretty_assertions::assert_eq!(record.entity_id.as_str(), "https://example.org/entities/1");
         pretty_assertions::assert_eq!(record.trigger, NotificationTrigger::EntityUpdated);
         pretty_assertions::assert_eq!(record.event_ordinal, WriteOrdinal::at(1));
         pretty_assertions::assert_eq!(record.changed_attributes[0].as_str(), "temperature");
+        pretty_assertions::assert_eq!(record.delivery_key, DeliveryKey::from(7));
     }
 
     #[test]
@@ -303,8 +312,11 @@ mod tests {
         let mut raw = row();
         raw.subscription_id = "not a uri".to_owned();
         assert!(matches!(
-            ClaimedDelivery::from_row(raw, ContextTarget::Live),
-            Err(ClaimedDeliveryError::InvalidSubscriptionId { .. })
+            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
+            Err(UnreadableClaimedDelivery {
+                reason: ClaimedDeliveryError::InvalidSubscriptionId { .. },
+                ..
+            })
         ));
     }
 
@@ -313,8 +325,11 @@ mod tests {
         let mut raw = row();
         raw.entity_id = "not a uri".to_owned();
         assert!(matches!(
-            ClaimedDelivery::from_row(raw, ContextTarget::Live),
-            Err(ClaimedDeliveryError::InvalidEntityId { .. })
+            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
+            Err(UnreadableClaimedDelivery {
+                reason: ClaimedDeliveryError::InvalidEntityId { .. },
+                ..
+            })
         ));
     }
 
@@ -323,8 +338,11 @@ mod tests {
         let mut raw = row();
         raw.trigger = 99;
         assert!(matches!(
-            ClaimedDelivery::from_row(raw, ContextTarget::Live),
-            Err(ClaimedDeliveryError::UnknownTrigger { .. })
+            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
+            Err(UnreadableClaimedDelivery {
+                reason: ClaimedDeliveryError::UnknownTrigger { .. },
+                ..
+            })
         ));
     }
 
@@ -333,8 +351,11 @@ mod tests {
         let mut raw = row();
         raw.event_ordinal = -1;
         assert!(matches!(
-            ClaimedDelivery::from_row(raw, ContextTarget::Live),
-            Err(ClaimedDeliveryError::InvalidEventOrdinal { .. })
+            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
+            Err(UnreadableClaimedDelivery {
+                reason: ClaimedDeliveryError::InvalidEventOrdinal { .. },
+                ..
+            })
         ));
     }
 
@@ -343,8 +364,11 @@ mod tests {
         let mut raw = row();
         raw.changed_attributes = vec!["bad name".to_owned()];
         assert!(matches!(
-            ClaimedDelivery::from_row(raw, ContextTarget::Live),
-            Err(ClaimedDeliveryError::InvalidAttributeName { .. })
+            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
+            Err(UnreadableClaimedDelivery {
+                reason: ClaimedDeliveryError::InvalidAttributeName { .. },
+                ..
+            })
         ));
     }
 
@@ -352,7 +376,21 @@ mod tests {
     fn the_mapper_failure_names_the_delivery_it_could_not_read() {
         let mut raw = row();
         raw.trigger = 99;
-        let error = ClaimedDelivery::from_row(raw, ContextTarget::Live).expect_err("an unreadable trigger");
-        assert!(error.to_string().contains('7'), "the failure must name the unreadable delivery");
+        let error = ClaimedDelivery::from_row(raw, &ContextTarget::Live).expect_err("an unreadable trigger");
+        assert!(
+            error.to_string().contains("notification delivery 7 "),
+            "the failure must name the unreadable delivery: {error}"
+        );
+    }
+
+    /// The claim leased the row before reading it, so the key and branch its
+    /// acknowledgement addresses survive the failure to read it.
+    #[test]
+    fn an_unreadable_row_keeps_the_key_and_branch_its_acknowledgement_addresses() {
+        let mut raw = row();
+        raw.entity_id = "not a uri".to_owned();
+        let error = ClaimedDelivery::from_row(raw, &ContextTarget::Live).expect_err("an unreadable entity identifier");
+        pretty_assertions::assert_eq!(error.delivery_key, DeliveryKey::from(7));
+        pretty_assertions::assert_eq!(error.target, ContextTarget::Live);
     }
 }

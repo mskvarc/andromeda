@@ -5,18 +5,42 @@
 //! respond-async`. Either they run inline in the request that caused them, or
 //! they are persisted alongside the entity write and drained by a worker.
 
-/// How a request's side effects are applied.
+use crate::EntityService;
+use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_context_space::context_target::ContextTarget;
+
+/// The live branch, for the placement that can only ever write to it.
+static LIVE_BRANCH: ContextTarget = ContextTarget::Live;
+
+/// The branch a batch writes and where its side effects run.
+///
+/// Only the live branch's side-effect queue is drained, so only a batch on the
+/// live branch may defer its side effects. The two are one value rather than a
+/// target and a mode passed side by side, which is what keeps a deferred batch
+/// on a Snapshot branch from being expressed at all: a job queued there would
+/// never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BatchSideEffectMode {
-    /// Run side-effects inline in the same request that triggered them.
-    /// Strong read-your-write: the batch response implies the temporal
+pub enum SideEffectPlacement<'a> {
+    /// Run side effects inline in the request that triggered them, on this
+    /// branch. Strong read-your-write: the batch response implies the temporal
     /// history and any derived notifications have already been produced.
-    Inline,
-    /// Persist the side-effect job in the same transaction as the entity
-    /// write; a background worker executes the job at-least-once. Opt-in via
-    /// `Prefer: respond-async` plus the configured minimum-batch-size
-    /// threshold.
-    Enqueue,
+    Inline(&'a ContextTarget),
+    /// Write the live branch and persist the side-effect job in the same
+    /// transaction as the entity write; a background worker executes the job
+    /// at-least-once. Opt-in via `Prefer: respond-async` plus the configured
+    /// minimum-batch-size threshold.
+    DeferredOnLive,
+}
+
+impl<'a> SideEffectPlacement<'a> {
+    /// The branch the batch writes.
+    #[must_use]
+    pub const fn target(self) -> &'a ContextTarget {
+        match self {
+            SideEffectPlacement::Inline(target) => target,
+            SideEffectPlacement::DeferredOnLive => &LIVE_BRANCH,
+        }
+    }
 }
 
 /// Whether the request opted into `Prefer: respond-async` processing.
@@ -29,59 +53,124 @@ pub enum AsyncPreference {
 }
 
 /// Pure routing logic for
-/// [`EntityService::effective_side_effect_mode`](crate::EntityService::effective_side_effect_mode).
+/// [`EntityService::side_effect_placement`](crate::EntityService::side_effect_placement).
 ///
 /// Split from the method so the decision table can be unit-tested without
 /// constructing a full service. See that method's doc comment for the semantic
 /// contract.
-pub(crate) const fn resolve_side_effect_mode(async_threshold: Option<usize>, preference: AsyncPreference, batch_size: usize) -> BatchSideEffectMode {
-    match (preference, async_threshold) {
-        (AsyncPreference::Requested, None) => BatchSideEffectMode::Enqueue,
-        (AsyncPreference::Requested, Some(threshold)) if batch_size >= threshold => BatchSideEffectMode::Enqueue,
-        (AsyncPreference::Requested | AsyncPreference::NotRequested, Some(_)) | (AsyncPreference::NotRequested, None) => BatchSideEffectMode::Inline,
+pub(crate) const fn resolve_side_effect_placement(
+    target: &ContextTarget,
+    async_threshold: Option<usize>,
+    preference: AsyncPreference,
+    batch_size: usize,
+) -> SideEffectPlacement<'_> {
+    match (target, preference, async_threshold) {
+        (ContextTarget::Live, AsyncPreference::Requested, None) => SideEffectPlacement::DeferredOnLive,
+        (ContextTarget::Live, AsyncPreference::Requested, Some(threshold)) if batch_size >= threshold => SideEffectPlacement::DeferredOnLive,
+        (ContextTarget::Live, AsyncPreference::Requested | AsyncPreference::NotRequested, Some(_))
+        | (ContextTarget::Live, AsyncPreference::NotRequested, None)
+        | (ContextTarget::Snapshot(_), AsyncPreference::Requested | AsyncPreference::NotRequested, _) => SideEffectPlacement::Inline(target),
+    }
+}
+
+impl EntityService {
+    /// The changes a deferred side-effect job has to carry for the
+    /// notifications its commit does not queue itself.
+    ///
+    /// A broker recording durable deliveries commits every match with the write,
+    /// so its job carries none: whichever broker drains the job -- possibly one
+    /// delivering live, sharing the tenant database -- would otherwise notify
+    /// them a second time. A live-delivery broker records none at commit, so its
+    /// job carries every change and the draining broker notifies them.
+    pub(crate) fn owed_change_events(&self, events: Vec<ChangeEvent>) -> Vec<ChangeEvent> {
+        match self.notifications {
+            Some(_) => Vec::new(),
+            None => events,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AsyncPreference, BatchSideEffectMode, resolve_side_effect_mode};
+    use crate::side_effect::{AsyncPreference, SideEffectPlacement, resolve_side_effect_placement};
+    use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 
+    fn snapshot() -> ContextTarget {
+        ContextTarget::Snapshot(SnapshotTarget::published(
+            SnapshotKey::try_from(7).expect("a positive key"),
+            "urn:ngsi-ld:Snapshot:inline".parse().expect("a valid snapshot URI"),
+        ))
+    }
+
+    /// Only the live branch's side-effect queue is drained, so a batch scoped
+    /// to a Snapshot (clause 5.5.15) runs its side effects inline, on that
+    /// Snapshot, even when it asked to respond asynchronously and passes the
+    /// threshold.
     #[test]
-    fn prefer_respond_async_with_none_threshold_routes_to_enqueue() {
-        pretty_assertions::assert_eq!(resolve_side_effect_mode(None, AsyncPreference::Requested, 1), BatchSideEffectMode::Enqueue);
+    fn a_snapshot_scoped_batch_runs_its_side_effects_inline_on_its_snapshot_even_when_async_is_requested() {
+        let snapshot = snapshot();
+        for threshold in [None, Some(0), Some(1)] {
+            pretty_assertions::assert_eq!(
+                resolve_side_effect_placement(&snapshot, threshold, AsyncPreference::Requested, 10),
+                SideEffectPlacement::Inline(&snapshot),
+                "threshold {threshold:?}"
+            );
+        }
+    }
+
+    /// A deferred placement writes the live branch, and an inline one writes
+    /// the branch it was resolved for.
+    #[test]
+    fn a_placement_writes_the_branch_it_was_resolved_for() {
+        let snapshot = snapshot();
+        pretty_assertions::assert_eq!(SideEffectPlacement::DeferredOnLive.target(), &ContextTarget::Live);
+        pretty_assertions::assert_eq!(SideEffectPlacement::Inline(&snapshot).target(), &snapshot);
+        pretty_assertions::assert_eq!(SideEffectPlacement::Inline(&ContextTarget::Live).target(), &ContextTarget::Live);
     }
 
     #[test]
-    fn prefer_respond_async_with_threshold_below_batch_size_routes_to_inline() {
-        pretty_assertions::assert_eq!(resolve_side_effect_mode(Some(100), AsyncPreference::Requested, 10), BatchSideEffectMode::Inline);
+    fn prefer_respond_async_with_none_threshold_defers_on_the_live_branch() {
+        pretty_assertions::assert_eq!(
+            resolve_side_effect_placement(&ContextTarget::Live, None, AsyncPreference::Requested, 1),
+            SideEffectPlacement::DeferredOnLive
+        );
     }
 
     #[test]
-    fn prefer_respond_async_at_or_above_threshold_routes_to_enqueue() {
+    fn prefer_respond_async_with_threshold_above_batch_size_runs_inline() {
         pretty_assertions::assert_eq!(
-            resolve_side_effect_mode(Some(100), AsyncPreference::Requested, 100),
-            BatchSideEffectMode::Enqueue
+            resolve_side_effect_placement(&ContextTarget::Live, Some(100), AsyncPreference::Requested, 10),
+            SideEffectPlacement::Inline(&ContextTarget::Live)
         );
-        pretty_assertions::assert_eq!(
-            resolve_side_effect_mode(Some(100), AsyncPreference::Requested, 512),
-            BatchSideEffectMode::Enqueue
-        );
+    }
+
+    #[test]
+    fn prefer_respond_async_at_or_above_threshold_defers_on_the_live_branch() {
+        for batch_size in [100, 512] {
+            pretty_assertions::assert_eq!(
+                resolve_side_effect_placement(&ContextTarget::Live, Some(100), AsyncPreference::Requested, batch_size),
+                SideEffectPlacement::DeferredOnLive,
+                "batch size {batch_size}"
+            );
+        }
     }
 
     #[test]
     fn prefer_respond_sync_forces_inline_with_threshold_zero() {
         pretty_assertions::assert_eq!(
-            resolve_side_effect_mode(Some(0), AsyncPreference::NotRequested, 1000),
-            BatchSideEffectMode::Inline
+            resolve_side_effect_placement(&ContextTarget::Live, Some(0), AsyncPreference::NotRequested, 1000),
+            SideEffectPlacement::Inline(&ContextTarget::Live)
         );
     }
 
     #[test]
-    fn no_async_opt_in_routes_to_inline_regardless_of_threshold() {
-        pretty_assertions::assert_eq!(resolve_side_effect_mode(None, AsyncPreference::NotRequested, 1000), BatchSideEffectMode::Inline);
-        pretty_assertions::assert_eq!(
-            resolve_side_effect_mode(Some(1), AsyncPreference::NotRequested, 1000),
-            BatchSideEffectMode::Inline
-        );
+    fn no_async_opt_in_runs_inline_regardless_of_threshold() {
+        for threshold in [None, Some(1)] {
+            pretty_assertions::assert_eq!(
+                resolve_side_effect_placement(&ContextTarget::Live, threshold, AsyncPreference::NotRequested, 1000),
+                SideEffectPlacement::Inline(&ContextTarget::Live),
+                "threshold {threshold:?}"
+            );
+        }
     }
 }

@@ -13,9 +13,11 @@ use crate::{
 };
 use andromeda_context_commit::{committer::ContextCommitter, context_change_event::ContextChangeEvent, lease_holder::LeaseHolder};
 use andromeda_entity::{
+    NotificationWriteConfig,
     change_sink::EntityChangeSink,
     error::EntityError,
     side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
+    side_effect_notification::SideEffectNotificationRoute,
     spatial_acceleration::SpatialAcceleration,
     spatial_reconciliation::{RebuildOutcome, rebuild_location_index},
 };
@@ -45,7 +47,9 @@ use tokio::sync::broadcast;
 /// The drain always runs: `Prefer: respond-async` enqueues a durable job
 /// whenever the request opts in, with or without a configured batch-size
 /// threshold, so an unconditional drain is what keeps every enqueued job from
-/// waiting forever.
+/// waiting forever. The notifications a job still owes are settled by this
+/// broker's delivery mode: queued as deliveries under durable delivery, handed
+/// to the in-process notification worker under live delivery.
 ///
 /// # Errors
 ///
@@ -61,11 +65,20 @@ pub(super) fn register_entity_side_effects(
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
     let entity_config = &config.entity;
-    let change_sink = Arc::new(BroadcastEntityChangeSink::new(changes.clone())) as Arc<dyn EntityChangeSink>; // clone: services and the drain each own a sender handle.
+    // A job may have been queued by a broker in the other delivery mode sharing
+    // this tenant database, so the notifications it still owes are settled by
+    // this broker's own mode.
+    let notifications = if config.notifications.delivery.is_durable() {
+        SideEffectNotificationRoute::Durable(NotificationWriteConfig {
+            subscription_cache: Arc::clone(&storage.subscription_cache),
+        })
+    } else {
+        SideEffectNotificationRoute::Live(Arc::new(BroadcastEntityChangeSink::new(changes.clone())) as Arc<dyn EntityChangeSink>) // clone: services and the drain each own a sender handle.
+    };
     let drain = Arc::new(EntitySideEffectDrain::new(
         Arc::new(PendingSideEffectsRepository::new(&storage.pool)),
         Arc::clone(writes), // clone: request handling and the drain share one committer.
-        Some(change_sink),
+        notifications,
         EntitySideEffectDrainConfig {
             lease_seconds: i32::try_from(entity_config.pending_side_effects_lease.duration().as_secs()).unwrap_or(i32::MAX),
             batch_size: i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX),

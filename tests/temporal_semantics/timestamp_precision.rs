@@ -1,4 +1,4 @@
-//! Verification matrix row "Timestamp precision policy".
+//! Timestamp precision policy: instants are stored exactly or refused.
 //!
 //! `docs/timestamp-precision.md` records the policy: a client-supplied NGSI-LD
 //! instant is accepted exactly as clause 4.6.3 defines it — the literal `Z`
@@ -8,7 +8,7 @@
 //! refused for the same reason.
 //!
 //! The unit tests cover the parser. What this file adds is the end-to-end half
-//! the matrix row states: what a client sends decides what storage holds,
+//! of the policy: what a client sends decides what storage holds,
 //! nothing between them rounds, and a value the policy refuses never reaches
 //! storage at all.
 //!

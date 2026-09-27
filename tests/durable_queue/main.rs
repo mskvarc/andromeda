@@ -10,18 +10,34 @@
 //! address whatever due row the tenant holds, so a second claimant — another
 //! suite, or a broker with the delivery worker enabled — would make "exactly
 //! one worker holds this row" unobservable. The verifications that are about
-//! what a client sees run against the configured broker instead.
+//! what a client sees, or about what the broker's own delivery drain does with
+//! rows its tenant database queued, run against the configured broker instead.
 
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport and persistence errors.
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+#[path = "../support/notification_adapter.rs"]
+pub mod notification_adapter;
+
+mod live_delivery_drain;
+mod live_side_effect_drain;
 mod notification_cleanup;
+mod notification_delivery_slots;
 mod notification_fan_out;
 mod notification_fixture;
 mod notification_lease;
+mod notification_poison;
 mod notification_retry;
+mod notification_unreadable_subscription;
 mod queue_database;
 mod queue_workers;
+mod recorded_changes;
+mod replay_committer;
+mod replay_interruption;
+mod side_effect_attempt_ceiling;
+mod side_effect_lapsed_release;
 mod side_effect_lease;
+mod side_effect_replay_settlement;
+mod side_effect_shared_document;
 mod subscription_surrogate;
 mod uuid_privacy;

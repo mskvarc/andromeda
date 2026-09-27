@@ -98,11 +98,31 @@ pub enum SubscriptionDeliveryState {
     LastFailure,
 }
 
+/// The live-only `subscription_notified_registrations` table: the context
+/// source registrations each context source registration subscription was
+/// notified of as matching.
+#[derive(Iden, Clone, Copy)]
+pub enum SubscriptionNotifiedRegistrations {
+    /// Table name: `subscription_notified_registrations`
+    Table,
+    /// The subscription notified.
+    SubscriptionKey,
+    /// The registration it was notified of.
+    RegistrationId,
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::subscriptions::{SubscriptionDeliveryState, Subscriptions};
+    use crate::subscriptions::{SubscriptionDeliveryState, SubscriptionNotifiedRegistrations, Subscriptions};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
+
+    #[test]
+    fn notified_registrations_table_and_columns() {
+        assert_eq!(SubscriptionNotifiedRegistrations::Table.to_string(), "subscription_notified_registrations");
+        assert_eq!(SubscriptionNotifiedRegistrations::SubscriptionKey.to_string(), "subscription_key");
+        assert_eq!(SubscriptionNotifiedRegistrations::RegistrationId.to_string(), "registration_id");
+    }
 
     #[test]
     fn subscriptions_table_and_columns() {

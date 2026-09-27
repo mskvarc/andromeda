@@ -45,7 +45,7 @@ pub async fn mark_delivered(
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let (sql, values) = mark_delivered_statement(delivery_key, worker_id, target).build_sqlx(PostgresQueryBuilder);
     let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
-    Ok(acknowledgement(result.rows_affected()))
+    Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
 }
 
 /// Record a failed attempt, release the lease and schedule the next attempt.
@@ -63,7 +63,7 @@ pub async fn mark_failed(
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let (sql, values) = mark_failed_statement(delivery_key, worker_id, failure, next_attempt_at, target).build_sqlx(PostgresQueryBuilder);
     let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
-    Ok(acknowledgement(result.rows_affected()))
+    Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
 }
 
 /// Record a terminal failure and make the delivery permanently unclaimable.
@@ -85,7 +85,7 @@ pub async fn mark_exhausted(
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let (sql, values) = mark_exhausted_statement(delivery_key, worker_id, failure, target).build_sqlx(PostgresQueryBuilder);
     let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
-    Ok(acknowledgement(result.rows_affected()))
+    Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
 }
 
 /// Every acknowledgement is scoped to the row this worker still holds the lease
@@ -140,36 +140,14 @@ fn mark_exhausted_statement(delivery_key: i64, worker_id: LeaseHolder, failure: 
         .to_owned()
 }
 
-/// Decide whether a lease-guarded update reached the delivery this worker owned.
-///
-/// The guarded predicate matches at most one row, so a zero count means the
-/// worker's lease had expired and another worker holds the delivery.
-const fn acknowledgement(rows_affected: u64) -> LeaseAcknowledgement {
-    if rows_affected == 0 {
-        LeaseAcknowledgement::Lost
-    } else {
-        LeaseAcknowledgement::Applied
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::notification_delivery::acknowledge::{acknowledgement, mark_delivered_statement, mark_exhausted_statement, mark_failed_statement};
-    use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
+    use crate::notification_delivery::acknowledge::{mark_delivered_statement, mark_exhausted_statement, mark_failed_statement};
+    use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::context_target::ContextTarget;
     use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
     use uuid::Uuid;
-
-    #[test]
-    fn an_update_that_reached_no_row_reports_the_lease_as_lost() {
-        pretty_assertions::assert_eq!(acknowledgement(0), LeaseAcknowledgement::Lost);
-    }
-
-    #[test]
-    fn an_update_that_reached_its_row_reports_the_lease_as_held() {
-        pretty_assertions::assert_eq!(acknowledgement(1), LeaseAcknowledgement::Applied);
-    }
 
     #[test]
     fn every_acknowledgement_is_guarded_by_the_live_lease_it_was_taken_under() {

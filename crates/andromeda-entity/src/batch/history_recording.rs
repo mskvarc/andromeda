@@ -11,7 +11,7 @@ use crate::{
     batch::UpsertPolicy,
     history_recording_assertions::{assert_observes_stored_instances, observed_default_instance, recorded_observation},
     notification_recording_harness::{ACCURACY_IRI, CATEGORY_IRI, ENTITY_ID, NAME_IRI, live_target, recording_service, single_recorded_write},
-    side_effect::BatchSideEffectMode,
+    side_effect::SideEffectPlacement,
     write_kind::{BatchMerge, BatchUpdate, BatchUpsert},
 };
 use andromeda_context_commit::history_record::HistoryRecord;
@@ -43,7 +43,7 @@ async fn batch_merge_records_the_merged_instance_keeping_its_untouched_sub_prope
     )
     .await;
     service
-        .batch_merge(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+        .batch_merge(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
         .await
         .expect("the batch merge lands");
 
@@ -66,7 +66,7 @@ async fn batch_merge_defers_the_merged_instance_when_enqueued() {
     )
     .await;
     service
-        .batch_merge(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Enqueue)
+        .batch_merge(SideEffectPlacement::DeferredOnLive, admitted, &ContextSpec::core_only())
         .await
         .expect("the batch merge lands");
 
@@ -96,11 +96,10 @@ async fn batch_update_without_overwrite_records_only_the_attributes_it_appended(
     .await;
     service
         .batch_update(
-            &live_target(),
+            SideEffectPlacement::Inline(&live_target()),
             admitted,
             &ContextSpec::core_only(),
             OverwritePolicy::Preserve,
-            BatchSideEffectMode::Inline,
         )
         .await
         .expect("the batch update lands");
@@ -123,11 +122,10 @@ async fn batch_update_without_overwrite_that_appended_nothing_records_no_observa
     .await;
     service
         .batch_update(
-            &live_target(),
+            SideEffectPlacement::Inline(&live_target()),
             admitted,
             &ContextSpec::core_only(),
             OverwritePolicy::Preserve,
-            BatchSideEffectMode::Inline,
         )
         .await
         .expect("the batch update completes");
@@ -149,11 +147,10 @@ async fn batch_update_with_overwrite_records_the_stored_instance() {
     .await;
     service
         .batch_update(
-            &live_target(),
+            SideEffectPlacement::Inline(&live_target()),
             admitted,
             &ContextSpec::core_only(),
             OverwritePolicy::Overwrite,
-            BatchSideEffectMode::Inline,
         )
         .await
         .expect("the batch update lands");
@@ -174,7 +171,7 @@ async fn batch_upsert_update_records_the_stored_instance() {
     )
     .await;
     service
-        .batch_upsert(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
         .await
         .expect("the batch upsert lands");
 
@@ -198,7 +195,7 @@ async fn batch_upsert_replace_records_every_stored_attribute_of_the_replacement(
     )
     .await;
     service
-        .batch_upsert(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
         .await
         .expect("the batch upsert lands");
 

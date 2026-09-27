@@ -1,7 +1,7 @@
 //! Immediate logical temporal reads over a deferred history sink.
 
 use crate::{
-    append_intent::TemporalObservationIdentity,
+    append_intent::{KeyedTemporalAppendIntent, TemporalObservationIdentity},
     error::TemporalError,
     outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
     pending_observation::{intent_matches_query, is_scope_row, pending_observations},
@@ -90,6 +90,24 @@ fn order_merged_identifiers(identifiers: &mut [Uri], order: MergedIdentifierOrde
     }
 }
 
+/// The intents still pending on `target`, which `read` fetches from the
+/// pending queue only when `target` is the live branch.
+///
+/// Only the live branch defers its history. A Snapshot branch records it in
+/// the write's own transaction, so none of its history is ever pending, and
+/// the queue -- which holds the live branch's intents alone -- is not asked:
+/// what it holds would be the live branch's history, not the Snapshot's.
+async fn pending_on_branch<Read, Pending>(target: &ContextTarget, read: Read) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError>
+where
+    Read: FnOnce() -> Pending,
+    Pending: Future<Output = Result<Vec<KeyedTemporalAppendIntent>, TemporalError>>,
+{
+    match target {
+        ContextTarget::Live => read().await,
+        ContextTarget::Snapshot(_) => Ok(Vec::new()),
+    }
+}
+
 /// Reader that overlays committed pending intents on an idempotent history sink.
 pub struct PendingTemporalHistoryOverlay {
     /// Selected history sink reader.
@@ -102,6 +120,11 @@ impl PendingTemporalHistoryOverlay {
     /// Construct an immediate logical view over an eventual append sink.
     pub const fn new(stored: Arc<dyn TemporalHistoryReader>, pending: Arc<dyn PendingTemporalIntentReader>) -> PendingTemporalHistoryOverlay {
         PendingTemporalHistoryOverlay { stored, pending }
+    }
+
+    /// The intents still pending for `entity_id` in `target`.
+    async fn pending_for_entity(&self, target: &ContextTarget, entity_id: &Uri) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
+        pending_on_branch(target, || self.pending.pending_for_entity(entity_id)).await
     }
 
     /// Read all matching rows before the overlay applies lastN to the union.
@@ -117,7 +140,7 @@ impl PendingTemporalHistoryOverlay {
         // the subsequent sink read either sees the accepted rows or the retained
         // intent still supplies them. Reading in the opposite order creates a
         // gap when acceptance and acknowledgement both occur between reads.
-        let pending = self.pending.pending_for_entity(target, entity_id).await?;
+        let pending = self.pending_for_entity(target, entity_id).await?;
         let mut stored = self.stored.query_entity_history(target, entity_id, &unwindowed).await?.observations;
         let mut seen: HashSet<TemporalObservationIdentity> = stored.iter().filter_map(|observation| observation.identity).collect();
         for sequenced in pending {
@@ -160,7 +183,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
     }
 
     async fn entity_exists(&self, target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError> {
-        if !self.pending.pending_for_entity(target, entity_id).await?.is_empty() {
+        if !self.pending_for_entity(target, entity_id).await?.is_empty() {
             return Ok(true);
         }
         self.stored.entity_exists(target, entity_id).await
@@ -188,7 +211,6 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
                 continue;
             }
             let pending_types = self
-                .pending
                 .pending_for_entity(target, entity_id)
                 .await?
                 .into_iter()
@@ -202,7 +224,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
     }
 
     async fn query_entity_ids(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
-        let pending = self.pending.pending_intents(target).await?;
+        let pending = pending_on_branch(target, || self.pending.pending_intents()).await?;
         let mut unpaged = compiled.clone();
         unpaged.pagination = Pagination {
             limit: u32::MAX,

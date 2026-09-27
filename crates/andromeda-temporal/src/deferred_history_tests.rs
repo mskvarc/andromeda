@@ -30,7 +30,7 @@ use andromeda_context_commit::{
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
-use andromeda_context_space::context_target::ContextTarget;
+use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -52,6 +52,7 @@ use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU32,
+    slice,
     sync::Arc,
     time::Duration,
 };
@@ -99,7 +100,7 @@ impl RecordingQueue {
 
 #[async_trait]
 impl PendingTemporalIntentReader for RecordingQueue {
-    async fn pending_for_entity(&self, _target: &ContextTarget, entity_id: &Uri) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
+    async fn pending_for_entity(&self, entity_id: &Uri) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
         Ok(self
             .state
             .lock()
@@ -111,7 +112,7 @@ impl PendingTemporalIntentReader for RecordingQueue {
             .collect())
     }
 
-    async fn pending_intents(&self, _target: &ContextTarget) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
+    async fn pending_intents(&self) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
         Ok(self.state.lock().await.pending.iter().map(|claim| claim.pending.clone()).collect())
     }
 }
@@ -120,7 +121,6 @@ impl PendingTemporalIntentReader for RecordingQueue {
 impl TemporalIntentQueue for RecordingQueue {
     async fn claim(
         &self,
-        _target: &ContextTarget,
         _owner: LeaseHolder,
         limit: TemporalIntentBatchSize,
         _lease_until: DateTime<Utc>,
@@ -131,7 +131,6 @@ impl TemporalIntentQueue for RecordingQueue {
 
     async fn claim_for_entity(
         &self,
-        _target: &ContextTarget,
         _owner: LeaseHolder,
         entity_id: &Uri,
         limit: TemporalIntentBatchSize,
@@ -150,12 +149,7 @@ impl TemporalIntentQueue for RecordingQueue {
             .collect())
     }
 
-    async fn acknowledge(
-        &self,
-        _target: &ContextTarget,
-        _owner: LeaseHolder,
-        intent: &KeyedTemporalAppendIntent,
-    ) -> Result<LeaseAcknowledgement, TemporalError> {
+    async fn acknowledge(&self, _owner: LeaseHolder, intent: &KeyedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError> {
         let mut state = self.state.lock().await;
         if state.lease_lapsed {
             return Ok(LeaseAcknowledgement::Lost);
@@ -167,13 +161,7 @@ impl TemporalIntentQueue for RecordingQueue {
         Ok(LeaseAcknowledgement::Applied)
     }
 
-    async fn retry(
-        &self,
-        _target: &ContextTarget,
-        _owner: LeaseHolder,
-        intent: &KeyedTemporalAppendIntent,
-        retry: TemporalIntentRetry,
-    ) -> Result<LeaseAcknowledgement, TemporalError> {
+    async fn retry(&self, _owner: LeaseHolder, intent: &KeyedTemporalAppendIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
         let mut state = self.state.lock().await;
         if state.lease_lapsed {
             return Ok(LeaseAcknowledgement::Lost);
@@ -403,7 +391,6 @@ fn retry_policy() -> TemporalIntentRetryPolicy {
 
 fn drain(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>) -> TemporalIntentDrain {
     TemporalIntentDrain::new(
-        live_target(),
         Arc::clone(&queue) as Arc<dyn TemporalIntentQueue>,
         queue as Arc<dyn PendingTemporalIntentReader>,
         sink,
@@ -588,4 +575,67 @@ async fn a_long_sink_failure_summary_is_cut_to_the_column_limit() {
         .expect("failure is retained per item");
     let summaries: Vec<usize> = queue.retries().await.iter().map(|retry| retry.summary.chars().count()).collect();
     assert_eq!(summaries, vec![usize::try_from(FAILURE_SUMMARY_MAX_CHARACTERS).expect("fits usize")]);
+}
+
+fn snapshot_target() -> ContextTarget {
+    ContextTarget::Snapshot(SnapshotTarget::published(
+        SnapshotKey::try_from(7).expect("a positive key"),
+        "urn:ngsi-ld:Snapshot:deferred".parse().expect("a valid snapshot URI"),
+    ))
+}
+
+/// Only the live branch defers its history, so an intent the queue holds is
+/// the live branch's: a Snapshot read neither sees its rows, nor counts its
+/// entity as existing, nor lists it among the matching entities.
+#[tokio::test]
+async fn a_snapshot_read_does_not_overlay_the_live_branchs_pending_intents() {
+    let queue = Arc::new(RecordingQueue::default());
+    let sink = Arc::new(RecordingSink::default());
+    let (pending, entity_id) = fixture();
+    queue.insert(pending).await;
+    let overlay = PendingTemporalHistoryOverlay::new(
+        Arc::clone(&sink) as Arc<dyn TemporalHistoryReader>,
+        Arc::clone(&queue) as Arc<dyn PendingTemporalIntentReader>,
+    );
+    let snapshot = snapshot_target();
+
+    let rows = overlay
+        .query_entity_history(&snapshot, &entity_id, &query())
+        .await
+        .expect("snapshot history read")
+        .observations;
+    assert!(rows.is_empty(), "the live branch's pending rows must not appear in a Snapshot: {rows:?}");
+    assert!(!overlay.entity_exists(&snapshot, &entity_id).await.expect("snapshot existence"));
+    let listed = overlay.query_entity_ids(&snapshot, &query()).await.expect("snapshot entity listing");
+    assert!(listed.candidates.is_empty(), "the pending entity is the live branch's");
+    assert!(
+        overlay
+            .entity_types(&snapshot, slice::from_ref(&entity_id))
+            .await
+            .expect("snapshot types")
+            .is_empty()
+    );
+
+    // The same intent is visible on the live branch, so the Snapshot read
+    // skipped it rather than finding nothing to overlay.
+    assert!(overlay.entity_exists(&live_target(), &entity_id).await.expect("live existence"));
+}
+
+/// A Snapshot branch records its history in the write's own transaction, so
+/// its mutation barrier has nothing queued to wait for and leaves the live
+/// branch's pending intent for the entity alone.
+#[tokio::test]
+async fn a_snapshot_mutation_barrier_neither_waits_for_nor_delivers_live_intents() {
+    let queue = Arc::new(RecordingQueue::default());
+    let sink = Arc::new(RecordingSink::default());
+    let (pending, entity_id) = fixture();
+    queue.insert(pending).await;
+
+    drain(Arc::clone(&queue), Arc::clone(&sink))
+        .synchronize(&snapshot_target(), &entity_id)
+        .await
+        .expect("a Snapshot barrier has nothing to synchronize");
+
+    assert_eq!(queue.pending_count().await, 1, "the live branch's intent stays queued");
+    assert_eq!(sink.logical_effect_count().await, 0, "nothing was delivered on the Snapshot's behalf");
 }

@@ -517,6 +517,78 @@ ping_interval = "45s"
         }
     }
 
+    /// A claim lease that runs out while its notification is still in flight
+    /// lets a second worker send the same notification, so a broker configured
+    /// that way refuses to load rather than start.
+    #[test]
+    #[serial]
+    fn a_delivery_lease_that_does_not_exceed_the_request_timeout_is_refused_at_load() {
+        let path = write_temp_config(
+            r#"
+[notifications.delivery]
+request_timeout = "30s"
+lease = "30s"
+"#,
+        );
+
+        let result = RuntimeConfig::load(Some(&path), ServerOverrides::default());
+        fs::remove_file(path).expect("temp config should be removed");
+
+        let error = result.expect_err("a lease equal to the request timeout must be refused");
+        assert!(
+            error
+                .to_string()
+                .contains("notifications.delivery.lease must exceed notifications.delivery.request_timeout"),
+            "{error}"
+        );
+    }
+
+    /// The delivery lease must leave its margin over one attempt's request
+    /// timeout: one second short of it refuses to load, the margin exactly
+    /// loads.
+    #[test]
+    #[serial]
+    fn a_delivery_lease_is_refused_below_its_margin_over_the_request_timeout_and_loads_at_it() {
+        let short = write_temp_config("[notifications.delivery]\nrequest_timeout = \"10s\"\nlease = \"14s\"\n");
+        let refused = RuntimeConfig::load(Some(&short), ServerOverrides::default());
+        fs::remove_file(short).expect("temp config should be removed");
+        let exact = write_temp_config("[notifications.delivery]\nrequest_timeout = \"10s\"\nlease = \"15s\"\n");
+        let loaded = RuntimeConfig::load(Some(&exact), ServerOverrides::default());
+        fs::remove_file(exact).expect("temp config should be removed");
+
+        let error = refused.expect_err("a 14s lease over a 10s request timeout lacks the margin");
+        assert!(
+            error
+                .to_string()
+                .contains("notifications.delivery.lease must exceed notifications.delivery.request_timeout by at least 5s"),
+            "{error}"
+        );
+        loaded.expect("a 15s lease over a 10s request timeout carries the margin");
+    }
+
+    /// The side-effect lease must leave its margin over the connection acquire
+    /// deadline: one second short of it refuses to load, the margin exactly
+    /// loads.
+    #[test]
+    #[serial]
+    fn a_side_effect_lease_is_refused_below_its_margin_over_the_acquire_timeout_and_loads_at_it() {
+        let short = write_temp_config("[database]\nacquire_timeout = \"5s\"\n[entity]\npending_side_effects_lease = \"9s\"\n");
+        let refused = RuntimeConfig::load(Some(&short), ServerOverrides::default());
+        fs::remove_file(short).expect("temp config should be removed");
+        let exact = write_temp_config("[database]\nacquire_timeout = \"5s\"\n[entity]\npending_side_effects_lease = \"10s\"\n");
+        let loaded = RuntimeConfig::load(Some(&exact), ServerOverrides::default());
+        fs::remove_file(exact).expect("temp config should be removed");
+
+        let error = refused.expect_err("a 9s side-effect lease over a 5s acquire timeout lacks the margin");
+        assert!(
+            error
+                .to_string()
+                .contains("entity.pending_side_effects_lease (9s) must exceed database.acquire_timeout (5s) by at least 5s"),
+            "{error}"
+        );
+        loaded.expect("a 10s side-effect lease over a 5s acquire timeout carries the margin");
+    }
+
     #[test]
     #[serial]
     fn env_overrides_file() {

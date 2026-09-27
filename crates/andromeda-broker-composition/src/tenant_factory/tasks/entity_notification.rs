@@ -1,5 +1,9 @@
 //! The workers turning entity changes and elapsed intervals into clause 5.8
-//! notifications, and the drain that delivers what they queued.
+//! notifications.
+//!
+//! The drain delivering what the tenant database queued is registered in
+//! `crate::tenant_factory::tasks::notification_delivery`; the resident
+//! processor registered here is its transport.
 //!
 //! Clause 5.11's context source notifications are registered separately, in
 //! `crate::tenant_factory::tasks::csource_notification`: they watch a
@@ -14,8 +18,8 @@ use crate::{
         storage::TenantStorage,
         tasks::{
             EntityNotificationDelivery,
+            notification_delivery::{DeliveryDrainDrive, register_notification_delivery},
             notification_schedule::{classify_notification_failure, register_notification_schedule, register_periodic_wake},
-            retention::retention_duration,
         },
     },
 };
@@ -26,28 +30,21 @@ use andromeda_federation::FederationService;
 use andromeda_jsonld::operation_hit_scope::run_in_operation_scope;
 use andromeda_notification::{
     delivery_config::DeliveryConfig,
-    delivery_drain::{NotificationDeliveryDrain, NotificationDeliveryTransport},
-    delivery_store::DeliveryStore,
     interval::IntervalNotificationOperation,
     processor::{NotificationProcessor, NotificationProcessorDeps},
 };
-use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use andromeda_subscription::{change::SubscriptionChange, store::SubscriptionStore};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
-    drain_task::{DrainPassOutcome, DrainTask},
     failure::TaskFailure,
-    periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule},
     registration::TaskRegistration,
     resident_task::ResidentTask,
     restart_policy::RestartPolicy,
-    scheduled_task::ScheduledTask,
     shutdown_policy::ShutdownPolicy,
     supervisor::TaskSupervisor,
     task_name::TaskName,
-    wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver, wake_channel},
+    wake_trigger::wake_channel,
 };
-use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{
@@ -91,12 +88,18 @@ pub(super) fn compose_notification_processor(
     }))
 }
 
-/// Register the workers driving one tenant's notification policy: the resident
-/// processor evaluating subscriptions and, when durable delivery is configured,
-/// the drain that delivers what it queued.
+/// Register the workers driving one tenant's clause 5.8 notification policy:
+/// the resident processor, and the drain delivering the notifications queued
+/// in the tenant's database.
 ///
-/// The returned wake handle exists only in durable mode; live delivery has no
-/// queue to wake.
+/// The processor evaluates the tenant's committed entity changes only under
+/// live delivery, sending each notification at once. Under durable delivery
+/// the committer records every notification in the commit that raised it (the
+/// entity services' notification write configuration) and the processor
+/// evaluates no change of its own. Under either mode the processor is the
+/// drain's transport, re-evaluating and sending each queued delivery the drain
+/// claims; the drain itself runs under either mode, for the reasons
+/// `crate::tenant_factory::tasks::notification_delivery` gives.
 ///
 /// # Errors
 ///
@@ -109,7 +112,7 @@ pub(super) fn register_notification_workers(
     processor: Arc<NotificationProcessor>,
     entity_changes: &broadcast::Sender<ContextChangeEvent>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
-    durable: Option<DurableDeliveryDrive>,
+    drive: DeliveryDrainDrive,
 ) -> Result<(), TenantAssemblyError> {
     let delivery = if config.is_durable() {
         EntityNotificationDelivery::Durable
@@ -120,27 +123,10 @@ pub(super) fn register_notification_workers(
         supervisor,
         entity_changes.clone(), // clone: each worker owns a sender handle it subscribes through.
         subscription_changes,
-        Arc::clone(&processor), // clone: the resident processor is also the durable delivery transport.
+        Arc::clone(&processor), // clone: the resident processor is also the delivery drain's transport.
         delivery,
     )?;
-    if !config.is_durable() {
-        return Ok(());
-    }
-    let drive = durable.ok_or_else(|| TenantAssemblyError::invariant("durable notification delivery requires a wake receiver"))?;
-    let store = Arc::new(NotificationDeliveryQueue::new(pool)) as Arc<dyn DeliveryStore>;
-    let drain = NotificationDeliveryDrain::new(store, processor as Arc<dyn NotificationDeliveryTransport>, config)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    register_notification_delivery(supervisor, Arc::new(drain), config, drive)
-}
-
-/// What drives the durable notification-delivery drain: the wake its commits
-/// raise, and the pacer that rests it while the tenant is quiet and nothing is
-/// due.
-pub(super) struct DurableDeliveryDrive {
-    /// The drain's wake receiver.
-    pub(super) wake: DrainWakeReceiver,
-    /// The tenant's background pacer.
-    pub(super) pacer: Arc<BackgroundPacer>,
+    register_notification_delivery(supervisor, pool, config, processor, drive)
 }
 
 /// Register the sweep delivering one tenant's `timeInterval` entity
@@ -238,91 +224,6 @@ fn register_notification_processor(
     });
     supervisor
         .register_resident(task)
-        .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
-}
-
-fn register_notification_delivery(
-    supervisor: &TaskSupervisor,
-    drain: Arc<NotificationDeliveryDrain>,
-    config: &DeliveryConfig,
-    drive: DurableDeliveryDrive,
-) -> Result<(), TenantAssemblyError> {
-    let DurableDeliveryDrive { wake, pacer } = drive;
-    let fallback_floor = config.poll_interval.duration().max(Duration::from_secs(1));
-    let fallback_ceiling = config
-        .poll_interval_max
-        .duration()
-        .max(config.poll_interval.duration())
-        .max(Duration::from_secs(1));
-    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("notification-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, fallback_floor, fallback_ceiling),
-        ShutdownPolicy::new(fallback_floor),
-    );
-    let operation = Arc::clone(&drain); // clone: delivery and cleanup executions share one stateless delivery operation.
-    let task = DrainTask::new(registration, fallback, move |execution| {
-        let operation = Arc::clone(&operation); // clone: each delivery pass owns the policy operation while executing.
-        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
-        async move {
-            pacer
-                .run_drain_pass(execution.cause(), async move {
-                    let now = DateTime::<Utc>::from(execution.cutoff());
-                    let outcome = operation.execute(now).await.map_err(|error| classify_notification_failure(&error))?;
-                    if outcome.work_may_remain {
-                        Ok(DrainPassOutcome::WorkMayRemain)
-                    } else {
-                        Ok(DrainPassOutcome::Idle)
-                    }
-                })
-                .await
-        }
-    });
-    supervisor
-        .register_drain(task, wake)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-
-    let cleanup_cadence = config.cleanup_interval.duration().max(Duration::from_secs(1));
-    let cleanup_after = retention_duration(config.cleanup_after.duration().as_secs(), "notification delivery cleanup age")?;
-    let dead_letter_after = retention_duration(config.dead_letter_after.duration().as_secs(), "notification delivery dead-letter age")?;
-    let orphan_event_after = retention_duration(config.orphan_event_after.duration().as_secs(), "notification delivery orphan-event age")?;
-    let schedule = PeriodicSchedule::new(cleanup_cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("notification-delivery-cleanup").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cleanup_cadence, cleanup_cadence),
-        ShutdownPolicy::new(cleanup_cadence),
-    );
-    let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let drain = Arc::clone(&drain); // clone: each cleanup execution owns the policy operation while executing.
-        async move {
-            let now = DateTime::<Utc>::from(execution.cutoff());
-            let purged = drain
-                .purge_delivered(now - cleanup_after)
-                .await
-                .map_err(|error| classify_notification_failure(&error))?;
-            // Dead letters are reaped before the orphan pass so an event a
-            // dead-lettered delivery just released can be swept in the same
-            // tick once it also clears the orphan-event horizon.
-            let dead_lettered = drain
-                .purge_exhausted(now - dead_letter_after)
-                .await
-                .map_err(|error| classify_notification_failure(&error))?;
-            let orphaned = drain
-                .purge_orphan_events(now - orphan_event_after)
-                .await
-                .map_err(|error| classify_notification_failure(&error))?;
-            tracing::debug!(purged, dead_lettered, orphaned, "notification delivery cleanup completed");
-            Ok(())
-        }
-    });
-    supervisor
-        .register_scheduled(task)
         .map(drop)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }

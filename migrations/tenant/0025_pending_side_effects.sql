@@ -6,6 +6,10 @@
 -- the same transaction as the Entity write, so either both commit or neither
 -- does. A background worker drains the queue at least once per job, and a
 -- worker that crashes leaves its lease to lapse for another to reclaim.
+--
+-- The queue exists only in the live branch. A request scoped to a Snapshot
+-- runs its side effects inline, so no Snapshot branch ever has a job to
+-- queue, and no worker would drain one.
 -- ============================================================================
 
 CREATE TABLE pending_side_effects (

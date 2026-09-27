@@ -34,10 +34,14 @@ pub mod error;
 pub mod failure_summary;
 /// Temporal-history consequences carried by a write.
 pub mod history_record;
+/// The side-effect job lease a replayed commit settles.
+pub mod job_lease;
 /// Whether a lease-guarded acknowledgement reached the row it targeted.
 pub mod lease_acknowledgement;
 /// The identity a worker holds a durable queue lease under.
 pub mod lease_holder;
+/// The clock one pass over a leased queue stamps its releases with.
+pub mod lease_pass_clock;
 /// Preconditions and retry classification for entity mutations.
 pub mod precondition;
 /// The identity of one durable side-effect job.

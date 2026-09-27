@@ -26,7 +26,7 @@ use crate::entity::{
     reject_linked_retrieval,
     single_source_failure,
 };
-use andromeda_entity::side_effect::BatchSideEffectMode;
+use andromeda_entity::side_effect::SideEffectPlacement;
 use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
@@ -156,7 +156,7 @@ pub(crate) async fn delete_by_query(
         PurgeMode::DeleteEntities => {
             let batch = state
                 .entities
-                .batch_delete(&target, &entity_ids, BatchSideEffectMode::Inline)
+                .batch_delete(SideEffectPlacement::Inline(&target), &entity_ids)
                 .await
                 .with_entity_instance(&uri)?;
             batch_operation_result(batch.success, batch.errors, classify_entity_error)

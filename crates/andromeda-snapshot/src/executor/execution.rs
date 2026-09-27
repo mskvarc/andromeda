@@ -311,6 +311,7 @@ fn branch_commit_failure(error: CommitError) -> Result<ExecutionResultDetails, S
         | CommitError::DuplicateEntity { .. }
         | CommitError::Persistence { .. }
         | CommitError::Invariant { .. }
+        | CommitError::ReplayLeaseLost { .. }
         | CommitError::UnexpectedOutcomeCount { .. }) => Ok(failure_detail(format!("Failed to store results: {failure}"))),
     }
 }

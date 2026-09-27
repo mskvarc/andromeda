@@ -1,8 +1,6 @@
 //! Enqueueing temporal append intents inside the entity anchor transaction.
 
 use crate::intent_store::PostgresTemporalIntentStore;
-use andromeda_context_space::context_target::ContextTarget;
-use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
 use andromeda_postgresql_seaquery::{
     pg_array::text_array,
@@ -33,9 +31,9 @@ pub(super) fn intent_unnest_columns() -> [UnnestColumn; 4] {
 ///
 /// One commit may land more than one entity, and every intent it produces
 /// shares the commit's single write identity; that alone does not identify
-/// one durable intent, because a batch commit in
-/// `BatchSideEffectMode::Enqueue` mode writes an inline intent for an
-/// entity's tombstones and later replays that same entity's deferred
+/// one durable intent, because a batch commit whose side effects are
+/// deferred (`SideEffectPlacement::DeferredOnLive`) writes an inline intent for
+/// an entity's tombstones and later replays that same entity's deferred
 /// side-effect job under the same write identity, producing a second intent
 /// for the same entity whose entries occupy a different ordinal range. The
 /// deduplicating key is therefore `(write_id, entity_id, base_ordinal)`, matching
@@ -43,13 +41,7 @@ pub(super) fn intent_unnest_columns() -> [UnnestColumn; 4] {
 /// `ON CONFLICT ... DO NOTHING` is what makes a commit replayed under its
 /// original identity enqueue no second copy of any entity's intent at a given
 /// base ordinal.
-pub(super) fn enqueue_statement(
-    target: &ContextTarget,
-    ids: Vec<Uuid>,
-    entity_ids: &[&str],
-    bases: Vec<i32>,
-    payloads: Vec<Value>,
-) -> Result<InsertStatement, SeaQueryError> {
+pub(super) fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, payloads: Vec<Value>) -> Result<InsertStatement, SeaQueryError> {
     let columns = intent_unnest_columns();
     let call = unnest_call([
         (&columns[0], Expr::val(ids)),
@@ -67,7 +59,7 @@ pub(super) fn enqueue_statement(
         .to_owned();
     let mut statement = Query::insert();
     statement
-        .into_table(table_of(target, TemporalAppendIntents::Table))
+        .into_table(TemporalAppendIntents::Table)
         .columns([
             TemporalAppendIntents::WriteId,
             TemporalAppendIntents::EntityId,
@@ -88,12 +80,9 @@ pub(super) fn enqueue_statement(
 }
 
 impl PostgresTemporalIntentStore {
-    /// Persist complete intents inside the entity anchor transaction.
-    pub(crate) async fn enqueue_in_tx(
-        tx: &mut Transaction<'_, Postgres>,
-        target: &ContextTarget,
-        intents: &[TemporalAppendIntent],
-    ) -> Result<(), TemporalError> {
+    /// Persist complete intents inside the entity anchor transaction, in the
+    /// live branch's queue: only the live branch defers its history.
+    pub(crate) async fn enqueue_in_tx(tx: &mut Transaction<'_, Postgres>, intents: &[TemporalAppendIntent]) -> Result<(), TemporalError> {
         if intents.is_empty() {
             return Ok(());
         }
@@ -112,7 +101,7 @@ impl PostgresTemporalIntentStore {
             );
             payloads.push(serde_json::to_value(intent).map_err(|error| TemporalError::internal(format!("failed to encode temporal append intent: {error}")))?);
         }
-        let statement = enqueue_statement(target, ids, &entity_ids, bases, payloads)
+        let statement = enqueue_statement(ids, &entity_ids, bases, payloads)
             .map_err(|error| TemporalError::internal(format!("failed to build intent enqueue: {error}")))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         let sql = apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns());
@@ -129,14 +118,13 @@ impl PostgresTemporalIntentStore {
 #[cfg(test)]
 mod tests {
     use crate::intent_store::enqueue::{enqueue_statement, intent_unnest_columns};
-    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_postgresql_seaquery::unnest::apply_column_alias;
     use sea_query::{Alias, PostgresQueryBuilder};
     use serde_json::json;
     use uuid::Uuid;
 
     fn enqueue_sql() -> String {
-        let statement = enqueue_statement(&ContextTarget::Live, vec![Uuid::nil()], &["urn:ngsi-ld:Vehicle:1"], vec![0], vec![json!({})]).expect("arity");
+        let statement = enqueue_statement(vec![Uuid::nil()], &["urn:ngsi-ld:Vehicle:1"], vec![0], vec![json!({})]).expect("arity");
         let sql = statement.to_string(PostgresQueryBuilder);
         apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns())
     }
@@ -165,7 +153,7 @@ mod tests {
         assert!(!sql.contains("WITH ORDINALITY"), "{sql}");
     }
 
-    /// A batch commit in `BatchSideEffectMode::Enqueue` mode keys on `base_ordinal` as
+    /// A batch commit whose side effects are deferred keys on `base_ordinal` as
     /// well as `(write_id, entity_id)` so two intents for the same write and
     /// entity at different ordinals are not collided.
     #[test]

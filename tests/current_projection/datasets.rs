@@ -1,5 +1,5 @@
-//! Verification-matrix rows "Default dataset uniqueness" and "Distinct
-//! datasets".
+//! Default dataset uniqueness and distinct datasets: the default instance is
+//! unique per attribute, and each `datasetId` forms its own grain.
 //!
 //! Clause 4.5.5 makes the instance without a `datasetId` the default instance,
 //! and clause 5.2.5 makes it unique per attribute. The projection states that

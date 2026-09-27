@@ -15,9 +15,12 @@ pub mod attribute_summary;
 pub mod attrs;
 /// Batch entity operations and execution policy.
 pub mod batch;
+/// The one Building subscription the durable-match tests match against.
+#[cfg(test)]
+mod building_subscription_fixture;
 /// Publication boundary for committed entity changes.
 pub mod change_sink;
-/// The change events a committed durable side effect publishes once its acknowledgement is confirmed.
+/// The change events a side-effect job publishes once the replay commit that settled it has landed.
 mod committed_side_effect;
 /// Cache of compiled entity queries, owned by the query service.
 pub mod compiled_cache;
@@ -94,7 +97,10 @@ pub mod residual_predicate;
 mod scope_admission;
 /// Work a batch write produces but need not finish before answering.
 pub mod side_effect;
+/// Bounded at-least-once drain for durable entity side effects.
 pub mod side_effect_drain;
+/// Settling the notifications a drained side-effect job still owes.
+pub mod side_effect_notification;
 /// The durable side-effect queue port.
 pub mod side_effect_queue;
 /// Which spatial index, if any, a geo query may be narrowed through.
@@ -132,14 +138,9 @@ use crate::{
         retry_delay::RetryDelay,
         service_ports::EntityServicePorts,
     },
-    side_effect::{AsyncPreference, BatchSideEffectMode, resolve_side_effect_mode},
+    side_effect::{AsyncPreference, SideEffectPlacement, resolve_side_effect_placement},
 };
-use andromeda_context_commit::{
-    batch_side_effect_job::BatchSideEffectJob,
-    change_event::ChangeEvent,
-    committer::ContextCommitter,
-    context_change_event::ContextChangeEvent,
-};
+use andromeda_context_commit::{change_event::ChangeEvent, committer::ContextCommitter, context_change_event::ContextChangeEvent};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -208,10 +209,18 @@ impl EntityService {
         acquire_id_locks_in(&self.id_locks, target, ids).await
     }
 
-    /// Select inline or durable queued side effects for one batch.
+    /// Place one batch of `batch_size` entities against `target`: where it
+    /// writes, and whether its side effects run inline or are queued for the
+    /// side-effect worker.
+    ///
+    /// They are queued only when the request asked to respond asynchronously,
+    /// the batch reaches the configured threshold, and `target` is the live
+    /// branch. A Snapshot branch always runs them inline: only the live
+    /// branch's side-effect queue is drained, so a job queued in a Snapshot
+    /// branch would never run.
     #[must_use]
-    pub const fn effective_side_effect_mode(&self, preference: AsyncPreference, batch_size: usize) -> BatchSideEffectMode {
-        resolve_side_effect_mode(self.batch_execution.async_side_effect_threshold, preference, batch_size)
+    pub const fn side_effect_placement<'a>(&self, target: &'a ContextTarget, preference: AsyncPreference, batch_size: usize) -> SideEffectPlacement<'a> {
+        resolve_side_effect_placement(target, self.batch_execution.async_side_effect_threshold, preference, batch_size)
     }
 
     fn emit_change(&self, target: &ContextTarget, event: ChangeEvent) {
@@ -221,10 +230,6 @@ impl EntityService {
                 event,
             });
         }
-    }
-
-    fn apply_inline_side_effects(&self, job: BatchSideEffectJob) {
-        job.change_events.into_iter().for_each(|event| self.emit_change(&job.target, event));
     }
 }
 

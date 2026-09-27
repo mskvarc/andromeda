@@ -1,11 +1,9 @@
 //! Verification suite for the transactional current-attribute projection.
 //!
-//! Covers the database-schema-redesign verification-matrix rows "Current
-//! projection atomicity", "Current projection delete", "Default dataset
-//! uniqueness", "Distinct datasets", "Narrow Entity keys", "Empty Entity
-//! type", "Current projection replayed writes", "Current projection no-op
-//! suppression", "Current projection long strings", "Instance expiry", "Identifier bounds",
-//! "Attribute write consequences" and "Entity write consequences".
+//! Covers current projection atomicity and deletion, default dataset
+//! uniqueness, distinct datasets, narrow Entity keys, empty Entity types,
+//! replayed writes, no-op suppression, long strings, instance expiry,
+//! identifier bounds, and the consequences of attribute and Entity writes.
 //! Each test drives the broker over HTTP (or, for the no-op guard, the
 //! broker's own projection statement) and then reads
 //! `current_attribute_values`, `entities`, and `temporal_entities` directly, so

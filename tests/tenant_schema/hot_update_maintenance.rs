@@ -1,4 +1,5 @@
-//! Verification matrix row "Hot-update maintenance".
+//! Hot-update maintenance: the churn-heavy relations carry the fillfactor and
+//! autovacuum settings their write rate needs.
 //!
 //! Four relations take queue-shaped churn — `current_attribute_values`,
 //! `entity_documents`, `notification_deliveries` and `pending_side_effects` —
@@ -8,18 +9,17 @@
 //! the vacuum cadence: the former is updated only for an expiry change, the
 //! latter only when a projected search column moves.
 //!
-//! The row is checked in four parts. The settings the migrations declare are
-//! read back from the catalogue, so a relation that lost them is caught. A
+//! The property is checked in four parts. The settings the migrations declare
+//! are read back from the catalogue, so a relation that lost them is caught. A
 //! sustained update run then reports the heap-only-tuple ratio and the dead-tuple
-//! count each relation actually reaches, which is the measurement the row asks
-//! for. The split of the entity into a document row that every write touches
-//! and a search row that only a projection change touches is verified through
-//! the API: a value-only write leaves the search row's update counter where it
-//! was, a type change advances it. And the two queue claims are told apart: the
+//! count each relation actually reaches, which is what the tuning is judged by.
+//! The split of the entity into a document row that every write touches and a
+//! search row that only a projection change touches is verified through the
+//! API: a value-only write leaves the search row's update counter where it was,
+//! a type change advances it. And the two queue claims are told apart: the
 //! delivery claim writes the inputs of its claimable-expression index, so vacuum
-//! cadence rather than fillfactor is the defence there, exactly as the proposal
-//! records; the side-effect claim writes no indexed column, so its fillfactor
-//! of 50 must keep it heap-only.
+//! cadence rather than fillfactor is the defence there; the side-effect claim
+//! writes no indexed column, so its fillfactor of 50 must keep it heap-only.
 
 use crate::SUITE;
 use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
@@ -39,7 +39,7 @@ struct TunedRelation {
     fillfactor: Option<i32>,
 }
 
-/// Every relation the proposal names as hot-update shaped, plus the append-only
+/// Every relation that takes hot-update-shaped churn, plus the append-only
 /// event relation that shares the vacuum cadence.
 const TUNED_RELATIONS: &[TunedRelation] = &[
     TunedRelation {
@@ -209,8 +209,8 @@ async fn every_hot_update_relation_still_declares_the_maintenance_settings_it_wa
 /// can keep heap-only, and it measures that the reservation does so. A write
 /// that changes the value touches `value_number`, which `idx_cav_value_number`
 /// contains, so it cannot: every typed-value index disqualifies HOT for its own
-/// column, which is why the proposal makes vacuum cadence rather than fillfactor
-/// the primary defence. Both are measured so the tuning is judged on what it
+/// column, which is why vacuum cadence rather than fillfactor is the primary
+/// defence. Both are measured so the tuning is judged on what it
 /// can reach.
 ///
 /// This one test holds the exclusive serialized lease rather than the shared
@@ -279,8 +279,8 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
     assert_eq!(revaluation.updated, CHURN_UPDATES, "every value-changing update must be counted");
     // `idx_cav_value_number` contains `value_number`, so none of these can be
     // heap-only. Recorded as an assertion because the day that index goes, the
-    // proposal's "vacuum cadence is the primary defence" reasoning changes with
-    // it and the row has to be re-measured.
+    // reasoning that vacuum cadence is the primary defence changes with it and
+    // the tuning has to be re-measured.
     assert_eq!(
         revaluation.heap_only, 0,
         "a value-changing update writes an index tuple, so none of the {} can be heap-only",

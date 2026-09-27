@@ -24,11 +24,15 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// Every consequence lands under `replay.record`'s identity instead of a
     /// freshly minted one, and the ordinal counter that numbers temporal,
     /// notification and side-effect consequences resumes at
-    /// `replay.base_ordinal` instead of zero. A durable side-effect job
-    /// retried after a crash therefore reproduces exactly the identity and
-    /// ordinals its first attempt would have produced, so the replay's rows
-    /// collide with the first attempt's on their row-level `ON CONFLICT ... DO
-    /// NOTHING` constraints instead of duplicating them.
+    /// `replay.base_ordinal` instead of zero, so the replay's rows belong to
+    /// the write that deferred them and follow the consequences it already
+    /// committed.
+    ///
+    /// The commit also removes the job `replay.lease` names, before it writes
+    /// any consequence and only while that lease is held; a lost lease ends in
+    /// [`CommitError::ReplayLeaseLost`](crate::error::CommitError::ReplayLeaseLost)
+    /// with nothing written, and a job the commit removed stays out of every
+    /// other worker's reach until the commit ends.
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
 }
 

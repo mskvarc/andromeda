@@ -1,4 +1,5 @@
-//! Verification matrix row "Migration failure".
+//! Migration failure: a tenant left half-switched by a failed migration is
+//! never served.
 //!
 //! The rebuild is a maintenance-window cutover, so the failure mode that
 //! matters is a tenant left half-switched: some phases applied, some not. Three

@@ -9,20 +9,31 @@
 //! every other Snapshot keep serving, and a re-run after the cause is removed
 //! lifts the quarantine (`docs/schema-migration-policy.md`).
 
-use super::*;
+use crate::support::{
+    assert_problem_details,
+    broker_url,
+    clean_database,
+    client,
+    create_entity,
+    create_snapshot_raw,
+    delete_snapshot_raw,
+    query_snapshot_entities,
+    wait_for_snapshot_terminal,
+};
 use andromeda_postgresql_context_store::{
-    migration_set::branch::{BranchMigrationSet, branch_migrations, current_branch_version},
+    migration_set::branch::{BRANCH_LEDGER, BranchMigrationSet, branch_migrations, current_branch_version},
     snapshot::branch_upgrade::{BranchUpgradeReport, SnapshotBranchState, snapshot_branch_state, upgrade_snapshot_branches},
 };
+use regex::Regex;
+use reqwest::StatusCode;
+use serde_json::{Value, json};
+use serial_test::serial;
 use sqlx::{
     PgPool,
     migrate::{Migration, MigrationType},
 };
-use std::{borrow::Cow, env};
+use std::{borrow::Cow, env, time::Duration};
 use tokio::time::timeout;
-
-/// The ledger every branch schema records its branch migrations in.
-const BRANCH_LEDGER: &str = "_andromeda_branch_migrations";
 
 /// The foreign keys from live branch relations into the tenant-global
 /// dictionaries, which the live-only tenant migration 0029 declares and no
@@ -111,6 +122,12 @@ async fn snapshot_branch_schema_matches_the_live_branch_name_for_name() {
         .await
         .expect("branch relations");
     assert!(!tables.is_empty(), "the branch schema {schema} holds the branch relations");
+    // Only the live branch defers work: a Snapshot branch runs its side effects
+    // inline and records its history in the write's own transaction, so it has
+    // neither queue.
+    for live_only in ["pending_side_effects", "temporal_append_intents"] {
+        assert!(!tables.iter().any(|table| table == live_only), "{schema} holds no {live_only}");
+    }
     for table in &tables {
         pretty_assertions::assert_eq!(
             relation_shape(&pool, &schema, table).await,
@@ -227,6 +244,16 @@ async fn snapshot_lifecycle_completes_while_the_dictionaries_are_row_exclusive_l
     holder.rollback().await.expect("release the dictionaries");
 }
 
+/// The relations `migration` creates, in the order it creates them.
+fn created_relations(migration: &Migration) -> Vec<String> {
+    Regex::new(r"(?i)\bCREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)")
+        .expect("the relation pattern is static and valid")
+        .captures_iter(migration.sql.as_str())
+        .filter_map(|created| created.get(1))
+        .map(|name| name.as_str().to_owned())
+        .collect()
+}
+
 /// A branch migration a later release appends: one new column on a branch relation.
 fn appended_migration(version: i64) -> Migration {
     Migration::new(
@@ -297,6 +324,11 @@ async fn snapshot_branch_upgrade_failure_quarantines_only_that_snapshot_until_a_
     // nevertheless already holds that migration's relation: re-applying the
     // migration fails, which is a failed upgrade.
     let last = branch_migrations().last().expect("the branch set is not empty");
+    assert!(
+        !created_relations(last).is_empty(),
+        "the quarantine is provoked by re-applying a migration whose relations already exist, so the last branch migration ({}) must create one",
+        last.version
+    );
     let current = current_branch_version().expect("branch version").get();
     sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {broken}.{BRANCH_LEDGER} WHERE version = $1")))
         .bind(last.version)
@@ -330,11 +362,18 @@ async fn snapshot_branch_upgrade_failure_quarantines_only_that_snapshot_until_a_
     let live = client().get(broker_url("/entities?type=Vehicle")).send().await.expect("live query");
     pretty_assertions::assert_eq!(live.status(), StatusCode::OK);
 
-    // Once the cause is removed, a re-run upgrades the Snapshot and lifts the quarantine.
-    sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {broken}.temporal_append_intents CASCADE")))
+    // Once the cause is removed, a re-run upgrades the Snapshot and lifts the
+    // quarantine: the conflicting relations are the ones the last branch
+    // migration creates.
+    let conflicting = created_relations(last)
+        .iter()
+        .map(|relation| format!("{broken}.{relation}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {conflicting} CASCADE")))
         .execute(&pool)
         .await
-        .expect("remove the conflicting relation");
+        .expect("remove the conflicting relations");
     let report = upgrade_snapshot_branches(&pool, &BranchMigrationSet::embedded()).await.expect("upgrade rerun");
     pretty_assertions::assert_eq!(report, BranchUpgradeReport { upgraded: 1, quarantined: 0 });
     pretty_assertions::assert_eq!(snapshot_branch_state(&pool).await.expect("probe"), SnapshotBranchState::Current);

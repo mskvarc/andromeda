@@ -1,4 +1,4 @@
-//! Verification-matrix row "Temporal access-path plans".
+//! Temporal access-path plans: an `idPattern` selection reaches an index.
 //!
 //! Stage 1 of a temporal query selects `temporal_entities` by the selector's
 //! `idPattern` (clause 5.2.33), compiled to a POSIX `~` on the identifier. An

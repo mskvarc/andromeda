@@ -9,10 +9,9 @@
 //!
 //! Topology mapping (plan §3): `T-LOCAL`/`T-MOCK`/`T-MOCK-N` → [`single`] plus an
 //! in-process [`ContextSourceAdapter`]; `T-PAIR` → [`pair`]; `T-SPLIT`/`T-CHAIN`
-//! → [`chain`], with brokers B and C each holding part of one entity. Concrete
-//! designs are in `docs/distributed-tests/cons.md`. Entity maps are durable
-//! and shared across instances, so the cross-instance linked-map rows
-//! (`REQ-CONS-8/13/26/45/48/61`) run like any other row.
+//! → [`chain`], with brokers B and C each holding part of one entity. Entity
+//! maps are durable and shared across instances, so the cross-instance
+//! linked-map rows (`REQ-CONS-8/13/26/45/48/61`) run like any other row.
 //!
 //! [`single`]: `crate::topology::{self`, `BrokerRole}::single`
 //! [`pair`]: `crate::topology::{self`, `BrokerRole}::pair`

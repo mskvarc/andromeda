@@ -1,4 +1,4 @@
-//! Verification-matrix row "Current projection no-op suppression".
+//! Current projection no-op suppression: restating a value rewrites nothing.
 //!
 //! The projection write carries an `IS DISTINCT FROM` guard over every
 //! non-grain column, so a batch that restates an instance with the value it

@@ -38,7 +38,7 @@ const SEARCH_PATH: &str = "search_path";
 /// clone `INSERT ... SELECT` respect intra-branch foreign keys (parents before
 /// children). The branch migrations create them; this list only orders the
 /// copies and the truncation.
-pub(crate) const BRANCH_TABLES: [&str; 15] = [
+pub(crate) const BRANCH_TABLES: [&str; 13] = [
     "entities",
     "temporal_entities",
     "subscriptions",
@@ -52,8 +52,6 @@ pub(crate) const BRANCH_TABLES: [&str; 15] = [
     "attribute_history_instance_claims",
     "subscription_delivery_state",
     "notification_deliveries",
-    "pending_side_effects",
-    "temporal_append_intents",
 ];
 
 /// Create a branch schema by running the branch migration set inside it.

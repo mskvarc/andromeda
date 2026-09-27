@@ -23,6 +23,8 @@ pub mod tenant_scoped_environment;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-ngsi-ld-lexicon",
+        "andromeda-tenancy",
         "andromeda-test-client",
         "andromeda-test-fixtures",
     ],

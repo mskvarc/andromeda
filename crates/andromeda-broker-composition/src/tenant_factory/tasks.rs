@@ -4,6 +4,7 @@ mod csource_notification;
 mod entity_notification;
 mod expiry;
 mod maintenance;
+mod notification_delivery;
 mod notification_schedule;
 mod pool_gauges;
 mod retention;
@@ -19,9 +20,10 @@ use crate::tenant_factory::{
     storage::TenantStorage,
     tasks::{
         csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
-        entity_notification::{DurableDeliveryDrive, compose_notification_processor, register_interval_notification, register_notification_workers},
+        entity_notification::{compose_notification_processor, register_interval_notification, register_notification_workers},
         expiry::register_expiry_workers,
         maintenance::{register_entity_side_effects, register_spatial_workers},
+        notification_delivery::DeliveryDrainDrive,
         pool_gauges::register_pool_gauges,
         snapshot::{PreparationRecovery, SnapshotStatusWake, register_snapshot_workers},
         table_size_gauges::register_table_size_gauges,
@@ -83,8 +85,8 @@ pub(super) struct TaskSupervision {
 pub(super) struct TenantTaskChannels {
     /// The entity, subscription and registration change streams.
     pub(super) signals: TenantSignals,
-    /// The notification-delivery drain's wake receiver, absent under live delivery.
-    pub(super) notification_wake: Option<DrainWakeReceiver>,
+    /// The notification-delivery drain's wake receiver.
+    pub(super) notification_wake: DrainWakeReceiver,
     /// The entity side-effect drain's wake receiver.
     pub(super) side_effect_wake: DrainWakeReceiver,
     /// The Snapshot status-delivery drain's wake handle, shared with the
@@ -168,10 +170,10 @@ pub(super) fn supervise_tasks(
         notification_processor,
         &entity,
         subscription,
-        notification_wake.map(|wake| DurableDeliveryDrive {
-            wake,
+        DeliveryDrainDrive {
+            wake: notification_wake,
             pacer: Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
-        }),
+        },
     )?;
     register_expiry_workers(&task_supervisor, config, storage, &services.state, &registration, &pacer)?;
     register_interval_notification(

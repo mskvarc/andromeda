@@ -2,8 +2,20 @@
 
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use thiserror::Error;
 use toml_comment::TomlComment;
+
+/// How much longer than the connection acquire deadline a side-effect lease
+/// must run.
+///
+/// A job's lease has to last from its claim to the first statement of its
+/// replay, which removes the job and locks it for the rest of the replay. That
+/// wait is chiefly acquiring the replay transaction's connection, which the
+/// acquire deadline bounds; the margin covers the rest of it -- decoding the
+/// claimed job, matching the notifications it still owes, and the settling
+/// statement itself -- before another worker could reclaim the job.
+pub const PENDING_SIDE_EFFECTS_LEASE_MARGIN: Duration = Duration::from_secs(5);
 
 /// Invalid entity execution configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -59,6 +71,20 @@ pub enum EntityConfigError {
     /// Dead-lettered side-effect reap cadence was configured as zero.
     #[error("entity.pending_side_effects_cleanup_interval must be greater than zero")]
     ZeroPendingSideEffectsCleanupInterval,
+    /// The side-effect lease does not outlast the connection acquire deadline
+    /// by [`PENDING_SIDE_EFFECTS_LEASE_MARGIN`], so a job's lease could lapse
+    /// before its replay locks it and another worker replay it instead.
+    #[error(
+        "entity.pending_side_effects_lease ({lease_seconds}s) must exceed database.acquire_timeout ({acquire_seconds}s) by at least {margin_seconds}s, the wait between claiming a job and its replay locking it"
+    )]
+    PendingSideEffectsLeaseWithoutMarginOverAcquire {
+        /// The configured side-effect lease, in whole seconds.
+        lease_seconds: u64,
+        /// The configured connection acquire deadline, in whole seconds.
+        acquire_seconds: u64,
+        /// The margin the lease must leave over the acquire deadline, in seconds.
+        margin_seconds: u64,
+    },
 }
 
 /// Entity batching, expiry, and durable side-effect configuration.
@@ -93,6 +119,11 @@ pub struct EntityConfig {
     pub pending_side_effects_poll_max: HumanDuration,
     /// Lease duration for a claimed side-effect job, in human-readable form
     /// (`"30s"`).
+    ///
+    /// It has to cover only the wait between a job's claim and the start of
+    /// its replay, which locks the job for as long as the replay runs, and is
+    /// refused unless it exceeds `database.acquire_timeout` by
+    /// [`PENDING_SIDE_EFFECTS_LEASE_MARGIN`].
     #[toml_comment(inline)]
     pub pending_side_effects_lease: HumanDuration,
     /// Maximum jobs claimed per poll.
@@ -202,13 +233,36 @@ impl EntityConfig {
         }
         Ok(())
     }
+
+    /// Check that the side-effect lease outlasts the wait between a job's
+    /// claim and its replay locking it, when acquiring a connection may take up
+    /// to `acquire_timeout`.
+    ///
+    /// # Errors
+    ///
+    /// Returns
+    /// [`EntityConfigError::PendingSideEffectsLeaseWithoutMarginOverAcquire`]
+    /// when the lease is shorter than `acquire_timeout` plus
+    /// [`PENDING_SIDE_EFFECTS_LEASE_MARGIN`].
+    pub fn validate_side_effect_lease_over(&self, acquire_timeout: Duration) -> Result<(), EntityConfigError> {
+        let lease = self.pending_side_effects_lease.duration();
+        if lease < acquire_timeout.saturating_add(PENDING_SIDE_EFFECTS_LEASE_MARGIN) {
+            return Err(EntityConfigError::PendingSideEffectsLeaseWithoutMarginOverAcquire {
+                lease_seconds: lease.as_secs(),
+                acquire_seconds: acquire_timeout.as_secs(),
+                margin_seconds: PENDING_SIDE_EFFECTS_LEASE_MARGIN.as_secs(),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{EntityConfig, EntityConfigError};
+    use crate::config::{EntityConfig, EntityConfigError};
     use andromeda_configuration_scalars::human_duration::HumanDuration;
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
 
     fn valid_config() -> EntityConfig {
         EntityConfig {
@@ -272,5 +326,34 @@ mod tests {
         let config = EntityConfig::default();
         assert_eq!(config.pending_side_effects_dead_letter_after.duration().as_secs(), 604_800);
         assert_eq!(config.pending_side_effects_cleanup_interval.duration().as_secs(), 300);
+    }
+
+    /// A lease that could lapse while its replay still waits for a connection
+    /// lets another worker reclaim and replay the job instead.
+    #[test]
+    fn a_side_effect_lease_without_the_margin_over_the_acquire_deadline_is_rejected() {
+        let mut config = valid_config();
+        config.pending_side_effects_lease = HumanDuration::from_secs(9);
+        assert_eq!(
+            config.validate_side_effect_lease_over(Duration::from_secs(5)),
+            Err(EntityConfigError::PendingSideEffectsLeaseWithoutMarginOverAcquire {
+                lease_seconds: 9,
+                acquire_seconds: 5,
+                margin_seconds: 5,
+            })
+        );
+    }
+
+    #[test]
+    fn a_side_effect_lease_covering_the_acquire_deadline_and_the_margin_is_accepted() {
+        let mut config = valid_config();
+        config.pending_side_effects_lease = HumanDuration::from_secs(10);
+        assert_eq!(config.validate_side_effect_lease_over(Duration::from_secs(5)), Ok(()));
+    }
+
+    /// The shipped side-effect lease covers the shipped acquire deadline.
+    #[test]
+    fn the_default_side_effect_lease_covers_the_default_acquire_deadline() {
+        assert_eq!(EntityConfig::default().validate_side_effect_lease_over(Duration::from_secs(5)), Ok(()));
     }
 }

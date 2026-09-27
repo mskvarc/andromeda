@@ -1,4 +1,4 @@
-//! Verification-matrix row "Empty Entity type".
+//! Empty Entity type: an empty type array is refused by the API and the schema.
 //!
 //! An Entity always has at least one type (clause 4.5.1). Rust rejects the
 //! empty array at the API boundary, and `chk_entity_search_entity_type_name_keys_present`

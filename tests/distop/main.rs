@@ -10,8 +10,7 @@
 //! `docker/compose/test/distributed/` (brokers A/B/C, host ports 1061/1062/1063) plus
 //! in-process mock Context Sources for fault injection and exact forwarded-request
 //! assertions. Topologies, requirements, and the conformance ratchet are
-//! documented in `docs/distributed-operations-test-plan.md` and the companion
-//! `docs/distributed-tests/` catalog.
+//! documented in `docs/distributed-operations-test-plan.md`.
 //!
 //! The canonical runner is `cargo xtask itest distributed`, which brings the
 //! four-broker compose stack up, sources its environment, and runs this suite

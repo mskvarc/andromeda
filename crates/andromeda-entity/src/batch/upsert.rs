@@ -33,7 +33,7 @@ use crate::{
     error::EntityError,
     expanded_member::{unwrap_expanded_ref, written_attribute_names},
     notification_plan::attribute_change_groups,
-    side_effect::BatchSideEffectMode,
+    side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
@@ -62,12 +62,12 @@ pub(super) type UpsertChunkOutcome = (BatchResult, Vec<(Uri, EntityError)>, Vec<
 impl EntityService {
     pub(super) async fn batch_upsert_replace_chunk(
         &self,
-        target: &ContextTarget,
+        placement: SideEffectPlacement<'_>,
         chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
         errors: &mut Vec<(Uri, EntityError)>,
-        mode: BatchSideEffectMode,
     ) -> Result<UpsertOutcome, EntityError> {
+        let target = placement.target();
         // Clause 5.6.8.4 gives replace mode two branches and neither admits the
         // sentinel: an Entity that does not exist is created by "the behaviour
         // defined by clause 5.6.1", and one that does "shall be completely
@@ -119,7 +119,7 @@ impl EntityService {
 
         let mut success = Vec::new();
         let mut created = Vec::new();
-        let mut outcome = self.commit_chunk(target, writes, mode).await?;
+        let mut outcome = self.commit_chunk(placement, writes).await?;
 
         for attempt in 1..=WRITE_ATTEMPTS {
             success.extend(take(&mut outcome.success));
@@ -162,7 +162,7 @@ impl EntityService {
                     Err(failure) => errors.push(*failure),
                 }
             }
-            outcome = self.commit_chunk(target, retry_writes, mode).await?;
+            outcome = self.commit_chunk(placement, retry_writes).await?;
         }
 
         Ok((BatchResult { success, errors: Vec::new() }, created))
@@ -170,12 +170,12 @@ impl EntityService {
 
     pub(super) async fn batch_upsert_update_chunk(
         &self,
-        target: &ContextTarget,
+        placement: SideEffectPlacement<'_>,
         chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
         errors: &mut Vec<(Uri, EntityError)>,
-        mode: BatchSideEffectMode,
     ) -> Result<UpsertOutcome, EntityError> {
+        let target = placement.target();
         // Clause 5.6.8.4: "If there were an existing Entity with the same Entity
         // ID, the behaviour defined by clause 5.6.2 shall be executed, but
         // limited to a local operation, if the requested update mode is
@@ -265,7 +265,7 @@ impl EntityService {
             }
         }
 
-        let outcome = self.commit_chunk(target, writes, mode).await?.settled();
+        let outcome = self.commit_chunk(placement, writes).await?.settled();
         errors.extend(outcome.errors);
 
         Ok((

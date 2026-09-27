@@ -1,4 +1,4 @@
-//! Verification matrix row "Dictionary growth limit".
+//! Attribute dictionary growth limit: minting new attribute names is bounded.
 //!
 //! `attribute_names` is append-only and attribute IRIs are open-world (clause
 //! 4.5.2), so any client can inflate the dictionary indefinitely. The bound is

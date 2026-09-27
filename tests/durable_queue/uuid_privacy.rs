@@ -1,6 +1,6 @@
 //! What a broker-minted identifier discloses, and what it does not grant.
 //!
-//! Verification-matrix row "UUID privacy": every externally visible
+//! UUID privacy: every externally visible
 //! broker-minted identifier is created and inspected. The temporal
 //! `instanceId` clause 4.5.7 hands back is a version-7 UUID, so it discloses
 //! the approximate instant it was minted — an intentional, documented property

@@ -51,10 +51,9 @@ use crate::{
         upsert::UpsertChunkOutcome,
     },
     error::EntityError,
-    side_effect::BatchSideEffectMode,
+    side_effect::SideEffectPlacement,
     write_kind::{BatchCreate, BatchMerge, BatchUpdate, BatchUpsert},
 };
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::expanded::mutation::selection::OverwritePolicy;
@@ -132,6 +131,9 @@ impl EntityService {
 
     /// Create the admitted entities in a single batch operation (NGSI-LD 5.6.7).
     ///
+    /// The batch writes the branch `placement` names and runs its side effects
+    /// where `placement` puts them.
+    ///
     /// # Errors
     ///
     /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when an
@@ -143,10 +145,9 @@ impl EntityService {
     /// results per entity.
     pub async fn batch_create(
         &self,
-        target: &ContextTarget,
+        placement: SideEffectPlacement<'_>,
         admitted: AdmittedBatch<BatchCreate>,
         context: &ContextSpec,
-        mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchCreate);
         let result: Result<BatchResult, EntityError> = async {
@@ -160,7 +161,7 @@ impl EntityService {
             }
 
             let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(deduped))
-                .map(|chunk| async move { self.batch_create_chunk(target, chunk, context, mode).await })
+                .map(|chunk| async move { self.batch_create_chunk(placement, chunk, context).await })
                 .buffered(self.batch_execution.chunk_write_concurrency)
                 .collect()
                 .await;
@@ -175,13 +176,16 @@ impl EntityService {
 
     /// Delete multiple entities by ID in a single batch operation (NGSI-LD 5.6.10).
     ///
+    /// The batch writes the branch `placement` names and runs its side effects
+    /// where `placement` puts them.
+    ///
     /// # Errors
     ///
     /// Reports [`EntityError::Persistence`] when the store could not read or
     /// commit a chunk. An identifier that names no entity, or that the batch
     /// repeats, is carried in [`BatchResult::errors`] instead, because clause
     /// 5.6.10 reports batch results per entity.
-    pub async fn batch_delete(&self, target: &ContextTarget, entity_ids: &[Uri], mode: BatchSideEffectMode) -> Result<BatchResult, EntityError> {
+    pub async fn batch_delete(&self, placement: SideEffectPlacement<'_>, entity_ids: &[Uri]) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchDelete);
         let result: Result<BatchResult, EntityError> = async {
             // Clause 5.5.11.4: the first occurrence deletes, every later one is
@@ -199,7 +203,7 @@ impl EntityService {
 
             let chunk_len = self.batch_chunk_len(unique_ids.len());
             let chunk_results: Vec<Result<DeleteChunkOutcome, EntityError>> = stream::iter(unique_ids.chunks(chunk_len))
-                .map(|chunk| async move { self.batch_delete_chunk(target, chunk, mode).await })
+                .map(|chunk| async move { self.batch_delete_chunk(placement, chunk).await })
                 .buffered(self.batch_execution.chunk_write_concurrency)
                 .collect()
                 .await;
@@ -221,6 +225,9 @@ impl EntityService {
     /// Update attributes of the admitted entities in a single batch operation
     /// (NGSI-LD 5.6.9).
     ///
+    /// The batch writes the branch `placement` names and runs its side effects
+    /// where `placement` puts them.
+    ///
     /// An identifier the array repeats is updated once per instance, in array
     /// order, each instance against the state its predecessor left: clause
     /// 5.5.11.3 has the broker send separate notifications for each individual
@@ -237,11 +244,10 @@ impl EntityService {
     /// results per entity.
     pub async fn batch_update(
         &self,
-        target: &ContextTarget,
+        placement: SideEffectPlacement<'_>,
         admitted: AdmittedBatch<BatchUpdate>,
         context: &ContextSpec,
         overwrite: OverwritePolicy,
-        mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchUpdate);
         let result: Result<BatchResult, EntityError> = async {
@@ -250,7 +256,7 @@ impl EntityService {
             let mut batch = BatchResult::empty();
             for round in rounds.into_rounds() {
                 let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
-                    .map(|chunk| async move { self.batch_update_chunk(target, chunk, context, overwrite, mode).await })
+                    .map(|chunk| async move { self.batch_update_chunk(placement, chunk, context, overwrite).await })
                     .buffered(self.batch_execution.chunk_write_concurrency)
                     .collect()
                     .await;
@@ -265,6 +271,9 @@ impl EntityService {
 
     /// Merge the admitted partial updates into their entities in a single batch
     /// operation.
+    ///
+    /// The batch writes the branch `placement` names and runs its side effects
+    /// where `placement` puts them.
     ///
     /// An identifier the array repeats is merged once per instance, in array
     /// order, each merge applied to what the previous one produced: clause
@@ -282,10 +291,9 @@ impl EntityService {
     /// [`BatchResult::errors`] instead.
     pub async fn batch_merge(
         &self,
-        target: &ContextTarget,
+        placement: SideEffectPlacement<'_>,
         admitted: AdmittedBatch<BatchMerge>,
         context: &ContextSpec,
-        mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchMerge);
         let result: Result<BatchResult, EntityError> = async {
@@ -294,7 +302,7 @@ impl EntityService {
             let mut batch = BatchResult::empty();
             for round in rounds.into_rounds() {
                 let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
-                    .map(|chunk| async move { self.batch_merge_chunk(target, chunk, context, mode).await })
+                    .map(|chunk| async move { self.batch_merge_chunk(placement, chunk, context).await })
                     .buffered(self.batch_execution.chunk_write_concurrency)
                     .collect()
                     .await;
@@ -309,6 +317,9 @@ impl EntityService {
 
     /// Create or update the admitted entities in a single batch operation
     /// (NGSI-LD 5.6.8), in the mode they were admitted for.
+    ///
+    /// The batch writes the branch `placement` names and runs its side effects
+    /// where `placement` puts them.
     ///
     /// An identifier the array repeats is created by its first instance and
     /// replaced or updated by each later one, in array order, so the stored
@@ -328,10 +339,9 @@ impl EntityService {
     /// batch results per entity.
     pub async fn batch_upsert(
         &self,
-        target: &ContextTarget,
+        placement: SideEffectPlacement<'_>,
         admitted: AdmittedBatch<BatchUpsert>,
         context: &ContextSpec,
-        mode: BatchSideEffectMode,
     ) -> Result<(BatchResult, Vec<Uri>), EntityError> {
         let timer = entity::start(EntityOperation::BatchUpsert);
         let result: Result<(BatchResult, Vec<Uri>), EntityError> = async {
@@ -345,8 +355,8 @@ impl EntityService {
                     .map(|chunk| async move {
                         let mut chunk_errors = Vec::new();
                         let outcome = match policy {
-                            UpsertPolicy::Update => self.batch_upsert_update_chunk(target, chunk, context, &mut chunk_errors, mode).await,
-                            UpsertPolicy::Replace => self.batch_upsert_replace_chunk(target, chunk, context, &mut chunk_errors, mode).await,
+                            UpsertPolicy::Update => self.batch_upsert_update_chunk(placement, chunk, context, &mut chunk_errors).await,
+                            UpsertPolicy::Replace => self.batch_upsert_replace_chunk(placement, chunk, context, &mut chunk_errors).await,
                         };
                         outcome.map(|(result, chunk_created)| (result, chunk_errors, chunk_created))
                     })

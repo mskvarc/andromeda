@@ -1,4 +1,5 @@
-//! Verification matrix row "CSR routing projection".
+//! CSR routing projection: `registration_information` mirrors every selector
+//! the registration documents declare.
 //!
 //! `context_source_registrations.information` (clause 5.2.9) stays the
 //! authority for every response body; `registration_information` is the same

@@ -1,4 +1,4 @@
-//! Verification-matrix row "Current projection long strings".
+//! Current projection long strings: every string has one canonical column.
 //!
 //! `value_string` is keyed by a B-tree, which refuses an entry past 2704
 //! bytes, so a String longer than the indexed bound is held in

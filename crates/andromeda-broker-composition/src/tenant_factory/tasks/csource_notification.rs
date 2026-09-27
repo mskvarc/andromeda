@@ -17,7 +17,12 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
-use andromeda_notification::{csource_interval::CsourceIntervalNotificationOperation, csource_processor::CsourceNotificationProcessor};
+use andromeda_notification::{
+    csource_interval::CsourceIntervalNotificationOperation,
+    csource_processor::{CsourceNotificationProcessor, CsourceNotificationProcessorDeps},
+    notified_registration_store::NotifiedRegistrationStore,
+};
+use andromeda_postgresql_context_store::csource_subscription::notified_registrations::NotifiedRegistrationLedger;
 use andromeda_registration::store::RegistrationStore;
 use andromeda_subscription::{change::CsourceSubscriptionChange, store::SubscriptionStore};
 use andromeda_task_runtime::{
@@ -63,6 +68,8 @@ struct CsourceNotificationPorts {
     subscriptions: Arc<dyn SubscriptionStore>,
     /// The registrations a notification reports.
     registrations: Arc<dyn RegistrationStore>,
+    /// The registrations each subscription was notified of.
+    notified: Arc<dyn NotifiedRegistrationStore>,
     /// The processor compacting a notified registration.
     engine: JsonLdEngine,
     /// The dispatcher every transport binding is reached through.
@@ -97,9 +104,10 @@ pub(super) fn register_csource_notification_workers(
             target: storage.live_target.clone(),                    // clone: the resident processor owns the live branch it evaluates.
             subscriptions: Arc::clone(&csource_subscriptions),      // clone: the processor and the interval worker share one store.
             registrations: Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
-            engine: storage.engine.clone(),                         // clone: notification policy owns its engine handle.
-            transport: Arc::clone(transport),                       // clone: every worker delivers through one dispatcher.
-            tenant: storage.tenant.clone(),                         // clone: notification policy owns its tenant partition.
+            notified: Arc::new(NotifiedRegistrationLedger::new(&storage.pool)),
+            engine: storage.engine.clone(),   // clone: notification policy owns its engine handle.
+            transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
+            tenant: storage.tenant.clone(),   // clone: notification policy owns its tenant partition.
         },
     )?;
     register_csource_interval_notification(
@@ -132,6 +140,7 @@ fn register_csource_notification_processor(
         target,
         subscriptions: subscription_store,
         registrations: registration_store,
+        notified,
         engine,
         transport,
         tenant,
@@ -147,14 +156,15 @@ fn register_csource_notification_processor(
     let task = ResidentTask::new(registration, move |execution| {
         let mut registration_receiver = registration_changes.subscribe();
         let mut subscription_receiver = subscription_changes.subscribe();
-        let processor = CsourceNotificationProcessor::new(
-            target.clone(), // clone: each resident restart owns the same immutable live branch target.
-            Arc::clone(&subscription_store),
-            Arc::clone(&registration_store),
-            engine.clone(), // clone: each resident restart owns the same engine handle.
-            Arc::clone(&transport),
-            tenant.clone(),
-        );
+        let processor = CsourceNotificationProcessor::new(CsourceNotificationProcessorDeps {
+            target: target.clone(), // clone: each resident restart owns the same immutable live branch target.
+            sub_repo: Arc::clone(&subscription_store),
+            csr_repo: Arc::clone(&registration_store),
+            notified: Arc::clone(&notified),
+            engine: engine.clone(), // clone: each resident restart owns the same engine handle.
+            transport: Arc::clone(&transport),
+            tenant: tenant.clone(), // clone: each resident restart owns the same tenant partition.
+        });
         async move {
             processor.reload_cache().await.map_err(|error| classify_notification_failure(&error))?;
             execution.mark_running();

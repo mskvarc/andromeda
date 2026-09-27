@@ -21,6 +21,7 @@
 use crate::{
     error::ContextStoreError,
     migration_set::branch::{BranchSchemaVersion, current_branch_version},
+    notification_delivery::branches::{drainable_targets, is_reaped_branch},
     snapshot::{branch_version::branch_is_current, status_code::stored_status as stored_snapshot_status},
     subscription_store::{
         delivery_state::interval_anchor_select,
@@ -31,6 +32,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_model::{snapshot::SnapshotStatus, subscription::SubscriptionStatus};
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_pool::{configure_pool_options, is_pool_saturated};
 use andromeda_postgresql_schema::{
@@ -160,10 +162,12 @@ impl PostgresPendingWorkProbe {
 /// Returns [`ContextStoreError::BranchVersion`] when the embedded branch set has
 /// no version, and the classified database failure of either read.
 pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTime>, ContextStoreError> {
-    let (queue_sql, queue_values) = least_due_select(current_branch_version()?).build_sqlx(PostgresQueryBuilder);
-    let queue_due: Option<DateTime<Utc>> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(queue_sql.as_str()), queue_values)
-        .fetch_one(pool)
-        .await?;
+    let queue_due = match earliest_queue_due(pool).await {
+        // A Snapshot reaped between the branch enumeration and the read drops
+        // the schema the read names; enumerating again leaves it out.
+        Err(error) if is_reaped_branch(&error) => earliest_queue_due(pool).await?,
+        other => other?,
+    };
 
     let (interval_sql, interval_values) = interval_probe_select().build_sqlx(PostgresQueryBuilder);
     let anchors: Vec<(DateTime<Utc>, f64)> = sqlx::query_as_with(sqlx::AssertSqlSafe(interval_sql.as_str()), interval_values)
@@ -171,6 +175,14 @@ pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTim
         .await?;
 
     Ok([queue_due, earliest_interval_due(anchors)].into_iter().flatten().min().map(SystemTime::from))
+}
+
+/// The earliest due instant across the queue and expiry sources, reading the
+/// delivery queue of every branch the delivery drain sweeps.
+async fn earliest_queue_due(pool: &sqlx::PgPool) -> Result<Option<DateTime<Utc>>, ContextStoreError> {
+    let branches = drainable_targets(pool).await?;
+    let (sql, values) = least_due_select(current_branch_version()?, &branches).build_sqlx(PostgresQueryBuilder);
+    Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?)
 }
 
 /// The earliest instant any periodic subscription owes a notification.
@@ -192,40 +204,49 @@ fn earliest_interval_due(anchors: Vec<(DateTime<Utc>, f64)>) -> Option<DateTime<
 /// `SELECT LEAST(...)` of the earliest due instant in each queue and expiry
 /// source, a single row whose one nullable column is the soonest, or NULL when
 /// nothing is due.
-fn least_due_select(current: BranchSchemaVersion) -> SelectStatement {
-    let sources = vec![
+///
+/// Every branch in `branches` contributes its delivery queue: a delivery lives
+/// in the queue of the branch whose subscription matched, and the delivery
+/// drain claims from each published Snapshot branch as from the live one, so a
+/// Snapshot-branch retry is an obligation of the tenant like any other.
+fn least_due_select(current: BranchSchemaVersion, branches: &[ContextTarget]) -> SelectStatement {
+    let deliveries = branches.iter().map(|branch| {
         claimable_min(
-            NotificationDeliveries::Table,
+            table_of(branch, NotificationDeliveries::Table),
             NotificationDeliveries::NextAttemptAt,
             NotificationDeliveries::LeaseUntil,
             unfinished_delivery(),
-        ),
-        claimable_min(
-            SnapshotNotificationOutbox::Table,
-            SnapshotNotificationOutbox::NextAttemptAt,
-            SnapshotNotificationOutbox::LeaseUntil,
-            unfinished_snapshot_notification(),
-        ),
-        claimable_min(
-            PendingSideEffects::Table,
-            PendingSideEffects::NextAttemptAt,
-            PendingSideEffects::LeaseUntil,
-            unfinished_side_effect(),
-        ),
-        claimable_min_all(
-            TemporalAppendIntents::Table,
-            TemporalAppendIntents::NextAttemptAt,
-            TemporalAppendIntents::LeaseUntil,
-        ),
-        preparing_min(current),
-        expiry_min(Entities::Table, Entities::ExpiresAt),
-        expiry_min(Entities::Table, Entities::MinAttributeExpiresAt),
-        subscription_expiry_min(),
-        expiry_min(Csr::Table, Csr::ExpiresAt),
-        earliest_min(Snapshots::Table, Snapshots::ExpiresAt),
-        earliest_min(EntityMaps::Table, EntityMaps::ExpiresAt),
-        cached_context_expiry_min(),
-    ];
+        )
+    });
+    let sources: Vec<SimpleExpr> = deliveries
+        .chain([
+            claimable_min(
+                SnapshotNotificationOutbox::Table,
+                SnapshotNotificationOutbox::NextAttemptAt,
+                SnapshotNotificationOutbox::LeaseUntil,
+                unfinished_snapshot_notification(),
+            ),
+            claimable_min(
+                PendingSideEffects::Table,
+                PendingSideEffects::NextAttemptAt,
+                PendingSideEffects::LeaseUntil,
+                unfinished_side_effect(),
+            ),
+            claimable_min_all(
+                TemporalAppendIntents::Table,
+                TemporalAppendIntents::NextAttemptAt,
+                TemporalAppendIntents::LeaseUntil,
+            ),
+            preparing_min(current),
+            expiry_min(Entities::Table, Entities::ExpiresAt),
+            expiry_min(Entities::Table, Entities::MinAttributeExpiresAt),
+            subscription_expiry_min(),
+            expiry_min(Csr::Table, Csr::ExpiresAt),
+            earliest_min(Snapshots::Table, Snapshots::ExpiresAt),
+            earliest_min(EntityMaps::Table, EntityMaps::ExpiresAt),
+            cached_context_expiry_min(),
+        ])
+        .collect();
     Query::select().expr_as(Func::least(sources), Alias::new("due")).to_owned()
 }
 
@@ -354,6 +375,7 @@ mod tests {
         migration_set::branch::BranchSchemaVersion,
         pending_work::{PostgresPendingWorkProbe, code_is_undefined_database, earliest_interval_due, interval_probe_select, least_due_select},
     };
+    use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
     use andromeda_tenancy::{database_name::TenantDatabaseName, pending_work::PendingWorkError};
     use chrono::{Duration, Utc};
@@ -406,7 +428,25 @@ mod tests {
     }
 
     fn least_sql() -> String {
-        least_due_select(BranchSchemaVersion::try_from(26_i64).expect("a positive version")).to_string(PostgresQueryBuilder)
+        least_due_select(BranchSchemaVersion::try_from(26_i64).expect("a positive version"), &[ContextTarget::Live]).to_string(PostgresQueryBuilder)
+    }
+
+    /// A delivery queued on a published Snapshot branch is an obligation of the
+    /// tenant: the drain claims it like a live one, so its retry must wake a
+    /// dormant tenant and keep a resident one's drain from resting past it.
+    #[test]
+    fn the_probe_reads_the_delivery_queue_of_every_published_snapshot_branch() {
+        let snapshot = ContextTarget::Snapshot(SnapshotTarget::published(
+            SnapshotKey::try_from(7_i64).expect("a positive key"),
+            "urn:ngsi-ld:Snapshot:probe".parse().expect("a valid URI"),
+        ));
+        let sql = least_due_select(
+            BranchSchemaVersion::try_from(26_i64).expect("a positive version"),
+            &[ContextTarget::Live, snapshot],
+        )
+        .to_string(PostgresQueryBuilder);
+        assert!(sql.contains("FROM \"notification_deliveries\""), "{sql}");
+        assert!(sql.contains("FROM \"snap_7\".\"notification_deliveries\""), "{sql}");
     }
 
     #[test]

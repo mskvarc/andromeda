@@ -1,4 +1,4 @@
-//! Verification matrix row "TOAST compression".
+//! TOAST compression: every wide write-once column declares lz4.
 //!
 //! Every variable-length column that is written once and read many times -
 //! the entity documents, the temporal values, the JSONB configuration

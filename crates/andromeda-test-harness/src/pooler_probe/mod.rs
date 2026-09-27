@@ -4,7 +4,8 @@
 //! client-backend counts over time, [`pooler_console`] drives the `PgBouncer`
 //! admin console, [`metrics_scrape`] reads a broker's Prometheus exposition,
 //! [`request_outcome`] classifies how one request resolved, [`tenant_load`]
-//! provisions tenants and generates bounded load with latency percentiles, and
+//! provisions tenants and generates bounded load with latency percentiles,
+//! [`tenant_database`] reaches one tenant's own database directly, and
 //! [`tenant_cleanup`] evicts runtimes and drops tenant databases between runs.
 
 pub mod backend_sampler;
@@ -13,4 +14,5 @@ pub mod metrics_scrape;
 pub mod pooler_console;
 pub mod request_outcome;
 pub mod tenant_cleanup;
+pub mod tenant_database;
 pub mod tenant_load;

@@ -1,13 +1,13 @@
 //! Reaping deliveries and the shared event they reference.
 //!
-//! Verification-matrix row "Notification event cleanup": completed, obsolete,
+//! Notification event cleanup: completed, obsolete,
 //! retry-exhausted and retained deliveries share one event, and each cleanup
 //! horizon is advanced in turn. The event remains while any retained delivery
 //! references it and is removed only once every delivery can be removed; no
 //! delivery loses its payload and no unreferenced event survives cleanup.
 
 use crate::{
-    notification_fixture::{delivery_ids, queue_notification},
+    notification_fixture::{delivery_ids, queue_notification, readable},
     queue_database::{deliveries_of, queue_database},
     queue_workers::{delivery_worker, holding_lease},
 };
@@ -57,7 +57,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     let queue = NotificationDeliveryQueue::new(&pool);
     let worker = delivery_worker();
 
-    let claimed = queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the fan-out");
+    let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the fan-out"));
     assert_eq!(claimed.len(), 4);
     // clone: the payload is compared again after the claimed batch is consumed.
     let payload = claimed.first().expect("a claimed delivery").event.entity_snapshot.clone();
@@ -125,7 +125,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
         .execute(&pool)
         .await
         .expect("make the retained delivery due");
-    let last = queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the last delivery");
+    let last = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the last delivery"));
     assert_eq!(last.len(), 1);
     assert_eq!(
         last.first().expect("the last delivery").event.entity_snapshot,
@@ -160,10 +160,12 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
     let worker = delivery_worker();
 
     for attempt in 0..MAX_ATTEMPTS {
-        let claimed = queue
-            .claim_pending(&worker, holding_lease(), 10)
-            .await
-            .unwrap_or_else(|_| panic!("claim attempt {attempt}"));
+        let claimed = readable(
+            queue
+                .claim_pending(&worker, holding_lease(), 10)
+                .await
+                .unwrap_or_else(|_| panic!("claim attempt {attempt}")),
+        );
         assert_eq!(claimed.len(), 1, "the delivery is still below the attempt ceiling on attempt {attempt}");
         // The worker's rule: a retryable failure below the ceiling is
         // rescheduled, the one that reaches it is acknowledged as terminal.
@@ -186,7 +188,7 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
         }
     }
 
-    let claimed_after_ceiling = queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim past the ceiling");
+    let claimed_after_ceiling = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim past the ceiling"));
     assert!(
         claimed_after_ceiling.is_empty(),
         "a delivery exhausted at the attempt ceiling is permanently unclaimable, exactly like a terminally failed one"

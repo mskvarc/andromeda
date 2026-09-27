@@ -23,6 +23,7 @@ use reqwest::{
 };
 use std::{
     error::Error,
+    iter,
     time::{Duration, Instant},
 };
 use tracing::{debug, warn};
@@ -69,6 +70,7 @@ impl HttpTransport {
         let client = reqwest::ClientBuilder::new()
             .http1_title_case_headers()
             .timeout(config.timeout)
+            .pool_idle_timeout(config.pool_idle_timeout)
             // A notification POST has no business following redirects: a public
             // endpoint answering `302 Location: http://169.254.169.254/…` would
             // otherwise walk the delivery straight past the SSRF guard, which
@@ -135,14 +137,26 @@ fn send_failure(endpoint: Url, deadline: Duration, error: &reqwest::Error) -> Tr
     if chain_indicates_tls(error) {
         TransportError::TlsError {
             endpoint,
-            detail: error.to_string(),
+            detail: error_chain_text(error),
         }
     } else {
         TransportError::ConnectionFailed {
             endpoint,
-            detail: error.to_string(),
+            detail: error_chain_text(error),
         }
     }
+}
+
+/// The message of `error` followed by that of every error below it.
+///
+/// `reqwest`'s own message names only the request that failed ("error sending
+/// request for url ..."); whether the connection was refused, reset, or closed
+/// before a response is said by the errors below it.
+fn error_chain_text(error: &(dyn Error + 'static)) -> String {
+    iter::successors(Some(error), |&current| current.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
 }
 
 /// Whether a send failure is a TLS handshake or certificate failure.
@@ -299,8 +313,129 @@ impl HttpTransport {
 
 #[cfg(test)]
 mod tests {
-    use crate::http::transport::chain_indicates_tls;
-    use std::io::{Error, ErrorKind};
+    use crate::{
+        http::{
+            config::HttpTransportConfig,
+            transport::{HttpTransport, chain_indicates_tls, error_chain_text},
+        },
+        outcome::DeliveryOutcome,
+        request::NotificationDelivery,
+        transport::NotificationTransport,
+    };
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use serde_json::json;
+    use std::{
+        io::{Error, ErrorKind},
+        str::FromStr,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+        time::sleep,
+    };
+    use url::Url;
+
+    /// Reads one request head and its `Content-Length` body from `stream`,
+    /// answering `None` when the peer closes first.
+    async fn read_request(stream: &mut TcpStream) -> Option<()> {
+        let mut received = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let read = stream.read(&mut buffer).await.ok()?;
+            if read == 0 {
+                return None;
+            }
+            received.extend_from_slice(&buffer[..read]);
+            let text = String::from_utf8_lossy(&received);
+            if let Some(head_end) = text.find("\r\n\r\n") {
+                let length = text[..head_end]
+                    .lines()
+                    .find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:").map(|value| value.trim().to_owned()))
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or_default();
+                if received.len() >= head_end + 4 + length {
+                    return Some(());
+                }
+            }
+        }
+    }
+
+    /// A receiver that answers the first request on each connection and keeps
+    /// the connection open, but drops any later request sent over it without
+    /// answering -- a peer that has abandoned an idle keep-alive connection
+    /// which the client still holds as open. Counts the connections accepted.
+    async fn receiver_abandoning_idle_connections() -> (Url, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("a loopback listener binds");
+        let address = listener.local_addr().expect("the listener has an address");
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&accepted);
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    if read_request(&mut stream).await.is_some() {
+                        let _written = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n").await;
+                        let _next = read_request(&mut stream).await;
+                    }
+                });
+            }
+        });
+        (Url::parse(&format!("http://{address}/notify")).expect("a well-formed endpoint"), accepted)
+    }
+
+    async fn deliver(transport: &HttpTransport, endpoint: &Url) -> DeliveryOutcome {
+        let subscription = Uri::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
+        let request = NotificationDelivery {
+            payload: &json!({"id": "urn:ngsi-ld:Notification:1"}),
+            endpoint_uri: endpoint,
+            accept: None,
+            receiver_info: None,
+            jsonld_context: None,
+            tenant: None,
+            snapshot: None,
+            timeout: None,
+            subscription_id: &subscription,
+        }
+        .assemble();
+        transport.deliver(&request).await.expect("the notification is delivered")
+    }
+
+    /// A connection idle for longer than the pool keeps it is not reused, so a
+    /// notification after a quiet period reaches a receiver that abandoned the
+    /// idle connection instead of failing on it.
+    #[tokio::test]
+    async fn a_connection_idle_past_the_pool_timeout_is_not_reused_for_the_next_notification() {
+        let (endpoint, accepted) = receiver_abandoning_idle_connections().await;
+        let transport = HttpTransport::new(HttpTransportConfig {
+            pool_idle_timeout: Duration::from_millis(100),
+            ..HttpTransportConfig::default()
+        })
+        .expect("the transport builds");
+
+        let first = deliver(&transport, &endpoint).await;
+        sleep(Duration::from_millis(400)).await;
+        let second = deliver(&transport, &endpoint).await;
+
+        assert!(matches!(first, DeliveryOutcome::Success { .. }), "{first:?}");
+        assert!(matches!(second, DeliveryOutcome::Success { .. }), "{second:?}");
+        pretty_assertions::assert_eq!(accepted.load(Ordering::SeqCst), 2, "the second notification opened a fresh connection");
+    }
+
+    /// An error that names only the request, as `reqwest`'s own does.
+    #[derive(Debug, thiserror::Error)]
+    #[error("error sending request")]
+    struct SendingRequest(#[source] Error);
+
+    #[test]
+    fn a_failure_detail_names_every_cause_below_the_outermost_error() {
+        let outer = SendingRequest(Error::new(ErrorKind::ConnectionReset, "connection reset by peer"));
+        pretty_assertions::assert_eq!(error_chain_text(&outer), "error sending request: connection reset by peer");
+    }
 
     #[test]
     fn a_rustls_error_anywhere_in_the_chain_is_classified_as_tls_by_type() {

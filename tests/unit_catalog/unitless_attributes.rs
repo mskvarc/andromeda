@@ -1,4 +1,4 @@
-//! Verification matrix row "Unitless attributes".
+//! Unitless attributes: families without a `unitCode` member refuse one.
 //!
 //! Clauses 4.5.3 (Relationship), 4.5.18 (`LanguageProperty`), 4.5.20
 //! (`VocabProperty`) and 4.5.24 (`JsonProperty`) define those attribute families

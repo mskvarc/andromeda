@@ -20,7 +20,7 @@ const POSTGRESQL_IDENTIFIER_BYTE_LIMIT: usize = 63;
 const PROJECTED_STRING_COLUMNS: [&str; 2] = ["value_string", "value_long_text"];
 
 /// Every constraint that holds an identifier column to [`IDENTIFIER_BYTE_LIMIT`].
-const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 34] = [
+const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 35] = [
     "chk_forwarded_subscription_routes_minted_id_length",
     "chk_attribute_names_name_length",
     "chk_entity_type_names_name_length",
@@ -55,6 +55,7 @@ const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 34] = [
     "chk_forwarded_subscriptions_local_subscription_id_length",
     "chk_forwarded_subscriptions_registration_id_length",
     "chk_forwarded_subscriptions_remote_subscription_id_length",
+    "chk_subscription_notified_registrations_registration_id_length",
 ];
 
 /// One `octet_length(<column>) <op> <bound>` clause a migration states.

@@ -4,11 +4,10 @@ use crate::{
     EntityService,
     batch::{BatchResult, admitted_batch::AdmittedBatchEntity},
     error::EntityError,
-    side_effect::BatchSideEffectMode,
+    side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
 use andromeda_context_commit::precondition::Precondition;
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::Utc;
@@ -40,11 +39,11 @@ impl EntityService {
 
     pub(super) async fn batch_create_chunk(
         &self,
-        target: &ContextTarget,
+        placement: SideEffectPlacement<'_>,
         chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
-        mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
+        let target = placement.target();
         // Clause 5.6.7.4 runs the behaviour of Create Entity for each item, and
         // clause 5.5.4 excepts only the fragments of a partial update or a
         // merge from its NGSI-LD Null prohibitions.
@@ -71,7 +70,7 @@ impl EntityService {
             }
         }
 
-        let outcome = self.commit_chunk(target, writes, mode).await?.settled();
+        let outcome = self.commit_chunk(placement, writes).await?.settled();
         errors.extend(outcome.errors);
 
         Ok(BatchResult {

@@ -34,9 +34,10 @@ pub struct TemporalIntentDrainOutcome {
 }
 
 /// Policy-owned bounded operation for ordered, idempotent intent delivery.
+///
+/// Only the live branch defers its temporal history, so the drain delivers the
+/// live branch's queue and applies every intent to the live branch.
 pub struct TemporalIntentDrain {
-    /// Context branch whose queue this drain processes.
-    target: ContextTarget,
     /// Durable anchor queue.
     queue: Arc<dyn TemporalIntentQueue>,
     /// Read side of the anchor queue used to prove entity synchronization.
@@ -75,7 +76,6 @@ pub struct TemporalIntentClaim {
 impl TemporalIntentDrain {
     /// Construct one bounded temporal intent delivery operation.
     pub const fn new(
-        target: ContextTarget,
         queue: Arc<dyn TemporalIntentQueue>,
         pending: Arc<dyn PendingTemporalIntentReader>,
         sink: Arc<dyn TemporalHistorySink>,
@@ -88,7 +88,6 @@ impl TemporalIntentDrain {
             retry_policy,
         } = claim;
         TemporalIntentDrain {
-            target,
             queue,
             pending,
             sink,
@@ -113,7 +112,7 @@ impl TemporalIntentDrain {
         let _execution = self.execution_gate.lock().await;
         let lease_duration = TimeDelta::from_std(self.lease_duration)
             .map_err(|error| TemporalError::internal(format!("temporal intent lease duration is out of range: {error}")))?;
-        let claimed = self.queue.claim(&self.target, self.owner, self.batch_size, now + lease_duration).await?;
+        let claimed = self.queue.claim(self.owner, self.batch_size, now + lease_duration).await?;
         self.process_claimed(claimed, now).await
     }
 
@@ -124,15 +123,15 @@ impl TemporalIntentDrain {
         let mut retried = 0usize;
         let mut lease_lost = 0usize;
         for claim in claimed {
-            let (recorded, delivery) = match self.sink.append(&self.target, &claim.pending.intent).await {
-                Ok(()) => (self.queue.acknowledge(&self.target, self.owner, &claim.pending).await?, Delivery::Landed),
+            let (recorded, delivery) = match self.sink.append(&ContextTarget::Live, &claim.pending.intent).await {
+                Ok(()) => (self.queue.acknowledge(self.owner, &claim.pending).await?, Delivery::Landed),
                 Err(error) => {
                     self.report_if_stuck(&claim, &error);
                     let retry = TemporalIntentRetry {
                         eligible_at: self.retry_policy.retry_at(now, claim.attempts)?,
                         summary: TemporalIntentRetryPolicy::summary(&error),
                     };
-                    (self.queue.retry(&self.target, self.owner, &claim.pending, retry).await?, Delivery::Rejected)
+                    (self.queue.retry(self.owner, &claim.pending, retry).await?, Delivery::Rejected)
                 }
             };
             let outcome = match (recorded, delivery) {
@@ -197,8 +196,21 @@ enum Delivery {
 #[async_trait]
 impl TemporalMutationBarrier for TemporalIntentDrain {
     async fn synchronize(&self, target: &ContextTarget, entity_id: &Uri) -> Result<(), TemporalError> {
+        match target {
+            ContextTarget::Live => self.synchronize_live(entity_id).await,
+            // A Snapshot branch records its history in the write's own
+            // transaction, so it never has a queued intent to wait for.
+            ContextTarget::Snapshot(_) => Ok(()),
+        }
+    }
+}
+
+impl TemporalIntentDrain {
+    /// Apply every intent the live branch still queues for `entity_id` before
+    /// an immediate mutation of its history runs.
+    async fn synchronize_live(&self, entity_id: &Uri) -> Result<(), TemporalError> {
         let _execution = self.execution_gate.lock().await;
-        if self.pending.pending_for_entity(target, entity_id).await?.is_empty() {
+        if self.pending.pending_for_entity(entity_id).await?.is_empty() {
             return Ok(());
         }
         let now = Utc::now();
@@ -206,13 +218,13 @@ impl TemporalMutationBarrier for TemporalIntentDrain {
             .map_err(|error| TemporalError::internal(format!("temporal intent lease duration is out of range: {error}")))?;
         let claimed = self
             .queue
-            .claim_for_entity(target, self.owner, entity_id, self.batch_size, now + lease_duration)
+            .claim_for_entity(self.owner, entity_id, self.batch_size, now + lease_duration)
             .await?;
         if claimed.is_empty() {
             return Err(TemporalError::persistence("pending temporal history is leased by another delivery owner"));
         }
         let outcome = self.process_claimed(claimed, now).await?;
-        if outcome.retried > 0 || outcome.lease_lost > 0 || !self.pending.pending_for_entity(target, entity_id).await?.is_empty() {
+        if outcome.retried > 0 || outcome.lease_lost > 0 || !self.pending.pending_for_entity(entity_id).await?.is_empty() {
             return Err(TemporalError::persistence(
                 "pending temporal history remains after the bounded mutation barrier",
             ));

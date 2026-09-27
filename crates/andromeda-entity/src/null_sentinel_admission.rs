@@ -265,7 +265,7 @@ mod tests {
         merge_options::MergeOptions,
         notification_recording_harness::{ENTITY_ID, entity_uri, live_target, recording_service},
         null_sentinel_admission::{NullSentinelAdmission, reject_null_placements_in_attribute, reject_null_placements_in_entity},
-        side_effect::BatchSideEffectMode,
+        side_effect::SideEffectPlacement,
         write_kind::{BatchCreate, BatchMerge, CreateEntity, MergeEntity},
     };
     use andromeda_jsonld::context_spec::ContextSpec;
@@ -528,7 +528,7 @@ mod tests {
         let entities = vec![written_entity("category", &json!({"type": "Property", "value": "urn:ngsi-ld:null"}))];
         let admitted = admitted_batch(&service, BatchMerge, entities, &ContextSpec::core_only()).await;
         let batch = service
-            .batch_merge(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+            .batch_merge(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
             .await
             .expect("the batch itself completes");
         assert!(

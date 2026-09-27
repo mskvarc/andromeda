@@ -1,8 +1,10 @@
 //! Durable claim, acknowledgement and retry state for temporal intent delivery.
+//!
+//! Only the live branch defers its temporal history, so the queue is the live
+//! branch's and no operation names a branch.
 
 use crate::{append_intent::KeyedTemporalAppendIntent, error::TemporalError};
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -51,7 +53,6 @@ pub trait TemporalIntentQueue: Send + Sync {
     #[must_use = "temporal intent claims must be awaited"]
     async fn claim(
         &self,
-        target: &ContextTarget,
         owner: LeaseHolder,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
@@ -61,7 +62,6 @@ pub trait TemporalIntentQueue: Send + Sync {
     #[must_use = "entity-scoped temporal intent claims must be awaited"]
     async fn claim_for_entity(
         &self,
-        target: &ContextTarget,
         owner: LeaseHolder,
         entity_id: &Uri,
         limit: TemporalIntentBatchSize,
@@ -76,17 +76,11 @@ pub trait TemporalIntentQueue: Send + Sync {
     /// worker that now holds it. The sink is idempotent under the write
     /// identity, so a second delivery lands nothing twice.
     #[must_use = "temporal intent acknowledgements must be awaited"]
-    async fn acknowledge(&self, target: &ContextTarget, owner: LeaseHolder, intent: &KeyedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError>;
+    async fn acknowledge(&self, owner: LeaseHolder, intent: &KeyedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError>;
 
     /// Release one failed intent with explicit retry metadata.
     ///
     /// Guarded by the caller's live lease exactly as [`TemporalIntentQueue::acknowledge`] is.
     #[must_use = "temporal intent retries must be recorded"]
-    async fn retry(
-        &self,
-        target: &ContextTarget,
-        owner: LeaseHolder,
-        intent: &KeyedTemporalAppendIntent,
-        retry: TemporalIntentRetry,
-    ) -> Result<LeaseAcknowledgement, TemporalError>;
+    async fn retry(&self, owner: LeaseHolder, intent: &KeyedTemporalAppendIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError>;
 }
