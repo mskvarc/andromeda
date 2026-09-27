@@ -12,7 +12,9 @@
 //!
 //! A retry is scheduled one backoff after the delivery's failure is
 //! acknowledged, not after the pass began, so a slow failing delivery is not
-//! due again the moment its pass ends.
+//! due again the moment its pass ends. The pass stamps it on its own clock --
+//! the instant the pass was started at, advanced by the monotonic time it has
+//! run since -- so that is the clock the failure is measured on here too.
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification},
@@ -38,9 +40,9 @@ use std::{
         Mutex,
         atomic::{AtomicI64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
-use tokio::time::{Instant, sleep};
+use tokio::time::sleep;
 
 /// Deliveries one pass sends at once.
 const CONCURRENCY: i64 = 2;
@@ -188,21 +190,25 @@ const FAST_SEND: Duration = Duration::from_millis(100);
 
 /// A transport whose first send goes to a slow endpoint that fails after
 /// [`SLOW_SEND`], while every other send succeeds after [`FAST_SEND`].
+///
+/// Every instant it records is monotonic, the clock a delivery pass advances
+/// its own instant by.
 #[derive(Default)]
 struct OneSlowEndpoint {
-    /// The delivery the slow endpoint received, once one did.
-    slow: Mutex<Option<DeliveryKey>>,
+    /// The delivery the slow endpoint received, and when its send began, once
+    /// one did.
+    slow: Mutex<Option<(DeliveryKey, Instant)>>,
     /// When each fast send completed.
     fast_completed: Mutex<Vec<(DeliveryKey, Instant)>>,
-    /// When the slow send failed, on the monotonic and the wall clock.
-    slow_failed: Mutex<Option<(Instant, DateTime<Utc>)>>,
+    /// When the slow send failed.
+    slow_failed: Mutex<Option<Instant>>,
 }
 
 impl OneSlowEndpoint {
     /// Whether `key` is the send the slow endpoint takes: the first one made.
     fn takes_slowly(&self, key: DeliveryKey) -> bool {
         let mut slow = self.slow.lock().expect("slow endpoint lock");
-        *slow.get_or_insert(key) == key
+        slow.get_or_insert_with(|| (key, Instant::now())).0 == key
     }
 }
 
@@ -211,7 +217,7 @@ impl NotificationDeliveryTransport for OneSlowEndpoint {
         Box::pin(async move {
             if self.takes_slowly(entry.key) {
                 sleep(SLOW_SEND).await;
-                *self.slow_failed.lock().expect("slow failure lock") = Some((Instant::now(), Utc::now()));
+                *self.slow_failed.lock().expect("slow failure lock") = Some(Instant::now());
                 DeliveryDisposition::RetryableFailure {
                     detail: "the slow endpoint timed out".to_owned(),
                 }
@@ -243,10 +249,11 @@ async fn durable_queue_a_slow_endpoint_holds_up_only_its_own_slot_and_its_retry_
         Arc::clone(&transport) as Arc<dyn NotificationDeliveryTransport>,
         &slot_configuration(MIXED_DELIVERIES, LONG_LEASE),
     );
-    let outcome = pass.execute(Utc::now()).await.expect("the pass runs");
+    let origin = Utc::now();
+    let outcome = pass.execute(origin).await.expect("the pass runs");
     assert_eq!(outcome.claimed, MIXED_DELIVERIES, "the pass claimed every delivery");
 
-    let (slow_failed_at, slow_failed_wall) = transport.slow_failed.lock().expect("slow failure lock").expect("the slow endpoint failed");
+    let slow_failed_at = transport.slow_failed.lock().expect("slow failure lock").expect("the slow endpoint failed");
     let (fast_sent, fast_before_slow) = {
         let fast_completed = transport.fast_completed.lock().expect("fast completions lock");
         (fast_completed.len(), fast_completed.iter().all(|(_, completed)| *completed < slow_failed_at))
@@ -257,7 +264,7 @@ async fn durable_queue_a_slow_endpoint_holds_up_only_its_own_slot_and_its_retry_
         "every other delivery completed while the slow endpoint was still holding its slot"
     );
 
-    let slow = transport
+    let (slow, slow_started_at) = transport
         .slow
         .lock()
         .expect("slow endpoint lock")
@@ -270,10 +277,17 @@ async fn durable_queue_a_slow_endpoint_holds_up_only_its_own_slot_and_its_retry_
             .expect("the slow delivery's state");
     assert!(!delivered, "the slow delivery failed");
     assert_eq!(attempts, 1, "its failed attempt is counted");
+    // The pass's instant is `origin` advanced by the monotonic time since the
+    // pass began, and the slow send began after the pass did, so `origin`
+    // advanced by the time since the slow send began is no later than the
+    // pass's instant at the failure, and earlier still than at its
+    // acknowledgement. A retry stamped from the start of the pass instead would
+    // fall due a whole slow send before this.
+    let failed_on_the_pass_clock = origin + TimeDelta::from_std(slow_failed_at - slow_started_at).expect("the slow send fits a time delta");
     assert!(
-        next_attempt_at >= slow_failed_wall + BASE_BACKOFF,
+        next_attempt_at >= failed_on_the_pass_clock + BASE_BACKOFF,
         "its retry falls due one backoff after its failure, not after the start of the pass: {next_attempt_at} precedes {}",
-        slow_failed_wall + BASE_BACKOFF
+        failed_on_the_pass_clock + BASE_BACKOFF
     );
     pool.close().await;
 }

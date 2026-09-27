@@ -7,6 +7,7 @@
 //! the negotiated media type — a `GeoJSON` Feature carries the same decoded URIs
 //! its JSON counterpart does.
 
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_vocabulary::compact::{classes as compact_classes, properties as compact_properties};
 use serde_json::Value;
 use std::borrow::Cow;
@@ -86,6 +87,13 @@ fn decode_uri_in_place(uri: &mut String) {
 
 /// Decode one percent-encoded URI without altering an undecodable or unescaped value.
 ///
+/// The rule undoes a client's encoding of a whole identifier, such as
+/// `urn%3Angsi-ld%3ABuilding%3A1`, so it applies only when what it decodes to
+/// is itself a URI (clause 4.6.2). An escape whose decoding is not a URI
+/// character -- the `%20` of `urn:ngsi-ld:City:a%20b` -- is part of the
+/// identifier as written, and decoding it would name a different entity, or
+/// none at all.
+///
 /// Temporal intent preparation uses the same narrow rule before validating a
 /// Relationship target for typed history storage. This keeps current-entity
 /// storage unchanged while preventing its durable temporal consequence from
@@ -94,6 +102,7 @@ fn decode_uri_in_place(uri: &mut String) {
 pub fn decode_percent_encoded_uri(uri: &str) -> Cow<'_, str> {
     if uri.contains('%')
         && let Ok(decoded) = percent_encoding::percent_decode_str(uri).decode_utf8()
+        && decoded.parse::<Uri>().is_ok()
     {
         return decoded;
     }
@@ -120,6 +129,18 @@ mod tests {
     fn single_uri_decoding_borrows_plain_input_and_owns_decoded_input() {
         assert!(matches!(decode_percent_encoded_uri("urn:ngsi-ld:Building:1"), Cow::Borrowed(_)));
         pretty_assertions::assert_eq!(decode_percent_encoded_uri("urn%3Angsi-ld%3ABuilding%3A1"), "urn:ngsi-ld:Building:1");
+    }
+
+    /// Decoding `%20` would turn a valid identifier into a string no URI
+    /// grammar admits, so the escape is kept as the client wrote it.
+    #[test]
+    fn an_escape_that_decodes_to_a_non_uri_character_is_kept() {
+        for raw in ["urn:ngsi-ld:City:a%20b", "https://example.com/a%20b", "urn:ngsi-ld:City:a%0Ab"] {
+            assert!(matches!(decode_percent_encoded_uri(raw), Cow::Borrowed(kept) if kept == raw), "{raw}");
+        }
+        let mut value = json!({"id": "urn:x", "type": "T", "ref": {"type": "Relationship", "object": "urn:ngsi-ld:City:a%20b"}});
+        decode_percent_encoded_uris(&mut value);
+        pretty_assertions::assert_eq!(value["ref"]["object"], "urn:ngsi-ld:City:a%20b");
     }
 
     #[test]

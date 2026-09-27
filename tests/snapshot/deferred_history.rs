@@ -73,8 +73,10 @@ async fn snapshot_scoped_temporal_write_under_deferred_history_is_recorded_in_th
             .0,
         StatusCode::CREATED
     );
+    // A Snapshot that executes no query ends "failure otherwise" (clause
+    // 5.16.1.4) and still publishes its branch.
     let prepared = wait_for_snapshot_terminal(&client(), snapshot, Duration::from_secs(5)).await;
-    pretty_assertions::assert_eq!(prepared["snapshotStatus"], "success", "the empty Snapshot publishes its branch: {prepared}");
+    pretty_assertions::assert_eq!(prepared["snapshotStatus"], "failure", "the empty Snapshot publishes its branch: {prepared}");
     let key: i64 = sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")
         .bind(snapshot)
         .fetch_one(&pool)

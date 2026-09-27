@@ -27,6 +27,9 @@ fn scoped(client: &Client, method: Method, url: String, tenant: &str, snapshot: 
 }
 
 /// Create an empty Snapshot of `tenant` and wait for its branch to publish.
+///
+/// It executes no query, so it ends "failure otherwise" (clause 5.16.1.4), and
+/// its branch is published all the same.
 async fn published_branch(client: &Client, broker: &str, tenant: &str, snapshot: &str) {
     let created = client
         .post(format!("{broker}snapshots"))
@@ -49,7 +52,7 @@ async fn published_branch(client: &Client, broker: &str, tenant: &str, snapshot:
             .await
             .expect("Snapshot body");
         if status["snapshotStatus"] != "preparing" {
-            assert_eq!(status["snapshotStatus"], "success", "the empty Snapshot publishes its branch: {status}");
+            assert_eq!(status["snapshotStatus"], "failure", "the empty Snapshot publishes its branch: {status}");
             return;
         }
         assert!(Instant::now() < deadline, "the Snapshot finishes preparing before the deadline");

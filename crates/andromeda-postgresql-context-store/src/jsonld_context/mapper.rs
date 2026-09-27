@@ -4,7 +4,7 @@ use crate::jsonld_context::{
     kind_code::kind_of,
     rows::{ContextMetadataRow, ContextSummaryRow},
 };
-use andromeda_ngsi_ld_lexicon::{identifier_length::IdentifierTooLong, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 use andromeda_postgresql_codes::{jsonld_context_kind::JsonldContextKindCode, registry::UnknownCompactCode};
 use iri_rs::IriBuf;
@@ -27,9 +27,9 @@ pub enum ContextMapperError {
         #[source]
         source: url::ParseError,
     },
-    /// Stored URL column is longer than an identifier may be.
-    #[error("over-long URL in database: {0}")]
-    UrlLength(#[from] IdentifierTooLong),
+    /// Stored URL column is not a URI, or is longer than an identifier may be.
+    #[error("URL in database is not an identifier: {0}")]
+    UrlIdentifier(#[from] UriParseError),
     /// `number_of_hits` column was negative.
     #[error("negative number_of_hits in database: {value}")]
     NegativeHits {

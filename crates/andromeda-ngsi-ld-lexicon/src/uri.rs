@@ -151,17 +151,31 @@ impl AsRef<str> for Uri {
     }
 }
 
+/// Hold `raw` to the IETF RFC 3986 grammar, or the IETF RFC 3987 one when it
+/// carries non-ASCII (clause 4.6.2 NOTE 2).
+///
+/// The WHATWG URL parser behind [`Url`] is not a URI validator: it keeps a
+/// literal space in the opaque path of a scheme such as `urn`, strips tabs and
+/// line breaks anywhere, and trims leading and trailing spaces, so
+/// `urn:ngsi-ld:Building:has space` would otherwise be an identifier. No form
+/// is parsed before the grammar admits the whole string.
+fn well_formed(raw: &str) -> Result<(), UriParseError> {
+    Iri::parse(raw).map(drop).map_err(|_| UriParseError::Malformed)
+}
+
 // Validating parser: clause 4.6.2 admits a URN or a URL, and NOTE 2 extends
-// both to IRIs. A URN is tried first so its NID case-folding (Annex A.3)
-// applies. An all-ASCII remainder is a URL, whose parser normalises scheme and
-// authority; a remainder carrying non-ASCII is kept verbatim as an IRI, because
-// the URL parser would percent-escape it and break the round trip. The length
-// bound applies to the normalised spelling, because that is the one stored:
-// the URL parser lengthens a string by percent-encoding a space.
+// both to IRIs. Once the grammar admits the string, a URN is tried first so its
+// NID case-folding (Annex A.3) applies. An all-ASCII remainder is a URL, whose
+// parser normalises scheme and authority; a remainder carrying non-ASCII is kept
+// verbatim as an IRI, because the URL parser would percent-escape it and break
+// the round trip. The length bound applies to the normalised spelling, because
+// that is the one stored: the URL parser lengthens a string by percent-encoding
+// an apostrophe in the query of a special scheme.
 impl FromStr for Uri {
     type Err = UriParseError;
 
     fn from_str(s: &str) -> Result<Uri, UriParseError> {
+        well_formed(s)?;
         let form = if let Ok(urn) = s.parse::<Urn>() {
             UriForm::Urn(urn)
         } else if s.is_ascii() {
@@ -182,12 +196,15 @@ impl TryFrom<Urn> for Uri {
     }
 }
 
-// A URL is always a valid identifier form; only its length can refuse it.
+// A WHATWG URL is not always a URI: an opaque path such as the one of
+// `urn:a b` keeps its literal space. Its serialisation is held to the grammar
+// like any other spelling, then to the length bound.
 impl TryFrom<Url> for Uri {
-    type Error = IdentifierTooLong;
+    type Error = UriParseError;
 
-    fn try_from(url: Url) -> Result<Uri, IdentifierTooLong> {
-        Uri::bounded(UriForm::Url(url))
+    fn try_from(url: Url) -> Result<Uri, UriParseError> {
+        well_formed(url.as_str())?;
+        Ok(Uri::bounded(UriForm::Url(url))?)
     }
 }
 
@@ -352,11 +369,13 @@ mod tests {
         pretty_assertions::assert_eq!(raw.parse::<Uri>(), Err(UriParseError::TooLong(IdentifierTooLong { length: raw.len() })));
     }
 
-    /// The URL parser percent-encodes a space, so a 1023-octet URL with one
-    /// space is stored as 1025 octets and is refused on that stored length.
+    /// The URL parser percent-encodes an apostrophe in the query of a special
+    /// scheme, although IETF RFC 3986 admits it there, so a 1023-octet URL with
+    /// one apostrophe is stored as 1025 octets and is refused on that stored
+    /// length.
     #[test]
     fn the_limit_applies_to_the_normalised_spelling() {
-        let prefix = "https://example.com/a b/";
+        let prefix = "https://example.com/?a'b";
         let raw = format!("{prefix}{}", "c".repeat(IDENTIFIER_BYTE_LIMIT - 1 - prefix.len()));
         pretty_assertions::assert_eq!(raw.len(), IDENTIFIER_BYTE_LIMIT - 1);
         pretty_assertions::assert_eq!(
@@ -384,12 +403,74 @@ mod tests {
     fn a_foreign_url_past_the_limit_cannot_become_a_uri() {
         let url: Url = format!("https://example.com/{}", "a".repeat(IDENTIFIER_BYTE_LIMIT)).parse().unwrap();
         let length = url.as_str().len();
-        pretty_assertions::assert_eq!(Uri::try_from(url), Err(IdentifierTooLong { length }));
+        pretty_assertions::assert_eq!(Uri::try_from(url), Err(UriParseError::TooLong(IdentifierTooLong { length })));
 
         let urn: Urn = urn_of_length(IDENTIFIER_BYTE_LIMIT + 1).parse().unwrap();
         assert!(Uri::try_from(urn).is_err());
 
         let iri = IriBuf::new(format!("https://example.com/{}", "\u{e9}".repeat(IDENTIFIER_BYTE_LIMIT))).unwrap();
         assert!(Uri::try_from(iri).is_err());
+    }
+
+    /// Clause 4.6.2 makes an identifier a URI (IETF RFC 3986), or by NOTE 2 an
+    /// IRI (IETF RFC 3987). Neither grammar admits a literal space, tab or line
+    /// break in any component, although the WHATWG URL parser keeps the first
+    /// in an opaque path and silently strips the others.
+    #[test]
+    fn whitespace_in_a_urn_a_url_or_an_iri_is_malformed() {
+        for raw in [
+            "urn:ngsi-ld:Building:has space",
+            "urn:ngsi-ld:Building:has\ttab",
+            "urn:ngsi-ld:Building:has\nnewline",
+            "urn:ngsi-ld:Building:trailing ",
+            " urn:ngsi-ld:Building:leading",
+            "https://example.com/has space",
+            "https://example.com/has\ttab",
+            "https://example.com/has\nnewline",
+            "https://example.com/?q=has space",
+            "https://example.com/Par\u{ed}s has space",
+            "https://example.com/Par\u{ed}s\ttab",
+            "https://example.com/Par\u{ed}s\nnewline",
+            "urn:ngsi-ld:Ciudad:Par\u{ed}s has space",
+        ] {
+            pretty_assertions::assert_eq!(raw.parse::<Uri>(), Err(UriParseError::Malformed), "{raw:?}");
+        }
+    }
+
+    /// Characters IETF RFC 3986 reserves for no component, and a percent sign
+    /// not followed by two hexadecimal digits, which the WHATWG parser accepts
+    /// or percent-encodes on the way in.
+    #[test]
+    fn characters_outside_the_uri_grammar_are_malformed() {
+        for raw in [
+            "urn:ngsi-ld:Building:a<b",
+            "urn:ngsi-ld:Building:a\"b",
+            "urn:ngsi-ld:Building:a{b}",
+            "urn:ngsi-ld:Building:a|b",
+            "urn:ngsi-ld:Building:a\\b",
+            "urn:ngsi-ld:Building:a^b",
+            "urn:ngsi-ld:Building:a`b",
+            "urn:ngsi-ld:Building:a%zz",
+            "https://example.com/a%2",
+        ] {
+            pretty_assertions::assert_eq!(raw.parse::<Uri>(), Err(UriParseError::Malformed), "{raw:?}");
+        }
+    }
+
+    /// A space is an identifier character once percent-encoded, in every form.
+    #[test]
+    fn a_percent_encoded_space_is_well_formed() {
+        for raw in ["urn:ngsi-ld:Building:has%20space", "https://example.com/has%20space?q=a%20b#f%20g"] {
+            let parsed: Uri = raw.parse().expect("a percent-encoded space is a URI character");
+            pretty_assertions::assert_eq!(parsed.as_str(), raw);
+        }
+    }
+
+    /// The WHATWG URL parser keeps the literal space of an opaque path, so a
+    /// [`Url`] a caller built elsewhere is held to the grammar too.
+    #[test]
+    fn a_foreign_url_with_a_literal_space_cannot_become_a_uri() {
+        let url: Url = "urn:ngsi-ld:Building:has space".parse().expect("the WHATWG parser keeps the space");
+        pretty_assertions::assert_eq!(Uri::try_from(url), Err(UriParseError::Malformed));
     }
 }

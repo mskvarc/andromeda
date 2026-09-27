@@ -92,6 +92,7 @@ mod tls_terminator_deployment;
 mod transient_entity_conflict;
 mod unit_code_family_admission;
 mod uri_comparison;
+mod whitespace_identifiers;
 
 #[path = "../support/context_source_adapter.rs"]
 pub mod context_source_adapter;

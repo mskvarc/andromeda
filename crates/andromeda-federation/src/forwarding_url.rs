@@ -129,13 +129,16 @@ mod tests {
         );
     }
 
+    /// A `/` and a `%` are URI characters an identifier may carry, but in a
+    /// path segment they would split it or be decoded at the peer, so both are
+    /// escaped to keep the identifier one segment spelled as the client sent it.
     #[test]
     fn entity_identifiers_and_query_pairs_are_encoded_by_the_url_encoder() {
-        let id = "urn:ngsi-ld:Vehicle:A 1".parse().expect("valid URI");
+        let id = "urn:ngsi-ld:Vehicle:A/1%20".parse().expect("valid URI");
         let built = build_retrieve_url(&url("http://peer"), &id, "attrs=speed&type=Vehicle").expect("joins");
         pretty_assertions::assert_eq!(
             built.as_str(),
-            "http://peer/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:A%201?attrs=speed&type=Vehicle"
+            "http://peer/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:A%2F1%2520?attrs=speed&type=Vehicle"
         );
     }
 
