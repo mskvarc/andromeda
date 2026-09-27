@@ -62,7 +62,7 @@ RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     --mount=type=cache,id=andromeda-sccache,target=/var/cache/sccache,sharing=locked \
     with-sccache cargo build --release --locked --bin andromeda
 
-FROM debian:trixie-20260824-slim AS runtime
+FROM debian:trixie-20260918-slim AS runtime
 
 # wget: compose healthchecks use it too.
 RUN apt-get update \
