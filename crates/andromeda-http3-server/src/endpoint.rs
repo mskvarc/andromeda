@@ -5,20 +5,18 @@
 //! that coexist without conflict. This module binds only the UDP side; the TCP
 //! listener that serves HTTP/1.1 and HTTP/2 is bound elsewhere.
 
-use crate::{
-    config::Http3Activation,
-    tls::{Http3TlsError, quic_server_crypto},
-};
-use quinn::{Endpoint, ServerConfig};
-use std::{io, net::SocketAddr, sync::Arc};
+use crate::quic_crypto::{QuicCryptoError, quic_server_config};
+use andromeda_server_tls::server_config_feed::ServerConfigFeed;
+use quinn::Endpoint;
+use std::{io, net::SocketAddr};
 use thiserror::Error;
 
 /// Failure to bind the QUIC endpoint.
 #[derive(Debug, Error)]
 pub enum Http3EndpointError {
-    /// The TLS configuration could not be assembled.
+    /// The TLS configuration could not be turned into a QUIC configuration.
     #[error(transparent)]
-    Tls(#[from] Http3TlsError),
+    Crypto(#[from] QuicCryptoError),
     /// The UDP socket could not be bound.
     #[error("cannot bind QUIC endpoint to {address}: {source}")]
     Bind {
@@ -29,25 +27,27 @@ pub enum Http3EndpointError {
     },
 }
 
-/// Bind a QUIC server endpoint terminating TLS for the given activation.
+/// Bind a QUIC server endpoint terminating TLS with the feed's current
+/// configuration.
 ///
 /// The endpoint listens on `address` over UDP. It must be called from within a
-/// Tokio runtime, as quinn drives the socket on the ambient runtime.
+/// Tokio runtime, as quinn drives the socket on the ambient runtime. Later
+/// configurations from the feed are applied while serving, by
+/// [`serve_endpoint`](crate::execution::serve_endpoint).
 ///
 /// # Errors
 ///
-/// Returns [`Http3EndpointError::Tls`] when the certificate material cannot be
-/// turned into a QUIC configuration, and [`Http3EndpointError::Bind`] when the
-/// UDP socket cannot be bound.
-pub fn bind(activation: Http3Activation<'_>, address: SocketAddr) -> Result<Endpoint, Http3EndpointError> {
-    let crypto = quic_server_crypto(activation)?;
-    let server_config = ServerConfig::with_crypto(Arc::new(crypto));
+/// Returns [`Http3EndpointError::Crypto`] when the configuration is not
+/// QUIC-compatible, and [`Http3EndpointError::Bind`] when the UDP socket cannot
+/// be bound.
+pub fn bind(feed: &ServerConfigFeed, address: SocketAddr) -> Result<Endpoint, Http3EndpointError> {
+    let server_config = quic_server_config(feed.current())?;
     Endpoint::server(server_config, address).map_err(|source| Http3EndpointError::Bind { address, source })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{endpoint::bind, test_support::SelfSignedListener};
+    use crate::{endpoint::bind, test_support::QuicIdentity};
     use std::{
         error::Error,
         net::{Ipv4Addr, SocketAddr},
@@ -55,10 +55,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_endpoint_binds_an_ephemeral_udp_port() -> Result<(), Box<dyn Error + Send + Sync>> {
-        let listener = SelfSignedListener::generate()?;
-        let activation = listener.config().activation()?.expect("enabled config yields activation");
-        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-        let endpoint = bind(activation, address)?;
+        let identity = QuicIdentity::anonymous()?;
+        let endpoint = bind(identity.feed(), SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
         let bound = endpoint.local_addr()?;
         assert_ne!(bound.port(), 0, "the endpoint was assigned a concrete port");
         endpoint.close(0u32.into(), b"test complete");

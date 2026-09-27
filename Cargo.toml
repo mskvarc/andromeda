@@ -171,6 +171,7 @@ andromeda-postgresql-seaquery = { path = "crates/andromeda-postgresql-seaquery" 
 andromeda-postgresql-temporal-query = { path = "crates/andromeda-postgresql-temporal-query" }
 andromeda-postgresql-temporal-store = { path = "crates/andromeda-postgresql-temporal-store" }
 andromeda-registration = { path = "crates/andromeda-registration" }
+andromeda-server-tls = { path = "crates/andromeda-server-tls" }
 andromeda-snapshot = { path = "crates/andromeda-snapshot" }
 andromeda-spatial-index = { path = "crates/andromeda-spatial-index" }
 andromeda-subscription = { path = "crates/andromeda-subscription" }
@@ -183,4 +184,5 @@ andromeda-test-client = { path = "crates/andromeda-test-client" }
 andromeda-test-fixtures = { path = "crates/andromeda-test-fixtures" }
 andromeda-test-harness = { path = "crates/andromeda-test-harness" }
 andromeda-test-mocks = { path = "crates/andromeda-test-mocks" }
+andromeda-test-tls = { path = "crates/andromeda-test-tls" }
 andromeda-unit-catalog = { path = "crates/andromeda-unit-catalog" }

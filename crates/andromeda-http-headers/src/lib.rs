@@ -26,12 +26,14 @@
 
 pub mod accept;
 pub mod alt_svc;
+pub mod api_root_scheme;
 pub mod forwarded_header_trust;
 pub mod forwarded_protocol;
 pub mod geo_json_body;
 pub mod json_ld_accept;
 pub mod language;
 pub mod link;
+pub mod listener_scheme;
 pub mod location;
 pub mod media_type;
 pub mod ngsild_content_range;

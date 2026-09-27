@@ -55,6 +55,7 @@ andromeda-postgresql-name-dictionary.workspace = true
 andromeda-postgresql-pool.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
 andromeda-registration.workspace = true
+andromeda-server-tls.workspace = true
 andromeda-snapshot.workspace = true
 andromeda-spatial-index.workspace = true
 andromeda-subscription.workspace = true
@@ -82,7 +83,7 @@ tokio-util = { version = "0.7.19", features = ["rt"] }
 toml = "1.1.6"
 toml-comment = "0.3.0"
 tower = { version = "0.5.3", features = ["util"] }
-tower-http = { version = "0.7.1", features = ["set-header"] }
+tower-http = { version = "0.7.1", features = ["add-extension", "set-header"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
@@ -94,6 +95,7 @@ shadow-rs = "2.0.0"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+http = "1.5.0"
 pretty_assertions = "1.4.1"
 serial_test = "4.0.1"
 tokio = { version = "1.53.1", features = ["full", "test-util"] }

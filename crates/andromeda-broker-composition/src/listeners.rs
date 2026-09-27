@@ -10,13 +10,24 @@
 //! no QUIC and no `Alt-Svc`. Every listener runs concurrently under one shutdown
 //! token; the first to fail cancels the rest so the process never keeps serving
 //! on a subset of them.
+//!
+//! Each listener tells the requests it carries which scheme it speaks, so the
+//! URLs the broker mints from a request origin carry `https` exactly when the
+//! request arrived over TLS the broker terminated (see [`crate::listener_tls`]).
 
-use crate::config::runtime::RuntimeConfig;
+use crate::{
+    config::runtime::RuntimeConfig,
+    listener_tls::{ListenerTlsError, SharedTlsIdentity, listener_scheme},
+};
 use andromeda_http_api::{api::HttpApi, management::ManagementApi};
-use andromeda_http_headers::alt_svc::{AltSvcAdvertisement, InvalidAdvertisement};
-use andromeda_http_server::{config::ServerConfig, error::HttpServerError, execution::serve as serve_tcp};
+use andromeda_http_headers::{
+    alt_svc::{AltSvcAdvertisement, InvalidAdvertisement},
+    api_root_scheme::ApiRootScheme,
+    listener_scheme::ListenerScheme,
+};
+use andromeda_http_server::{config::ServerConfig, error::HttpServerError, execution::serve as serve_tcp, listener_security::ListenerSecurity};
 use andromeda_http3_server::{
-    config::Http3ConfigError,
+    config::Http3Mode,
     endpoint::{self, Http3EndpointError},
     execution::{Http3ServeError, serve_endpoint},
 };
@@ -25,7 +36,7 @@ use std::{future::Future, net::SocketAddr, num::NonZeroU16, pin::Pin};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tower::{Layer, util::option_layer};
-use tower_http::set_header::SetResponseHeaderLayer;
+use tower_http::{add_extension::AddExtensionLayer, set_header::SetResponseHeaderLayer};
 
 /// A boxed, error-unified listener future driven under the shared shutdown token.
 type ListenerFuture<'a> = Pin<Box<dyn Future<Output = Result<(), ListenerError>> + Send + 'a>>;
@@ -36,9 +47,9 @@ pub enum ListenerError {
     /// The TCP (HTTP/1.1 and HTTP/2) listener failed.
     #[error(transparent)]
     Tcp(#[from] HttpServerError),
-    /// The HTTP/3 listener configuration was invalid.
+    /// The shared TLS identity could not be loaded or configured.
     #[error(transparent)]
-    Http3Config(#[from] Http3ConfigError),
+    Tls(#[from] ListenerTlsError),
     /// The HTTP/3 (QUIC) endpoint could not be bound.
     #[error(transparent)]
     Http3Bind(#[from] Http3EndpointError),
@@ -55,16 +66,20 @@ pub enum ListenerError {
 
 /// Serve the broker's HTTP listeners until `shutdown` resolves.
 ///
-/// The data-plane TCP listener is always served. When [`RuntimeConfig::http3`]
-/// is enabled, a QUIC listener is bound on the same host and port over UDP and
-/// served concurrently, and the TCP responses advertise it through `Alt-Svc`.
-/// When `management` is `Some` (the `separate-port` mode), a third TCP-only
-/// listener serves the observability endpoints on the management host and port.
+/// The data-plane TCP listener is always served, in plaintext or over TLS as
+/// `server.transport` says. When [`RuntimeConfig::http3`] is enabled, a QUIC
+/// listener is bound on the same host and port over UDP and served
+/// concurrently, and the TCP responses advertise it through `Alt-Svc`. When
+/// `management` is `Some` (the `separate-port` mode), a third TCP-only listener
+/// serves the observability endpoints on the management host and port, over
+/// the transport `management.transport` says. Every TLS-terminating listener
+/// presents the shared `[tls]` identity, reloaded as its files rotate.
 ///
 /// # Errors
 ///
-/// Returns a [`ListenerError`] when any listener cannot be bound or fails while
-/// serving, or when the HTTP/3 advertisement cannot be built.
+/// Returns a [`ListenerError`] when the shared TLS identity cannot be loaded,
+/// when any listener cannot be bound or fails while serving, or when the
+/// HTTP/3 advertisement cannot be built.
 pub async fn serve(
     config: &RuntimeConfig,
     api: HttpApi,
@@ -72,26 +87,36 @@ pub async fn serve(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), ListenerError> {
     let address = SocketAddr::from((config.server.host, config.server.port));
-    // Validated identically at configuration load; re-read here to bind with.
-    let activation = config.http3.activation()?;
+    // Held until every listener has stopped: dropping it stops reloading the
+    // certificate files, and each listener keeps the last configuration it had.
+    let mut identity = SharedTlsIdentity::new(&config.tls);
+    let tcp_security = identity.tcp_security(config.server.transport)?;
+    let quic_feed = match config.http3.mode {
+        Http3Mode::Disabled => None,
+        Http3Mode::Enabled => Some(identity.quic_feed()?),
+    };
+    let management_security = management.as_ref().map(|_| identity.tcp_security(config.management.transport)).transpose()?;
 
     // The HTTP/3 advertisement and router are prepared before the API is
     // consumed into the TCP service, because axum's HTTP/3 adapter drives a
-    // bare router rather than the process-stacked TCP service.
-    let advertisement = match activation {
+    // bare router rather than the process-stacked TCP service. QUIC is always
+    // TLS, so the HTTP/3 router mints `https` URLs.
+    let advertisement = match quic_feed {
         Some(_) => {
             let port = NonZeroU16::new(config.server.port).ok_or(ListenerError::ZeroPort)?;
             Some(AltSvcAdvertisement::h3(port, config.http3.advertisement_max_age.duration())?)
         }
         None => None,
     };
-    let h3_router = activation.is_some().then(|| api.h3_router());
+    let h3_router = quic_feed
+        .is_some()
+        .then(|| api.h3_router().layer(AddExtensionLayer::new(ListenerScheme::new(ApiRootScheme::Https))));
 
     // Advertise HTTP/3 on TCP responses only while the QUIC listener is up; the
     // layer is absent, not merely empty, when HTTP/3 is disabled.
     let alt_svc_layer =
         advertisement.map(|advertisement| SetResponseHeaderLayer::if_not_present(AltSvcAdvertisement::name().clone(), advertisement.value().clone()));
-    let tcp_service = option_layer(alt_svc_layer).layer(api.into_service());
+    let tcp_service = AddExtensionLayer::new(listener_scheme(config.server.transport)).layer(option_layer(alt_svc_layer).layer(api.into_service()));
 
     let shutdown_token = CancellationToken::new();
     let signal_token = shutdown_token.clone();
@@ -104,28 +129,30 @@ pub async fn serve(
     // listener always, the QUIC listener when HTTP/3 is enabled, and the
     // management listener in `separate-port` mode.
     let mut listeners: Vec<ListenerFuture<'_>> = Vec::new();
-    let tcp = serve_tcp(&config.server, tcp_service, wait_for(&shutdown_token));
+    let tcp = serve_tcp(&config.server, tcp_security, tcp_service, wait_for(&shutdown_token));
     listeners.push(Box::pin(async move { tcp.await.map_err(ListenerError::from) }));
 
-    if let (Some(activation), Some(router)) = (activation, h3_router) {
-        let endpoint = endpoint::bind(activation, address)?;
-        let http3 = serve_endpoint(endpoint, router, wait_for(&shutdown_token));
+    if let (Some(feed), Some(router)) = (quic_feed, h3_router) {
+        let endpoint = endpoint::bind(&feed, address)?;
+        let http3 = serve_endpoint(endpoint, feed, router, wait_for(&shutdown_token));
         listeners.push(Box::pin(async move { http3.await.map_err(ListenerError::from) }));
     }
 
-    if let Some(management) = management {
+    if let (Some(management), Some(security)) = (management, management_security) {
         // The management listener is TCP-only and reuses the data plane's
         // graceful-drain deadline on its own host and port.
         let management_config = ServerConfig {
             host: config.management.host,
             port: config.management.port,
+            transport: config.management.transport,
             graceful_drain: config.server.graceful_drain,
         };
-        let management_serve = serve_management(management_config, management, wait_for(&shutdown_token));
+        let management_serve = serve_management(management_config, security, management, wait_for(&shutdown_token));
         listeners.push(Box::pin(async move { management_serve.await.map_err(ListenerError::from) }));
     }
 
     let result = try_join_all(listeners).await.map(|_outcomes| ());
+    drop(identity);
 
     // If a listener returned an error before the shutdown signal fired, cancel
     // so the spawned signal task can complete rather than leak.
@@ -141,8 +168,14 @@ pub async fn serve(
 /// A thin wrapper that owns the synthesized [`ServerConfig`] so the returned
 /// future borrows nothing from the caller and can be boxed alongside the
 /// data-plane listeners under one shutdown token.
-async fn serve_management(config: ServerConfig, management: ManagementApi, shutdown: impl Future<Output = ()> + Send + 'static) -> Result<(), HttpServerError> {
-    serve_tcp(&config, management.into_service(), shutdown).await
+async fn serve_management(
+    config: ServerConfig,
+    security: ListenerSecurity,
+    management: ManagementApi,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> Result<(), HttpServerError> {
+    let service = AddExtensionLayer::new(listener_scheme(config.transport)).layer(management.into_service());
+    serve_tcp(&config, security, service, shutdown).await
 }
 
 /// A future that resolves when `token` is cancelled, owning a clone of it so it

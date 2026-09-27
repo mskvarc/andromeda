@@ -67,6 +67,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-temporal-query",
         "andromeda-postgresql-temporal-store",
         "andromeda-registration",
+        "andromeda-server-tls",
         "andromeda-snapshot",
         "andromeda-spatial-index",
         "andromeda-subscription",

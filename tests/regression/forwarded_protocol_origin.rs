@@ -6,9 +6,9 @@
 //! defined by IETF RFC 5246 [19] shall be supported. HTTP without TLS is not
 //! recommended."
 //!
-//! Andromeda meets that clause by terminating TLS at a reverse proxy
+//! A deployment may meet that clause by terminating TLS at a reverse proxy
 //! (`docs/tls-deployment.md`), which leaves the broker serving plaintext HTTP.
-//! It previously hardcoded `http://` when reconstructing its own origin, so a
+//! The broker previously hardcoded `http://` when reconstructing its own origin, so a
 //! broker behind a terminator advertised `http://` URLs for an `https://`
 //! deployment -- including the `@context` URL clause 5.13 has it store, which
 //! outlives the request that created it.
@@ -32,7 +32,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
-use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, forwarded_protocol::ForwardedProtocol};
+use andromeda_http_headers::{api_root_scheme::ApiRootScheme, forwarded_header_trust::ForwardedHeaderTrust};
 use andromeda_test_client::{broker_endpoint::BrokerEndpoint, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{
@@ -64,12 +64,12 @@ struct ForwardedCase {
     /// The forwarded fields the request carries, in the order it sends them.
     fields: &'static [(&'static str, &'static str)],
     /// The scheme the URL the broker mints and stores must carry.
-    minted: ForwardedProtocol,
+    minted: ApiRootScheme,
 }
 
 impl ForwardedCase {
     /// Pair a set of forwarded fields with the scheme they must produce.
-    const fn new(fields: &'static [(&'static str, &'static str)], minted: ForwardedProtocol) -> ForwardedCase {
+    const fn new(fields: &'static [(&'static str, &'static str)], minted: ApiRootScheme) -> ForwardedCase {
         ForwardedCase { fields, minted }
     }
 }
@@ -82,23 +82,23 @@ impl ForwardedCase {
 /// as an invariant over the whole table.
 const READABLE_FIELDS: &[ForwardedCase] = &[
     // The de-facto field alone.
-    ForwardedCase::new(&[("X-Forwarded-Proto", "https")], ForwardedProtocol::Https),
+    ForwardedCase::new(&[("X-Forwarded-Proto", "https")], ApiRootScheme::Https),
     // The RFC 7239 field alone.
-    ForwardedCase::new(&[("Forwarded", "proto=https")], ForwardedProtocol::Https),
+    ForwardedCase::new(&[("Forwarded", "proto=https")], ApiRootScheme::Https),
     // Both, agreeing, as the reference terminator configuration sends them.
-    ForwardedCase::new(&[("Forwarded", "proto=https"), ("X-Forwarded-Proto", "https")], ForwardedProtocol::Https),
+    ForwardedCase::new(&[("Forwarded", "proto=https"), ("X-Forwarded-Proto", "https")], ApiRootScheme::Https),
     // RFC 7239 clause 4 permits a quoted string wherever it permits a token.
-    ForwardedCase::new(&[("Forwarded", "proto=\"https\"")], ForwardedProtocol::Https),
+    ForwardedCase::new(&[("Forwarded", "proto=\"https\"")], ApiRootScheme::Https),
     // A complete RFC 7239 element, whose other parameters change nothing.
-    ForwardedCase::new(&[("Forwarded", "for=192.0.2.60;proto=https;host=terminator.example")], ForwardedProtocol::Https),
+    ForwardedCase::new(&[("Forwarded", "for=192.0.2.60;proto=https;host=terminator.example")], ApiRootScheme::Https),
     // A `for=`-only element names no protocol, so the de-facto field decides.
-    ForwardedCase::new(&[("Forwarded", "for=192.0.2.60"), ("X-Forwarded-Proto", "https")], ForwardedProtocol::Https),
+    ForwardedCase::new(&[("Forwarded", "for=192.0.2.60"), ("X-Forwarded-Proto", "https")], ApiRootScheme::Https),
     // A `for=`-only element with nothing beside it leaves the listener scheme.
-    ForwardedCase::new(&[("Forwarded", "for=192.0.2.60")], ForwardedProtocol::Http),
+    ForwardedCase::new(&[("Forwarded", "for=192.0.2.60")], ApiRootScheme::Http),
     // Trusting the edge is not a blanket upgrade: a terminator that forwarded
     // plaintext gets plaintext back.
-    ForwardedCase::new(&[("X-Forwarded-Proto", "http")], ForwardedProtocol::Http),
-    ForwardedCase::new(&[("Forwarded", "proto=http")], ForwardedProtocol::Http),
+    ForwardedCase::new(&[("X-Forwarded-Proto", "http")], ApiRootScheme::Http),
+    ForwardedCase::new(&[("Forwarded", "proto=http")], ApiRootScheme::Http),
 ];
 
 /// The field shapes the broker cannot read a protocol from.
@@ -107,13 +107,13 @@ const READABLE_FIELDS: &[ForwardedCase] = &[
 /// scheme decides only how a minted URL is spelled and is never a precondition
 /// of the operation the request asked for.
 const UNREADABLE_FIELDS: &[ForwardedCase] = &[
-    ForwardedCase::new(&[("Forwarded", "definitely not rfc 7239")], ForwardedProtocol::Http),
-    ForwardedCase::new(&[("Forwarded", ";;;")], ForwardedProtocol::Http),
+    ForwardedCase::new(&[("Forwarded", "definitely not rfc 7239")], ApiRootScheme::Http),
+    ForwardedCase::new(&[("Forwarded", ";;;")], ApiRootScheme::Http),
     // Clause 6.2 admits `http` and `https` only, so a third scheme is refused
     // rather than minted into an `apiRoot`.
-    ForwardedCase::new(&[("Forwarded", "proto=gopher")], ForwardedProtocol::Http),
-    ForwardedCase::new(&[("X-Forwarded-Proto", "not-a-scheme")], ForwardedProtocol::Http),
-    ForwardedCase::new(&[("X-Forwarded-Proto", "ws")], ForwardedProtocol::Http),
+    ForwardedCase::new(&[("Forwarded", "proto=gopher")], ApiRootScheme::Http),
+    ForwardedCase::new(&[("X-Forwarded-Proto", "not-a-scheme")], ApiRootScheme::Http),
+    ForwardedCase::new(&[("X-Forwarded-Proto", "ws")], ApiRootScheme::Http),
 ];
 
 /// One half of the tier: a broker and the trust its operator declared for the
@@ -225,7 +225,7 @@ async fn regression_forwarded_protocol_is_ignored_without_a_trusted_proxy() {
 
     let ignored: Vec<ForwardedCase> = READABLE_FIELDS
         .iter()
-        .map(|case| ForwardedCase::new(case.fields, ForwardedProtocol::Http))
+        .map(|case| ForwardedCase::new(case.fields, ApiRootScheme::Http))
         .collect();
     untrusted.assert_mints(&ignored).await;
 
@@ -264,12 +264,12 @@ async fn regression_the_rfc_7239_field_outranks_the_de_facto_one() {
 
     trusted
         .assert_mints(&[
-            ForwardedCase::new(&[("Forwarded", "proto=https"), ("X-Forwarded-Proto", "http")], ForwardedProtocol::Https),
-            ForwardedCase::new(&[("Forwarded", "proto=http"), ("X-Forwarded-Proto", "https")], ForwardedProtocol::Http),
+            ForwardedCase::new(&[("Forwarded", "proto=https"), ("X-Forwarded-Proto", "http")], ApiRootScheme::Https),
+            ForwardedCase::new(&[("Forwarded", "proto=http"), ("X-Forwarded-Proto", "https")], ApiRootScheme::Http),
             // The same two disagreements with the fields sent the other way
             // round: the broker reads by field name, never by arrival order.
-            ForwardedCase::new(&[("X-Forwarded-Proto", "http"), ("Forwarded", "proto=https")], ForwardedProtocol::Https),
-            ForwardedCase::new(&[("X-Forwarded-Proto", "https"), ("Forwarded", "proto=http")], ForwardedProtocol::Http),
+            ForwardedCase::new(&[("X-Forwarded-Proto", "http"), ("Forwarded", "proto=https")], ApiRootScheme::Https),
+            ForwardedCase::new(&[("X-Forwarded-Proto", "https"), ("Forwarded", "proto=http")], ApiRootScheme::Http),
         ])
         .await;
 
@@ -290,10 +290,10 @@ async fn regression_the_leftmost_forwarded_element_decides_the_protocol() {
 
     trusted
         .assert_mints(&[
-            ForwardedCase::new(&[("Forwarded", "proto=https,proto=http")], ForwardedProtocol::Https),
-            ForwardedCase::new(&[("Forwarded", "proto=http,proto=https")], ForwardedProtocol::Http),
-            ForwardedCase::new(&[("X-Forwarded-Proto", "https, http")], ForwardedProtocol::Https),
-            ForwardedCase::new(&[("X-Forwarded-Proto", "http, https")], ForwardedProtocol::Http),
+            ForwardedCase::new(&[("Forwarded", "proto=https,proto=http")], ApiRootScheme::Https),
+            ForwardedCase::new(&[("Forwarded", "proto=http,proto=https")], ApiRootScheme::Http),
+            ForwardedCase::new(&[("X-Forwarded-Proto", "https, http")], ApiRootScheme::Https),
+            ForwardedCase::new(&[("X-Forwarded-Proto", "http, https")], ApiRootScheme::Http),
         ])
         .await;
 

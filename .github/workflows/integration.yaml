@@ -37,8 +37,8 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          gate='["base","distributed","federation","snapshot","http3","extensions"]'
-          all='["base","distributed","federation","snapshot","http3","extensions","pgbouncer"]'
+          gate='["base","distributed","federation","snapshot","http3","extensions","tls"]'
+          all='["base","distributed","federation","snapshot","http3","extensions","tls","pgbouncer"]'
           case "$EVENT" in
             schedule)
               echo "stacks=$all" >> "$GITHUB_OUTPUT"

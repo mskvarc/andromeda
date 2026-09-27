@@ -3,7 +3,7 @@ description: Run one integration stack against a prebuilt broker image and test 
 
 inputs:
   stack:
-    description: The xtask stack name (base, distributed, federation, snapshot, http3, extensions, pgbouncer).
+    description: The xtask stack name (base, distributed, federation, snapshot, http3, extensions, tls, pgbouncer).
     required: true
   image-source:
     description: >

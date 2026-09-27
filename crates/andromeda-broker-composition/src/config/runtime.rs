@@ -18,6 +18,7 @@ use andromeda_http3_server::config::Http3Config;
 use andromeda_jsonld::config::JsonLdConfig;
 use andromeda_postgresql_atomic_write::config::AtomicWriteConfig;
 use andromeda_postgresql_context_store::config::DatabaseConfig;
+use andromeda_server_tls::config::TlsConfig;
 use andromeda_snapshot::config::SnapshotConfig;
 use andromeda_temporal::config::TemporalConfig;
 use andromeda_tenancy::config::TenancyConfig;
@@ -82,6 +83,10 @@ pub struct RuntimeConfig {
 
     /// Opt-in HTTP/3 (QUIC) listener configuration, sharing the TCP port.
     pub http3: Http3Config,
+
+    /// The TLS identity every TLS-terminating listener presents; read only
+    /// when some listener terminates TLS.
+    pub tls: TlsConfig,
 
     /// Primary and tenant PostgreSQL connection configuration.
     pub database: DatabaseConfig,

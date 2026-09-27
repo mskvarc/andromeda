@@ -1,4 +1,4 @@
-# QUIC terminates TLS at the endpoint, so the broker holds the cert.
+# QUIC terminates TLS at the endpoint, so the broker holds the cert; TCP stays plaintext.
 name: andromeda-http3
 
 services:
@@ -37,8 +37,8 @@ services:
       ANDROMEDA__TENANCY__ENABLED: "true"
       ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
       ANDROMEDA__HTTP3__MODE: "enabled"
-      ANDROMEDA__HTTP3__CERTIFICATE_PATH: "/etc/andromeda/certs/broker.crt"
-      ANDROMEDA__HTTP3__PRIVATE_KEY_PATH: "/etc/andromeda/certs/broker.key"
+      ANDROMEDA__TLS__CERTIFICATE_PATH: "/etc/andromeda/certs/broker.crt"
+      ANDROMEDA__TLS__PRIVATE_KEY_PATH: "/etc/andromeda/certs/broker.key"
       ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:http3-broker"
       ANDROMEDA__IDENTITY__SOURCE_ALIAS: "http3-broker"
     healthcheck:

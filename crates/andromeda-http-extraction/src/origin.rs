@@ -2,8 +2,10 @@
 
 use crate::classification::classify_request_origin_error;
 use andromeda_http_headers::{
+    api_root_scheme::ApiRootScheme,
     forwarded_header_trust::ForwardedHeaderTrust,
-    forwarded_protocol::{ForwardedProtocol, forwarded_protocol},
+    forwarded_protocol::forwarded_protocol,
+    listener_scheme::ListenerScheme,
 };
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{extract::FromRequestParts, http::request::Parts};
@@ -12,14 +14,7 @@ use std::future::{Future, ready};
 use thiserror::Error;
 use url::Url;
 
-/// The scheme the broker's own listener speaks.
-///
-/// Andromeda serves plaintext HTTP and is deployed behind a TLS terminator
-/// (`docs/tls-deployment.md`), so this is the scheme of every URL it mints
-/// unless a proxy the operator has declared trusted says otherwise.
-const LISTENER_PROTOCOL: ForwardedProtocol = ForwardedProtocol::Http;
-
-/// A `Host` header that cannot identify the broker origin.
+/// A request authority that cannot identify the broker origin.
 #[derive(Debug, Error)]
 pub enum RequestOriginError {
     /// The header text cannot form an HTTP origin.
@@ -34,7 +29,7 @@ pub enum RequestOriginError {
 ///
 /// Clause 6.2 makes the `apiRoot` "the scheme (`http` or `https`), host and
 /// optional port": this is that origin as the request reveals it. It is `None`
-/// for a request carrying no `Host` header, and the resources that would embed
+/// for a request naming no authority, and the resources that would embed
 /// an origin are then stored without one.
 pub struct RequestOrigin(pub Option<Url>);
 
@@ -54,23 +49,52 @@ impl RequestOrigin {
 /// untrusted, so a router assembled without that stack -- a unit test, a
 /// fragment mounted on its own -- can never be talked into minting an `https`
 /// URL by a client-supplied field.
-fn forwarded_scheme(parts: &Parts) -> Option<ForwardedProtocol> {
+fn forwarded_scheme(parts: &Parts) -> Option<ApiRootScheme> {
     match parts.extensions.get::<ForwardedHeaderTrust>() {
         Some(ForwardedHeaderTrust::Trusted) => forwarded_protocol(&parts.headers),
         Some(ForwardedHeaderTrust::Untrusted) | None => None,
     }
 }
 
-/// Reconstruct the origin from the request's `Host` field and, when the edge is
-/// trusted, from the protocol it forwarded.
+/// The scheme the listener the request arrived on speaks.
+///
+/// Each listener installs its [`ListenerScheme`] as a request extension. A
+/// request carrying none is treated as plaintext, so a router assembled without
+/// a listener -- a unit test, a fragment mounted on its own -- never mints an
+/// `https` URL it was not served over.
+fn listener_scheme(parts: &Parts) -> ApiRootScheme {
+    parts
+        .extensions
+        .get::<ListenerScheme>()
+        .map_or(ApiRootScheme::Http, |scheme| ApiRootScheme::from(*scheme))
+}
+
+/// The authority the request addresses.
+///
+/// HTTP/2 and HTTP/3 carry it in the `:authority` pseudo-header rather than a
+/// `Host` field (RFC 9113 clause 8.3.1, RFC 9114 clause 4.3.1), and it arrives
+/// as the authority of the request target; so does the authority of an
+/// HTTP/1.1 absolute-form target, which RFC 9112 clause 3.2.2 has override
+/// `Host`. Only an origin-form HTTP/1.1 request names its authority in `Host`
+/// alone.
+fn request_authority(parts: &Parts) -> Option<headers::Host> {
+    // clone: the authority is a shared, reference-counted buffer the request keeps.
+    parts
+        .uri
+        .authority()
+        .cloned()
+        .map(headers::Host::from)
+        .or_else(|| parts.headers.typed_get::<headers::Host>())
+}
+
+/// Reconstruct the origin from the authority the request addresses and, when
+/// the edge is trusted, from the protocol it forwarded; otherwise from the
+/// scheme of the listener the request arrived on.
 fn resolve_origin(parts: &Parts) -> Result<RequestOrigin, RequestOriginError> {
-    let Some(host) = parts.headers.typed_get::<headers::Host>() else {
+    let Some(host) = request_authority(parts) else {
         return Ok(RequestOrigin(None));
     };
-    let scheme = match forwarded_scheme(parts) {
-        Some(forwarded) => forwarded,
-        None => LISTENER_PROTOCOL,
-    };
+    let scheme = forwarded_scheme(parts).unwrap_or_else(|| listener_scheme(parts));
     Url::parse(&format!("{}://{host}", scheme.as_scheme()))
         .map(|origin| RequestOrigin(Some(origin)))
         .map_err(|error| RequestOriginError::InvalidOrigin { detail: error.to_string() })
@@ -90,7 +114,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::origin::RequestOrigin;
-    use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
+    use andromeda_http_headers::{api_root_scheme::ApiRootScheme, forwarded_header_trust::ForwardedHeaderTrust, listener_scheme::ListenerScheme};
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use axum::{
         extract::FromRequestParts,
@@ -112,11 +136,28 @@ mod tests {
         Ok(parts)
     }
 
-    /// The origin the extractor reconstructs, as wire text.
-    async fn origin_of(fields: &[(&'static str, &str)], trust: Option<ForwardedHeaderTrust>) -> Result<Option<String>, Box<dyn Error>> {
-        let mut parts = parts(fields, trust)?;
+    /// The origin the extractor reconstructs from `parts`, as wire text.
+    async fn origin_from(mut parts: Parts) -> Result<Option<String>, Box<dyn Error>> {
         let origin = RequestOrigin::from_request_parts(&mut parts, &()).await.map_err(|_| "origin rejected")?;
         Ok(origin.into_inner().map(|url| url.to_string()))
+    }
+
+    /// The origin the extractor reconstructs, as wire text.
+    async fn origin_of(fields: &[(&'static str, &str)], trust: Option<ForwardedHeaderTrust>) -> Result<Option<String>, Box<dyn Error>> {
+        let parts = parts(fields, trust)?;
+        origin_from(parts).await
+    }
+
+    /// The origin reconstructed for a request that arrived on a listener
+    /// speaking `scheme`.
+    async fn origin_on_listener(
+        scheme: ApiRootScheme,
+        fields: &[(&'static str, &str)],
+        trust: Option<ForwardedHeaderTrust>,
+    ) -> Result<Option<String>, Box<dyn Error>> {
+        let mut parts = parts(fields, trust)?;
+        parts.extensions.insert(ListenerScheme::from(scheme));
+        origin_from(parts).await
     }
 
     #[tokio::test]
@@ -125,8 +166,8 @@ mod tests {
         Ok(())
     }
 
-    /// The broker's own listener speaks plaintext HTTP, so that is the scheme
-    /// of a minted URL when nothing trusted says otherwise.
+    /// A request that names no listener scheme is treated as plaintext, so
+    /// that is the scheme of a minted URL when nothing trusted says otherwise.
     #[tokio::test]
     async fn the_listener_scheme_is_used_when_no_proxy_is_trusted() -> Result<(), Box<dyn Error>> {
         pretty_assertions::assert_eq!(
@@ -227,6 +268,67 @@ mod tests {
     #[tokio::test]
     async fn a_host_field_that_is_not_an_authority_yields_no_origin() -> Result<(), Box<dyn Error>> {
         pretty_assertions::assert_eq!(origin_of(&[("host", "not a host")], None).await?, None);
+        Ok(())
+    }
+
+    /// A TLS-terminating listener mints `https` URLs, including the durable
+    /// clause 5.13 `@context` URLs, with no proxy involved.
+    #[tokio::test]
+    async fn an_https_listener_scheme_is_used_when_no_proxy_is_trusted() -> Result<(), Box<dyn Error>> {
+        pretty_assertions::assert_eq!(
+            origin_on_listener(ApiRootScheme::Https, &[("host", "broker.example")], None).await?,
+            Some("https://broker.example/".to_owned())
+        );
+        Ok(())
+    }
+
+    /// An untrusted edge can neither upgrade nor downgrade the listener's scheme.
+    #[tokio::test]
+    async fn an_untrusted_forwarded_http_cannot_downgrade_an_https_listener() -> Result<(), Box<dyn Error>> {
+        for trust in [None, Some(ForwardedHeaderTrust::Untrusted)] {
+            pretty_assertions::assert_eq!(
+                origin_on_listener(ApiRootScheme::Https, &[("host", "broker.example"), ("x-forwarded-proto", "http")], trust).await?,
+                Some("https://broker.example/".to_owned())
+            );
+        }
+        Ok(())
+    }
+
+    /// A trusted edge knows the scheme the client used, which may differ from
+    /// the hop between the edge and the broker.
+    #[tokio::test]
+    async fn a_trusted_edge_outranks_the_listener_scheme() -> Result<(), Box<dyn Error>> {
+        pretty_assertions::assert_eq!(
+            origin_on_listener(
+                ApiRootScheme::Https,
+                &[("host", "broker.example"), ("forwarded", "proto=http")],
+                Some(ForwardedHeaderTrust::Trusted)
+            )
+            .await?,
+            Some("http://broker.example/".to_owned())
+        );
+        Ok(())
+    }
+
+    /// An HTTP/2 or HTTP/3 request names its authority in `:authority`, which
+    /// arrives as the request target's authority with no `Host` field at all.
+    #[tokio::test]
+    async fn an_authority_pseudo_header_names_the_origin_without_a_host_field() -> Result<(), Box<dyn Error>> {
+        let (mut parts, ()) = Request::get("https://broker.example:1056/ngsi-ld/v1/jsonldContexts").body(())?.into_parts();
+        parts.extensions.insert(ListenerScheme::from(ApiRootScheme::Https));
+        pretty_assertions::assert_eq!(origin_from(parts).await?, Some("https://broker.example:1056/".to_owned()));
+        Ok(())
+    }
+
+    /// RFC 9112 clause 3.2.2: the authority of an absolute-form target
+    /// outranks a disagreeing `Host` field.
+    #[tokio::test]
+    async fn a_target_authority_outranks_the_host_field() -> Result<(), Box<dyn Error>> {
+        let (parts, ()) = Request::get("http://broker.example/ngsi-ld/v1/jsonldContexts")
+            .header("host", "elsewhere.example")
+            .body(())?
+            .into_parts();
+        pretty_assertions::assert_eq!(origin_from(parts).await?, Some("http://broker.example/".to_owned()));
         Ok(())
     }
 }

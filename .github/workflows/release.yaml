@@ -57,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stack: [base, distributed, federation, snapshot, http3, extensions]
+        stack: [base, distributed, federation, snapshot, http3, extensions, tls]
     runs-on: ubuntu-latest
     permissions:
       contents: read

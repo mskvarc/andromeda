@@ -1,0 +1,36 @@
+[package]
+name = "andromeda-server-tls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# `toml` is used only through the `toml-comment` derive, which expands to
+# `toml::Value` at the call site; cargo-machete cannot see that macro-generated
+# use and would otherwise report the dependency as unused.
+[package.metadata.cargo-machete]
+ignored = ["toml"]
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-configuration-scalars.workspace = true
+notify-debouncer-full = "0.7.0"
+rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-pki-types = "1.15.1"
+serde = { version = "1.0.229", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.21"
+tokio = { version = "1.53.1", features = ["macros", "rt", "sync"] }
+toml = "1.1.6"
+toml-comment = "0.3.0"
+tracing = "0.1.44"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+andromeda-test-tls.workspace = true
+pretty_assertions = "1.4.1"
+serde_json = "1.0.151"
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "sync", "time"] }

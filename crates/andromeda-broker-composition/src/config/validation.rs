@@ -5,6 +5,8 @@ use crate::config::{
     management::{ManagementConfigError, ManagementMode},
     runtime::RuntimeConfig,
 };
+use andromeda_http_server::config::ListenerTransport;
+use andromeda_http3_server::config::Http3Mode;
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
@@ -13,7 +15,6 @@ use std::{
 pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
     config.server.validate().map_err(owner_configuration_error)?;
     config.http.validate().map_err(owner_configuration_error)?;
-    config.http3.activation().map_err(owner_configuration_error)?;
     config.database.validate().map_err(owner_configuration_error)?;
     config.jsonld.validate().map_err(owner_configuration_error)?;
     config.temporal.validate().map_err(owner_configuration_error)?;
@@ -29,6 +30,27 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), Configuratio
     validate_side_effect_lease_over_acquire_timeout(config)?;
     validate_build_admission_timeout_below_request_timeout(config)?;
     validate_management_port_distinct_from_server(config)?;
+    validate_tls_material_for_listeners(config)?;
+    Ok(())
+}
+
+/// Every listener that terminates TLS must have an identity to present.
+///
+/// A cross-section invariant spanning `server`, `http3`, `management` and
+/// `tls`: the `[tls]` section is inert until one of those asks for it, so it is
+/// validated only then. QUIC is always TLS, so an enabled HTTP/3 listener always
+/// asks; the management listener asks only in `separate-port` mode, the only
+/// mode in which its `transport` is read.
+fn validate_tls_material_for_listeners(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
+    let tcp = matches!(config.server.transport, ListenerTransport::Tls);
+    let quic = matches!(config.http3.mode, Http3Mode::Enabled);
+    let management = matches!(
+        (config.management.mode, config.management.transport),
+        (ManagementMode::SeparatePort, ListenerTransport::Tls)
+    );
+    if tcp || quic || management {
+        config.tls.material_sources().map_err(owner_configuration_error)?;
+    }
     Ok(())
 }
 
@@ -118,9 +140,67 @@ mod tests {
             validate_build_admission_timeout_below_request_timeout,
             validate_management_port_distinct_from_server,
             validate_side_effect_lease_over_acquire_timeout,
+            validate_tls_material_for_listeners,
         },
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use andromeda_http_server::config::ListenerTransport;
+    use andromeda_http3_server::config::Http3Mode;
+    use std::path::PathBuf;
+
+    /// Whether the TLS cross-section check refuses `config` for want of a
+    /// certificate.
+    fn refused_for_missing_certificate(config: &RuntimeConfig) -> bool {
+        validate_tls_material_for_listeners(config)
+            .map_err(|error| error.to_string())
+            .is_err_and(|message| message.contains("tls.certificate_path must be set"))
+    }
+
+    #[test]
+    fn tls_transport_without_certificate_is_rejected() {
+        let mut config = RuntimeConfig::default();
+        config.server.transport = ListenerTransport::Tls;
+        assert!(refused_for_missing_certificate(&config));
+    }
+
+    #[test]
+    fn http3_enabled_without_tls_material_is_rejected() {
+        let mut config = RuntimeConfig::default();
+        config.http3.mode = Http3Mode::Enabled;
+        assert!(refused_for_missing_certificate(&config));
+    }
+
+    #[test]
+    fn separate_port_management_tls_without_material_is_rejected() {
+        let mut config = RuntimeConfig::default();
+        config.management.mode = ManagementMode::SeparatePort;
+        config.management.transport = ListenerTransport::Tls;
+        assert!(refused_for_missing_certificate(&config));
+    }
+
+    /// The management `transport` is read only in `separate-port` mode, so it
+    /// asks for no identity when the management endpoints ride the data plane.
+    #[test]
+    fn merged_management_tls_transport_needs_no_material() {
+        let mut config = RuntimeConfig::default();
+        config.management.mode = ManagementMode::Merged;
+        config.management.transport = ListenerTransport::Tls;
+        assert!(validate_tls_material_for_listeners(&config).is_ok());
+    }
+
+    #[test]
+    fn the_default_configuration_needs_no_tls_material() {
+        assert!(validate_tls_material_for_listeners(&RuntimeConfig::default()).is_ok());
+    }
+
+    #[test]
+    fn a_tls_listener_with_a_key_pair_is_accepted() {
+        let mut config = RuntimeConfig::default();
+        config.server.transport = ListenerTransport::Tls;
+        config.tls.certificate_path = PathBuf::from("/etc/andromeda/broker.crt");
+        config.tls.private_key_path = PathBuf::from("/etc/andromeda/broker.key");
+        assert!(validate_tls_material_for_listeners(&config).is_ok());
+    }
 
     #[test]
     fn management_port_colliding_with_server_port_is_rejected() {

@@ -48,8 +48,8 @@ pub(crate) enum XtaskError {
     /// The manifest records no compiled binary for a requested suite.
     #[error("the prebuilt test manifest has no binary for suite '{0}'")]
     SuiteBinaryMissing(String),
-    /// Generating the HTTP/3 self-signed certificate failed.
-    #[error("openssl failed to generate the HTTP/3 certificate")]
+    /// Generating a stack's test certificate material failed.
+    #[error("openssl failed to generate the stack's test certificates")]
     CertGeneration,
     /// Building the blocking HTTP client for the health probe failed.
     #[error("failed to build the health-probe HTTP client: {0}")]

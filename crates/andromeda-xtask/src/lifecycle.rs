@@ -3,11 +3,10 @@
 //! stack, exactly as the shell tier's `trap cleanup EXIT` did.
 
 use crate::{
-    certs,
     compose::{self, ImageBuild},
     error::XtaskError,
     local_broker::{self, HostBroker},
-    stack::{Stack, StackName, Suite},
+    stack::{Stack, Suite},
     test_binaries::{TestManifest, run},
 };
 use std::{
@@ -80,9 +79,7 @@ pub(crate) fn run_stack(
     };
     let compose_file = repository_root.join(stack.compose_file);
 
-    if stack.name == StackName::Http3 {
-        certs::ensure(repository_root)?;
-    }
+    stack.material.provision(repository_root)?;
     if broker_mode == BrokerMode::Local {
         local_broker::preflight_ports()?;
     }

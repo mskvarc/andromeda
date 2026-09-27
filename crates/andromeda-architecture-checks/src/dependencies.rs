@@ -11,6 +11,7 @@ const TEST_INFRASTRUCTURE_CRATES: &[&str] = &[
     "andromeda-test-fixtures",
     "andromeda-test-harness",
     "andromeda-test-mocks",
+    "andromeda-test-tls",
 ];
 
 /// Which dependency table a declaration came from.

@@ -1,9 +1,10 @@
 //! Binding and serving an already assembled state-complete HTTP service.
 
-use crate::{config::ServerConfig, error::HttpServerError};
-use axum::{ServiceExt, extract::Request, response::Response};
+use crate::{config::ServerConfig, error::HttpServerError, listener_security::ListenerSecurity, tls_tcp_listener::TlsTcpListener};
+use axum::{ServiceExt, extract::Request, response::Response, serve::Listener};
 use std::{
     convert::Infallible,
+    fmt::Debug,
     future::{Future, IntoFuture},
     net::SocketAddr,
     time::Duration,
@@ -13,6 +14,9 @@ use tower::Service;
 
 /// Bind the configured listener and serve until the supplied shutdown future resolves.
 ///
+/// `security` decides whether the bound socket serves plaintext or terminates
+/// TLS; composition derives it from the listener's configured transport.
+///
 /// # Errors
 ///
 /// Returns [`HttpServerError::Bind`] when the configured address cannot be bound,
@@ -20,7 +24,7 @@ use tower::Service;
 /// [`HttpServerError::Serve`] when connection acceptance or serving fails, and
 /// [`HttpServerError::DrainDeadlineExceeded`] when accepted connections are still in flight once
 /// the configured graceful-drain deadline has passed.
-pub async fn serve<S, F>(config: &ServerConfig, service: S, shutdown: F) -> Result<(), HttpServerError>
+pub async fn serve<S, F>(config: &ServerConfig, security: ListenerSecurity, service: S, shutdown: F) -> Result<(), HttpServerError>
 where
     S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + 'static,
     S::Future: Send + 'static,
@@ -29,8 +33,14 @@ where
     let address = SocketAddr::from((config.host, config.port));
     let listener = TcpListener::bind(address).await.map_err(|source| HttpServerError::Bind { address, source })?;
     let local_address = listener.local_addr().map_err(|source| HttpServerError::LocalAddress { source })?;
-    tracing::info!(address = %local_address, "HTTP listener accepting connections");
-    serve_listener(listener, service, shutdown, config.graceful_drain_deadline()).await
+    tracing::info!(address = %local_address, transport = %security.transport(), "HTTP listener accepting connections");
+    let drain_deadline = config.graceful_drain_deadline();
+    match security {
+        ListenerSecurity::Plaintext => serve_listener(listener, service, shutdown, drain_deadline).await,
+        ListenerSecurity::Tls { feed, handshake_timeout } => {
+            serve_listener(TlsTcpListener::new(listener, feed, handshake_timeout), service, shutdown, drain_deadline).await
+        }
+    }
 }
 
 /// Serve an already bound listener, allowing composition and tests to control its address.
@@ -40,8 +50,10 @@ where
 /// Returns [`HttpServerError::Serve`] when connection acceptance or serving fails, and
 /// [`HttpServerError::DrainDeadlineExceeded`] when accepted connections are still in flight once
 /// `drain_deadline` has passed.
-pub async fn serve_listener<S, F>(listener: TcpListener, service: S, shutdown: F, drain_deadline: Duration) -> Result<(), HttpServerError>
+pub async fn serve_listener<L, S, F>(listener: L, service: S, shutdown: F, drain_deadline: Duration) -> Result<(), HttpServerError>
 where
+    L: Listener,
+    L::Addr: Debug,
     S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + 'static,
     S::Future: Send + 'static,
     F: Future<Output = ()> + Send,

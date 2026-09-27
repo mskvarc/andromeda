@@ -5,11 +5,12 @@
 //! by IETF RFC 5246 [19] shall be supported. HTTP without TLS is not
 //! recommended."
 //!
-//! The `andromeda` binary implements no TLS: it serves plaintext HTTP, and the
-//! clause is met by the deployment described in `docs/tls-deployment.md` and
-//! built by `docker/compose/test/tls/`. That makes those two files load-bearing rather than
-//! illustrative, and the three properties the claim actually depends on are
-//! properties of their content:
+//! The broker can terminate TLS itself, but this deployment keeps its listener
+//! on plaintext HTTP (the default `server.transport`) and meets the clause with
+//! the reverse proxy described in `docs/tls-deployment.md` and built by
+//! `docker/compose/test/tls/`. For that model those two files are load-bearing
+//! rather than illustrative, and the three properties the claim actually
+//! depends on are properties of their content:
 //!
 //! - the terminator offers TLS 1.2, and nothing the IETF has since deprecated;
 //! - the terminator **replaces** the forwarded fields rather than appending to
@@ -19,8 +20,8 @@
 //!
 //! These assert those properties from the repository, so they run wherever the
 //! test suite runs. They are not a substitute for standing the stack up: only a
-//! live terminator proves the handshake, and `docs/tls-deployment.md` records
-//! the command that does it.
+//! live terminator proves the handshake, which the `tls` suite (`tests/tls/`)
+//! does against the running stack.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

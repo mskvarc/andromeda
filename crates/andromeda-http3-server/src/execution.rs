@@ -2,15 +2,24 @@
 //!
 //! The bound endpoint is driven by [`axum_h3::H3Router`], which accepts each
 //! QUIC connection, then each request on it, and dispatches the request to the
-//! same axum router the TCP listener serves. Serving ends when the supplied
-//! shutdown future resolves, after which in-flight connections are given until
-//! the endpoint goes idle to finish.
+//! same axum router the TCP listener serves. While it serves, every
+//! configuration the shared TLS identity's feed rebuilds -- a rotated
+//! certificate, a changed client CA -- is installed on the endpoint, so new
+//! connections present it while open ones keep the session they negotiated.
+//! Serving ends when the supplied shutdown future resolves, after which
+//! in-flight connections are given until the endpoint goes idle to finish.
 
+use crate::quic_crypto::quic_server_config;
+use andromeda_server_tls::server_config_feed::ServerConfigFeed;
 use axum::Router;
 use axum_h3::H3Router;
 use h3_util::quinn::H3QuinnAcceptor;
 use quinn::Endpoint;
-use std::{future::Future, io};
+use std::{
+    convert::Infallible,
+    future::{Future, pending},
+    io,
+};
 use thiserror::Error;
 
 /// Failure while serving HTTP/3.
@@ -30,7 +39,8 @@ pub enum Http3ServeError {
     },
 }
 
-/// Serve `router` over the bound QUIC `endpoint` until `shutdown` resolves.
+/// Serve `router` over the bound QUIC `endpoint` until `shutdown` resolves,
+/// installing each configuration `feed` rebuilds as it arrives.
 ///
 /// After the shutdown future resolves the accept loop stops taking new
 /// connections and the endpoint is awaited idle, letting connections already in
@@ -41,19 +51,48 @@ pub enum Http3ServeError {
 /// Returns [`Http3ServeError::LocalAddress`] when the endpoint's address cannot
 /// be read for logging, and [`Http3ServeError::Serve`] when the accept loop
 /// fails.
-pub async fn serve_endpoint<F>(endpoint: Endpoint, router: Router, shutdown: F) -> Result<(), Http3ServeError>
+pub async fn serve_endpoint<F>(endpoint: Endpoint, feed: ServerConfigFeed, router: Router, shutdown: F) -> Result<(), Http3ServeError>
 where
     F: Future<Output = ()> + Send,
 {
     let local_address = endpoint.local_addr().map_err(Http3ServeError::LocalAddress)?;
     tracing::info!(address = %local_address, "HTTP/3 listener accepting connections");
     // The acceptor takes ownership of the endpoint handle; a second cheap,
-    // Arc-backed handle is retained so the endpoint can be awaited idle once
-    // serving stops.
+    // Arc-backed handle is retained to install rotated configurations and to
+    // await the endpoint idle once serving stops.
     let acceptor = H3QuinnAcceptor::new(endpoint.clone());
-    let result = H3Router::from(router).serve_with_shutdown(acceptor, shutdown).await;
+    let result = tokio::select! {
+        result = H3Router::from(router).serve_with_shutdown(acceptor, shutdown) => result,
+        never = install_rotations(&endpoint, feed) => match never {},
+    };
     endpoint.wait_idle().await;
     result.map_err(|error| Http3ServeError::Serve { message: error.to_string() })
+}
+
+/// Install every configuration `feed` rebuilds on `endpoint`, for as long as
+/// the endpoint serves.
+///
+/// A configuration quinn rejects is logged and the endpoint keeps the one it
+/// has. Once the feed can no longer change the endpoint keeps its last
+/// configuration, and this waits out the rest of serving.
+async fn install_rotations(endpoint: &Endpoint, mut feed: ServerConfigFeed) -> Infallible {
+    while let Some(tls) = feed.changed().await {
+        match quic_server_config(tls) {
+            Ok(config) => {
+                endpoint.set_server_config(Some(config));
+                tracing::info!(
+                    event = "quic_tls_config_installed",
+                    "HTTP/3 listener presents the reloaded TLS material to new connections"
+                );
+            }
+            Err(error) => tracing::error!(
+                event = "quic_tls_config_rejected",
+                error = %error,
+                "keeping the previous HTTP/3 TLS configuration"
+            ),
+        }
+    }
+    pending().await
 }
 
 #[cfg(test)]
@@ -61,8 +100,10 @@ mod tests {
     use crate::{
         endpoint::bind,
         execution::{Http3ServeError, serve_endpoint},
-        test_support::{H3_ALPN, Http3Client, SelfSignedListener, request},
+        quic_crypto::H3_ALPN,
+        test_support::{Http3Client, QuicIdentity, request},
     };
+    use andromeda_test_tls::authority::TestAuthority;
     use axum::{
         Router,
         extract::Query,
@@ -76,10 +117,12 @@ mod tests {
         error::Error,
         net::{Ipv4Addr, SocketAddr},
         sync::Arc,
+        time::{Duration, Instant},
     };
     use tokio::{
         sync::{Notify, oneshot},
         task::JoinHandle,
+        time::sleep,
     };
     use tower::Layer;
     use tower_http::normalize_path::NormalizePathLayer;
@@ -115,7 +158,7 @@ mod tests {
 
     /// A listener bound to an ephemeral port and serving a router in the background.
     struct RunningListener {
-        listener: SelfSignedListener,
+        identity: QuicIdentity,
         address: SocketAddr,
         shutdown: Option<oneshot::Sender<()>>,
         handle: JoinHandle<Result<(), Http3ServeError>>,
@@ -127,18 +170,19 @@ mod tests {
         /// Not async: it binds and spawns without awaiting, but must be called
         /// from within a Tokio runtime (every caller is a `#[tokio::test]`).
         fn start(router: Router) -> Result<RunningListener, Box<dyn Error + Send + Sync>> {
-            let listener = SelfSignedListener::generate()?;
-            let endpoint = {
-                let activation = listener.config().activation()?.expect("enabled config yields activation");
-                bind(activation, SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?
-            };
+            RunningListener::serve(QuicIdentity::anonymous()?, router)
+        }
+
+        /// Start serving `router` with the given identity.
+        fn serve(identity: QuicIdentity, router: Router) -> Result<RunningListener, Box<dyn Error + Send + Sync>> {
+            let endpoint = bind(identity.feed(), SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
             let address = endpoint.local_addr()?;
             let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-            let handle = tokio::spawn(serve_endpoint(endpoint, router, async move {
+            let handle = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, async move {
                 let _ = shutdown_receiver.await;
             }));
             Ok(RunningListener {
-                listener,
+                identity,
                 address,
                 shutdown: Some(shutdown_sender),
                 handle,
@@ -152,7 +196,7 @@ mod tests {
 
         /// Dial the listener over HTTP/3.
         async fn dial(&self) -> Result<Http3Client, Box<dyn Error + Send + Sync>> {
-            self.listener.dial(self.address).await
+            self.identity.dial(self.address).await
         }
 
         /// Signal shutdown and wait for the server to drain and stop.
@@ -325,18 +369,15 @@ mod tests {
             }),
         );
 
-        let listener = SelfSignedListener::generate()?;
-        let endpoint = {
-            let activation = listener.config().activation()?.expect("enabled config yields activation");
-            bind(activation, SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?
-        };
+        let identity = QuicIdentity::anonymous()?;
+        let endpoint = bind(identity.feed(), SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
         let address = endpoint.local_addr()?;
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-        let server = tokio::spawn(serve_endpoint(endpoint, router, async move {
+        let server = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, async move {
             let _ = shutdown_receiver.await;
         }));
 
-        let mut client = listener.dial(address).await?;
+        let mut client = identity.dial(address).await?;
         // Signal shutdown and release the handler once the request is in flight,
         // then confirm the response still completes.
         let coordinator = tokio::spawn({
@@ -361,7 +402,7 @@ mod tests {
     #[tokio::test]
     async fn a_client_not_trusting_the_certificate_is_rejected() -> Result<(), Box<dyn Error + Send + Sync>> {
         let running = RunningListener::start(test_router())?;
-        let outcome = Http3Client::connect(RootCertStore::empty(), vec![H3_ALPN.to_vec()], running.address).await;
+        let outcome = Http3Client::connect(RootCertStore::empty(), vec![H3_ALPN.to_vec()], running.address, None).await;
         assert!(outcome.is_err(), "a client trusting no roots must not complete the handshake");
         running.stop().await
     }
@@ -369,9 +410,53 @@ mod tests {
     #[tokio::test]
     async fn a_client_offering_a_non_h3_alpn_is_rejected() -> Result<(), Box<dyn Error + Send + Sync>> {
         let running = RunningListener::start(test_router())?;
-        let roots = running.listener.root_store()?;
-        let outcome = Http3Client::connect(roots, vec![b"h2".to_vec()], running.address).await;
+        let roots = running.identity.root_store()?;
+        let outcome = Http3Client::connect(roots, vec![b"h2".to_vec()], running.address, None).await;
         assert!(outcome.is_err(), "a client sharing no ALPN with the server must not complete the handshake");
+        running.stop().await
+    }
+
+    #[tokio::test]
+    async fn the_endpoint_presents_a_rotated_certificate_to_new_connections() -> Result<(), Box<dyn Error + Send + Sync>> {
+        let running = RunningListener::start(test_router())?;
+        let mut open = running.dial().await?;
+        let original_leaf = open.server_leaf().cloned();
+        let rotated = running.identity.rotate()?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut fresh = running.dial().await?;
+        while fresh.server_leaf() != Some(rotated.certificate()) {
+            assert!(Instant::now() < deadline, "the rotated certificate was never presented");
+            fresh.close().await;
+            sleep(Duration::from_millis(50)).await;
+            fresh = running.dial().await?;
+        }
+        assert_ne!(original_leaf.as_ref(), Some(rotated.certificate()));
+        let response = fresh.send(request(Method::GET, running.port(), "/probe")?, &[]).await?;
+        assert_eq!(response.text()?, "h3 works");
+        let survived = open.send(request(Method::GET, running.port(), "/probe")?, &[]).await?;
+        assert_eq!(survived.text()?, "h3 works", "the connection opened before the rotation keeps serving");
+        assert_eq!(open.server_leaf().cloned(), original_leaf);
+        fresh.close().await;
+        open.close().await;
+        running.stop().await
+    }
+
+    /// The QUIC endpoint verifies client certificates through the same shared
+    /// rustls configuration the TCP listener uses.
+    #[tokio::test]
+    async fn required_client_authentication_rejects_a_quic_client_without_a_certificate() -> Result<(), Box<dyn Error + Send + Sync>> {
+        let clients = TestAuthority::generate()?;
+        let running = RunningListener::serve(QuicIdentity::requiring_clients_of(&clients)?, test_router())?;
+        let anonymous = async {
+            let mut client = running.dial().await?;
+            client.send(request(Method::GET, running.port(), "/probe")?, &[]).await
+        };
+        assert!(anonymous.await.is_err(), "a client without a certificate is refused");
+        let client_identity = clients.issue_client_identity()?;
+        let mut authenticated = Http3Client::connect(running.identity.root_store()?, vec![H3_ALPN.to_vec()], running.address, Some(&client_identity)).await?;
+        let response = authenticated.send(request(Method::GET, running.port(), "/probe")?, &[]).await?;
+        assert_eq!(response.text()?, "h3 works");
+        authenticated.close().await;
         running.stop().await
     }
 }

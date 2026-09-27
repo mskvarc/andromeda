@@ -1,4 +1,5 @@
-//! Generic listener, connection execution and graceful HTTP draining.
+//! Generic listener, connection execution and graceful HTTP draining, over
+//! plaintext TCP or TLS terminated in process.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -6,11 +7,14 @@
 pub mod config;
 pub mod error;
 pub mod execution;
+pub mod listener_security;
+mod tls_acceptor;
+mod tls_tcp_listener;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: ["andromeda-configuration-scalars"],
-    allow_workspace_dev_dependencies: [],
+    allow_workspace_dependencies: ["andromeda-configuration-scalars", "andromeda-server-tls"],
+    allow_workspace_dev_dependencies: ["andromeda-test-tls"],
     allow_production_dependencies: ["axum", "tokio"],
 }
 

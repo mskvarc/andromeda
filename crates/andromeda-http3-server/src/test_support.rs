@@ -1,87 +1,106 @@
-//! Self-signed TLS material and an HTTP/3 client harness shared across tests.
+//! TLS material and an HTTP/3 client harness shared across tests.
 //!
 //! HTTP/3 cannot be exercised without a certificate, so every test that binds
-//! or dials a QUIC endpoint needs a throwaway key pair; generating it once here
-//! keeps that setup out of the individual test modules. The [`Http3Client`]
-//! harness dials such a listener and issues real requests over QUIC, so the
-//! server modules can be tested over the wire rather than through mocks.
+//! or dials a QUIC endpoint needs a throwaway identity served through the same
+//! shared-identity feed the broker uses; setting it up once here keeps that out
+//! of the individual test modules. The [`Http3Client`] harness dials such a
+//! listener and issues real requests over QUIC, so the server modules can be
+//! tested over the wire rather than through mocks.
 
-use crate::config::{Http3Config, Http3Mode};
+use crate::quic_crypto::{H3_ALPN, QUIC_HANDSHAKE_POLICY};
+use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_server_tls::{
+    config::{ClientAuthentication, TlsConfig},
+    material_watch::TlsMaterialWatch,
+    server_config_feed::ServerConfigFeed,
+};
+use andromeda_test_tls::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles};
 use bytes::{Buf, Bytes};
 use h3::client::{self, SendRequest};
 use h3_quinn::{Connection, OpenStreams};
 use http::{HeaderMap, Request, StatusCode};
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
-use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::{RootCertStore, crypto::aws_lc_rs::default_provider};
 use rustls_pki_types::CertificateDer;
 use std::{
     error::Error,
-    fs::File,
     future::poll_fn,
-    io::Write,
     net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
     sync::Arc,
 };
-use tempfile::TempDir;
 use tokio::task::JoinHandle;
 
-/// The ALPN token for HTTP/3, as a client offers it.
-pub(crate) const H3_ALPN: &[u8] = b"h3";
-
-/// A generated self-signed identity written to disk, with the paths wired into
-/// an enabled [`Http3Config`] and the leaf certificate kept for client trust.
-pub(crate) struct SelfSignedListener {
-    /// Keeps the certificate and key files alive for the listener's lifetime.
-    _directory: TempDir,
-    /// An enabled configuration pointing at the written key pair.
-    config: Http3Config,
-    /// The leaf certificate, for a dialling client's root store.
-    certificate: CertificateDer<'static>,
+/// A server identity on disk, watched and fed to the QUIC endpoint exactly as
+/// the broker feeds its shared identity, with the authority that issued it
+/// kept for client trust.
+pub(crate) struct QuicIdentity {
+    /// The live TLS configuration the endpoint serves.
+    feed: ServerConfigFeed,
+    /// Keeps the identity files watched for the listener's lifetime.
+    _watch: TlsMaterialWatch,
+    /// The identity files, replaceable to rotate the certificate.
+    files: IdentityFiles,
+    /// The authority that issued the server's certificate.
+    authority: TestAuthority,
 }
 
-impl SelfSignedListener {
-    /// Generate a `localhost` identity and write it to a fresh temporary directory.
-    pub(crate) fn generate() -> Result<SelfSignedListener, Box<dyn Error + Send + Sync>> {
-        let directory = TempDir::new()?;
-        let CertifiedKey { cert, signing_key } = generate_simple_self_signed(vec!["localhost".to_owned()])?;
-        let certificate_path = directory.path().join("broker.crt");
-        let private_key_path = directory.path().join("broker.key");
-        File::create(&certificate_path)?.write_all(cert.pem().as_bytes())?;
-        File::create(&private_key_path)?.write_all(signing_key.serialize_pem().as_bytes())?;
-        let config = Http3Config {
-            mode: Http3Mode::Enabled,
-            certificate_path,
-            private_key_path,
-            ..Http3Config::default()
+impl QuicIdentity {
+    /// An identity requesting no client certificate.
+    ///
+    /// Must be called from within a Tokio runtime, which rebuilds the feed.
+    pub(crate) fn anonymous() -> Result<QuicIdentity, Box<dyn Error + Send + Sync>> {
+        QuicIdentity::start(ClientAuthentication::None, None)
+    }
+
+    /// An identity requiring a client certificate issued by `clients`.
+    pub(crate) fn requiring_clients_of(clients: &TestAuthority) -> Result<QuicIdentity, Box<dyn Error + Send + Sync>> {
+        QuicIdentity::start(ClientAuthentication::Required, Some(clients))
+    }
+
+    /// Write a fresh `localhost` identity and feed it under the QUIC policy.
+    fn start(client_authentication: ClientAuthentication, clients: Option<&TestAuthority>) -> Result<QuicIdentity, Box<dyn Error + Send + Sync>> {
+        let authority = TestAuthority::generate()?;
+        let files = IdentityFiles::write(&authority.issue_server_identity()?)?;
+        let client_ca_path = clients.map(|issuer| files.write_client_ca(issuer)).transpose()?.unwrap_or_else(PathBuf::new);
+        let config = TlsConfig {
+            certificate_path: files.certificate_path().to_path_buf(),
+            private_key_path: files.private_key_path().to_path_buf(),
+            client_authentication,
+            client_ca_path,
+            reload_debounce: HumanDuration::from_millis(100),
+            ..TlsConfig::default()
         };
-        Ok(SelfSignedListener {
-            _directory: directory,
-            config,
-            certificate: cert.der().clone(),
+        let watch = TlsMaterialWatch::start(&config)?;
+        let feed = watch.feed(QUIC_HANDSHAKE_POLICY)?;
+        Ok(QuicIdentity {
+            feed,
+            _watch: watch,
+            files,
+            authority,
         })
     }
 
-    /// The enabled configuration referencing the written key pair.
-    pub(crate) fn config(&self) -> &Http3Config {
-        &self.config
+    /// The live configuration the endpoint serves.
+    pub(crate) const fn feed(&self) -> &ServerConfigFeed {
+        &self.feed
     }
 
-    /// The leaf certificate a dialling client must trust as its sole root.
-    pub(crate) fn certificate(&self) -> CertificateDer<'static> {
-        self.certificate.clone()
-    }
-
-    /// A root store trusting only this listener's certificate.
+    /// A root store trusting only this identity's authority.
     pub(crate) fn root_store(&self) -> Result<RootCertStore, Box<dyn Error + Send + Sync>> {
-        let mut roots = RootCertStore::empty();
-        roots.add(self.certificate())?;
-        Ok(roots)
+        Ok(self.authority.root_store()?)
     }
 
-    /// Dial this listener over HTTP/3, trusting only its certificate.
+    /// Replace the identity files with a newly issued leaf and return it.
+    pub(crate) fn rotate(&self) -> Result<TestIdentity, Box<dyn Error + Send + Sync>> {
+        let rotated = self.authority.issue_server_identity()?;
+        self.files.replace(&rotated)?;
+        Ok(rotated)
+    }
+
+    /// Dial the listener over HTTP/3, trusting only this identity's authority.
     pub(crate) async fn dial(&self, server: SocketAddr) -> Result<Http3Client, Box<dyn Error + Send + Sync>> {
-        Http3Client::connect(self.root_store()?, vec![H3_ALPN.to_vec()], server).await
+        Http3Client::connect(self.root_store()?, vec![H3_ALPN.to_vec()], server, None).await
     }
 }
 
@@ -104,6 +123,8 @@ impl Http3Response {
 
 /// An open HTTP/3 client connection, reusable for several requests.
 pub(crate) struct Http3Client {
+    /// The leaf certificate the server presented.
+    server_leaf: Option<CertificateDer<'static>>,
     /// The client-side QUIC endpoint, kept alive for the connection's lifetime.
     endpoint: Endpoint,
     /// The request opener, cloneable to multiplex concurrent request streams.
@@ -113,18 +134,30 @@ pub(crate) struct Http3Client {
 }
 
 impl Http3Client {
-    /// Connect to `server`, verifying its certificate against `roots` and
-    /// offering the given ALPN protocols.
-    pub(crate) async fn connect(roots: RootCertStore, alpn: Vec<Vec<u8>>, server: SocketAddr) -> Result<Http3Client, Box<dyn Error + Send + Sync>> {
-        let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(default_provider()))
+    /// Connect to `server`, verifying its certificate against `roots`,
+    /// offering the given ALPN protocols and presenting `identity`, if any.
+    pub(crate) async fn connect(
+        roots: RootCertStore,
+        alpn: Vec<Vec<u8>>,
+        server: SocketAddr,
+        identity: Option<&TestIdentity>,
+    ) -> Result<Http3Client, Box<dyn Error + Send + Sync>> {
+        let builder = rustls::ClientConfig::builder_with_provider(Arc::new(default_provider()))
             .with_safe_default_protocol_versions()?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+            .with_root_certificates(roots);
+        let mut crypto = match identity {
+            Some(identity) => builder.with_client_auth_cert(vec![identity.certificate().clone()], identity.private_key())?,
+            None => builder.with_no_client_auth(),
+        };
         crypto.alpn_protocols = alpn;
         let client_config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
         let mut endpoint = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
         endpoint.set_default_client_config(client_config);
         let connection = endpoint.connect(server, "localhost")?.await?;
+        let server_leaf = connection
+            .peer_identity()
+            .and_then(|identity| identity.downcast::<Vec<CertificateDer<'static>>>().ok())
+            .and_then(|chain| chain.into_iter().next());
         let (mut driver, send_request) = client::new(Connection::new(connection)).await?;
         let driver = tokio::spawn(async move {
             // Resolves with the closing error once the connection ends; that is
@@ -132,10 +165,16 @@ impl Http3Client {
             let _closed = poll_fn(|cx| driver.poll_close(cx)).await;
         });
         Ok(Http3Client {
+            server_leaf,
             endpoint,
             send_request,
             driver,
         })
+    }
+
+    /// The leaf certificate the server presented on this connection.
+    pub(crate) const fn server_leaf(&self) -> Option<&CertificateDer<'static>> {
+        self.server_leaf.as_ref()
     }
 
     /// Issue one request with an optional body and read the full response.

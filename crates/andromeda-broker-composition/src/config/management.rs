@@ -6,6 +6,7 @@
 //! subject to CORS, CSRF, helmet, body-limit or compression, and so probes and
 //! metrics keep answering while the data plane is saturated or draining.
 
+use andromeda_http_server::config::ListenerTransport;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use strum::{Display, EnumString};
@@ -66,7 +67,7 @@ pub enum ManagementConfigError {
 
 /// Management-plane configuration.
 ///
-/// `host` and `port` are read only in [`ManagementMode::SeparatePort`]; in
+/// `host`, `port` and `transport` are read only in [`ManagementMode::SeparatePort`]; in
 /// [`ManagementMode::Merged`] the endpoints ride the data-plane listener, and in
 /// [`ManagementMode::Disabled`] no management listener is bound.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
@@ -80,6 +81,11 @@ pub struct ManagementConfig {
     /// Management listener port. Ignored unless `mode` is `separate-port`.
     #[toml_comment(inline)]
     pub port: u16,
+    /// Whether the management listener serves plaintext or terminates TLS with
+    /// the `[tls]` identity: `plaintext` or `tls`. Ignored unless `mode` is
+    /// `separate-port`.
+    #[toml_comment(inline)]
+    pub transport: ListenerTransport,
     /// Metrics exposure mode.
     #[toml_comment(inline)]
     pub metrics: MetricsExposure,
@@ -93,6 +99,7 @@ impl Default for ManagementConfig {
             mode: ManagementMode::SeparatePort,
             host: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             port: 1086,
+            transport: ListenerTransport::Plaintext,
             metrics: MetricsExposure::Disabled,
         }
     }
@@ -131,6 +138,7 @@ impl ManagementConfig {
 #[cfg(test)]
 mod tests {
     use crate::config::management::{ManagementConfig, ManagementConfigError, ManagementMode, MetricsExposure};
+    use andromeda_http_server::config::ListenerTransport;
     use std::str::FromStr;
 
     #[test]
@@ -141,6 +149,11 @@ mod tests {
     #[test]
     fn port_defaults_to_1086() {
         pretty_assertions::assert_eq!(ManagementConfig::default().port, 1086);
+    }
+
+    #[test]
+    fn management_transport_defaults_to_plaintext() {
+        pretty_assertions::assert_eq!(ManagementConfig::default().transport, ListenerTransport::Plaintext);
     }
 
     #[test]

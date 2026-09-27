@@ -2,6 +2,7 @@
 //! profile, environment, and owned suites. Every other module is a thin driver
 //! over this table.
 
+use crate::certs::StackMaterial;
 use clap::ValueEnum;
 
 /// Environment variable naming the broker API base a suite talks to.
@@ -16,6 +17,20 @@ pub(crate) const CONFORMANCE_BROKER_URL_ENV: &str = "ANDROMEDA_TEST_CONFORMANCE_
 pub(crate) const HTTP3_AUTHORITY_ENV: &str = "ANDROMEDA_TEST_HTTP3_AUTHORITY";
 /// Environment variable naming the HTTP/3 leaf certificate the client trusts.
 pub(crate) const HTTP3_CERT_ENV: &str = "ANDROMEDA_TEST_HTTP3_CERT";
+/// Environment variable naming the native-TLS broker's API base.
+pub(crate) const TLS_NATIVE_URL_ENV: &str = "ANDROMEDA_TEST_TLS_NATIVE_URL";
+/// Environment variable naming the mutual-TLS broker's API base.
+pub(crate) const TLS_MUTUAL_URL_ENV: &str = "ANDROMEDA_TEST_TLS_MUTUAL_URL";
+/// Environment variable naming the certificate-rotation broker's API base.
+pub(crate) const TLS_ROTATING_URL_ENV: &str = "ANDROMEDA_TEST_TLS_ROTATING_URL";
+/// Environment variable naming the native-TLS broker's management origin.
+pub(crate) const TLS_MANAGEMENT_URL_ENV: &str = "ANDROMEDA_TEST_TLS_MANAGEMENT_URL";
+/// Environment variable naming the API base behind the nginx terminator.
+pub(crate) const TLS_PROXY_URL_ENV: &str = "ANDROMEDA_TEST_TLS_PROXY_URL";
+/// Environment variable naming the terminator's plaintext redirect listener.
+pub(crate) const TLS_PROXY_PLAINTEXT_URL_ENV: &str = "ANDROMEDA_TEST_TLS_PROXY_PLAINTEXT_URL";
+/// Environment variable naming the directory of the TLS stack's generated material.
+pub(crate) const TLS_MATERIAL_ENV: &str = "ANDROMEDA_TEST_TLS_MATERIAL";
 /// Environment variable naming the second pooled replica broker's API base.
 pub(crate) const BROKER_REPLICA_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_REPLICA_URL";
 /// Environment variable naming the wide-cache pooled broker's API base.
@@ -80,6 +95,8 @@ pub(crate) enum StackName {
     /// Four brokers on one PostgreSQL: three whose request path runs through a
     /// `PgBouncer` transaction pooler and an un-pooled baseline.
     Pgbouncer,
+    /// Brokers terminating TLS natively, and one behind an nginx terminator.
+    Tls,
 }
 
 /// One row of the registry: everything needed to bring a stack up and run its suites.
@@ -94,6 +111,8 @@ pub(crate) struct Stack {
     pub(crate) env: &'static [(&'static str, &'static str)],
     /// The suites this stack owns, each with the thread count its isolation allows.
     pub(crate) suites: &'static [Suite],
+    /// The certificate material generated before the stack comes up.
+    pub(crate) material: StackMaterial,
 }
 
 impl Stack {
@@ -112,6 +131,7 @@ impl Stack {
             StackName::Http3 => 4,
             StackName::Extensions => 5,
             StackName::Pgbouncer => 6,
+            StackName::Tls => 7,
         }
     }
 }
@@ -185,7 +205,7 @@ const BASE_SUITES: &[Suite] = &[
 ];
 
 /// The complete stack registry, indexed by [`Stack::index`].
-pub(crate) static STACKS: [Stack; 7] = [
+pub(crate) static STACKS: [Stack; 8] = [
     Stack {
         name: StackName::Base,
         compose_file: "docker/compose/test/base/docker-compose.yaml",
@@ -196,6 +216,7 @@ pub(crate) static STACKS: [Stack; 7] = [
             (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5432/postgres"),
         ],
         suites: BASE_SUITES,
+        material: StackMaterial::None,
     },
     Stack {
         name: StackName::Distributed,
@@ -205,6 +226,7 @@ pub(crate) static STACKS: [Stack; 7] = [
         // compose ports; only the front broker's database endpoint is pinned.
         env: &[(DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5442/broker_a")],
         suites: &[Suite::parallel("distop")],
+        material: StackMaterial::None,
     },
     Stack {
         name: StackName::Federation,
@@ -213,6 +235,7 @@ pub(crate) static STACKS: [Stack; 7] = [
         // The fed topology reads FED_* keys that already default to the compose ports.
         env: &[],
         suites: &[Suite::parallel("fed")],
+        material: StackMaterial::None,
     },
     Stack {
         name: StackName::Snapshot,
@@ -223,6 +246,7 @@ pub(crate) static STACKS: [Stack; 7] = [
             (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5481/snapshot_primary"),
         ],
         suites: &[Suite::serial("snapshot")],
+        material: StackMaterial::None,
     },
     Stack {
         name: StackName::Http3,
@@ -234,6 +258,7 @@ pub(crate) static STACKS: [Stack; 7] = [
             (HTTP3_CERT_ENV, "docker/compose/test/http3/certs/broker.crt"),
         ],
         suites: &[Suite::serial("http3")],
+        material: StackMaterial::Http3Leaf,
     },
     Stack {
         name: StackName::Extensions,
@@ -245,6 +270,7 @@ pub(crate) static STACKS: [Stack; 7] = [
             (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5491/postgres"),
         ],
         suites: &[Suite::serial("extensions")],
+        material: StackMaterial::None,
     },
     Stack {
         name: StackName::Pgbouncer,
@@ -270,12 +296,35 @@ pub(crate) static STACKS: [Stack; 7] = [
             Suite::serial("pgbouncer_resilience"),
             Suite::serial("pgbouncer_dormant"),
         ],
+        material: StackMaterial::None,
+    },
+    Stack {
+        name: StackName::Tls,
+        compose_file: "docker/compose/test/tls/docker-compose.yaml",
+        profile: None,
+        env: &[
+            (TLS_NATIVE_URL_ENV, "https://127.0.0.1:1156/ngsi-ld/v1/"),
+            (TLS_MUTUAL_URL_ENV, "https://127.0.0.1:1157/ngsi-ld/v1/"),
+            (TLS_ROTATING_URL_ENV, "https://127.0.0.1:1158/ngsi-ld/v1/"),
+            (TLS_MANAGEMENT_URL_ENV, "https://127.0.0.1:1186/"),
+            (TLS_PROXY_URL_ENV, "https://127.0.0.1:8443/ngsi-ld/v1/"),
+            (TLS_PROXY_PLAINTEXT_URL_ENV, "http://127.0.0.1:8080/ngsi-ld/v1/"),
+            (TLS_MATERIAL_ENV, "docker/compose/test/tls/certs"),
+        ],
+        // The rotation test rewrites a certificate other tests' brokers do not
+        // read, but every test opens its own connections and several assert on
+        // which leaf a new one is shown, so the suite runs single-threaded.
+        suites: &[Suite::serial("tls")],
+        material: StackMaterial::TlsAuthority,
     },
 ];
 
 #[cfg(test)]
 mod tests {
-    use crate::stack::{STACKS, Stack, StackName, stack_for_suite};
+    use crate::{
+        certs::StackMaterial,
+        stack::{STACKS, Stack, StackName, stack_for_suite},
+    };
 
     #[test]
     fn every_stack_name_indexes_its_own_registry_row() {
@@ -298,6 +347,15 @@ mod tests {
         assert_eq!(base.name, StackName::Base);
         let (extensions, _) = stack_for_suite("extensions").expect("extensions is registered");
         assert_eq!(extensions.name, StackName::Extensions);
+    }
+
+    #[test]
+    fn the_tls_suite_belongs_to_the_tls_stack_and_generates_its_authority() {
+        let (tls, _) = stack_for_suite("tls").expect("tls is registered");
+        assert_eq!(tls.name, StackName::Tls);
+        assert_eq!(tls.material, StackMaterial::TlsAuthority);
+        assert_eq!(Stack::get(StackName::Http3).material, StackMaterial::Http3Leaf);
+        assert_eq!(Stack::get(StackName::Base).material, StackMaterial::None);
     }
 
     #[test]

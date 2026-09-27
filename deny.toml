@@ -12,6 +12,11 @@ allow = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Un
 name = "webpki-root-certs"
 allow = ["CDLA-Permissive-2.0"]
 
+# Public-domain dedication; the file watcher behind TLS certificate reload.
+[[licenses.exceptions]]
+name = "notify"
+allow = ["CC0-1.0"]
+
 [advisories]
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
