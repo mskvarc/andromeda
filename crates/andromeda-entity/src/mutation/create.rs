@@ -46,7 +46,7 @@ impl EntityService {
             stamp_attribute_instants(&mut expanded, &Value::Null, Utc::now()).map_err(ExpandedEntityError::from)?;
             let payload = Arc::new(expanded);
             let types = written_entity_types(&payload)?;
-            let plan = self.plan_notifications(target, id, &types, creation(&payload)?, Some(&payload), None);
+            let plan = self.notifier.plan(target, id, &types, creation(&payload)?, Some(&payload), None);
 
             let write = AtomicWrite::builder()
                 .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
@@ -63,7 +63,7 @@ impl EntityService {
                 return Err(EntityError::already_exists(id));
             }
 
-            plan.events.into_iter().for_each(|event| self.emit_change(target, event));
+            plan.events.into_iter().for_each(|event| self.notifier.publish(target, event));
 
             Ok(id.clone()) // clone: the caller owns the created identifier while the request entity remains borrowed
         }

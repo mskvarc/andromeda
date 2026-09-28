@@ -5,7 +5,7 @@
 //! are written in the same transaction as the mutation that raised them, which
 //! is what makes a notification crash-consistent with the change it describes.
 
-use crate::{EntityService, NotificationWriteConfig};
+use crate::{NotificationWriteConfig, change_notifier::ChangeNotifier};
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
@@ -47,18 +47,13 @@ pub(crate) struct MutationSnapshots<'a> {
     pub previous: Option<&'a Value>,
 }
 
-impl EntityService {
+impl ChangeNotifier {
     /// Build one record for every subscription `change` is owed to.
     ///
     /// Returns an empty vector when notification recording is not configured:
     /// a live-delivery broker's notification worker evaluates the change itself.
-    pub(crate) fn build_subscription_matches(
-        &self,
-        entity: ChangedEntity<'_>,
-        change: &EntityChange,
-        snapshots: MutationSnapshots<'_>,
-    ) -> Vec<SubscriptionMatch> {
-        self.notifications
+    pub(crate) fn subscription_matches(&self, entity: ChangedEntity<'_>, change: &EntityChange, snapshots: MutationSnapshots<'_>) -> Vec<SubscriptionMatch> {
+        self.recording
             .as_ref()
             .map_or_else(Vec::new, |recording| recording.subscription_matches(entity, change, snapshots))
     }

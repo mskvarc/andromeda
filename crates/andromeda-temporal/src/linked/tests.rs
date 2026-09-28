@@ -33,6 +33,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
+    change_notifier::ChangeNotifier,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     port::{reader::EntityReader, retry_delay::RetryDelay},
@@ -556,6 +557,7 @@ fn service(broker: StubBroker) -> TemporalService {
             retry_delay: broker as Arc<dyn RetryDelay>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
+        Arc::new(ChangeNotifier::new(None, None)),
         TemporalInstanceLimits {
             default_page: 100,
             maximum: 1000,
@@ -773,6 +775,7 @@ fn service_with_remote(broker: StubBroker, source: &Arc<RecordingSource>) -> Tem
             retry_delay: broker as Arc<dyn RetryDelay>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
+        Arc::new(ChangeNotifier::new(None, None)),
         TemporalInstanceLimits {
             default_page: 100,
             maximum: 1000,

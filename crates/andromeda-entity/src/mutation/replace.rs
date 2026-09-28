@@ -68,7 +68,7 @@ impl EntityService {
                     };
                     let history = mutation_history(addressed, previous, &payload)?;
                     let change = modification(previous, &payload)?;
-                    let plan = self.plan_notifications(target, &entity_uri, &types, change, Some(&payload), Some(previous));
+                    let plan = self.notifier.plan(target, &entity_uri, &types, change, Some(&payload), Some(previous));
                     let write = AtomicWrite::builder()
                         .entity_id(Arc::clone(&entity_id)) // clone: Arc ref-count bump; the identifier outlives the attempt
                         .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&payload))?)) // clone: Arc ref-count bump
@@ -80,7 +80,7 @@ impl EntityService {
                 .await?;
 
             for event in events {
-                self.emit_change(target, event);
+                self.notifier.publish(target, event);
             }
             Ok(())
         }

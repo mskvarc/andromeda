@@ -65,7 +65,7 @@ impl EntityService {
             current: Some(&match_snapshot),
             previous: Some(payload),
         };
-        Ok(self.build_subscription_matches(deleted, &change, snapshots))
+        Ok(self.notifier.subscription_matches(deleted, &change, snapshots))
     }
 
     pub(super) async fn batch_delete_chunk(&self, placement: SideEffectPlacement<'_>, chunk: &[Uri]) -> Result<DeleteChunkOutcome, EntityError> {
@@ -94,7 +94,7 @@ impl EntityService {
             let side_effects = match (placement, payload) {
                 (SideEffectPlacement::Inline(_), _) | (SideEffectPlacement::DeferredOnLive, None) => None,
                 (SideEffectPlacement::DeferredOnLive, Some(payload)) => {
-                    let change_events = self.owed_change_events(deletion_events(id, payload, sys_attrs.get(id))?);
+                    let change_events = self.notifier.owed_change_events(deletion_events(id, payload, sys_attrs.get(id))?);
                     (!change_events.is_empty()).then(|| BatchSideEffectJob {
                         temporal_entities: Vec::new(),
                         change_events,
@@ -146,7 +146,7 @@ impl EntityService {
         }
 
         for event in events {
-            self.emit_change(target, event);
+            self.notifier.publish(target, event);
         }
 
         Ok((success, errors))

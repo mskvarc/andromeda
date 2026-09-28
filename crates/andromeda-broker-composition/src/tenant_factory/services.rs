@@ -26,6 +26,7 @@ use andromeda_entity::{
     EntityService,
     NotificationWriteConfig,
     batch::execution::BatchExecutionConfig,
+    change_notifier::ChangeNotifier,
     change_sink::EntityChangeSink,
     discovery::EntityDiscoveryService,
     port::{attribute_history::AttributeDatasetHistory, service_ports::EntityServicePorts},
@@ -90,7 +91,8 @@ pub(super) fn construct_services(
         // per-tenant cap when one fronts the request path.
         TenantRef::Named(_) => config.database.named_serving_max_connections(config.tenancy.tenant_max_connections) as usize,
     };
-    let entities = compose_entity_service(config, storage, signals, writes, pool_size);
+    let notifier = compose_change_notifier(config, storage, signals);
+    let entities = compose_entity_service(config, storage, &notifier, writes, pool_size);
     // Table 5.2.40-1: the alias this tenant writes into the outgoing `Via`
     // chain identifies the tenant within this context source, so a request that
     // has traversed one tenant is not mistaken for a loop at another (clause
@@ -109,7 +111,7 @@ pub(super) fn construct_services(
         )
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?,
     );
-    let temporal = compose_temporal_service(config, storage, temporal_ports, writes, &forwarding);
+    let temporal = compose_temporal_service(config, storage, temporal_ports, &notifier, writes, &forwarding);
     let entity_query = compose_entity_query_service(storage, &forwarding);
     let context_store = Arc::new(JsonLdContextRepository::new(&storage.pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
@@ -152,22 +154,34 @@ pub(super) fn construct_services(
     Ok(ConstructedServices { state, snapshot_preparation })
 }
 
+/// Compose the one notifier every policy that changes current state raises its
+/// notifications through, so a change is notified the same way whichever API
+/// made it (clause 5.8.6).
+///
+/// A durable notification write is configured only when delivery is durable;
+/// with live delivery the notification worker evaluates subscriptions itself.
+fn compose_change_notifier(config: &TenantFactoryConfig, storage: &TenantStorage, signals: &TenantSignals) -> Arc<ChangeNotifier> {
+    let entity_change_sink = Arc::new(BroadcastEntityChangeSink::new(signals.entity.clone())) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
+    Arc::new(ChangeNotifier::new(
+        Some(entity_change_sink),
+        config.notifications.delivery.is_durable().then(|| NotificationWriteConfig {
+            subscription_cache: Arc::clone(&storage.subscription_cache),
+        }),
+    ))
+}
+
 /// Compose the entity policy service every write and read request enters.
 ///
 /// The batch activity tracker is created here because the entity policy is its
 /// only observer: the batch paths record on it and entity expiry consults it
 /// through the same service.
-///
-/// A durable notification write is configured only when delivery is enabled;
-/// with live delivery the notification worker evaluates subscriptions itself.
 fn compose_entity_service(
     config: &TenantFactoryConfig,
     storage: &TenantStorage,
-    signals: &TenantSignals,
+    notifier: &Arc<ChangeNotifier>,
     writes: &Arc<dyn ContextCommitter>,
     pool_size: usize,
 ) -> Arc<EntityService> {
-    let entity_change_sink = Arc::new(BroadcastEntityChangeSink::new(signals.entity.clone())) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
     let attribute_history = Arc::clone(&storage.temporal_repo) as Arc<dyn AttributeDatasetHistory>; // clone: temporal and entity policy share the concrete history adapter.
     Arc::new(EntityService::new(
         EntityServicePorts {
@@ -178,7 +192,7 @@ fn compose_entity_service(
             writes: Arc::clone(writes),
         },
         storage.engine.clone(), // clone: entity policy owns its engine handle.
-        Some(entity_change_sink),
+        Arc::clone(notifier),
         BatchExecutionConfig {
             concurrency: config.entity.batch_concurrency.unwrap_or_else(|| usize::min(pool_size, 25)),
             chunk_concurrency: config.entity.batch_chunk_concurrency.unwrap_or(4),
@@ -188,9 +202,6 @@ fn compose_entity_service(
             prepare_blocking_threshold: config.entity.batch_prepare_blocking_threshold,
             async_side_effect_threshold: config.entity.batch_async_side_effect_threshold,
         },
-        config.notifications.delivery.is_durable().then(|| NotificationWriteConfig {
-            subscription_cache: Arc::clone(&storage.subscription_cache),
-        }),
     ))
 }
 
@@ -199,6 +210,7 @@ fn compose_temporal_service(
     config: &TenantFactoryConfig,
     storage: &TenantStorage,
     ports: &TemporalPorts,
+    notifier: &Arc<ChangeNotifier>,
     writes: &Arc<dyn ContextCommitter>,
     forwarding: &Arc<FederationService>,
 ) -> Arc<TemporalService> {
@@ -212,6 +224,7 @@ fn compose_temporal_service(
             retry_delay: Arc::new(TokioRetryDelay),
         },
         storage.engine.clone(), // clone: temporal policy owns its engine handle.
+        Arc::clone(notifier),
         config.temporal.instance_limits(),
         // The delete-by-query extension's `TooManyResults` bound; inert unless
         // the extension is routed, which composition gates separately.

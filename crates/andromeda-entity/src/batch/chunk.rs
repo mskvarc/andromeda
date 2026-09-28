@@ -138,7 +138,7 @@ impl EntityService {
             Ok(change) => change,
             Err(error) => return Err(Box::new((id, error))),
         };
-        let plan = self.plan_notifications(target, &id, &types, change, Some(&payload), None);
+        let plan = self.notifier.plan(target, &id, &types, change, Some(&payload), None);
         Ok(ChunkWrite {
             id,
             entity: EntityMutation::Insert(EntityRecord::from_parts(
@@ -185,7 +185,7 @@ impl EntityService {
             Ok(change) => change,
             Err(error) => return Err(Box::new((id, error))),
         };
-        let plan = self.plan_notifications(target, &id, &types, change, Some(&payload), None);
+        let plan = self.notifier.plan(target, &id, &types, change, Some(&payload), None);
         Ok(ChunkWrite {
             id,
             entity: EntityMutation::Insert(record),
@@ -235,7 +235,7 @@ impl EntityService {
             Ok(types) => types,
             Err(error) => return Err(Box::new((id, error))),
         };
-        let plan = self.plan_notifications(target, &id, &types, change, Some(&merged), Some(previous));
+        let plan = self.notifier.plan(target, &id, &types, change, Some(&merged), Some(previous));
         let record = match EntityRecord::from_expanded(merged) {
             Ok(record) => record,
             Err(error) => return Err(Box::new((id, error.into()))),
@@ -321,7 +321,7 @@ impl EntityService {
                         .collect();
                     let job = BatchSideEffectJob {
                         temporal_entities,
-                        change_events: self.owed_change_events(events),
+                        change_events: self.notifier.owed_change_events(events),
                     };
                     (builder.history(endings).side_effects(Some(job)).build(), Vec::new())
                 }
@@ -361,7 +361,7 @@ impl EntityService {
         }
 
         for event in emit_events {
-            self.emit_change(target, event);
+            self.notifier.publish(target, event);
         }
 
         Ok(chunk)

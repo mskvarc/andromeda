@@ -14,6 +14,7 @@ use crate::{
     NotificationWriteConfig,
     batch::execution::BatchExecutionConfig,
     building_subscription_fixture::{BUILDING_TYPE_IRI, building_subscription_cache, subscription_key},
+    change_notifier::ChangeNotifier,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     port::{
@@ -235,7 +236,7 @@ fn recording_service_with(notifications: Option<NotificationWriteConfig>) -> (En
             writes: Arc::new(committer) as Arc<dyn ContextCommitter>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds"),
-        None,
+        Arc::new(ChangeNotifier::new(None, notifications)),
         BatchExecutionConfig {
             concurrency: 1,
             chunk_concurrency: 1,
@@ -247,7 +248,6 @@ fn recording_service_with(notifications: Option<NotificationWriteConfig>) -> (En
             prepare_blocking_threshold: 1024,
             async_side_effect_threshold: None,
         },
-        notifications,
     );
     (service, recorded)
 }

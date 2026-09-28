@@ -5,8 +5,6 @@
 //! respond-async`. Either they run inline in the request that caused them, or
 //! they are persisted alongside the entity write and drained by a worker.
 
-use crate::EntityService;
-use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::context_target::ContextTarget;
 
 /// The live branch, for the placement that can only ever write to it.
@@ -70,23 +68,6 @@ pub(crate) const fn resolve_side_effect_placement(
         (ContextTarget::Live, AsyncPreference::Requested | AsyncPreference::NotRequested, Some(_))
         | (ContextTarget::Live, AsyncPreference::NotRequested, None)
         | (ContextTarget::Snapshot(_), AsyncPreference::Requested | AsyncPreference::NotRequested, _) => SideEffectPlacement::Inline(target),
-    }
-}
-
-impl EntityService {
-    /// The changes a deferred side-effect job has to carry for the
-    /// notifications its commit does not queue itself.
-    ///
-    /// A broker recording durable deliveries commits every match with the write,
-    /// so its job carries none: whichever broker drains the job -- possibly one
-    /// delivering live, sharing the tenant database -- would otherwise notify
-    /// them a second time. A live-delivery broker records none at commit, so its
-    /// job carries every change and the draining broker notifies them.
-    pub(crate) fn owed_change_events(&self, events: Vec<ChangeEvent>) -> Vec<ChangeEvent> {
-        match self.notifications {
-            Some(_) => Vec::new(),
-            None => events,
-        }
     }
 }
 

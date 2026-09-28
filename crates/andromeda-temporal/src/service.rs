@@ -7,7 +7,10 @@ use crate::{
     remote_linked::RemoteTemporalLinkedSource,
 };
 use andromeda_context_commit::committer::ContextCommitter;
-use andromeda_entity::port::{reader::EntityReader, retry_delay::RetryDelay};
+use andromeda_entity::{
+    change_notifier::ChangeNotifier,
+    port::{reader::EntityReader, retry_delay::RetryDelay},
+};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
@@ -39,6 +42,9 @@ pub struct TemporalService {
     pub(crate) retry_delay: Arc<dyn RetryDelay>,
     /// JSON-LD processor used by query compilation and representation compaction.
     pub(crate) engine: JsonLdEngine,
+    /// Raises the notifications a change a temporal write makes to current
+    /// state owes, exactly as a Core write's (clause 5.8.6).
+    pub(crate) notifier: Arc<ChangeNotifier>,
     /// The clause 6.3.10 page sizes of instance-returning reads.
     pub(crate) instance_limits: TemporalInstanceLimits,
     /// The maximum history instances one delete-by-query may remove before it is
@@ -120,6 +126,9 @@ impl TemporalService {
     ///
     /// The reader and mutator ports decouple policy from concrete storage. The write coordinator owns atomic append composition, while the entity reader provides base entity lookups.
     ///
+    /// `notifier` is the one the Core API notifies through, so a change to
+    /// current state is notified the same way whichever API made it.
+    ///
     /// `remote_temporal_linked` is the clause 4.5.23.1 half of a join that this
     /// broker's own history cannot answer. `None` confines every join to local
     /// history.
@@ -127,6 +136,7 @@ impl TemporalService {
     pub fn new(
         ports: TemporalServicePorts,
         engine: JsonLdEngine,
+        notifier: Arc<ChangeNotifier>,
         instance_limits: TemporalInstanceLimits,
         delete_by_query_max_matches: u64,
         aggregation_grouping_max_groups: u64,
@@ -148,6 +158,7 @@ impl TemporalService {
             entity_reader,
             retry_delay,
             engine,
+            notifier,
             instance_limits,
             delete_by_query_max_matches,
             aggregation_grouping_max_groups,

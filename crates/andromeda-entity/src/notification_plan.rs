@@ -15,7 +15,7 @@
 //! instances it touched.
 
 use crate::{
-    EntityService,
+    change_notifier::ChangeNotifier,
     error::EntityError,
     notification_fanout::{ChangedEntity, MutationSnapshots},
 };
@@ -35,7 +35,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 /// Both notification channels planned from one mutation.
-pub(crate) struct NotificationPlan {
+pub struct NotificationPlan {
     /// Durable records committed in the mutation's transaction, one per matched
     /// subscription.
     pub matches: Vec<SubscriptionMatch>,
@@ -50,7 +50,7 @@ pub(crate) struct NotificationPlan {
 ///
 /// Reports [`EntityError::Internal`] when the payload carries an instance whose
 /// `datasetId` cannot be read: the request that produced it was admitted.
-pub(crate) fn creation(current: &Value) -> Result<EntityChange, EntityError> {
+pub fn creation(current: &Value) -> Result<EntityChange, EntityError> {
     classified(EntityLifecycle::Created, &Value::Null, current)
 }
 
@@ -62,7 +62,7 @@ pub(crate) fn creation(current: &Value) -> Result<EntityChange, EntityError> {
 /// Reports [`EntityError::Internal`] when either state carries an instance
 /// whose `datasetId` cannot be read: the stored state was admitted when it was
 /// written, and the new state when its request was.
-pub(crate) fn modification(previous: &Value, current: &Value) -> Result<EntityChange, EntityError> {
+pub fn modification(previous: &Value, current: &Value) -> Result<EntityChange, EntityError> {
     classified(EntityLifecycle::Modified, previous, current)
 }
 
@@ -107,14 +107,15 @@ fn standing_change(mut change: EntityChange, current: Option<&Value>, at: DateTi
     }
 }
 
-impl EntityService {
+impl ChangeNotifier {
     /// Plan both notification channels for one write's `change` to one Entity.
     ///
     /// `entity_snapshot` is the entity as it stands after the mutation -- the
     /// payload a `keyValues`/`normalized` notification renders, never the
     /// request fragment. The previous state is carried for `showChanges` and
     /// for the filters of a change that removed instances.
-    pub(crate) fn plan_notifications(
+    #[must_use]
+    pub fn plan(
         &self,
         target: &ContextTarget,
         entity_id: &Uri,
@@ -140,7 +141,7 @@ impl EntityService {
             current: snapshot_ref,
             previous: previous_snapshot,
         };
-        let matches = self.build_subscription_matches(mutated, &change, snapshots);
+        let matches = self.subscription_matches(mutated, &change, snapshots);
         let event = ChangeEvent::builder()
             .entity_id(entity_id.clone()) // clone: the event owns its identifier
             .entity_types(entity_types.to_vec())

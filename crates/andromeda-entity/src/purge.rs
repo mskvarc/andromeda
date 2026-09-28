@@ -73,7 +73,7 @@ impl EntityService {
                         return Ok(None);
                     };
                     let change = modification(previous, &removed.merged)?;
-                    let plan = self.plan_notifications(
+                    let plan = self.notifier.plan(
                         target,
                         entity_id,
                         &stored_entity_types(&removed.merged)?,
@@ -97,7 +97,7 @@ impl EntityService {
             // `attributeDeleted` trigger says what kind of change fires a
             // notification rather than which operation caused it. Reported the
             // way clause 5.6.5 reports the single-attribute form.
-            purged.events.into_iter().for_each(|event| self.emit_change(target, event));
+            purged.events.into_iter().for_each(|event| self.notifier.publish(target, event));
         }
 
         Ok(modified_count)

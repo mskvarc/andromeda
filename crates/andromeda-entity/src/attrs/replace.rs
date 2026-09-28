@@ -89,7 +89,7 @@ impl EntityService {
                 let types = written_entity_types(&merged)?;
 
                 let change = modification(previous, &merged)?;
-                let plan = self.plan_notifications(target, &entity_uri, &types, change, Some(&merged), Some(previous));
+                let plan = self.notifier.plan(target, &entity_uri, &types, change, Some(&merged), Some(previous));
 
                 let addressed = AddressedInstances::AttributeFragment {
                     attribute: &attr_iri,
@@ -103,7 +103,7 @@ impl EntityService {
             .await?;
 
         for event in events {
-            self.emit_change(target, event);
+            self.notifier.publish(target, event);
         }
 
         Ok(())

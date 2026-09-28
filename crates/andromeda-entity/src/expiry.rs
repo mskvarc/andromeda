@@ -160,7 +160,9 @@ impl EntityService {
             };
             let types = stored_entity_types(&purged.current)?;
             let change = modification(&purged.previous, &purged.current)?;
-            let plan = self.plan_notifications(target, &identifier, &types, change, Some(&purged.current), Some(&purged.previous));
+            let plan = self
+                .notifier
+                .plan(target, &identifier, &types, change, Some(&purged.current), Some(&purged.previous));
             writes.push(
                 AtomicWrite::builder()
                     .entity_id(Arc::new(identifier.clone()))
@@ -182,7 +184,7 @@ impl EntityService {
             if outcome.is_updated() {
                 landed += 1;
                 for event in events {
-                    self.emit_change(target, event);
+                    self.notifier.publish(target, event);
                 }
             }
         }

@@ -72,7 +72,7 @@ impl EntityService {
             // Clause 5.8.6: one deletion is one change, owed once to every
             // subscription it matches -- through `entityDeleted` or through the
             // `attributeDeleted` of every instance the entity took with it.
-            let subscription_matches = self.build_subscription_matches(deleted, &change, snapshots);
+            let subscription_matches = self.notifier.subscription_matches(deleted, &change, snapshots);
 
             let write = AtomicWrite::builder()
                 .entity_id(Arc::new(entity_uri.clone())) // clone: the delete write owns its validated identifier.
@@ -89,7 +89,7 @@ impl EntityService {
                 return Err(EntityError::not_found(&entity_uri));
             }
 
-            self.emit_change(
+            self.notifier.publish(
                 target,
                 ChangeEvent::builder()
                     .entity_id(entity_uri)

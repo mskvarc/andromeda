@@ -3,6 +3,7 @@
 use crate::{
     EntityService,
     batch::execution::BatchExecutionConfig,
+    change_notifier::ChangeNotifier,
     error::EntityError,
     port::{
         attribute_history::AttributeDatasetHistory,
@@ -62,7 +63,7 @@ fn entity_service(store: &Arc<InMemoryStore>, writes: Arc<dyn ContextCommitter>)
             writes,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds"),
-        None,
+        Arc::new(ChangeNotifier::new(None, None)),
         BatchExecutionConfig {
             concurrency: 1,
             chunk_concurrency: 1,
@@ -72,7 +73,6 @@ fn entity_service(store: &Arc<InMemoryStore>, writes: Arc<dyn ContextCommitter>)
             prepare_blocking_threshold: 1024,
             async_side_effect_threshold: None,
         },
-        None,
     )
 }
 

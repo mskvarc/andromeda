@@ -18,6 +18,8 @@ pub mod batch;
 /// The one Building subscription the durable-match tests match against.
 #[cfg(test)]
 mod building_subscription_fixture;
+/// The notifications a committed change to current state owes, whichever API made it.
+pub mod change_notifier;
 /// Publication boundary for committed entity changes.
 pub mod change_sink;
 /// The change events a side-effect job publishes once the replay commit that settled it has landed.
@@ -129,7 +131,7 @@ pub mod write_kind;
 
 use crate::{
     batch::execution::BatchExecutionConfig,
-    change_sink::EntityChangeSink,
+    change_notifier::ChangeNotifier,
     id_lock::{IdLockMap, acquire_id_locks_in},
     port::{
         attribute_history::AttributeDatasetHistory,
@@ -140,7 +142,7 @@ use crate::{
     },
     side_effect::{AsyncPreference, SideEffectPlacement, resolve_side_effect_placement},
 };
-use andromeda_context_commit::{change_event::ChangeEvent, committer::ContextCommitter, context_change_event::ContextChangeEvent};
+use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -164,22 +166,18 @@ pub struct EntityService {
     attribute_history: Arc<dyn AttributeDatasetHistory>,
     writes: Arc<dyn ContextCommitter>,
     engine: JsonLdEngine,
-    change_sink: Option<Arc<dyn EntityChangeSink>>,
+    notifier: Arc<ChangeNotifier>,
     batch_execution: BatchExecutionConfig,
-    notifications: Option<NotificationWriteConfig>,
     id_locks: Arc<IdLockMap>,
 }
 
 impl EntityService {
     /// Construct entity policy over caller-owned ports and runtime bindings.
+    ///
+    /// `notifier` is shared with every other policy that changes current
+    /// state, so a change is notified the same way whichever API made it.
     #[must_use]
-    pub fn new(
-        ports: EntityServicePorts,
-        engine: JsonLdEngine,
-        change_sink: Option<Arc<dyn EntityChangeSink>>,
-        batch_config: BatchExecutionConfig,
-        notifications: Option<NotificationWriteConfig>,
-    ) -> EntityService {
+    pub fn new(ports: EntityServicePorts, engine: JsonLdEngine, notifier: Arc<ChangeNotifier>, batch_config: BatchExecutionConfig) -> EntityService {
         let EntityServicePorts {
             reader,
             blocking_executor,
@@ -197,9 +195,8 @@ impl EntityService {
             attribute_history,
             writes,
             engine,
-            change_sink,
+            notifier,
             batch_execution,
-            notifications,
             id_locks,
         }
     }
@@ -221,15 +218,6 @@ impl EntityService {
     #[must_use]
     pub const fn side_effect_placement<'a>(&self, target: &'a ContextTarget, preference: AsyncPreference, batch_size: usize) -> SideEffectPlacement<'a> {
         resolve_side_effect_placement(target, self.batch_execution.async_side_effect_threshold, preference, batch_size)
-    }
-
-    fn emit_change(&self, target: &ContextTarget, event: ChangeEvent) {
-        if let Some(ref sink) = self.change_sink {
-            sink.publish(ContextChangeEvent {
-                target: target.clone(), // clone: the asynchronous consumer owns the immutable branch selection.
-                event,
-            });
-        }
     }
 }
 

@@ -99,7 +99,7 @@ impl EntityService {
                 let merged = Arc::new(existing);
                 let types = written_entity_types(&merged)?;
                 let change = modification(previous, &merged)?;
-                let plan = self.plan_notifications(target, &entity_uri, &types, change, Some(&merged), Some(previous));
+                let plan = self.notifier.plan(target, &entity_uri, &types, change, Some(&merged), Some(previous));
 
                 let write = payload_write(&entity_uri, &merged, history, plan.matches)?;
                 Ok((write, MutatedEntity { events: plan.events }))
@@ -107,7 +107,7 @@ impl EntityService {
             .await?;
 
         for event in events {
-            self.emit_change(target, event);
+            self.notifier.publish(target, event);
         }
 
         Ok(())
