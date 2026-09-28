@@ -55,7 +55,12 @@ use serde_json::{Value, json};
 const RESOURCE_NOT_FOUND: &str = "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound";
 
 /// The temporal window clause 5.7.3.3 needs beside the projection under test.
-const WINDOW: &str = "timerel=after&timeAt=2000-01-01T00:00:00Z";
+///
+/// It is placed on `modifiedAt`, which every instance a Core write recorded
+/// carries: the fixture's instances declare no `observedAt`, and a window on
+/// that default axis would select none of them, leaving no Temporal Evolution
+/// to project at all (clause 5.7.3.4, step S1).
+const WINDOW: &str = "timeproperty=modifiedAt&timerel=after&timeAt=2000-01-01T00:00:00Z";
 
 /// A Building carrying one Property, one Relationship and the clause 4.7
 /// default geo-property, so one request can watch all three narrowings.

@@ -1,42 +1,47 @@
 //! Temporal entity assembly: [`TemporalEntityRenderer`] assembles a temporal
 //! entity representation from decoded history rows (NGSI-LD clause 6.3.10).
 
-use crate::temporal::history_row::{TimeRange, neutral_row_to_expanded_instance};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use crate::temporal::{
+    history_row::{TimeRange, neutral_row_to_expanded_instance},
+    page_cut::PageCut,
+};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    temporal_format::TemporalFormat,
+    time_prop::TimeProp,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::{
     projection::{compiled::Projection, term::ProjectionTerm},
     temporal::compiled::CompiledTemporalQuery,
 };
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
 
-/// Temporal attribute instances paired with their effective observation time.
-type TemporalAttributeInstances = Vec<(Option<DateTime<Utc>>, Value)>;
 /// Stable attribute insertion order for the rendered temporal entity.
-type TemporalAttrMap = IndexMap<AttributeName, TemporalAttributeInstances>;
+type TemporalAttrMap = IndexMap<AttributeName, Vec<Value>>;
 
 /// Output of [`TemporalEntityRenderer`]: the assembled entity JSON together
-/// with pagination metadata needed for Content-Range header construction.
+/// with the instants a `Content-Range` is built from.
 #[derive(Debug)]
 pub struct TemporalEntityBuildResult {
     /// The fully-assembled temporal entity JSON value (expanded form).
     pub entity: Value,
-    /// Whether the result set was truncated by the system-applied lastN cap.
-    pub truncated: bool,
-    /// The observed time range across all attribute instances.
+    /// The least and most recent instants the representation carries on the
+    /// requested axis, Scope history aside.
     pub time_range: Option<TimeRange>,
-    /// The maximum partition total across all attributes (for Content-Range size).
-    pub max_partition_total: Option<i64>,
 }
 
 /// Assembles a temporal entity representation from decoded history rows.
 ///
-/// Groups attribute instances by attribute name, applies time range cutting
-/// for unsynchronized attributes (NGSI-LD clause 6.3.10), and emits the
-/// entity JSON along with truncation/pagination metadata.
+/// Groups attribute instances by attribute name, keeps only the instances on
+/// the kept side of the response's common [`PageCut`] (clause 6.3.10), and
+/// emits the entity JSON along with the instants it carries.
 #[derive(Debug)]
 pub struct TemporalEntityRenderer<'a> {
     /// Entity identifier emitted in the representation.
@@ -47,28 +52,38 @@ pub struct TemporalEntityRenderer<'a> {
     rows: &'a [TemporalHistoryRow],
     /// Compiled temporal representation policy.
     compiled: &'a CompiledTemporalQuery,
+    /// The cut the partial response the entity belongs to is made at, absent
+    /// when the response is complete.
+    cut: Option<PageCut>,
 }
 
 impl<'a> TemporalEntityRenderer<'a> {
-    /// Create a renderer for the given entity and row set.
+    /// Create a renderer for the given entity and row set, cut at `cut`.
     #[must_use]
     pub const fn new(
         entity_id: &'a Uri,
         entity_types: &'a [EntityTypeName],
         rows: &'a [TemporalHistoryRow],
         compiled: &'a CompiledTemporalQuery,
+        cut: Option<PageCut>,
     ) -> TemporalEntityRenderer<'a> {
         TemporalEntityRenderer {
             entity_id,
             entity_types,
             rows,
             compiled,
+            cut,
         }
     }
 }
 
 impl TemporalEntityRenderer<'_> {
-    /// Assemble the temporal entity and the pagination metadata around it.
+    /// Assemble the temporal entity and the instants it carries.
+    ///
+    /// An attribute every instance of which lies beyond the cut is still
+    /// rendered, with no instance: the stream was read, it merely continues on
+    /// the next page, and a client reading the page by attribute finds it
+    /// there (ETSI TP `020_14` and `021_15` read those empty attributes).
     #[must_use]
     pub fn render(self) -> TemporalEntityBuildResult {
         let TemporalEntityRenderer {
@@ -76,91 +91,37 @@ impl TemporalEntityRenderer<'_> {
             entity_types,
             rows,
             compiled,
+            cut,
         } = self;
+        let timeproperty = compiled.window.timeproperty;
 
         let mut attrs: TemporalAttrMap = IndexMap::with_capacity(rows.len().min(64));
-        let mut truncated = false;
         let mut min_time: Option<DateTime<Utc>> = None;
         let mut max_time: Option<DateTime<Utc>> = None;
-        let mut max_partition_total: Option<i64> = None;
+        let timestamps = rendered_timestamps(compiled);
 
         for row in rows {
-            let attr_name = row.attribute_name.clone(); // clone: the typed map owns names while history rows remain borrowed.
+            // clone: the typed map owns names while history rows remain borrowed.
+            let instances = attrs.entry(row.attribute_name.clone()).or_default();
+            if cut.is_some_and(|cut| !cut.keeps(row, timeproperty)) {
+                continue;
+            }
 
-            if compiled.instances.last_n_origin.is_system_capped()
-                && let Some(last_n) = compiled.instances.last_n
-                && let Some(total) = row.partition_total
+            // The reified Scope has no position on the requested axis. Clause
+            // 4.5.6 names it beside "each Property and Relationship" rather
+            // than among them, and clause 4.18 makes a Scope valid "from the
+            // time it has been set until the time it has been explicitly
+            // removed" rather than observed at an instant inside the window --
+            // annex C clause C.5.16 renders one set an hour before the window
+            // it answers. Letting that instant into the range would report a
+            // window the request never asked for.
+            if !is_scope_attribute(&row.attribute_name)
+                && let Some(instant) = row.time_axis(timeproperty)
             {
-                max_partition_total = Some(max_partition_total.map_or(total, |m: i64| m.max(total)));
-                if total > i64::from(last_n) {
-                    truncated = true;
-                }
+                min_time = Some(min_time.map_or(instant, |seen: DateTime<Utc>| seen.min(instant)));
+                max_time = Some(max_time.map_or(instant, |seen: DateTime<Utc>| seen.max(instant)));
             }
-
-            // Clause 6.3.10 cuts unsynchronized attributes on the time axis the
-            // query selected, so the position of an instance is its instant on
-            // exactly that axis (clause 4.11 defaults it to `observedAt`). An
-            // instance that carries no instant on the selected axis has no
-            // position and takes no part in the cut.
-            //
-            // The reified Scope has no position at all. Clause 4.5.6 names it
-            // beside "each Property and Relationship" rather than among them,
-            // and clause 4.18 makes a Scope valid "from the time it has been
-            // set until the time it has been explicitly removed" rather than
-            // observed at an instant inside the window — annex C clause C.5.16
-            // renders one set an hour before the window it answers. Letting
-            // that instant into the cut would trim the attributes around it,
-            // and letting it into the range would report a window the request
-            // never asked for.
-            let obs = if is_scope_attribute(&attr_name) {
-                None
-            } else {
-                row.time_axis(compiled.window.timeproperty)
-            };
-            if let Some(t) = obs {
-                min_time = Some(min_time.map_or(t, |m: DateTime<Utc>| m.min(t)));
-                max_time = Some(max_time.map_or(t, |m: DateTime<Utc>| m.max(t)));
-            }
-
-            let instance = neutral_row_to_expanded_instance(row, compiled.representation.sys_attrs);
-            attrs.entry(attr_name).or_default().push((obs, instance));
-        }
-
-        if truncated && attrs.len() > 1 {
-            let attr_ranges: Vec<(&AttributeName, DateTime<Utc>, DateTime<Utc>)> = attrs
-                .iter()
-                .filter_map(|(name, instances)| {
-                    let times: Vec<DateTime<Utc>> = instances.iter().filter_map(|(t, _)| *t).collect();
-                    let min = times.iter().min().copied()?;
-                    let max = times.iter().max().copied()?;
-                    Some((name, min, max))
-                })
-                .collect();
-
-            if attr_ranges.len() > 1 {
-                let global_min = attr_ranges.iter().map(|(_, min, _)| *min).min();
-                let global_max = attr_ranges.iter().map(|(_, _, max)| *max).max();
-                if let (Some(g_min), Some(g_max)) = (global_min, global_max) {
-                    let has_gap = attr_ranges.iter().any(|(_, a_min, _)| attr_ranges.iter().any(|(_, _, b_max)| *b_max < *a_min));
-
-                    if has_gap {
-                        let cut_max = if compiled.instances.last_n_origin.is_user_specified() { g_max } else { g_min };
-                        let keep_range = attr_ranges.iter().find(|(_, min, max)| *min <= cut_max && cut_max <= *max);
-
-                        if let Some((_, keep_min, keep_max)) = keep_range {
-                            let (keep_min, keep_max) = (*keep_min, *keep_max);
-                            for (name, instances) in &mut attrs {
-                                if is_scope_attribute(name) {
-                                    continue;
-                                }
-                                instances.retain(|(t, _)| t.is_some_and(|t| t >= keep_min && t <= keep_max));
-                            }
-                            min_time = Some(keep_min);
-                            max_time = Some(keep_max);
-                        }
-                    }
-                }
-            }
+            instances.push(neutral_row_to_expanded_instance(row, timestamps));
         }
 
         project_attrs(&mut attrs, &compiled.projection);
@@ -170,17 +131,29 @@ impl TemporalEntityRenderer<'_> {
         entity.insert("@type".to_string(), json!(entity_types));
 
         for (attr_name, instances) in attrs {
-            let values: Vec<Value> = instances.into_iter().map(|(_, v)| v).collect();
-            entity.insert(attr_name.to_string(), Value::Array(values));
+            entity.insert(attr_name.to_string(), Value::Array(instances));
         }
 
-        let time_range = min_time.zip(max_time);
         TemporalEntityBuildResult {
             entity: Value::Object(entity),
-            truncated,
-            time_range,
-            max_partition_total,
+            time_range: min_time.zip(max_time),
         }
+    }
+}
+
+/// Which clause 4.8 system timestamps the assembled instances carry.
+///
+/// `sysAttrs` decides it (clause 6.3.11), except that the clause 4.5.9
+/// `temporalValues` pairs need the instant on the Temporal Property the query
+/// ran on as their second element: over `createdAt` or `modifiedAt` that
+/// instant is a system timestamp, so the instances keep them. The projection
+/// that builds the pairs reads the value and that one instant alone, so the
+/// other timestamps kept alongside never reach the response.
+const fn rendered_timestamps(compiled: &CompiledTemporalQuery) -> SysAttrsInclusion {
+    match (compiled.representation.format, compiled.window.timeproperty) {
+        (TemporalFormat::TemporalValues, TimeProp::Created | TimeProp::Modified) => SysAttrsInclusion::Include,
+        (TemporalFormat::TemporalValues, TimeProp::Observed | TimeProp::Deleted)
+        | (TemporalFormat::Normalized | TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues, _) => compiled.representation.sys_attrs,
     }
 }
 
@@ -225,7 +198,7 @@ fn project_attrs(attrs: &mut TemporalAttrMap, projection: &Projection) {
 }
 
 /// Whether `attr_name` is the clause 4.21 `scope` keyword's attribute row.
-fn is_scope_attribute(attr_name: &AttributeName) -> bool {
+pub(crate) fn is_scope_attribute(attr_name: &AttributeName) -> bool {
     attr_name.as_str() == expanded_properties::SCOPE.as_str()
 }
 
@@ -251,7 +224,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         pagination::Pagination,
-        temporal::{instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
+        temporal::{instance_page::PageDirection, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::TimeZone;
@@ -324,7 +297,7 @@ mod tests {
             omit: Vec::new(),
         });
 
-        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled).render();
+        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled, None).render();
 
         let object = built.entity.as_object().expect("object");
         assert!(object.contains_key("https://example.com/speed"));
@@ -345,7 +318,7 @@ mod tests {
             }],
         });
 
-        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled).render();
+        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled, None).render();
 
         let object = built.entity.as_object().expect("object");
         assert!(!object.contains_key("https://example.com/speed"));
@@ -370,7 +343,7 @@ mod tests {
             omit: Vec::new(),
         });
 
-        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled).render();
+        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled, None).render();
 
         let object = built.entity.as_object().expect("object");
         assert!(object.contains_key("https://example.com/isParkedIn"));
@@ -396,7 +369,7 @@ mod tests {
             }],
         });
 
-        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled).render();
+        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled, None).render();
 
         let object = built.entity.as_object().expect("object");
         assert!(
@@ -425,7 +398,7 @@ mod tests {
             omit: Vec::new(),
         });
 
-        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled).render();
+        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled, None).render();
 
         let object = built.entity.as_object().expect("object");
         assert!(!object.contains_key(expanded_properties::SCOPE.as_str()));
@@ -437,10 +410,37 @@ mod tests {
         let rows = vec![row("speed", 0), row("fuel", 1)];
         let compiled = compiled(Projection::default());
 
-        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled).render();
+        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled, None).render();
 
         let object = built.entity.as_object().expect("object");
         assert!(object.contains_key("https://example.com/speed"));
         assert!(object.contains_key("https://example.com/fuel"));
+    }
+
+    /// A row observed `minutes` after the fixture instant.
+    fn row_at(attr: &str, instance: u32, minutes: i64) -> TemporalHistoryRow {
+        let mut row = row(attr, instance);
+        row.observed_at = Some(instant() + chrono::Duration::minutes(minutes));
+        row
+    }
+
+    /// Clause 6.3.10: the instances beyond the response's common cut are left
+    /// out, an attribute left with none stays present and empty, and the range
+    /// the representation reports is the one it actually carries.
+    #[test]
+    fn a_cut_leaves_out_the_instances_beyond_it_and_keeps_emptied_attributes() {
+        let rows = vec![row_at("speed", 0, 1), row_at("speed", 1, 2), row_at("speed", 2, 3), row_at("fuel", 3, 5)];
+        let cut = PageCut {
+            direction: PageDirection::Forward,
+            boundary: instant() + chrono::Duration::minutes(2),
+        };
+        let compiled = compiled(Projection::default());
+        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), &rows, &compiled, Some(cut)).render();
+        assert_eq!(built.entity["https://example.com/speed"].as_array().map(Vec::len), Some(2));
+        assert_eq!(built.entity["https://example.com/fuel"], serde_json::json!([]));
+        assert_eq!(
+            built.time_range,
+            Some((instant() + chrono::Duration::minutes(1), instant() + chrono::Duration::minutes(2)))
+        );
     }
 }

@@ -20,7 +20,7 @@ const POSTGRESQL_IDENTIFIER_BYTE_LIMIT: usize = 63;
 const PROJECTED_STRING_COLUMNS: [&str; 2] = ["value_string", "value_long_text"];
 
 /// Every constraint that holds an identifier column to [`IDENTIFIER_BYTE_LIMIT`].
-const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 35] = [
+const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 34] = [
     "chk_forwarded_subscription_routes_minted_id_length",
     "chk_attribute_names_name_length",
     "chk_entity_type_names_name_length",
@@ -48,7 +48,6 @@ const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 35] = [
     "chk_current_attribute_values_dataset_id_length",
     "chk_subscriptions_id_length",
     "chk_notification_events_entity_id_length",
-    "chk_notification_events_changed_dataset_id_length",
     "chk_temporal_append_intents_entity_id_length",
     "chk_subscription_companions_local_subscription_id_length",
     "chk_subscription_companions_companion_subscription_id_length",

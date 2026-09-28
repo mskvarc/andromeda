@@ -96,13 +96,16 @@ async fn temporal_semantics_independent_time_axes_each_select_only_their_own_col
     assert_eq!(observed_window[0]["value"], json!(55));
 
     // The same window on every other axis holds nothing: no other axis carries
-    // a value anywhere near the declared observation instant.
+    // a value anywhere near the declared observation instant. Clause 5.7.3.4
+    // (S1) removes an Entity whose concerned Attributes hold no data in the
+    // window -- "such Entity shall be removed from S, thus it shall not appear in
+    // the final result set" -- so the retrieval finds nothing to represent.
     for timeproperty in ["createdAt", "modifiedAt", "deletedAt"] {
         let (status, body) = get_temporal_entity(&http, &entity_id, &format!("timeproperty={timeproperty}&{}", declared_observation_window())).await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(
-            rendered_instances(&body, "speed").is_empty(),
-            "{timeproperty} must not answer from the observedAt column"
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{timeproperty} must not answer from the observedAt column: {body}"
         );
     }
 
@@ -154,12 +157,13 @@ async fn temporal_semantics_missing_observed_time_is_never_taken_from_the_write_
     assert!(row.created_at.is_some(), "the broker assigns createdAt");
 
     // The default axis covers everything storage has ever recorded and still
-    // matches nothing, because the row carries no value on that axis.
+    // matches nothing, because the row carries no value on that axis; clause
+    // 5.7.3.4 (S1) then leaves no Temporal Evolution to represent.
     let (status, body) = get_temporal_entity(&http, &entity_id, "timerel=after&timeAt=1970-01-01T00:00:00Z").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        rendered_instances(&body, "speed").is_empty(),
-        "an unbounded observedAt query must not match an instance that has no observedAt"
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "an unbounded observedAt query must not match an instance that has no observedAt: {body}"
     );
 
     // The axis the instance does carry a value on matches it.

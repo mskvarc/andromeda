@@ -6,6 +6,7 @@
 use crate::object_list::bare_uri_object_list;
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::{AttributeType, TemporalValueEncoding},
+    time_prop::TimeProp,
     uri::Uri,
 };
 use indexmap::IndexMap;
@@ -31,20 +32,25 @@ pub enum TemporalValuesError {
 /// Transforms a compacted temporal entity into `temporalValues` form
 /// (NGSI-LD clause 4.5.9).
 ///
-/// Each attribute is collapsed into `[value, observedAt]` pairs grouped by
-/// dataset ID. Reserved entity-level keys (`id`, `type`, `@context`,
-/// timestamps) pass through unchanged.
+/// Each attribute is collapsed into `[value, instant]` pairs grouped by
+/// dataset ID, the instant being the one the query placed the instance by.
+/// Reserved entity-level keys (`id`, `type`, `@context`, timestamps) pass
+/// through unchanged.
 #[derive(Debug)]
 pub struct TemporalValuesRenderer {
     /// Compacted temporal entity to project.
     payload: Value,
+    /// The Temporal Property the query ran on (clause 4.11), whose instant is
+    /// the second element of every pair.
+    timeproperty: TimeProp,
 }
 
 impl TemporalValuesRenderer {
-    /// Create a renderer for the given compacted payload.
+    /// Create a renderer for the given compacted payload, pairing each value
+    /// with the instance's instant on `timeproperty`.
     #[must_use]
-    pub const fn new(payload: Value) -> TemporalValuesRenderer {
-        TemporalValuesRenderer { payload }
+    pub const fn new(payload: Value, timeproperty: TimeProp) -> TemporalValuesRenderer {
+        TemporalValuesRenderer { payload, timeproperty }
     }
 
     /// Collapse each attribute into the clause 4.5.9 `temporalValues` pairs.
@@ -56,6 +62,7 @@ impl TemporalValuesRenderer {
     /// [`TemporalValuesError::InvalidAttributeType`] when an instance carries a
     /// `type` that names no NGSI-LD attribute type.
     pub fn render(self) -> Result<Value, TemporalValuesError> {
+        let axis: &'static str = self.timeproperty.into();
         let obj = match self.payload {
             Value::Object(m) => m,
             other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => return Ok(other),
@@ -113,8 +120,13 @@ impl TemporalValuesRenderer {
                 for inst in insts {
                     let val = inst.get(extract_key).cloned().unwrap_or(Value::Null);
                     let val = simplified_value(val, attr_type, extract_key);
-                    let obs = inst.get("observedAt").or_else(|| inst.get("deletedAt")).cloned().unwrap_or(Value::Null);
-                    pairs.push(json!([val, obs]));
+                    // Clause 4.5.9: "the second element shall correspond to the
+                    // associated Temporal Property", which is the one the query
+                    // placed the instance by (clause 4.11, `observedAt` by
+                    // default). A deletion carries no instant on an observation
+                    // axis, so its `deletedAt` stands in for it.
+                    let instant = inst.get(axis).or_else(|| inst.get("deletedAt")).cloned().unwrap_or(Value::Null);
+                    pairs.push(json!([val, instant]));
                 }
 
                 let mut tv_obj = serde_json::Map::new();
@@ -170,7 +182,9 @@ mod tests {
     use super::*;
 
     fn transform(input: Value) -> Value {
-        TemporalValuesRenderer::new(input).render().expect("valid temporal values payload")
+        TemporalValuesRenderer::new(input, TimeProp::Observed)
+            .render()
+            .expect("valid temporal values payload")
     }
 
     #[test]
@@ -373,6 +387,46 @@ mod tests {
         assert!(result["period"].get("value").is_none(), "{}", result["period"]);
     }
 
+    /// Clause 4.5.9: the second element of each pair is the instant on the
+    /// Temporal Property the query ran on, so a query over `modifiedAt` pairs
+    /// each value with its `modifiedAt` rather than a null `observedAt`.
+    #[test]
+    fn each_pair_carries_the_instant_on_the_queried_temporal_property() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Vehicle",
+            "currentStatus": [
+                {"type": "Property", "value": "inTransitTo", "createdAt": "c1", "modifiedAt": "m1"},
+                {"type": "Property", "value": "stoppedAt", "observedAt": "o2", "createdAt": "c2", "modifiedAt": "m2"}
+            ]
+        });
+        for (timeproperty, expected) in [
+            (TimeProp::Modified, json!([["inTransitTo", "m1"], ["stoppedAt", "m2"]])),
+            (TimeProp::Created, json!([["inTransitTo", "c1"], ["stoppedAt", "c2"]])),
+            (TimeProp::Observed, json!([["inTransitTo", null], ["stoppedAt", "o2"]])),
+        ] {
+            // clone: every axis projects its own copy of the one fixture.
+            let result = TemporalValuesRenderer::new(input.clone(), timeproperty)
+                .render()
+                .expect("valid temporal values payload");
+            pretty_assertions::assert_eq!(result["currentStatus"]["values"], expected, "{timeproperty}");
+        }
+    }
+
+    /// A deleted instance on the `deletedAt` axis is paired with that instant.
+    #[test]
+    fn a_deletion_is_paired_with_its_deletion_instant_on_the_deleted_at_axis() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Vehicle",
+            "speed": [{"type": "Property", "value": "urn:ngsi-ld:null", "deletedAt": "d1"}]
+        });
+        let result = TemporalValuesRenderer::new(input, TimeProp::Deleted)
+            .render()
+            .expect("valid temporal values payload");
+        pretty_assertions::assert_eq!(result["speed"]["values"], json!([["urn:ngsi-ld:null", "d1"]]));
+    }
+
     #[test]
     fn temporal_values_rejects_a_malformed_dataset_uri() {
         let input = json!({
@@ -380,7 +434,9 @@ mod tests {
             "type": "Vehicle",
             "speed": [{"type": "Property", "value": 25, "observedAt": "t1", "datasetId": "not a URI"}]
         });
-        let error = TemporalValuesRenderer::new(input).render().expect_err("malformed datasetId is rejected");
+        let error = TemporalValuesRenderer::new(input, TimeProp::Observed)
+            .render()
+            .expect_err("malformed datasetId is rejected");
         assert!(matches!(error, TemporalValuesError::InvalidDatasetId));
     }
 
@@ -391,7 +447,9 @@ mod tests {
             "type": "Vehicle",
             "speed": [{"type": "Unknown", "value": 25, "observedAt": "t1"}]
         });
-        let error = TemporalValuesRenderer::new(input).render().expect_err("unknown attribute type is rejected");
+        let error = TemporalValuesRenderer::new(input, TimeProp::Observed)
+            .render()
+            .expect_err("unknown attribute type is rejected");
         assert!(matches!(error, TemporalValuesError::InvalidAttributeType));
     }
 }

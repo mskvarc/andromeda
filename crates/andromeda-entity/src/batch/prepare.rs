@@ -20,7 +20,7 @@ use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{batch_context::BatchContextHandle, processor::JsonLdEngine},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     expanded::{attribute_expiry::min_attribute_expires_at, entity_member::extract_expires_at},
@@ -46,8 +46,6 @@ pub(super) struct PreparedEntity {
     pub expanded: Value,
     /// The members a query filters on, extracted from the expanded payload.
     pub projection: SearchProjection,
-    /// Attribute names changed by this request payload.
-    pub changed_attributes: Vec<AttributeName>,
     /// Entity expiration timestamp (clause 4.22).
     pub expires_at: Option<DateTime<Utc>>,
     /// The earliest attribute-instance expiration, when one exists (clause 4.22).
@@ -176,9 +174,6 @@ impl EntityService {
         // siblings.
         admit_expanded_entity(&expanded, admission).map_err(|error| Box::new((id.clone(), error)))?; // clone: the success path retains the identifier
         let projection = SearchProjection::from_expanded(&expanded).map_err(|error| Box::new((id.clone(), EntityError::from(error))))?; // clone: the success path retains the identifier
-        // The names the request changed are the names the payload carries: a
-        // batch create or replace writes the whole payload.
-        let changed_attributes = projection.attribute_names.clone(); // clone: the projection keeps the names for the row, the change event for its subscribers
         let expires_at = extract_expires_at(&expanded);
         let min_attribute_expires_at = min_attribute_expires_at(&expanded);
 
@@ -186,7 +181,6 @@ impl EntityService {
             id,
             expanded,
             projection,
-            changed_attributes,
             expires_at,
             min_attribute_expires_at,
         })

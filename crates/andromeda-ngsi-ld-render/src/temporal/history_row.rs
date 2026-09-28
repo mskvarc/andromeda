@@ -154,10 +154,22 @@ fn expanded_structured_value(object: &Value, attribute_type: AttributeType) -> V
 /// `[["a"],["b","c"]]` as `["a","b","c"]` — so the array renders back as those
 /// value nodes and compacts to the array the current representation of the same
 /// Attribute answers with. An object-valued Property is stored as the node
-/// object expansion produced, so it renders as that node.
+/// object expansion produced, so it renders as that node, and so does an object
+/// element of an array: the write path keeps a scalar element as the bare
+/// scalar and every other element as its expanded node, so an element that is a
+/// JSON object is always a node.
 fn expanded_property_value(object: &Value) -> Value {
     match object {
-        Value::Array(elements) => Value::Array(elements.iter().map(|element| json!({"@value": element})).collect()),
+        Value::Array(elements) => Value::Array(
+            elements
+                .iter()
+                .map(|element| match element {
+                    // clone: the rendered instance owns the expanded node the row holds.
+                    Value::Object(_) => element.clone(),
+                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => json!({"@value": element}),
+                })
+                .collect(),
+        ),
         // clone: the rendered instance owns the expanded node the row holds.
         Value::Object(_) => Value::Array(vec![object.clone()]),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => json!([{"@value": object}]),
@@ -493,6 +505,20 @@ mod tests {
         // clone: the fixture keeps its own copy of the node it asserts on.
         let rendered = neutral_row_to_expanded_instance(&row(TemporalValue::Object(node.clone())), SysAttrsInclusion::Strip);
         pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&json!([node])));
+    }
+
+    /// An array mixing scalars and objects renders each scalar as a value node
+    /// and each object element as the expanded node it was stored as, so the
+    /// objects compact back to the keys the client wrote.
+    #[test]
+    fn an_array_holding_objects_renders_each_object_as_its_node() {
+        let node = json!({"https://uri.etsi.org/ngsi-ld/default-context/zone": [{"@value": "Asia/Dubai"}]});
+        let stored = json!([1, node]);
+        let rendered = neutral_row_to_expanded_instance(&row(TemporalValue::Object(stored)), SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(
+            member(&rendered, AttributeType::Property.value_key_str()),
+            Some(&json!([{"@value": 1}, {"https://uri.etsi.org/ngsi-ld/default-context/zone": [{"@value": "Asia/Dubai"}]}]))
+        );
     }
 
     /// A scalar keeps the single value node it always had, so the array and

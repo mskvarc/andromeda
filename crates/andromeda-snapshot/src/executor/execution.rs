@@ -1,4 +1,5 @@
-//! Execution and persistence of individual snapshot queries.
+//! Execution of snapshot temporal queries, and the persistence every snapshot
+//! query writes its captured results through.
 //!
 //! A query's own failure is recorded in its execution result (clause 5.2.42).
 //! A transient store failure -- a lost deadlock or serialization race, or a
@@ -11,17 +12,15 @@ use crate::{
     executor::{
         SnapshotExecutor,
         status::{failure_detail, success_detail},
-        translation::{entity_parameters, temporal_parameters},
+        translation::temporal_parameters,
     },
 };
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, error::CommitError};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::{error::EntityError, query::EntityQueryService};
+use andromeda_entity::error::EntityError;
 use andromeda_federation::{
-    entity_result::collect_warnings,
-    forwarded_query::client_query::ClientQuery,
     operation::ForwardingOperation,
-    request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, ForwardTemporalQueryRequest, QueryDelivery, SourcePage, TriggeringRequest},
+    request::{CsrModeFilter, EntityMapInUse, ForwardTemporalQueryRequest, SourcePage, TriggeringRequest},
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -33,117 +32,6 @@ use std::{collections::HashSet, sync::Arc};
 use tracing::{error, warn};
 
 impl SnapshotExecutor {
-    pub(crate) async fn run_entity_query(
-        &self,
-        target: &ContextTarget,
-        snapshot_id: &Uri,
-        query: Query,
-        index: usize,
-        context: &ContextSpec,
-        materialized_entities: &mut HashSet<Uri>,
-    ) -> Result<ExecutionResultDetails, SnapshotError> {
-        let mut params = match entity_parameters(query) {
-            Ok(params) => params,
-            Err(error) => return Ok(failure_detail(error.to_string())),
-        };
-        if let Err(error) = params.validate() {
-            return Ok(failure_detail(format!("Snapshot query translation failed validation: {error}")));
-        }
-
-        let mut offset = 0_u32;
-        let mut captured = HashSet::new();
-        loop {
-            params.limit = Some(self.capture_page_size);
-            params.offset = Some(offset);
-            params.count = Some(true);
-            let (mut entities, _) = match self.sources.entity_query.query(&self.sources.live_target, &params, context).await {
-                Ok(result) => result,
-                Err(error) => {
-                    warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot entity query failed");
-                    return entity_query_failure(error);
-                }
-            };
-            let local_page_len = entities.len();
-            let forwarded_result = self
-                .sources
-                .forwarding
-                .forward_query(
-                    &self.sources.live_target,
-                    ForwardQueryRequest {
-                        client_query: ClientQuery::EntityQuery(&params),
-                        // A Snapshot materialises its members through the GET query
-                        // binding (clause 5.5.15).
-                        delivery: QueryDelivery::Query,
-                        split: self.sources.forwarding.split_entities(params.split_entities),
-                        context,
-                        triggering: TriggeringRequest::default(),
-                        csf_expr: None,
-                        mode_filter: CsrModeFilter::All,
-                        entity_map: EntityMapInUse::None,
-                        source_page: Some(SourcePage {
-                            limit: self.capture_page_size,
-                            offset,
-                        }),
-                    },
-                )
-                .await;
-            let forwarded = match forwarded_result {
-                Ok(forwarded) => forwarded.results,
-                Err(error) => {
-                    warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot CSR forwarding failed");
-                    if local_page_len == 0 && captured.is_empty() {
-                        return Ok(failure_detail(format!(
-                            "No valid entity result was available because distributed execution failed: {error}"
-                        )));
-                    }
-                    Vec::new()
-                }
-            };
-            let forwarding_warnings = collect_warnings(&forwarded);
-            for warning in &forwarding_warnings {
-                warn!(snapshot_id = %snapshot_id, query_index = index, warning = %warning, "Snapshot entity query retained a distributed warning");
-            }
-            let remote_page_full = forwarded.iter().any(|result| result.entities.len() >= self.capture_page_size as usize);
-            let remote_page_len = forwarded.iter().map(|result| result.entities.len()).sum::<usize>();
-            if local_page_len == 0 && remote_page_len == 0 && captured.is_empty() && !forwarding_warnings.is_empty() {
-                return Ok(failure_detail(
-                    "No valid entity result was available because every matching distributed source failed",
-                ));
-            }
-            if !forwarded.is_empty() {
-                entities = EntityQueryService::merge_with_forwarded(entities, forwarded, None);
-            }
-            let mut pairs = Vec::with_capacity(entities.len());
-            for entity in entities {
-                let identifier = entity.id.clone(); // clone: the atomic write and result accounting independently own the identifier.
-                let compact = match serde_json::to_value(entity) {
-                    Ok(compact) => compact,
-                    Err(error) => return Ok(failure_detail(format!("Failed to serialize captured entity: {error}"))),
-                };
-                let expanded = match self.sources.entity_query.engine().expand(compact, context).await {
-                    Ok(expanded) => expanded,
-                    Err(error) => return Ok(failure_detail(format!("Failed to expand captured entity: {error}"))),
-                };
-                pairs.push((identifier, expanded));
-            }
-            let new_pairs = pairs.iter().filter(|(id, _)| !materialized_entities.contains(id)).cloned().collect::<Vec<_>>();
-            let detail = self.persist_current_results(target, snapshot_id, index, &new_pairs).await?;
-            if detail.problem_details.is_some() {
-                return Ok(detail);
-            }
-            captured.extend(pairs.iter().map(|(id, _)| id.clone()));
-            materialized_entities.extend(new_pairs.into_iter().map(|(id, _)| id));
-            if local_page_len < self.capture_page_size as usize && !remote_page_full {
-                break;
-            }
-            offset = match offset.checked_add(self.capture_page_size) {
-                Some(offset) => offset,
-                None => return Ok(failure_detail("Snapshot entity pagination offset overflowed")),
-            };
-        }
-        Ok(success_detail(captured.len()))
-    }
-
     pub(crate) async fn run_temporal_query(
         &self,
         target: &ContextTarget,
@@ -232,7 +120,7 @@ impl SnapshotExecutor {
         Ok(success_detail(captured.len()))
     }
 
-    async fn persist_current_results(
+    pub(super) async fn persist_current_results(
         &self,
         target: &ContextTarget,
         snapshot_id: &Uri,
@@ -284,7 +172,7 @@ impl SnapshotExecutor {
 
 /// A failed local entity query: the query's own failure, or a transient store
 /// failure the preparation restarts on.
-fn entity_query_failure(error: EntityError) -> Result<ExecutionResultDetails, SnapshotError> {
+pub(super) fn entity_query_failure(error: EntityError) -> Result<ExecutionResultDetails, SnapshotError> {
     match entity_recurrence(&error) {
         Recurrence::Transient => Err(SnapshotError::from(error)),
         Recurrence::Persistent => Ok(failure_detail(error.to_string())),

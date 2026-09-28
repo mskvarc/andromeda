@@ -1,7 +1,7 @@
 //! Deleted attribute and instance materialization.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::sub_second, uri::Uri};
-use andromeda_ngsi_ld_model::expanded::null_sentinel::expanded_null_value;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::sub_second, uri::Uri};
+use andromeda_ngsi_ld_model::expanded::{instance_key::AttributeInstanceKey, null_sentinel::expanded_null_value};
 use andromeda_ngsi_ld_vocabulary::{
     NULL_URI,
     expanded::{classes as expanded_classes, properties as expanded_properties},
@@ -91,10 +91,13 @@ pub(super) fn fix_null_language_maps(entity: &mut Value) {
     }
 }
 
+/// Materialise every `deleted` Attribute instance into `entity` from the
+/// state before the change, nullified (clause 5.8.6: "the value of the
+/// deleted Attribute shall be `urn:ngsi-ld:null`") and, when `deleted_at` is
+/// given, stamped with it.
 pub(super) fn inject_deleted_attributes(
     entity: &mut Value,
-    changed_attributes: &[AttributeName],
-    changed_dataset_id: Option<&Uri>,
+    deleted: &[&AttributeInstanceKey],
     previous_attributes: Option<&Value>,
     deleted_at: Option<DateTime<Utc>>,
 ) {
@@ -107,8 +110,9 @@ pub(super) fn inject_deleted_attributes(
     let Some(prev_obj) = prev_obj else { return };
     let Some(entity_obj) = entity.as_object_mut() else { return };
 
-    for attr_name in changed_attributes {
-        let attr_iri = attr_name.as_str();
+    for key in deleted {
+        let attr_iri = key.attr.as_str();
+        let changed_dataset_id = key.dataset_id.as_ref();
         if entity_obj.contains_key(attr_iri) {
             inject_deleted_instances(entity_obj, attr_iri, prev_obj, changed_dataset_id, deleted_at);
             continue;
@@ -195,10 +199,10 @@ pub(super) fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<U
 mod tests {
     use super::{inject_deleted_attributes, nullify_attribute_instance};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+    use andromeda_ngsi_ld_model::expanded::instance_key::AttributeInstanceKey;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use pretty_assertions::assert_eq;
     use serde_json::json;
-    use std::slice;
 
     #[test]
     fn a_dataset_specific_event_materializes_only_that_deleted_instance() {
@@ -217,11 +221,67 @@ mod tests {
         });
         let mut current = json!({"@id": "urn:ngsi-ld:Vehicle:1"});
 
-        inject_deleted_attributes(&mut current, slice::from_ref(&attribute), Some(&dataset), Some(&previous), None);
+        let key = AttributeInstanceKey {
+            // clone: the key owns its attribute name while the test still reads it
+            attr: attribute.clone(),
+            dataset_id: Some(dataset.clone()), // clone: same, for the dataset
+        };
+        inject_deleted_attributes(&mut current, &[&key], Some(&previous), None);
 
         let instances = current[attribute.as_str()].as_array().expect("deleted attribute instances");
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0][expanded_properties::DATASET_ID.as_str()][0]["@id"], json!(dataset.as_str()));
+    }
+
+    /// Clause 5.8.6 with clause 5.5.11.0: one change that deleted two
+    /// instances of the same attribute and one of another carries all three,
+    /// nullified, in its one notification.
+    #[test]
+    fn every_instance_one_change_deleted_is_materialized() {
+        let speed = "https://example.com/speed".parse::<AttributeName>().expect("valid attribute name");
+        let name = "https://example.com/name".parse::<AttributeName>().expect("valid attribute name");
+        let dataset = "urn:dataset:named".parse::<Uri>().expect("valid dataset URI");
+        let previous = json!({
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            speed.as_str(): [
+                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], expanded_properties::VALUE.as_str(): [{"@value": 1}]},
+                {
+                    "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                    expanded_properties::VALUE.as_str(): [{"@value": 2}],
+                    expanded_properties::DATASET_ID.as_str(): [{"@id": dataset.as_str()}]
+                }
+            ],
+            name.as_str(): [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], expanded_properties::VALUE.as_str(): [{"@value": "bus"}]}]
+        });
+        let mut current = json!({"@id": "urn:ngsi-ld:Vehicle:1"});
+        let keys = [
+            AttributeInstanceKey {
+                // clone: each key owns its attribute name
+                attr: speed.clone(),
+                dataset_id: None,
+            },
+            AttributeInstanceKey {
+                // clone: same
+                attr: speed.clone(),
+                dataset_id: Some(dataset),
+            },
+            AttributeInstanceKey {
+                // clone: same
+                attr: name.clone(),
+                dataset_id: None,
+            },
+        ];
+        let deleted: Vec<&AttributeInstanceKey> = keys.iter().collect();
+
+        inject_deleted_attributes(&mut current, &deleted, Some(&previous), None);
+
+        assert_eq!(current[speed.as_str()].as_array().map(Vec::len), Some(2), "{current}");
+        assert_eq!(current[name.as_str()].as_array().map(Vec::len), Some(1), "{current}");
+        assert_eq!(
+            current[name.as_str()][0][expanded_properties::VALUE.as_str()],
+            json!([{"@value": "urn:ngsi-ld:null"}]),
+            "{current}"
+        );
     }
 
     /// Clauses 4.5.0 and 4.5.21.2: a deleted `ListProperty` is nullified in its

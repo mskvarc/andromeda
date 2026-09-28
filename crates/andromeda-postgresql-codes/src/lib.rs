@@ -3,7 +3,8 @@
 //! Two things a stored row is made of live here, and nothing else does. The
 //! first is the compact code domains: the small closed vocabularies a migration
 //! writes into `SMALLINT` columns — the attribute family and value shape of a
-//! history row, the trigger condition of a notification, the operation set of a
+//! history row, the trigger conditions of a subscription, the lifecycle and
+//! instance transitions of a notification event, the operation set of a
 //! context-source registration. The second is the identities those rows are
 //! keyed and referenced by: the current-state entity key, the temporal entity
 //! key and the attribute stream key.
@@ -30,6 +31,9 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+/// The persisted transition of one Attribute instance a notification event
+/// records.
+pub mod attribute_change_kind;
 /// The persisted attribute family of one history row.
 pub mod attribute_kind;
 /// The persisted distributed-operation mode of one registration.
@@ -40,6 +44,8 @@ pub mod csr_operation;
 pub mod csr_status;
 /// The narrow key a current-state entity is referenced by.
 pub mod entity_key;
+/// The persisted lifecycle transition of one notification event.
+pub mod entity_lifecycle;
 /// The persisted kind of one stored JSON-LD context.
 pub mod jsonld_context_kind;
 /// The persisted outcome of one maintenance action.
@@ -50,7 +56,7 @@ pub mod maintenance_decision;
 pub mod maintenance_inspection_result;
 /// The persisted relation one maintenance target row describes.
 pub mod maintenance_target;
-/// The persisted trigger condition of one notification record.
+/// The persisted trigger conditions a subscription listens for.
 pub mod notification_trigger;
 /// The one pattern every migration-owned compact code domain is declared with.
 pub mod registry;

@@ -13,8 +13,8 @@
 //! Entity matched no subscription produces no event at all.
 
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::entity_change::EntityChange;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
 use serde_json::Value;
@@ -42,16 +42,11 @@ pub struct NotificationEvent {
     /// Deterministic position of this event within its write, unique across the
     /// whole batch so a replayed write cannot produce a second event.
     pub event_ordinal: WriteOrdinal,
-    /// Mutation trigger reason (for example `entityCreated`, `entityUpdated`).
-    pub trigger: NotificationTrigger,
+    /// What the write did to the Entity: its lifecycle and every Attribute
+    /// instance it touched (clause 5.8.6).
+    pub change: EntityChange,
     /// Entity whose change produced the event.
     pub entity_id: Uri,
-    /// Names of the attributes the mutation changed.
-    #[builder(default = Default::default())]
-    pub changed_attributes: Vec<AttributeName>,
-    /// Dataset discriminator of the changed Attribute instance.
-    #[builder(default = Default::default())]
-    pub changed_dataset_id: Option<Uri>,
     /// Expanded entity snapshot at the time of the mutation.
     #[builder(default = Default::default())]
     pub entity_snapshot: Option<Value>,

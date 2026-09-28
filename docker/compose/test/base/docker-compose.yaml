@@ -17,8 +17,10 @@ x-broker-base: &broker-base
     ANDROMEDA__SERVER__HOST: "0.0.0.0"
     ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
     ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
-    # Small enough to hit the 206 cut.
+    # Small enough to hit the 206 cut, forwards without lastN and backwards
+    # with a lastN above the maximum.
     ANDROMEDA__TEMPORAL__DEFAULT_LAST_N: "19"
+    ANDROMEDA__TEMPORAL__MAX_LAST_N: "19"
     # Tracked by EXPIRY_SWEEP_INTERVAL in tests/expiration.
     ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL: "1s"
     # Broker share: 2 x (16 + 4 x 4) = 64 of max_connections.

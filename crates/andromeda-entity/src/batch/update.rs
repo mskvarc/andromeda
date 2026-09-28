@@ -17,7 +17,7 @@ use crate::{
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
-    notification_plan::attribute_change_groups,
+    notification_plan::modification,
     side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
@@ -139,8 +139,8 @@ impl EntityService {
 
             // Batch update mirrors the single attribute update (clause 5.6.9):
             // the per-attribute triggers, partitioned from the before/after diff.
-            let groups = match attribute_change_groups(previous, &existing) {
-                Ok(groups) => groups,
+            let change = match modification(previous, &existing) {
+                Ok(change) => change,
                 Err(error) => {
                     errors.push((id, error));
                     continue;
@@ -158,7 +158,7 @@ impl EntityService {
                         overwrite,
                     },
                 },
-                &groups,
+                change,
                 Precondition::MustExist,
                 now,
             ) {

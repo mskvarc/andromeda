@@ -10,7 +10,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_context_store::pending_side_effects::{
-    payload::{EntityDocumentSharing, PersistedBatchSideEffectJob, PersistedChangeEvent, PersistedSysAttrs, PersistedTemporalEntity},
+    payload::{PersistedAttributeChange, PersistedBatchSideEffectJob, PersistedChangeEvent, PersistedSysAttrs, PersistedTemporalEntity},
     repo::PendingSideEffectsRepository,
 };
 use serde_json::Value;
@@ -57,16 +57,11 @@ pub(crate) async fn apply(
 
 /// The one job every landed write of a commit contributes its deferred side
 /// effects to.
-///
-/// The change events one write produces all carry the entity it left behind
-/// in one shared allocation, so the job stores that entity once and every
-/// later event refers back to the first one that stored it.
 fn persisted_job(landed: &[&AtomicWrite]) -> PersistedBatchSideEffectJob {
     let mut merged = PersistedBatchSideEffectJob {
         temporal_entities: Vec::new(),
         change_events: Vec::new(),
     };
-    let mut documents = EntityDocumentSharing::default();
     for job in landed.iter().filter_map(|write| write.side_effects.as_ref()) {
         merged
             .temporal_entities
@@ -74,22 +69,27 @@ fn persisted_job(landed: &[&AtomicWrite]) -> PersistedBatchSideEffectJob {
                 id: id.as_ref().clone(), // clone: the persisted DTO owns the validated entity URI.
                 expanded: Value::clone(expanded),
             }));
-        for event in &job.change_events {
-            let position = merged.change_events.len();
-            merged.change_events.push(persisted_event(event, position, &mut documents));
-        }
+        merged.change_events.extend(job.change_events.iter().map(persisted_event));
     }
     merged
 }
 
-/// The persisted form of the change event at `position` in its job.
-fn persisted_event<'a>(event: &'a ChangeEvent, position: usize, documents: &mut EntityDocumentSharing<'a>) -> PersistedChangeEvent {
+/// The persisted form of one change event.
+fn persisted_event(event: &ChangeEvent) -> PersistedChangeEvent {
     PersistedChangeEvent {
         entity_id: event.entity_id.clone(),       // clone: persistence owns the event identifier.
         entity_types: event.entity_types.clone(), // clone: persistence owns the event type list.
-        trigger_reason: event.trigger_reason,
-        changed_attributes: event.changed_attributes.clone(), // clone: persistence owns the changed-attribute list.
-        changed_dataset_id: event.changed_dataset_id.clone(), // clone: persistence owns the instance discriminator.
+        lifecycle: event.change.lifecycle,
+        instances: event
+            .change
+            .instances
+            .iter()
+            .map(|instance| PersistedAttributeChange {
+                attribute: instance.key.attr.clone(),        // clone: persistence owns the attribute name.
+                dataset_id: instance.key.dataset_id.clone(), // clone: persistence owns the instance discriminator.
+                kind: instance.kind,
+            })
+            .collect(),
         occurred_at: event.occurred_at,
         entity_snapshot: event.entity_snapshot.as_deref().cloned(),
         previous_attributes: event.previous_attributes.as_deref().cloned(),
@@ -99,7 +99,7 @@ fn persisted_event<'a>(event: &'a ChangeEvent, position: usize, documents: &mut 
             expires_at: snapshot.expires_at,
         }),
         origin: event.origin,
-        current_payload: event.current_payload.as_ref().map(|document| documents.persist(position, document)),
+        current_payload: event.current_payload.as_deref().cloned(),
     }
 }
 
@@ -113,71 +113,81 @@ mod tests {
         entity_mutation::EntityMutation,
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-    use andromeda_postgresql_context_store::pending_side_effects::payload::PersistedEntityDocument;
-    use serde_json::{Value, json};
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        expanded::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            instance_key::AttributeInstanceKey,
+        },
+        notification::ChangeOrigin,
+    };
+    use chrono::Utc;
+    use serde_json::json;
     use std::sync::Arc;
 
     fn uri(raw: &str) -> Uri {
         raw.parse().expect("a valid URI")
     }
 
-    /// One write's changes, each carrying the entity the write left behind.
-    fn write_with_changes(id: &str, triggers: &[NotificationTrigger]) -> AtomicWrite {
-        let left_behind = Arc::new(json!([{"@id": id}]));
-        let change_events = triggers
-            .iter()
-            .map(|trigger| {
-                let mut event = ChangeEvent::new(uri(id), Vec::new(), *trigger);
-                event.current_payload = Some(Arc::clone(&left_behind));
-                event
-            })
-            .collect();
+    /// One write's change through `lifecycle`, carrying `current` as the entity
+    /// the write left behind.
+    fn write_with_change(id: &str, lifecycle: EntityLifecycle, current: Option<serde_json::Value>) -> AtomicWrite {
+        let change = EntityChange::new(
+            lifecycle,
+            vec![AttributeChange {
+                key: AttributeInstanceKey {
+                    attr: "https://example.org/name".parse().expect("a valid attribute name"),
+                    dataset_id: Some(uri("urn:dataset:a")),
+                },
+                kind: AttributeChangeKind::Created,
+            }],
+        );
+        let event = ChangeEvent::builder()
+            .entity_id(uri(id))
+            .change(change)
+            .occurred_at(Utc::now())
+            .origin(ChangeOrigin::Local)
+            .current_payload(current.map(Arc::new))
+            .build();
         AtomicWrite::builder()
             .entity_id(Arc::new(uri(id)))
             .entity(EntityMutation::None)
             .side_effects(Some(BatchSideEffectJob {
                 temporal_entities: Vec::new(),
-                change_events,
+                change_events: vec![event],
             }))
             .build()
     }
 
-    /// A creation raises `entityCreated` and one `attributeCreated` per
-    /// Attribute, all carrying the created entity: the job stores it once per
-    /// write, and each write's own entity is stored for that write.
+    /// Every landed write contributes its one change, in submission order,
+    /// with its lifecycle, instances and the entity it left behind.
     #[test]
-    fn the_entity_a_write_left_behind_is_stored_once_for_all_of_its_changes() {
-        let first = write_with_changes(
+    fn every_write_of_a_commit_contributes_its_change_in_order() {
+        let first = write_with_change(
             "urn:ngsi-ld:Building:1",
-            &[NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated],
+            EntityLifecycle::Created,
+            Some(json!([{"@id": "urn:ngsi-ld:Building:1"}])),
         );
-        let second = write_with_changes(
+        let second = write_with_change(
             "urn:ngsi-ld:Building:2",
-            &[NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated],
+            EntityLifecycle::Modified,
+            Some(json!([{"@id": "urn:ngsi-ld:Building:2"}])),
         );
 
         let job = persisted_job(&[&first, &second]);
 
-        let documents: Vec<Option<PersistedEntityDocument>> = job.change_events.into_iter().map(|event| event.current_payload).collect();
-        pretty_assertions::assert_eq!(
-            documents,
-            vec![
-                Some(PersistedEntityDocument::Stored(json!([{"@id": "urn:ngsi-ld:Building:1"}]))),
-                Some(PersistedEntityDocument::AsEvent(0)),
-                Some(PersistedEntityDocument::Stored(json!([{"@id": "urn:ngsi-ld:Building:2"}]))),
-                Some(PersistedEntityDocument::AsEvent(2)),
-            ]
-        );
+        pretty_assertions::assert_eq!(job.change_events.len(), 2);
+        pretty_assertions::assert_eq!(job.change_events[0].lifecycle, EntityLifecycle::Created);
+        pretty_assertions::assert_eq!(job.change_events[1].lifecycle, EntityLifecycle::Modified);
+        pretty_assertions::assert_eq!(job.change_events[0].instances[0].kind, AttributeChangeKind::Created);
+        pretty_assertions::assert_eq!(job.change_events[0].instances[0].dataset_id.as_ref().map(Uri::as_str), Some("urn:dataset:a"));
+        pretty_assertions::assert_eq!(job.change_events[1].current_payload, Some(json!([{"@id": "urn:ngsi-ld:Building:2"}])));
     }
 
     /// A deletion carries no resulting entity, so nothing is stored for it.
     #[test]
     fn a_change_without_a_resulting_entity_stores_no_document() {
-        let mut write = write_with_changes("urn:ngsi-ld:Building:1", &[NotificationTrigger::EntityDeleted]);
-        if let Some(job) = write.side_effects.as_mut() {
-            job.change_events.iter_mut().for_each(|event| event.current_payload = None::<Arc<Value>>);
-        }
+        let write = write_with_change("urn:ngsi-ld:Building:1", EntityLifecycle::Deleted, None);
         let job = persisted_job(&[&write]);
         assert!(job.change_events.iter().all(|event| event.current_payload.is_none()));
     }

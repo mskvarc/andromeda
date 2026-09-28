@@ -1,22 +1,12 @@
 //! Persisted (wire) form of a batch side-effect job stored in the
 //! `pending_side_effects.payload` JSONB column.
-//!
-//! One write's change events all carry the entity that write left behind, so
-//! a job stores each such entity once: the first event carrying it stores the
-//! document, and every later event of the job carrying the same one refers
-//! back to that event ([`PersistedEntityDocument`]).
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
+use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind, notification::ChangeOrigin};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    collections::{HashMap, hash_map::Entry},
-    marker::PhantomData,
-    sync::Arc,
-};
 use thiserror::Error;
 
 /// Failure to decode a durable pending-side-effect JSONB payload.
@@ -25,15 +15,6 @@ pub enum PendingSideEffectPayloadError {
     /// Stored JSON does not match the fully validated persistence shape.
     #[error("pending-side-effect row contains an invalid domain value: {0}")]
     InvalidStoredPayload(#[from] serde_json::Error),
-    /// A change event refers to the entity document of an event that does
-    /// not precede it in the job, or that carries none.
-    #[error("pending-side-effect change event {event} refers to the entity document of change event {referenced}, which holds none before it")]
-    DanglingEntityDocument {
-        /// Position of the referring event in `change_events`.
-        event: usize,
-        /// Position the event refers to.
-        referenced: usize,
-    },
 }
 
 /// JSON-persisted shape of a batch side-effect job.
@@ -77,13 +58,10 @@ pub struct PersistedChangeEvent {
     pub entity_id: Uri,
     /// Entity type IRIs.
     pub entity_types: Vec<EntityTypeName>,
-    /// The NGSI-LD notification trigger reason.
-    pub trigger_reason: NotificationTrigger,
-    /// Attribute IRIs that changed.
-    pub changed_attributes: Vec<AttributeName>,
-    /// Dataset discriminator of the changed Attribute instance.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub changed_dataset_id: Option<Uri>,
+    /// What the write did to the Entity as a whole.
+    pub lifecycle: EntityLifecycle,
+    /// Every Attribute instance the write created, updated or deleted.
+    pub instances: Vec<PersistedAttributeChange>,
     /// When the change occurred.
     pub occurred_at: DateTime<Utc>,
     /// Entity snapshot after the change, if available.
@@ -101,79 +79,19 @@ pub struct PersistedChangeEvent {
     /// notification renders and what its `q`, `geoQ` and `scopeQ` are
     /// evaluated against (clause 5.8.6), whenever the job is drained.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_payload: Option<PersistedEntityDocument>,
+    pub current_payload: Option<Value>,
 }
 
-/// One change event's entity document, stored once per job.
+/// Wire-shape of one Attribute instance a change touched.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum PersistedEntityDocument {
-    /// The document itself, stored by the first event of the job carrying it.
-    Stored(Value),
-    /// The same document as the event at this position in `change_events`,
-    /// which precedes the referring event.
-    AsEvent(usize),
-}
-
-/// Assigns each change event of one job its [`PersistedEntityDocument`],
-/// storing every distinct document once.
-///
-/// Documents are told apart by identity, not by content: the events one write
-/// produces share the very allocation of the entity it left behind, and that
-/// sharing is what a job preserves. Two equal documents from separate
-/// allocations are stored twice, which costs space but never correctness.
-///
-/// The table borrows every document it has seen for `'a`, so no allocation it
-/// remembers can be freed and reused by another document while it is in use.
-#[derive(Debug, Default)]
-pub struct EntityDocumentSharing<'a> {
-    /// Position of the event that stored each document, by its allocation.
-    stored_at: HashMap<*const Value, usize>,
-    /// The documents the table has seen, borrowed for as long as it is used.
-    documents: PhantomData<&'a Value>,
-}
-
-impl<'a> EntityDocumentSharing<'a> {
-    /// The persisted form of `document`, carried by the change event at
-    /// `event` in the job: a reference to the earlier event that stored the
-    /// same document, or the document itself when no event stored it yet.
-    pub fn persist(&mut self, event: usize, document: &'a Arc<Value>) -> PersistedEntityDocument {
-        match self.stored_at.entry(Arc::as_ptr(document)) {
-            Entry::Occupied(earlier) => PersistedEntityDocument::AsEvent(*earlier.get()),
-            Entry::Vacant(first) => {
-                first.insert(event);
-                PersistedEntityDocument::Stored(Value::clone(document)) // clone: the persisted job owns the one stored copy.
-            }
-        }
-    }
-}
-
-/// Resolve each change event's persisted entity document, in `change_events`
-/// order, sharing one allocation among the events that refer to the same one.
-///
-/// # Errors
-///
-/// Returns [`PendingSideEffectPayloadError::DanglingEntityDocument`] when an
-/// event refers to one that does not precede it or that carries no document.
-pub fn resolve_entity_documents(
-    documents: impl IntoIterator<Item = Option<PersistedEntityDocument>>,
-) -> Result<Vec<Option<Arc<Value>>>, PendingSideEffectPayloadError> {
-    let mut resolved: Vec<Option<Arc<Value>>> = Vec::new();
-    for (event, document) in documents.into_iter().enumerate() {
-        let shared = match document {
-            None => None,
-            Some(PersistedEntityDocument::Stored(value)) => Some(Arc::new(value)),
-            Some(PersistedEntityDocument::AsEvent(referenced)) => Some(
-                resolved
-                    .get(referenced)
-                    .and_then(Option::as_ref)
-                    .map(Arc::clone) // clone: Arc ref-count bump
-                    .ok_or(PendingSideEffectPayloadError::DanglingEntityDocument { event, referenced })?,
-            ),
-        };
-        resolved.push(shared);
-    }
-    Ok(resolved)
+pub struct PersistedAttributeChange {
+    /// Expanded name of the Attribute.
+    pub attribute: AttributeName,
+    /// The instance's `datasetId`, absent for the default instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_id: Option<Uri>,
+    /// The instance's transition.
+    pub kind: AttributeChangeKind,
 }
 
 /// Wire-shape of system attributes.
@@ -191,41 +109,46 @@ pub struct PersistedSysAttrs {
 #[cfg(test)]
 mod tests {
     use crate::pending_side_effects::payload::{
-        EntityDocumentSharing,
         PendingSideEffectPayloadError,
+        PersistedAttributeChange,
         PersistedBatchSideEffectJob,
         PersistedChangeEvent,
-        PersistedEntityDocument,
         PersistedSysAttrs,
         PersistedTemporalEntity,
-        resolve_entity_documents,
     };
-    use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
+    use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind, notification::ChangeOrigin};
     use chrono::{TimeZone, Utc};
     use serde_json::{Value, json};
-    use std::sync::Arc;
 
-    const TRIGGERS: [NotificationTrigger; 6] = [
-        NotificationTrigger::EntityCreated,
-        NotificationTrigger::EntityUpdated,
-        NotificationTrigger::EntityDeleted,
-        NotificationTrigger::AttributeCreated,
-        NotificationTrigger::AttributeUpdated,
-        NotificationTrigger::AttributeDeleted,
-    ];
+    const LIFECYCLES: [EntityLifecycle; 3] = [EntityLifecycle::Created, EntityLifecycle::Modified, EntityLifecycle::Deleted];
     const ORIGINS: [ChangeOrigin; 2] = [ChangeOrigin::Local, ChangeOrigin::Forwarded];
 
     fn persisted_job() -> PersistedBatchSideEffectJob {
         let occurred_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid timestamp");
-        let change_events = TRIGGERS
+        let change_events = LIFECYCLES
             .into_iter()
-            .flat_map(|trigger_reason| {
+            .flat_map(|lifecycle| {
                 ORIGINS.into_iter().map(move |origin| PersistedChangeEvent {
                     entity_id: "https://example.org/entities/1".parse().expect("valid entity URI"),
                     entity_types: vec!["Building".parse().expect("valid entity type")],
-                    trigger_reason,
-                    changed_attributes: vec!["temperature".parse().expect("valid attribute name")],
-                    changed_dataset_id: None,
+                    lifecycle,
+                    instances: vec![
+                        PersistedAttributeChange {
+                            attribute: "temperature".parse().expect("valid attribute name"),
+                            dataset_id: None,
+                            kind: AttributeChangeKind::Created,
+                        },
+                        PersistedAttributeChange {
+                            attribute: "temperature".parse().expect("valid attribute name"),
+                            dataset_id: Some("urn:ngsi-ld:Dataset:a".parse().expect("valid dataset URI")),
+                            kind: AttributeChangeKind::Updated,
+                        },
+                        PersistedAttributeChange {
+                            attribute: "humidity".parse().expect("valid attribute name"),
+                            dataset_id: None,
+                            kind: AttributeChangeKind::Deleted,
+                        },
+                    ],
                     occurred_at,
                     entity_snapshot: Some(json!({"id": "https://example.org/entities/1"})),
                     previous_attributes: Some(json!({"temperature": 20})),
@@ -235,9 +158,7 @@ mod tests {
                         expires_at: None,
                     }),
                     origin,
-                    current_payload: Some(PersistedEntityDocument::Stored(
-                        json!({"id": "https://example.org/entities/1", "temperature": 21}),
-                    )),
+                    current_payload: Some(json!({"id": "https://example.org/entities/1", "temperature": 21})),
                 })
             })
             .collect();
@@ -257,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_side_effect_jsonb_round_trips_every_trigger_origin_and_uri_form() {
+    fn pending_side_effect_jsonb_round_trips_every_lifecycle_transition_origin_and_uri_form() {
         let expected = persisted_job();
         let encoded = serde_json::to_value(&expected).expect("payload serialises");
         let decoded = PersistedBatchSideEffectJob::decode(&encoded).expect("payload decodes");
@@ -285,8 +206,10 @@ mod tests {
             (vec!["temporal_entities", "0", "id"], json!("not-a-uri")),
             (vec!["change_events", "0", "entity_id"], json!("not-a-uri")),
             (vec!["change_events", "0", "entity_types", "0"], json!("two words")),
-            (vec!["change_events", "0", "changed_attributes", "0"], json!("two words")),
-            (vec!["change_events", "0", "trigger_reason"], json!("unknown")),
+            (vec!["change_events", "0", "instances", "0", "attribute"], json!("two words")),
+            (vec!["change_events", "0", "instances", "1", "dataset_id"], json!("not-a-uri")),
+            (vec!["change_events", "0", "instances", "0", "kind"], json!("unknown")),
+            (vec!["change_events", "0", "lifecycle"], json!("unknown")),
             (vec!["change_events", "0", "origin"], json!("unknown")),
         ];
 
@@ -316,76 +239,14 @@ mod tests {
         }
     }
 
-    /// The events one write produces share the entity it left behind, so the
-    /// job stores that entity once and every later event refers back to the
-    /// first; a separately allocated document is stored on its own.
+    /// The lifecycle and instance transitions are Andromeda's own vocabulary,
+    /// so they persist in kebab-case.
     #[test]
-    fn a_document_shared_by_several_events_is_stored_once() {
-        let left_behind = Arc::new(json!([{"@id": "urn:ngsi-ld:Building:1"}]));
-        let other = Arc::new(json!([{"@id": "urn:ngsi-ld:Building:2"}]));
-        let mut sharing = EntityDocumentSharing::default();
-        let persisted = vec![
-            sharing.persist(0, &left_behind),
-            sharing.persist(1, &left_behind),
-            sharing.persist(2, &other),
-            sharing.persist(3, &left_behind),
-        ];
-        pretty_assertions::assert_eq!(
-            persisted,
-            vec![
-                PersistedEntityDocument::Stored(Value::clone(&left_behind)),
-                PersistedEntityDocument::AsEvent(0),
-                PersistedEntityDocument::Stored(Value::clone(&other)),
-                PersistedEntityDocument::AsEvent(0),
-            ]
-        );
-    }
-
-    /// Resolution hands every event referring to one stored document the same
-    /// allocation, and an event without a document stays without one.
-    #[test]
-    fn resolved_references_share_the_stored_document() -> Result<(), PendingSideEffectPayloadError> {
-        let resolved = resolve_entity_documents([
-            Some(PersistedEntityDocument::Stored(json!({"@id": "urn:ngsi-ld:Building:1"}))),
-            None,
-            Some(PersistedEntityDocument::AsEvent(0)),
-        ])?;
-        pretty_assertions::assert_eq!(resolved.len(), 3);
-        assert!(resolved[1].is_none());
-        match (&resolved[0], &resolved[2]) {
-            (Some(stored), Some(referring)) => assert!(Arc::ptr_eq(stored, referring), "the referring event shares the stored allocation"),
-            (first, third) => panic!("both events carry the document, got {first:?} and {third:?}"),
-        }
-        Ok(())
-    }
-
-    /// A reference to a later event, to itself, or to an event that carries
-    /// no document names nothing the job holds, so the payload is refused.
-    #[test]
-    fn a_reference_to_no_earlier_document_is_refused() {
-        for (documents, event, referenced) in [
-            (
-                vec![Some(PersistedEntityDocument::AsEvent(1)), Some(PersistedEntityDocument::Stored(json!({})))],
-                0,
-                1,
-            ),
-            (vec![Some(PersistedEntityDocument::AsEvent(0))], 0, 0),
-            (vec![None, Some(PersistedEntityDocument::AsEvent(0))], 1, 0),
-        ] {
-            let refused = resolve_entity_documents(documents);
-            assert!(
-                matches!(refused, Err(PendingSideEffectPayloadError::DanglingEntityDocument { event: e, referenced: r }) if e == event && r == referenced),
-                "{refused:?}"
-            );
-        }
-    }
-
-    /// The reference is spelled in this broker's own kebab-case vocabulary.
-    #[test]
-    fn a_shared_document_is_persisted_as_a_kebab_case_reference() {
-        let encoded = serde_json::to_value(PersistedEntityDocument::AsEvent(2)).expect("reference serialises");
-        pretty_assertions::assert_eq!(encoded, json!({"as-event": 2}));
-        let encoded = serde_json::to_value(PersistedEntityDocument::Stored(json!({"@id": "urn:ngsi-ld:Building:1"}))).expect("document serialises");
-        pretty_assertions::assert_eq!(encoded, json!({"stored": {"@id": "urn:ngsi-ld:Building:1"}}));
+    fn a_deferred_change_persists_its_transitions_in_kebab_case() {
+        let encoded = serde_json::to_value(persisted_job()).expect("payload serialises");
+        pretty_assertions::assert_eq!(encoded["change_events"][0]["lifecycle"], json!("created"));
+        pretty_assertions::assert_eq!(encoded["change_events"][2]["lifecycle"], json!("modified"));
+        pretty_assertions::assert_eq!(encoded["change_events"][0]["instances"][2]["kind"], json!("deleted"));
+        assert!(encoded["change_events"][0]["instances"][0].get("dataset_id").is_none());
     }
 }

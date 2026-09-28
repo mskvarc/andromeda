@@ -20,6 +20,7 @@ use crate::{
 };
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
 use std::sync::Arc;
 
 /// How the broker draining a side-effect job settles the notifications the job
@@ -52,9 +53,9 @@ pub(crate) fn owed_subscription_matches(recording: &NotificationWriteConfig, tar
 /// system attributes embedded, because the row is gone by delivery time and
 /// `createdAt` and `modifiedAt` can no longer be read back (clause 5.8.6).
 fn change_matches(recording: &NotificationWriteConfig, target: &ContextTarget, change: &ChangeEvent) -> Vec<SubscriptionMatch> {
-    let removed = match (change.current_payload.as_deref(), change.entity_snapshot.as_deref()) {
-        (Some(_), _) | (None, None) => None,
-        (None, Some(snapshot)) => Some(match change.sys_attrs_snapshot.as_ref() {
+    let removed = match change.change.lifecycle {
+        EntityLifecycle::Created | EntityLifecycle::Modified => None,
+        EntityLifecycle::Deleted => change.entity_snapshot.as_deref().map(|snapshot| match change.sys_attrs_snapshot.as_ref() {
             Some(sys_attrs) => snapshot_with_sys_attrs(snapshot, sys_attrs),
             None => snapshot.clone(), // clone: the durable match owns the removed entity while the change keeps its shared snapshot.
         }),
@@ -65,9 +66,7 @@ fn change_matches(recording: &NotificationWriteConfig, target: &ContextTarget, c
             id: &change.entity_id,
             types: &change.entity_types,
         },
-        change.trigger_reason,
-        &change.changed_attributes,
-        change.changed_dataset_id.as_ref(),
+        &change.change,
         MutationSnapshots {
             current: change.current_payload.as_deref().or(removed.as_ref()),
             previous: change.previous_attributes.as_deref(),
@@ -85,7 +84,14 @@ mod tests {
     use andromeda_context_commit::change_event::ChangeEvent;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-    use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot};
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        expanded::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            instance_key::AttributeInstanceKey,
+        },
+        notification::{ChangeOrigin, SysAttrsSnapshot},
+    };
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
@@ -112,14 +118,21 @@ mod tests {
         }])
     }
 
-    fn change(trigger: NotificationTrigger, types: &[&str]) -> ChangeEvent {
+    /// A change through `lifecycle` that `kind`s the `category` instance.
+    fn change(lifecycle: EntityLifecycle, kind: AttributeChangeKind, types: &[&str]) -> ChangeEvent {
+        let category = AttributeChange {
+            key: AttributeInstanceKey {
+                attr: CATEGORY_IRI.parse::<AttributeName>().expect("a valid attribute name"),
+                dataset_id: None,
+            },
+            kind,
+        };
         ChangeEvent::builder()
             .entity_id(ENTITY_ID.parse::<Uri>().expect("a valid entity URI"))
             .entity_types(types.iter().map(|raw| raw.parse::<EntityTypeName>().expect("a valid type name")).collect())
-            .trigger_reason(trigger)
+            .change(EntityChange::new(lifecycle, vec![category]))
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
-            .changed_attributes(vec![CATEGORY_IRI.parse::<AttributeName>().expect("a valid attribute name")])
             .build()
     }
 
@@ -127,7 +140,7 @@ mod tests {
     /// behind, with the state it replaced for `showChanges`.
     #[tokio::test]
     async fn an_owed_update_matches_the_subscription_with_the_resulting_entity() {
-        let mut updated = change(NotificationTrigger::AttributeUpdated, &[BUILDING_TYPE_IRI]);
+        let mut updated = change(EntityLifecycle::Modified, AttributeChangeKind::Updated, &[BUILDING_TYPE_IRI]);
         updated.current_payload = Some(Arc::new(building("retail")));
         updated.previous_attributes = Some(Arc::new(building("office")));
 
@@ -135,7 +148,7 @@ mod tests {
 
         assert_eq!(matches.len(), 1, "the one Building subscription is owed the update");
         assert_eq!(matches[0].subscription_key, subscription_key());
-        assert_eq!(matches[0].trigger, NotificationTrigger::AttributeUpdated);
+        assert_eq!(matches[0].change.lifecycle, EntityLifecycle::Modified);
         assert_eq!(matches[0].entity_snapshot, Some(building("retail")));
         assert_eq!(matches[0].previous_snapshot, Some(building("office")));
     }
@@ -143,7 +156,7 @@ mod tests {
     /// A change to an entity no subscription selects is owed nothing.
     #[tokio::test]
     async fn an_owed_change_no_subscription_selects_is_owed_nothing() {
-        let mut created = change(NotificationTrigger::EntityCreated, &["https://example.org/Vehicle"]);
+        let mut created = change(EntityLifecycle::Created, AttributeChangeKind::Created, &["https://example.org/Vehicle"]);
         created.current_payload = Some(Arc::new(building("office")));
 
         assert!(owed_subscription_matches(&recording().await, &ContextTarget::Live, &[created]).is_empty());
@@ -154,7 +167,7 @@ mod tests {
     #[tokio::test]
     async fn an_owed_deletion_matches_with_the_removed_entity_and_its_system_attributes() {
         let instant = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a valid instant");
-        let mut deleted = change(NotificationTrigger::EntityDeleted, &[BUILDING_TYPE_IRI]);
+        let mut deleted = change(EntityLifecycle::Deleted, AttributeChangeKind::Deleted, &[BUILDING_TYPE_IRI]);
         deleted.entity_snapshot = Some(Arc::new(building("office")));
         deleted.previous_attributes = Some(Arc::new(building("office")));
         deleted.sys_attrs_snapshot = Some(SysAttrsSnapshot {
@@ -175,16 +188,17 @@ mod tests {
     /// notification events, so the matches keep it.
     #[tokio::test]
     async fn owed_changes_keep_the_order_they_were_raised_in() {
-        let mut first = change(NotificationTrigger::EntityCreated, &[BUILDING_TYPE_IRI]);
+        let mut first = change(EntityLifecycle::Created, AttributeChangeKind::Created, &[BUILDING_TYPE_IRI]);
         first.current_payload = Some(Arc::new(building("office")));
-        let mut second = change(NotificationTrigger::AttributeCreated, &[BUILDING_TYPE_IRI]);
-        second.current_payload = Some(Arc::new(building("office")));
+        let mut second = change(EntityLifecycle::Modified, AttributeChangeKind::Updated, &[BUILDING_TYPE_IRI]);
+        second.current_payload = Some(Arc::new(building("retail")));
+        second.previous_attributes = Some(Arc::new(building("office")));
 
-        let triggers: Vec<NotificationTrigger> = owed_subscription_matches(&recording().await, &ContextTarget::Live, &[first, second])
+        let lifecycles: Vec<EntityLifecycle> = owed_subscription_matches(&recording().await, &ContextTarget::Live, &[first, second])
             .iter()
-            .map(|matched| matched.trigger)
+            .map(|matched| matched.change.lifecycle)
             .collect();
 
-        assert_eq!(triggers, vec![NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated]);
+        assert_eq!(lifecycles, vec![EntityLifecycle::Created, EntityLifecycle::Modified]);
     }
 }

@@ -4,8 +4,8 @@ use crate::{
     EntityService,
     admitted_write::AdmittedEntity,
     error::EntityError,
-    expanded_member::{written_attribute_names, written_entity_types},
-    notification_plan::{NotificationGroup, attribute_change_groups},
+    expanded_member::written_entity_types,
+    notification_plan::creation,
     write_kind::CreateEntity,
 };
 use andromeda_context_commit::{
@@ -18,10 +18,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{
-    expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError},
-    notification::NotificationTrigger,
-};
+use andromeda_ngsi_ld_model::expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError};
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
 use serde_json::Value;
@@ -49,10 +46,7 @@ impl EntityService {
             stamp_attribute_instants(&mut expanded, &Value::Null, Utc::now()).map_err(ExpandedEntityError::from)?;
             let payload = Arc::new(expanded);
             let types = written_entity_types(&payload)?;
-            let changed_attrs = written_attribute_names(&payload)?;
-            let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attrs)];
-            groups.extend(attribute_change_groups(&Value::Null, &payload)?);
-            let plan = self.plan_notifications(target, id, &types, &groups, Some(&payload), None);
+            let plan = self.plan_notifications(target, id, &types, creation(&payload)?, Some(&payload), None);
 
             let write = AtomicWrite::builder()
                 .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.

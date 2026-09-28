@@ -8,6 +8,7 @@
 pub mod attribute_change;
 pub mod attribute_expiry;
 pub mod attribute_system_time;
+pub mod current_state_fold;
 pub mod dataset_id;
 pub mod entity_member;
 pub mod geo_property;

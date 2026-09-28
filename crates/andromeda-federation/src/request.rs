@@ -2,6 +2,7 @@
 
 use crate::{
     config::SplitEntities,
+    entity_budget::EntityBudget,
     forwarded_body::ForwardedBody,
     forwarded_query::client_query::ClientQuery,
     operation::{ForwardingOperation, ProvisionResource},
@@ -15,7 +16,8 @@ use andromeda_ngsi_ld_query::filter::expression::Expr;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use http::HeaderMap;
 
-/// An explicit page to request independently from every matching context source.
+/// An explicit page to request independently from every matching context
+/// source of a temporal query.
 ///
 /// Ordinary distributed reads leave this absent because the broker obtains a
 /// merge window and applies the client's page after aggregation. Durable range
@@ -173,8 +175,9 @@ pub struct ForwardQueryRequest<'a> {
     pub mode_filter: CsrModeFilter,
     /// The `EntityMap` the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
-    /// Explicit per-source range, or `None` for the ordinary post-merge page policy.
-    pub source_page: Option<SourcePage>,
+    /// The entities the request may gather from every source it contacts,
+    /// shared by all its forwarding phases (clause 4.12).
+    pub budget: &'a EntityBudget,
 }
 
 /// Parameters for forwarding a single-entity retrieval, current or temporal.

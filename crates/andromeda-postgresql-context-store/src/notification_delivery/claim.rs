@@ -239,8 +239,10 @@ fn delivery_claimable_at() -> SimpleExpr {
 /// a live lease held by this transaction, so no other worker can have altered
 /// them between the claim and this read. The changed attributes are resolved
 /// back through the tenant-global `attribute_names` dictionary in event-recorded
-/// order by a lateral aggregate over the event's `changed_attribute_name_keys`,
-/// defaulting to an empty array when the event touched none.
+/// order by a lateral aggregate over the event's `change_attribute_name_keys`,
+/// defaulting to an empty array when the event touched none. The aggregate keeps
+/// one name per key, repeats included, so it stays position for position with
+/// the event's transitions and `datasetId`s.
 fn claimed_projection_statement(target: &ContextTarget, claimed_keys: &[i64]) -> SelectStatement {
     let (delivery, event, subscription) = (Alias::new("c"), Alias::new("e"), Alias::new("s"));
     let (unnest_alias, unnest_columns, position) = ordinality_alias();
@@ -252,7 +254,7 @@ fn claimed_projection_statement(target: &ContextTarget, claimed_keys: &[i64]) ->
             Expr::col((unnest_alias.clone(), position)),
         ))
         .from_function(
-            unnest_call([(&unnest_columns[0], Expr::col((event.clone(), NotificationEvents::ChangedAttributeNameKeys)))]),
+            unnest_call([(&unnest_columns[0], Expr::col((event.clone(), NotificationEvents::ChangeAttributeNameKeys)))]),
             unnest_alias.clone(),
         )
         .join_as(
@@ -263,7 +265,7 @@ fn claimed_projection_statement(target: &ContextTarget, claimed_keys: &[i64]) ->
         )
         .to_owned();
 
-    let changed_attributes = Func::coalesce([SimpleExpr::SubQuery(None, Box::new(ordered_names.into_sub_query_statement())), text_array(&[])]);
+    let change_attributes = Func::coalesce([SimpleExpr::SubQuery(None, Box::new(ordered_names.into_sub_query_statement())), text_array(&[])]);
 
     Query::select()
         .column((delivery.clone(), NotificationDeliveries::DeliveryKey))
@@ -273,10 +275,11 @@ fn claimed_projection_statement(target: &ContextTarget, claimed_keys: &[i64]) ->
         .expr_as(Expr::col((event.clone(), NotificationEvents::EventKey)), Alias::new("event_key"))
         .column((event.clone(), NotificationEvents::WriteId))
         .column((event.clone(), NotificationEvents::EventOrdinal))
-        .column((event.clone(), NotificationEvents::Trigger))
+        .column((event.clone(), NotificationEvents::Lifecycle))
         .column((event.clone(), NotificationEvents::EntityId))
-        .expr_as(changed_attributes, Alias::new("changed_attributes"))
-        .column((event.clone(), NotificationEvents::ChangedDatasetId))
+        .column((event.clone(), NotificationEvents::ChangeKinds))
+        .expr_as(change_attributes, Alias::new("change_attributes"))
+        .column((event.clone(), NotificationEvents::ChangeDatasetIds))
         .column((event.clone(), NotificationEvents::EntitySnapshot))
         .column((event.clone(), NotificationEvents::PreviousSnapshot))
         .column((event.clone(), NotificationEvents::CreatedAt))
@@ -416,6 +419,9 @@ mod tests {
         let sql = projection_sql(&ContextTarget::Live);
         assert!(sql.contains(r#"AS "subscription_id""#), "{sql}");
         assert!(sql.contains(r#"AS "event_key""#), "{sql}");
-        assert!(sql.contains(r#"AS "changed_attributes""#), "{sql}");
+        assert!(sql.contains(r#"AS "change_attributes""#), "{sql}");
+        assert!(sql.contains(r#""e"."lifecycle""#), "{sql}");
+        assert!(sql.contains(r#""e"."change_kinds""#), "{sql}");
+        assert!(sql.contains(r#""e"."change_dataset_ids""#), "{sql}");
     }
 }

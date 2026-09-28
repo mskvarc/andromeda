@@ -17,6 +17,9 @@ use std::{
 const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
 /// The tier pins `default_last_n` to 19 so the `SYSTEM_LAST_N_CAP` regressions hit the 206 cut.
 const DEFAULT_LAST_N: &str = "19";
+/// The tier pins `max_last_n` to the same 19, so a `lastN` above it is paged
+/// backwards as the base-tier regressions expect.
+const MAX_LAST_N: &str = "19";
 /// The settings every base-tier broker runs with beside its ports, identical to
 /// the containerized `broker` profile in `docker/compose/test/base/docker-compose.yaml`,
 /// which documents why each one is needed: a 1s expiry sweep for the expiration
@@ -113,6 +116,7 @@ pub(crate) fn spawn_broker(repository_root: &Path, broker: HostBroker) -> Result
         .env("ANDROMEDA__MANAGEMENT__PORT", broker.management_port().to_string())
         .env("ANDROMEDA__DATABASE__URL", DATABASE_URL)
         .env("ANDROMEDA__TEMPORAL__DEFAULT_LAST_N", DEFAULT_LAST_N)
+        .env("ANDROMEDA__TEMPORAL__MAX_LAST_N", MAX_LAST_N)
         .envs(TIER_SETTINGS)
         .stdout(Stdio::null())
         .stderr(Stdio::null());

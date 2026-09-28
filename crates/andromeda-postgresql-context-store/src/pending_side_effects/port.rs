@@ -1,7 +1,7 @@
 //! Direct PostgreSQL implementation of the entity side-effect queue port.
 
 use crate::pending_side_effects::{
-    payload::{PendingSideEffectPayloadError, PersistedBatchSideEffectJob, PersistedChangeEvent, PersistedEntityDocument, resolve_entity_documents},
+    payload::{PersistedBatchSideEffectJob, PersistedChangeEvent},
     repo::PendingSideEffectsRepository,
 };
 use andromeda_context_commit::{
@@ -19,7 +19,11 @@ use andromeda_entity::{
     error::EntityError,
     side_effect_queue::{DeadLetterAttempt, LeasedSideEffect, SideEffectQueue},
 };
-use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
+use andromeda_ngsi_ld_model::{
+    entity_change::EntityChange,
+    expanded::{attribute_change::AttributeChange, instance_key::AttributeInstanceKey},
+    notification::SysAttrsSnapshot,
+};
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use andromeda_postgresql_seaquery::interval::make_interval_secs;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
@@ -327,64 +331,52 @@ fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
 /// Decode one persisted queue payload into the semantic side-effect job.
 fn decode_job(payload: &Value) -> Result<BatchSideEffectJob, EntityError> {
     let persisted = PersistedBatchSideEffectJob::decode(payload).map_err(|error| EntityError::persistence(error.to_string()))?;
-    persisted_to_domain(persisted).map_err(|error| EntityError::persistence(error.to_string()))
+    Ok(persisted_to_domain(persisted))
 }
 
 /// Move a validated persisted payload into the policy-owned job representation.
-///
-/// The events that stored one entity document once share it again, in one
-/// allocation, as the write that queued them did.
-///
-/// # Errors
-///
-/// Returns [`PendingSideEffectPayloadError::DanglingEntityDocument`] when an
-/// event refers to an entity document no earlier event of the job stores.
-fn persisted_to_domain(persisted: PersistedBatchSideEffectJob) -> Result<BatchSideEffectJob, PendingSideEffectPayloadError> {
+fn persisted_to_domain(persisted: PersistedBatchSideEffectJob) -> BatchSideEffectJob {
     let temporal_entities = persisted
         .temporal_entities
         .into_iter()
         .map(|temporal| (Arc::new(temporal.id), Arc::new(temporal.expanded)))
         .collect();
-
-    let (events, documents): (Vec<PersistedChangeEvent>, Vec<Option<PersistedEntityDocument>>) = persisted
-        .change_events
-        .into_iter()
-        .map(|mut event| {
-            let document = event.current_payload.take();
-            (event, document)
-        })
-        .unzip();
-    let current_payloads = resolve_entity_documents(documents)?;
-
-    let change_events = events
-        .into_iter()
-        .zip(current_payloads)
-        .map(|(pce, current_payload)| {
-            let sys_attrs_snapshot = pce.sys_attrs_snapshot.map(|s| SysAttrsSnapshot {
-                created_at: s.created_at,
-                modified_at: s.modified_at,
-                expires_at: s.expires_at,
-            });
-            ChangeEvent::builder()
-                .entity_id(pce.entity_id)
-                .entity_types(pce.entity_types)
-                .trigger_reason(pce.trigger_reason)
-                .changed_attributes(pce.changed_attributes)
-                .changed_dataset_id(pce.changed_dataset_id)
-                .occurred_at(pce.occurred_at)
-                .entity_snapshot(pce.entity_snapshot)
-                .previous_attributes(pce.previous_attributes)
-                .sys_attrs_snapshot(sys_attrs_snapshot)
-                .origin(pce.origin)
-                .current_payload(current_payload)
-                .build()
-        })
-        .collect();
-
-    Ok(BatchSideEffectJob {
+    let change_events = persisted.change_events.into_iter().map(domain_change_event).collect();
+    BatchSideEffectJob {
         temporal_entities,
         change_events,
-    })
+    }
+}
+
+/// Move one persisted change event into the change it records.
+fn domain_change_event(persisted: PersistedChangeEvent) -> ChangeEvent {
+    let sys_attrs_snapshot = persisted.sys_attrs_snapshot.map(|s| SysAttrsSnapshot {
+        created_at: s.created_at,
+        modified_at: s.modified_at,
+        expires_at: s.expires_at,
+    });
+    let instances = persisted
+        .instances
+        .into_iter()
+        .map(|instance| AttributeChange {
+            key: AttributeInstanceKey {
+                attr: instance.attribute,
+                dataset_id: instance.dataset_id,
+            },
+            kind: instance.kind,
+        })
+        .collect();
+    ChangeEvent::builder()
+        .entity_id(persisted.entity_id)
+        .entity_types(persisted.entity_types)
+        .change(EntityChange::new(persisted.lifecycle, instances))
+        .occurred_at(persisted.occurred_at)
+        .entity_snapshot(persisted.entity_snapshot)
+        .previous_attributes(persisted.previous_attributes)
+        .sys_attrs_snapshot(sys_attrs_snapshot)
+        .origin(persisted.origin)
+        .current_payload(persisted.current_payload.map(Arc::new))
+        .build()
 }
 
 #[cfg(test)]

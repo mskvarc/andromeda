@@ -1,15 +1,16 @@
 //! Temporal lifecycle and query policy service.
 
 use crate::{
+    instance_limits::TemporalInstanceLimits,
     linked::candidates::TemporalLinkedCandidate,
     port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator, service_ports::TemporalServicePorts},
     remote_linked::RemoteTemporalLinkedSource,
 };
 use andromeda_context_commit::committer::ContextCommitter;
-use andromeda_entity::port::reader::EntityReader;
+use andromeda_entity::port::{reader::EntityReader, retry_delay::RetryDelay};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_query::temporal::{last_n::LastNOrigin, window::TimeInterval};
+use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
@@ -34,10 +35,12 @@ pub struct TemporalService {
     pub(crate) writes: Arc<dyn ContextCommitter>,
     /// Base-entity reads used for type metadata and residual completion.
     pub(crate) entity_reader: Arc<dyn EntityReader>,
+    /// The wait between two attempts of a write a concurrent writer superseded.
+    pub(crate) retry_delay: Arc<dyn RetryDelay>,
     /// JSON-LD processor used by query compilation and representation compaction.
     pub(crate) engine: JsonLdEngine,
-    /// Broker safety cap applied when the client omits `lastN`.
-    pub(crate) default_last_n: u32,
+    /// The clause 6.3.10 page sizes of instance-returning reads.
+    pub(crate) instance_limits: TemporalInstanceLimits,
     /// The maximum history instances one delete-by-query may remove before it is
     /// refused with `TooManyResults` (the `temporal_delete_by_query` extension).
     pub(crate) delete_by_query_max_matches: u64,
@@ -64,7 +67,7 @@ pub enum CreateOrUpdateResult {
 pub struct TemporalReadResult {
     /// The compacted temporal entity JSON payload.
     pub value: Value,
-    /// Range metadata present when system truncation occurred.
+    /// Range metadata, present when the response is a partial page.
     pub range: Option<TemporalRange>,
     /// The Linked Entities the representation names, read off it before any
     /// format projection narrowed it (clause 4.5.23). A caller that joins
@@ -73,17 +76,16 @@ pub struct TemporalReadResult {
     pub linked_candidates: Vec<TemporalLinkedCandidate>,
 }
 
-/// Neutral metadata needed by the HTTP binding to construct temporal `Content-Range`.
+/// Neutral metadata the HTTP binding builds a temporal `Content-Range` from
+/// (clause 6.3.10).
 #[derive(Debug, Clone)]
 pub struct TemporalRange {
     /// Compiled temporal interval used by the read.
     pub interval: TimeInterval,
-    /// Observed minimum and maximum included in the representation.
+    /// The least and most recent instants the partial response carries.
     pub observed: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    /// Maximum partition count when the reader supplied it.
-    pub partition_total: Option<i64>,
-    /// Whether `lastN` came from the caller or the broker's safety cap.
-    pub last_n_origin: LastNOrigin,
+    /// The direction the remainder of the response is paged in.
+    pub direction: PageDirection,
 }
 
 /// Warning collected when a per-entity temporal query step fails non-fatally.
@@ -101,9 +103,9 @@ pub struct TemporalQueryResult {
     pub entities: Vec<Value>,
     /// Total entity count when the `count` option was requested.
     pub total_count: Option<i64>,
-    /// Whether any entity's history was truncated by the system lastN cap.
+    /// Whether the page cut the history of any entity short.
     pub any_truncated: bool,
-    /// Range metadata when at least one entity was system-truncated.
+    /// Range metadata, present when the response is a partial page.
     pub range: Option<TemporalRange>,
     /// Non-fatal warnings encountered during per-entity processing.
     pub warnings: Vec<TemporalQueryWarning>,
@@ -125,7 +127,7 @@ impl TemporalService {
     pub fn new(
         ports: TemporalServicePorts,
         engine: JsonLdEngine,
-        default_last_n: u32,
+        instance_limits: TemporalInstanceLimits,
         delete_by_query_max_matches: u64,
         aggregation_grouping_max_groups: u64,
         remote_temporal_linked: Option<Arc<dyn RemoteTemporalLinkedSource>>,
@@ -136,6 +138,7 @@ impl TemporalService {
             mutation_barrier,
             mutator,
             writes,
+            retry_delay,
         } = ports;
         TemporalService {
             reader,
@@ -143,8 +146,9 @@ impl TemporalService {
             mutator,
             writes,
             entity_reader,
+            retry_delay,
             engine,
-            default_last_n,
+            instance_limits,
             delete_by_query_max_matches,
             aggregation_grouping_max_groups,
             remote_temporal_linked,

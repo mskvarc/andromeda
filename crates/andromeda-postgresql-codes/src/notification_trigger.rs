@@ -1,14 +1,13 @@
-//! The persisted trigger condition of one notification record.
+//! The persisted trigger conditions a subscription listens for.
 
 use crate::{compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
-    /// The change that made a notification due (clause 5.3.3).
+    /// A condition a subscription listens for (clause 5.2.12).
     ///
-    /// The same vocabulary serves both sides of clause 5.3.3 — the conditions a
-    /// subscription listens for and the one condition an emitted change carries
-    /// — so a subscription's stored trigger set and a queued notification's
-    /// trigger are numbered from one registry rather than two.
+    /// A queued notification does not store a trigger: one change raises any
+    /// number of them, and what it stores is the change itself -- see
+    /// `EntityLifecycleCode` and `AttributeChangeKindCode`.
     ///
     /// The labels are the specification's camel-case tokens, since these are
     /// the values a subscription document carries on the wire.

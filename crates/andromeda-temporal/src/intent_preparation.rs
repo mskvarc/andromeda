@@ -53,7 +53,7 @@ pub(crate) fn prepare(
     let mut selection_value = None;
     for consequence in history {
         match consequence {
-            HistoryRecord::Observations(payload) => {
+            HistoryRecord::Observations(payload) | HistoryRecord::EvolutionInstances(payload) => {
                 append_payload_entries(payload, recorded_at, &mut entries)?;
                 selection_value = Some(Value::clone(payload));
             }

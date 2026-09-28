@@ -31,8 +31,8 @@ use crate::{
         prepare::PreparedEntity,
     },
     error::EntityError,
-    expanded_member::{unwrap_expanded_ref, written_attribute_names},
-    notification_plan::attribute_change_groups,
+    expanded_member::unwrap_expanded_ref,
+    notification_plan::modification,
     side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
@@ -144,18 +144,11 @@ impl EntityService {
                 let Some(payload) = payloads.get(&id) else {
                     continue;
                 };
-                let changed = match written_attribute_names(payload) {
-                    Ok(changed) => changed,
-                    Err(error) => {
-                        errors.push((id, error));
-                        continue;
-                    }
-                };
                 // clone: `Arc` ref-count bumps; the payload is reused for every
                 // attempt this entity needs.
                 let write = match snapshots.get(&id) {
                     Some(snapshot) => self.replacement_write(target, id, payload, &snapshot.payload, snapshot.modified_at, now),
-                    None => self.chunk_insert_payload(target, id, Arc::clone(payload), changed, Precondition::MustNotExist, now),
+                    None => self.chunk_insert_payload(target, id, Arc::clone(payload), Precondition::MustNotExist, now),
                 };
                 match write {
                     Ok(write) => retry_writes.push(write),
@@ -237,8 +230,8 @@ impl EntityService {
 
             // Upsert-update mirrors the single attribute update (clause 5.6.9):
             // the per-attribute triggers, partitioned from the before/after diff.
-            let groups = match attribute_change_groups(existing, &merged) {
-                Ok(groups) => groups,
+            let change = match modification(existing, &merged) {
+                Ok(change) => change,
                 Err(error) => {
                     errors.push((id, error));
                     continue;
@@ -256,7 +249,7 @@ impl EntityService {
                         overwrite: OverwritePolicy::Overwrite,
                     },
                 },
-                &groups,
+                change,
                 Precondition::MustExist,
                 now,
             ) {
@@ -294,13 +287,7 @@ impl EntityService {
         let mut prepared = prepared;
         match drop_deletion_sentinels(&mut prepared.expanded) {
             DroppedSentinels::Unchanged => self.chunk_insert(target, prepared, Precondition::None, now),
-            DroppedSentinels::Dropped => {
-                let payload = Arc::new(prepared.expanded);
-                match written_attribute_names(&payload) {
-                    Ok(changed_attributes) => self.chunk_insert_payload(target, prepared.id, payload, changed_attributes, Precondition::None, now),
-                    Err(error) => Err(Box::new((prepared.id, error))),
-                }
-            }
+            DroppedSentinels::Dropped => self.chunk_insert_payload(target, prepared.id, Arc::new(prepared.expanded), Precondition::None, now),
         }
     }
 
@@ -323,8 +310,8 @@ impl EntityService {
         modified_at: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
-        let groups = match attribute_change_groups(previous, payload) {
-            Ok(groups) => groups,
+        let change = match modification(previous, payload) {
+            Ok(change) => change,
             Err(error) => return Err(Box::new((id, error))),
         };
         self.chunk_update(
@@ -338,7 +325,7 @@ impl EntityService {
                     overwrite: OverwritePolicy::Overwrite,
                 },
             },
-            &groups,
+            change,
             Precondition::UnchangedSince(modified_at),
             now,
         )

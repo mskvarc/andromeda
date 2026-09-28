@@ -52,10 +52,11 @@ pub enum TemporalNotFoundReason {
         /// The rendered instance identifier that selected no instance.
         instance: String,
     },
-    /// An `attrs` filter selected no temporal data on the entity (clause 5.7.2).
-    #[error("no temporal data found for the specified attributes on entity {entity}")]
-    NoDataForAttributes {
-        /// The entity the filter was applied to.
+    /// The temporal window or the `attrs` selection left no instance of the
+    /// entity at all (clause 5.7.3.4, step S1).
+    #[error("no temporal data of entity {entity} matches the requested time interval and attributes")]
+    NoInstanceSelected {
+        /// The entity the restriction was applied to.
         entity: Uri,
     },
     /// A projection left no member of the entity's temporal representation

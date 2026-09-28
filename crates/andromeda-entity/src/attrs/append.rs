@@ -6,7 +6,7 @@ use crate::{
     attrs::attribute_write::payload_write,
     error::EntityError,
     expanded_member::{unwrap_expanded_ref, written_attribute_names, written_entity_types},
-    notification_plan::attribute_change_groups,
+    notification_plan::modification,
     write_kind::AppendAttributes,
 };
 use andromeda_context_commit::history_record::mutation_history;
@@ -76,8 +76,8 @@ impl EntityService {
                 // the notification's `changedAttributes`; the entity's other
                 // attributes did not change.
                 let types = written_entity_types(&merged)?;
-                let groups = attribute_change_groups(previous, &merged)?;
-                let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
+                let change = modification(previous, &merged)?;
+                let plan = self.plan_notifications(target, &entity_uri, &types, change, Some(&merged), Some(previous));
 
                 let addressed = AddressedInstances::EntityFragment {
                     fragment: &expanded,

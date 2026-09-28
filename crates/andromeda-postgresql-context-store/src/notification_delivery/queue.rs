@@ -138,10 +138,8 @@ fn entry(delivery: ClaimedDelivery) -> DeliveryEntry {
                 .key(NotificationEventKey::from(delivery.event_key))
                 .write_id(delivery.write_id)
                 .event_ordinal(delivery.event_ordinal)
-                .trigger(delivery.trigger)
+                .change(delivery.change)
                 .entity_id(delivery.entity_id)
-                .changed_attributes(delivery.changed_attributes)
-                .changed_dataset_id(delivery.changed_dataset_id)
                 .entity_snapshot(delivery.entity_snapshot)
                 .previous_snapshot(delivery.previous_snapshot)
                 .created_at(delivery.created_at)
@@ -158,7 +156,7 @@ mod tests {
     };
     use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+    use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use andromeda_notification::{
         delivery_claim::DeliveryClaim,
         delivery_entry::DeliveryKey,
@@ -178,10 +176,8 @@ mod tests {
             event_key: 3,
             write_id: WriteId::from_uuid(Uuid::nil()),
             event_ordinal: WriteOrdinal::at(2),
-            trigger: NotificationTrigger::EntityCreated,
+            change: EntityChange::new(EntityLifecycle::Created, Vec::new()),
             entity_id: "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"),
-            changed_attributes: Vec::new(),
-            changed_dataset_id: None,
             entity_snapshot: None,
             previous_snapshot: None,
             created_at: Utc::now(),
@@ -209,7 +205,7 @@ mod tests {
         pretty_assertions::assert_eq!(entry.attempt_count, 1);
         pretty_assertions::assert_eq!(entry.event.key, NotificationEventKey::from(3_i64));
         pretty_assertions::assert_eq!(entry.event.event_ordinal, WriteOrdinal::at(2));
-        pretty_assertions::assert_eq!(entry.event.trigger, NotificationTrigger::EntityCreated);
+        pretty_assertions::assert_eq!(entry.event.change.lifecycle, EntityLifecycle::Created);
     }
 
     /// An unreadable row is still leased to the worker, so it reaches the

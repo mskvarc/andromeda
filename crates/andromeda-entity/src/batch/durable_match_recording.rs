@@ -1,12 +1,16 @@
 //! Every batch write records the durable subscription matches its own live
 //! notification would produce, with the per-attribute triggers its single-entity
-//! sibling carries (clauses 5.6.7 to 5.6.10, reported under clause 5.2.12).
+//! sibling carries (clauses 5.6.7 to 5.6.10, reported under clause 5.2.12):
+//! one match per entity and subscription, carrying the whole change
+//! (clauses 5.5.11.0 and 5.8.6).
 //!
 //! These tests commit each batch operation against the shared recording harness
 //! and read the matches — and, on the asynchronous path, the deferred change
 //! events — off the [`AtomicWrite`] the committer captured. They guard two
 //! defects the schema overhaul left open: a batch write that recorded no durable
-//! match at all, and one that collapsed every trigger to `entityUpdated`.
+//! match at all, and one that collapsed every trigger to `entityUpdated` -- and
+//! a third: a write that recorded one match per raised trigger, notifying the
+//! same subscription several times for one change.
 
 use crate::{
     admission_fixture::admitted_batch,
@@ -26,7 +30,7 @@ use crate::{
     side_effect::SideEffectPlacement,
     write_kind::{BatchCreate, BatchMerge, BatchUpdate, BatchUpsert},
 };
-use andromeda_context_commit::atomic_write::AtomicWrite;
+use andromeda_context_commit::{atomic_write::AtomicWrite, subscription_match::SubscriptionMatch};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::selection::OverwritePolicy, notification::NotificationTrigger};
 use pretty_assertions::assert_eq;
@@ -43,24 +47,23 @@ fn building_entity(value: &str) -> Entity {
     .expect("the fixture entity is valid")
 }
 
-/// The triggers the write is owed a durable match for, in submission order.
-fn match_triggers(write: &AtomicWrite) -> Vec<NotificationTrigger> {
-    write.subscription_matches.iter().map(|matched| matched.trigger).collect()
-}
-
-/// Assert the write carries exactly one match with the given trigger and changed
-/// attribute against the fixture subscription.
-fn assert_match(write: &AtomicWrite, trigger: NotificationTrigger, changed: &str) {
+/// The one match the write owes the fixture subscription (clause 5.8.6).
+fn single_match(write: &AtomicWrite) -> &SubscriptionMatch {
     assert_eq!(
         write.subscription_matches.len(),
         1,
-        "one matching subscription is owed one notification: {:?}",
-        match_triggers(write)
+        "one matching subscription is owed one notification per change"
     );
-    let matched = &write.subscription_matches[0];
+    &write.subscription_matches[0]
+}
+
+/// Assert the write carries exactly one match against the fixture
+/// subscription, raising `triggers` over the one `changed` attribute.
+fn assert_match(write: &AtomicWrite, triggers: &[NotificationTrigger], changed: &str) {
+    let matched = single_match(write);
     assert_eq!(matched.subscription_key, subscription_key());
-    assert_eq!(matched.trigger, trigger);
-    assert_eq!(matched.changed_attrs, vec![attribute_name(changed)]);
+    assert_eq!(matched.change.triggers(), triggers);
+    assert_eq!(matched.change.attributes(), vec![&attribute_name(changed)]);
     assert!(matched.entity_snapshot.is_some(), "the durable match carries the post-mutation snapshot");
 }
 
@@ -74,15 +77,10 @@ async fn batch_create_records_an_entity_created_match_inline() {
         .expect("the batch create lands");
 
     let write = single_recorded_write(&recorded);
-    assert_eq!(
-        match_triggers(&write),
-        vec![NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated]
-    );
-    assert!(
-        write
-            .subscription_matches
-            .iter()
-            .all(|matched| matched.changed_attrs == vec![attribute_name(CATEGORY_IRI)])
+    assert_match(
+        &write,
+        &[NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated],
+        CATEGORY_IRI,
     );
     assert!(write.side_effects.is_none(), "an inline write defers no job");
 }
@@ -100,9 +98,10 @@ async fn batch_create_records_the_match_and_defers_no_event_when_enqueued() {
     // The durable match commits with the entity row even on the asynchronous
     // path, so the deferred job owes no notification: carrying the change as
     // well would notify it again when a live-delivery broker drains the job.
-    assert_eq!(
-        match_triggers(&write),
-        vec![NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated]
+    assert_match(
+        &write,
+        &[NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated],
+        CATEGORY_IRI,
     );
     let job = write.side_effects.as_ref().expect("an enqueued write carries a deferred job");
     assert_eq!(job.temporal_entities.len(), 1, "the observation is still deferred to the worker");
@@ -121,11 +120,15 @@ async fn a_live_delivery_batch_create_defers_its_changes_with_the_resulting_enti
     let write = single_recorded_write(&recorded);
     assert!(write.subscription_matches.is_empty(), "a live-delivery broker records no durable match");
     let job = write.side_effects.as_ref().expect("an enqueued write carries a deferred job");
-    let deferred: Vec<NotificationTrigger> = job.change_events.iter().map(|event| event.trigger_reason).collect();
-    assert_eq!(deferred, vec![NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated]);
+    let deferred: Vec<Vec<NotificationTrigger>> = job.change_events.iter().map(|event| event.change.triggers()).collect();
+    assert_eq!(
+        deferred,
+        vec![vec![NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated]],
+        "one write defers one change event, raising every trigger it owes"
+    );
     assert!(
         job.change_events.iter().all(|event| event.current_payload.is_some()),
-        "each owed change carries the entity the write left behind"
+        "the owed change carries the entity the write left behind"
     );
 }
 
@@ -146,7 +149,7 @@ async fn batch_update_records_an_attribute_updated_match() {
     let write = single_recorded_write(&recorded);
     // The overwritten attribute already existed, so the batch update raises
     // attributeUpdated, not the coarse entityUpdated the defect produced.
-    assert_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
+    assert_match(&write, &[NotificationTrigger::AttributeUpdated], CATEGORY_IRI);
 }
 
 #[tokio::test]
@@ -159,7 +162,7 @@ async fn batch_merge_records_an_attribute_updated_match() {
         .expect("the batch merge lands");
 
     let write = single_recorded_write(&recorded);
-    assert_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
+    assert_match(&write, &[NotificationTrigger::AttributeUpdated], CATEGORY_IRI);
 }
 
 #[tokio::test]
@@ -178,7 +181,7 @@ async fn batch_upsert_replace_of_an_existing_entity_records_an_attribute_updated
         .expect("the batch upsert lands");
 
     let write = single_recorded_write(&recorded);
-    assert_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
+    assert_match(&write, &[NotificationTrigger::AttributeUpdated], CATEGORY_IRI);
 }
 
 #[tokio::test]
@@ -197,7 +200,7 @@ async fn batch_upsert_update_of_an_existing_entity_records_an_attribute_updated_
         .expect("the batch upsert lands");
 
     let write = single_recorded_write(&recorded);
-    assert_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
+    assert_match(&write, &[NotificationTrigger::AttributeUpdated], CATEGORY_IRI);
 }
 
 #[tokio::test]
@@ -237,14 +240,13 @@ async fn batch_delete_records_attribute_deleted_and_entity_deleted_matches() {
         .expect("the batch delete completes");
 
     let write = single_recorded_write(&recorded);
-    // Clause 5.6.10: one attributeDeleted naming every attribute the entity took
-    // with it, then one entityDeleted.
-    assert_eq!(
-        match_triggers(&write),
-        vec![NotificationTrigger::AttributeDeleted, NotificationTrigger::EntityDeleted],
-        "a batch delete owes both an attributeDeleted and an entityDeleted match"
+    // Clause 5.6.10: one match, raising entityDeleted together with the
+    // attributeDeleted of every attribute the entity took with it.
+    assert_match(
+        &write,
+        &[NotificationTrigger::EntityDeleted, NotificationTrigger::AttributeDeleted],
+        CATEGORY_IRI,
     );
-    assert_eq!(write.subscription_matches[0].changed_attrs, vec![attribute_name(CATEGORY_IRI)]);
 }
 
 #[tokio::test]
@@ -256,10 +258,11 @@ async fn batch_delete_records_matches_and_defers_nothing_when_enqueued() {
         .expect("the batch delete completes");
 
     let write = single_recorded_write(&recorded);
-    assert_eq!(
-        match_triggers(&write),
-        vec![NotificationTrigger::AttributeDeleted, NotificationTrigger::EntityDeleted],
-        "the durable matches commit with the delete even on the asynchronous path"
+    // The durable match commits with the delete even on the asynchronous path.
+    assert_match(
+        &write,
+        &[NotificationTrigger::EntityDeleted, NotificationTrigger::AttributeDeleted],
+        CATEGORY_IRI,
     );
     assert!(write.side_effects.is_none(), "a delete whose notifications are queued at commit owes no job");
 }
@@ -275,8 +278,8 @@ async fn a_live_delivery_batch_delete_defers_its_events_when_enqueued() {
     let write = single_recorded_write(&recorded);
     assert!(write.subscription_matches.is_empty(), "a live-delivery broker records no durable match");
     let job = write.side_effects.as_ref().expect("an enqueued delete carries a deferred job");
-    let deferred: Vec<NotificationTrigger> = job.change_events.iter().map(|event| event.trigger_reason).collect();
-    assert_eq!(deferred, vec![NotificationTrigger::AttributeDeleted, NotificationTrigger::EntityDeleted]);
+    let deferred: Vec<Vec<NotificationTrigger>> = job.change_events.iter().map(|event| event.change.triggers()).collect();
+    assert_eq!(deferred, vec![vec![NotificationTrigger::EntityDeleted, NotificationTrigger::AttributeDeleted]]);
     assert!(
         job.change_events
             .iter()

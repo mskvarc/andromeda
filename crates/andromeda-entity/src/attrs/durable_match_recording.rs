@@ -23,9 +23,9 @@ use crate::{
     },
     write_kind::{AppendAttributes, PartialUpdateAttribute, ReplaceAttribute, UpdateAttributes},
 };
-use andromeda_ngsi_ld_model::{
-    expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
-    notification::NotificationTrigger,
+use andromeda_ngsi_ld_model::expanded::{
+    attribute_change::AttributeChangeKind,
+    mutation::selection::{DatasetSelection, OverwritePolicy},
 };
 use serde_json::json;
 
@@ -39,7 +39,7 @@ async fn append_attrs_records_an_attribute_created_match() {
         .expect("the append lands");
 
     let write = single_recorded_write(&recorded);
-    assert_single_match(&write, NotificationTrigger::AttributeCreated, NAME_IRI);
+    assert_single_match(&write, &[(AttributeChangeKind::Created, NAME_IRI)]);
 }
 
 #[tokio::test]
@@ -49,7 +49,7 @@ async fn update_attrs_records_an_attribute_updated_match() {
     service.update_attrs(&live_target(), &entity_uri(), admitted).await.expect("the update lands");
 
     let write = single_recorded_write(&recorded);
-    assert_single_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
+    assert_single_match(&write, &[(AttributeChangeKind::Updated, CATEGORY_IRI)]);
 }
 
 #[tokio::test]
@@ -63,7 +63,7 @@ async fn partial_update_attr_records_an_attribute_updated_match() {
         .expect("the partial update lands");
 
     let write = single_recorded_write(&recorded);
-    assert_single_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
+    assert_single_match(&write, &[(AttributeChangeKind::Updated, CATEGORY_IRI)]);
 }
 
 #[tokio::test]
@@ -81,7 +81,7 @@ async fn delete_attr_records_an_attribute_deleted_match() {
         .expect("the delete lands");
 
     let write = single_recorded_write(&recorded);
-    assert_single_match(&write, NotificationTrigger::AttributeDeleted, CATEGORY_IRI);
+    assert_single_match(&write, &[(AttributeChangeKind::Deleted, CATEGORY_IRI)]);
 }
 
 #[tokio::test]
@@ -95,5 +95,5 @@ async fn replace_attr_records_an_attribute_updated_match() {
         .expect("the replace lands");
 
     let write = single_recorded_write(&recorded);
-    assert_single_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
+    assert_single_match(&write, &[(AttributeChangeKind::Updated, CATEGORY_IRI)]);
 }

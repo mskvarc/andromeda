@@ -5,7 +5,7 @@ use crate::{
     attrs::attribute_write::{MutatedEntity, payload_write},
     error::EntityError,
     expanded_member::{attr_name_of, written_entity_types},
-    notification_plan::attribute_change_groups,
+    notification_plan::modification,
 };
 use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
 use andromeda_context_space::context_target::ContextTarget;
@@ -98,8 +98,8 @@ impl EntityService {
 
                 let merged = Arc::new(existing);
                 let types = written_entity_types(&merged)?;
-                let groups = attribute_change_groups(previous, &merged)?;
-                let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
+                let change = modification(previous, &merged)?;
+                let plan = self.plan_notifications(target, &entity_uri, &types, change, Some(&merged), Some(previous));
 
                 let write = payload_write(&entity_uri, &merged, history, plan.matches)?;
                 Ok((write, MutatedEntity { events: plan.events }))

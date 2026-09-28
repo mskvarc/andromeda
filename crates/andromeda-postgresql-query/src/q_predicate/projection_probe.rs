@@ -3,7 +3,7 @@
 //!
 //! One alias, one place: a predicate compiled here and a predicate compiled by
 //! a linked-entity hop read the same relation under the same name, so a value
-//! condition written against [`probe_column`] composes into either without
+//! condition written against [`projection_column`] composes into either without
 //! knowing which.
 
 use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, instance_expiry::instance_stands};
@@ -18,7 +18,7 @@ struct Cav;
 
 /// A `"cav"."column"` reference into the probe's projection scan.
 #[must_use]
-pub fn probe_column(column: CurrentAttributeValues) -> SimpleExpr {
+pub(crate) fn projection_column(column: CurrentAttributeValues) -> SimpleExpr {
     SeaExpr::col((Cav, column))
 }
 
@@ -47,12 +47,12 @@ pub fn exists_on_projection(id: AttributeNameKey, value: Condition, rows: &Entit
     probe
         .expr(int_literal(1))
         .from(rows.table(CurrentAttributeValues::Table).alias(Cav))
-        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameKey)).eq(id.get()))
+        .and_where(SeaExpr::expr(projection_column(CurrentAttributeValues::AttributeNameKey)).eq(id.get()))
         // Clause 4.22: a past-due instance neither carries the attribute nor
         // holds its value, whether or not the sweep has deleted it yet.
-        .and_where(instance_stands(probe_column(CurrentAttributeValues::ExpiresAt)))
+        .and_where(instance_stands(projection_column(CurrentAttributeValues::ExpiresAt)))
         .cond_where(value)
-        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(rows.entity_key_column()));
+        .and_where(SeaExpr::expr(projection_column(CurrentAttributeValues::EntityKey)).eq(rows.entity_key_column()));
     Condition::all().add(SeaExpr::exists(probe))
 }
 
@@ -61,7 +61,7 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
-        q_predicate::projection_probe::{attribute_row_exists, exists_on_projection, probe_column},
+        q_predicate::projection_probe::{attribute_row_exists, exists_on_projection, projection_column},
     };
     use andromeda_postgresql_schema::current::{CurrentAttributeValues, Entities};
     use sea_query::{Condition, ExprTrait, PostgresQueryBuilder, Query};
@@ -93,7 +93,7 @@ mod tests {
     /// so its operands bind after the dictionary key and before nothing.
     #[test]
     fn a_value_probe_places_its_condition_between_the_attribute_key_and_the_correlation() {
-        let value = Condition::all().add(probe_column(CurrentAttributeValues::ValueString).eq("red"));
+        let value = Condition::all().add(projection_column(CurrentAttributeValues::ValueString).eq("red"));
         let sql = render(exists_on_projection(AttributeNameKey::from(7), value, &EntityRowRefs::unaliased(None)));
         assert!(
             sql.contains(

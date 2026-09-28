@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 /// job, or `None` when it records none.
 pub(crate) fn recorded_observation(write: &AtomicWrite) -> Option<&Value> {
     let inline = write.history.iter().filter_map(|record| match record {
-        HistoryRecord::Observations(observed) => Some(observed.as_ref()),
+        HistoryRecord::Observations(observed) | HistoryRecord::EvolutionInstances(observed) => Some(observed.as_ref()),
         HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
     });
     let deferred = write

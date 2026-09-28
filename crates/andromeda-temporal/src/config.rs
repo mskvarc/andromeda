@@ -1,6 +1,6 @@
 //! Temporal policy configuration.
 
-use crate::storage_policy::TemporalStoragePolicy;
+use crate::{instance_limits::TemporalInstanceLimits, storage_policy::TemporalStoragePolicy};
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -20,6 +20,13 @@ pub const DEFAULT_CHUNK_INTERVAL: HumanDuration = HumanDuration::from_days(7);
 /// mutated in place.
 pub const DEFAULT_COLUMNSTORE_AFTER: HumanDuration = HumanDuration::from_days(30);
 
+/// The largest `temporal.max_last_n` a deployment may configure.
+///
+/// Every instance of a temporal page is rendered and compacted in memory before
+/// the response is written, so the ceiling bounds the work one request can ask
+/// of the broker regardless of how an operator tunes the maximum below it.
+pub const MAX_LAST_N_CEILING: u32 = 5000;
+
 /// The number of seconds in one day, the grain the history-partition day fields
 /// are constrained to.
 const SECONDS_PER_DAY: u64 = 86_400;
@@ -30,6 +37,15 @@ pub enum TemporalConfigError {
     /// The default `lastN` limit was configured as zero.
     #[error("temporal.default_last_n must be at least 1")]
     ZeroDefaultLastN,
+    /// The `lastN` maximum was configured below the default page.
+    ///
+    /// A read without `lastN` is paged at the default, and that page has to be
+    /// one a client could also ask for explicitly.
+    #[error("temporal.max_last_n must be at least temporal.default_last_n")]
+    MaxLastNBelowDefault,
+    /// The `lastN` maximum was configured above [`MAX_LAST_N_CEILING`].
+    #[error("temporal.max_last_n must not exceed {MAX_LAST_N_CEILING}")]
+    MaxLastNAboveCeiling,
     /// Expiry reconciliation cadence was configured as zero.
     #[error("temporal.expiration_check_interval must be greater than zero")]
     ZeroExpirationCheckInterval,
@@ -93,14 +109,27 @@ pub struct TemporalConfig {
     /// Native or deferred append topology selected for this broker profile.
     #[toml_comment(inline)]
     pub append_mode: TemporalAppendMode,
-    /// System default `lastN` cap applied when a temporal query omits `lastN`.
+    /// Instances per attribute a temporal read without `lastN` returns before
+    /// it is paged forwards (clause 6.3.10: "If no limits are specified, a
+    /// default limit is enforced, depending on implementation specific
+    /// configurations").
     ///
-    /// Clause 5.2.21 leaves the default implementation-defined; it defaults to
-    /// 100, a generous page for production use. The ETSI conformance suite has a
-    /// precondition of pagination at 20 instances per attribute (a default query
-    /// must page rather than return every instance), so a conformance run sets
+    /// Defaults to 100. The ETSI conformance suite has a precondition of
+    /// pagination at 20 instances per attribute (a default query must page
+    /// rather than return every instance), so a conformance run sets
     /// `ANDROMEDA__TEMPORAL__DEFAULT_LAST_N=19` to sit just under that threshold.
     pub default_last_n: u32,
+    /// The largest `lastN` answered in full; a larger one is narrowed to this
+    /// many instances per attribute and paged backwards with a 206 whose
+    /// `Content-Range` still reports the requested `lastN` (clause 6.3.10).
+    ///
+    /// Defaults to 1000, and may be raised to at most 5000; it must not fall
+    /// below `default_last_n`. The same number bounds the instances that share
+    /// one timestamp at the edge of a page: a page never splits them, and a
+    /// group larger than this is refused with `TooManyResults`. The ETSI
+    /// conformance suite expects a `lastN` of 20 to be paged, so a conformance
+    /// run sets `ANDROMEDA__TEMPORAL__MAX_LAST_N=19` beside the default.
+    pub max_last_n: u32,
     /// Cadence of every `expiresAt` sweep the broker schedules per tenant:
     /// entities (clause 5.2.4), subscriptions (clause 5.8.1.4), context source
     /// registrations (clause 5.9.2.4), snapshots and entity maps, in
@@ -180,6 +209,7 @@ impl Default for TemporalConfig {
         TemporalConfig {
             append_mode: TemporalAppendMode::Native,
             default_last_n: 100,
+            max_last_n: 1000,
             expiration_check_interval: HumanDuration::from_secs(30),
             intent_fallback: HumanDuration::from_secs(1),
             intent_fallback_max: HumanDuration::from_secs(30),
@@ -219,7 +249,8 @@ impl TemporalConfig {
     /// # Errors
     ///
     /// Returns the [`TemporalConfigError`] variant naming the first setting
-    /// that spans no time or no work: a zero `lastN` cap, expiry cadence,
+    /// that spans no time or no work: a zero default `lastN` page, a `lastN`
+    /// maximum below that page or above [`MAX_LAST_N_CEILING`], expiry cadence,
     /// intent fallback cadence, batch size, lease, retry delay, stuck-attempt
     /// threshold, chunk interval, columnstore lag, retention horizon or
     /// retention sweep cadence; a retry ceiling below the retry delay; or a
@@ -228,6 +259,12 @@ impl TemporalConfig {
     pub const fn validate(&self) -> Result<(), TemporalConfigError> {
         if self.default_last_n == 0 {
             return Err(TemporalConfigError::ZeroDefaultLastN);
+        }
+        if self.max_last_n < self.default_last_n {
+            return Err(TemporalConfigError::MaxLastNBelowDefault);
+        }
+        if self.max_last_n > MAX_LAST_N_CEILING {
+            return Err(TemporalConfigError::MaxLastNAboveCeiling);
         }
         if self.expiration_check_interval.is_zero() {
             return Err(TemporalConfigError::ZeroExpirationCheckInterval);
@@ -279,6 +316,15 @@ impl TemporalConfig {
         Ok(())
     }
 
+    /// The page sizes instance-returning temporal reads run under.
+    #[must_use]
+    pub const fn instance_limits(&self) -> TemporalInstanceLimits {
+        TemporalInstanceLimits {
+            default_page: self.default_last_n,
+            maximum: self.max_last_n,
+        }
+    }
+
     /// The storage policy the configuration describes, for the backend to
     /// reconcile.
     ///
@@ -303,7 +349,8 @@ impl TemporalConfig {
 #[cfg(test)]
 mod config_tests {
     use crate::{
-        config::{DEFAULT_COLUMNSTORE_AFTER, TemporalAppendMode, TemporalConfig, TemporalConfigError},
+        config::{DEFAULT_COLUMNSTORE_AFTER, MAX_LAST_N_CEILING, TemporalAppendMode, TemporalConfig, TemporalConfigError},
+        instance_limits::TemporalInstanceLimits,
         storage_policy::TemporalStoragePolicy,
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
@@ -314,6 +361,7 @@ mod config_tests {
         TemporalConfig {
             append_mode: TemporalAppendMode::Native,
             default_last_n: 19,
+            max_last_n: 19,
             expiration_check_interval: HumanDuration::from_secs(30),
             intent_fallback: HumanDuration::from_secs(1),
             intent_fallback_max: HumanDuration::from_secs(30),
@@ -339,6 +387,63 @@ mod config_tests {
     fn the_default_append_mode_is_native() {
         assert_eq!(TemporalConfig::default().append_mode, TemporalAppendMode::Native);
         assert_eq!(TemporalAppendMode::default(), TemporalAppendMode::Native);
+    }
+
+    /// A read without `lastN` pages at 100 instances per attribute and a client
+    /// `lastN` is answered in full up to 1000 unless an operator says otherwise.
+    #[test]
+    fn the_default_page_is_one_hundred_and_the_maximum_one_thousand() {
+        let config = TemporalConfig::default();
+        assert_eq!(config.validate(), Ok(()));
+        assert_eq!(
+            config.instance_limits(),
+            TemporalInstanceLimits {
+                default_page: 100,
+                maximum: 1000
+            }
+        );
+    }
+
+    #[test]
+    fn a_zero_default_page_is_rejected() {
+        let config = TemporalConfig { default_last_n: 0, ..valid() };
+        assert_eq!(config.validate(), Err(TemporalConfigError::ZeroDefaultLastN));
+    }
+
+    /// The default page is one a client could ask for, so the maximum may not
+    /// sit below it.
+    #[test]
+    fn a_maximum_below_the_default_page_is_rejected() {
+        let config = TemporalConfig {
+            default_last_n: 100,
+            max_last_n: 99,
+            ..valid()
+        };
+        assert_eq!(config.validate(), Err(TemporalConfigError::MaxLastNBelowDefault));
+    }
+
+    #[test]
+    fn a_maximum_equal_to_the_default_page_is_accepted() {
+        let config = TemporalConfig {
+            default_last_n: 19,
+            max_last_n: 19,
+            ..valid()
+        };
+        assert_eq!(config.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_maximum_at_the_ceiling_is_accepted_and_one_above_is_rejected() {
+        let at_ceiling = TemporalConfig {
+            max_last_n: MAX_LAST_N_CEILING,
+            ..valid()
+        };
+        assert_eq!(at_ceiling.validate(), Ok(()));
+        let above = TemporalConfig {
+            max_last_n: MAX_LAST_N_CEILING + 1,
+            ..valid()
+        };
+        assert_eq!(above.validate(), Err(TemporalConfigError::MaxLastNAboveCeiling));
     }
 
     #[test]

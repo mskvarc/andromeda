@@ -9,7 +9,7 @@ use crate::{
     expanded_member::written_entity_types,
     merge_fragment::{adapt_member, existing_attribute_types},
     merge_options::MergeOptions,
-    notification_plan::attribute_change_groups,
+    notification_plan::modification,
     write_kind::MergeEntity,
 };
 use andromeda_context_commit::{
@@ -120,8 +120,8 @@ impl EntityService {
                     stamp_attribute_instants(&mut existing, previous, now).map_err(ExpandedEntityError::from)?;
                     let merged = Arc::new(existing);
                     let types = written_entity_types(&merged)?;
-                    let groups = attribute_change_groups(previous, &merged)?;
-                    let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
+                    let change = modification(previous, &merged)?;
+                    let plan = self.plan_notifications(target, &entity_uri, &types, change, Some(&merged), Some(previous));
 
                     let addressed = AddressedInstances::EntityFragment {
                         fragment: &patch_expanded,

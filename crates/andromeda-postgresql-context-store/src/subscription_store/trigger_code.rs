@@ -1,4 +1,5 @@
-//! The number `notification_events.trigger` stores a trigger condition as.
+//! The number a subscription's `notificationTrigger` list stores each trigger
+//! condition as.
 //!
 //! The domain vocabulary of clause 5.3.3 and the migration-owned registry that
 //! numbers it are variant-for-variant identical, and the translation between
@@ -39,7 +40,7 @@ pub const fn trigger_of(code: NotificationTriggerCode) -> NotificationTrigger {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_delivery::trigger_code::{stored_trigger, trigger_of};
+    use crate::subscription_store::trigger_code::{stored_trigger, trigger_of};
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use andromeda_postgresql_codes::notification_trigger::NotificationTriggerCode;
     use strum::IntoEnumIterator;

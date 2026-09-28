@@ -10,11 +10,16 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{cmp::Ordering, collections::HashMap};
 
 /// The precise state transition of one Attribute instance.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// Not a specification token: the kebab-case spelling is the one Andromeda
+/// persists a deferred change under.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum AttributeChangeKind {
     /// The instance was absent and is now present.
     Created,

@@ -23,6 +23,7 @@ use crate::{
         client_query::ClientQuery,
     },
     request::SourcePage,
+    source_walk::SOURCE_PAGE_SIZE,
     term_resolver::TermResolver,
 };
 use andromeda_http_headers::language::LanguageFilter;
@@ -41,9 +42,6 @@ pub mod client_query;
 /// The `options` token asking a source for its system-generated attributes
 /// (clause 4.8; Table 6.3.11-1).
 const SYS_ATTRS_OPTION: &str = "sysAttrs";
-/// The maximum source page the Core API accepts before the hub applies its
-/// own post-merge page window.
-const SOURCE_PAGE_LIMIT: &str = "1000";
 
 /// The query string one registration is sent: the client's parameters,
 /// narrowed to what the registration covers and to what the split-entities
@@ -258,7 +256,9 @@ impl ForwardedQuery {
                     self.push(ForwardedParameter::Offset, page.offset.to_string());
                 }
             }
-            None => self.push(ForwardedParameter::Limit, SOURCE_PAGE_LIMIT.to_owned()),
+            // The page-size hint of a walk that follows the source's `next`
+            // pointers to the end of its answer (clause 5.5.9.1).
+            None => self.push(ForwardedParameter::Limit, SOURCE_PAGE_SIZE.to_string()),
         }
     }
 

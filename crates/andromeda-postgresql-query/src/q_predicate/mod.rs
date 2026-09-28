@@ -74,6 +74,19 @@
 //! `attribute_names` compiles to constant `FALSE` exactly as any other unknown
 //! name does.
 //!
+//! # Temporal `q`
+//!
+//! A temporal query's `q` (clause 5.7.4.4 step S2) is "checked against all the
+//! Attribute instances resulting from the initial filtering performed by the
+//! temporal query", not against current state. The same comparisons then run
+//! over the in-window `attribute_history` rows instead of the projection: the
+//! two relations hold an instance's value in the same typed columns, and an
+//! [`InstanceScan`](crate::q_predicate::instance_scan::InstanceScan) says which
+//! one a compiled `q` reads. Each Query Term is its own existential over the
+//! window's instances of its attribute, honouring the query's `datasetId`
+//! selection and requested Temporal Property, and the AND/OR tree combines
+//! them.
+//!
 //! # Multi-instance semantics
 //!
 //! `EXISTS` matches when *any* row for the attribute satisfies the predicate.
@@ -83,9 +96,12 @@
 
 pub mod attribute_names;
 pub mod fallback;
+pub mod history_window;
+pub mod instance_scan;
 pub mod local_target;
 pub mod projection;
 pub mod projection_probe;
 pub mod structured_target;
 pub mod traversal;
 pub mod typed_column;
+pub mod value_column;

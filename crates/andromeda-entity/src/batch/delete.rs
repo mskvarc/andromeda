@@ -10,8 +10,9 @@
 use crate::{
     EntityService,
     error::EntityError,
-    expanded_member::{stored_attribute_names, stored_entity_types},
+    expanded_member::stored_entity_types,
     notification_fanout::{ChangedEntity, MutationSnapshots},
+    notification_plan::deletion,
     side_effect::SideEffectPlacement,
     sys_attrs::snapshot_with_sys_attrs,
 };
@@ -28,22 +29,18 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{
-    expanded::attribute_change::classify_attribute_changes,
-    notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot},
-};
+use andromeda_ngsi_ld_model::notification::{ChangeOrigin, SysAttrsSnapshot};
 use chrono::Utc;
 use serde_json::Value;
-use std::{slice, sync::Arc};
+use std::sync::Arc;
 
 /// One chunk's successfully deleted identifiers and its per-entity failures.
 pub(super) type DeleteChunkOutcome = (Vec<Uri>, Vec<(Uri, EntityError)>);
 
 impl EntityService {
     /// The durable notification records one deletion owes, mirroring the single
-    /// delete (clause 5.6.6): one `attributeDeleted` naming every attribute the
-    /// entity took with it, then one `entityDeleted`. Both carry the pre-delete
-    /// snapshot as their entity and previous image.
+    /// delete (clause 5.6.6): one per subscription the deletion is owed to,
+    /// carrying the pre-delete snapshot as its entity and previous image.
     ///
     /// The entity snapshot the durable match stores has the clause-4.8 system
     /// attributes embedded when they are known, because the deleted row is gone
@@ -57,8 +54,7 @@ impl EntityService {
         sys_attrs: Option<&SysAttrsSnapshot>,
     ) -> Result<Vec<SubscriptionMatch>, EntityError> {
         let entity_types = stored_entity_types(payload)?;
-        let attr_keys = stored_attribute_names(payload)?;
-        let attribute_changes = classify_attribute_changes(payload, &Value::Null).map_err(EntityError::internal)?;
+        let change = deletion(payload)?;
         let match_snapshot = sys_attrs.map_or_else(|| payload.clone(), |sys_attrs| snapshot_with_sys_attrs(payload, sys_attrs));
         let deleted = ChangedEntity {
             target,
@@ -69,18 +65,7 @@ impl EntityService {
             current: Some(&match_snapshot),
             previous: Some(payload),
         };
-        let mut matches = Vec::new();
-        for change in attribute_changes {
-            matches.extend(self.build_subscription_matches_for_instance(
-                deleted,
-                NotificationTrigger::AttributeDeleted,
-                slice::from_ref(&change.key.attr),
-                change.key.dataset_id.as_ref(),
-                snapshots,
-            ));
-        }
-        matches.extend(self.build_subscription_matches(deleted, NotificationTrigger::EntityDeleted, &attr_keys, snapshots));
-        Ok(matches)
+        Ok(self.build_subscription_matches(deleted, &change, snapshots))
     }
 
     pub(super) async fn batch_delete_chunk(&self, placement: SideEffectPlacement<'_>, chunk: &[Uri]) -> Result<DeleteChunkOutcome, EntityError> {
@@ -168,51 +153,26 @@ impl EntityService {
     }
 }
 
-/// The clause 5.6.10 notifications one deletion raises.
-///
-/// Two events, not one: an `attributeDeleted` subscription has to hear about
-/// every attribute the entity took with it.
+/// The clause 5.6.10 notification one deletion raises: one change carrying
+/// the Entity's deletion and every instance it took with it (clause 5.8.6).
 ///
 /// # Errors
 ///
-/// Reports [`EntityError::Internal`] when the stored payload's types, attribute
-/// names or `datasetId`s cannot be read.
+/// Reports [`EntityError::Internal`] when the stored payload's types or
+/// `datasetId`s cannot be read.
 fn deletion_events(id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Result<Vec<ChangeEvent>, EntityError> {
-    let entity_types = stored_entity_types(payload)?;
-    let attr_keys = stored_attribute_names(payload)?;
-    let attribute_changes = classify_attribute_changes(payload, &Value::Null).map_err(EntityError::internal)?;
-
-    let mut events = Vec::with_capacity(attribute_changes.len() + 1);
-    for change in attribute_changes {
-        events.push(
-            ChangeEvent::builder()
-                .entity_id(id.clone()) // clone: the event owns its identifier
-                .entity_types(entity_types.clone()) // clone: value also needed by the EntityDeleted event
-                .trigger_reason(NotificationTrigger::AttributeDeleted)
-                .occurred_at(Utc::now())
-                .origin(ChangeOrigin::Local)
-                .changed_attributes(vec![change.key.attr])
-                .changed_dataset_id(change.key.dataset_id)
-                .entity_snapshot(Some(payload.clone())) // clone: the event owns its snapshot
-                .previous_attributes(Some(payload.clone())) // clone: the event owns its previous payload
-                .sys_attrs_snapshot(sys_attrs.cloned())
-                .build(),
-        );
-    }
-    events.push(
+    Ok(vec![
         ChangeEvent::builder()
             .entity_id(id.clone()) // clone: the event owns its identifier
-            .entity_types(entity_types)
-            .trigger_reason(NotificationTrigger::EntityDeleted)
+            .entity_types(stored_entity_types(payload)?)
+            .change(deletion(payload)?)
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
-            .changed_attributes(attr_keys)
             .entity_snapshot(Some(payload.clone())) // clone: the event owns its snapshot
             .previous_attributes(Some(payload.clone())) // clone: the event owns its previous payload
             .sys_attrs_snapshot(sys_attrs.cloned())
             .build(),
-    );
-    Ok(events)
+    ])
 }
 
 /// The same events, read off what the delete reported the row held.

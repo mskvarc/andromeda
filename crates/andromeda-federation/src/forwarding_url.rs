@@ -45,11 +45,41 @@ pub(crate) fn forwarding_url(endpoint: &Url, path: &[&str], query_string: &str) 
     Ok(url)
 }
 
+/// The name of the clause 6.3.18 local-scope parameter.
+const LOCAL_PARAMETER: &str = "local";
+
+/// The name of the clause 6.3.10 page-start parameter.
+const OFFSET_PARAMETER: &str = "offset";
+
 /// Append `local=true` (clause 6.3.18) to a forwarded URL, which is how clause
 /// 5.5.13's local scope binds in HTTP when a registration sets `localOnly`.
+///
+/// A URL already naming the local scope is left as it is: the next-page
+/// pointer a source hands back (clause 6.3.10) repeats the parameters of the
+/// request that produced it, and a second `local` would be a malformed
+/// repetition of a single-valued parameter.
 pub(crate) fn with_local_scope(mut url: Url) -> Url {
-    url.query_pairs_mut().append_pair("local", "true");
+    if !url.query_pairs().any(|(name, _)| name == LOCAL_PARAMETER) {
+        url.query_pairs_mut().append_pair(LOCAL_PARAMETER, "true");
+    }
     url
+}
+
+/// The same forwarded URL asking for the page that starts at `offset` (clause
+/// 6.3.10), replacing an `offset` it already carried.
+pub(crate) fn with_offset(url: &Url, offset: u64) -> Url {
+    let kept: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(name, _)| name != OFFSET_PARAMETER)
+        .map(|(name, value)| (name.into_owned(), value.into_owned()))
+        .collect();
+    let mut paged = url.clone(); // clone: every page of a walk is its own URL, and the first one stays the walk's origin
+    paged
+        .query_pairs_mut()
+        .clear()
+        .extend_pairs(kept)
+        .append_pair(OFFSET_PARAMETER, &offset.to_string());
+    paged
 }
 
 /// Build a forwarding URL for entity queries.
@@ -63,9 +93,9 @@ pub(crate) fn build_retrieve_url(endpoint: &Url, entity_id: &Uri, query_string: 
 }
 
 /// Build a forwarding URL for a batch entity query (clause 6.23: POST
-/// `/entityOperations/query`).
-pub(crate) fn build_batch_query_url(endpoint: &Url) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["entityOperations", "query"], "")
+/// `/entityOperations/query`), carrying the page parameters of `query_string`.
+pub(crate) fn build_batch_query_url(endpoint: &Url, query_string: &str) -> Result<Url, FederationError> {
+    forwarding_url(endpoint, &["entityOperations", "query"], query_string)
 }
 
 /// Build a forwarding URL for discovery queries (types, attributes).
@@ -86,7 +116,7 @@ pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &Uri, query
 
 #[cfg(test)]
 mod tests {
-    use crate::forwarding_url::{build_retrieve_url, forwarding_url, with_local_scope};
+    use crate::forwarding_url::{build_retrieve_url, forwarding_url, with_local_scope, with_offset};
     use url::Url;
 
     fn url(raw: &str) -> Url {
@@ -148,13 +178,34 @@ mod tests {
         pretty_assertions::assert_eq!(with_local_scope(built).as_str(), "http://peer/ngsi-ld/v1/entities?type=Vehicle&local=true");
     }
 
+    /// A next-page pointer repeats the local scope of the request that produced
+    /// it, and the scope is not written a second time.
+    #[test]
+    fn the_local_scope_is_not_repeated_on_a_url_already_naming_it() {
+        let paged = url("http://peer/ngsi-ld/v1/entities?type=Vehicle&local=true&offset=1000");
+        pretty_assertions::assert_eq!(with_local_scope(paged).query_pairs().filter(|(name, _)| name == "local").count(), 1);
+    }
+
+    /// Clause 6.3.10: a page is requested by its start, replacing the start the
+    /// previous page was requested with and keeping every other parameter.
+    #[test]
+    fn a_page_start_replaces_the_previous_one() {
+        let first = url("http://peer/ngsi-ld/v1/entityOperations/query?limit=1000");
+        let second = with_offset(&first, 1000);
+        pretty_assertions::assert_eq!(second.as_str(), "http://peer/ngsi-ld/v1/entityOperations/query?limit=1000&offset=1000");
+        pretty_assertions::assert_eq!(
+            with_offset(&second, 2000).as_str(),
+            "http://peer/ngsi-ld/v1/entityOperations/query?limit=1000&offset=2000"
+        );
+    }
+
     #[test]
     fn the_batch_query_url_is_the_entity_operations_query_resource() {
         use crate::forwarding_url::build_batch_query_url;
         for endpoint in ["http://peer", "http://peer/ngsi-ld/v1"] {
             pretty_assertions::assert_eq!(
-                build_batch_query_url(&url(endpoint)).expect("joins").as_str(),
-                "http://peer/ngsi-ld/v1/entityOperations/query",
+                build_batch_query_url(&url(endpoint), "limit=1000").expect("joins").as_str(),
+                "http://peer/ngsi-ld/v1/entityOperations/query?limit=1000",
                 "{endpoint}"
             );
         }

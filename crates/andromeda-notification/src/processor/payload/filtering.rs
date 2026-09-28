@@ -3,6 +3,7 @@
 use andromeda_entity::sys_attrs::expanded_entity_object_mut;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_model::expanded::attribute_change::AttributeChange;
 use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, prefix};
 use serde_json::Value;
 
@@ -60,15 +61,19 @@ pub(super) fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[Uri
     }
 }
 
-pub(super) async fn inject_previous_values(
-    current: &mut Value,
-    previous: &Value,
-    changed_attributes: &[AttributeName],
-    changed_dataset_id: Option<&Uri>,
-    exact_attribute_instance: bool,
-    engine: &JsonLdEngine,
-    context: &ContextSpec,
-) {
+/// Which notified instances a `showChanges` notification reports the
+/// previous value of (clause 5.8.6).
+#[derive(Clone, Copy, Debug)]
+pub(super) enum PreviousValueScope<'a> {
+    /// Every instance of every Attribute: the Entity itself was deleted.
+    EveryInstance,
+    /// Exactly the instances the change touched.
+    Instances(&'a [AttributeChange]),
+}
+
+/// Add the `showChanges` previous member to every notified instance `scope`
+/// selects that the state before the change held.
+pub(super) async fn inject_previous_values(current: &mut Value, previous: &Value, scope: PreviousValueScope<'_>, engine: &JsonLdEngine, context: &ContextSpec) {
     let (Some(curr_obj), Some(prev_obj)) = (current.as_object_mut(), previous.as_object()) else {
         return;
     };
@@ -77,59 +82,55 @@ pub(super) async fn inject_previous_values(
 
     let prepared_context = engine.prepare_term_context(context);
     for key in keys {
-        if !changed_attributes.is_empty() {
-            let expanded_matches = engine
-                .expand_term(&key, &prepared_context)
-                .await
-                .ok()
-                .and_then(|iri| iri.as_str().parse::<AttributeName>().ok())
-                .is_some_and(|name| changed_attributes.contains(&name));
-            let compact_matches = key.parse::<AttributeName>().is_ok_and(|name| changed_attributes.contains(&name));
-            if !expanded_matches && !compact_matches {
-                continue;
+        let datasets: Option<Vec<Option<&str>>> = match scope {
+            PreviousValueScope::EveryInstance => None,
+            PreviousValueScope::Instances(instances) => {
+                let expanded = engine
+                    .expand_term(&key, &prepared_context)
+                    .await
+                    .ok()
+                    .and_then(|iri| iri.as_str().parse::<AttributeName>().ok());
+                let compact = key.parse::<AttributeName>().ok();
+                let changed: Vec<Option<&str>> = instances
+                    .iter()
+                    .filter(|instance| Some(&instance.key.attr) == expanded.as_ref() || Some(&instance.key.attr) == compact.as_ref())
+                    .map(|instance| instance.key.dataset_id.as_ref().map(Uri::as_str))
+                    .collect();
+                if changed.is_empty() {
+                    continue;
+                }
+                Some(changed)
             }
-        }
+        };
 
         if let Some(prev_val) = prev_obj.get(&key)
             && let Some(curr_attr) = curr_obj.get_mut(&key)
         {
-            inject_previous_for_dataset(curr_attr, prev_val, changed_dataset_id, exact_attribute_instance);
+            inject_previous_for_dataset(curr_attr, prev_val, datasets.as_deref());
         }
     }
 }
 
-fn inject_previous_for_dataset(current: &mut Value, previous: &Value, changed_dataset_id: Option<&Uri>, exact_attribute_instance: bool) {
+/// Add the previous member to each instance of one notified attribute whose
+/// `datasetId` is among `datasets`, or to every instance when `datasets` is
+/// `None`, from the previous instance of the same `datasetId`.
+fn inject_previous_for_dataset(current: &mut Value, previous: &Value, datasets: Option<&[Option<&str>]>) {
+    let previous_instances: Vec<&Value> = match previous {
+        Value::Array(instances) => instances.iter().collect(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => vec![previous],
+    };
+    let inject = |current_instance: &mut Value| {
+        let current_dataset_id = compact_dataset_id(current_instance);
+        if datasets.is_some_and(|datasets| !datasets.contains(&current_dataset_id)) {
+            return;
+        }
+        if let Some(previous_instance) = previous_instances.iter().find(|instance| compact_dataset_id(instance) == current_dataset_id) {
+            inject_previous_into_instance(current_instance, previous_instance);
+        }
+    };
     match current {
-        Value::Object(_) => {
-            let target_dataset_id = if exact_attribute_instance {
-                changed_dataset_id.map(Uri::as_str)
-            } else {
-                compact_dataset_id(current)
-            };
-            let previous_instance = match previous {
-                Value::Array(instances) => instances.iter().find(|instance| compact_dataset_id(instance) == target_dataset_id),
-                Value::Object(_) if compact_dataset_id(previous) == target_dataset_id => Some(previous),
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => None,
-            };
-            if let Some(previous_instance) = previous_instance {
-                inject_previous_into_instance(current, previous_instance);
-            }
-        }
-        Value::Array(current_instances) => {
-            let previous_instances: Vec<&Value> = match previous {
-                Value::Array(instances) => instances.iter().collect(),
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => vec![previous],
-            };
-            for current_instance in current_instances {
-                let current_dataset_id = compact_dataset_id(current_instance);
-                if exact_attribute_instance && current_dataset_id != changed_dataset_id.map(Uri::as_str) {
-                    continue;
-                }
-                if let Some(previous_instance) = previous_instances.iter().find(|instance| compact_dataset_id(instance) == current_dataset_id) {
-                    inject_previous_into_instance(current_instance, previous_instance);
-                }
-            }
-        }
+        Value::Object(_) => inject(current),
+        Value::Array(current_instances) => current_instances.iter_mut().for_each(inject),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
@@ -225,10 +226,33 @@ mod tests {
             {"type": "Property", "value": 2, "datasetId": dataset.as_str()}
         ]);
 
-        inject_previous_for_dataset(&mut current, &previous, Some(&dataset), true);
+        inject_previous_for_dataset(&mut current, &previous, Some(&[Some(dataset.as_str())]));
 
         assert!(current[0].get("previousValue").is_none());
         assert_eq!(current[1]["previousValue"], json!(2));
+    }
+
+    /// Clause 5.8.6 with clause 5.5.11.0: one change that updated two of an
+    /// attribute's three instances reports the previous value of exactly those
+    /// two in its one notification.
+    #[test]
+    fn show_changes_marks_every_instance_one_change_touched() {
+        let mut current = json!([
+            {"type": "Property", "value": 10},
+            {"type": "Property", "value": 20, "datasetId": "urn:dataset:a"},
+            {"type": "Property", "value": 30, "datasetId": "urn:dataset:b"}
+        ]);
+        let previous = json!([
+            {"type": "Property", "value": 1},
+            {"type": "Property", "value": 2, "datasetId": "urn:dataset:a"},
+            {"type": "Property", "value": 3, "datasetId": "urn:dataset:b"}
+        ]);
+
+        inject_previous_for_dataset(&mut current, &previous, Some(&[None, Some("urn:dataset:b")]));
+
+        assert_eq!(current[0]["previousValue"], json!(1));
+        assert!(current[1].get("previousValue").is_none());
+        assert_eq!(current[2]["previousValue"], json!(3));
     }
 
     /// Clause 4.5.21.2: `previousValueList` "represents the previous
@@ -240,7 +264,7 @@ mod tests {
         let mut current = json!({"type": "ListProperty", "valueList": [3, 4]});
         let previous = json!({"type": "ListProperty", "valueList": [1, 2]});
 
-        inject_previous_for_dataset(&mut current, &previous, None, false);
+        inject_previous_for_dataset(&mut current, &previous, None);
 
         assert_eq!(current["previousValueList"], json!([1, 2]));
         assert!(current.get("previousValue").is_none(), "{current}");
@@ -260,7 +284,7 @@ mod tests {
         let mut current = json!({"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Room:3"}]});
         let previous = json!({"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Room:1"}, {"object": "urn:ngsi-ld:Room:2"}]});
 
-        inject_previous_for_dataset(&mut current, &previous, None, false);
+        inject_previous_for_dataset(&mut current, &previous, None);
 
         assert_eq!(
             current["previousObjectList"],
@@ -304,7 +328,7 @@ mod tests {
         for (previous, previous_member, expected) in cases {
             // clone: the case's previous instance is both the source and the shape the current one takes
             let mut current = previous.clone();
-            inject_previous_for_dataset(&mut current, &previous, None, false);
+            inject_previous_for_dataset(&mut current, &previous, None);
             assert_eq!(current[previous_member], expected, "{previous}");
         }
     }
@@ -321,7 +345,7 @@ mod tests {
             {"type": "Property", "value": 2, "datasetId": dataset.as_str()}
         ]);
 
-        inject_previous_for_dataset(&mut current, &previous, None, false);
+        inject_previous_for_dataset(&mut current, &previous, None);
 
         assert_eq!(current[0]["previousValue"], json!(1));
         assert_eq!(current[1]["previousValue"], json!(2));

@@ -22,22 +22,17 @@ use andromeda_delivery::{
 use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{
-    expanded::attribute_expiry::standing_at,
-    notification::{NotificationTrigger, SysAttrsSnapshot},
-};
+use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, notification::SysAttrsSnapshot};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     cache::SubscriptionCache,
     change::SubscriptionChange,
+    change_filters::{ChangedStates, narrow_by_change_filters},
     compiled::CompiledSubscription,
     error::SubscriptionError,
-    matching::matches_entity_filters,
-    spatial_narrowing::narrow_by_spatial_index,
     store::SubscriptionStore,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
-use chrono::Utc;
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::sync::Arc;
@@ -175,12 +170,15 @@ impl NotificationProcessor {
 
     async fn apply_entity_change_for(&self, target: ContextTarget, event: ChangeEvent, subscription_id: Option<&Uri>) -> NotificationEvaluationOutcome {
         debug!(
-            "Change event received: id={}, trigger={}, types={:?}, attrs={:?}",
-            event.entity_id, event.trigger_reason, event.entity_types, event.changed_attributes
+            entity = %event.entity_id,
+            lifecycle = ?event.change.lifecycle,
+            types = ?event.entity_types,
+            attributes = ?event.change.attributes(),
+            "Change event received"
         );
         let candidates = self.candidate_subscriptions(&target, &event, subscription_id);
         if candidates.is_empty() {
-            debug!("No matching subscriptions for event {} (trigger={})", event.entity_id, event.trigger_reason);
+            debug!(entity = %event.entity_id, "No matching subscriptions for the change");
             return NotificationEvaluationOutcome::default();
         }
         debug!("Found {} matching subscriptions for event {}", candidates.len(), event.entity_id);
@@ -237,7 +235,7 @@ impl NotificationProcessor {
         let outcome = self.cache.find_matching(target, event);
         debug!(
             entity = %event.entity_id,
-            trigger = %event.trigger_reason,
+            triggers = ?event.change.triggers(),
             active = outcome.funnel.active,
             routed = outcome.funnel.routed,
             watched = outcome.funnel.watched,
@@ -254,13 +252,14 @@ impl NotificationProcessor {
     }
 
     /// Narrow the candidates to those whose `q`, `geoQ` and `scopeQ` the
-    /// changed entity satisfies (clause 5.8.6).
+    /// changed entity satisfies (clause 5.8.6), exactly as the durable path
+    /// decides it at commit.
     ///
     /// A deletion is evaluated against what the entity was, because what it is
-    /// now is nothing; every other trigger is evaluated against the entity the
-    /// write left behind. With neither document available no filter can be
-    /// evaluated, so the candidates stand as they are. Either document is read
-    /// as it stands now, without its expired instances.
+    /// now is nothing; the state before the write is what the event carries as
+    /// its previous attributes, or, failing that, the removed snapshot. Every
+    /// other change is evaluated against the entity the write left behind, and
+    /// against the state before it as well when it removed instances.
     fn narrow_by_entity_filters(
         &self,
         target: &ContextTarget,
@@ -268,19 +267,18 @@ impl NotificationProcessor {
         candidates: Vec<Arc<CompiledSubscription>>,
         entity_data: Option<&Value>,
     ) -> Vec<Arc<CompiledSubscription>> {
-        let filter_data = if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted) {
-            event.previous_attributes.as_ref().or(event.entity_snapshot.as_ref()).map(AsRef::as_ref)
-        } else {
-            entity_data
+        let previous = event.previous_attributes.as_deref();
+        let states = match event.change.lifecycle {
+            EntityLifecycle::Deleted => ChangedStates {
+                current: None,
+                previous: previous.or(event.entity_snapshot.as_deref()),
+            },
+            EntityLifecycle::Created | EntityLifecycle::Modified => ChangedStates {
+                current: entity_data,
+                previous,
+            },
         };
-        let Some(data) = filter_data else {
-            return candidates;
-        };
-        // Clause 4.22: an instance past its `expiresAt` is invalid, so no filter
-        // may match through it while the sweep has yet to delete it.
-        let data = standing_at(data, Utc::now());
-        let geo_filtered = narrow_by_spatial_index(&self.cache, target, candidates, &data, &event.entity_types);
-        geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, &data)).collect()
+        narrow_by_change_filters(&self.cache, target, candidates, &event.change, states, &event.entity_types)
     }
 
     /// The entity's clause 4.8 system attributes, resolved once when any
@@ -295,8 +293,9 @@ impl NotificationProcessor {
         }
         // clone: the notification stamps its own copy while the event keeps its snapshot
         let recorded = event.sys_attrs_snapshot.clone();
-        if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted) {
-            return recorded;
+        match event.change.lifecycle {
+            EntityLifecycle::Deleted => return recorded,
+            EntityLifecycle::Created | EntityLifecycle::Modified => (),
         }
         match self.entity_reader.get_sys_attrs(target, &event.entity_id).await {
             Ok(Some(attrs)) => Some(attrs),
@@ -315,22 +314,41 @@ mod tests {
     use crate::processor::payload::filtering::filter_entity_attributes;
     use andromeda_context_commit::subscription_key::SubscriptionKey;
     use andromeda_ngsi_ld_model::{
+        entity_change::EntityChange,
+        expanded::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            instance_key::AttributeInstanceKey,
+        },
         notification::ChangeOrigin,
         subscription::{EntitySelector, SubscriptionStatus},
     };
     use andromeda_ngsi_ld_query::{filter::parser, projection::compiled::Projection, scope::query::ScopeQuery};
-    use andromeda_subscription::{compilation::compile_geo_q, matching::matches_subscription};
+    use andromeda_subscription::{
+        compilation::compile_geo_q,
+        matching::{matches_entity_filters, matches_subscription},
+    };
     use chrono::{DateTime, Utc};
     use serde_json::Value;
     use std::num::NonZeroU32;
     use url::Url;
 
-    fn make_event(entity_id: &str, types: Vec<&str>, trigger: NotificationTrigger, attrs: Vec<&str>) -> ChangeEvent {
+    /// A modification that `kind`s the default instance of every attribute in
+    /// `attrs`.
+    fn make_event(entity_id: &str, types: Vec<&str>, kind: AttributeChangeKind, attrs: Vec<&str>) -> ChangeEvent {
+        let instances = attrs
+            .into_iter()
+            .map(|attribute| AttributeChange {
+                key: AttributeInstanceKey {
+                    attr: attribute.parse().expect("valid test attribute name"),
+                    dataset_id: None,
+                },
+                kind,
+            })
+            .collect();
         ChangeEvent::builder()
             .entity_id(entity_id.parse().expect("valid test URI"))
             .entity_types(types.into_iter().map(|t| t.parse().expect("valid test type name")).collect())
-            .trigger_reason(trigger)
-            .changed_attributes(attrs.into_iter().map(|a| a.parse().expect("valid test attribute name")).collect())
+            .change(EntityChange::new(EntityLifecycle::Modified, instances))
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
             .build()
@@ -389,7 +407,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(matches_subscription(&sub, &event));
     }
 
@@ -405,7 +423,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
@@ -421,7 +439,7 @@ mod tests {
             vec!["entityCreated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
@@ -440,7 +458,7 @@ mod tests {
         let event = make_event(
             "urn:ngsi-ld:Vehicle:A1",
             vec!["Vehicle"],
-            NotificationTrigger::AttributeUpdated,
+            AttributeChangeKind::Updated,
             vec!["speed", "location"],
         );
         assert!(matches_subscription(&sub, &event));
@@ -458,12 +476,7 @@ mod tests {
             vec!["attributeUpdated"],
             Some(vec!["speed"]),
         );
-        let event = make_event(
-            "urn:ngsi-ld:Vehicle:A1",
-            vec!["Vehicle"],
-            NotificationTrigger::AttributeUpdated,
-            vec!["location"],
-        );
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["location"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
@@ -479,7 +492,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(matches_subscription(&sub, &event));
     }
 
@@ -495,7 +508,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
@@ -511,7 +524,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(matches_subscription(&sub, &event));
     }
 
@@ -527,7 +540,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
@@ -544,14 +557,14 @@ mod tests {
             None,
         );
         sub.expires_at = Some(Utc::now() - chrono::Duration::hours(1));
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
     #[test]
     fn no_selectors_matches_all_entities() {
         let sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(matches_subscription(&sub, &event));
     }
 
@@ -568,7 +581,7 @@ mod tests {
             None,
         );
         sub.status = SubscriptionStatus::Paused;
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 

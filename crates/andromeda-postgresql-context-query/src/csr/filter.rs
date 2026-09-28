@@ -209,7 +209,7 @@ mod tests {
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_row_refs::EntityRowRefs,
-        q_predicate::projection::compile,
+        q_predicate::{instance_scan::InstanceScan, projection::compile},
     };
     use andromeda_postgresql_schema::current::Entities;
     use pretty_assertions::assert_eq;
@@ -443,7 +443,7 @@ mod tests {
             }
             assert!(!evaluate(&expr, &absent()), "{} must reject an entity without the attribute", case.expression);
 
-            let projection_sql = render_entity_condition(compile(&expr, &EntityRowRefs::unaliased(None), &names()));
+            let projection_sql = render_entity_condition(compile(&expr, &InstanceScan::Current(&EntityRowRefs::unaliased(None)), &names()));
             assert!(
                 projection_sql.contains("EXISTS("),
                 "{} must test presence structurally: {projection_sql}",

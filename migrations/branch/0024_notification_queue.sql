@@ -1,7 +1,7 @@
 -- ============================================================================
 -- 0024: Notification queue
 -- ============================================================================
--- Spec: ETSI GS CIM 009 v1.9.1 clauses 5.2.12, 5.2.14.1, 5.6.6
+-- Spec: ETSI GS CIM 009 v1.9.1 clauses 5.2.12, 5.2.14.1, 5.6.6, 5.8.6
 --
 -- The durable notification queue, as two relations: the payload belongs to
 -- the change, and only the queue state belongs to the delivery. An Entity
@@ -10,10 +10,15 @@
 -- state are written once per change, while every claim, retry and
 -- acknowledgement rewrites a narrow delivery row.
 --
+-- One event records one write's change to one Entity, which clause 5.8.6
+-- notifies once per Subscription: the Entity's lifecycle transition and every
+-- Attribute instance the write created, updated or deleted, as three parallel
+-- arrays with one element per instance.
+--
 -- Codes:
 --
---   trigger: 1 entityCreated, 2 entityUpdated, 3 entityDeleted,
---     4 attributeCreated, 5 attributeUpdated, 6 attributeDeleted
+--   lifecycle: 1 created, 2 modified, 3 deleted
+--   change_kinds: 1 created, 2 updated, 3 deleted
 --
 -- An event that no Subscription matches is never written, so no stored event
 -- is without a delivery until its deliveries have been reaped.
@@ -31,24 +36,30 @@ CREATE TABLE notification_events (
     -- it makes a replayed write insert nothing rather than announce a change
     -- a second time.
     event_ordinal INTEGER NOT NULL,
-    trigger SMALLINT NOT NULL,
+    lifecycle SMALLINT NOT NULL,
     write_id UUID NOT NULL,
     -- No foreign key: clause 5.6.6 deletion notifies about an Entity that no
     -- longer exists, and a reference would either forbid that row or cascade
     -- away the announcement of the deletion.
     entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    -- `attribute_names` keys. Empty, never NULL, for an Entity-level trigger:
-    -- "no attribute in particular" is true there, and "unknown" is not.
-    changed_attribute_name_keys INTEGER[] COMPRESSION lz4 NOT NULL,
-    changed_dataset_id TEXT COMPRESSION lz4 COLLATE "C",
+    -- One element per changed Attribute instance, position for position:
+    -- its transition, its `attribute_names` key and its `datasetId` (NULL
+    -- for the default instance). Empty, never NULL, for a change that
+    -- touched no instance: an Entity created or deleted with no Attribute.
+    change_kinds SMALLINT[] COMPRESSION lz4 NOT NULL,
+    change_attribute_name_keys INTEGER[] COMPRESSION lz4 NOT NULL,
+    change_dataset_ids TEXT[] COMPRESSION lz4 COLLATE "C" NOT NULL,
     entity_snapshot JSONB COMPRESSION lz4,
     previous_snapshot JSONB COMPRESSION lz4,
     CONSTRAINT pk_notification_events PRIMARY KEY (event_key),
     CONSTRAINT uq_notification_events_write_identity UNIQUE (write_id, event_ordinal),
     CONSTRAINT chk_notification_events_event_ordinal CHECK (event_ordinal >= 0),
-    CONSTRAINT chk_notification_events_trigger CHECK (trigger BETWEEN 1 AND 6),
-    CONSTRAINT chk_notification_events_entity_id_length CHECK (octet_length(entity_id) <= 1024),
-    CONSTRAINT chk_notification_events_changed_dataset_id_length CHECK (octet_length(changed_dataset_id) <= 1024)
+    CONSTRAINT chk_notification_events_lifecycle CHECK (lifecycle BETWEEN 1 AND 3),
+    CONSTRAINT chk_notification_events_change_kinds CHECK (change_kinds <@ ARRAY[1, 2, 3]::SMALLINT[]),
+    CONSTRAINT chk_notification_events_change_arity CHECK (
+        cardinality(change_attribute_name_keys) = cardinality(change_kinds)
+        AND cardinality(change_dataset_ids) = cardinality(change_kinds)),
+    CONSTRAINT chk_notification_events_entity_id_length CHECK (octet_length(entity_id) <= 1024)
 ) WITH (
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,

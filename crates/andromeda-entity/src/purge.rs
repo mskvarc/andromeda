@@ -10,7 +10,7 @@ use crate::{
     EntityService,
     error::EntityError,
     expanded_member::stored_entity_types,
-    notification_plan::attribute_change_groups,
+    notification_plan::modification,
     purge_dataset::build_dataset_purge_write,
 };
 use andromeda_context_commit::{
@@ -72,12 +72,12 @@ impl EntityService {
                     let Some((mut write, mut removed)) = build_scoped_purge_write(entity_id, previous, mode, &attr_iris)? else {
                         return Ok(None);
                     };
-                    let groups = attribute_change_groups(previous, &removed.merged)?;
+                    let change = modification(previous, &removed.merged)?;
                     let plan = self.plan_notifications(
                         target,
                         entity_id,
                         &stored_entity_types(&removed.merged)?,
-                        &groups,
+                        change,
                         Some(&removed.merged),
                         Some(previous),
                     );

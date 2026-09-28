@@ -9,7 +9,7 @@
 use crate::processor::{
     NotificationProcessor,
     compiled_transport,
-    payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache, entity_survival},
+    payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache},
 };
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
@@ -119,10 +119,7 @@ impl NotificationProcessor {
             entity_data,
             previous_attributes: event.previous_attributes.as_deref(),
             sub: compiled_sub,
-            trigger_reason: &event.trigger_reason,
-            survival: entity_survival(event),
-            changed_attributes: &event.changed_attributes,
-            changed_dataset_id: event.changed_dataset_id.as_ref(),
+            change: &event.change,
             occurred_at: event.occurred_at,
             entity_query: &self.entity_query,
             compaction_cache: Some(change.compaction_cache),

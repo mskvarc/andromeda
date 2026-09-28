@@ -1,26 +1,31 @@
 //! The distributed part of a query: the two clause 5.7.2.4 forwarding phases
 //! and what they bring back.
 
-use crate::entity::{
-    ContextSpec,
-    ContextualExpander,
-    CsrModeFilter,
-    EntityResultExt,
-    ForwardQueryRequest,
-    JsonKeyAttributes,
-    ProblemResponse,
-    SourceContribution,
-    collect_warnings,
-    contributions_of,
-    expand_q_expr,
+use crate::{
+    entity::{
+        ContextSpec,
+        ContextualExpander,
+        CsrModeFilter,
+        EntityResultExt,
+        ForwardQueryRequest,
+        JsonKeyAttributes,
+        ProblemResponse,
+        SourceContribution,
+        collect_warnings,
+        contributions_of,
+        expand_q_expr,
+    },
+    error::public_error,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     FederationService,
     config::SplitEntities,
+    entity_budget::{EntityBudget, EntityBudgetExceeded},
     forwarded_query::client_query::ClientQuery,
     outcome::{ForwardReadOutcome, ForwardedEntities},
+    query_forwarding_error::QueryForwardingError,
     request::{EntityMapInUse, QueryDelivery, TriggeringRequest},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
@@ -28,6 +33,7 @@ use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::filter::expression::Expr;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::Uri as HttpUri;
@@ -43,9 +49,18 @@ pub(crate) struct ForwardedQueryResults {
     pub(crate) warnings: Vec<NgsiLdWarning>,
     /// What each source contributed to the map of the request (clause 5.2.39).
     pub(crate) contributions: Vec<SourceContribution>,
+    /// The budget the sources were walked under, which bounds the merged
+    /// collection and the local rows read for it too (clause 4.12).
+    pub(crate) budget: EntityBudget,
 }
 
 impl ForwardedQueryResults {
+    /// How many local rows the merge needs at most: one past the budget, which
+    /// is all it takes to tell that the merged collection exceeds it.
+    pub(crate) const fn local_row_limit(&self) -> u32 {
+        self.budget.maximum().get().saturating_add(1)
+    }
+
     /// Whether any source returned an entity, which is what makes the local
     /// page an incomplete view of the result (clause 5.5.9).
     pub(crate) fn holds_remote_entities(&self) -> bool {
@@ -55,7 +70,14 @@ impl ForwardedQueryResults {
     /// Fold what the sources returned onto the entities the broker holds
     /// itself: the primary phase's answers first, then the auxiliary ones,
     /// which only supplement what is present already (clause 4.3.6.2).
-    pub(crate) fn merge_onto(self, local_entities: Vec<Entity>, attrs: Option<&[AttributeName]>) -> MergedEntities {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityBudgetExceeded`] when the merged collection exceeds the
+    /// budget the sources were walked under: the local rows were read one past
+    /// it, so a larger collection is refused rather than paged from a
+    /// truncation (clause 4.12).
+    pub(crate) fn merge_onto(self, local_entities: Vec<Entity>, attrs: Option<&[AttributeName]>) -> Result<MergedEntities, EntityBudgetExceeded> {
         let merged = if self.primary.is_empty() {
             local_entities
         } else {
@@ -66,11 +88,12 @@ impl ForwardedQueryResults {
         } else {
             EntityQueryService::merge_with_forwarded(merged, self.auxiliary, attrs)
         };
-        MergedEntities {
+        self.budget.admits(u64::try_from(merged.len()).unwrap_or(u64::MAX))?;
+        Ok(MergedEntities {
             entities: merged,
             warnings: self.warnings,
             contributions: self.contributions,
-        }
+        })
     }
 }
 
@@ -128,7 +151,8 @@ impl QueryForwarding<'_> {
     ///
     /// A source that could not be reached is a clause 6.3.17 warning, never a
     /// failure of the query; only the 501 of a lone proxied source is (Table
-    /// 6.4.3.2-3).
+    /// 6.4.3.2-3), and so are answers exceeding the request's budget (clause
+    /// 4.12, `TooManyResults`).
     pub(crate) async fn run(&self) -> Result<ForwardedQueryResults, ProblemResponse> {
         // The CSR filter was parsed while extracting the request. The expanded
         // copy selects the registrations; the raw expression is forwarded as
@@ -150,11 +174,14 @@ impl QueryForwarding<'_> {
             }
             None => None,
         };
-        let primary = self.phase(CsrModeFilter::ExcludeAuxiliary, csf_expr.as_ref()).await;
+        // Clause 4.12: one budget bounds everything the query gathers, from
+        // both phases' sources and, once they have answered, the local store.
+        let budget = EntityBudget::new(self.forwarding.max_query_entities());
+        let primary = self.phase(CsrModeFilter::ExcludeAuxiliary, csf_expr.as_ref(), &budget).await?;
         if let Some(status) = primary.sources.single_source_status {
             return Err(single_source_declined(status, self.uri));
         }
-        let auxiliary = self.phase(CsrModeFilter::AuxiliaryOnly, csf_expr.as_ref()).await;
+        let auxiliary = self.phase(CsrModeFilter::AuxiliaryOnly, csf_expr.as_ref(), &budget).await?;
 
         let mut warnings = collect_warnings(&primary.results);
         warnings.extend(collect_warnings(&auxiliary.results));
@@ -167,12 +194,25 @@ impl QueryForwarding<'_> {
             auxiliary: auxiliary.results,
             warnings,
             contributions,
+            budget,
         })
     }
 
     /// One forwarding phase over the registrations `mode_filter` admits.
-    async fn phase(&self, mode_filter: CsrModeFilter, csf_expr: Option<&Expr>) -> ForwardReadOutcome<ForwardedEntities> {
-        self.forwarding
+    ///
+    /// A forwarding that could not run at all leaves the query with the local
+    /// answer; a phase whose sources answer with more entities than the request
+    /// may gather refuses the query, because a truncated collection would make
+    /// its page window and `NGSILD-Results-Count` silently wrong (clauses 4.12
+    /// and 6.3.13).
+    async fn phase(
+        &self,
+        mode_filter: CsrModeFilter,
+        csf_expr: Option<&Expr>,
+        budget: &EntityBudget,
+    ) -> Result<ForwardReadOutcome<ForwardedEntities>, ProblemResponse> {
+        let forwarded = self
+            .forwarding
             .forward_query(
                 self.target,
                 ForwardQueryRequest {
@@ -184,13 +224,17 @@ impl QueryForwarding<'_> {
                     csf_expr,
                     mode_filter,
                     entity_map: self.entity_map,
-                    source_page: None,
+                    budget,
                 },
             )
-            .await
-            .unwrap_or_else(|error| {
+            .await;
+        match forwarded {
+            Ok(outcome) => Ok(outcome),
+            Err(QueryForwardingError::TooManyResults(exceeded)) => Err(public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), self.uri)),
+            Err(QueryForwardingError::Federation(error)) => {
                 warn!(%error, "context source forwarding failed during the entity query");
-                ForwardReadOutcome::empty()
-            })
+                Ok(ForwardReadOutcome::empty())
+            }
+        }
     }
 }

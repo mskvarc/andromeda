@@ -8,12 +8,9 @@
 use crate::{EntityService, NotificationWriteConfig};
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    expanded::attribute_expiry::standing_at,
-    notification::{ChangeOrigin, NotificationTrigger},
-};
-use andromeda_subscription::{matching::matches_entity_filters, spatial_narrowing::narrow_by_spatial_index};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::ChangeOrigin};
+use andromeda_subscription::change_filters::{ChangedStates, narrow_by_change_filters};
 use chrono::Utc;
 use serde_json::Value;
 use tracing::debug;
@@ -51,48 +48,27 @@ pub(crate) struct MutationSnapshots<'a> {
 }
 
 impl EntityService {
-    /// Build one record for every subscription this mutation matches.
-    ///
-    /// Returns an empty vector when notification recording is not configured.
-    pub(crate) fn build_subscription_matches(
-        &self,
-        entity: ChangedEntity<'_>,
-        trigger: NotificationTrigger,
-        changed_attrs: &[AttributeName],
-        snapshots: MutationSnapshots<'_>,
-    ) -> Vec<SubscriptionMatch> {
-        self.build_subscription_matches_for_instance(entity, trigger, changed_attrs, None, snapshots)
-    }
-
-    /// Build durable matches for one precise attribute-instance change.
+    /// Build one record for every subscription `change` is owed to.
     ///
     /// Returns an empty vector when notification recording is not configured:
     /// a live-delivery broker's notification worker evaluates the change itself.
-    pub(crate) fn build_subscription_matches_for_instance(
+    pub(crate) fn build_subscription_matches(
         &self,
         entity: ChangedEntity<'_>,
-        trigger: NotificationTrigger,
-        changed_attrs: &[AttributeName],
-        changed_dataset_id: Option<&Uri>,
+        change: &EntityChange,
         snapshots: MutationSnapshots<'_>,
     ) -> Vec<SubscriptionMatch> {
-        self.notifications.as_ref().map_or_else(Vec::new, |recording| {
-            recording.subscription_matches(entity, trigger, changed_attrs, changed_dataset_id, snapshots)
-        })
+        self.notifications
+            .as_ref()
+            .map_or_else(Vec::new, |recording| recording.subscription_matches(entity, change, snapshots))
     }
 }
 
 impl NotificationWriteConfig {
-    /// Build one durable match for every subscription one precise change
-    /// satisfies (clause 5.8.6).
-    pub(crate) fn subscription_matches(
-        &self,
-        entity: ChangedEntity<'_>,
-        trigger: NotificationTrigger,
-        changed_attrs: &[AttributeName],
-        changed_dataset_id: Option<&Uri>,
-        snapshots: MutationSnapshots<'_>,
-    ) -> Vec<SubscriptionMatch> {
+    /// Build one durable match for every subscription one entity change is owed
+    /// to (clause 5.8.6): at most one per subscription, however many of its
+    /// triggers the change raised or instances it touched.
+    pub(crate) fn subscription_matches(&self, entity: ChangedEntity<'_>, change: &EntityChange, snapshots: MutationSnapshots<'_>) -> Vec<SubscriptionMatch> {
         let NotificationWriteConfig { subscription_cache } = self;
         let ChangedEntity {
             target,
@@ -107,17 +83,15 @@ impl NotificationWriteConfig {
         let event = ChangeEvent::builder()
             .entity_id(entity_id.clone()) // clone: owned Uri for ChangeEvent
             .entity_types(entity_types.to_vec())
-            .trigger_reason(trigger)
+            .change(change.clone()) // clone: the matched event owns the change it is matched as
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
-            .changed_attributes(changed_attrs.to_vec())
-            .changed_dataset_id(changed_dataset_id.cloned())
             .build();
 
         let outcome = subscription_cache.find_matching(target, &event);
         debug!(
             entity = %entity_id,
-            trigger = %trigger,
+            triggers = ?change.triggers(),
             active = outcome.funnel.active,
             routed = outcome.funnel.routed,
             watched = outcome.funnel.watched,
@@ -127,37 +101,22 @@ impl NotificationWriteConfig {
         );
         outcome.funnel.record();
 
-        let filter_snapshot = if matches!(trigger, NotificationTrigger::AttributeDeleted | NotificationTrigger::EntityDeleted) {
-            previous_snapshot.or(entity_snapshot)
-        } else {
-            entity_snapshot
+        let states = ChangedStates {
+            current: entity_snapshot,
+            previous: previous_snapshot,
         };
-        let matching: Vec<_> = if let Some(data) = filter_snapshot {
-            // Clause 4.22: an instance past its `expiresAt` is invalid, so no
-            // filter may match through it while the sweep has yet to delete it.
-            let data = standing_at(data, Utc::now());
-            narrow_by_spatial_index(subscription_cache, target, outcome.matched, &data, entity_types)
-                .into_iter()
-                .filter(|sub| matches_entity_filters(sub, &data))
-                .collect()
-        } else {
-            outcome.matched
-        };
-
+        let matching = narrow_by_change_filters(subscription_cache, target, outcome.matched, change, states, entity_types);
         matching
             .into_iter()
             .map(|sub| {
                 // clone: every entry owns its own copy of the entity id, the
-                // snapshots and the attribute names, all of which are borrowed
-                // here.
+                // change and the snapshots, all of which are borrowed here.
                 SubscriptionMatch::builder()
                     .subscription_key(sub.key)
                     .entity_id(entity_id.clone())
-                    .trigger(trigger)
+                    .change(change.clone())
                     .entity_snapshot(entity_snapshot.cloned())
                     .previous_snapshot(previous_snapshot.cloned())
-                    .changed_attrs(changed_attrs.to_vec())
-                    .changed_dataset_id(changed_dataset_id.cloned())
                     .build()
             })
             .collect()

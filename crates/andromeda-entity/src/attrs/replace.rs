@@ -7,7 +7,7 @@ use crate::{
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     expanded_member::{unwrap_expanded_ref, written_entity_types},
-    notification_plan::attribute_change_groups,
+    notification_plan::modification,
     write_kind::ReplaceAttribute,
 };
 use andromeda_context_commit::history_record::mutation_history;
@@ -88,8 +88,8 @@ impl EntityService {
                 let merged = Arc::new(existing);
                 let types = written_entity_types(&merged)?;
 
-                let groups = attribute_change_groups(previous, &merged)?;
-                let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
+                let change = modification(previous, &merged)?;
+                let plan = self.plan_notifications(target, &entity_uri, &types, change, Some(&merged), Some(previous));
 
                 let addressed = AddressedInstances::AttributeFragment {
                     attribute: &attr_iri,

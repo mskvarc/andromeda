@@ -52,8 +52,8 @@ impl NotificationDeliveryTransport for AcceptingTransport {
 /// identifier cannot be read back, and return the delivery's key.
 async fn queue_unreadable_delivery(pool: &PgPool, subscription_key: i64) -> i64 {
     let event: i64 = sqlx::query_scalar(
-        "INSERT INTO notification_events (created_at, event_ordinal, trigger, write_id, entity_id, changed_attribute_name_keys) \
-         VALUES (NOW(), 0, 1, $1, $2, '{}') RETURNING event_key",
+        "INSERT INTO notification_events (created_at, event_ordinal, lifecycle, write_id, entity_id, change_kinds, change_attribute_name_keys, change_dataset_ids) \
+         VALUES (NOW(), 0, 1, $1, $2, '{}', '{}', '{}') RETURNING event_key",
     )
     .bind(Uuid::new_v4())
     .bind(UNREADABLE_ENTITY_ID)

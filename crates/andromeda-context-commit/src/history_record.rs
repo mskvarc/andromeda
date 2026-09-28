@@ -15,8 +15,24 @@ use std::sync::Arc;
 /// One temporal-history consequence of an entity mutation.
 #[derive(Debug, IsVariant)]
 pub enum HistoryRecord {
-    /// Attribute observations contained in an expanded payload.
+    /// Attribute observations contained in an expanded payload, recorded
+    /// because a Core write changed the Entity's current state (clause 4.3.1:
+    /// "Brokers that intend to implement the Temporal API should consider
+    /// updating the Temporal Evolution of an Entity whenever the 'current
+    /// state' is modified via the Core API").
     Observations(Arc<Value>),
+    /// Attribute instances added to the Temporal Evolution of an Entity through
+    /// the Temporal API (clauses 5.6.11 and 5.6.12), recorded exactly as the
+    /// client sent them.
+    ///
+    /// Clauses 5.6.11.4 and 5.6.12.4 add the instances "to the target Temporal
+    /// Evolution of an Entity", so every one of them is history. What they do
+    /// to current state is a separate question -- current state holds one
+    /// instance per Attribute instance (clause 4.5.5), the most current one
+    /// (clause 4.5.5.3) -- which the write answers through its
+    /// [`CurrentStateProjection`](crate::current_state_projection::CurrentStateProjection)
+    /// rather than through its history.
+    EvolutionInstances(Arc<Value>),
     /// End of one attribute instance that left current entity state.
     Tombstone(RemovedAttributeInstance),
     /// End of the Entity's Scope, which left current entity state.
@@ -293,7 +309,7 @@ mod tests {
             .into_iter()
             .map(|entry| match entry {
                 HistoryRecord::Tombstone(removed) => (removed.key.attr.as_str().to_owned(), removed.key.dataset_id.map(|id| id.as_str().to_owned())),
-                HistoryRecord::Observations(_) | HistoryRecord::ScopeRemoval => (String::new(), None),
+                HistoryRecord::Observations(_) | HistoryRecord::EvolutionInstances(_) | HistoryRecord::ScopeRemoval => (String::new(), None),
             })
             .collect::<Vec<_>>();
 

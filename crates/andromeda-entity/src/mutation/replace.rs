@@ -5,7 +5,7 @@ use crate::{
     admitted_write::AdmittedEntity,
     error::EntityError,
     expanded_member::written_entity_types,
-    notification_plan::attribute_change_groups,
+    notification_plan::modification,
     write_kind::ReplaceEntity,
 };
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::mutation_history};
@@ -67,8 +67,8 @@ impl EntityService {
                         overwrite: OverwritePolicy::Overwrite,
                     };
                     let history = mutation_history(addressed, previous, &payload)?;
-                    let groups = attribute_change_groups(previous, &payload)?;
-                    let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&payload), Some(previous));
+                    let change = modification(previous, &payload)?;
+                    let plan = self.plan_notifications(target, &entity_uri, &types, change, Some(&payload), Some(previous));
                     let write = AtomicWrite::builder()
                         .entity_id(Arc::clone(&entity_id)) // clone: Arc ref-count bump; the identifier outlives the attempt
                         .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&payload))?)) // clone: Arc ref-count bump

@@ -11,6 +11,7 @@
 use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
+    instance_recency::InstanceRecency,
 };
 use std::{cmp::Ordering, mem::replace};
 
@@ -136,17 +137,17 @@ fn merge_instances(mut held: Vec<Attribute>, received: Vec<Attribute>) -> Vec<At
     held
 }
 
-/// Clause 4.5.5.3's order between two conflicting instances: the most recent
-/// `observedAt` is the greater, then the most recent `modifiedAt`; instances
-/// no timestamp tells apart are equal, and the caller keeps the one it held.
+/// Clause 4.5.5.3's order between two conflicting instances; instances no
+/// timestamp tells apart are equal, and the caller keeps the one it held.
 fn most_recent(held: &Attribute, candidate: &Attribute) -> Ordering {
-    match (held.common().observed_at, candidate.common().observed_at) {
-        (Some(held_at), Some(candidate_at)) if held_at != candidate_at => return held_at.cmp(&candidate_at),
-        (Some(_) | None, Some(_) | None) => {}
-    }
-    match (held.common().modified_at, candidate.common().modified_at) {
-        (Some(held_at), Some(candidate_at)) => held_at.cmp(&candidate_at),
-        (None, Some(_) | None) | (Some(_), None) => Ordering::Equal,
+    recency(held).order(&recency(candidate))
+}
+
+/// The clause 4.5.5.3 instants one instance carries.
+const fn recency(instance: &Attribute) -> InstanceRecency {
+    InstanceRecency {
+        observed_at: instance.common().observed_at,
+        modified_at: instance.common().modified_at,
     }
 }
 

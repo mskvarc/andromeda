@@ -87,13 +87,15 @@ pub async fn subscribe_to_created_probe(client: &TestClient, pool: &PgPool, enti
 /// commit would have, and return the delivery's key.
 pub async fn queue_delivery(pool: &PgPool, subscription_key: i64, event: QueuedEvent<'_>) -> i64 {
     let event_key: i64 = sqlx::query_scalar(
-        "INSERT INTO notification_events (created_at, event_ordinal, trigger, write_id, entity_id, changed_attribute_name_keys, entity_snapshot) \
-         VALUES (NOW(), 0, $1, $2, $3, $4, $5) RETURNING event_key",
+        "INSERT INTO notification_events (created_at, event_ordinal, lifecycle, write_id, entity_id, change_kinds, change_attribute_name_keys, change_dataset_ids, entity_snapshot) \
+         VALUES (NOW(), 0, $1, $2, $3, $4, $5, $6, $7) RETURNING event_key",
     )
-    .bind(event.trigger)
+    .bind(event.lifecycle)
     .bind(Uuid::new_v4())
     .bind(event.entity_id)
-    .bind(event.changed_attribute_name_keys)
+    .bind(event.change.iter().map(|instance| instance.kind).collect::<Vec<i16>>())
+    .bind(event.change.iter().map(|instance| instance.attribute_name_key).collect::<Vec<i32>>())
+    .bind(event.change.iter().map(|instance| instance.dataset_id).collect::<Vec<Option<&str>>>())
     .bind(event.entity_snapshot)
     .fetch_one(pool)
     .await
@@ -108,14 +110,24 @@ pub async fn queue_delivery(pool: &PgPool, subscription_key: i64, event: QueuedE
 
 /// The stored shape of one queued notification event.
 pub struct QueuedEvent<'a> {
-    /// Compact trigger code: 1 `entityCreated`, 6 `attributeDeleted`.
-    pub trigger: i16,
+    /// Compact lifecycle code: 1 created, 2 modified, 3 deleted.
+    pub lifecycle: i16,
     /// The stored entity identifier, valid or not.
     pub entity_id: &'a str,
-    /// Dictionary keys of the attributes the change touched.
-    pub changed_attribute_name_keys: Vec<i32>,
+    /// Every Attribute instance the change touched.
+    pub change: Vec<QueuedInstance<'a>>,
     /// The stored expanded Entity.
     pub entity_snapshot: Value,
+}
+
+/// The stored shape of one Attribute instance a queued change touched.
+pub struct QueuedInstance<'a> {
+    /// Compact transition code: 1 created, 2 updated, 3 deleted.
+    pub kind: i16,
+    /// Dictionary key of the instance's attribute.
+    pub attribute_name_key: i32,
+    /// The stored `datasetId`, valid or not, absent for the default instance.
+    pub dataset_id: Option<&'a str>,
 }
 
 /// The dictionary key of `name` in the tenant's attribute name dictionary.
@@ -174,9 +186,9 @@ async fn durable_queue_a_live_delivery_broker_delivers_a_notification_its_databa
         scope.database_pool(),
         subscription_key,
         QueuedEvent {
-            trigger: 1,
+            lifecycle: 1,
             entity_id: &entity_id,
-            changed_attribute_name_keys: Vec::new(),
+            change: Vec::new(),
             entity_snapshot: json!([{"@id": entity_id, "@type": [PROBE_TYPE]}]),
         },
     )
@@ -216,33 +228,29 @@ async fn durable_queue_a_live_delivery_broker_dead_letters_deliveries_it_can_nev
         pool,
         subscription_key,
         QueuedEvent {
-            trigger: 1,
+            lifecycle: 1,
             entity_id: &unreadable_entity,
-            changed_attribute_name_keys: Vec::new(),
+            change: Vec::new(),
             entity_snapshot: json!([{"@id": entity_id, "@type": [PROBE_TYPE]}]),
         },
     )
     .await;
-    // An attribute deletion whose snapshot names the deleted instance by a
-    // datasetId that is not an identifier: the row reads back, but the broker
-    // can never evaluate it.
+    // An attribute deletion whose stored change names the deleted instance by
+    // a datasetId that is not an identifier: the entity reads back, but the
+    // change it records never does.
     let name_key = attribute_name_key(pool, PROBE_ATTRIBUTE).await;
     let unevaluable = queue_delivery(
         pool,
         subscription_key,
         QueuedEvent {
-            trigger: 6,
+            lifecycle: 2,
             entity_id: &entity_id,
-            changed_attribute_name_keys: vec![name_key],
-            entity_snapshot: json!([{
-                "@id": entity_id,
-                "@type": [PROBE_TYPE],
-                PROBE_ATTRIBUTE: [{
-                    "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
-                    "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "not a dataset identifier"}],
-                    "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "probe"}]
-                }]
-            }]),
+            change: vec![QueuedInstance {
+                kind: 3,
+                attribute_name_key: name_key,
+                dataset_id: Some("not a dataset identifier"),
+            }],
+            entity_snapshot: json!([{"@id": entity_id, "@type": [PROBE_TYPE]}]),
         },
     )
     .await;
@@ -250,9 +258,9 @@ async fn durable_queue_a_live_delivery_broker_dead_letters_deliveries_it_can_nev
         pool,
         subscription_key,
         QueuedEvent {
-            trigger: 1,
+            lifecycle: 1,
             entity_id: &entity_id,
-            changed_attribute_name_keys: Vec::new(),
+            change: Vec::new(),
             entity_snapshot: json!([{"@id": entity_id, "@type": [PROBE_TYPE]}]),
         },
     )
@@ -264,7 +272,7 @@ async fn durable_queue_a_live_delivery_broker_dead_letters_deliveries_it_can_nev
     let (delivered, _, _, _) = settled_delivery(pool, deliverable, ACKNOWLEDGEMENT_DEADLINE).await;
     assert!(delivered, "the deliverable peer is acknowledged");
 
-    for (delivery, reason) in [(unreadable, "invalid entity URI"), (unevaluable, "cannot be evaluated")] {
+    for (delivery, reason) in [(unreadable, "invalid entity URI"), (unevaluable, "invalid datasetId")] {
         let (delivered, exhausted, attempts, last_error) = settled_delivery(pool, delivery, ACKNOWLEDGEMENT_DEADLINE).await;
         assert!(!delivered, "delivery {delivery} was never sent");
         assert!(exhausted, "delivery {delivery} is dead-lettered instead of leased again at every lease expiry");

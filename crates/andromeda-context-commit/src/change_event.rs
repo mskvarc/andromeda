@@ -1,14 +1,17 @@
 //! Entity change events committed for downstream consumers.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_model::{
+    entity_change::EntityChange,
+    notification::{ChangeOrigin, SysAttrsSnapshot},
+};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
-/// An entity mutation that may trigger notifications under NGSI-LD clause
-/// 5.2.12.
+/// One write's change to one Entity, which clause 5.8.6 notifies once to every
+/// subscription it is owed to.
 #[derive(Clone, Debug, TypedBuilder)]
 pub struct ChangeEvent {
     /// Mutated entity identifier.
@@ -16,18 +19,12 @@ pub struct ChangeEvent {
     /// Types declared by the mutated entity.
     #[builder(default = Default::default())]
     pub entity_types: Vec<EntityTypeName>,
-    /// Mutation trigger from clause 5.2.12.
-    pub trigger_reason: NotificationTrigger,
-    /// Attribute names touched by the mutation.
-    #[builder(default = Default::default())]
-    pub changed_attributes: Vec<AttributeName>,
-    /// Dataset discriminator of the one changed Attribute instance, or `None`
-    /// for the default instance and for entity-level events.
-    #[builder(default = Default::default())]
-    pub changed_dataset_id: Option<Uri>,
+    /// What the write did to the Entity and to each Attribute instance it
+    /// touched, which the clause 5.2.12 triggers are read from.
+    pub change: EntityChange,
     /// Time at which the mutation occurred.
     pub occurred_at: DateTime<Utc>,
-    /// Expanded pre-deletion snapshot for entity-deleted events.
+    /// Expanded pre-deletion snapshot for an entity deletion.
     #[builder(default = Default::default(), setter(transform = |snapshot: Option<Value>| snapshot.map(Arc::new)))]
     pub entity_snapshot: Option<Arc<Value>>,
     /// Expanded state before the mutation for `showChanges`.
@@ -43,33 +40,25 @@ pub struct ChangeEvent {
     pub current_payload: Option<Arc<Value>>,
 }
 
-impl ChangeEvent {
-    /// Build a local event whose optional payload fields are absent.
-    #[must_use]
-    pub fn new(entity_id: Uri, entity_types: Vec<EntityTypeName>, trigger_reason: NotificationTrigger) -> ChangeEvent {
-        ChangeEvent::builder()
-            .entity_id(entity_id)
-            .entity_types(entity_types)
-            .trigger_reason(trigger_reason)
-            .occurred_at(Utc::now())
-            .origin(ChangeOrigin::Local)
-            .build()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::change_event::ChangeEvent;
-    use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        notification::{ChangeOrigin, NotificationTrigger},
+    };
+    use chrono::Utc;
 
     #[test]
-    fn the_convenience_constructor_marks_a_change_local() {
-        let event = ChangeEvent::new(
-            "urn:ngsi-ld:Building:1".parse().expect("valid entity id"),
-            vec!["Building".parse().expect("valid type name")],
-            NotificationTrigger::EntityCreated,
-        );
-        pretty_assertions::assert_eq!(event.trigger_reason, NotificationTrigger::EntityCreated);
+    fn a_change_event_raises_the_triggers_of_its_change() {
+        let event = ChangeEvent::builder()
+            .entity_id("urn:ngsi-ld:Building:1".parse().expect("valid entity id"))
+            .entity_types(vec!["Building".parse().expect("valid type name")])
+            .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
+            .occurred_at(Utc::now())
+            .origin(ChangeOrigin::Local)
+            .build();
+        pretty_assertions::assert_eq!(event.change.triggers(), vec![NotificationTrigger::EntityCreated]);
         pretty_assertions::assert_eq!(event.origin, ChangeOrigin::Local);
     }
 }

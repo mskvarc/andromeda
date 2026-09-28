@@ -53,12 +53,13 @@ struct ProjectionWork {
 pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
-    intents: &[TemporalAppendIntent],
+    intents: &[&TemporalAppendIntent],
     keys: &HashMap<Uri, EntityKey>,
     dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<(), CommitError> {
     let projected: Vec<(&TemporalAppendIntent, EntityKey)> = intents
         .iter()
+        .copied()
         .filter_map(|intent| keys.get(&intent.entity_id).map(|key| (intent, *key)))
         .collect();
     if projected.is_empty() {

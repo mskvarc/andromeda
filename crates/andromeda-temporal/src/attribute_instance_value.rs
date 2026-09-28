@@ -287,14 +287,7 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
     // Keeping only the first would answer that rule against a single element and
     // drop the rest from the temporal evolution as well.
     if nodes.len() > 1 {
-        let values = nodes
-            .iter()
-            .map(|node| {
-                node.get("@value")
-                    .cloned() // clone: the intent owns the element the expanded node holds.
-                    .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::PropertyArrayElementMissingValue))
-            })
-            .collect::<Result<Vec<Value>, TemporalError>>()?;
+        let values = nodes.iter().map(property_array_element).collect::<Result<Vec<Value>, TemporalError>>()?;
         return Ok(TemporalValue::Object(Value::Array(values)));
     }
     let value_node =
@@ -320,6 +313,35 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
         Value::Array(_) | Value::Object(_) => Ok(TemporalValue::Object(Value::clone(value))), // clone: the intent owns the structured value.
         Value::Null => Ok(TemporalValue::String("null".to_owned())),
     }
+}
+
+/// The stored form of one element of an array-valued Property.
+///
+/// Clause 5.2.5 puts no restriction on a Property `value`, so an array may hold
+/// JSON objects beside scalars, and JSON-LD expansion turns each object into a
+/// node object rather than a value node. A value node holding a scalar is kept
+/// as that scalar, which is the shape an all-scalar array has always been stored
+/// in; every other node -- a node object, a typed `@json` literal, a `@list` --
+/// is kept as the expanded node it is, so its members compact back to the keys
+/// the client wrote. The two shapes cannot be confused on the way back: a stored
+/// element that is a JSON object is always a node, because a scalar value node
+/// is stored as the bare scalar.
+///
+/// # Errors
+///
+/// [`TemporalError::Validation`] when the expanded element is not a JSON-LD
+/// node at all, which no conformant expansion produces.
+fn property_array_element(node: &Value) -> Result<Value, TemporalError> {
+    let object = node
+        .as_object()
+        .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::PropertyArrayElementMissingValue))?;
+    let json_literal = object.get("@type").and_then(Value::as_str) == Some("@json");
+    let scalar = match object.get("@value") {
+        Some(value @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_))) if !json_literal => Some(value),
+        Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) | None => None,
+    };
+    // clone: the intent owns the element the expanded node holds.
+    Ok(scalar.map_or_else(|| node.clone(), Value::clone))
 }
 
 /// Decode a Property value that is one of the three clause 4.6.3 time values, or
@@ -616,6 +638,65 @@ mod tests {
             pretty_assertions::assert_eq!(queried_as(literal, Quoting::Quoted), quoted, "a quoted operand reads {literal}");
             pretty_assertions::assert_eq!(queried_as(literal, Quoting::Bare), bare, "a bare operand reads {literal}");
         }
+    }
+
+    /// Clause 5.2.5 puts no restriction on a Property `value`: an array holding
+    /// several JSON objects expands to several node objects, and each is kept as
+    /// the node it is rather than refusing the write.
+    #[test]
+    fn an_array_of_several_objects_is_kept_node_by_node() {
+        let first = json!({"https://example.org/zone": [{"@value": "Europe/Andorra"}]});
+        let second = json!({"https://example.org/zone": [{"@value": "Asia/Dubai"}]});
+        let instance = json!({expanded_properties::VALUE.as_str(): [first, second]});
+        let value = extract_temporal_value(&instance, AttributeType::Property).expect("an array of objects is a Property value");
+        pretty_assertions::assert_eq!(
+            value,
+            TemporalValue::Object(json!([
+                {"https://example.org/zone": [{"@value": "Europe/Andorra"}]},
+                {"https://example.org/zone": [{"@value": "Asia/Dubai"}]}
+            ]))
+        );
+    }
+
+    /// A scalar beside an object keeps the bare-scalar shape an all-scalar array
+    /// is stored in, and the object keeps its node.
+    #[test]
+    fn a_scalar_beside_an_object_keeps_its_bare_shape() {
+        let node = json!({"https://example.org/a": [{"@value": 1}]});
+        let instance = json!({expanded_properties::VALUE.as_str(): [{"@value": 1}, node]});
+        let value = extract_temporal_value(&instance, AttributeType::Property).expect("a mixed array is a Property value");
+        pretty_assertions::assert_eq!(value, TemporalValue::Object(json!([1, {"https://example.org/a": [{"@value": 1}]}])));
+    }
+
+    /// An all-scalar array is stored exactly as before: one bare scalar per
+    /// value node, whatever `@type` a context coerced onto the element.
+    #[test]
+    fn an_all_scalar_array_is_stored_as_bare_scalars() {
+        let instance = json!({expanded_properties::VALUE.as_str(): [
+            {"@value": "a"},
+            {"@value": "2024-01-01T00:00:00Z", "@type": expanded_classes::DATE_TIME.as_str()},
+            {"@value": true}
+        ]});
+        let value = extract_temporal_value(&instance, AttributeType::Property).expect("a scalar array");
+        pretty_assertions::assert_eq!(value, TemporalValue::Object(json!(["a", "2024-01-01T00:00:00Z", true])));
+    }
+
+    /// A typed `@json` literal inside an array is a node, not a scalar, so it
+    /// is kept whole and renders back as the literal it was.
+    #[test]
+    fn a_json_literal_element_is_kept_as_its_node() {
+        let literal = json!({"@value": {"k": [1, 2]}, "@type": "@json"});
+        let instance = json!({expanded_properties::VALUE.as_str(): [{"@value": 3}, literal]});
+        let value = extract_temporal_value(&instance, AttributeType::Property).expect("a mixed array");
+        pretty_assertions::assert_eq!(value, TemporalValue::Object(json!([3, {"@value": {"k": [1, 2]}, "@type": "@json"}])));
+    }
+
+    /// An element that is not a JSON-LD node at all is refused.
+    #[test]
+    fn an_element_that_is_no_node_is_refused() {
+        let instance = json!({expanded_properties::VALUE.as_str(): [{"@value": 1}, "bare"]});
+        let error = extract_temporal_value(&instance, AttributeType::Property).expect_err("a bare string is no expanded node");
+        assert!(error.to_string().contains("carries no value"), "{error}");
     }
 
     /// The text a `Time` operand binds against the string column has to be the

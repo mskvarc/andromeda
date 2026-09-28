@@ -25,6 +25,7 @@
 
 pub mod attribute_instance_correlation;
 pub mod attribute_name_key;
+pub mod dataset_predicate;
 pub mod dictionary;
 pub mod entity_ordering;
 pub mod entity_row_refs;
@@ -43,6 +44,7 @@ pub mod scope_predicate;
 pub mod scope_validity;
 pub mod temporal_operand;
 pub mod time_column;
+pub mod time_interval_predicate;
 pub mod type_predicate;
 
 #[cfg(test)]

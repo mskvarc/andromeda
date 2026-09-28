@@ -5,7 +5,7 @@ use crate::{
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     expanded_member::stored_entity_types,
-    notification_plan::attribute_change_groups,
+    notification_plan::modification,
     port::expiry::EntityExpirySource,
 };
 #[cfg(test)]
@@ -159,8 +159,8 @@ impl EntityService {
                 continue;
             };
             let types = stored_entity_types(&purged.current)?;
-            let groups = attribute_change_groups(&purged.previous, &purged.current)?;
-            let plan = self.plan_notifications(target, &identifier, &types, &groups, Some(&purged.current), Some(&purged.previous));
+            let change = modification(&purged.previous, &purged.current)?;
+            let plan = self.plan_notifications(target, &identifier, &types, change, Some(&purged.current), Some(&purged.previous));
             writes.push(
                 AtomicWrite::builder()
                     .entity_id(Arc::new(identifier.clone()))

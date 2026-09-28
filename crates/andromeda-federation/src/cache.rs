@@ -126,6 +126,7 @@ mod tests {
     use crate::{
         cache::{CacheKey, ForwardedGetCache},
         outcome::ForwardedResponse,
+        source_continuation::SourceContinuation,
     };
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
@@ -138,6 +139,7 @@ mod tests {
             body,
             warnings: Vec::new(),
             entity_map: None,
+            continuation: SourceContinuation::Complete,
         }
     }
 

@@ -9,6 +9,11 @@ use crate::{candidate_index::CandidateIndex, compiled::CompiledSubscription, err
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
+    entity_change::{EntityChange, EntityLifecycle},
+    expanded::{
+        attribute_change::{AttributeChange, AttributeChangeKind},
+        instance_key::AttributeInstanceKey,
+    },
     notification::{ChangeOrigin, NotificationTrigger},
     subscription::{EntitySelector, SubscriptionStatus},
 };
@@ -61,8 +66,8 @@ struct SubscriptionDesc {
 struct EventDesc {
     types: Vec<usize>,
     id: usize,
-    trigger: NotificationTrigger,
-    attributes: Vec<usize>,
+    lifecycle: EntityLifecycle,
+    instances: Vec<(usize, AttributeChangeKind)>,
 }
 
 fn type_desc() -> impl Strategy<Value = TypeDesc> {
@@ -89,18 +94,19 @@ fn subscription_desc() -> impl Strategy<Value = SubscriptionDesc> {
 }
 
 fn event_desc() -> impl Strategy<Value = EventDesc> {
-    let triggers: Vec<NotificationTrigger> = NotificationTrigger::iter().collect();
+    let lifecycles = vec![EntityLifecycle::Created, EntityLifecycle::Modified, EntityLifecycle::Deleted];
+    let kinds = vec![AttributeChangeKind::Created, AttributeChangeKind::Updated, AttributeChangeKind::Deleted];
     (
         subsequence((0..TYPES.len()).collect::<Vec<_>>(), 0..=TYPES.len()),
         0..4_usize,
-        select(triggers),
-        subsequence((0..ATTRIBUTES.len()).collect::<Vec<_>>(), 0..=ATTRIBUTES.len()),
+        select(lifecycles),
+        vec((0..ATTRIBUTES.len(), select(kinds)), 0..=ATTRIBUTES.len()),
     )
-        .prop_map(|(types, id, trigger, attributes)| EventDesc {
+        .prop_map(|(types, id, lifecycle, instances)| EventDesc {
             types,
             id,
-            trigger,
-            attributes,
+            lifecycle,
+            instances,
         })
 }
 
@@ -190,15 +196,23 @@ fn build_event(desc: &EventDesc) -> Result<ChangeEvent, SubscriptionError> {
                 .map(|index| TYPES[*index].parse::<EntityTypeName>().map_err(|error| internal(&error)))
                 .collect::<Result<Vec<_>, _>>()?,
         )
-        .trigger_reason(desc.trigger)
+        .change(EntityChange::new(
+            desc.lifecycle,
+            desc.instances
+                .iter()
+                .map(|(index, kind)| {
+                    Ok(AttributeChange {
+                        key: AttributeInstanceKey {
+                            attr: ATTRIBUTES[*index].parse::<AttributeName>().map_err(|error| internal(&error))?,
+                            dataset_id: None,
+                        },
+                        kind: *kind,
+                    })
+                })
+                .collect::<Result<Vec<_>, SubscriptionError>>()?,
+        ))
         .occurred_at(Utc::now())
         .origin(ChangeOrigin::Local)
-        .changed_attributes(
-            desc.attributes
-                .iter()
-                .map(|index| ATTRIBUTES[*index].parse::<AttributeName>().map_err(|error| internal(&error)))
-                .collect::<Result<Vec<_>, _>>()?,
-        )
         .build())
 }
 

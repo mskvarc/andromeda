@@ -21,6 +21,7 @@ mod contention_retry;
 mod deferred_history;
 mod entity_group;
 mod history;
+mod history_interpretation;
 /// Native or deferred temporal history selection.
 pub mod history_mode;
 /// PostgreSQL durable temporal intent queue.

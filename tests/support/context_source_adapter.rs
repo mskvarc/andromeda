@@ -8,7 +8,7 @@ use andromeda_test_mocks::{
 };
 use axum::{
     body::Bytes,
-    http::{HeaderMap, HeaderValue, Method, StatusCode, header::CONTENT_TYPE},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header::CONTENT_TYPE},
 };
 use serde_json::Value;
 use std::time::Duration;
@@ -63,12 +63,43 @@ impl ContextSourceAdapter {
             .await;
     }
 
+    /// Queues a JSON-LD response carrying the extra response `headers`, such as the clause 6.3.10
+    /// `Link rel="next"` a paginated answer points at its following page with.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `body` cannot be serialized, when `path` is not an absolute path, when
+    /// `status_code` is not a valid HTTP status, or when a header name or value is invalid.
+    pub async fn set_stub_with_body_and_headers(&self, method: Method, path: &str, status_code: u16, body: &Value, headers: &[(&str, &str)]) {
+        let body = serde_json::to_vec(body).expect("Context Source JSON response serializes");
+        self.enqueue_with_headers(method, path, status_code, Some(Bytes::from(body)), Some("application/ld+json"), headers)
+            .await;
+    }
+
     async fn enqueue(&self, method: Method, path: &str, status_code: u16, body: Option<Bytes>, content_type: Option<&str>) {
+        self.enqueue_with_headers(method, path, status_code, body, content_type, &[]).await;
+    }
+
+    async fn enqueue_with_headers(
+        &self,
+        method: Method,
+        path: &str,
+        status_code: u16,
+        body: Option<Bytes>,
+        content_type: Option<&str>,
+        extra: &[(&str, &str)],
+    ) {
         let path = CallbackPath::parse(path).expect("Context Source stub path is absolute");
         let status = StatusCode::from_u16(status_code).expect("Context Source response status is valid");
         let mut headers = HeaderMap::new();
         if let Some(content_type) = content_type {
             headers.insert(CONTENT_TYPE, HeaderValue::from_str(content_type).expect("Context Source content type is valid"));
+        }
+        for (name, value) in extra {
+            headers.append(
+                HeaderName::from_bytes(name.as_bytes()).expect("Context Source header name is valid"),
+                HeaderValue::from_str(value).expect("Context Source header value is valid"),
+            );
         }
         self.server
             .enqueue(

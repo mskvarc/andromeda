@@ -4,6 +4,8 @@ mod attempts;
 /// Where a snapshot capture reads the context it freezes.
 pub mod capture_sources;
 mod drain;
+/// Capturing the whole result of one snapshot entity query.
+mod entity_capture;
 mod execution;
 mod status;
 mod translation;

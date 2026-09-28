@@ -101,7 +101,7 @@ pub(crate) fn query_response(
         response = response.with_total_count(count);
     }
     if let Some(range) = range
-        && let Some(content_range) = build_content_range(&range.interval, range.observed, range.last_n_origin)
+        && let Some(content_range) = build_content_range(&range.interval, range.observed, range.direction)
     {
         response = response.with_content_range(content_range);
     }

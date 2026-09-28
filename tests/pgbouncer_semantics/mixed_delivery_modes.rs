@@ -21,9 +21,9 @@
 use crate::{client, control_pool, reset};
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
+use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind, notification::ChangeOrigin};
 use andromeda_postgresql_context_store::pending_side_effects::{
-    payload::{PersistedBatchSideEffectJob, PersistedChangeEvent, PersistedEntityDocument},
+    payload::{PersistedAttributeChange, PersistedBatchSideEffectJob, PersistedChangeEvent},
     repo::PendingSideEffectsRepository,
 };
 use andromeda_test_fixtures::context::CORE_CONTEXT;
@@ -132,22 +132,25 @@ fn live_deferred_creation(entity_id: &str) -> PersistedBatchSideEffectJob {
     let change = PersistedChangeEvent {
         entity_id: entity_id.parse().expect("a valid entity identifier"),
         entity_types: vec![DEVICE.parse().expect("a valid entity type")],
-        trigger_reason: NotificationTrigger::EntityCreated,
-        changed_attributes: vec![TEMPERATURE.parse().expect("a valid attribute name")],
-        changed_dataset_id: None,
+        lifecycle: EntityLifecycle::Created,
+        instances: vec![PersistedAttributeChange {
+            attribute: TEMPERATURE.parse().expect("a valid attribute name"),
+            dataset_id: None,
+            kind: AttributeChangeKind::Created,
+        }],
         occurred_at: Utc::now(),
         entity_snapshot: None,
         previous_attributes: None,
         sys_attrs_snapshot: None,
         origin: ChangeOrigin::Local,
-        current_payload: Some(PersistedEntityDocument::Stored(json!({
+        current_payload: Some(json!({
             "@id": entity_id,
             "@type": [DEVICE],
             TEMPERATURE: [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 21}]
             }]
-        }))),
+        })),
     };
     PersistedBatchSideEffectJob {
         temporal_entities: Vec::new(),

@@ -3,6 +3,7 @@
 use crate::{
     append_intent::{KeyedTemporalAppendIntent, TemporalObservationIdentity},
     error::TemporalError,
+    instance_page_selection::select_page,
     outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
     pending_observation::{intent_matches_query, is_scope_row, pending_observations},
     port::{
@@ -26,7 +27,7 @@ use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryR
 use andromeda_ngsi_ld_query::{
     ordering::sort_direction::SortDirection,
     pagination::{CountPolicy, Pagination},
-    temporal::{compiled::CompiledTemporalQuery, ordering::TemporalEntityOrdering, window::TimeInterval},
+    temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, ordering::TemporalEntityOrdering, window::TimeInterval},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -127,7 +128,7 @@ impl PendingTemporalHistoryOverlay {
         pending_on_branch(target, || self.pending.pending_for_entity(entity_id)).await
     }
 
-    /// Read all matching rows before the overlay applies lastN to the union.
+    /// Read all matching rows before the overlay narrows the union to its page.
     async fn complete_entity_history(
         &self,
         target: &ContextTarget,
@@ -135,7 +136,7 @@ impl PendingTemporalHistoryOverlay {
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalHistoryObservation>, TemporalError> {
         let mut unwindowed = compiled.clone();
-        unwindowed.instances.last_n = None;
+        unwindowed.instances.page = InstancePage::Whole;
         // Snapshot anchor intents first. If delivery transitions after this read,
         // the subsequent sink read either sees the accepted rows or the retained
         // intent still supplies them. Reading in the opposite order creates a
@@ -169,7 +170,7 @@ impl PendingTemporalHistoryOverlay {
                 .then_with(|| left.row.recorded_at.cmp(&right.row.recorded_at))
                 .then_with(|| rendered_instance_id(&left.row).cmp(&rendered_instance_id(&right.row)))
         });
-        Ok(apply_last_n(stored, compiled))
+        Ok(select_page(stored, compiled))
     }
 }
 
@@ -329,30 +330,6 @@ fn compare_dataset_ids(left: Option<&Uri>, right: Option<&Uri>) -> Ordering {
         (Some(_), None) => Ordering::Greater,
         (Some(left), Some(right)) => left.as_str().cmp(right.as_str()),
     }
-}
-
-/// Retain the last requested observations in every attribute/dataset partition.
-fn apply_last_n(observations: Vec<TemporalHistoryObservation>, compiled: &CompiledTemporalQuery) -> Vec<TemporalHistoryObservation> {
-    let Some(last_n) = compiled.instances.last_n else {
-        return observations;
-    };
-    let limit = usize::try_from(last_n).unwrap_or(usize::MAX);
-    let mut selected = Vec::with_capacity(observations.len());
-    let mut partition_start = 0usize;
-    while partition_start < observations.len() {
-        let first = &observations[partition_start].row;
-        let mut partition_end = partition_start + 1;
-        while partition_end < observations.len()
-            && observations[partition_end].row.attribute_name == first.attribute_name
-            && observations[partition_end].row.dataset_id == first.dataset_id
-        {
-            partition_end += 1;
-        }
-        let retained_start = partition_start.max(partition_end.saturating_sub(limit));
-        selected.extend(observations[retained_start..partition_end].iter().cloned()); // clone: selected rows must outlive the partition borrow.
-        partition_start = partition_end;
-    }
-    selected
 }
 
 #[cfg(test)]

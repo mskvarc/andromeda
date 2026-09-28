@@ -46,6 +46,10 @@ const JSON_GET_TEXT: &str = "->>";
 /// The text concatenation operator `||`.
 const TEXT_CONCAT: &str = "||";
 
+/// The JSONB concatenation operator `||`, which merges two objects, the right
+/// operand's members winning on a shared key.
+const JSONB_CONCAT: &str = "||";
+
 /// The `AT TIME ZONE` operator, which reinterprets a `timestamptz` in a named
 /// zone (or attaches a zone to a `timestamp`).
 const AT_TIME_ZONE: &str = "AT TIME ZONE";
@@ -83,6 +87,9 @@ pub trait PgBinaryOperator {
     fn json_get_text(self, key: SimpleExpr) -> SimpleExpr;
     /// `self || other` - concatenate two text values.
     fn concat_text(self, other: SimpleExpr) -> SimpleExpr;
+    /// `self || other` - merge two JSONB objects, `other`'s members winning on a
+    /// shared key.
+    fn jsonb_concat(self, other: SimpleExpr) -> SimpleExpr;
     /// `self AT TIME ZONE zone` - reinterpret a `timestamptz` in `zone`, so a
     /// resolved instant can be rendered in a fixed zone independent of the
     /// session `TimeZone`.
@@ -134,6 +141,10 @@ impl PgBinaryOperator for SimpleExpr {
         self.binary(BinOper::Custom(TEXT_CONCAT), other)
     }
 
+    fn jsonb_concat(self, other: SimpleExpr) -> SimpleExpr {
+        self.binary(BinOper::Custom(JSONB_CONCAT), other)
+    }
+
     fn at_time_zone(self, zone: SimpleExpr) -> SimpleExpr {
         self.binary(BinOper::Custom(AT_TIME_ZONE), zone)
     }
@@ -146,6 +157,12 @@ mod tests {
 
     fn render(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    }
+
+    #[test]
+    fn jsonb_concat_renders_the_merge_operator() {
+        let sql = render(SimpleExpr::from(Expr::col(Alias::new("metadata"))).jsonb_concat(Expr::col(Alias::new("members"))));
+        assert!(sql.contains(r#""metadata" || "members""#), "{sql}");
     }
 
     #[test]

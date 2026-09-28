@@ -2,7 +2,10 @@
 
 use crate::{
     error::ContextStoreError,
-    notification_delivery::{rows::NewNotificationEvent, trigger_code::stored_trigger},
+    notification_delivery::{
+        change_code::{stored_change_kind, stored_lifecycle},
+        rows::NewNotificationEvent,
+    },
 };
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_context_space::context_target::ContextTarget;
@@ -13,6 +16,7 @@ use andromeda_postgresql_schema::{
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{
+    pg_array::nullable_text_array,
     pg_type::PostgresType,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
@@ -122,10 +126,11 @@ fn insert_events_statement(
         NotificationEvents::CreatedAt,
         NotificationEvents::WriteId,
         NotificationEvents::EventOrdinal,
-        NotificationEvents::Trigger,
+        NotificationEvents::Lifecycle,
         NotificationEvents::EntityId,
-        NotificationEvents::ChangedAttributeNameKeys,
-        NotificationEvents::ChangedDatasetId,
+        NotificationEvents::ChangeKinds,
+        NotificationEvents::ChangeAttributeNameKeys,
+        NotificationEvents::ChangeDatasetIds,
         NotificationEvents::EntitySnapshot,
         NotificationEvents::PreviousSnapshot,
     ]);
@@ -134,16 +139,26 @@ fn insert_events_statement(
             .ordinal
             .as_i32()
             .map_err(|error| ContextStoreError::Internal(format!("notification event ordinal: {error}")))?;
-        let changed_attribute_name_keys: Vec<i32> = event.changed_attribute_name_keys.iter().map(|id| id.get()).collect();
+        let change_kinds: Vec<i16> = event.change.instances.iter().map(|instance| stored_change_kind(instance.kind).code()).collect();
+        let change_attribute_name_keys: Vec<i32> = event.change_attribute_name_keys.iter().map(|id| id.get()).collect();
+        let change_dataset_ids: Vec<Option<&str>> = event
+            .change
+            .instances
+            .iter()
+            .map(|instance| instance.key.dataset_id.as_ref().map(Uri::as_str))
+            .collect();
         statement
             .values([
                 recorded_at.into(),
                 Expr::val(write_id),
                 event_ordinal.into(),
-                stored_trigger(event.trigger).code().into(),
+                stored_lifecycle(event.change.lifecycle).code().into(),
                 event.entity_id.as_str().into(),
-                Expr::val(changed_attribute_name_keys),
-                event.changed_dataset_id.map(Uri::as_str).into(),
+                Expr::val(change_kinds),
+                Expr::val(change_attribute_name_keys),
+                // A default instance's `datasetId` is a NULL element, which one
+                // bound array cannot carry.
+                nullable_text_array(&change_dataset_ids),
                 // The snapshot is bound by value because a bound parameter owns
                 // its data; the entity state cannot be borrowed into the wire
                 // buffer.
@@ -249,7 +264,13 @@ mod tests {
     use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        expanded::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            instance_key::AttributeInstanceKey,
+        },
+    };
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use andromeda_postgresql_seaquery::unnest::apply_column_alias;
     use chrono::Utc;
@@ -269,13 +290,31 @@ mod tests {
         SubscriptionKey::try_from(key).expect("a positive subscription key")
     }
 
-    fn event<'a>(entity: &'a Uri, ordinal: u32, subscriptions: &[i64], snapshot: &'a serde_json::Value) -> NewNotificationEvent<'a> {
+    /// A modification that updated `speed` and deleted the `urn:dataset:a`
+    /// instance of `name`.
+    fn change() -> EntityChange {
+        let instance = |attribute: &str, dataset: Option<&str>, kind: AttributeChangeKind| AttributeChange {
+            key: AttributeInstanceKey {
+                attr: attribute.parse().expect("a valid attribute name"),
+                dataset_id: dataset.map(|raw| raw.parse().expect("a valid dataset URI")),
+            },
+            kind,
+        };
+        EntityChange::new(
+            EntityLifecycle::Modified,
+            vec![
+                instance("https://example.org/speed", None, AttributeChangeKind::Updated),
+                instance("https://example.org/name", Some("urn:dataset:a"), AttributeChangeKind::Deleted),
+            ],
+        )
+    }
+
+    fn event<'a>(entity: &'a Uri, change: &'a EntityChange, ordinal: u32, subscriptions: &[i64], snapshot: &'a serde_json::Value) -> NewNotificationEvent<'a> {
         NewNotificationEvent {
             ordinal: WriteOrdinal::at(ordinal),
-            trigger: NotificationTrigger::AttributeUpdated,
+            change,
             entity_id: entity,
-            changed_attribute_name_keys: vec![AttributeNameKey::from(7), AttributeNameKey::from(9)],
-            changed_dataset_id: None,
+            change_attribute_name_keys: vec![AttributeNameKey::from(7), AttributeNameKey::from(9)],
             entity_snapshot: Some(snapshot),
             previous_snapshot: None,
             subscription_keys: subscriptions.iter().map(|key| subscription(*key)).collect(),
@@ -286,7 +325,8 @@ mod tests {
     fn a_replayed_write_inserts_no_second_copy_of_an_event_it_already_wrote() {
         let entity = entity();
         let snapshot = json!({ "id": "urn:ngsi-ld:Vehicle:1" });
-        let events = [event(&entity, 3, &[1], &snapshot)];
+        let change = change();
+        let events = [event(&entity, &change, 3, &[1], &snapshot)];
         let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &events)
             .expect("a representable event")
             .to_string(PostgresQueryBuilder);
@@ -295,24 +335,30 @@ mod tests {
     }
 
     #[test]
-    fn the_event_insert_carries_the_dictionary_keys_and_trigger_number() {
+    fn the_event_insert_carries_every_changed_instance_position_for_position() {
         let entity = entity();
+        let change = change();
         let snapshot = json!({ "id": "urn:ngsi-ld:Vehicle:1" });
-        let events = [event(&entity, 3, &[1], &snapshot)];
+        let events = [event(&entity, &change, 3, &[1], &snapshot)];
         let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &events)
             .expect("a representable event")
             .to_string(PostgresQueryBuilder);
-        // AttributeUpdated is trigger number 5; the changed keys 7 and 9 are the
-        // integer array bound for the event.
-        assert!(sql.contains('5'), "{sql}");
+        // Modified is lifecycle number 2; the instances are updated (2) then
+        // deleted (3), keyed 7 and 9, the first the default instance.
+        assert!(sql.contains("ARRAY [2,3]") || sql.contains("ARRAY[2,3]"), "{sql}");
         assert!(sql.contains("ARRAY [7,9]") || sql.contains("ARRAY[7,9]"), "{sql}");
+        assert!(
+            sql.contains("array_cat(array_append('{}'::text[], NULL), array_append('{}'::text[], 'urn:dataset:a'))"),
+            "{sql}"
+        );
     }
 
     #[test]
     fn an_ordinal_beyond_the_stored_range_fails_rather_than_wrapping() {
         let entity = entity();
         let snapshot = json!({});
-        let event = event(&entity, u32::MAX, &[1], &snapshot);
+        let change = change();
+        let event = event(&entity, &change, u32::MAX, &[1], &snapshot);
         assert!(insert_events_statement(&target(), Utc::now(), Uuid::nil(), &[event]).is_err());
     }
 
@@ -350,10 +396,11 @@ mod tests {
     fn the_owed_pairs_follow_event_then_matcher_order_and_skip_events_a_replay_did_not_write() {
         let entity = entity();
         let snapshot = json!({});
+        let change = change();
         let events = [
-            event(&entity, 3, &[5, 6], &snapshot),
-            event(&entity, 4, &[7], &snapshot),
-            event(&entity, 5, &[8], &snapshot),
+            event(&entity, &change, 3, &[5, 6], &snapshot),
+            event(&entity, &change, 4, &[7], &snapshot),
+            event(&entity, &change, 5, &[8], &snapshot),
         ];
         let inserted = [(100_i64, 3_i32), (101, 5)];
         let (event_keys, subscription_keys) = owed_deliveries(&events, &inserted);

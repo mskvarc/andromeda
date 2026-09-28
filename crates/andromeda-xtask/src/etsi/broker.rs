@@ -19,6 +19,9 @@ const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres
 /// The suite pages temporal instances at twenty per attribute, so the broker's
 /// default last-n is pinned just under that for the duration of the run.
 const DEFAULT_LAST_N: &str = "19";
+/// The suite also expects a `lastN` of twenty to be paged (TP `020_13_02` and
+/// `021_15`), so the largest `lastN` answered in full is pinned under it too.
+const MAX_LAST_N: &str = "19";
 /// Health-poll budget: 120 attempts one second apart.
 const READINESS_ATTEMPTS: u16 = 120;
 /// Per-tenant pool size for the run. Robot drives the suite serially, so one
@@ -79,6 +82,7 @@ pub(crate) fn spawn(repository_root: &Path, port: u16, broker_log: &Path) -> Res
         .arg(port.to_string())
         .env("ANDROMEDA__DATABASE__URL", DATABASE_URL)
         .env("ANDROMEDA__TEMPORAL__DEFAULT_LAST_N", DEFAULT_LAST_N)
+        .env("ANDROMEDA__TEMPORAL__MAX_LAST_N", MAX_LAST_N)
         .env("ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS", TENANT_MAX_CONNECTIONS)
         .env("ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED", RUNTIME_MAX_CACHED)
         .env("ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL", RUNTIME_IDLE_TTL)

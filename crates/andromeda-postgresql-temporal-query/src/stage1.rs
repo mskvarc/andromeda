@@ -4,13 +4,13 @@
 //! Entity deletion (clause 5.6.6) removes the current-state row and leaves the
 //! temporal evolution standing, so an entity's history has to stay selectable
 //! after it; the entity URI and the entity types are carried on the temporal
-//! catalogue for exactly that reason. Current-state filters - `q` and the geo
-//! query - reach `entities` through a correlated `EXISTS` instead, which is
-//! what makes "no current state" mean "matches no current-state filter" rather
-//! than "history disappears".
+//! catalogue for exactly that reason. The value filters read the temporal
+//! evolution too: clause 5.7.4.4 checks `q` (step S2) and the geoquery (step S3)
+//! against the Attribute instances inside the temporal window, which are the
+//! `attribute_history` rows, never against current state.
 
 use crate::{
-    alias::{Ah, Ahg, An, Ang, Ce, Cs, EntityIdColumn, S, Sg},
+    alias::{Ah, Ahg, An, Ang, EntityIdColumn, S, Sg},
     axis::axis_column,
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
@@ -19,20 +19,21 @@ use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
     entity_selection::{ConsideredEntities, EntitySelector},
     pagination::CountPolicy,
-    temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
+    temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
+    dataset_predicate::dataset_condition,
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_ordering::{order_by_entity_identifier, ordering_collation},
-    entity_row_refs::{DocumentsRef, EntityRowRefs},
     error::RenderError,
     geo_predicate::relation_expression,
-    q_predicate::projection as q_filter,
+    q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
+    time_interval_predicate::within_interval,
     type_predicate::condition as type_condition,
 };
 use andromeda_postgresql_schema::{
-    current::{E, Entities},
+    current::E,
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
@@ -209,8 +210,8 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
         ConsideredEntities::NoEntity => condition = condition.add(false_literal()),
     }
 
-    if let Some(probe) = current_state_probe(schema, compiled, names) {
-        condition = condition.add(SeaExpr::exists(probe));
+    if let Some(q_expr) = compiled.entities.q_expr.as_ref() {
+        condition = condition.add(q_filter::compile(q_expr, &InstanceScan::History(&windowed_instances(schema, compiled)), names));
     }
 
     if let Some(probe) = temporal_geo_existential(schema, compiled)? {
@@ -220,32 +221,20 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
     Ok(condition)
 }
 
-/// The correlated `EXISTS` over the current-state relations carrying the `q`
-/// filter (clause 4.9).
+/// The Attribute instances a temporal `q` is checked against (clause 5.7.4.4
+/// step S2): the entity's history rows inside the window on the requested
+/// Temporal Property, of the `datasetId`s the query selected.
 ///
-/// `q` reads the `current_attribute_values` projection and, for paths the
-/// projection cannot answer, the entity's JSONB payload, which the probe reads
-/// by key lookup rather than by joining `entity_documents`. It is a statement
-/// about current state, evaluated inside a probe correlated to the temporal
-/// entity's URI. `None` when the query carries no `q`, so a temporal query with
-/// no `q` never touches current state.
-///
-/// A geo query (clause 4.10) is deliberately *not* here: clause 5.7.4.4 step S3
-/// checks its restriction against the `GeoProperty` instances "within the
-/// interval defined by the temporal query", which are the `attribute_history`
-/// rows, not current state. [`temporal_geo_existential`] carries it.
-fn current_state_probe(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Option<SelectStatement> {
-    let q_expr = compiled.entities.q_expr.as_ref()?;
-
-    let rows = EntityRowRefs::aliased(schema.cloned(), Ce, Cs, DocumentsRef::ByKeyLookup);
-
-    let mut probe = SelectStatement::new();
-    probe
-        .expr(int_literal(1))
-        .from(qualified(schema, Entities::Table).alias(Ce))
-        .cond_where(SeaExpr::col((Ce, Entities::Id)).equals((E, TemporalEntities::Id)))
-        .cond_where(q_filter::compile(q_expr, &rows, names));
-    Some(probe.take())
+/// The window is the one the instance match itself applies, so a `q` term can
+/// only be satisfied by an instance the query could also return.
+fn windowed_instances(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> HistoryWindow {
+    HistoryWindow::builder()
+        .schema(schema.cloned())
+        .temporal_entity_key(SeaExpr::col((E, TemporalEntities::TemporalEntityKey)))
+        .axis(axis_column(compiled.window.timeproperty))
+        .interval(compiled.window.interval)
+        .datasets(DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter))
+        .build()
 }
 
 /// The correlated `EXISTS` over the `attribute_history` rows a temporal geo
@@ -307,16 +296,7 @@ fn temporal_geo_existential(schema: Option<&DynIden>, compiled: &CompiledTempora
 /// defaulting to `observedAt` (clause 4.11).
 fn geo_window_condition(compiled: &CompiledTemporalQuery) -> Condition {
     let axis = axis_column(compiled.window.timeproperty);
-    let mut condition = Condition::all();
-    match &compiled.window.interval {
-        TimeInterval::Unbounded => {}
-        TimeInterval::Before(instant) => condition = condition.add(SeaExpr::col((Ahg, axis)).lt(*instant)),
-        TimeInterval::After(instant) => condition = condition.add(SeaExpr::col((Ahg, axis)).gte(*instant)),
-        TimeInterval::Between { from, to } => {
-            condition = condition.add(SeaExpr::col((Ahg, axis)).gte(*from)).add(SeaExpr::col((Ahg, axis)).lt(*to));
-        }
-    }
-    condition
+    within_interval(&SeaExpr::col((Ahg, axis)), &compiled.window.interval)
 }
 
 /// Render one selector's identifier, pattern and type predicates against the
@@ -350,29 +330,15 @@ fn build_temporal_stage1_conditions(schema: Option<&DynIden>, compiled: &Compile
         condition = condition.add(SeaExpr::col((An, AttributeNames::Name)).is_in(names));
     }
 
-    // datasetId filter (clause 4.5.5): the default instance is stored as a
-    // NULL `dataset_id`, so it is tested separately from the named ones.
-    condition = match DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter) {
-        DatasetFilter::Unfiltered => condition,
-        DatasetFilter::DefaultOnly => condition.add(SeaExpr::col((S, TemporalAttributeStreams::DatasetId)).is_null()),
-        DatasetFilter::NamedOnly(named) => condition.add(SeaExpr::col((S, TemporalAttributeStreams::DatasetId)).is_in(named.iter().map(ToString::to_string))),
-        DatasetFilter::DefaultOrNamed(named) => condition.add(
-            Condition::any()
-                .add(SeaExpr::col((S, TemporalAttributeStreams::DatasetId)).is_in(named.iter().map(ToString::to_string)))
-                .add(SeaExpr::col((S, TemporalAttributeStreams::DatasetId)).is_null()),
-        ),
-    };
+    // datasetId filter (clause 4.5.5).
+    condition = condition.add(dataset_condition(
+        &SeaExpr::col((S, TemporalAttributeStreams::DatasetId)),
+        &DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter),
+    ));
 
     // Temporal filters (timerel + time_at), on the requested axis alone.
     let axis = axis_column(compiled.window.timeproperty);
-    match &compiled.window.interval {
-        TimeInterval::Unbounded => {}
-        TimeInterval::Before(instant) => condition = condition.add(SeaExpr::col((Ah, axis)).lt(*instant)),
-        TimeInterval::After(instant) => condition = condition.add(SeaExpr::col((Ah, axis)).gte(*instant)),
-        TimeInterval::Between { from, to } => {
-            condition = condition.add(SeaExpr::col((Ah, axis)).gte(*from)).add(SeaExpr::col((Ah, axis)).lt(*to));
-        }
-    }
+    condition = condition.add(within_interval(&SeaExpr::col((Ah, axis)), &compiled.window.interval));
 
     // Historical scope filtering via EXISTS subquery against scope_history,
     // which hangs off the temporal entity grain rather than off `entities`.
@@ -396,12 +362,18 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
     use andromeda_ngsi_ld_query::{
         cursor::PageCursor,
+        dataset::DatasetSelector,
         entity_selection::{EntitySelection, EntitySelector},
         filter::parser,
         geo::query::GeoQuery,
         ordering::{collation::IcuCollation, sort_direction::SortDirection},
         scope::query::ScopeQuery,
-        temporal::{instance_selection::InstanceSelection, ordering::TemporalEntityOrdering, representation::Representation, window::TemporalWindow},
+        temporal::{
+            instance_selection::InstanceSelection,
+            ordering::TemporalEntityOrdering,
+            representation::Representation,
+            window::{TemporalWindow, TimeInterval},
+        },
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -661,26 +633,62 @@ mod tests {
         pretty_assertions::assert_eq!(exists_count, 4, "The catalogue predicate wraps three scope predicates: {sql}");
     }
 
-    /// Clause 4.9: a `q` expression is a statement about current state, so it is
-    /// evaluated inside a probe correlated to the temporal entity's URI rather
-    /// than by joining `entities` into the driving statement. Inside that probe
-    /// the projection is reached by the current-state surrogate key, which only
-    /// the `entities` row the probe already selected can supply.
-    #[test]
-    fn stage1_q_filter_probes_current_state_through_the_entity_surrogate_key() {
-        let mut compiled = minimal_compiled();
-        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">50").unwrap());
-        let names = QueryNames {
-            attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(7))]),
+    /// The names the `q` tests below resolve: `speed` at key 7, `address` at 9.
+    fn speed_and_address() -> QueryNames {
+        QueryNames {
+            attributes: ResolvedNames::from_pairs([
+                ("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(7)),
+                ("https://example.com/address".parse().expect("valid attribute name"), AttributeNameKey::from(9)),
+            ]),
             types: ResolvedNames::default(),
-        };
-        let (sql, _) = built(&compiled, &names);
-        assert!(sql.contains("FROM \"entities\" AS \"ce\""), "{sql}");
-        assert!(sql.contains("\"ce\".\"id\" = \"e\".\"id\""), "{sql}");
-        assert!(sql.contains("\"current_attribute_values\""), "{sql}");
-        assert!(sql.contains("\"cav\".\"entity_key\" = \"ce\".\"entity_key\""), "{sql}");
-        assert!(!sql.contains("\"cav\".\"entity_id\""), "{sql}");
-        assert!(!sql.contains("jsonb_path_query_first"), "{sql}");
+        }
+    }
+
+    /// Clause 5.7.4.4 S2: a temporal `q` "shall be checked against all the
+    /// Attribute instances resulting from the initial filtering performed by the
+    /// temporal query", so each Query Term probes the in-window history rows of
+    /// its attribute, correlated to the temporal entity, and never current state.
+    #[test]
+    fn stage1_q_filter_probes_the_in_window_history_instances() {
+        let mut compiled = minimal_compiled();
+        compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
+        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
+        let (sql, _) = built(&compiled, &speed_and_address());
+        for fragment in [
+            r#"FROM "temporal_attribute_streams" AS "qs" JOIN "attribute_history" AS "qh" ON "qh"."stream_key" = "qs"."stream_key""#,
+            r#""qh"."deleted_at" IS NULL"#,
+            r#""qh"."observed_at" >="#,
+            r#""qh"."value_number" >"#,
+            r#""qs"."temporal_entity_key" = "e"."temporal_entity_key""#,
+        ] {
+            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
+        }
+        assert!(!sql.contains("current_attribute_values"), "a temporal q never reads current state: {sql}");
+        assert!(!sql.contains(r#""entities""#), "{sql}");
+    }
+
+    /// The window a `q` term reads is on the requested Temporal Property and
+    /// honours the query's `datasetId` selection.
+    #[test]
+    fn stage1_q_filter_honours_the_timeproperty_and_the_dataset_selection() {
+        let mut compiled = minimal_compiled();
+        compiled.window.timeproperty = TimeProp::Modified;
+        compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
+        compiled.instances.dataset_id_filter = vec![DatasetSelector::parse("@none").expect("the default instance selector")];
+        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\"==1").unwrap());
+        let (sql, _) = built(&compiled, &speed_and_address());
+        assert!(sql.contains(r#""qh"."modified_at" <"#), "{sql}");
+        assert!(sql.contains(r#""qs"."dataset_id" IS NULL"#), "{sql}");
+    }
+
+    /// Each Query Term is its own existential, combined by the q tree.
+    #[test]
+    fn each_term_of_an_or_is_its_own_windowed_existential() {
+        let mut compiled = minimal_compiled();
+        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100|\"https://example.com/speed\"<10").unwrap());
+        let (sql, _) = built(&compiled, &speed_and_address());
+        pretty_assertions::assert_eq!(sql.matches(r#"AS "qh""#).count(), 2, "{sql}");
+        assert!(sql.contains(" OR EXISTS"), "{sql}");
     }
 
     #[test]
@@ -691,19 +699,19 @@ mod tests {
         assert!(sql.contains("FALSE"), "{sql}");
     }
 
-    /// The jsonpath fallback reads the payload, which only current state
-    /// carries, so it is read by key lookup correlated to the probe's alias
-    /// rather than by joining the document row into every probe.
+    /// A compound-value term is answered by the payload jsonpath over each
+    /// in-window instance rebuilt as a one-instance entity document, inside the
+    /// history probe.
     #[test]
-    fn a_q_predicate_on_a_compound_value_reads_the_current_state_payload() {
+    fn a_q_predicate_on_a_compound_value_reads_the_rebuilt_history_instance() {
         let mut compiled = minimal_compiled();
-        compiled.entities.q_expr = Some(parser::parse("address[city]==\"Berlin\"").unwrap());
-        let (sql, _) = built(&compiled, &QueryNames::default());
+        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/address\"[city]==\"Berlin\"").unwrap());
+        let (sql, _) = built(&compiled, &speed_and_address());
         assert!(
-            sql.contains(r#"(SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "ce"."entity_key")"#),
+            sql.contains("jsonb_path_query_first(jsonb_build_array(jsonb_build_object('https://example.com/address'"),
             "{sql}"
         );
-        assert!(!sql.contains("entity_search"), "a q filter alone joins no search row: {sql}");
+        assert!(!sql.contains("entity_documents"), "{sql}");
     }
 
     /// Clause 5.7.4.4 S3: the geospatial restriction is checked against the

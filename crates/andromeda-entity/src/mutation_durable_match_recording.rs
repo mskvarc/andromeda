@@ -1,9 +1,10 @@
 //! Every whole-entity mutation records the durable subscription matches its own
 //! live notification would produce (clause 5.8), proven without a live broker.
 //!
-//! The single merge (clause 5.6.17) and replace (clause 5.6.18) paths each fire
-//! per-attribute triggers — one match per attribute the mutation changed — never
-//! a coarse `entityUpdated`. These tests commit each operation against the
+//! The single merge (clause 5.6.17) and replace (clause 5.6.18) paths each
+//! record one match carrying the precise instance transitions the mutation
+//! made -- never a coarse `entityUpdated`, and never one match per changed
+//! attribute (clause 5.8.6). These tests commit each operation against the
 //! shared recording harness and read the `subscription_matches` off the
 //! [`AtomicWrite`](andromeda_context_commit::atomic_write::AtomicWrite) it
 //! produced, so a regression to a whole-entity trigger would fail loudly rather
@@ -15,7 +16,6 @@ use crate::{
     notification_recording_harness::{
         CATEGORY_IRI,
         NAME_IRI,
-        assert_matches,
         assert_single_match,
         core_context,
         entity_uri,
@@ -25,7 +25,7 @@ use crate::{
     },
     write_kind::{MergeEntity, ReplaceEntity},
 };
-use andromeda_ngsi_ld_model::{entity::EntityPatch, notification::NotificationTrigger};
+use andromeda_ngsi_ld_model::{entity::EntityPatch, expanded::attribute_change::AttributeChangeKind};
 use serde_json::json;
 
 /// Build an [`EntityPatch`] from a compact fixture payload; short-form terms
@@ -45,7 +45,7 @@ async fn merge_records_an_attribute_updated_match() {
         .expect("the merge lands");
 
     let write = single_recorded_write(&recorded);
-    assert_single_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
+    assert_single_match(&write, &[(AttributeChangeKind::Updated, CATEGORY_IRI)]);
 }
 
 #[tokio::test]
@@ -59,14 +59,14 @@ async fn merge_records_an_attribute_created_match() {
         .expect("the merge lands");
 
     let write = single_recorded_write(&recorded);
-    assert_single_match(&write, NotificationTrigger::AttributeCreated, NAME_IRI);
+    assert_single_match(&write, &[(AttributeChangeKind::Created, NAME_IRI)]);
 }
 
 #[tokio::test]
 async fn replace_entity_records_the_replacement_diff() {
     let (service, recorded) = recording_service().await;
     // The replacement omits `category`, so the diff against the stored Building
-    // deletes it and creates `name` (clause 5.6.18): two per-attribute matches.
+    // deletes it and creates `name` (clause 5.6.18): one match carrying both.
     let admitted = admitted_entity::<ReplaceEntity>(
         &service,
         &patch(json!({"type": "Building", "name": {"type": "Property", "value": "lobby"}})),
@@ -79,11 +79,8 @@ async fn replace_entity_records_the_replacement_diff() {
         .expect("the replace lands");
 
     let write = single_recorded_write(&recorded);
-    assert_matches(
+    assert_single_match(
         &write,
-        &[
-            (NotificationTrigger::AttributeDeleted, CATEGORY_IRI),
-            (NotificationTrigger::AttributeCreated, NAME_IRI),
-        ],
+        &[(AttributeChangeKind::Deleted, CATEGORY_IRI), (AttributeChangeKind::Created, NAME_IRI)],
     );
 }

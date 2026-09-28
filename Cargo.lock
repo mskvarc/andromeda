@@ -444,6 +444,8 @@ dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-registration",
  "andromeda-telemetry",
+ "andromeda-test-mocks",
+ "bytes",
  "chrono",
  "dashmap",
  "derive_more",
@@ -1553,6 +1555,7 @@ dependencies = [
  "sea-query",
  "serde_json",
  "thiserror 2.0.21",
+ "typed-builder",
 ]
 
 [[package]]

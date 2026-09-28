@@ -131,9 +131,9 @@ async fn durable_queue_a_delivery_whose_subscription_cannot_be_read_stays_pendin
         &pool,
         subscription_key,
         QueuedEvent {
-            trigger: 1,
+            lifecycle: 1,
             entity_id: &entity_id,
-            changed_attribute_name_keys: Vec::new(),
+            change: Vec::new(),
             entity_snapshot: json!([{"@id": entity_id, "@type": [PROBE_TYPE]}]),
         },
     )

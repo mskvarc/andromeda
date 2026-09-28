@@ -6,6 +6,7 @@
 
 use crate::{
     batch_side_effect_job::BatchSideEffectJob,
+    current_state_projection::CurrentStateProjection,
     entity_mutation::EntityMutation,
     error::CommitError,
     history_record::HistoryRecord,
@@ -27,6 +28,10 @@ pub struct AtomicWrite {
     /// Temporal Evolution records produced by the mutation.
     #[builder(default = Default::default())]
     pub history: Vec<HistoryRecord>,
+    /// What the mutation did to current state, which the current-attribute
+    /// projection follows.
+    #[builder(default = CurrentStateProjection::FromHistory)]
+    pub projection: CurrentStateProjection,
     /// Subscriptions the mutation matched, each owed a notification event.
     #[builder(default = Default::default())]
     pub subscription_matches: Vec<SubscriptionMatch>,
@@ -74,7 +79,9 @@ impl AtomicWrite {
                 .history
                 .iter()
                 .find_map(|consequence| match consequence {
-                    HistoryRecord::Observations(payload) => Some(extract_types(payload).map_err(CommitError::invariant)),
+                    HistoryRecord::Observations(payload) | HistoryRecord::EvolutionInstances(payload) => {
+                        Some(extract_types(payload).map_err(CommitError::invariant))
+                    }
                     HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
                 })
                 .unwrap_or_else(|| Ok(Vec::new())),

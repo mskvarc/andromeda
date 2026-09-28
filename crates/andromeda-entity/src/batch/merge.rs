@@ -14,7 +14,7 @@ use crate::{
     EntityService,
     batch::{BatchResult, admitted_batch::AdmittedBatchEntity, chunk::UpdatedPayloads},
     error::EntityError,
-    notification_plan::attribute_change_groups,
+    notification_plan::modification,
     side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
@@ -65,8 +65,8 @@ impl EntityService {
                 continue;
             }
 
-            let groups = match attribute_change_groups(previous, &existing) {
-                Ok(groups) => groups,
+            let change = match modification(previous, &existing) {
+                Ok(change) => change,
                 Err(error) => {
                     errors.push((id, error));
                     continue;
@@ -84,7 +84,7 @@ impl EntityService {
                         overwrite: OverwritePolicy::Overwrite,
                     },
                 },
-                &groups,
+                change,
                 Precondition::MustExist,
                 now,
             ) {

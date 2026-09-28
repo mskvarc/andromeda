@@ -19,6 +19,8 @@ mod counted_body;
 pub mod discovery;
 /// Discovery response merging.
 pub mod discovery_result;
+/// The entities one forwarded query may gather from its sources.
+pub mod entity_budget;
 /// EntityMap creation forwarding (clauses 5.14.4 and 5.14.5).
 pub mod entity_map;
 /// Current-entity query and retrieve execution.
@@ -60,6 +62,8 @@ pub mod provision;
 pub mod provision_batch;
 /// Purge forwarding.
 pub mod provision_purge;
+/// Why a forwarded entity query produced no answer.
+pub mod query_forwarding_error;
 /// Choosing how a forwarded current-entity read reaches one registration.
 pub mod read_binding;
 /// Registration selection and fan-out shared by forwarded reads.
@@ -70,6 +74,10 @@ pub mod registration_selection;
 pub mod request;
 /// Clause 6.3.17 single-source failure classification.
 pub mod single_source_failure;
+/// Where a source's answer to a forwarded read continues.
+mod source_continuation;
+/// Walking every page of a source's answer to a forwarded query.
+pub mod source_walk;
 /// Subscription forwarding to registered context sources (clause 5.8).
 pub mod subscription;
 /// Temporal query and retrieve execution.
@@ -94,6 +102,7 @@ use crate::{
     outcome::TransportFailure,
 };
 use andromeda_http_headers::{
+    link::{header::Link, relation_type::RelationType},
     ngsild_entity_map::NgsiLdEntityMap,
     ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
     preference_applied::PreferenceApplied,
@@ -112,7 +121,8 @@ use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_registration::store::{RegistrationStore, forwarding_outcome::ForwardingOutcome};
 use andromeda_telemetry::federation_ops::record_upstream_status;
 use chrono::Utc;
-use std::{sync::Arc, time::Duration};
+use iri_rs::IriRefBuf;
+use std::{num::NonZeroU32, sync::Arc, time::Duration};
 use tracing::warn;
 
 /// Whether an incoming `Via` chain already contains the local context-source alias.
@@ -146,6 +156,10 @@ pub(crate) struct SentResponse {
     /// The `EntityMap` the source used (clause 5.5.14 `NGSILD-EntityMap`), when
     /// it returned one.
     pub(crate) entity_map: Option<Uri>,
+    /// The target of the source's `Link rel="next"` (clause 6.3.10), as the
+    /// source wrote it: the reference to the page following this one, still to
+    /// be resolved against the URL it answered.
+    pub(crate) next_page: Option<IriRefBuf>,
     /// The raw body.
     pub(crate) body: Vec<u8>,
 }
@@ -173,6 +187,8 @@ pub struct FederationService {
     cache: ForwardedGetCache,
     /// What an unset `splitEntities` means in this deployment.
     split_entities_default: SplitEntitiesDefault,
+    /// Most entities one federated query gathers (clause 4.12).
+    max_query_entities: NonZeroU32,
 }
 
 impl FederationService {
@@ -213,7 +229,16 @@ impl FederationService {
             cooldowns: CooldownRegistry::default(),
             cache: ForwardedGetCache::new(config.cache_max_entries),
             split_entities_default: config.split_entities_default,
+            max_query_entities: config.max_query_entities,
         })
+    }
+
+    /// Most entities one federated Query Entities gathers from the local store
+    /// and its context sources together before it is refused with
+    /// `TooManyResults` (clause 4.12).
+    #[must_use]
+    pub const fn max_query_entities(&self) -> NonZeroU32 {
+        self.max_query_entities
     }
 
     /// Resolve a request's or subscription's `splitEntities` against the
@@ -280,6 +305,8 @@ impl FederationService {
                     .unwrap_or_default();
                 let returned_version = headers::HeaderMapExt::typed_get::<PreferenceApplied>(response.headers()).and_then(|applied| applied.applied_version());
                 let entity_map = headers::HeaderMapExt::typed_get::<NgsiLdEntityMap>(response.headers()).map(NgsiLdEntityMap::into_inner);
+                let next_page = headers::HeaderMapExt::typed_get::<Link>(response.headers())
+                    .and_then(|link| link.find_by_rel(RelationType::Next).next().map(|value| value.link().clone())); // clone: the answer outlives the header map it was read from
                 match response.bytes().await {
                     Ok(body) => Ok(SentResponse {
                         status,
@@ -287,6 +314,7 @@ impl FederationService {
                         ngsild_warnings,
                         returned_version,
                         entity_map,
+                        next_page,
                         body: body.to_vec(),
                     }),
                     Err(error) => Err(classify_transport_failure(&error, timeout)),
@@ -350,6 +378,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-test-mocks",
     ],
     allow_production_dependencies: ["reqwest", "tokio"],
 }

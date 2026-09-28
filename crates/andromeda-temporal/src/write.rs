@@ -8,7 +8,6 @@ use crate::{
     temporal_validation_reason::TemporalValidationReason,
     unit_code_admission::validate_entity_unit_code_admission,
 };
-use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::HistoryRecord};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
@@ -63,31 +62,16 @@ impl TemporalService {
             entity_id
         };
 
-        // Per the specification, temporal entities can be created independently
-        // of the entity table, so the entity is not required to exist first.
+        // Clause 5.6.11.4: an existing Temporal Evolution gets the instances
+        // added "as mandated by clause 5.6.12"; otherwise "implementations
+        // shall create the provided Temporal Evolution of an Entity". Both are
+        // the same write -- every instance to history, the standing ones to
+        // current state -- and the answer differs only in what it reports.
         let exists = self.reader.entity_exists(target, &entity_id).await?;
-
-        let payload = Arc::new(expanded);
-
+        self.commit_evolution(target, &entity_id, Arc::new(expanded)).await?;
         if exists {
-            self.add_attrs_internal(target, &entity_id, payload).await?;
             Ok(CreateOrUpdateResult::Updated)
         } else {
-            // The base entity row is a placeholder carrying the expanded
-            // payload, so the stored JSON has the `@type` every entity read
-            // expects. No pre-flight existence check: the statement's conflict
-            // clause is the check, and it does not lose a race to a concurrent
-            // temporal write for the same new identifier.
-            let write = AtomicWrite::builder()
-                .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
-                // Unconditional: two concurrent temporal writes for one new
-                // identifier are both legitimate, and neither should fail
-                // because the other materialised the row first.
-                .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::clone(&payload))?)) // clone: Arc ref-count bump
-                .history(vec![HistoryRecord::Observations(payload)])
-                .build();
-            self.writes.commit(target, vec![write]).await?;
-
             Ok(CreateOrUpdateResult::Created(entity_id))
         }
     }
@@ -118,29 +102,7 @@ impl TemporalService {
         normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload, context).await?;
         validate_entity_unit_code_admission(&expanded)?;
-        self.add_attrs_internal(target, entity_id, Arc::new(expanded)).await?;
-        Ok(())
-    }
-
-    /// Append every observation in `expanded` to the entity's Temporal Evolution
-    /// in one transaction.
-    ///
-    /// No entity placeholder is written here: the caller has already established
-    /// that the entity has `temporal_entity_attributes` rows, and their foreign
-    /// key to `entities(id)` cascades on delete, so the base row is necessarily
-    /// present.
-    ///
-    /// A database failure fails the whole request. NGSI-LD 6.20.3.1 defines only
-    /// 204/400/404 for `POST /temporal/entities/{id}/attrs`, and 204 means "all
-    /// the Attributes were added successfully" -- there is no response code that
-    /// can report a subset having been stored.
-    async fn add_attrs_internal(&self, target: &ContextTarget, entity_id: &Uri, expanded: Arc<Value>) -> Result<(), TemporalError> {
-        let write = AtomicWrite::builder()
-            .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
-            .entity(EntityMutation::None)
-            .history(vec![HistoryRecord::Observations(expanded)])
-            .build();
-        self.writes.commit(target, vec![write]).await?;
+        self.commit_evolution(target, entity_id, Arc::new(expanded)).await?;
         Ok(())
     }
 

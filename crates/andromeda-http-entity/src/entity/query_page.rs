@@ -77,7 +77,10 @@ impl QueryPage {
     /// Clause 5.5.9: once sources contribute entities the page is cut from the
     /// merged collection rather than from the local rows, so the local query is
     /// widened to the whole result here and the requested window is applied by
-    /// [`QueryPage::cut`] once the merge is done.
+    /// [`QueryPage::cut`] once the merge is done. The widening stops one row past
+    /// the budget the sources were walked under (clause 4.12): one more is all
+    /// it takes to tell that the collection is too large, and reading the rest
+    /// could only be discarded.
     ///
     /// Clause 5.5.9.1: the page walks by opaque cursor when it continues a walk
     /// (a cursor arrived) or when a fresh, locally-scoped query in the default
@@ -91,11 +94,8 @@ impl QueryPage {
         is_local: bool,
         incoming: Option<PageCursor>,
     ) -> QueryPage {
-        let cut_at = if forwarded.is_some_and(ForwardedQueryResults::holds_remote_entities) {
-            PageCut::AfterMerge
-        } else {
-            PageCut::Local
-        };
+        let merged = forwarded.filter(|results| results.holds_remote_entities());
+        let cut_at = if merged.is_some() { PageCut::AfterMerge } else { PageCut::Local };
         // A continuation carries the cursor; a fresh page is cursor-eligible when
         // it names the default order and no offset. Either way the collection
         // must be the local one, which clause 4.23.1's no-order-under-
@@ -117,8 +117,8 @@ impl QueryPage {
             pointers,
             mode,
         };
-        if matches!(page.cut_at, PageCut::AfterMerge) {
-            query.limit = Some(u32::MAX);
+        if let Some(results) = merged {
+            query.limit = Some(results.local_row_limit());
             query.offset = Some(0);
         }
         page
@@ -128,7 +128,8 @@ impl QueryPage {
     /// the total alongside it when the request asked to be told.
     ///
     /// `local_total` is what the store counted, which stands whenever the store
-    /// held the whole collection.
+    /// held the whole collection. A merged collection is ordered by `id` before
+    /// the window is cut from it.
     pub(crate) fn cut(&self, entities: Vec<Entity>, local_total: Option<i64>) -> (Vec<Entity>, Option<i64>) {
         match self.cut_at {
             PageCut::Local => (entities, local_total),
@@ -137,6 +138,15 @@ impl QueryPage {
                     ResultCount::Requested => Some(i64::try_from(entities.len()).unwrap_or(i64::MAX)),
                     ResultCount::NotRequested => None,
                 };
+                // Clause 4.3.6.7 asks for consistent pagination over the merged
+                // collection, which needs one deterministic order: the default
+                // `id` order the local store pages in, byte-wise as the store
+                // collates identifiers. No other order can reach this point,
+                // because clause 5.7.2.4 refuses `orderBy` once a source takes
+                // part.
+                let mut entities = entities;
+                entities.sort_unstable_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+                let entities = entities;
                 let page = entities
                     .into_iter()
                     .skip(usize::try_from(self.offset).unwrap_or(usize::MAX))
@@ -195,5 +205,67 @@ impl QueryPage {
             }
         };
         append_pagination_links(response, instance, i64::from(self.limit), links, media_type);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::entity::query_page::{PageCut, PageMode, QueryPage, ResultCount};
+    use andromeda_http_response::pagination::PagePointers;
+    use andromeda_ngsi_ld_model::entity::Entity;
+    use serde_json::json;
+
+    fn entity(id: &str) -> Entity {
+        serde_json::from_value(json!({"id": id, "type": "Vehicle"})).expect("a valid entity")
+    }
+
+    fn merged_page(limit: u32, offset: u32, count: ResultCount) -> QueryPage {
+        QueryPage {
+            limit,
+            offset,
+            count,
+            cut_at: PageCut::AfterMerge,
+            pointers: PagePointers::OverRequestUri,
+            mode: PageMode::Offset,
+        }
+    }
+
+    fn ids(entities: &[Entity]) -> Vec<&str> {
+        entities.iter().map(|entity| entity.id.as_str()).collect()
+    }
+
+    /// Clause 4.3.6.7: the merged collection -- local entities first, then
+    /// what each source answered, in arrival order -- is paged in one
+    /// deterministic order, the `id` order the local store pages in.
+    #[test]
+    fn a_merged_collection_is_cut_from_its_identifier_order() {
+        let merged = vec![entity("urn:c"), entity("urn:e"), entity("urn:a"), entity("urn:d"), entity("urn:b")];
+        let (page, total) = merged_page(2, 1, ResultCount::Requested).cut(merged, None);
+        pretty_assertions::assert_eq!(ids(&page), vec!["urn:b", "urn:c"]);
+        pretty_assertions::assert_eq!(total, Some(5));
+    }
+
+    /// Clause 6.3.13: the count is the size of the whole merged collection,
+    /// whatever window is cut from it, and only when it was asked for.
+    #[test]
+    fn the_count_of_a_merged_collection_is_its_whole_size() {
+        let merged = vec![entity("urn:a"), entity("urn:b"), entity("urn:c")];
+        let (page, total) = merged_page(10, 3, ResultCount::Requested).cut(merged, Some(1));
+        assert!(page.is_empty());
+        pretty_assertions::assert_eq!(total, Some(3));
+        let (_, total) = merged_page(10, 0, ResultCount::NotRequested).cut(vec![entity("urn:a")], Some(1));
+        pretty_assertions::assert_eq!(total, None);
+    }
+
+    /// A page the store cut is answered as the store answered it.
+    #[test]
+    fn a_locally_cut_page_is_left_as_the_store_ordered_it() {
+        let page = QueryPage {
+            cut_at: PageCut::Local,
+            ..merged_page(10, 0, ResultCount::Requested)
+        };
+        let (entities, total) = page.cut(vec![entity("urn:b"), entity("urn:a")], Some(7));
+        pretty_assertions::assert_eq!(ids(&entities), vec!["urn:b", "urn:a"]);
+        pretty_assertions::assert_eq!(total, Some(7));
     }
 }

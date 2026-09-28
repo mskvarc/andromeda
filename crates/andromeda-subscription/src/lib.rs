@@ -12,6 +12,7 @@ pub mod candidate_index;
 mod candidate_index_property;
 /// Subscription lifecycle change values.
 pub mod change;
+pub mod change_filters;
 /// Subscription compilation policy.
 pub mod compilation;
 /// Compiled subscription state used by matching paths.

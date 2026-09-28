@@ -1,13 +1,15 @@
-//! JSONB jsonpath fallback for the `q` predicate shapes the
-//! `current_attribute_values` projection cannot answer.
+//! JSONB jsonpath fallback for the `q` predicate shapes the typed value columns
+//! cannot answer.
 //!
 //! The projection stores one typed value per attribute instance. Sub-attributes
 //! (`temperature.observedAt`) and the interior of compound values
-//! (`address[city]`) live only inside the payload, so predicates addressing them
-//! read the payload directly. This path is unindexed by construction.
+//! (`address[city]`) live only inside an expanded entity document, so
+//! predicates addressing them read that document directly: the payload over
+//! current state, a rebuilt one-instance document over history (see
+//! [`InstanceScan::document_condition`](crate::q_predicate::instance_scan::InstanceScan::document_condition)).
+//! This path is unindexed by construction.
 
 use crate::{
-    entity_row_refs::EntityRowRefs,
     jsonb::{attribute_value_jsonpath, lift_comparison},
     operator::{compare, pattern as pattern_predicate},
 };
@@ -45,16 +47,16 @@ fn whole_text(jsonb: SimpleExpr) -> SimpleExpr {
 /// only the payload can answer. An earlier compiler silently dropped the
 /// sub-path here and tested the top-level attribute instead.
 #[must_use]
-pub fn fallback_exists(path: &AttrPath, rows: &EntityRowRefs) -> Condition {
+pub fn fallback_exists(path: &AttrPath, document: &SimpleExpr) -> Condition {
     let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
-    Condition::all().add(jsonb_path_exists(rows.payload_column(), &jsonpath))
+    Condition::all().add(jsonb_path_exists(document.clone(), &jsonpath)) // clone: sea-query owns every operand
 }
 
-/// The `jsonb_path_query_first` extraction reaching one payload member of this
-/// attribute.
-fn payload_extraction(path: &AttrPath, terminal_iri: &str, rows: &EntityRowRefs) -> SimpleExpr {
+/// The `jsonb_path_query_first` extraction reaching one member of this
+/// attribute in the expanded `document`.
+fn payload_extraction(path: &AttrPath, terminal_iri: &str, document: &SimpleExpr) -> SimpleExpr {
     let jsonpath = value_extraction_jsonpath(path, terminal_iri);
-    jsonb_path_query_first(rows.payload_column(), &jsonpath)
+    jsonb_path_query_first(document.clone(), &jsonpath) // clone: sea-query owns every operand, and one document is read by several extractions
 }
 
 /// Build a comparison between one stored text expression and one operand, both
@@ -83,12 +85,12 @@ fn equality_scalar_comparison(extract_value: SimpleExpr, extract_object: SimpleE
 
 /// Compile an equality predicate (`==`/`!=`) against the payload.
 #[must_use]
-pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, rows: &EntityRowRefs) -> Condition {
-    let extract_value = payload_extraction(path, VALUE.as_str(), rows);
+pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, document: &SimpleExpr) -> Condition {
+    let extract_value = payload_extraction(path, VALUE.as_str(), document);
 
     match rhs {
         CompareValue::Scalar(scalar) => {
-            let extract_object = payload_extraction(path, OBJECT.as_str(), rows);
+            let extract_object = payload_extraction(path, OBJECT.as_str(), document);
             Condition::all().add(equality_scalar_comparison(extract_value, extract_object, scalar, membership.as_cmp_op()))
         }
         CompareValue::Range { min, max } => {
@@ -116,7 +118,7 @@ pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &Compa
             // way the single-scalar arm above does — `compile_equality_on_projection`
             // routes every list arm through this same COALESCE via
             // `scalar_condition`, and the fallback has to agree with it.
-            let extract_object = payload_extraction(path, OBJECT.as_str(), rows);
+            let extract_object = payload_extraction(path, OBJECT.as_str(), document);
             let disjunction = values.iter().fold(Condition::any(), |cond, value| {
                 // Each arm reads its own COALESCE of the two extractions.
                 let coalesced = Func::coalesce([whole_text(extract_value.clone()), whole_text(extract_object.clone())]);
@@ -139,8 +141,8 @@ pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &Compa
 /// order a `<` or `>` could mean. `COALESCing` `hasObject` in here made
 /// `owner>"a"` select entities the standard requires it to reject.
 #[must_use]
-pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, rows: &EntityRowRefs) -> Condition {
-    let extract_value = payload_extraction(path, VALUE.as_str(), rows);
+pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, document: &SimpleExpr) -> Condition {
+    let extract_value = payload_extraction(path, VALUE.as_str(), document);
     Condition::all().add(scalar_predicate(whole_text(extract_value), rhs, op.as_cmp_op()))
 }
 
@@ -155,12 +157,11 @@ pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, rows: &E
 /// Relationship's object URI is not matched against a pattern however
 /// string-shaped it is.
 #[must_use]
-pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, rows: &EntityRowRefs) -> Condition {
-    let payload = rows.payload_column();
+pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, document: &SimpleExpr) -> Condition {
     let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
-    let extract = whole_text(jsonb_path_query_first(payload.clone(), &jsonpath)); // clone: the presence test reads the same payload column
+    let extract = whole_text(jsonb_path_query_first(document.clone(), &jsonpath)); // clone: the presence test reads the same document
     let value = pattern_predicate(cast_compound(extract, PostgresType::Text), polarity, SeaExpr::val(pattern.as_str()));
-    let present = jsonb_path_exists(payload, &jsonpath);
+    let present = jsonb_path_exists(document.clone(), &jsonpath); // clone: sea-query owns every operand
     Condition::all().add(present_and(present, value))
 }
 
@@ -180,7 +181,8 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        q_predicate::projection::compile,
+        entity_row_refs::EntityRowRefs,
+        q_predicate::{instance_scan::InstanceScan, projection::compile},
     };
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser, path::QueryPath, predicate::Predicate, scalar::Scalar};
     use andromeda_postgresql_schema::current::Entities;
@@ -218,7 +220,7 @@ mod tests {
 
     fn render(q: &str) -> String {
         let expr = parser::parse(q).expect("parse q");
-        render_condition(compile(&expr, &EntityRowRefs::unaliased(None), &names()))
+        render_condition(compile(&expr, &InstanceScan::Current(&EntityRowRefs::unaliased(None)), &names()))
     }
 
     /// Clause 4.9: a `q` on the system sub-attribute `observedAt` reaches its
@@ -340,7 +342,7 @@ mod tests {
             membership: SetMembership::Within,
             rhs: CompareValue::Scalar(Scalar::Str("x".to_string())),
         });
-        let condition = compile(&expr, &EntityRowRefs::unaliased(None), &names());
+        let condition = compile(&expr, &InstanceScan::Current(&EntityRowRefs::unaliased(None)), &names());
         let sql = render_condition(condition);
         assert!(sql.contains("o''brien"), "apostrophe must be doubled inside the SQL literal: {sql}");
     }

@@ -28,24 +28,6 @@ pub struct An;
 #[iden = "te"]
 pub struct Te;
 
-/// Alias `ce` for the current-state `entities` row a `q` or geo predicate reads.
-///
-/// A `q` expression and a geo query filter current state (clauses 4.9 and 4.10)
-/// and read relations - the JSONB payload and the default `location` columns -
-/// that only the current-state relations have. Stage 1 reaches that row through
-/// a correlated `EXISTS`, never a join, so an entity whose current state has
-/// been deleted keeps its history queryable and simply matches no current-state
-/// filter.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ce"]
-pub struct Ce;
-
-/// Alias `cs` for the current-state `entity_search` row beside [`Ce`], joined
-/// into the probe only when a geo query reads the default `location` columns.
-#[derive(Iden, Clone, Copy)]
-#[iden = "cs"]
-pub struct Cs;
-
 /// Alias `sg` for the `temporal_attribute_streams` row the geo existential
 /// reads, kept distinct from [`S`] so the clause 5.7.4.4 geo probe nested beside
 /// the main stream match cannot capture its rows.
@@ -72,7 +54,7 @@ pub struct EntityIdColumn;
 
 #[cfg(test)]
 mod tests {
-    use crate::alias::{Ah, Ahg, An, Ang, Ce, Cs, EntityIdColumn, S, Sg, Te};
+    use crate::alias::{Ah, Ahg, An, Ang, EntityIdColumn, S, Sg, Te};
     use sea_query::Iden;
 
     #[test]
@@ -81,8 +63,6 @@ mod tests {
         pretty_assertions::assert_eq!(Ah.to_string(), "ah");
         pretty_assertions::assert_eq!(An.to_string(), "an");
         pretty_assertions::assert_eq!(Te.to_string(), "te");
-        pretty_assertions::assert_eq!(Ce.to_string(), "ce");
-        pretty_assertions::assert_eq!(Cs.to_string(), "cs");
         pretty_assertions::assert_eq!(Sg.to_string(), "sg");
         pretty_assertions::assert_eq!(Ang.to_string(), "ang");
         pretty_assertions::assert_eq!(Ahg.to_string(), "ahg");

@@ -43,7 +43,7 @@ pub enum TemporalAttributeStreams {
 }
 
 /// The `attribute_history` hypertable - stores historical attribute instances.
-#[derive(Iden, Clone, Copy)]
+#[derive(Iden, Clone, Copy, Debug)]
 pub enum AttributeHistory {
     /// Table name: `attribute_history`
     Table,

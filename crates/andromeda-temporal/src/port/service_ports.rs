@@ -2,7 +2,7 @@
 
 use crate::port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator};
 use andromeda_context_commit::committer::ContextCommitter;
-use andromeda_entity::port::reader::EntityReader;
+use andromeda_entity::port::{reader::EntityReader, retry_delay::RetryDelay};
 use std::sync::Arc;
 
 /// The storage capabilities a temporal service answers requests through.
@@ -21,4 +21,6 @@ pub struct TemporalServicePorts {
     pub mutator: Arc<dyn TemporalMutator>,
     /// Durable context commits carrying atomic append composition.
     pub writes: Arc<dyn ContextCommitter>,
+    /// The wait between two attempts of a write a concurrent writer superseded.
+    pub retry_delay: Arc<dyn RetryDelay>,
 }

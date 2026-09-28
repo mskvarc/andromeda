@@ -35,3 +35,6 @@ pub mod rows;
 pub(crate) mod status_code;
 /// Which subscription family a statement addresses.
 mod stored_kind;
+/// The number a subscription's `notificationTrigger` list stores each trigger
+/// condition as.
+pub(crate) mod trigger_code;

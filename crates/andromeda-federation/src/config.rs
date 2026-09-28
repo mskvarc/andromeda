@@ -2,7 +2,7 @@
 
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{num::NonZeroU32, time::Duration};
 use thiserror::Error;
 use toml_comment::TomlComment;
 
@@ -72,6 +72,11 @@ pub enum FederationConfigError {
     ZeroConnectTimeout,
 }
 
+/// The default of [`FederationConfig::max_query_entities`]: ten times the
+/// largest page the core API guarantees, so a hub serves any client page of a
+/// federated collection of that size.
+pub const DEFAULT_MAX_QUERY_ENTITIES: NonZeroU32 = NonZeroU32::MIN.saturating_add(9_999);
+
 /// Distributed Context Source forwarding limits.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct FederationConfig {
@@ -92,6 +97,12 @@ pub struct FederationConfig {
     /// unset (clauses 4.3.6.7, 5.2.12, 5.8.6, 5.14.4.4).
     #[toml_comment(inline)]
     pub split_entities_default: SplitEntitiesDefault,
+    /// Most entities one federated Query Entities gathers from the local store
+    /// and every Context Source it walks together; a query whose answers
+    /// exceed it is refused with `TooManyResults` (403, clause 4.12) rather than
+    /// answered with a truncated collection.
+    #[toml_comment(inline)]
+    pub max_query_entities: NonZeroU32,
 }
 
 impl Default for FederationConfig {
@@ -102,6 +113,7 @@ impl Default for FederationConfig {
             request_timeout: HumanDuration::from_millis(5000),
             cache_max_entries: 1024,
             split_entities_default: SplitEntitiesDefault::Complete,
+            max_query_entities: DEFAULT_MAX_QUERY_ENTITIES,
         }
     }
 }
@@ -144,7 +156,7 @@ impl FederationConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{FederationConfig, FederationConfigError, SplitEntities, SplitEntitiesDefault};
+    use crate::config::{DEFAULT_MAX_QUERY_ENTITIES, FederationConfig, FederationConfigError, SplitEntities, SplitEntitiesDefault};
     use andromeda_configuration_scalars::human_duration::HumanDuration;
 
     fn config() -> FederationConfig {
@@ -154,7 +166,14 @@ mod tests {
             request_timeout: HumanDuration::from_millis(5000),
             cache_max_entries: 1024,
             split_entities_default: SplitEntitiesDefault::Complete,
+            max_query_entities: DEFAULT_MAX_QUERY_ENTITIES,
         }
+    }
+
+    /// The federated query budget defaults to ten thousand entities.
+    #[test]
+    fn the_query_budget_defaults_to_ten_thousand_entities() {
+        pretty_assertions::assert_eq!(FederationConfig::default().max_query_entities.get(), 10_000);
     }
 
     #[test]

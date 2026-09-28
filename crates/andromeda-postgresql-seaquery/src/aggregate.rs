@@ -25,6 +25,12 @@ struct BoolOr;
 #[iden = "ROW_NUMBER"]
 struct RowNumber;
 
+/// The `RANK()` window function, ranking rows within a window frame with ties
+/// sharing one rank.
+#[derive(Iden, Clone, Copy)]
+#[iden = "RANK"]
+struct Rank;
+
 /// `STDDEV(value)` - the sample standard deviation of a group's values.
 #[must_use]
 pub fn stddev(value: SimpleExpr) -> SimpleExpr {
@@ -47,6 +53,18 @@ pub fn bool_or(predicate: SimpleExpr) -> SimpleExpr {
 #[must_use]
 pub fn row_number() -> SimpleExpr {
     Func::cust(RowNumber).args::<[SimpleExpr; 0]>([]).into()
+}
+
+/// `RANK()` - one plus the number of rows that sort strictly before this one
+/// in its window frame, so rows that tie on every ordering key share a rank.
+///
+/// A temporal page keeps whole groups of instances sharing one timestamp by
+/// ranking on the timestamp alone: every member of the group at the page edge
+/// carries the rank of the group's first row. The `OVER (…)` frame is supplied
+/// through [`sea_query::SelectStatement::expr_window_as`].
+#[must_use]
+pub fn rank() -> SimpleExpr {
+    Func::cust(Rank).args::<[SimpleExpr; 0]>([]).into()
 }
 
 /// `array_agg(value ORDER BY order_by)` - collect `value` into an array in the
@@ -136,10 +154,11 @@ mod tests {
 
     #[test]
     fn the_group_aggregates_render_their_own_function_names() {
-        use crate::aggregate::{bool_or, row_number, stddev};
+        use crate::aggregate::{bool_or, rank, row_number, stddev};
         let render = |expr| Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
         assert!(render(stddev(Expr::col(Alias::new("v")))).contains(r#"STDDEV("v")"#));
         assert!(render(bool_or(Expr::col(Alias::new("u")).is_null())).contains(r#"BOOL_OR("u" IS NULL)"#));
         assert!(render(row_number()).contains("ROW_NUMBER()"));
+        assert!(render(rank()).contains("RANK()"));
     }
 }

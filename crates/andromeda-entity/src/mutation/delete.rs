@@ -3,8 +3,9 @@
 use crate::{
     EntityService,
     error::EntityError,
-    expanded_member::{stored_attribute_names, stored_entity_types},
+    expanded_member::stored_entity_types,
     notification_fanout::{ChangedEntity, MutationSnapshots},
+    notification_plan::deletion,
     sys_attrs::snapshot_with_sys_attrs,
 };
 use andromeda_context_commit::{
@@ -17,14 +18,10 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{
-    expanded::attribute_change::classify_attribute_changes,
-    notification::{ChangeOrigin, NotificationTrigger},
-};
+use andromeda_ngsi_ld_model::notification::ChangeOrigin;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
-use serde_json::Value;
-use std::{slice, sync::Arc};
+use std::sync::Arc;
 
 impl EntityService {
     /// Delete an entity by its URI (NGSI-LD 5.6.6).
@@ -53,8 +50,7 @@ impl EntityService {
                 }
             };
 
-            let attr_keys = stored_attribute_names(&entity_snapshot)?;
-            let attribute_changes = classify_attribute_changes(&entity_snapshot, &Value::Null).map_err(EntityError::internal)?;
+            let change = deletion(&entity_snapshot)?;
 
             // The durable match stores the entity snapshot verbatim, and by delivery
             // time the deleted row is gone, so its clause-4.8 system attributes are
@@ -73,17 +69,10 @@ impl EntityService {
                 current: Some(&match_snapshot),
                 previous: Some(&entity_snapshot),
             };
-            let mut subscription_matches = Vec::new();
-            for change in &attribute_changes {
-                subscription_matches.extend(self.build_subscription_matches_for_instance(
-                    deleted,
-                    NotificationTrigger::AttributeDeleted,
-                    slice::from_ref(&change.key.attr),
-                    change.key.dataset_id.as_ref(),
-                    snapshots,
-                ));
-            }
-            subscription_matches.extend(self.build_subscription_matches(deleted, NotificationTrigger::EntityDeleted, &attr_keys, snapshots));
+            // Clause 5.8.6: one deletion is one change, owed once to every
+            // subscription it matches -- through `entityDeleted` or through the
+            // `attributeDeleted` of every instance the entity took with it.
+            let subscription_matches = self.build_subscription_matches(deleted, &change, snapshots);
 
             let write = AtomicWrite::builder()
                 .entity_id(Arc::new(entity_uri.clone())) // clone: the delete write owns its validated identifier.
@@ -100,35 +89,14 @@ impl EntityService {
                 return Err(EntityError::not_found(&entity_uri));
             }
 
-            // One event per deleted attribute instance so dataset-scoped
-            // `attributeDeleted` subscriptions receive only the instance removed.
-            for change in attribute_changes {
-                self.emit_change(
-                    target,
-                    ChangeEvent::builder()
-                        .entity_id(entity_uri.clone()) // clone: value also needed by subsequent EntityDeleted emit
-                        .entity_types(entity_types.clone()) // clone: value also needed by subsequent EntityDeleted emit
-                        .trigger_reason(NotificationTrigger::AttributeDeleted)
-                        .occurred_at(Utc::now())
-                        .origin(ChangeOrigin::Local)
-                        .changed_attributes(vec![change.key.attr])
-                        .changed_dataset_id(change.key.dataset_id)
-                        .entity_snapshot(Some(entity_snapshot.clone())) // clone: value also needed by subsequent EntityDeleted emit
-                        .previous_attributes(Some(entity_snapshot.clone())) // clone: value also needed by subsequent EntityDeleted emit
-                        .sys_attrs_snapshot(sys_attrs_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
-                        .build(),
-                );
-            }
-
             self.emit_change(
                 target,
                 ChangeEvent::builder()
                     .entity_id(entity_uri)
                     .entity_types(entity_types)
-                    .trigger_reason(NotificationTrigger::EntityDeleted)
+                    .change(change)
                     .occurred_at(Utc::now())
                     .origin(ChangeOrigin::Local)
-                    .changed_attributes(attr_keys)
                     .entity_snapshot(Some(entity_snapshot.clone())) // clone: separate ownership for snapshot and previous fields
                     .previous_attributes(Some(entity_snapshot))
                     .sys_attrs_snapshot(sys_attrs_snapshot)

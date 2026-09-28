@@ -3,11 +3,10 @@
 use crate::{
     aggregation_eligibility::ensure_aggregation_eligible,
     error::TemporalError,
-    linked::candidates::TemporalLinkedCandidate,
     port::history_reader::TemporalHistoryReader,
     read::rendered_entity::HistoryPresence,
     requested_identifiers::RequestedIdentifiers,
-    service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalReadResult, TemporalService},
+    service::{TemporalRange, TemporalReadResult, TemporalService},
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_operation_unsupported::TemporalOperationUnsupported,
 };
@@ -26,7 +25,6 @@ use andromeda_ngsi_ld_render::{
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
-use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::{collections::HashMap, slice::from_ref};
 
@@ -78,11 +76,19 @@ impl TemporalService {
                 .render_one_temporal_entity(target, entity_id, &entity_types, &compiled, &NameCompactor::new(&self.engine, context))
                 .await?;
 
-            // Clause 5.7.2: an `attrs` filter that selects nothing leaves no
-            // temporal representation to return, which is a 404 rather than an
-            // entity with no attributes.
-            if rendered.presence == HistoryPresence::Absent && !compiled.instances.attr_filter.is_empty() {
-                return Err(TemporalError::NotFound(TemporalNotFoundReason::NoDataForAttributes {
+            // Clause 5.7.3.4, step S1: "if the time series, for all the
+            // concerned Attributes of an Entity, does not include data
+            // corresponding to the temporal query interval, then such Entity
+            // shall be removed from S, thus it shall not appear in the final
+            // result set" -- the concerned Attributes being those `attrs` names,
+            // "or all if none are specified". A restriction that leaves nothing
+            // therefore leaves no Temporal Evolution to represent (clause
+            // 5.7.3.5), which is ResourceNotFound whether or not `attrs` was
+            // given. With neither a window nor `attrs` nothing is removed, so an
+            // entity whose evolution holds no attribute still answers itself.
+            let restricted = compiled.window.interval.is_bounded() || !compiled.instances.attr_filter.is_empty();
+            if restricted && self.window_presence(target, entity_id, &compiled, rendered.presence).await? == HistoryPresence::Absent {
+                return Err(TemporalError::NotFound(TemporalNotFoundReason::NoInstanceSelected {
                     entity: entity_id.clone(),
                 }));
             }
@@ -99,16 +105,13 @@ impl TemporalService {
                 }));
             }
 
-            let range = if rendered.truncated {
-                Some(TemporalRange {
-                    interval: compiled.window.interval,
-                    observed: rendered.time_range,
-                    partition_total: rendered.max_partition_total,
-                    last_n_origin: compiled.instances.last_n_origin,
-                })
-            } else {
-                None
-            };
+            // Clause 6.3.10: a page that left instances out is a 206 carrying the
+            // `Content-Range` its client resumes from.
+            let range = rendered.cut.map(|cut| TemporalRange {
+                interval: compiled.window.interval,
+                observed: rendered.time_range,
+                direction: cut.direction,
+            });
 
             Ok(TemporalReadResult {
                 value: rendered.value,
@@ -121,111 +124,33 @@ impl TemporalService {
         result
     }
 
-    /// Query temporal entities matching the given filter and temporal parameters.
+    /// Whether clause 5.7.3.4 step S1 -- the temporal window and the `attrs`
+    /// selection -- leaves any of the entity's history, given the `presence`
+    /// the rendered answer reports.
+    ///
+    /// The `datasetId` step runs after S1 and removes "the complete Attribute
+    /// from S1", never the Entity, so an answer the dataset filter emptied is
+    /// judged again without it: the entity then stands, reduced to no
+    /// Attribute, rather than being not found.
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::Request`] when the parameters do not satisfy
-    /// clause 5.7.4 or name an attribute that is ineligible for a requested
-    /// aggregation method (clause 5.7.4.4),
-    /// [`TemporalError::OperationNotSupported`] when the selected reader
-    /// refuses one of those methods, [`TemporalError::Internal`] when the
-    /// reader reports a stage-one outcome that paginated ahead of a residual
-    /// predicate, and [`TemporalError::Persistence`] when the history cannot
-    /// be read. A single entity that fails to render is reported as a warning
-    /// on the result rather than failing the query.
-    pub async fn query(&self, target: &ContextTarget, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalQueryResult, TemporalError> {
-        let timer = temporal::start(TemporalOperation::Query);
-        let result = async {
-            params.validate(true)?;
-
-            let compiled = self.compile_temporal_query(params, context).await?;
-
-            ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
-            self.ensure_requested_attributes_aggregable(target, &compiled).await?;
-            let id_outcome = self.reader.query_entity_ids(target, &compiled).await?;
-            let (entity_ids, total_count) = id_outcome
-                .complete(compiled.pagination)
-                .map_err(|error| TemporalError::internal(error.to_string()))?;
-
-            // One batch read of the temporal catalogue, which owns the entity types
-            // (clauses 4.5.1 and 4.5.6) and answers for entities whose current
-            // state a clause 5.6.6 deletion has already removed.
-            let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
-
-            let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
-            let mut entities = Vec::new();
-            let mut warnings = Vec::new();
-            let mut linked_candidates: Vec<TemporalLinkedCandidate> = Vec::new();
-            let mut any_truncated = false;
-            let mut overall_min: Option<DateTime<Utc>> = None;
-            let mut overall_max: Option<DateTime<Utc>> = None;
-            let mut overall_partition_total: Option<i64> = None;
-            let names = NameCompactor::new(&self.engine, context);
-            for entity_id in entity_ids {
-                let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
-                match self.render_one_temporal_entity(target, &entity_id, entity_types, &compiled, &names).await {
-                    // An entity the window selects no history for is simply not part
-                    // of the result set.
-                    Ok(rendered) if rendered.presence == HistoryPresence::Absent => {}
-                    // Clause 5.7.4.5 reduces "every Entity within the payload body"
-                    // to the members the projection defines, so an Entity reduced
-                    // to none of them is not in the payload -- the query's answer to
-                    // what a retrieval answers with `ResourceNotFound`.
-                    Ok(rendered) if projected && rendered_entity_members(&rendered.value) == RenderedEntityMembers::None => {}
-                    Ok(rendered) => {
-                        if rendered.truncated {
-                            any_truncated = true;
-                        }
-                        if let Some((min_t, max_t)) = rendered.time_range {
-                            overall_min = Some(overall_min.map_or(min_t, |seen: DateTime<Utc>| seen.min(min_t)));
-                            overall_max = Some(overall_max.map_or(max_t, |seen: DateTime<Utc>| seen.max(max_t)));
-                        }
-                        if let Some(partition_total) = rendered.max_partition_total {
-                            overall_partition_total = Some(overall_partition_total.map_or(partition_total, |seen: i64| seen.max(partition_total)));
-                        }
-                        linked_candidates.extend(rendered.candidates);
-                        entities.push(rendered.value);
-                    }
-                    // The grouped-aggregation bound refuses the whole operation
-                    // rather than dropping one entity: an over-the-bound grouping
-                    // is a `TooManyResults` (403), not a partial result set.
-                    Err(error @ TemporalError::TooManyResults { .. }) => return Err(error),
-                    // One entity that cannot be rendered degrades the result set
-                    // rather than the query: the rest of the matches still answer.
-                    Err(error) => {
-                        tracing::warn!(error = %error, entity_id = %entity_id, "Failed to render the temporal evolution of an entity");
-                        warnings.push(TemporalQueryWarning {
-                            entity_id, // moved: the warning owns the identifier this iteration finished with
-                            message: error.to_string(),
-                        });
-                    }
-                }
-            }
-
-            let range = if any_truncated {
-                Some(TemporalRange {
-                    interval: compiled.window.interval,
-                    observed: overall_min.zip(overall_max),
-                    partition_total: overall_partition_total,
-                    last_n_origin: compiled.instances.last_n_origin,
-                })
-            } else {
-                None
-            };
-
-            Ok(TemporalQueryResult {
-                entities,
-                total_count,
-                any_truncated,
-                range,
-                warnings,
-                linked_candidates,
-            })
+    /// Returns [`TemporalError::Persistence`] when the history cannot be read.
+    async fn window_presence(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        compiled: &CompiledTemporalQuery,
+        presence: HistoryPresence,
+    ) -> Result<HistoryPresence, TemporalError> {
+        if presence == HistoryPresence::Present || compiled.instances.dataset_id_filter.is_empty() {
+            return Ok(presence);
         }
-        .await;
-        timer.finish_result(&result);
-        result
+        // clone: the S1 probe reads the same query without the dataset step that follows it
+        let mut window_only = compiled.clone();
+        window_only.instances.dataset_id_filter.clear();
+        let window_only = window_only;
+        Ok(self.read_history_page(target, entity_id, &window_only).await?.presence())
     }
 
     /// Build an aggregated temporal response in compacted form, bypassing JSON-LD compaction.
@@ -381,6 +306,8 @@ fn ensure_aggregation_supported(reader: &dyn TemporalHistoryReader, requested: &
     }
 }
 
+/// Query Temporal Evolution of Entities (clause 5.7.4).
+mod query;
 /// Rendering the temporal evolution of one entity over a compiled window.
 pub(crate) mod rendered_entity;
 

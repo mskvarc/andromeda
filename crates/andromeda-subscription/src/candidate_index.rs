@@ -162,12 +162,17 @@ impl CandidateIndex {
 
     /// Route one event through the funnel and evaluate the survivors with the
     /// authoritative matcher.
+    ///
+    /// The trigger stage keeps a subscription listening to any trigger the
+    /// change raises; the matcher then decides whether one of them was raised
+    /// on a watched attribute.
     pub fn find_matching(&self, event: &ChangeEvent) -> MatchOutcome {
         let routed = self.route_selectors(event);
         let routed_count = routed.len();
+        let raised = event.change.triggers();
         let watched: Vec<SubscriptionKey> = routed
             .into_iter()
-            .filter(|key| self.by_trigger[trigger_slot(event.trigger_reason)].contains(key))
+            .filter(|key| raised.iter().any(|trigger| self.by_trigger[trigger_slot(*trigger)].contains(key)))
             .filter(|key| self.admits_changed_attributes(*key, event))
             .collect();
         let candidates: Vec<&Arc<CompiledSubscription>> = watched.iter().filter_map(|key| self.entries.get(key)).collect();
@@ -224,8 +229,9 @@ impl CandidateIndex {
     fn admits_changed_attributes(&self, key: SubscriptionKey, event: &ChangeEvent) -> bool {
         self.watch_all.contains(&key)
             || event
-                .changed_attributes
-                .iter()
+                .change
+                .attributes()
+                .into_iter()
                 .any(|name| self.by_watched_attribute.get(name).is_some_and(|keys| keys.contains(&key)))
     }
 }

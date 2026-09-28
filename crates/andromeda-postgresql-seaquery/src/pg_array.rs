@@ -85,9 +85,43 @@ pub fn text_array(values: &[&str]) -> SimpleExpr {
     Expr::val(values.iter().map(|value| (*value).to_owned()).collect::<Vec<String>>())
 }
 
+/// The `array_cat` function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "array_cat"]
+struct ArrayCat;
+
+/// A `text[]` whose elements may be SQL `NULL`, in the order given.
+///
+/// One bound array value cannot carry a `NULL` element (see
+/// [`crate::placeholder`]), and the `ARRAY[…]` constructor cannot take
+/// sea-query markers, whose template tokenizer reads `[…]` as a quoted
+/// identifier. The array is therefore concatenated from one-element arrays:
+/// each present element binds as its own parameter and each absent one is a
+/// `NULL`, which binds nothing. The concatenation is a balanced tree, so its
+/// nesting grows with the logarithm of the element count. Every present
+/// element is a parameter, so this suits the elements of one row, never a
+/// batch.
+#[must_use]
+pub fn nullable_text_array(values: &[Option<&str>]) -> SimpleExpr {
+    match values {
+        [] => Expr::cust("'{}'::text[]"),
+        [value] => array_append(
+            Expr::cust("'{}'::text[]"),
+            match value {
+                Some(value) => Expr::val(*value),
+                None => Expr::cust("NULL"),
+            },
+        ),
+        [..] => {
+            let (head, tail) = values.split_at(values.len() / 2);
+            Func::cust(ArrayCat).args([nullable_text_array(head), nullable_text_array(tail)]).into()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::pg_array::{any, array_append, array_position, array_subquery};
+    use crate::pg_array::{any, array_append, array_position, array_subquery, nullable_text_array};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
 
@@ -127,5 +161,42 @@ mod tests {
             .build(PostgresQueryBuilder);
         assert!(sql.contains("= ANY("), "{sql}");
         assert_eq!(values.0.len(), 1, "the whole array is one bound value: {sql}");
+    }
+
+    #[test]
+    fn a_nullable_text_array_binds_present_elements_and_spells_absent_ones() {
+        let values = [Some("urn:a"), None, Some("urn:b")];
+        let (sql, bound) = Query::select().expr(nullable_text_array(&values)).to_owned().build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            "SELECT array_cat(array_append('{}'::text[], $1), array_cat(array_append('{}'::text[], NULL), array_append('{}'::text[], $2)))"
+        );
+        assert_eq!(bound.0.len(), 2);
+    }
+
+    #[test]
+    fn an_empty_nullable_text_array_is_typed() {
+        assert_eq!(render_expr(nullable_text_array(&[])), "SELECT '{}'::text[]");
+    }
+
+    /// The concatenation is balanced: 64 elements nest seven calls deep, not
+    /// sixty-four.
+    #[test]
+    fn a_nullable_text_array_nests_logarithmically() {
+        let values: Vec<Option<&str>> = (0..64).map(|index| if index % 2 == 0 { Some("urn:x") } else { None }).collect();
+        let (sql, bound) = Query::select().expr(nullable_text_array(&values)).to_owned().build(PostgresQueryBuilder);
+        let depth = sql
+            .chars()
+            .scan(0_i32, |open, character| {
+                *open += match character {
+                    '(' => 1,
+                    ')' => -1,
+                    _ => 0,
+                };
+                Some(*open)
+            })
+            .max();
+        assert_eq!(depth, Some(7), "{sql}");
+        assert_eq!(bound.0.len(), 32);
     }
 }

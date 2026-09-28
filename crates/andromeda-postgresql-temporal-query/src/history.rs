@@ -1,5 +1,5 @@
 //! Stage 2 of a temporal query: attribute history for one entity, optionally
-//! narrowed to the last `N` instances per attribute.
+//! narrowed to one clause 6.3.10 page of instances per attribute.
 //!
 //! The statement reads the rebuilt hypertable through the temporal catalogue
 //! alone - `attribute_history` to `temporal_attribute_streams` to
@@ -17,7 +17,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
-    temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
+    temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, window::TimeInterval},
 };
 use andromeda_postgresql_query::scope_predicate::{ScopeTarget, condition as scope_condition};
 use andromeda_postgresql_schema::{
@@ -25,11 +25,11 @@ use andromeda_postgresql_schema::{
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::{
-    aggregate::{count_all, row_number},
+    aggregate::{count_all, rank, row_number},
     branch::qualified,
     postgis::st_as_ewkb,
 };
-use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, JoinType, Order, Query, SelectStatement, WindowStatement};
+use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Func, JoinType, NullOrdering, Order, Query, SelectStatement, WindowStatement};
 
 /// Build Stage 2 query: temporal history for a single entity.
 ///
@@ -174,59 +174,149 @@ fn project_base_columns(select: &mut SelectStatement) {
     select.expr(Expr::col((S, TemporalAttributeStreams::DatasetId)));
 }
 
-/// Build the history query, with the optional `lastN` ranking.
+/// Build the history query, narrowed to the page the query compiled.
 fn build_history_query(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
-    let axis = axis_column(compiled.window.timeproperty);
-
-    if let Some(last_n) = compiled.instances.last_n {
-        // A total order over the instances of one stream, so the ranking that
-        // picks the last N and the rendering order do not depend on the plan.
-        // `(recorded_at, write_id, write_ordinal)` is the hypertable's unique
-        // key, so it separates every pair of rows, including two instances that
-        // share a value on the requested axis.
-        let mut rank_window = WindowStatement::partition_by((Ah, AttributeHistory::StreamKey));
-        rank_window
-            .order_by((Ah, axis), Order::Desc)
-            .order_by((Ah, AttributeHistory::RecordedAt), Order::Desc)
-            .order_by((Ah, AttributeHistory::WriteId), Order::Desc)
-            .order_by((Ah, AttributeHistory::WriteOrdinal), Order::Desc);
-
-        let mut ranked = Query::select();
-        project_base_columns(&mut ranked);
-        ranked.expr_window_as(row_number(), rank_window, Alias::new("rn"));
-        ranked.expr_window_as(
-            count_all(),
-            WindowStatement::partition_by((Ah, AttributeHistory::StreamKey)),
-            Alias::new("partition_total"),
-        );
-        base_history_source(&mut ranked, schema);
-        ranked.cond_where(condition);
-
-        let ranked_alias = Alias::new("ranked");
-        let mut outer = Query::select();
-        outer
-            .expr(Expr::col((ranked_alias.clone(), Asterisk)))
-            .from_subquery(ranked.take(), ranked_alias.clone())
-            .and_where(Expr::col((ranked_alias.clone(), Alias::new("rn"))).lte(i64::from(last_n)))
-            .order_by((ranked_alias.clone(), Alias::new("attribute_name")), Order::Asc)
-            .order_by((ranked_alias.clone(), axis), Order::Asc)
-            .order_by((ranked_alias.clone(), AttributeHistory::RecordedAt), Order::Asc)
-            .order_by((ranked_alias.clone(), AttributeHistory::WriteId), Order::Asc)
-            .order_by((ranked_alias, AttributeHistory::WriteOrdinal), Order::Asc);
-        outer.take()
-    } else {
-        let mut select = Query::select();
-        project_base_columns(&mut select);
-        base_history_source(&mut select, schema);
-        select.cond_where(condition);
-        select
-            .order_by((An, AttributeNames::Name), Order::Asc)
-            .order_by((Ah, axis), Order::Asc)
-            .order_by((Ah, AttributeHistory::RecordedAt), Order::Asc)
-            .order_by((Ah, AttributeHistory::WriteId), Order::Asc)
-            .order_by((Ah, AttributeHistory::WriteOrdinal), Order::Asc);
-        select.take()
+    match compiled.instances.page {
+        InstancePage::Whole => whole_history(schema, compiled, condition),
+        InstancePage::LastN { n } => ranked_history(schema, compiled, condition, &last_n_ranking(compiled, n)),
+        InstancePage::Forward { size } => ranked_history(schema, compiled, condition, &forward_page_ranking(compiled, size)),
+        InstancePage::Backward { size, .. } => ranked_history(schema, compiled, condition, &backward_page_ranking(compiled, size)),
     }
+}
+
+/// Every instance in the window, in rendering order.
+fn whole_history(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
+    let axis = axis_column(compiled.window.timeproperty);
+    let mut select = Query::select();
+    project_base_columns(&mut select);
+    base_history_source(&mut select, schema);
+    select.cond_where(condition);
+    select
+        .order_by((An, AttributeNames::Name), Order::Asc)
+        .order_by((Ah, axis), Order::Asc)
+        .order_by((Ah, AttributeHistory::RecordedAt), Order::Asc)
+        .order_by((Ah, AttributeHistory::WriteId), Order::Asc)
+        .order_by((Ah, AttributeHistory::WriteOrdinal), Order::Asc);
+    select.take()
+}
+
+/// How one ranked shape numbers the instances of a stream and which numbers it
+/// keeps.
+struct Ranking {
+    /// The window function every row is numbered by.
+    function: Expr,
+    /// The per-stream ordering the numbering follows.
+    window: WindowStatement,
+    /// The instances at the inclusive lower bound of the window, which a forward
+    /// page keeps without counting them.
+    uncounted: Option<Expr>,
+    /// The largest number kept.
+    kept: u32,
+}
+
+/// Clauses 5.7.3.4 and 5.7.4.4: a `lastN` the broker answers in full is
+/// exactly the last `n` instances.
+///
+/// The ranking breaks ties on the hypertable's unique key,
+/// `(recorded_at, write_id, write_ordinal)`, so two instances sharing a value on
+/// the requested axis are kept or dropped the same way on every execution.
+fn last_n_ranking(compiled: &CompiledTemporalQuery, n: u32) -> Ranking {
+    let axis = axis_column(compiled.window.timeproperty);
+    let mut window = WindowStatement::partition_by((Ah, AttributeHistory::StreamKey));
+    window
+        .order_by((Ah, axis), Order::Desc)
+        .order_by((Ah, AttributeHistory::RecordedAt), Order::Desc)
+        .order_by((Ah, AttributeHistory::WriteId), Order::Desc)
+        .order_by((Ah, AttributeHistory::WriteOrdinal), Order::Desc);
+    Ranking {
+        function: row_number(),
+        window,
+        uncounted: None,
+        kept: n,
+    }
+}
+
+/// Clause 6.3.10 forwards: the least recent `size` instances of every stream.
+///
+/// The instances are ranked on the axis alone, so every instance of the group
+/// sharing the timestamp at the page edge carries the rank of the group's first
+/// member and the page keeps the group whole: a client resuming with
+/// `timerel=after&timeAt=<range-end>` (an inclusive bound, clause 4.11) then
+/// meets the group again rather than finding part of it missing. For the same
+/// reason the instances sitting exactly on the inclusive lower bound of the
+/// window are not counted: they are the group the previous page ended on, and
+/// counting them could stall a resumed walk on that one timestamp.
+fn forward_page_ranking(compiled: &CompiledTemporalQuery, size: u32) -> Ranking {
+    let axis = axis_column(compiled.window.timeproperty);
+    let mut window = WindowStatement::partition_by((Ah, AttributeHistory::StreamKey));
+    window.order_by_with_nulls((Ah, axis), Order::Asc, NullOrdering::Last);
+    let uncounted = match compiled.window.interval {
+        TimeInterval::After(lower) | TimeInterval::Between { from: lower, .. } => {
+            Some(Func::sum(Expr::case(Expr::col((Ah, axis)).eq(lower), 1).finally(0)).into())
+        }
+        TimeInterval::Unbounded | TimeInterval::Before(_) => None,
+    };
+    Ranking {
+        function: rank(),
+        window,
+        uncounted,
+        kept: size,
+    }
+}
+
+/// Clause 6.3.10 backwards: the most recent `size` instances of every stream,
+/// ranked on the axis alone so the group sharing the timestamp at the page's
+/// lower edge is kept whole. `timerel=before` is an exclusive bound (clause
+/// 4.11), so a client resuming with `timeAt=<range-end>` then neither meets the
+/// group again nor misses any of it.
+fn backward_page_ranking(compiled: &CompiledTemporalQuery, size: u32) -> Ranking {
+    let axis = axis_column(compiled.window.timeproperty);
+    let mut window = WindowStatement::partition_by((Ah, AttributeHistory::StreamKey));
+    window.order_by_with_nulls((Ah, axis), Order::Desc, NullOrdering::Last);
+    Ranking {
+        function: rank(),
+        window,
+        uncounted: None,
+        kept: size,
+    }
+}
+
+/// The history narrowed by `ranking`, with every stream's total in the window
+/// beside it so the page can tell whether it left instances out.
+fn ranked_history(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, condition: Condition, ranking: &Ranking) -> SelectStatement {
+    let axis = axis_column(compiled.window.timeproperty);
+    let partition = || WindowStatement::partition_by((Ah, AttributeHistory::StreamKey));
+
+    let mut ranked = Query::select();
+    project_base_columns(&mut ranked);
+    // clone: sea-query owns every expression and window it renders.
+    ranked.expr_window_as(ranking.function.clone(), ranking.window.clone(), Alias::new("rn"));
+    ranked.expr_window_as(count_all(), partition(), Alias::new("partition_total"));
+    if let Some(uncounted) = &ranking.uncounted {
+        // clone: same.
+        ranked.expr_window_as(uncounted.clone(), partition(), Alias::new("uncounted"));
+    }
+    base_history_source(&mut ranked, schema);
+    ranked.cond_where(condition);
+
+    let ranked_alias = Alias::new("ranked");
+    let position = Expr::col((ranked_alias.clone(), Alias::new("rn")));
+    let counted = if ranking.uncounted.is_some() {
+        position.sub(Expr::col((ranked_alias.clone(), Alias::new("uncounted"))))
+    } else {
+        position
+    };
+    let mut outer = Query::select();
+    outer
+        .expr(Expr::col((ranked_alias.clone(), Asterisk)))
+        .from_subquery(ranked.take(), ranked_alias.clone())
+        .and_where(counted.lte(i64::from(ranking.kept)))
+        .order_by((ranked_alias.clone(), Alias::new("attribute_name")), Order::Asc)
+        .order_by((ranked_alias.clone(), axis), Order::Asc)
+        .order_by((ranked_alias.clone(), AttributeHistory::RecordedAt), Order::Asc)
+        .order_by((ranked_alias.clone(), AttributeHistory::WriteId), Order::Asc)
+        .order_by((ranked_alias, AttributeHistory::WriteOrdinal), Order::Asc);
+    outer.take()
 }
 
 #[cfg(test)]
@@ -349,7 +439,7 @@ mod tests {
         // breaks ties on the hypertable's unique key rather than leaving it to
         // the plan.
         let mut compiled = minimal_compiled();
-        compiled.instances.last_n = Some(5);
+        compiled.instances.page = InstancePage::LastN { n: 5 };
         let sql = sql_of(&compiled);
         assert!(sql.contains("ROW_NUMBER()"), "{sql}");
         assert!(sql.contains("PARTITION BY \"ah\".\"stream_key\""), "{sql}");
@@ -415,11 +505,95 @@ mod tests {
     #[test]
     fn build_temporal_history_with_last_n() {
         let mut compiled = minimal_compiled();
-        compiled.instances.last_n = Some(5);
+        compiled.instances.page = InstancePage::LastN { n: 5 };
         let sql = sql_of(&compiled);
         assert!(sql.contains("\"ranked\""), "{sql}");
         assert!(sql.contains("ROW_NUMBER()"), "{sql}");
         assert!(sql.contains("\"ranked\".\"rn\" <="), "{sql}");
+    }
+
+    /// Clause 6.3.10 forwards: without `lastN` the page is the least recent
+    /// instances, ranked ascending on the axis alone so a group sharing the
+    /// page-edge timestamp shares one rank and is kept whole.
+    #[test]
+    fn a_forward_page_ranks_ascending_on_the_axis_alone() {
+        let mut compiled = minimal_compiled();
+        compiled.instances.page = InstancePage::Forward { size: 100 };
+        let sql = sql_of(&compiled);
+        assert!(
+            sql.contains("RANK() OVER ( PARTITION BY \"ah\".\"stream_key\" ORDER BY \"ah\".\"observed_at\" ASC NULLS LAST )"),
+            "{sql}"
+        );
+        assert!(!sql.contains("ROW_NUMBER()"), "{sql}");
+        assert!(sql.contains("\"ranked\".\"rn\" <= 100"), "{sql}");
+        assert!(!sql.contains("uncounted"), "an unbounded window has no lower bound to leave uncounted: {sql}");
+    }
+
+    /// The instances on the inclusive lower bound of `after`/`between` are the
+    /// group a previous forward page ended on, so they are kept without being
+    /// counted and a resumed walk always advances.
+    #[test]
+    fn a_forward_page_leaves_the_inclusive_lower_bound_uncounted() {
+        for interval in [
+            TimeInterval::After("2024-01-15T10:00:00Z".parse().expect("valid instant")),
+            TimeInterval::Between {
+                from: "2024-01-15T10:00:00Z".parse().expect("valid instant"),
+                to: "2024-01-16T10:00:00Z".parse().expect("valid instant"),
+            },
+        ] {
+            let mut compiled = minimal_compiled();
+            compiled.instances.page = InstancePage::Forward { size: 100 };
+            compiled.window.interval = interval;
+            let sql = sql_of(&compiled);
+            assert!(
+                sql.contains("SUM((CASE WHEN (\"ah\".\"observed_at\" = '2024-01-15 10:00:00.000000 +00:00') THEN 1 ELSE 0 END)) OVER ( PARTITION BY \"ah\".\"stream_key\" ) AS \"uncounted\""),
+                "{sql}"
+            );
+            assert!(sql.contains("\"ranked\".\"rn\" - \"ranked\".\"uncounted\" <= 100"), "{sql}");
+        }
+    }
+
+    /// `before` is an exclusive bound, so a backward page counts every instance
+    /// and ranks descending on the axis alone.
+    #[test]
+    fn a_backward_page_ranks_descending_on_the_axis_alone() {
+        let mut compiled = minimal_compiled();
+        compiled.instances.page = InstancePage::Backward { size: 1000, requested: 5000 };
+        compiled.window.interval = TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant"));
+        let sql = sql_of(&compiled);
+        assert!(
+            sql.contains("RANK() OVER ( PARTITION BY \"ah\".\"stream_key\" ORDER BY \"ah\".\"observed_at\" DESC NULLS LAST )"),
+            "{sql}"
+        );
+        assert!(sql.contains("\"ranked\".\"rn\" <= 1000"), "{sql}");
+        assert!(!sql.contains("uncounted"), "{sql}");
+    }
+
+    /// Every ranked shape reports each stream's total in the window, which is
+    /// how the page tells whether it left an instance out.
+    #[test]
+    fn every_ranked_shape_reports_the_stream_total() {
+        for page in [
+            InstancePage::LastN { n: 5 },
+            InstancePage::Forward { size: 5 },
+            InstancePage::Backward { size: 5, requested: 50 },
+        ] {
+            let mut compiled = minimal_compiled();
+            compiled.instances.page = page;
+            let sql = sql_of(&compiled);
+            assert!(
+                sql.contains("COUNT(*) OVER ( PARTITION BY \"ah\".\"stream_key\" ) AS \"partition_total\""),
+                "{page:?}: {sql}"
+            );
+        }
+    }
+
+    /// Every instance in the window is read when no page applies.
+    #[test]
+    fn the_whole_history_is_not_ranked() {
+        let sql = sql_of(&minimal_compiled());
+        assert!(!sql.contains("RANK()"), "{sql}");
+        assert!(!sql.contains("ROW_NUMBER()"), "{sql}");
     }
 
     /// Clause 4.5.5: `@none` selects the instance that carries no `datasetId`,

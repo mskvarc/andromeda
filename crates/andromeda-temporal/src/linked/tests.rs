@@ -2,6 +2,7 @@
 
 use crate::{
     error::TemporalError,
+    instance_limits::TemporalInstanceLimits,
     linked::{
         TemporalJoinRequest,
         candidates::{RemoteEligibility, TemporalLinkedCandidate, collect_candidates},
@@ -31,7 +32,11 @@ use andromeda_context_commit::{
     error::CommitError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::{entity_snapshot::EntitySnapshot, error::EntityError, port::reader::EntityReader};
+use andromeda_entity::{
+    entity_snapshot::EntitySnapshot,
+    error::EntityError,
+    port::{reader::EntityReader, retry_delay::RetryDelay},
+};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -62,6 +67,7 @@ use std::{
     iter,
     num::NonZeroU32,
     sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
 };
 
 fn uri(value: &str) -> Uri {
@@ -546,10 +552,14 @@ fn service(broker: StubBroker) -> TemporalService {
             reader: Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>,
             mutation_barrier: Arc::clone(&broker) as Arc<dyn TemporalMutationBarrier>,
             mutator: Arc::clone(&broker) as Arc<dyn TemporalMutator>,
-            writes: broker as Arc<dyn ContextCommitter>,
+            writes: Arc::clone(&broker) as Arc<dyn ContextCommitter>, // clone: one test double supplies every focused capability
+            retry_delay: broker as Arc<dyn RetryDelay>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-        100,
+        TemporalInstanceLimits {
+            default_page: 100,
+            maximum: 1000,
+        },
         100,
         100,
         None,
@@ -759,10 +769,14 @@ fn service_with_remote(broker: StubBroker, source: &Arc<RecordingSource>) -> Tem
             reader: Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>,
             mutation_barrier: Arc::clone(&broker) as Arc<dyn TemporalMutationBarrier>,
             mutator: Arc::clone(&broker) as Arc<dyn TemporalMutator>,
-            writes: broker as Arc<dyn ContextCommitter>,
+            writes: Arc::clone(&broker) as Arc<dyn ContextCommitter>, // clone: one test double supplies every focused capability
+            retry_delay: broker as Arc<dyn RetryDelay>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-        100,
+        TemporalInstanceLimits {
+            default_page: 100,
+            maximum: 1000,
+        },
         100,
         100,
         Some(Arc::clone(source) as Arc<dyn RemoteTemporalLinkedSource>), // clone: the test keeps its handle on the recording
@@ -1064,4 +1078,10 @@ async fn a_linked_entity_lacking_the_requested_attrs_still_appears_with_its_own(
         linked.get("reading").is_some() || linked.get("https://example.com/reading").is_some(),
         "the linked entity kept its own attributes: {linked}"
     );
+}
+
+/// The stubbed broker's commits never lose, so it never waits between attempts.
+#[async_trait]
+impl RetryDelay for StubBroker {
+    async fn wait(&self, _delay: Duration) {}
 }

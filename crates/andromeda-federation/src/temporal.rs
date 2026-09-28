@@ -57,11 +57,13 @@ impl FederationService {
                 body: Value::Array(items),
                 warnings,
                 entity_map,
+                ..
             }) => with_warnings(items, warnings, entity_map),
             ForwardGetOutcome::Success(ForwardedResponse {
                 body: object @ Value::Object(_),
                 warnings,
                 entity_map,
+                ..
             }) => with_warnings(vec![object], warnings, entity_map),
             ForwardGetOutcome::Success(ForwardedResponse {
                 body: Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_),

@@ -31,7 +31,7 @@ use andromeda_context_commit::{
 };
 use andromeda_entity::side_effect_queue::{LeasedSideEffect, SideEffectQueue};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -62,7 +62,7 @@ fn owed_notification(stored_subscription: i64) -> Vec<AtomicWrite> {
                 SubscriptionMatch::builder()
                     .subscription_key(subscription_key(stored_subscription))
                     .entity_id(entity_id)
-                    .trigger(NotificationTrigger::EntityCreated)
+                    .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
                     .build(),
             ])
             .build(),

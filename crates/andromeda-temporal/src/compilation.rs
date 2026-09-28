@@ -1,6 +1,6 @@
 //! Temporal query compilation policy.
 
-use crate::{error::TemporalError, service::TemporalService};
+use crate::{error::TemporalError, instance_limits::TemporalInstanceLimits, service::TemporalService};
 use andromeda_entity::query::selector_compilation::compile_entity_selectors;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat};
@@ -20,8 +20,8 @@ use andromeda_ngsi_ld_query::{
     temporal::{
         compiled::CompiledTemporalQuery,
         grouping::{AggregationGrouping, GroupingTerm, group_key::GroupKey},
+        instance_page::InstancePage,
         instance_selection::InstanceSelection,
-        last_n::LastNOrigin,
         ordering::TemporalEntityOrdering,
         representation::Representation,
         window::{TemporalWindow, TimeInterval},
@@ -76,7 +76,7 @@ impl TemporalService {
         let geo = self.compile_geo_query(params, &prepared_context).await?;
 
         let format = params.parse_format()?;
-        let last_n = compile_last_n(params, format, self.default_last_n);
+        let page = compile_instance_page(params.last_n, format, self.instance_limits);
         let grouping = compile_grouping(params, format, &expander).await?;
 
         // Clause 5.5.9.1: the opaque pagination cursor is a per-request position
@@ -109,8 +109,7 @@ impl TemporalService {
                 InstanceSelection::builder()
                     .attr_filter(attr_filter)
                     .dataset_id_filter(dataset_id_filter)
-                    .last_n(last_n.effective)
-                    .last_n_origin(last_n.origin)
+                    .page(page)
                     .build(),
             )
             .representation(compile_representation(params, format, grouping))
@@ -162,36 +161,24 @@ async fn compile_q_filter(params: &TemporalQueryParameters, expander: &impl Term
     Ok(Some(expr))
 }
 
-/// The instance cap a temporal read runs under, and where that cap came from.
-struct LastNSelection {
-    /// Number of instances kept per attribute, absent when none is imposed.
-    effective: Option<u32>,
-    /// Whether the cap is the client's own, a narrowed form of it, or the broker's.
-    origin: LastNOrigin,
-}
-
-/// Resolve `lastN` against the broker's safety cap.
+/// Resolve `lastN` against the broker's page sizes (clause 6.3.10).
 ///
 /// An aggregated representation is already bounded by its aggregation period
-/// (clause 4.5.19), so the safety cap that clause 6.3.10 leaves to the broker
-/// is imposed only on the instance-returning formats.
-fn compile_last_n(params: &TemporalQueryParameters, format: TemporalFormat, cap: u32) -> LastNSelection {
+/// (clause 4.5.19), so it keeps every instance in the window. Otherwise a read
+/// without `lastN` is the forward default page; a `lastN` within the maximum is
+/// answered in full; and one above it is narrowed to the maximum and paged
+/// backwards, the `Content-Range` still reporting the requested number.
+const fn compile_instance_page(last_n: Option<u32>, format: TemporalFormat, limits: TemporalInstanceLimits) -> InstancePage {
     if format.is_aggregated() {
-        return LastNSelection {
-            effective: params.last_n,
-            origin: match params.last_n {
-                Some(requested) => LastNOrigin::UserSpecified { requested },
-                Option::None => LastNOrigin::None,
-            },
-        };
+        return InstancePage::Whole;
     }
-    LastNSelection {
-        effective: Some(params.last_n.map_or(cap, |requested| requested.min(cap))),
-        origin: match params.last_n {
-            Some(requested) if requested > cap => LastNOrigin::UserSpecifiedCapped { requested },
-            Some(requested) => LastNOrigin::UserSpecified { requested },
-            Option::None => LastNOrigin::SystemCapped,
+    match last_n {
+        None => InstancePage::Forward { size: limits.default_page },
+        Some(requested) if requested > limits.maximum => InstancePage::Backward {
+            size: limits.maximum,
+            requested,
         },
+        Some(n) => InstancePage::LastN { n },
     }
 }
 
@@ -266,4 +253,57 @@ pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expande
     let pick = expand_projection_terms(params.pick.as_deref().unwrap_or_default(), expander).await?;
     let omit = expand_projection_terms(params.omit.as_deref().unwrap_or_default(), expander).await?;
     Ok(Projection { pick, omit })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{compilation::compile_instance_page, instance_limits::TemporalInstanceLimits};
+    use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
+    use andromeda_ngsi_ld_query::temporal::instance_page::InstancePage;
+
+    const LIMITS: TemporalInstanceLimits = TemporalInstanceLimits {
+        default_page: 100,
+        maximum: 1000,
+    };
+
+    /// Clause 6.3.10: without `lastN` the read pages forwards, at the default
+    /// page, rather than returning the most recent instances as an implicit
+    /// `lastN`.
+    #[test]
+    fn a_read_without_last_n_is_a_forward_default_page() {
+        pretty_assertions::assert_eq!(
+            compile_instance_page(None, TemporalFormat::Normalized, LIMITS),
+            InstancePage::Forward { size: 100 }
+        );
+        pretty_assertions::assert_eq!(
+            compile_instance_page(None, TemporalFormat::TemporalValues, LIMITS),
+            InstancePage::Forward { size: 100 }
+        );
+    }
+
+    /// A `lastN` the maximum admits is the whole answer, the maximum included.
+    #[test]
+    fn a_last_n_within_the_maximum_is_answered_in_full() {
+        for n in [1, 150, 1000] {
+            pretty_assertions::assert_eq!(compile_instance_page(Some(n), TemporalFormat::Normalized, LIMITS), InstancePage::LastN { n });
+        }
+    }
+
+    /// A `lastN` above the maximum is narrowed and paged backwards, keeping the
+    /// requested number for the `Content-Range` size.
+    #[test]
+    fn a_last_n_above_the_maximum_is_a_backward_page_of_the_maximum() {
+        pretty_assertions::assert_eq!(
+            compile_instance_page(Some(5000), TemporalFormat::Normalized, LIMITS),
+            InstancePage::Backward { size: 1000, requested: 5000 }
+        );
+    }
+
+    /// Clause 4.5.19 bounds an aggregation by its period, so no page applies.
+    #[test]
+    fn an_aggregated_read_keeps_every_instance() {
+        for last_n in [None, Some(5), Some(5000)] {
+            pretty_assertions::assert_eq!(compile_instance_page(last_n, TemporalFormat::AggregatedValues, LIMITS), InstancePage::Whole);
+        }
+    }
 }

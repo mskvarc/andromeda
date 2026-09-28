@@ -19,7 +19,7 @@ use crate::SUITE;
 use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{database_access::connect_test_database, environment::TestEnvironment};
@@ -93,12 +93,12 @@ async fn delivery_insert_waits_out_a_concurrent_subscription_deletion_and_owes_i
         .expect("writer backend pid");
     let entity_id: Uri = scope.id("DeliveryRaceProbe:1").parse().expect("a valid entity identifier");
     let record = WriteRecord::mint(Utc::now());
+    let change = EntityChange::new(EntityLifecycle::Created, Vec::new());
     let events = [NewNotificationEvent {
         ordinal: WriteOrdinal::at(0),
-        trigger: NotificationTrigger::EntityCreated,
+        change: &change,
         entity_id: &entity_id,
-        changed_attribute_name_keys: Vec::new(),
-        changed_dataset_id: None,
+        change_attribute_name_keys: Vec::new(),
         entity_snapshot: None,
         previous_snapshot: None,
         subscription_keys: vec![SubscriptionKey::try_from(key).expect("a positive subscription key")],

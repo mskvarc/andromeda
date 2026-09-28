@@ -6,8 +6,7 @@
 
 use crate::{
     error::ContextStoreError,
-    notification_delivery::trigger_code::trigger_of,
-    subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow, status_code::status_of},
+    subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow, status_code::status_of, trigger_code::trigger_of},
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};

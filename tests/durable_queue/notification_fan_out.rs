@@ -16,7 +16,13 @@ use crate::{
 };
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_model::{
+    entity_change::{EntityChange, EntityLifecycle},
+    expanded::{
+        attribute_change::{AttributeChange, AttributeChangeKind},
+        instance_key::AttributeInstanceKey,
+    },
+};
 use andromeda_notification::delivery_store::DeliveryStore;
 use andromeda_postgresql_context_store::notification_delivery::{queue::NotificationDeliveryQueue, rows::NewNotificationEvent};
 use chrono::Utc;
@@ -60,6 +66,24 @@ async fn delivery_bytes(pool: &PgPool, record: &WriteRecord) -> i64 {
     .expect("delivery bytes")
 }
 
+/// The change that updated `temperature` and `speed`.
+fn updated_temperature_and_speed() -> EntityChange {
+    let updated = |attribute: &str| AttributeChange {
+        key: AttributeInstanceKey {
+            attr: attribute.parse().expect("a valid attribute name"),
+            dataset_id: None,
+        },
+        kind: AttributeChangeKind::Updated,
+    };
+    EntityChange::new(
+        EntityLifecycle::Modified,
+        vec![
+            updated("https://uri.etsi.org/ngsi-ld/default-context/temperature"),
+            updated("https://uri.etsi.org/ngsi-ld/default-context/speed"),
+        ],
+    )
+}
+
 #[tokio::test]
 #[serial(durable_queue)]
 async fn durable_queue_a_change_no_subscription_matched_persists_nothing() {
@@ -87,6 +111,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
     let snapshot = large_snapshot(&entity);
     let temperature = attribute_name(&pool, "https://uri.etsi.org/ngsi-ld/default-context/temperature").await;
     let speed = attribute_name(&pool, "https://uri.etsi.org/ngsi-ld/default-context/speed").await;
+    let updated = updated_temperature_and_speed();
 
     let single = subscription_id();
     let single_key = subscription(&pool, single.as_str()).await;
@@ -96,10 +121,9 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
         &one_subscriber,
         &[NewNotificationEvent {
             ordinal: WriteOrdinal::at(0),
-            trigger: NotificationTrigger::AttributeUpdated,
+            change: &updated,
             entity_id: &entity,
-            changed_attribute_name_keys: vec![temperature, speed],
-            changed_dataset_id: None,
+            change_attribute_name_keys: vec![temperature, speed],
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
             subscription_keys: vec![subscription_key(single_key)],
@@ -122,10 +146,9 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
         &high_fan_out,
         &[NewNotificationEvent {
             ordinal: WriteOrdinal::at(0),
-            trigger: NotificationTrigger::AttributeUpdated,
+            change: &updated,
             entity_id: &entity,
-            changed_attribute_name_keys: vec![temperature, speed],
-            changed_dataset_id: None,
+            change_attribute_name_keys: vec![temperature, speed],
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
             subscription_keys: many_keys.iter().map(|key| subscription_key(*key)).collect(),
@@ -164,13 +187,14 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
     assert_eq!(claimed.len(), HIGH_FAN_OUT + 1, "every owed delivery is claimable");
     let rendered = claimed.first().expect("a claimed delivery");
     assert_eq!(
-        rendered.event.changed_attributes.iter().map(AttributeName::as_str).collect::<Vec<&str>>(),
+        rendered.event.change.attributes().into_iter().map(AttributeName::as_str).collect::<Vec<&str>>(),
         vec![
             "https://uri.etsi.org/ngsi-ld/default-context/temperature",
             "https://uri.etsi.org/ngsi-ld/default-context/speed"
         ],
         "the dictionary keys resolve back in the order the event recorded them"
     );
+    assert_eq!(rendered.event.change, updated, "the stored change reads back instance for instance");
     assert_eq!(
         rendered.event.entity_snapshot.as_ref(),
         Some(&snapshot),
@@ -191,16 +215,16 @@ async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_absorbs_a_r
     let entities: Vec<Uri> = (0..3).map(|_| entity_id()).collect();
     let snapshots: Vec<Value> = entities.iter().map(entity_snapshot).collect();
     let record = WriteRecord::mint(Utc::now());
+    let change = EntityChange::new(EntityLifecycle::Modified, Vec::new());
     let events: Vec<NewNotificationEvent<'_>> = entities
         .iter()
         .zip(snapshots.iter())
         .enumerate()
         .map(|(index, (entity, snapshot))| NewNotificationEvent {
             ordinal: WriteOrdinal::at(u32::try_from(index).expect("a representable ordinal")),
-            trigger: NotificationTrigger::EntityUpdated,
+            change: &change,
             entity_id: entity,
-            changed_attribute_name_keys: Vec::new(),
-            changed_dataset_id: None,
+            change_attribute_name_keys: Vec::new(),
             entity_snapshot: Some(snapshot),
             previous_snapshot: None,
             subscription_keys: vec![subscription_key(first_key), subscription_key(second_key)],
@@ -248,10 +272,9 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
         &record,
         &[NewNotificationEvent {
             ordinal: WriteOrdinal::at(0),
-            trigger: NotificationTrigger::EntityCreated,
+            change: &EntityChange::new(EntityLifecycle::Created, Vec::new()),
             entity_id: &entity,
-            changed_attribute_name_keys: Vec::new(),
-            changed_dataset_id: None,
+            change_attribute_name_keys: Vec::new(),
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
             subscription_keys: vec![subscription_key(subscriber_key)],

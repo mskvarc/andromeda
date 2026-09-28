@@ -13,14 +13,12 @@
 //! numbering. `kind` and `status` are registry codes too, and the three
 //! attribute lists are the dictionary keys [`InternedAttributeLists`] carries.
 
-use crate::{
-    notification_delivery::trigger_code::stored_trigger,
-    subscription_store::{
-        failure::persistence_error,
-        interned_attributes::InternedAttributeLists,
-        status_code::stored_status,
-        stored_kind::{StoredKind, of_kind},
-    },
+use crate::subscription_store::{
+    failure::persistence_error,
+    interned_attributes::InternedAttributeLists,
+    status_code::stored_status,
+    stored_kind::{StoredKind, of_kind},
+    trigger_code::stored_trigger,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;

@@ -14,6 +14,11 @@ mod compilation;
 pub mod config;
 pub mod delete_by_query;
 pub mod error;
+mod evolution_write;
+/// The page sizes an instance-returning temporal read runs under.
+pub mod instance_limits;
+/// Choosing the instances of one attribute stream a temporal page keeps.
+pub(crate) mod instance_page_selection;
 /// Bounded delivery of deferred temporal append intents.
 pub mod intent_drain;
 mod intent_preparation;

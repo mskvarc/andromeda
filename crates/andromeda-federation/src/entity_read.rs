@@ -12,9 +12,11 @@ use crate::{
     forwarding_url::{build_batch_query_url, build_query_url, build_retrieve_url},
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedEntities, ForwardedResponse, MatchedSources},
+    query_forwarding_error::QueryForwardingError,
     read_binding::{ReadBinding, ReadIntent, read_binding_for},
     read_fan_out::{ForwardedGetConditions, ForwardedRead, ReadSelection, ReadServing, expand_registration_targets, read_outcome},
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
+    source_walk::SOURCE_PAGE_SIZE,
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -64,7 +66,7 @@ impl FederationService {
     /// A query answers with an array and a retrieval with one object, but
     /// either shape is read from either: a retrieval continuing a clause 4.5.23
     /// flat join answers with the entity and its linked entities side by side.
-    fn entities_of(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> Option<ForwardedEntities> {
+    pub(crate) fn entities_of(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> Option<ForwardedEntities> {
         let mode = registration.access.mode.unwrap_or_default();
         let with_warnings = |entities, warnings, linked_map| {
             Some(ForwardedEntities {
@@ -80,6 +82,7 @@ impl FederationService {
                 body: Value::Array(items),
                 warnings: cs_warnings,
                 entity_map,
+                ..
             }) => {
                 let (entities, parse_warnings) = parse_forwarded_entities(&registration.id, items, Utc::now());
                 let mut warnings = cs_warnings;
@@ -90,6 +93,7 @@ impl FederationService {
                 body: object @ Value::Object(_),
                 warnings: cs_warnings,
                 entity_map,
+                ..
             }) => {
                 let (entities, parse_warnings) = parse_forwarded_entities(&registration.id, vec![object], Utc::now());
                 let mut warnings = cs_warnings;
@@ -125,7 +129,9 @@ impl FederationService {
     }
 
     /// Forward an entity query to the matching context sources (clause
-    /// 5.7.2.4), each sent the part of the client's query it is registered for.
+    /// 5.7.2.4), each sent the part of the client's query it is registered
+    /// for, and gather every page of each source's answer (clauses 4.3.6.7,
+    /// 5.5.9.1).
     ///
     /// # Errors
     ///
@@ -133,13 +139,16 @@ impl FederationService {
     /// cannot be expanded against the request's context,
     /// [`FederationError::Registration`] when the matching registrations
     /// cannot be read, and [`FederationError::Conflict`] when the selected
-    /// registrations are mutually exclusive. A source that fails to answer
-    /// does not fail the call: its failure travels as a warning.
+    /// registrations are mutually exclusive, each as
+    /// [`QueryForwardingError::Federation`], and
+    /// [`QueryForwardingError::TooManyResults`] when the sources' answers
+    /// exceed the request's budget. A source that fails to answer does not
+    /// fail the call: its failure travels as a warning.
     pub async fn forward_query(
         &self,
         target: &ContextTarget,
         request: ForwardQueryRequest<'_>,
-    ) -> Result<ForwardReadOutcome<ForwardedEntities>, FederationError> {
+    ) -> Result<ForwardReadOutcome<ForwardedEntities>, QueryForwardingError> {
         let timer = federation_ops::start(FederationOperation::Query);
         let result = async move {
             if !target.permits_federation() {
@@ -154,7 +163,7 @@ impl FederationService {
                 csf_expr,
                 mode_filter,
                 entity_map,
-                source_page,
+                budget,
             } = request;
             if self.is_loop_detected(triggering.via) {
                 return Ok(own_loop_outcome());
@@ -189,7 +198,7 @@ impl FederationService {
                 let Some(binding) = read_binding_for(intent, &registration) else {
                     continue;
                 };
-                let reads = ForwardedQuery::for_registration_on_page(client_query, &registration, split, source_page, &resolver)
+                let reads = ForwardedQuery::for_registration(client_query, &registration, split, &resolver)
                     .await?
                     .iter()
                     .map(|query| query_read(&registration, query, binding))
@@ -201,17 +210,17 @@ impl FederationService {
             }
             let matched = targets.len();
             let answers = self
-                .fan_out_read(
+                .fan_out_walk(
                     targets,
-                    FederationService::entities_of,
                     ForwardedGetConditions {
                         context,
                         triggering,
                         cacheability: Cacheability::Cacheable,
                         entity_map,
                     },
+                    budget,
                 )
-                .await;
+                .await?;
             Ok(read_outcome(answers, matched))
         }
         .await;
@@ -318,8 +327,11 @@ fn query_read(registration: &ContextSourceRegistration, query: &ForwardedQuery, 
         ReadBinding::BatchQuery => {
             let selectors = selectors_from_query(query);
             let body = build_batch_query_body(&selectors, query.value_of(ForwardedParameter::Attrs));
+            // Clause 6.23 carries the query in the body; the page size travels
+            // as the URI parameter clause 6.3.10 defines for it.
+            let page = format!("{}={}", ForwardedParameter::Limit, SOURCE_PAGE_SIZE);
             ForwardedRead::PostQuery {
-                url: build_batch_query_url(endpoint),
+                url: build_batch_query_url(endpoint, &page),
                 body,
             }
         }

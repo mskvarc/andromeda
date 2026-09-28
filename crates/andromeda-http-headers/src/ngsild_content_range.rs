@@ -9,6 +9,7 @@
 //! range unit rather than byte ranges.
 //! This file, including local modifications, is distributed under the MIT License.
 
+use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
 use chrono::{DateTime, Utc};
 use http::{HeaderName, HeaderValue};
 use std::{fmt, iter, num::ParseIntError, str::FromStr};
@@ -84,11 +85,15 @@ impl NgsiLdContentRange {
 
 impl fmt::Display for NgsiLdContentRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The instants keep every sub-second digit they carry: a client resumes
+        // a page from `range-end` (clause 6.3.10), and a bound truncated to the
+        // second would re-read the instances before it or, as the exclusive
+        // `before` bound of a backward page, skip the ones it cut off.
         write!(
             f,
             "{RANGE_UNIT} {}-{}/{}",
-            self.start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            self.end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            sub_second(self.start),
+            sub_second(self.end),
             self.total.map_or_else(|| "*".to_owned(), |n| n.to_string())
         )
     }
@@ -181,6 +186,16 @@ mod tests {
         let error = NgsiLdContentRange::from_str("date-time 2020-01-01T20:00:00Z-2021-01-01T01:01:00Z/*").expect_err("must reject");
 
         assert!(matches!(error, NgsiLdContentRangeError::UnitMissing(_)), "got {error:?}");
+    }
+
+    /// A client resumes a page from its bounds, so an instant keeps the
+    /// sub-second digits it carries rather than being truncated to the second.
+    #[test]
+    fn a_sub_second_bound_is_rendered_without_losing_precision() {
+        let range = NgsiLdContentRange::new(instant("2020-01-01T20:00:00.250Z"), instant("2020-01-01T20:00:01.123456Z"), None);
+
+        assert_eq!(range.to_string(), "DateTime 2020-01-01T20:00:00.250Z-2020-01-01T20:00:01.123456Z/*");
+        assert_eq!(NgsiLdContentRange::from_str(&range.to_string()).expect("round trip"), range);
     }
 
     /// Rendering and parsing agree, so a range survives a round trip.

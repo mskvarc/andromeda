@@ -7,7 +7,7 @@
 
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
 use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
-use andromeda_ngsi_ld_query::temporal::{last_n::LastNOrigin, window::TimeInterval};
+use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
 use chrono::{DateTime, Utc};
 
 /// Build a `Content-Range` header value for temporal pagination.
@@ -26,16 +26,15 @@ use chrono::{DateTime, Utc};
 pub fn build_content_range(
     interval: &TimeInterval,
     time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    last_n_origin: LastNOrigin,
+    direction: PageDirection,
 ) -> Option<NgsiLdContentRange> {
     let (min_time, max_time) = time_range?;
     let least_recent = sub_second(min_time);
     let most_recent = sub_second(max_time);
 
-    let (start, end, size) = if let Some(requested) = last_n_origin.requested() {
-        (backwards_range_start(interval, &most_recent), least_recent, Some(u64::from(requested)))
-    } else {
-        (forwards_range_start(interval, &least_recent), most_recent, None)
+    let (start, end, size) = match direction {
+        PageDirection::Backward { requested } => (backwards_range_start(interval, &most_recent), least_recent, Some(u64::from(requested))),
+        PageDirection::Forward => (forwards_range_start(interval, &least_recent), most_recent, None),
     };
 
     let start = start.parse().ok()?;
@@ -62,5 +61,83 @@ fn forwards_range_start(interval: &TimeInterval, least_recent: &str) -> String {
     match interval {
         TimeInterval::After(instant) | TimeInterval::Between { from: instant, .. } => sub_second(*instant),
         TimeInterval::Before(_) | TimeInterval::Unbounded => least_recent.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::content_range::build_content_range;
+    use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
+    use chrono::{DateTime, Utc};
+
+    fn instant(raw: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+    }
+
+    /// The response of every case below carries 01:01 to 01:19.
+    fn observed() -> (DateTime<Utc>, DateTime<Utc>) {
+        (instant("2020-01-01T01:01:00Z"), instant("2020-01-01T01:19:00Z"))
+    }
+
+    fn rendered(interval: TimeInterval, direction: PageDirection) -> String {
+        build_content_range(&interval, Some(observed()), direction).expect("a range").to_string()
+    }
+
+    /// Clause 6.3.10 forwards: range-start is `timeAt` for `after` and
+    /// `between`, the least recent timestamp for `before`; range-end is the
+    /// most recent timestamp; size is `*`.
+    #[test]
+    fn a_forward_page_reports_its_start_bound_its_most_recent_instant_and_no_size() {
+        let at = instant("2020-01-01T00:00:00Z");
+        pretty_assertions::assert_eq!(
+            rendered(TimeInterval::After(at), PageDirection::Forward),
+            "DateTime 2020-01-01T00:00:00Z-2020-01-01T01:19:00Z/*"
+        );
+        pretty_assertions::assert_eq!(
+            rendered(
+                TimeInterval::Between {
+                    from: at,
+                    to: instant("2021-01-01T00:00:00Z")
+                },
+                PageDirection::Forward
+            ),
+            "DateTime 2020-01-01T00:00:00Z-2020-01-01T01:19:00Z/*"
+        );
+        pretty_assertions::assert_eq!(
+            rendered(TimeInterval::Before(instant("2021-01-01T00:00:00Z")), PageDirection::Forward),
+            "DateTime 2020-01-01T01:01:00Z-2020-01-01T01:19:00Z/*"
+        );
+    }
+
+    /// Clause 6.3.10 backwards: range-start is `timeAt` for `before`,
+    /// `endTimeAt` for `between`, the most recent timestamp for `after`;
+    /// range-end is the least recent timestamp; size is the requested `lastN`.
+    #[test]
+    fn a_backward_page_reports_its_end_bound_its_least_recent_instant_and_the_requested_last_n() {
+        let direction = PageDirection::Backward { requested: 5000 };
+        pretty_assertions::assert_eq!(
+            rendered(TimeInterval::Before(instant("2021-01-01T00:00:00Z")), direction),
+            "DateTime 2021-01-01T00:00:00Z-2020-01-01T01:01:00Z/5000"
+        );
+        pretty_assertions::assert_eq!(
+            rendered(
+                TimeInterval::Between {
+                    from: instant("2019-01-01T00:00:00Z"),
+                    to: instant("2021-06-01T00:00:00Z")
+                },
+                direction
+            ),
+            "DateTime 2021-06-01T00:00:00Z-2020-01-01T01:01:00Z/5000"
+        );
+        pretty_assertions::assert_eq!(
+            rendered(TimeInterval::After(instant("2019-01-01T00:00:00Z")), direction),
+            "DateTime 2020-01-01T01:19:00Z-2020-01-01T01:01:00Z/5000"
+        );
+    }
+
+    /// An empty response carries no range at all.
+    #[test]
+    fn an_empty_response_carries_no_range() {
+        assert!(build_content_range(&TimeInterval::Unbounded, None, PageDirection::Forward).is_none());
     }
 }

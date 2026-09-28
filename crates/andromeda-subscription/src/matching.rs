@@ -19,7 +19,8 @@ use tracing::debug;
 
 /// Determine whether a compiled subscription matches a change event.
 ///
-/// Checks status, expiration, trigger, entity selectors, watched attributes,
+/// Checks status, expiration, the change's triggers and watched attributes,
+/// entity selectors,
 /// and localOnly filtering (ETSI GS CIM 009 v1.9.1, clause 5.5.13).
 pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> bool {
     if sub.status != SubscriptionStatus::Active {
@@ -57,11 +58,19 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         return false;
     }
 
-    // The compiled triggers and the event carry the same typed vocabulary, so
-    // membership is an enum comparison rather than the per-event string
-    // allocation this used to make (Table 5.2.12).
-    if !sub.triggers.contains(&event.trigger_reason) {
-        debug!("Subscription {} skipped: trigger '{}' not in {:?}", sub.id, event.trigger_reason, sub.triggers);
+    // Table 5.2.12-1: the listed triggers "indicate what kind of changes shall
+    // trigger a notification", and clause 5.8.1.4 makes the watched Attributes
+    // "those that trigger a new notification when they are changed". Both only
+    // decide whether this change is owed to the subscription; a change owed is
+    // one notification however many of the triggers it raised.
+    if !event.change.is_owed_to(&sub.triggers, sub.watched_attrs.as_ref()) {
+        debug!(
+            "Subscription {} skipped: change {:?} raises none of {:?} on watched attributes {:?}",
+            sub.id,
+            event.change.triggers(),
+            sub.triggers,
+            sub.watched_attrs
+        );
         return false;
     }
 
@@ -105,19 +114,13 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         }
     }
 
-    if let Some(ref watched) = sub.watched_attrs
-        && !event.changed_attributes.iter().any(|attribute| watched.contains(attribute))
-    {
-        debug!(
-            "Subscription {} skipped: watchedAttributes {:?} did not match event attrs {:?}",
-            sub.id, watched, event.changed_attributes
-        );
-        return false;
-    }
-
     debug!(
-        "Subscription {} matched event {} (trigger={}, types={:?}, attrs={:?})",
-        sub.id, event.entity_id, event.trigger_reason, event.entity_types, event.changed_attributes
+        "Subscription {} matched event {} (triggers={:?}, types={:?}, attrs={:?})",
+        sub.id,
+        event.entity_id,
+        event.change.triggers(),
+        event.entity_types,
+        event.change.attributes()
     );
     true
 }
@@ -163,7 +166,15 @@ mod tests {
     use super::*;
     use crate::{compilation::compile_geo_q, error::SubscriptionError};
     use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
-    use andromeda_ngsi_ld_model::{notification::NotificationTrigger, subscription::SubscriptionStatus};
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        expanded::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            instance_key::AttributeInstanceKey,
+        },
+        notification::NotificationTrigger,
+        subscription::SubscriptionStatus,
+    };
     use andromeda_ngsi_ld_query::{
         error::QueryError,
         geo::{compile::compile_geo_query, input::GeoQueryInput},
@@ -228,15 +239,31 @@ mod tests {
         })
     }
 
-    fn make_event() -> Result<ChangeEvent, SubscriptionError> {
+    fn change(lifecycle: EntityLifecycle, kind: AttributeChangeKind) -> Result<EntityChange, SubscriptionError> {
+        Ok(EntityChange::new(
+            lifecycle,
+            vec![AttributeChange {
+                key: AttributeInstanceKey {
+                    attr: parse_fixture("temperature", "attribute name")?,
+                    dataset_id: None,
+                },
+                kind,
+            }],
+        ))
+    }
+
+    fn event_of(change: EntityChange) -> Result<ChangeEvent, SubscriptionError> {
         Ok(ChangeEvent::builder()
             .entity_id(parse_fixture("urn:ngsi-ld:Entity:001", "entity URI")?)
             .entity_types(vec![parse_fixture("Building", "entity type")?])
-            .trigger_reason(NotificationTrigger::EntityCreated)
+            .change(change)
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
-            .changed_attributes(vec![parse_fixture("temperature", "attribute name")?])
             .build())
+    }
+
+    fn make_event() -> Result<ChangeEvent, SubscriptionError> {
+        event_of(change(EntityLifecycle::Created, AttributeChangeKind::Created)?)
     }
 
     fn at(unix_seconds: i64) -> Result<DateTime<Utc>, SubscriptionError> {
@@ -377,11 +404,7 @@ mod tests {
     #[test]
     fn subscription_skips_wrong_trigger() -> Result<(), SubscriptionError> {
         let sub = make_sub()?;
-        let event = ChangeEvent::new(
-            parse_fixture("urn:ngsi-ld:Entity:001", "entity URI")?,
-            vec![parse_fixture("Building", "entity type")?],
-            NotificationTrigger::EntityDeleted,
-        );
+        let event = event_of(change(EntityLifecycle::Deleted, AttributeChangeKind::Deleted)?)?;
         assert!(!matches_subscription(&sub, &event));
         Ok(())
     }

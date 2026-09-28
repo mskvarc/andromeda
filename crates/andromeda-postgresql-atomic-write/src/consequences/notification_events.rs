@@ -110,17 +110,14 @@ fn group<'a>(landed: &[&'a AtomicWrite]) -> Vec<EventGroup<'a>> {
 
 /// Whether two pending notifications describe the same change.
 ///
-/// Everything an event stores has to agree, not just the entity: one write can
-/// report an attribute-level change and an entity-level one for the same entity
-/// (clause 5.8.3), and folding those together would tell a subscriber the change
-/// was something other than what it listened for.
+/// Everything an event stores has to agree, not just the entity: two writes of
+/// one commit can each change the same entity, and folding those together would
+/// tell a subscriber about one change where clause 5.8.6 owes it two.
 fn same_change(left: &SubscriptionMatch, right: &SubscriptionMatch) -> bool {
     left.entity_id == right.entity_id
-        && left.trigger == right.trigger
+        && left.change == right.change
         && left.entity_snapshot == right.entity_snapshot
         && left.previous_snapshot == right.previous_snapshot
-        && left.changed_attrs == right.changed_attrs
-        && left.changed_dataset_id == right.changed_dataset_id
 }
 
 /// Mint the dictionary key of every attribute the grouped changes name.
@@ -137,7 +134,7 @@ async fn resolve_dictionary(
 ) -> Result<HashMap<AttributeName, AttributeNameKey>, CommitError> {
     let mut names: Vec<AttributeName> = groups
         .iter()
-        .flat_map(|group| group.change.changed_attrs.iter())
+        .flat_map(|group| group.change.change.instances.iter().map(|instance| &instance.key.attr))
         .cloned() // clone: the dictionary request owns the names it resolves.
         .collect();
     names.sort_unstable();
@@ -159,22 +156,22 @@ fn event<'a>(
     let ordinal = base.advanced_by(delta).map_err(|error| CommitError::Invariant {
         detail: format!("notification event ordinal overflowed at position {position}: {error}"),
     })?;
-    let changed_attribute_name_keys = group
+    let change_attribute_name_keys = group
         .change
-        .changed_attrs
+        .change
+        .instances
         .iter()
-        .map(|name| {
-            dictionary.get(name).copied().ok_or_else(|| CommitError::Invariant {
-                detail: format!("attribute name dictionary returned no key for {name}"),
+        .map(|instance| {
+            dictionary.get(&instance.key.attr).copied().ok_or_else(|| CommitError::Invariant {
+                detail: format!("attribute name dictionary returned no key for {}", instance.key.attr),
             })
         })
         .collect::<Result<Vec<AttributeNameKey>, CommitError>>()?;
     Ok(NewNotificationEvent {
         ordinal,
-        trigger: group.change.trigger,
+        change: &group.change.change,
         entity_id: &group.change.entity_id,
-        changed_attribute_name_keys,
-        changed_dataset_id: group.change.changed_dataset_id.as_ref(),
+        change_attribute_name_keys,
         entity_snapshot: group.change.entity_snapshot.as_ref(),
         previous_snapshot: group.change.previous_snapshot.as_ref(),
         subscription_keys: group.subscriptions,
@@ -191,22 +188,58 @@ mod tests {
         subscription_match::SubscriptionMatch,
         write_ordinal::WriteOrdinal,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        expanded::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            instance_key::AttributeInstanceKey,
+        },
+    };
+    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
+
+    const SPEED: &str = "https://example.org/speed";
 
     fn uri(value: &str) -> Uri {
         value.parse().expect("a valid URI")
     }
 
-    fn change(subscription: i64, trigger: NotificationTrigger) -> SubscriptionMatch {
+    fn speed() -> AttributeName {
+        SPEED.parse().expect("a valid attribute name")
+    }
+
+    /// A change through `lifecycle` that `kind`s the `speed` instance of
+    /// `dataset`.
+    fn entity_change(lifecycle: EntityLifecycle, kind: AttributeChangeKind, dataset: Option<&str>) -> EntityChange {
+        EntityChange::new(
+            lifecycle,
+            vec![AttributeChange {
+                key: AttributeInstanceKey {
+                    attr: speed(),
+                    dataset_id: dataset.map(uri),
+                },
+                kind,
+            }],
+        )
+    }
+
+    fn matched(subscription: i64, change: EntityChange) -> SubscriptionMatch {
         SubscriptionMatch::builder()
             .subscription_key(SubscriptionKey::try_from(subscription).expect("a positive subscription key"))
             .entity_id(uri("urn:ngsi-ld:Vehicle:1"))
-            .trigger(trigger)
+            .change(change)
             .entity_snapshot(Some(json!({ "id": "urn:ngsi-ld:Vehicle:1" })))
             .build()
+    }
+
+    fn updated(subscription: i64) -> SubscriptionMatch {
+        matched(subscription, entity_change(EntityLifecycle::Modified, AttributeChangeKind::Updated, None))
+    }
+
+    fn created(subscription: i64) -> SubscriptionMatch {
+        matched(subscription, entity_change(EntityLifecycle::Created, AttributeChangeKind::Created, None))
     }
 
     fn write(changes: Vec<SubscriptionMatch>) -> AtomicWrite {
@@ -219,22 +252,19 @@ mod tests {
 
     #[test]
     fn subscribers_of_one_change_share_a_single_event() {
-        let written = write(vec![
-            change(1, NotificationTrigger::EntityUpdated),
-            change(2, NotificationTrigger::EntityUpdated),
-        ]);
+        let written = write(vec![updated(1), updated(2)]);
         let groups = group(&[&written]);
         pretty_assertions::assert_eq!(groups.len(), 1);
         pretty_assertions::assert_eq!(groups[0].subscriptions.len(), 2);
     }
 
+    /// Two writes of one commit changing the same entity differently are two
+    /// changes, each notified once (clause 5.8.6).
     #[test]
-    fn two_triggers_on_one_entity_stay_two_events() {
-        let written = write(vec![
-            change(1, NotificationTrigger::AttributeUpdated),
-            change(1, NotificationTrigger::EntityUpdated),
-        ]);
-        let groups = group(&[&written]);
+    fn two_changes_to_one_entity_stay_two_events() {
+        let first = write(vec![created(1)]);
+        let second = write(vec![updated(1)]);
+        let groups = group(&[&first, &second]);
         pretty_assertions::assert_eq!(groups.len(), 2);
     }
 
@@ -242,16 +272,13 @@ mod tests {
     /// to be a function of submission order alone.
     #[test]
     fn the_grouping_follows_submission_order() {
-        let written = write(vec![
-            change(1, NotificationTrigger::EntityUpdated),
-            change(2, NotificationTrigger::AttributeUpdated),
-            change(3, NotificationTrigger::EntityUpdated),
-        ]);
-        let groups = group(&[&written]);
+        let first = write(vec![updated(1)]);
+        let second = write(vec![created(2), updated(3)]);
+        let groups = group(&[&first, &second]);
         pretty_assertions::assert_eq!(groups.len(), 2);
-        pretty_assertions::assert_eq!(groups[0].change.trigger, NotificationTrigger::EntityUpdated);
+        pretty_assertions::assert_eq!(groups[0].change.change.lifecycle, EntityLifecycle::Modified);
         pretty_assertions::assert_eq!(groups[0].subscriptions.len(), 2);
-        pretty_assertions::assert_eq!(groups[1].change.trigger, NotificationTrigger::AttributeUpdated);
+        pretty_assertions::assert_eq!(groups[1].change.change.lifecycle, EntityLifecycle::Created);
     }
 
     #[test]
@@ -262,16 +289,18 @@ mod tests {
 
     #[test]
     fn changes_differing_only_in_their_previous_snapshot_are_not_folded_together() {
-        let mut second = change(2, NotificationTrigger::EntityUpdated);
+        let mut second = updated(2);
         second.previous_snapshot = Some(json!({ "id": "urn:ngsi-ld:Vehicle:1" }));
-        assert!(!same_change(&change(1, NotificationTrigger::EntityUpdated), &second));
+        assert!(!same_change(&updated(1), &second));
     }
 
     #[test]
     fn changes_differing_only_in_dataset_identity_are_not_folded_together() {
-        let mut second = change(2, NotificationTrigger::AttributeUpdated);
-        second.changed_dataset_id = Some("urn:dataset:named".parse().expect("valid dataset URI"));
-        assert!(!same_change(&change(1, NotificationTrigger::AttributeUpdated), &second));
+        let second = matched(
+            2,
+            entity_change(EntityLifecycle::Modified, AttributeChangeKind::Updated, Some("urn:dataset:named")),
+        );
+        assert!(!same_change(&updated(1), &second));
     }
 
     /// The commit's temporal history entries have already drawn from the
@@ -280,13 +309,57 @@ mod tests {
     /// position alone.
     #[test]
     fn an_events_ordinal_is_the_commits_base_plus_its_position() {
-        let matched = change(1, NotificationTrigger::EntityUpdated);
+        let matched = updated(1);
         let group = EventGroup {
             change: &matched,
             subscriptions: vec![matched.subscription_key],
         };
-        let dictionary = HashMap::new();
+        let dictionary = HashMap::from([(speed(), AttributeNameKey::from(7))]);
         let built = event(WriteOrdinal::at(4), 2, group, &dictionary).expect("a valid group builds an event");
         pretty_assertions::assert_eq!(built.ordinal, WriteOrdinal::at(6));
+        pretty_assertions::assert_eq!(built.change_attribute_name_keys, vec![AttributeNameKey::from(7)]);
+    }
+
+    /// Every instance names its attribute's key, repeats included, so the
+    /// stored arrays stay position for position with the change.
+    #[test]
+    fn an_event_keys_every_changed_instance_of_the_change() {
+        let change = EntityChange::new(
+            EntityLifecycle::Modified,
+            vec![
+                AttributeChange {
+                    key: AttributeInstanceKey {
+                        attr: speed(),
+                        dataset_id: None,
+                    },
+                    kind: AttributeChangeKind::Updated,
+                },
+                AttributeChange {
+                    key: AttributeInstanceKey {
+                        attr: speed(),
+                        dataset_id: Some(uri("urn:dataset:named")),
+                    },
+                    kind: AttributeChangeKind::Deleted,
+                },
+            ],
+        );
+        let matched = matched(1, change);
+        let group = EventGroup {
+            change: &matched,
+            subscriptions: vec![matched.subscription_key],
+        };
+        let dictionary = HashMap::from([(speed(), AttributeNameKey::from(7))]);
+        let built = event(WriteOrdinal::at(0), 0, group, &dictionary).expect("a valid group builds an event");
+        pretty_assertions::assert_eq!(built.change_attribute_name_keys, vec![AttributeNameKey::from(7), AttributeNameKey::from(7)]);
+    }
+
+    #[test]
+    fn an_attribute_the_dictionary_did_not_mint_is_an_invariant_breach() {
+        let matched = updated(1);
+        let group = EventGroup {
+            change: &matched,
+            subscriptions: vec![matched.subscription_key],
+        };
+        assert!(event(WriteOrdinal::at(0), 0, group, &HashMap::new()).is_err());
     }
 }

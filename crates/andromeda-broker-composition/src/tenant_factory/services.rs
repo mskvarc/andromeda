@@ -209,9 +209,10 @@ fn compose_temporal_service(
             mutation_barrier: Arc::clone(&ports.mutation_barrier),
             mutator: Arc::clone(&storage.temporal_repo) as Arc<dyn TemporalMutator>,
             writes: Arc::clone(writes),
+            retry_delay: Arc::new(TokioRetryDelay),
         },
         storage.engine.clone(), // clone: temporal policy owns its engine handle.
-        config.temporal.default_last_n,
+        config.temporal.instance_limits(),
         // The delete-by-query extension's `TooManyResults` bound; inert unless
         // the extension is routed, which composition gates separately.
         config.extensions.temporal_delete_by_query_max_matches,

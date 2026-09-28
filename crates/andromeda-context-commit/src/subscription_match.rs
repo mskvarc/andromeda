@@ -1,8 +1,8 @@
 //! One subscription a committing context write owes a notification.
 
 use crate::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::entity_change::EntityChange;
 use serde_json::Value;
 use typed_builder::TypedBuilder;
 
@@ -18,38 +18,29 @@ pub struct SubscriptionMatch {
     pub subscription_key: SubscriptionKey,
     /// Entity that triggered the notification.
     pub entity_id: Uri,
-    /// Mutation trigger reason.
-    pub trigger: NotificationTrigger,
+    /// What the write did to the Entity, which the notification reports.
+    pub change: EntityChange,
     /// Expanded entity snapshot after the mutation.
     #[builder(default = Default::default())]
     pub entity_snapshot: Option<Value>,
     /// Expanded entity snapshot before the mutation.
     #[builder(default = Default::default())]
     pub previous_snapshot: Option<Value>,
-    /// Attributes changed by the mutation.
-    #[builder(default = Default::default())]
-    pub changed_attrs: Vec<AttributeName>,
-    /// Dataset discriminator of the changed Attribute instance.
-    #[builder(default = Default::default())]
-    pub changed_dataset_id: Option<Uri>,
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{subscription_key::SubscriptionKey, subscription_match::SubscriptionMatch};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-    use pretty_assertions::assert_eq;
+    use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 
     #[test]
     fn the_builder_defaults_optional_notification_data() {
         let entry = SubscriptionMatch::builder()
             .subscription_key(SubscriptionKey::try_from(1).expect("a positive key"))
             .entity_id("urn:ngsi-ld:A".parse().expect("valid entity URI"))
-            .trigger(NotificationTrigger::EntityUpdated)
+            .change(EntityChange::new(EntityLifecycle::Modified, Vec::new()))
             .build();
         assert!(entry.entity_snapshot.is_none());
         assert!(entry.previous_snapshot.is_none());
-        assert_eq!(entry.changed_attrs, [] as [AttributeName; 0]);
     }
 }

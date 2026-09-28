@@ -34,6 +34,7 @@ use crate::{
         start_rendering,
         with_linked_resolution_warnings,
     },
+    error::public_error,
     read_rendering::{EntityRepresentation, apply_representation_names, render_entities, render_joined_entities},
     state::EntityRouteServices,
 };
@@ -47,6 +48,7 @@ use andromeda_federation::{
 use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
 use andromeda_ngsi_ld_request::{
     deferred_split_filters::DeferredSplitFilters,
@@ -273,8 +275,9 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
 ///
 /// # Errors
 ///
-/// The classified failure of compiling a deferred filter against the request's
-/// `@context`.
+/// `TooManyResults` when the merged collection exceeds the budget the sources
+/// were walked under (clause 4.12), and the classified failure of compiling a
+/// deferred filter against the request's `@context`.
 async fn merge_and_filter(
     service: &EntityQueryService,
     local_entities: Vec<Entity>,
@@ -289,7 +292,9 @@ async fn merge_and_filter(
         warnings,
         contributions,
     } = match forwarded {
-        Some(results) => results.merge_onto(local_entities, query.attrs.as_deref()),
+        Some(results) => results
+            .merge_onto(local_entities, query.attrs.as_deref())
+            .map_err(|exceeded| public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), instance))?,
         None => MergedEntities::local(local_entities),
     };
     let entities = match deferred {

@@ -10,7 +10,7 @@ use crate::{
     queue_database::{deliveries_of, queue_database, record_events, subscription, subscription_key},
 };
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_postgresql_context_store::notification_delivery::rows::NewNotificationEvent;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -48,10 +48,9 @@ async fn durable_queue_deleting_a_subscription_reclaims_its_deliveries_through_t
         &record,
         &[NewNotificationEvent {
             ordinal: WriteOrdinal::at(0),
-            trigger: NotificationTrigger::EntityCreated,
+            change: &EntityChange::new(EntityLifecycle::Created, Vec::new()),
             entity_id: &entity,
-            changed_attribute_name_keys: Vec::new(),
-            changed_dataset_id: None,
+            change_attribute_name_keys: Vec::new(),
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
             subscription_keys: vec![subscription_key(owner_key)],

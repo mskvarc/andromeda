@@ -9,6 +9,7 @@ use crate::{
     forwarding_url::with_local_scope,
     outcome::{ForwardGetOutcome, ForwardedResponse, TransportFailure},
     request::TriggeringRequest,
+    source_continuation::SourceContinuation,
 };
 use andromeda_http_headers::{
     accept::Accept,
@@ -119,6 +120,7 @@ impl FederationService {
         }
         debug!("CS forwarding GET {}", url);
 
+        let answered = url.clone(); // clone: the next-page pointer resolves against the URL the request consumes
         let request = match self.build_request(ForwardedRequest {
             method: reqwest::Method::GET,
             url,
@@ -136,7 +138,7 @@ impl FederationService {
             Err(failure) => return ForwardGetOutcome::Transport(failure),
         };
 
-        let outcome = interpret_read_response(&registration.id, sent);
+        let outcome = interpret_read_response(registration, &answered, sent);
         if let ForwardGetOutcome::Success(response) = &outcome
             && let (Some(key), Some(duration)) = (cache_key, cache_duration)
         {
@@ -179,6 +181,7 @@ impl FederationService {
         }
         debug!("CS forwarding POST {}", url);
 
+        let answered = url.clone(); // clone: the next-page pointer resolves against the URL the request consumes
         let request = match self.build_request(ForwardedRequest {
             method: reqwest::Method::POST,
             url,
@@ -195,7 +198,7 @@ impl FederationService {
             Ok(sent) => sent,
             Err(failure) => return ForwardGetOutcome::Transport(failure),
         };
-        interpret_read_response(&registration.id, sent)
+        interpret_read_response(registration, &answered, sent)
     }
 
     /// Build a request with every header clause 6.3.19 and clause 6.3.18 call
@@ -294,8 +297,11 @@ impl FederationService {
 /// Read a forwarded read response into its clause 6.3.17 outcome: a 404 that
 /// contributes nothing, an error status, a stale/relayed warning set, or the
 /// parsed entities. The GET and the POST batch-query bindings answer the same
-/// way (clause 5.7.2.4), so both interpret their response here.
-fn interpret_read_response(registration_id: &Uri, sent: SentResponse) -> ForwardGetOutcome {
+/// way (clause 5.7.2.4), so both interpret their response here. `answered` is
+/// the URL the request was sent to, which the source's `next` pointer resolves
+/// against (clause 6.3.10).
+fn interpret_read_response(registration: &ContextSourceRegistration, answered: &Url, sent: SentResponse) -> ForwardGetOutcome {
+    let registration_id = &registration.id;
     if sent.status == reqwest::StatusCode::NOT_FOUND {
         return ForwardGetOutcome::NotFound(sent.ngsild_warnings);
     }
@@ -322,6 +328,7 @@ fn interpret_read_response(registration_id: &Uri, sent: SentResponse) -> Forward
             body,
             warnings,
             entity_map: sent.entity_map,
+            continuation: SourceContinuation::of(sent.next_page.as_ref(), answered, registration.access.endpoint.url()),
         }),
         Err(e) => {
             warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);

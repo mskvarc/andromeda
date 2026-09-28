@@ -429,7 +429,14 @@ mod tests {
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-    use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        expanded::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            instance_key::AttributeInstanceKey,
+        },
+        notification::ChangeOrigin,
+    };
     use chrono::{DateTime, TimeZone, Utc};
     use futures::future::BoxFuture;
     use serde_json::{Value, json};
@@ -701,7 +708,12 @@ mod tests {
         let entity_id = "urn:ngsi-ld:Building:side-effect"
             .parse()
             .map_err(|error| EntityError::internal(format!("invalid test entity id: {error}")))?;
-        let event = ChangeEvent::new(entity_id, Vec::new(), NotificationTrigger::EntityCreated);
+        let event = ChangeEvent::builder()
+            .entity_id(entity_id)
+            .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
+            .occurred_at(Utc::now())
+            .origin(ChangeOrigin::Local)
+            .build();
         Ok(LeasedSideEffect {
             id: SideEffectJobId::mint(),
             attempts: 0,
@@ -995,14 +1007,20 @@ mod tests {
         ChangeEvent::builder()
             .entity_id(uri(id))
             .entity_types(vec![BUILDING_TYPE_IRI.parse::<EntityTypeName>().expect("a valid type name")])
-            .trigger_reason(NotificationTrigger::EntityCreated)
+            .change(EntityChange::new(
+                EntityLifecycle::Created,
+                vec![AttributeChange {
+                    key: AttributeInstanceKey {
+                        attr: "https://uri.etsi.org/ngsi-ld/default-context/category"
+                            .parse::<AttributeName>()
+                            .expect("a valid attribute name"),
+                        dataset_id: None,
+                    },
+                    kind: AttributeChangeKind::Created,
+                }],
+            ))
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
-            .changed_attributes(vec![
-                "https://uri.etsi.org/ngsi-ld/default-context/category"
-                    .parse::<AttributeName>()
-                    .expect("a valid attribute name"),
-            ])
             .current_payload(Some(Arc::new(building(id))))
             .build()
     }
@@ -1021,7 +1039,7 @@ mod tests {
         SubscriptionMatch::builder()
             .subscription_key(subscription_key())
             .entity_id(uri(id))
-            .trigger(NotificationTrigger::EntityDeleted)
+            .change(EntityChange::new(EntityLifecycle::Deleted, Vec::new()))
             .build()
     }
 
@@ -1048,7 +1066,7 @@ mod tests {
         pretty_assertions::assert_eq!(writes[0].history.len(), 1);
         pretty_assertions::assert_eq!(writes[0].subscription_matches.len(), 1);
         pretty_assertions::assert_eq!(writes[0].subscription_matches[0].subscription_key, subscription_key());
-        pretty_assertions::assert_eq!(writes[0].subscription_matches[0].trigger, NotificationTrigger::EntityCreated);
+        pretty_assertions::assert_eq!(writes[0].subscription_matches[0].change.lifecycle, EntityLifecycle::Created);
         Ok(())
     }
 

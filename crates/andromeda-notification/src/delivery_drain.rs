@@ -131,11 +131,11 @@ fn trace_entry(entry: &DeliveryEntry) {
         event_key = %entry.event.key,
         subscription_id = %entry.subscription_id,
         entity_id = %entry.event.entity_id,
-        trigger = %entry.event.trigger,
+        lifecycle = ?entry.event.change.lifecycle,
         attempt = entry.attempt_count,
         has_snapshot = entry.event.entity_snapshot.is_some(),
         has_previous = entry.event.previous_snapshot.is_some(),
-        changed_attributes = ?entry.event.changed_attributes,
+        changed_attributes = ?entry.event.change.attributes(),
         created_at = %entry.event.created_at,
         next_attempt_at = %entry.next_attempt_at,
         "Processing notification delivery"
@@ -395,7 +395,7 @@ mod tests {
     use andromeda_context_commit::{lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+    use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use async_trait::async_trait;
     use chrono::{DateTime, TimeDelta, Utc};
     use futures::{
@@ -668,7 +668,7 @@ mod tests {
             .key(NotificationEventKey::from(1))
             .write_id(WriteId::mint())
             .event_ordinal(WriteOrdinal::at(0))
-            .trigger(NotificationTrigger::EntityUpdated)
+            .change(EntityChange::new(EntityLifecycle::Modified, Vec::new()))
             .entity_id(parse("urn:ngsi-ld:Entity:1")?)
             .created_at(Utc::now())
             .build();

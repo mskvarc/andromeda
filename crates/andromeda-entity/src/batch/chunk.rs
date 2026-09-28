@@ -17,7 +17,7 @@ use crate::{
     batch::prepare::PreparedEntity,
     error::EntityError,
     expanded_member::written_entity_types,
-    notification_plan::{NotificationGroup, NotificationPlan, attribute_change_groups},
+    notification_plan::{NotificationPlan, creation},
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_commit::{
@@ -32,10 +32,10 @@ use andromeda_context_commit::{
     write_retry::WRITE_ATTEMPTS,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
+    entity_change::EntityChange,
     expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError, written_observation::AddressedInstances},
-    notification::NotificationTrigger,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -124,7 +124,6 @@ impl EntityService {
             id,
             mut expanded,
             projection,
-            changed_attributes,
             expires_at,
             min_attribute_expires_at,
         } = prepared;
@@ -135,12 +134,11 @@ impl EntityService {
         }
         let payload = Arc::new(expanded);
         let types = projection.types.clone(); // clone: the plan carries the names after the record has taken them
-        let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attributes)];
-        match attribute_change_groups(&Value::Null, &payload) {
-            Ok(changes) => groups.extend(changes),
+        let change = match creation(&payload) {
+            Ok(change) => change,
             Err(error) => return Err(Box::new((id, error))),
-        }
-        let plan = self.plan_notifications(target, &id, &types, &groups, Some(&payload), None);
+        };
+        let plan = self.plan_notifications(target, &id, &types, change, Some(&payload), None);
         Ok(ChunkWrite {
             id,
             entity: EntityMutation::Insert(EntityRecord::from_parts(
@@ -167,7 +165,6 @@ impl EntityService {
         target: &ContextTarget,
         id: Uri,
         payload: Arc<Value>,
-        changed_attributes: Vec<AttributeName>,
         precondition: Precondition,
         now: DateTime<Utc>,
     ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
@@ -184,12 +181,11 @@ impl EntityService {
             Err(error) => return Err(Box::new((id, error.into()))),
         };
         let types = record.projection.types.clone(); // clone: the plan carries the names the record holds
-        let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attributes)];
-        match attribute_change_groups(&Value::Null, &payload) {
-            Ok(changes) => groups.extend(changes),
+        let change = match creation(&payload) {
+            Ok(change) => change,
             Err(error) => return Err(Box::new((id, error))),
-        }
-        let plan = self.plan_notifications(target, &id, &types, &groups, Some(&payload), None);
+        };
+        let plan = self.plan_notifications(target, &id, &types, change, Some(&payload), None);
         Ok(ChunkWrite {
             id,
             entity: EntityMutation::Insert(record),
@@ -200,7 +196,7 @@ impl EntityService {
     }
 
     /// The write that overwrites an existing entity with the state replacing it,
-    /// under the per-op notification `groups`.
+    /// under the entity `change` the write made.
     ///
     /// The build site supplies one precise group per changed attribute instance.
     ///
@@ -214,7 +210,7 @@ impl EntityService {
         target: &ContextTarget,
         id: Uri,
         payloads: UpdatedPayloads<'_>,
-        groups: &[NotificationGroup],
+        change: EntityChange,
         precondition: Precondition,
         now: DateTime<Utc>,
     ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
@@ -239,7 +235,7 @@ impl EntityService {
             Ok(types) => types,
             Err(error) => return Err(Box::new((id, error))),
         };
-        let plan = self.plan_notifications(target, &id, &types, groups, Some(&merged), Some(previous));
+        let plan = self.plan_notifications(target, &id, &types, change, Some(&merged), Some(previous));
         let record = match EntityRecord::from_expanded(merged) {
             Ok(record) => record,
             Err(error) => return Err(Box::new((id, error.into()))),
@@ -318,7 +314,9 @@ impl EntityService {
                         .into_iter()
                         .filter_map(|record| match record {
                             HistoryRecord::Observations(observed) => Some((Arc::clone(&entity_id), observed)), // clone: Arc ref-count bump
-                            HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
+                            // A Core batch writes no Temporal API addition, and the
+                            // partition above routes none here.
+                            HistoryRecord::EvolutionInstances(_) | HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
                         })
                         .collect();
                     let job = BatchSideEffectJob {

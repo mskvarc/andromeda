@@ -123,7 +123,7 @@ pub async fn get(
         entity_map_uri,
     } = retrieved;
 
-    let content_range = range.and_then(|range| build_content_range(&range.interval, range.observed, range.last_n_origin));
+    let content_range = range.and_then(|range| build_content_range(&range.interval, range.observed, range.direction));
     let read = TemporalHistoryRead {
         service: &state.temporal,
         target: &target,

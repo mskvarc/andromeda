@@ -1,18 +1,20 @@
-//! `q` predicates compiled to `EXISTS` probes against the
-//! `current_attribute_values` projection.
+//! `q` predicates compiled to `EXISTS` probes against the stored attribute
+//! instances an [`InstanceScan`] names: the `current_attribute_values`
+//! projection for a Query Entities `q`, the in-window `attribute_history` rows
+//! for a temporal one.
 
 use crate::{
     attribute_name_key::AttributeNameKey,
     dictionary::query_names::QueryNames,
-    entity_row_refs::EntityRowRefs,
     operator::{does_not_hold, pattern as pattern_predicate},
     q_predicate::{
         fallback::{fallback_equality, fallback_exists, fallback_ordering, fallback_pattern},
+        instance_scan::InstanceScan,
         local_target::{LocalTarget, local_target},
-        projection_probe::{attribute_row_exists, exists_on_projection, probe_column},
         structured_target::{StructuredTarget, carries_operand, carries_target_language, omits_operand},
         traversal::LinkedHop,
         typed_column::typed_column_condition,
+        value_column::ValueColumn,
     },
 };
 use andromeda_ngsi_ld_query::{
@@ -24,7 +26,6 @@ use andromeda_ngsi_ld_query::{
     },
     pattern::Pattern,
 };
-use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::literal::false_literal;
 use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
@@ -34,28 +35,40 @@ use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 /// does not hold compiles to a constant `FALSE` rather than erroring, and every
 /// operand is bound as a parameter rather than converted, so every expression
 /// clause 4.9 admits has a condition.
+///
+/// Every Query Term is its own existential over the instances `scan` reads,
+/// and the AND/OR tree combines those existentials. Over a temporal window
+/// that is clause 5.7.4.4's reading: each term is "checked against all the
+/// Attribute instances resulting from the initial filtering", so `a>1;b<2`
+/// holds when some in-window instance of `a` exceeds 1 and some in-window
+/// instance of `b` is below 2, not necessarily at the same instant.
 #[must_use]
-pub fn compile(expr: &Expr, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
+pub fn compile(expr: &Expr, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
     match expr {
-        Expr::And(terms) => terms.iter().fold(Condition::all(), |cond, term| cond.add(compile(term, rows, names))),
-        Expr::Or(terms) => terms.iter().fold(Condition::any(), |cond, term| cond.add(compile(term, rows, names))),
-        Expr::Pred(pred) => compile_predicate(pred, rows, names),
+        Expr::And(terms) => terms.iter().fold(Condition::all(), |cond, term| cond.add(compile(term, scan, names))),
+        Expr::Or(terms) => terms.iter().fold(Condition::any(), |cond, term| cond.add(compile(term, scan, names))),
+        Expr::Pred(pred) => compile_predicate(pred, scan, names),
     }
 }
 
 /// Compile one leaf predicate, descending any linked-entity hops its axis
 /// carries before compiling the comparison against the entity it lands on.
-fn compile_predicate(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
-    compile_along_path(pred, pred.path(), rows, names, 0)
+fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+    compile_along_path(pred, pred.path(), scan, names, 0)
 }
 
 /// Compile a predicate against the entity reached by the remaining axis.
 ///
 /// `depth` is the number of hops already descended; it suffixes the aliases so
 /// a nested traversal's probes cannot shadow an enclosing one's.
-fn compile_along_path(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, names: &QueryNames, depth: usize) -> Condition {
+///
+/// A hop lands on the linked Entity as it stands: the instances `scan` reads
+/// decide which entities the Relationship named, and the linked entity is then
+/// asked about its current state, because a window selects instances of the
+/// entity being queried and says nothing of the entities it points at.
+fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_>, names: &QueryNames, depth: usize) -> Condition {
     match path {
-        QueryPath::Local(local) => compile_local_predicate(pred, local, rows, names),
+        QueryPath::Local(local) => compile_local_predicate(pred, local, scan, names),
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -68,29 +81,32 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, 
                 return unsatisfiable();
             };
             let hop = LinkedHop::at_depth(depth + 1);
-            let inner_condition = compile_along_path(pred, inner, &hop.inner_rows(rows.schema().cloned()), names, depth + 1);
-            hop.probe(relationship_id, guard_types, &names.types, rows, inner_condition)
+            let inner_rows = hop.inner_rows(scan.schema().cloned());
+            let inner_condition = compile_along_path(pred, inner, &InstanceScan::Current(&inner_rows), names, depth + 1);
+            hop.probe(relationship_id, guard_types, &names.types, scan, inner_condition)
         }
     }
 }
 
 /// Compile the comparison itself, routing it to the projection or the fallback.
-fn compile_local_predicate(pred: &Predicate, path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
+fn compile_local_predicate(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
     match pred {
-        Predicate::Exists(_) => compile_exists(path, rows, names),
-        Predicate::Equality { membership, rhs, .. } => compile_equality(path, *membership, rhs, rows, names),
+        Predicate::Exists(_) => compile_exists(path, scan, names),
+        Predicate::Equality { membership, rhs, .. } => compile_equality(path, *membership, rhs, scan, names),
         Predicate::Ordering { op, rhs, .. } => match local_target(path) {
             LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
-                Some(id) => compile_ordering_on_projection(id, *op, rhs, rows),
+                Some(id) => compile_ordering_on_projection(id, *op, rhs, scan),
                 None => unsatisfiable(),
             },
             // An ordering comparison against one member of a structure is not a
             // containment test, so nothing in the projection answers it and the
             // payload is the only reader left.
-            LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember => fallback_ordering(path, *op, rhs, rows),
+            LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember => {
+                scan.document_condition(&path.attr, names, |document| fallback_ordering(path, *op, rhs, &document))
+            }
         },
-        Predicate::MatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::Match, rows, names),
-        Predicate::NotMatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::NotMatch, rows, names),
+        Predicate::MatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::Match, scan, names),
+        Predicate::NotMatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::NotMatch, scan, names),
     }
 }
 
@@ -105,20 +121,21 @@ fn compile_local_predicate(pred: &Predicate, path: &AttrPath, rows: &EntityRowRe
 /// no `hasValue` for the fallback's jsonpath to reach, and a compound value's
 /// member nodes carry no `@language` for the containment to match — so the
 /// disjunction is exact rather than merely permissive.
-fn compile_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
+fn compile_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+    let fallback = || scan.document_condition(&path.attr, names, |document| fallback_equality(path, membership, rhs, &document));
     match local_target(path) {
         LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
-            Some(id) => compile_equality_on_projection(id, StructuredTarget::AnyValue, membership, rhs, rows),
+            Some(id) => compile_equality_on_projection(id, StructuredTarget::AnyValue, membership, rhs, scan),
             None => unsatisfiable(),
         },
         LocalTarget::TrailingMember(member) => {
             let tagged = match names.attributes.get(&path.attr) {
-                Some(id) => compile_equality_on_projection(id, StructuredTarget::TargetLanguage(member), membership, rhs, rows),
+                Some(id) => compile_equality_on_projection(id, StructuredTarget::TargetLanguage(member), membership, rhs, scan),
                 None => unsatisfiable(),
             };
-            Condition::any().add(tagged).add(fallback_equality(path, membership, rhs, rows))
+            Condition::any().add(tagged).add(fallback())
         }
-        LocalTarget::PayloadMember => fallback_equality(path, membership, rhs, rows),
+        LocalTarget::PayloadMember => fallback(),
     }
 }
 
@@ -141,10 +158,11 @@ fn unsatisfiable() -> Condition {
 /// `payload`: GIN's `jsonb_ops` only serves `?` when the left operand is the
 /// bare indexed column, and `payload->0` is an expression. It is a sequential
 /// scan.
-fn compile_exists(path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
+fn compile_exists(path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+    let fallback = || scan.document_condition(&path.attr, names, |document| fallback_exists(path, &document));
     match local_target(path) {
         LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
-            Some(id) => attribute_row_exists(id, rows),
+            Some(id) => scan.attribute_present(id),
             None => unsatisfiable(),
         },
         // Clause 4.9's target element for a language-selected path is the
@@ -153,12 +171,12 @@ fn compile_exists(path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> 
         // same spelling addresses.
         LocalTarget::TrailingMember(member) => {
             let tagged = match names.attributes.get(&path.attr) {
-                Some(id) => exists_on_projection(id, carries_target_language(&probe_column(CurrentAttributeValues::ValueObject), member), rows),
+                Some(id) => scan.exists(id, carries_target_language(&scan.value(ValueColumn::Object), member)),
                 None => unsatisfiable(),
             };
-            Condition::any().add(tagged).add(fallback_exists(path, rows))
+            Condition::any().add(tagged).add(fallback())
         }
-        LocalTarget::PayloadMember => fallback_exists(path, rows),
+        LocalTarget::PayloadMember => fallback(),
     }
 }
 
@@ -173,11 +191,11 @@ fn compile_equality_on_projection(
     target: StructuredTarget<'_>,
     membership: SetMembership,
     rhs: &CompareValue,
-    rows: &EntityRowRefs,
+    scan: &InstanceScan<'_>,
 ) -> Condition {
     let value = match rhs {
-        CompareValue::Scalar(scalar) => equality_condition(target, scalar, membership),
-        CompareValue::Range { min, max } => range_condition(target, min, max, membership),
+        CompareValue::Scalar(scalar) => equality_condition(target, scalar, membership, scan),
+        CompareValue::Range { min, max } => range_condition(target, min, max, membership, scan),
         // Clause 4.9: every member of a value list is compared with the equality
         // operator, so `==` holds when any of them matches and `!=` when none
         // does. The negated form is a conjunction of per-member inequalities
@@ -187,14 +205,14 @@ fn compile_equality_on_projection(
         // every entity — which made `attr!="a","b"` select nothing at all.
         CompareValue::ValueList(values) => match membership {
             SetMembership::Within => values.iter().fold(Condition::any(), |cond, value| {
-                cond.add(equality_condition(target, value, SetMembership::Within))
+                cond.add(equality_condition(target, value, SetMembership::Within, scan))
             }),
             SetMembership::Outside => values.iter().fold(Condition::all(), |cond, value| {
-                cond.add(equality_condition(target, value, SetMembership::Outside))
+                cond.add(equality_condition(target, value, SetMembership::Outside, scan))
             }),
         },
     };
-    exists_on_projection(id, value, rows)
+    scan.exists(id, value)
 }
 
 /// One equality comparison against every column the target value can occupy.
@@ -223,12 +241,12 @@ fn compile_equality_on_projection(
 /// would let `attr[en]!=5` match a plain numeric Property, whose target element
 /// for that path does not exist at all. That polarity keeps its own compilation
 /// for the same reason — it has to require the key to be present.
-fn equality_condition(target: StructuredTarget<'_>, scalar: &Scalar, membership: SetMembership) -> Condition {
-    let column = probe_column(CurrentAttributeValues::ValueObject);
+fn equality_condition(target: StructuredTarget<'_>, scalar: &Scalar, membership: SetMembership, scan: &InstanceScan<'_>) -> Condition {
+    let column = scan.value(ValueColumn::Object);
     match target {
         StructuredTarget::AnyValue => match membership {
-            SetMembership::Within => carries_any_target_value(&column, scalar),
-            SetMembership::Outside => Condition::all().add(does_not_hold(carries_any_target_value(&column, scalar))),
+            SetMembership::Within => carries_any_target_value(&column, scalar, scan),
+            SetMembership::Outside => Condition::all().add(does_not_hold(carries_any_target_value(&column, scalar, scan))),
         },
         StructuredTarget::TargetLanguage(language) => match membership {
             SetMembership::Within => carries_operand(&column, target, scalar),
@@ -239,9 +257,9 @@ fn equality_condition(target: StructuredTarget<'_>, scalar: &Scalar, membership:
 
 /// Whether any column that can hold an unqualified clause 4.9 target value
 /// holds this operand.
-fn carries_any_target_value(column: &SimpleExpr, scalar: &Scalar) -> Condition {
+fn carries_any_target_value(column: &SimpleExpr, scalar: &Scalar, scan: &InstanceScan<'_>) -> Condition {
     Condition::any()
-        .add(typed_column_condition(scalar, CmpOp::Equal))
+        .add(typed_column_condition(scalar, CmpOp::Equal, scan))
         .add(carries_operand(column, StructuredTarget::AnyValue, scalar))
 }
 
@@ -255,11 +273,11 @@ fn carries_any_target_value(column: &SimpleExpr, scalar: &Scalar) -> Condition {
 /// [`equality_condition`] gives: clause 4.9 makes a target whose datatype is not
 /// the range's unequal to it, and a comparison the column cannot even evaluate
 /// is unknown rather than false.
-fn range_condition(target: StructuredTarget<'_>, min: &Scalar, max: &Scalar, membership: SetMembership) -> Condition {
+fn range_condition(target: StructuredTarget<'_>, min: &Scalar, max: &Scalar, membership: SetMembership, scan: &InstanceScan<'_>) -> Condition {
     match target {
         StructuredTarget::AnyValue => match membership {
-            SetMembership::Within => within_range(min, max),
-            SetMembership::Outside => Condition::all().add(does_not_hold(within_range(min, max))),
+            SetMembership::Within => within_range(min, max, scan),
+            SetMembership::Outside => Condition::all().add(does_not_hold(within_range(min, max, scan))),
         },
         StructuredTarget::TargetLanguage(_) => unsatisfiable(),
     }
@@ -267,16 +285,16 @@ fn range_condition(target: StructuredTarget<'_>, min: &Scalar, max: &Scalar, mem
 
 /// Whether the typed column holding this range's operand kind sits inside the
 /// interval, both bounds included (clause 4.9 `Range`).
-fn within_range(min: &Scalar, max: &Scalar) -> Condition {
+fn within_range(min: &Scalar, max: &Scalar, scan: &InstanceScan<'_>) -> Condition {
     Condition::all()
-        .add(typed_column_condition(min, CmpOp::GreaterEq))
-        .add(typed_column_condition(max, CmpOp::LessEq))
+        .add(typed_column_condition(min, CmpOp::GreaterEq, scan))
+        .add(typed_column_condition(max, CmpOp::LessEq, scan))
 }
 
 /// Compile an ordering comparison (`>`/`>=`/`<`/`<=`) against the typed columns
-/// of `current_attribute_values`.
-fn compile_ordering_on_projection(id: AttributeNameKey, op: OrderingOp, rhs: &Scalar, rows: &EntityRowRefs) -> Condition {
-    exists_on_projection(id, Condition::all().add(typed_column_condition(rhs, op.as_cmp_op())), rows)
+/// of the scanned instances.
+fn compile_ordering_on_projection(id: AttributeNameKey, op: OrderingOp, rhs: &Scalar, scan: &InstanceScan<'_>) -> Condition {
+    scan.exists(id, Condition::all().add(typed_column_condition(rhs, op.as_cmp_op(), scan)))
 }
 
 // ---------------------------------------------------------------------------
@@ -311,28 +329,33 @@ fn compile_ordering_on_projection(id: AttributeNameKey, op: OrderingOp, rhs: &Sc
 /// `attribute_name_key` prefix of `idx_cav_value_string` before any regex is
 /// evaluated. `idx_cav_value_long_text_trgm` serves the overflow arm the same
 /// way.
-fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
+fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
     match local_target(path) {
         LocalTarget::OwnValue => (),
         // A regex is not a containment test, so the projection cannot answer a
         // pattern against one member of a structure; the payload can reach it.
-        LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember => return fallback_pattern(path, pattern, polarity, rows),
+        LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember => {
+            return scan.document_condition(&path.attr, names, |document| fallback_pattern(path, pattern, polarity, &document));
+        }
     }
     let Some(id) = names.attributes.get(&path.attr) else {
         return unsatisfiable();
     };
 
-    let on = |column| pattern_predicate(probe_column(column), polarity, SeaExpr::val(pattern.as_str()));
-    let value = Condition::any()
-        .add(on(CurrentAttributeValues::ValueString))
-        .add(on(CurrentAttributeValues::ValueLongText));
-    exists_on_projection(id, value, rows)
+    let value = scan.string_columns().iter().fold(Condition::any(), |value, column| {
+        value.add(pattern_predicate(scan.value(*column), polarity, SeaExpr::val(pattern.as_str())))
+    });
+    scan.exists(id, value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{dictionary::resolved_names::ResolvedNames, entity_row_refs::DocumentsRef, entity_type_name_key::EntityTypeNameKey};
+    use crate::{
+        dictionary::resolved_names::ResolvedNames,
+        entity_row_refs::{DocumentsRef, EntityRowRefs},
+        entity_type_name_key::EntityTypeNameKey,
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::parser;
     use andromeda_postgresql_schema::{current::Entities, projected_string_column::INDEXED_STRING_BYTE_LIMIT};
@@ -395,7 +418,7 @@ mod tests {
 
     fn render_with(q: &str, names: &QueryNames, rows: &EntityRowRefs) -> (String, Vec<Value>) {
         let expr = parser::parse(q).expect("parse q");
-        let condition = compile(&expr, rows, names);
+        let condition = compile(&expr, &InstanceScan::Current(rows), names);
         let (sql, values) = Query::select()
             .column(Entities::Id)
             .from(Entities::Table)

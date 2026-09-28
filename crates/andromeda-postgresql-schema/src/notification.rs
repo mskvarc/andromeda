@@ -21,14 +21,16 @@ pub enum NotificationEvents {
     WriteId,
     /// Position of the event within its write, unique per write identity
     EventOrdinal,
-    /// Migration-owned number of the trigger condition
-    Trigger,
+    /// Migration-owned number of the Entity's lifecycle transition
+    Lifecycle,
     /// Entity whose change the event records
     EntityId,
-    /// Dictionary keys of the attributes the change touched
-    ChangedAttributeNameKeys,
-    /// Dataset discriminator of an attribute-level event
-    ChangedDatasetId,
+    /// Migration-owned numbers of each changed Attribute instance's transition
+    ChangeKinds,
+    /// Dictionary keys of each changed Attribute instance's attribute
+    ChangeAttributeNameKeys,
+    /// Dataset discriminator of each changed Attribute instance, `NULL` for the default instance
+    ChangeDatasetIds,
     /// Entity state after the change
     EntitySnapshot,
     /// Entity state before the change
@@ -77,10 +79,11 @@ mod tests {
         assert_eq!(NotificationEvents::CreatedAt.to_string(), "created_at");
         assert_eq!(NotificationEvents::WriteId.to_string(), "write_id");
         assert_eq!(NotificationEvents::EventOrdinal.to_string(), "event_ordinal");
-        assert_eq!(NotificationEvents::Trigger.to_string(), "trigger");
+        assert_eq!(NotificationEvents::Lifecycle.to_string(), "lifecycle");
         assert_eq!(NotificationEvents::EntityId.to_string(), "entity_id");
-        assert_eq!(NotificationEvents::ChangedAttributeNameKeys.to_string(), "changed_attribute_name_keys");
-        assert_eq!(NotificationEvents::ChangedDatasetId.to_string(), "changed_dataset_id");
+        assert_eq!(NotificationEvents::ChangeKinds.to_string(), "change_kinds");
+        assert_eq!(NotificationEvents::ChangeAttributeNameKeys.to_string(), "change_attribute_name_keys");
+        assert_eq!(NotificationEvents::ChangeDatasetIds.to_string(), "change_dataset_ids");
         assert_eq!(NotificationEvents::EntitySnapshot.to_string(), "entity_snapshot");
         assert_eq!(NotificationEvents::PreviousSnapshot.to_string(), "previous_snapshot");
     }

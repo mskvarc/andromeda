@@ -5,11 +5,10 @@ use crate::processor::payload::{
     cache::{NotificationCompactionCache, ResolvedLinkedEntities, resolve_linked_cached},
     context::{normalize_compacted_entity, strip_to_structural_keys},
     deletion::{fix_null_language_maps, inject_deleted_attributes, nullify_entity_attributes},
-    filtering::{filter_entity_attributes, filter_entity_by_dataset_id, inject_previous_values},
+    filtering::{PreviousValueScope, filter_entity_attributes, filter_entity_by_dataset_id, inject_previous_values},
     projection::apply_notification_projection,
     representation::{compact_for_notification, render_format},
 };
-use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     query::EntityQueryService,
@@ -23,11 +22,15 @@ use andromeda_jsonld::{
         processor::JsonLdEngine,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    expanded::{attribute_expiry::remove_expired_instances, attribute_system_time::strip_attribute_instants},
-    notification::NotificationTrigger,
+    entity_change::{EntityChange, EntityLifecycle},
+    expanded::{
+        attribute_change::AttributeChangeKind,
+        attribute_expiry::remove_expired_instances,
+        attribute_system_time::strip_attribute_instants,
+        instance_key::AttributeInstanceKey,
+    },
 };
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_query::projection::term::ProjectionTerm;
@@ -45,57 +48,15 @@ use serde_json::Value;
 use std::mem::take;
 use tracing::debug;
 
-/// Whether the entity the notification is about outlived the change.
-///
-/// Clause 5.8.6 shapes a notification "triggered by the deletion of an Entity"
-/// down to `deletedAt` alone, plus `createdAt` and `modifiedAt` under
-/// `sysAttrs`. Deleting an entity raises one `AttributeDeleted` event per
-/// attribute as well as the `EntityDeleted` one, so a subscription watching an
-/// attribute is notified through the attribute trigger and the trigger alone
-/// cannot say whether the entity is still there. This does.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum EntitySurvival {
-    /// The entity outlived the change; a deleted attribute is reported against
-    /// the entity that survived it.
-    Survived,
-    /// The entity itself is gone.
-    Deleted,
-}
-
-/// Whether `event` leaves the entity behind.
-///
-/// An `EntityDeleted` event says so outright. An `AttributeDeleted` event says
-/// so by carrying a pre-deletion snapshot and no post-mutation payload, which
-/// is the shape both the immediate path (`EntityService`'s delete raises one
-/// such event per attribute) and the durable path replay produce; an ordinary
-/// attribute deletion carries the entity that survived it instead.
-pub(super) const fn entity_survival(event: &ChangeEvent) -> EntitySurvival {
-    match event.trigger_reason {
-        NotificationTrigger::EntityDeleted => EntitySurvival::Deleted,
-        NotificationTrigger::AttributeDeleted => {
-            if event.current_payload.is_none() && event.entity_snapshot.is_some() {
-                EntitySurvival::Deleted
-            } else {
-                EntitySurvival::Survived
-            }
-        }
-        NotificationTrigger::EntityCreated
-        | NotificationTrigger::EntityUpdated
-        | NotificationTrigger::AttributeCreated
-        | NotificationTrigger::AttributeUpdated => EntitySurvival::Survived,
-    }
-}
-
 pub(super) struct NotificationBuildParams<'a> {
     pub(super) target: &'a ContextTarget,
     pub(super) engine: &'a JsonLdEngine,
     pub(super) entity_data: &'a Value,
     pub(super) previous_attributes: Option<&'a Value>,
     pub(super) sub: &'a CompiledSubscription,
-    pub(super) trigger_reason: &'a NotificationTrigger,
-    pub(super) survival: EntitySurvival,
-    pub(super) changed_attributes: &'a [AttributeName],
-    pub(super) changed_dataset_id: Option<&'a Uri>,
+    /// What the write did to the Entity: its lifecycle and every Attribute
+    /// instance it touched, all of which the one notification reports.
+    pub(super) change: &'a EntityChange,
     pub(super) occurred_at: DateTime<Utc>,
     pub(super) entity_query: &'a EntityQueryService,
     pub(super) compaction_cache: Option<&'a NotificationCompactionCache>,
@@ -172,41 +133,38 @@ fn expanded_entity_node(document: &Value) -> Value {
     }
 }
 
-/// Shape the notified entity for a deletion trigger (clause 5.8.6).
+/// Shape the notified entity for what the change deleted (clause 5.8.6).
 ///
 /// A deleted entity is carried as its structural members alone, or, under
 /// `showChanges`, with every attribute nullified so the subscriber sees what
-/// went. A deleted attribute is materialised back into what survived it. Every
-/// other trigger notifies the entity as the write left it.
+/// went -- whichever clause 5.2.12 trigger matched the subscription, since an
+/// entity deletion reaches an `attributeDeleted` subscriber too and owes it the
+/// same `deletedAt`-only document. The Attribute instances a surviving entity
+/// lost are materialised back into it. Nothing else changes the entity as the
+/// write left it.
 fn apply_deletion_shape(entity: &mut Value, params: &NotificationBuildParams<'_>) {
-    // Clause 5.8.6 keys this on what the notification was triggered by, not on
-    // which clause 5.2.12 trigger matched the subscription: an entity deletion
-    // reaches an `attributeDeleted` subscriber too, and it owes that subscriber
-    // the same `deletedAt`-only document.
-    if params.survival == EntitySurvival::Deleted {
-        if params.sub.notification_show_changes {
-            nullify_entity_attributes(entity);
-        } else {
-            let structural = strip_to_structural_keys(entity, params.sub.notification_sys_attrs);
-            *entity = structural;
+    match params.change.lifecycle {
+        EntityLifecycle::Deleted => {
+            if params.sub.notification_show_changes {
+                nullify_entity_attributes(entity);
+            } else {
+                let structural = strip_to_structural_keys(entity, params.sub.notification_sys_attrs);
+                *entity = structural;
+            }
         }
-        return;
-    }
-    match params.trigger_reason {
-        NotificationTrigger::AttributeDeleted => apply_attribute_deletion(entity, params),
-        NotificationTrigger::EntityDeleted
-        | NotificationTrigger::EntityCreated
-        | NotificationTrigger::EntityUpdated
-        | NotificationTrigger::AttributeCreated
-        | NotificationTrigger::AttributeUpdated => (),
+        EntityLifecycle::Created | EntityLifecycle::Modified => {
+            if params.change.deletes_instances() {
+                apply_attribute_deletion(entity, params);
+            }
+        }
     }
 }
 
-/// Materialise the attribute instances a deletion removed, so the notification
+/// Materialise the attribute instances a change removed, so the notification
 /// carries what was deleted and not only what remains.
 ///
 /// A subscription with `watchedAttributes` is told about those attributes
-/// alone, so the changed set is narrowed to them before the instances are
+/// alone, so the deleted instances are narrowed to them before they are
 /// injected.
 fn apply_attribute_deletion(entity: &mut Value, params: &NotificationBuildParams<'_>) {
     let sub = params.sub;
@@ -215,19 +173,15 @@ fn apply_attribute_deletion(entity: &mut Value, params: &NotificationBuildParams
     } else {
         None
     };
-    let watched_changed: Vec<AttributeName>;
-    let effective_changed: &[AttributeName] = if let Some(ref watched) = sub.watched_attrs {
-        watched_changed = params
-            .changed_attributes
-            .iter()
-            .filter(|attribute| watched.contains(*attribute))
-            .cloned()
-            .collect();
-        &watched_changed
-    } else {
-        params.changed_attributes
-    };
-    inject_deleted_attributes(entity, effective_changed, params.changed_dataset_id, params.previous_attributes, deleted_at);
+    let deleted: Vec<&AttributeInstanceKey> = params
+        .change
+        .instances
+        .iter()
+        .filter(|instance| instance.kind == AttributeChangeKind::Deleted)
+        .filter(|instance| sub.watched_attrs.as_ref().is_none_or(|watched| watched.contains(&instance.key.attr)))
+        .map(|instance| &instance.key)
+        .collect();
+    inject_deleted_attributes(entity, &deleted, params.previous_attributes, deleted_at);
 
     if sub.notification_sys_attrs == SysAttrsInclusion::Include
         && let Some(object) = expanded_entity_object_mut(entity)
@@ -261,8 +215,9 @@ fn apply_notification_selection(entity: &mut Value, sub: &CompiledSubscription) 
 }
 
 /// Apply the `showChanges` view to the compacted entity (clause 5.8.6): the
-/// language maps a deletion left null, and the previous value of every changed
-/// instance.
+/// language maps a deletion left null, and the previous value of every
+/// instance the change touched -- every instance, when the Entity itself was
+/// deleted.
 ///
 /// A previous representation that cannot be compacted leaves the notification
 /// with its current values alone rather than failing the delivery.
@@ -270,9 +225,13 @@ async fn apply_show_changes(compacted: &mut Value, params: &NotificationBuildPar
     if !params.sub.notification_show_changes {
         return;
     }
-    if matches!(params.trigger_reason, NotificationTrigger::EntityDeleted) {
-        fix_null_language_maps(compacted);
-    }
+    let scope = match params.change.lifecycle {
+        EntityLifecycle::Deleted => {
+            fix_null_language_maps(compacted);
+            PreviousValueScope::EveryInstance
+        }
+        EntityLifecycle::Created | EntityLifecycle::Modified => PreviousValueScope::Instances(&params.change.instances),
+    };
     let Some(previous) = params.previous_attributes else {
         return;
     };
@@ -288,20 +247,7 @@ async fn apply_show_changes(compacted: &mut Value, params: &NotificationBuildPar
         return;
     };
     let previous_compacted = normalize_compacted_entity(previous_compacted);
-    let exact_attribute_instance = matches!(
-        params.trigger_reason,
-        NotificationTrigger::AttributeCreated | NotificationTrigger::AttributeUpdated | NotificationTrigger::AttributeDeleted
-    );
-    inject_previous_values(
-        compacted,
-        &previous_compacted,
-        params.changed_attributes,
-        params.changed_dataset_id,
-        exact_attribute_instance,
-        params.engine,
-        compactor.context(),
-    )
-    .await;
+    inject_previous_values(compacted, &previous_compacted, scope, params.engine, compactor.context()).await;
 }
 
 /// Place the linked entities the subscription's `join` asks for into the

@@ -2,16 +2,16 @@
 //!
 //! A change carries its entity in one of three shapes: the current payload of
 //! a write, a snapshot taken before a deletion, or nothing but the identifier
-//! and types. Which one a notification is built from follows the trigger
-//! (clause 5.8.6): a live change reads the entity as it is now, an attribute
-//! deletion reads what remains, and an entity deletion reads what was
-//! deleted, stamped with `deletedAt`.
+//! and types. Which one a notification is built from follows the Entity's
+//! lifecycle (clause 5.8.6): a creation or modification is notified with the
+//! entity as the write left it, and a deletion with what was deleted, stamped
+//! with `deletedAt`.
 
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::port::reader::EntityReader;
 use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -20,13 +20,9 @@ use tracing::{debug, error};
 /// The expanded entity a notification of `event` is built from, or `None`
 /// when there is nothing left to notify about.
 pub(super) async fn entity_data_for(reader: &dyn EntityReader, target: &ContextTarget, event: &ChangeEvent) -> Option<Value> {
-    match event.trigger_reason {
-        NotificationTrigger::EntityCreated
-        | NotificationTrigger::EntityUpdated
-        | NotificationTrigger::AttributeCreated
-        | NotificationTrigger::AttributeUpdated => current_entity(reader, target, event).await,
-        NotificationTrigger::AttributeDeleted => attribute_deletion_entity(reader, target, event).await,
-        NotificationTrigger::EntityDeleted => Some(entity_deletion_entity(event)),
+    match event.change.lifecycle {
+        EntityLifecycle::Created | EntityLifecycle::Modified => current_entity(reader, target, event).await,
+        EntityLifecycle::Deleted => Some(entity_deletion_entity(event)),
     }
 }
 
@@ -37,26 +33,6 @@ async fn current_entity(reader: &dyn EntityReader, target: &ContextTarget, event
         Some(payload) => Some(payload.clone()), // clone: the notification owns its document while the event stays shared
         None => read_entity(reader, target, event).await,
     }
-}
-
-/// What the notification carries for an attribute deletion: the entity as the
-/// write left it, the deleted entity stamped with `deletedAt` when the
-/// attribute went with the whole entity, or the stored entity when the event
-/// carries neither.
-async fn attribute_deletion_entity(reader: &dyn EntityReader, target: &ContextTarget, event: &ChangeEvent) -> Option<Value> {
-    if let Some(payload) = event.current_payload.as_deref() {
-        return Some(payload.clone()); // clone: the notification owns its document while the event stays shared
-    }
-    // Clause 5.8.6: "If the notification was triggered by the deletion of an
-    // Entity ... only the deletedAt system property shall be provided." Deleting
-    // an entity raises one `AttributeDeleted` event per attribute, each carrying
-    // the pre-deletion snapshot and no post-mutation payload -- so a snapshot
-    // without a payload describes what is gone, not what remains, and is owed
-    // the same `deletedAt` the `EntityDeleted` event is.
-    if event.entity_snapshot.is_some() {
-        return Some(entity_deletion_entity(event));
-    }
-    read_entity(reader, target, event).await
 }
 
 /// The deleted entity: its snapshot stamped with `deletedAt`, or, without a
@@ -118,7 +94,10 @@ fn stamp_deleted_at(node: &mut Value, occurred_at: DateTime<Utc>) {
 mod tests {
     use crate::processor::change_payload::{entity_deletion_entity, entity_node, stamp_deleted_at};
     use andromeda_context_commit::change_event::ChangeEvent;
-    use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        notification::ChangeOrigin,
+    };
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use chrono::{TimeZone, Utc};
     use serde_json::{Value, json};
@@ -127,8 +106,7 @@ mod tests {
         ChangeEvent::builder()
             .entity_id("urn:ngsi-ld:Vehicle:1".parse().expect("valid URI"))
             .entity_types(vec!["https://example.com/Vehicle".parse().expect("valid type name")])
-            .trigger_reason(NotificationTrigger::EntityDeleted)
-            .changed_attributes(Vec::new())
+            .change(EntityChange::new(EntityLifecycle::Deleted, Vec::new()))
             .occurred_at(Utc.with_ymd_and_hms(2024, 6, 15, 12, 30, 0).single().expect("valid instant"))
             .entity_snapshot(snapshot)
             .origin(ChangeOrigin::Local)

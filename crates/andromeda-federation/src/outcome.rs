@@ -1,5 +1,6 @@
 //! Typed results of context-source federation attempts.
 
+use crate::source_continuation::SourceContinuation;
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
@@ -46,6 +47,9 @@ pub(crate) struct ForwardedResponse {
     /// The `EntityMap` the source used for the request, from its
     /// `NGSILD-EntityMap` response header (clause 5.5.14), when it returned one.
     pub(crate) entity_map: Option<Uri>,
+    /// Where the answer continues, from the source's `Link rel="next"`
+    /// (clauses 5.5.9.1 and 6.3.10).
+    pub(crate) continuation: SourceContinuation,
 }
 
 /// Outcome of a GET request to a context source.
@@ -324,7 +328,10 @@ pub struct ForwardedDiscoveryResult {
 
 #[cfg(test)]
 mod tests {
-    use crate::outcome::{ForwardGetOutcome, ForwardedResponse, TransportFailure};
+    use crate::{
+        outcome::{ForwardGetOutcome, ForwardedResponse, TransportFailure},
+        source_continuation::SourceContinuation,
+    };
     use serde_json::json;
 
     /// Only an HTTP error status is a status a source answered with. The
@@ -340,6 +347,7 @@ mod tests {
             body: json!([]),
             warnings: Vec::new(),
             entity_map: None,
+            continuation: SourceContinuation::Complete,
         });
         pretty_assertions::assert_eq!(success.error_status(), None);
         pretty_assertions::assert_eq!(ForwardGetOutcome::NotFound(Vec::new()).error_status(), None);

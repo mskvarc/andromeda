@@ -5,8 +5,7 @@
 //! It proves — without a live broker — that an operation records the durable
 //! subscription matches its own live notification would produce (clause 5.8):
 //! a test commits an operation, reads the `subscription_matches` off the
-//! [`AtomicWrite`] the committer captured, and asserts the trigger,
-//! `changedAttributes` and snapshot a matching subscription is owed. The single
+//! [`AtomicWrite`] the committer captured, and asserts the change and snapshot a matching subscription is owed. The single
 //! reader serves both the single-entity and the batch read ports, so the
 //! whole-entity and attribute-level paths share one fixture.
 
@@ -34,7 +33,7 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{NotificationTrigger, SysAttrsSnapshot};
+use andromeda_ngsi_ld_model::{expanded::attribute_change::AttributeChangeKind, notification::SysAttrsSnapshot};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
@@ -280,9 +279,12 @@ pub(crate) fn single_recorded_write(recorded: &Arc<Mutex<Vec<AtomicWrite>>>) -> 
     writes.remove(0)
 }
 
-/// Assert the write is owed exactly one match with the given trigger and changed
-/// attribute, carrying the post-mutation snapshot.
-pub(crate) fn assert_single_match(write: &AtomicWrite, trigger: NotificationTrigger, changed: &str) {
+/// Assert the write is owed exactly one match against the fixture
+/// subscription, carrying the post-mutation snapshot and exactly the given
+/// `(transition, attribute)` instances as an order-independent set: one change
+/// is one notification however many instances it touched (clause 5.8.6), and
+/// the order of its instances is not spec-significant.
+pub(crate) fn assert_single_match(write: &AtomicWrite, expected: &[(AttributeChangeKind, &str)]) {
     assert_eq!(
         write.subscription_matches.len(),
         1,
@@ -291,28 +293,9 @@ pub(crate) fn assert_single_match(write: &AtomicWrite, trigger: NotificationTrig
     let matched = &write.subscription_matches[0];
     assert_eq!(matched.subscription_key, subscription_key());
     assert_eq!(matched.entity_id.as_str(), ENTITY_ID);
-    assert_eq!(matched.trigger, trigger);
-    assert_eq!(matched.changed_attrs, vec![attribute_name(changed)]);
     assert!(matched.entity_snapshot.is_some(), "the durable match carries the post-mutation entity snapshot");
-}
-
-/// Assert the write is owed exactly the given `(trigger, changed attribute)`
-/// matches, as an order-independent set: a whole-entity mutation records one
-/// match per changed instance and their order is not spec-significant. Each
-/// match must name exactly one changed attribute and carry the post-mutation
-/// snapshot against the fixture subscription.
-pub(crate) fn assert_matches(write: &AtomicWrite, expected: &[(NotificationTrigger, &str)]) {
-    let actual: HashSet<(NotificationTrigger, AttributeName)> = write
-        .subscription_matches
-        .iter()
-        .map(|matched| {
-            assert_eq!(matched.subscription_key, subscription_key());
-            assert_eq!(matched.entity_id.as_str(), ENTITY_ID);
-            assert!(matched.entity_snapshot.is_some(), "the durable match carries the post-mutation entity snapshot");
-            assert_eq!(matched.changed_attrs.len(), 1, "each whole-entity match names exactly one changed attribute");
-            (matched.trigger, matched.changed_attrs[0].clone()) // clone: the set owns each changed attribute name
-        })
-        .collect();
-    let expected: HashSet<(NotificationTrigger, AttributeName)> = expected.iter().map(|(trigger, changed)| (*trigger, attribute_name(changed))).collect();
+    let actual: HashSet<(AttributeChangeKind, &AttributeName)> = matched.change.instances.iter().map(|instance| (instance.kind, &instance.key.attr)).collect();
+    let names: Vec<(AttributeChangeKind, AttributeName)> = expected.iter().map(|(kind, changed)| (*kind, attribute_name(changed))).collect();
+    let expected: HashSet<(AttributeChangeKind, &AttributeName)> = names.iter().map(|(kind, name)| (*kind, name)).collect();
     assert_eq!(actual, expected);
 }

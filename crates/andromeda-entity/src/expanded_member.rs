@@ -64,12 +64,3 @@ pub(crate) fn written_attribute_names(payload: &Value) -> Result<Vec<AttributeNa
 pub(crate) fn stored_entity_types(payload: &Value) -> Result<Vec<EntityTypeName>, EntityError> {
     extract_types(payload).map_err(EntityError::internal)
 }
-
-/// The attribute names of a payload read back from the store.
-///
-/// # Errors
-///
-/// Reports [`EntityError::Internal`] for a member key that cannot be read.
-pub(crate) fn stored_attribute_names(payload: &Value) -> Result<Vec<AttributeName>, EntityError> {
-    extract_attribute_names(payload).map_err(EntityError::internal)
-}
