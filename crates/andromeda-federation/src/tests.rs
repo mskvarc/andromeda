@@ -223,6 +223,7 @@ fn merge_temporal_query_unions_instances_for_same_entity() {
         })],
         warnings: Vec::new(),
         linked_map: None,
+        partial_ranges: Vec::new(),
     }];
     let result = merge_temporal_query_results(local, remote);
     pretty_assertions::assert_eq!(result.len(), 1);
@@ -253,6 +254,7 @@ fn merge_temporal_query_deduplicates_by_instance_id() {
         })],
         warnings: Vec::new(),
         linked_map: None,
+        partial_ranges: Vec::new(),
     }];
     let result = merge_temporal_query_results(local, remote);
     let speed = result[0].get("speed").unwrap().as_array().unwrap();
@@ -273,6 +275,7 @@ fn merge_temporal_query_auxiliary_only_supplements_existing() {
         ],
         warnings: Vec::new(),
         linked_map: None,
+        partial_ranges: Vec::new(),
     }];
     let result = merge_temporal_query_results(local, remote);
     pretty_assertions::assert_eq!(result.len(), 1);
@@ -299,6 +302,7 @@ fn merge_temporal_retrieve_combines_remote_attributes() {
         })],
         warnings: Vec::new(),
         linked_map: None,
+        partial_ranges: Vec::new(),
     }];
     let result = merge_temporal_retrieve_results(local, remote);
     let entity = result.unwrap();
@@ -316,6 +320,7 @@ fn merge_temporal_retrieve_remote_only() {
         entities: vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": [{"value": 10}]})],
         warnings: Vec::new(),
         linked_map: None,
+        partial_ranges: Vec::new(),
     }];
     let result = merge_temporal_retrieve_results(None, remote);
     assert!(result.is_some());

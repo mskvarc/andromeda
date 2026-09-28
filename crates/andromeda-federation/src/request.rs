@@ -19,16 +19,39 @@ use http::HeaderMap;
 /// An explicit page to request independently from every matching context
 /// source of a temporal query.
 ///
-/// Ordinary distributed reads leave this absent because the broker obtains a
-/// merge window and applies the client's page after aggregation. Durable range
-/// consumers use it to walk every source without repeatedly reading that first
-/// merge window.
+/// Ordinary distributed reads walk every source's answer instead, because the
+/// broker applies the client's page after aggregation. Durable range consumers
+/// use it to page through every source themselves without repeatedly reading
+/// the whole merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourcePage {
     /// Maximum number of results requested from each source.
     pub limit: u32,
     /// Number of source-local results skipped before this page.
     pub offset: u32,
+}
+
+/// How much of each matching source's answer a forwarded temporal query reads.
+#[derive(Debug, Clone, Copy)]
+pub enum SourcePaging<'a> {
+    /// Every page each source links with `next` (clauses 4.3.6.7 and
+    /// 5.5.9.1), gathered under the request's budget (clause 4.12), so the
+    /// client's page is cut from the whole merge.
+    Walk(&'a EntityBudget),
+    /// One explicit page from every source, for a consumer that pages through
+    /// the sources itself.
+    Page(SourcePage),
+}
+
+impl SourcePaging<'_> {
+    /// The explicit page to request, when the consumer pages itself.
+    #[must_use]
+    pub const fn explicit_page(&self) -> Option<SourcePage> {
+        match self {
+            SourcePaging::Walk(_) => None,
+            SourcePaging::Page(page) => Some(*page),
+        }
+    }
 }
 
 /// The headers of the request that triggered a forwarding, read for the
@@ -138,8 +161,8 @@ pub struct ForwardTemporalQueryRequest<'a> {
     pub mode_filter: CsrModeFilter,
     /// The `EntityMap` the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
-    /// Explicit per-source range, or `None` for the ordinary post-merge page policy.
-    pub source_page: Option<SourcePage>,
+    /// How much of each source's answer is read.
+    pub paging: SourcePaging<'a>,
 }
 
 /// Which HTTP binding a Query Entities request arrived on, which the forwarded

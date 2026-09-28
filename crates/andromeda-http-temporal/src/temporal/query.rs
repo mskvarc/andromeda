@@ -26,6 +26,7 @@ use crate::{
         TenantState,
         ValidatedQuery,
         query::{
+            complete_history::HistoryCompleteness,
             forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
             merged_history::merge_forwarded_history,
             merged_page::{MergedPageCut, cut_merged_page, defer_split_filters, hold_page_until_merge},
@@ -50,7 +51,11 @@ use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_http_response::pagination::PagePointers;
 use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
 use andromeda_ngsi_ld_request::{error::ParameterError, join_traversal::RetrievingJoin, pagination_cursor::decode_cursor};
-use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate, service::TemporalQueryWarning};
+use andromeda_temporal::{
+    error::TemporalError,
+    linked::candidates::TemporalLinkedCandidate,
+    service::{TemporalQueryWarning, TemporalRange},
+};
 use axum::{
     Extension,
     http::{HeaderMap, Uri},
@@ -58,6 +63,8 @@ use axum::{
 use serde_json::Value;
 use std::sync::Arc;
 
+/// How far the merged history is complete (clause 6.3.10).
+mod complete_history;
 /// Asking the registered context sources for their part of the history.
 mod forwarding;
 /// Folding what those sources returned into the locally read history.
@@ -297,12 +304,15 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     .await?;
 
     let deferred = defer_split_filters(&mut params, filtering);
-    let merged_page_bounds = hold_page_until_merge(&mut params, forwarded.as_deref());
+    let merged_page_bounds = hold_page_until_merge(&mut params, forwarded.as_ref());
 
     let local_result = service.query(&target, &params, &context).await.with_instance(&uri)?;
     log_query_warnings(&local_result.warnings);
     let local_total = local_match_count(local_result.total_count).with_instance(&uri)?;
-    let merged = merge_forwarded_history(local_result.entities, forwarded, filtering);
+    let completeness = HistoryCompleteness::of(&params, local_result.range, forwarded.as_ref()).with_instance(&uri)?;
+    let mut merged = merge_forwarded_history(local_result.entities, forwarded, filtering, &uri)?;
+    let timeproperty = params.timeproperty_or_default();
+    completeness.trim(&mut merged.entities, timeproperty);
 
     let (mut entities, total_count) = cut_merged_page(
         service.engine(),
@@ -318,6 +328,9 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         &uri,
     )
     .await?;
+    // Clause 6.3.10: the `Content-Range` describes the history the page's own
+    // entities carry, read before a flat join appends the linked ones.
+    let range = completeness.range(&entities, timeproperty);
     // Clause 6.3.10 pages the matching entities; a flat join appends the
     // entities they link to, which accompany the page rather than filling it.
     let returned = entities.len();
@@ -350,16 +363,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
 
     let values = if key_values { simplified_collection(entities, &uri)? } else { entities };
 
-    // Table 6.18.3.2-2 and Table 6.24.3.1-1: 201 when an EntityMap has been
-    // (re)created, 206 when the local history was cut short by the broker's own
-    // lastN cap.
-    let status = if local_result.any_truncated && local_result.range.is_some() {
-        StatusCode::PARTIAL_CONTENT
-    } else if map_created {
-        StatusCode::CREATED
-    } else {
-        StatusCode::OK
-    };
+    let status = response_status(range.as_ref(), map_created);
     // Table 6.18.3.2-2 carries the 203 row and clause 6.3.6 the
     // `Preference-Applied` echo, so the preference the request expressed is
     // what renders; clause 6.3.12's representation is what decides how clause
@@ -374,7 +378,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
             status,
             warnings,
             total_count,
-            range: local_result.range,
+            range,
             entity_map_uri,
             page,
             returned,
@@ -382,6 +386,20 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         },
         &uri,
     )
+}
+
+/// The status a temporal query answers with (Table 6.18.3.2-2 and Table
+/// 6.24.3.1-1): 206 when the history -- the local read's or a context
+/// source's -- was cut short at `range`, else 201 when an `EntityMap` has been
+/// (re)created, else 200.
+const fn response_status(range: Option<&TemporalRange>, map_created: bool) -> StatusCode {
+    if range.is_some() {
+        StatusCode::PARTIAL_CONTENT
+    } else if map_created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    }
 }
 
 /// The first and last entity identifiers of the matching element page, from

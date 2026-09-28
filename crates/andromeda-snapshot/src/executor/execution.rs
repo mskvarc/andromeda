@@ -20,7 +20,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::error::EntityError;
 use andromeda_federation::{
     operation::ForwardingOperation,
-    request::{CsrModeFilter, EntityMapInUse, ForwardTemporalQueryRequest, SourcePage, TriggeringRequest},
+    request::{CsrModeFilter, EntityMapInUse, ForwardTemporalQueryRequest, SourcePage, SourcePaging, TriggeringRequest},
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -75,7 +75,7 @@ impl SnapshotExecutor {
                         csf_expr: None,
                         mode_filter: CsrModeFilter::All,
                         entity_map: EntityMapInUse::None,
-                        source_page: Some(SourcePage {
+                        paging: SourcePaging::Page(SourcePage {
                             limit: self.capture_page_size,
                             offset,
                         }),

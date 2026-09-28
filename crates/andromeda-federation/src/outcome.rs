@@ -2,7 +2,7 @@
 
 use crate::source_continuation::SourceContinuation;
 use andromeda_entity_map::contribution::SourceContribution;
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
 use serde_json::Value;
@@ -50,6 +50,9 @@ pub(crate) struct ForwardedResponse {
     /// Where the answer continues, from the source's `Link rel="next"`
     /// (clauses 5.5.9.1 and 6.3.10).
     pub(crate) continuation: SourceContinuation,
+    /// The temporal `Content-Range` of a 206 answer (clause 6.3.10): how far
+    /// into each entity's history the answer reaches.
+    pub(crate) partial_range: Option<NgsiLdContentRange>,
 }
 
 /// Outcome of a GET request to a context source.
@@ -154,6 +157,10 @@ pub struct ForwardedTemporalEntities {
     /// The `EntityMap` the source used for the request, when it returned one
     /// (clause 5.5.14 `linkedMaps`).
     pub linked_map: Option<Uri>,
+    /// The `Content-Range` of every page of the answer that the source cut
+    /// short (clause 6.3.10): the instances past each range are still to come
+    /// from the source, so the merged history is complete only up to them.
+    pub partial_ranges: Vec<NgsiLdContentRange>,
 }
 
 impl ForwardedTemporalEntities {
@@ -348,6 +355,7 @@ mod tests {
             warnings: Vec::new(),
             entity_map: None,
             continuation: SourceContinuation::Complete,
+            partial_range: None,
         });
         pretty_assertions::assert_eq!(success.error_status(), None);
         pretty_assertions::assert_eq!(ForwardGetOutcome::NotFound(Vec::new()).error_status(), None);

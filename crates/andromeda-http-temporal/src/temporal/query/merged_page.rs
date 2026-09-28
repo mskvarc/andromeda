@@ -19,8 +19,9 @@ use crate::temporal::{
     expand_q_expr,
     matches_geo_query,
     matches_scope_query,
+    query::forwarding::ForwardedHistory,
 };
-use andromeda_federation::{config::SplitEntities, outcome::ForwardedTemporalEntities, temporal_last_n::truncate_to_last_n};
+use andromeda_federation::{config::SplitEntities, temporal_last_n::truncate_to_last_n};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_request::query::SharedQueryParams;
 use axum::http::Uri;
@@ -112,6 +113,12 @@ async fn retain_split_matches(
 /// its own part. Clause 5.5.9 then takes the page from the merged collection
 /// rather than from the local rows, and clause 6.3.13 counts the merged
 /// matches rather than the page.
+///
+/// The merge holds the local rows and then what each source answered, in
+/// arrival order, and paging needs one deterministic order: the default `id`
+/// order the local store pages in, byte-wise as the store collates
+/// identifiers. No other order reaches this point, because clause 5.7.4.4
+/// refuses an ordering on a query not limited to the local scope.
 fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, limit: u32, offset: u32) -> (Vec<Value>, Option<usize>) {
     let mut bounded = entities;
     if let Some(last_n) = params.last_n {
@@ -120,6 +127,7 @@ fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, limit: u3
             truncate_to_last_n(entity, last_n, timeproperty);
         }
     }
+    bounded.sort_by(|left, right| entity_id(left).cmp(&entity_id(right)));
     let bounded = bounded;
     let total = params.count.unwrap_or(false).then_some(bounded.len());
     let page = bounded
@@ -130,18 +138,23 @@ fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, limit: u3
     (page, total)
 }
 
+/// The identifier a merged temporal entity answers for; one without a readable
+/// `id` sorts first.
+fn entity_id(entity: &Value) -> Option<&str> {
+    entity.get("id").and_then(Value::as_str)
+}
+
 /// Hold the requested page back until after the merge when context sources
 /// contributed entities, returning the bounds the merged collection is cut to.
 ///
 /// Clause 5.5.9 cuts the page from the merged collection rather than from the
-/// local rows, so the local query has to run unpaged.
-pub(crate) fn hold_page_until_merge(params: &mut TemporalQueryParameters, forwarded: Option<&[ForwardedTemporalEntities]>) -> Option<(u32, u32)> {
-    let contributed = forwarded.is_some_and(|results| results.iter().any(|result| !result.entities.is_empty()));
-    if !contributed {
-        return None;
-    }
+/// local rows, so the local query reads from the first row, and as many rows
+/// as it takes to tell that the merge exceeds the request's budget (clause
+/// 4.12).
+pub(crate) fn hold_page_until_merge(params: &mut TemporalQueryParameters, forwarded: Option<&ForwardedHistory>) -> Option<(u32, u32)> {
+    let history = forwarded.filter(|history| history.holds_remote_entities())?;
     let bounds = (params.effective_limit(), params.effective_offset());
-    params.limit = Some(u32::MAX);
+    params.limit = Some(history.local_row_limit());
     params.offset = Some(0);
     Some(bounds)
 }

@@ -34,6 +34,7 @@ mod entity_map_scoping;
 mod entity_map_source_declined;
 mod entity_ordering_system_timestamps;
 mod federated_query_source_pagination;
+mod federated_temporal_query_source_pagination;
 mod federated_write_type_coverage;
 mod forwarded_protocol_origin;
 mod geojson_geometry_selection;

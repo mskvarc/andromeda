@@ -82,6 +82,8 @@ pub mod source_walk;
 pub mod subscription;
 /// Temporal query and retrieve execution.
 pub mod temporal;
+/// The attribute instances of a merged temporal representation.
+pub mod temporal_instances;
 /// Post-aggregation `lastN` truncation of temporal representations.
 pub mod temporal_last_n;
 /// Temporal response merging.
@@ -103,6 +105,7 @@ use crate::{
 };
 use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType},
+    ngsild_content_range::NgsiLdContentRange,
     ngsild_entity_map::NgsiLdEntityMap,
     ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
     preference_applied::PreferenceApplied,
@@ -160,6 +163,9 @@ pub(crate) struct SentResponse {
     /// source wrote it: the reference to the page following this one, still to
     /// be resolved against the URL it answered.
     pub(crate) next_page: Option<IriRefBuf>,
+    /// The temporal `Content-Range` of a 206 answer (clause 6.3.10), which says
+    /// how far into each entity's history the source's answer reaches.
+    pub(crate) partial_range: Option<NgsiLdContentRange>,
     /// The raw body.
     pub(crate) body: Vec<u8>,
 }
@@ -307,6 +313,9 @@ impl FederationService {
                 let entity_map = headers::HeaderMapExt::typed_get::<NgsiLdEntityMap>(response.headers()).map(NgsiLdEntityMap::into_inner);
                 let next_page = headers::HeaderMapExt::typed_get::<Link>(response.headers())
                     .and_then(|link| link.find_by_rel(RelationType::Next).next().map(|value| value.link().clone())); // clone: the answer outlives the header map it was read from
+                let partial_range = (status == reqwest::StatusCode::PARTIAL_CONTENT)
+                    .then(|| headers::HeaderMapExt::typed_get::<NgsiLdContentRange>(response.headers()))
+                    .flatten();
                 match response.bytes().await {
                     Ok(body) => Ok(SentResponse {
                         status,
@@ -315,6 +324,7 @@ impl FederationService {
                         returned_version,
                         entity_map,
                         next_page,
+                        partial_range,
                         body: body.to_vec(),
                     }),
                     Err(error) => Err(classify_transport_failure(&error, timeout)),

@@ -23,22 +23,54 @@
 //! can hand back no pointer a client could dereference to the next page; that
 //! walk asks for successive pages by `offset` (clause 6.3.10) and ends on the
 //! first empty one.
+//!
+//! A Query Entities answer and a Query Temporal Evolution of Entities answer
+//! are both an Entity Array a source pages the same way (clauses 5.7.2.4 and
+//! 5.7.4.4), so one walk serves both; each reads its own pages through
+//! [`WalkedAnswer`].
 
 use crate::{
     FederationService,
     entity_budget::{EntityBudget, EntityBudgetExceeded},
     error::FederationError,
     forwarding_url::with_offset,
-    outcome::{ForwardGetOutcome, ForwardedEntities},
+    outcome::ForwardGetOutcome,
     read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer},
     source_continuation::SourceContinuation,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_model::{entity::Entity, registration::ContextSourceRegistration};
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use futures::{StreamExt, stream};
 use serde_json::Value;
-use std::{collections::HashSet, num::NonZeroU32};
+use std::{collections::HashSet, mem, num::NonZeroU32};
 use url::Url;
+
+/// One source's answer as a walk gathers it, page by page.
+///
+/// Each kind of forwarded query reads a fetched page into its own answer; the
+/// walk only needs to take a page's elements and warnings over and to tell two
+/// elements for the same entity apart.
+pub(crate) trait WalkedAnswer: Sized {
+    /// One element of the Entity Array the source answers with.
+    type Element;
+
+    /// Read one fetched page, or `None` for a 404, which contributes nothing
+    /// (clause 6.3.17).
+    fn read(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> Option<Self>;
+
+    /// The elements gathered into this answer.
+    fn elements(&mut self) -> &mut Vec<Self::Element>;
+
+    /// The clause 6.3.17 warnings gathered into this answer.
+    fn warnings(&mut self) -> &mut Vec<NgsiLdWarning>;
+
+    /// The identifier of the entity an element stands for, when it names one.
+    fn identifier(element: &Self::Element) -> Option<&str>;
+
+    /// Take over what a later page of the same answer reported beside its
+    /// elements, once the walk has taken the elements themselves.
+    fn absorb(&mut self, page: Self);
+}
 
 /// The page size each source is asked for.
 ///
@@ -99,13 +131,14 @@ impl AnswerPosition {
         self.elements = self.elements.saturating_add(u64::try_from(elements).unwrap_or(u64::MAX));
     }
 
-    /// Keep the entities of one page the walk has not gathered before: a
+    /// Keep the elements of one page the walk has not gathered before: a
     /// source whose order shifted between two pages can answer one entity on
-    /// both, and it is one entity of the source's answer.
-    fn fresh(&mut self, entities: Vec<Entity>) -> Vec<Entity> {
-        entities
+    /// both, and it is one entity of the source's answer. An element naming no
+    /// entity cannot be matched against another and is kept.
+    fn fresh<A: WalkedAnswer>(&mut self, elements: Vec<A::Element>) -> Vec<A::Element> {
+        elements
             .into_iter()
-            .filter(|entity| self.gathered.insert(entity.id.as_str().to_owned()))
+            .filter(|element| A::identifier(element).is_none_or(|id| self.gathered.insert(id.to_owned())))
             .collect()
     }
 
@@ -128,14 +161,14 @@ impl FederationService {
     ///
     /// Returns [`EntityBudgetExceeded`] once the targets together have
     /// gathered more entities than `budget` allows.
-    pub(crate) async fn fan_out_walk(
+    pub(crate) async fn fan_out_walk<A: WalkedAnswer>(
         &self,
         targets: Vec<(ContextSourceRegistration, ForwardedRead)>,
         conditions: ForwardedGetConditions<'_>,
         budget: &EntityBudget,
-    ) -> Result<Vec<SourceAnswer<ForwardedEntities>>, EntityBudgetExceeded> {
+    ) -> Result<Vec<SourceAnswer<A>>, EntityBudgetExceeded> {
         stream::iter(targets)
-            .map(|(registration, first)| async move { self.walk_source(&registration, first, conditions, budget).await })
+            .map(|(registration, first)| async move { self.walk_source::<A>(&registration, first, conditions, budget).await })
             .buffer_unordered(self.csr_concurrency)
             .collect::<Vec<_>>()
             .await
@@ -144,13 +177,13 @@ impl FederationService {
     }
 
     /// Walk one source's answer from `first` to its last page.
-    async fn walk_source(
+    async fn walk_source<A: WalkedAnswer>(
         &self,
         registration: &ContextSourceRegistration,
         first: ForwardedRead,
         conditions: ForwardedGetConditions<'_>,
         budget: &EntityBudget,
-    ) -> Result<SourceAnswer<ForwardedEntities>, EntityBudgetExceeded> {
+    ) -> Result<SourceAnswer<A>, EntityBudgetExceeded> {
         let mode = registration.access.mode.unwrap_or_default();
         let (outcome, mut next) = match first {
             ForwardedRead::Get(url) => {
@@ -169,15 +202,16 @@ impl FederationService {
         let mut position = AnswerPosition::default();
         let first_sent = elements_sent(&outcome);
         position.advance(first_sent);
-        let Some(mut gathered) = FederationService::entities_of(registration, outcome) else {
+        let Some(mut gathered) = A::read(registration, outcome) else {
             return Ok(SourceAnswer {
                 mode,
                 error_status,
                 entry: None,
             });
         };
-        gathered.entities = position.fresh(gathered.entities);
-        budget.charge(gathered.entities.len())?;
+        let first_page = mem::take(gathered.elements());
+        *gathered.elements() = position.fresh::<A>(first_page);
+        budget.charge(gathered.elements().len())?;
         // The offset walk of the POST binding ends on the first empty page.
         if first_sent == 0 && matches!(next, PageEnd::Continue(NextPage::Offset { .. })) {
             next = PageEnd::Stop(None);
@@ -185,14 +219,14 @@ impl FederationService {
         loop {
             let request = match next {
                 PageEnd::Stop(warning) => {
-                    gathered.warnings.extend(warning);
+                    gathered.warnings().extend(warning);
                     break;
                 }
                 PageEnd::Continue(request) => request,
             };
             if !position.first_request_of(&request) {
                 gathered
-                    .warnings
+                    .warnings()
                     .push(incomplete_answer(registration, "pointed back at a page it already answered"));
                 break;
             }
@@ -211,11 +245,11 @@ impl FederationService {
             let sent = elements_sent(&outcome);
             position.advance(sent);
             let page = match outcome {
-                success @ ForwardGetOutcome::Success(_) => FederationService::entities_of(registration, success),
+                success @ ForwardGetOutcome::Success(_) => A::read(registration, success),
                 ForwardGetOutcome::NotFound(warnings) => {
-                    gathered.warnings.extend(warnings);
+                    gathered.warnings().extend(warnings);
                     gathered
-                        .warnings
+                        .warnings()
                         .push(incomplete_answer(registration, "no longer found the next page of its answer"));
                     break;
                 }
@@ -225,18 +259,18 @@ impl FederationService {
                 | ForwardGetOutcome::LoopDetected) => {
                     // Clause 6.3.17: the entities already gathered stand, and
                     // the failure says the answer is incomplete.
-                    gathered.warnings.extend(failure.warning(&registration.id));
+                    gathered.warnings().extend(failure.warning(&registration.id));
                     break;
                 }
             };
-            let Some(page) = page else {
+            let Some(mut page) = page else {
                 break;
             };
-            let fresh = position.fresh(page.entities);
+            let fresh = position.fresh::<A>(mem::take(page.elements()));
             budget.charge(fresh.len())?;
             let progressed = !fresh.is_empty();
-            gathered.entities.extend(fresh);
-            gathered.warnings.extend(page.warnings);
+            gathered.elements().extend(fresh);
+            gathered.absorb(page);
             next = match following {
                 // The offset walk ends on the first empty page, and on the first
                 // page adding nothing new: a source that ignores `offset`
@@ -329,16 +363,17 @@ mod tests {
         entity_budget::{EntityBudget, EntityBudgetExceeded},
         fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
         forwarded_query::client_query::ClientQuery,
-        outcome::{ForwardReadOutcome, ForwardedEntities},
+        operation::ForwardingOperation,
+        outcome::{ForwardReadOutcome, ForwardedEntities, ForwardedTemporalEntities},
         query_forwarding_error::QueryForwardingError,
-        request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, QueryDelivery, TriggeringRequest},
+        request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, ForwardTemporalQueryRequest, QueryDelivery, SourcePaging, TriggeringRequest},
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+    use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
     use andromeda_test_mocks::{
         callback_path::CallbackPath,
         callback_server::MockResponse,
@@ -358,6 +393,8 @@ mod tests {
 
     /// The query resource every GET page of these walks lands on.
     const QUERY_PATH: &str = "/ngsi-ld/v1/entities";
+    /// The temporal query resource every GET page of a temporal walk lands on.
+    const TEMPORAL_PATH: &str = "/ngsi-ld/v1/temporal/entities";
     /// The batch query resource every POST page lands on.
     const BATCH_PATH: &str = "/ngsi-ld/v1/entityOperations/query";
 
@@ -442,6 +479,67 @@ mod tests {
                 },
             )
             .await
+    }
+
+    /// One temporal page of `count` Vehicles numbered from `first`, answered
+    /// with `status`, pointing at `next` and carrying `content_range` when given.
+    fn temporal_page(first: usize, count: usize, status: StatusCode, next: Option<&str>, content_range: Option<&str>) -> MockResponse {
+        let entities: Vec<serde_json::Value> = (first..first + count)
+            .map(|number| {
+                json!({
+                    "id": format!("urn:ngsi-ld:Vehicle:{number:04}"),
+                    "type": "Vehicle",
+                    "speed": [{"type": "Property", "value": number, "observedAt": "2020-01-01T00:00:00Z"}]
+                })
+            })
+            .collect();
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+        if let Some(next) = next {
+            headers.insert("link", HeaderValue::from_str(&format!("<{next}>; rel=\"next\"")).expect("a valid Link header"));
+        }
+        if let Some(content_range) = content_range {
+            headers.insert("content-range", HeaderValue::from_str(content_range).expect("a valid Content-Range header"));
+        }
+        MockResponse::builder()
+            .status(status)
+            .headers(headers)
+            .body(Bytes::from(serde_json::to_vec(&entities).expect("the page serializes")))
+            .build()
+    }
+
+    /// Forward a temporal `type=Vehicle` query walking every source page under
+    /// a budget of `maximum`.
+    async fn temporal_walk(service: &FederationService, maximum: u32) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, QueryForwardingError> {
+        let query: TemporalQueryParameters =
+            serde_urlencoded::from_str("type=Vehicle&timerel=after&timeAt=2019-01-01T00:00:00Z").expect("a valid temporal query");
+        let budget = EntityBudget::new(NonZeroU32::new(maximum).expect("a positive budget"));
+        let context = ContextSpec::none();
+        service
+            .forward_temporal_query(
+                &ContextTarget::Live,
+                ForwardTemporalQueryRequest {
+                    client_query: &query,
+                    split: SplitEntities::Complete,
+                    context: &context,
+                    operation: ForwardingOperation::QueryTemporalEntity,
+                    triggering: TriggeringRequest::default(),
+                    csf_expr: None,
+                    mode_filter: CsrModeFilter::All,
+                    entity_map: EntityMapInUse::None,
+                    paging: SourcePaging::Walk(&budget),
+                },
+            )
+            .await
+    }
+
+    /// The identifiers a temporal walk gathered, in the order the source sent them.
+    fn temporal_gathered(outcome: &ForwardReadOutcome<ForwardedTemporalEntities>) -> Vec<String> {
+        outcome
+            .results
+            .iter()
+            .flat_map(|answer| answer.entities.iter().filter_map(|entity| entity["id"].as_str().map(str::to_owned)))
+            .collect()
     }
 
     /// The identifiers the walk gathered, in the order the source sent them.
@@ -666,6 +764,113 @@ mod tests {
         let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..5));
+        source.shutdown().await.expect("the mock source stops");
+    }
+
+    /// Clause 5.7.4.4: "The result of each remote query is an Entity Array"
+    /// merged into the result, so a temporal query follows every `next`
+    /// pointer of the source's answer, as an entity query does.
+    #[tokio::test]
+    async fn a_temporal_query_follows_every_next_pointer_of_the_source() {
+        let source = source().await;
+        let next = "/ngsi-ld/v1/temporal/entities?type=Vehicle&offset=2";
+        source
+            .enqueue(Method::GET, path(TEMPORAL_PATH), temporal_page(0, 2, StatusCode::OK, Some(next), None))
+            .await;
+        source
+            .enqueue(Method::GET, path(TEMPORAL_PATH), temporal_page(2, 1, StatusCode::OK, None, None))
+            .await;
+        let service = service(registration(&source, &["queryTemporal"]));
+
+        let outcome = temporal_walk(&service, 100).await.expect("the walk completes");
+
+        pretty_assertions::assert_eq!(temporal_gathered(&outcome), numbered(0..3));
+        pretty_assertions::assert_eq!(source.total_request_count(), 2);
+        assert!(outcome.results.iter().all(|answer| answer.partial_ranges.is_empty()));
+        source.shutdown().await.expect("the mock source stops");
+    }
+
+    /// Clause 6.3.10: every page the source cut short with a 206 says where,
+    /// and the answer keeps each of those `Content-Range`s for the merge.
+    #[tokio::test]
+    async fn every_partial_page_of_a_temporal_answer_keeps_its_content_range() {
+        let source = source().await;
+        let next = "/ngsi-ld/v1/temporal/entities?type=Vehicle&offset=1";
+        let first_range = "DateTime 2019-01-01T00:00:00Z-2020-01-01T00:00:00Z/*";
+        let second_range = "DateTime 2019-01-01T00:00:00Z-2020-02-01T00:00:00Z/*";
+        source
+            .enqueue(
+                Method::GET,
+                path(TEMPORAL_PATH),
+                temporal_page(0, 1, StatusCode::PARTIAL_CONTENT, Some(next), Some(first_range)),
+            )
+            .await;
+        source
+            .enqueue(
+                Method::GET,
+                path(TEMPORAL_PATH),
+                temporal_page(1, 1, StatusCode::PARTIAL_CONTENT, None, Some(second_range)),
+            )
+            .await;
+        let service = service(registration(&source, &["queryTemporal"]));
+
+        let outcome = temporal_walk(&service, 100).await.expect("the walk completes");
+
+        let ranges: Vec<String> = outcome
+            .results
+            .iter()
+            .flat_map(|answer| answer.partial_ranges.iter().map(ToString::to_string))
+            .collect();
+        pretty_assertions::assert_eq!(ranges, vec![first_range.to_owned(), second_range.to_owned()]);
+        pretty_assertions::assert_eq!(temporal_gathered(&outcome), numbered(0..2));
+        source.shutdown().await.expect("the mock source stops");
+    }
+
+    /// A 206 that does not say where it stopped cannot be combined with the
+    /// rest of the history, so the client is warned its part may be incomplete.
+    #[tokio::test]
+    async fn a_partial_temporal_page_without_a_content_range_is_reported() {
+        let source = source().await;
+        source
+            .enqueue(Method::GET, path(TEMPORAL_PATH), temporal_page(0, 1, StatusCode::PARTIAL_CONTENT, None, None))
+            .await;
+        let service = service(registration(&source, &["queryTemporal"]));
+
+        let outcome = temporal_walk(&service, 100).await.expect("the walk completes");
+
+        let warnings: Vec<String> = outcome
+            .results
+            .iter()
+            .flat_map(|answer| answer.warnings.iter().map(ToString::to_string))
+            .collect();
+        assert!(
+            warnings.iter().any(|warning| warning.contains("without a readable Content-Range")),
+            "{warnings:?}"
+        );
+        source.shutdown().await.expect("the mock source stops");
+    }
+
+    /// Clause 4.12: a temporal walk gathering more entities than the budget is
+    /// refused with `TooManyResults`, exactly as an entity query is.
+    #[tokio::test]
+    async fn a_temporal_walk_exceeding_the_budget_is_refused_with_too_many_results() {
+        let source = source().await;
+        let next = "/ngsi-ld/v1/temporal/entities?type=Vehicle&offset=2";
+        source
+            .enqueue(Method::GET, path(TEMPORAL_PATH), temporal_page(0, 2, StatusCode::OK, Some(next), None))
+            .await;
+        source
+            .enqueue(Method::GET, path(TEMPORAL_PATH), temporal_page(2, 2, StatusCode::OK, None, None))
+            .await;
+        let service = service(registration(&source, &["queryTemporal"]));
+
+        let refused = temporal_walk(&service, 3).await;
+
+        match refused {
+            Err(QueryForwardingError::TooManyResults(EntityBudgetExceeded { maximum })) => pretty_assertions::assert_eq!(maximum.get(), 3),
+            Err(QueryForwardingError::Federation(error)) => panic!("the walk must be refused for its budget, not fail: {error}"),
+            Ok(outcome) => panic!("the walk must be refused, it gathered {:?}", temporal_gathered(&outcome)),
+        }
         source.shutdown().await.expect("the mock source stops");
     }
 

@@ -7,65 +7,35 @@
 //! limit is applied once more over the aggregated instances so the response
 //! carries the n most recent across every source.
 
+use crate::temporal_instances::{InstanceShape, for_each_instance_list_mut};
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::cmp::Ordering;
-
-/// The members of a temporal representation that are not attributes.
-const ENTITY_MEMBERS: [&str; 8] = ["id", "type", "@context", "scope", "createdAt", "modifiedAt", "deletedAt", "expiresAt"];
-
-/// The `temporalValues` member holding `[value, timestamp]` pairs (clause 4.5.6.2).
-const VALUES_MEMBER: &str = "values";
 
 /// Keep, for every attribute of `entity`, the `last_n` instances with the most
 /// recent `timeproperty`, in descending order of it.
 ///
 /// Both temporal representations are understood: the normalized one, where an
 /// attribute is an array of instances each carrying the temporal property, and
-/// the `temporalValues` one, where it is one object whose `values` pairs each
-/// end in the timestamp. An attribute in neither shape is left untouched.
+/// the `temporalValues` one, whose family member holds pairs each ending in the
+/// timestamp -- one list per `datasetId` group.
 pub fn truncate_to_last_n(entity: &mut Value, last_n: u32, timeproperty: TimeProp) {
-    let Some(members) = entity.as_object_mut() else {
-        return;
-    };
     let keep = usize::try_from(last_n).unwrap_or(usize::MAX);
-    let property = timeproperty.to_string();
-    for (name, value) in members.iter_mut() {
-        if ENTITY_MEMBERS.contains(&name.as_str()) {
-            continue;
-        }
-        match value {
-            Value::Array(instances) => {
-                sort_most_recent_first(instances, |instance| instance.get(&property));
-                instances.truncate(keep);
-            }
-            Value::Object(attribute) => {
-                if let Some(Value::Array(pairs)) = attribute.get_mut(VALUES_MEMBER) {
-                    sort_most_recent_first(pairs, |pair| pair.as_array().and_then(|pair| pair.last()));
-                    pairs.truncate(keep);
-                }
-            }
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-        }
-    }
+    for_each_instance_list_mut(entity, |items, shape| {
+        sort_most_recent_first(items, shape, timeproperty);
+        items.truncate(keep);
+    });
 }
 
-/// Order `items` by the timestamp `instant_of` reads off each, most recent
-/// first; items without a readable timestamp sort last, in their given order.
-fn sort_most_recent_first(items: &mut [Value], instant_of: impl Fn(&Value) -> Option<&Value>) {
-    items.sort_by(|left, right| match (instant(instant_of(left)), instant(instant_of(right))) {
+/// Order `items` by their instant on `timeproperty`, most recent first; items
+/// without a readable instant sort last, in their given order.
+fn sort_most_recent_first(items: &mut [Value], shape: InstanceShape, timeproperty: TimeProp) {
+    items.sort_by(|left, right| match (shape.instant(left, timeproperty), shape.instant(right, timeproperty)) {
         (Some(left_at), Some(right_at)) => right_at.cmp(&left_at),
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
         (None, None) => Ordering::Equal,
     });
-}
-
-/// The instant a timestamp member names, when it is an RFC 3339 string.
-fn instant(value: Option<&Value>) -> Option<DateTime<Utc>> {
-    let raw = value?.as_str()?;
-    DateTime::parse_from_rfc3339(raw).ok().map(|at| at.with_timezone(&Utc))
 }
 
 #[cfg(test)]

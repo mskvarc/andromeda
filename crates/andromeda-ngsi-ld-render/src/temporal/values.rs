@@ -5,6 +5,7 @@
 
 use crate::object_list::bare_uri_object_list;
 use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
     attribute_type::{AttributeType, TemporalValueEncoding},
     time_prop::TimeProp,
     uri::Uri,
@@ -43,14 +44,22 @@ pub struct TemporalValuesRenderer {
     /// The Temporal Property the query ran on (clause 4.11), whose instant is
     /// the second element of every pair.
     timeproperty: TimeProp,
+    /// The family of every attribute the page carries with no instance, keyed
+    /// by its compacted name, since its empty instance array names none.
+    emptied: IndexMap<AttributeName, AttributeType>,
 }
 
 impl TemporalValuesRenderer {
     /// Create a renderer for the given compacted payload, pairing each value
-    /// with the instance's instant on `timeproperty`.
+    /// with the instance's instant on `timeproperty`, and naming each attribute
+    /// in `emptied` by the family recorded for it.
     #[must_use]
-    pub const fn new(payload: Value, timeproperty: TimeProp) -> TemporalValuesRenderer {
-        TemporalValuesRenderer { payload, timeproperty }
+    pub const fn new(payload: Value, timeproperty: TimeProp, emptied: IndexMap<AttributeName, AttributeType>) -> TemporalValuesRenderer {
+        TemporalValuesRenderer {
+            payload,
+            timeproperty,
+            emptied,
+        }
     }
 
     /// Collapse each attribute into the clause 4.5.9 `temporalValues` pairs.
@@ -89,7 +98,21 @@ impl TemporalValuesRenderer {
                 }
             };
 
+            // Clause 4.5.9: the member "shall contain as many array elements
+            // as Property instances ... being represented", so an attribute
+            // the page carries with none -- one whose instances all lie past a
+            // clause 6.3.10 cut -- stays, with an empty member of its family.
             if instances.is_empty() {
+                if let Some(family) = self
+                    .emptied
+                    .iter()
+                    .find_map(|(name, family)| (name.as_str() == key.as_str()).then_some(*family))
+                {
+                    let mut member = serde_json::Map::new();
+                    member.insert("type".to_string(), json!(family));
+                    member.insert(family.temporal_values_key().to_string(), Value::Array(Vec::new()));
+                    result.insert(key.clone(), Value::Object(member));
+                }
                 continue;
             }
 
@@ -182,7 +205,7 @@ mod tests {
     use super::*;
 
     fn transform(input: Value) -> Value {
-        TemporalValuesRenderer::new(input, TimeProp::Observed)
+        TemporalValuesRenderer::new(input, TimeProp::Observed, IndexMap::new())
             .render()
             .expect("valid temporal values payload")
     }
@@ -406,7 +429,7 @@ mod tests {
             (TimeProp::Observed, json!([["inTransitTo", null], ["stoppedAt", "o2"]])),
         ] {
             // clone: every axis projects its own copy of the one fixture.
-            let result = TemporalValuesRenderer::new(input.clone(), timeproperty)
+            let result = TemporalValuesRenderer::new(input.clone(), timeproperty, IndexMap::new())
                 .render()
                 .expect("valid temporal values payload");
             pretty_assertions::assert_eq!(result["currentStatus"]["values"], expected, "{timeproperty}");
@@ -421,10 +444,40 @@ mod tests {
             "type": "Vehicle",
             "speed": [{"type": "Property", "value": "urn:ngsi-ld:null", "deletedAt": "d1"}]
         });
-        let result = TemporalValuesRenderer::new(input, TimeProp::Deleted)
+        let result = TemporalValuesRenderer::new(input, TimeProp::Deleted, IndexMap::new())
             .render()
             .expect("valid temporal values payload");
         pretty_assertions::assert_eq!(result["speed"]["values"], json!([["urn:ngsi-ld:null", "d1"]]));
+    }
+
+    /// Clause 4.5.9 with clause 6.3.10: an attribute whose instances all lie
+    /// past the page's cut is still represented, by its family's member holding
+    /// no pair, so a client reading the page by attribute finds it (ETSI
+    /// `021_15_07`); an empty attribute of no recorded family has nothing to be
+    /// named by and is left out.
+    #[test]
+    fn an_emptied_attribute_keeps_its_type_and_an_empty_member_of_its_family() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Vehicle",
+            "speed": [],
+            "isParked": [],
+            "unknown": [],
+            "fuel": [{"type": "Property", "value": 1, "observedAt": "t1"}]
+        });
+        let emptied: IndexMap<AttributeName, AttributeType> = [
+            ("speed".parse().expect("a valid attribute name"), AttributeType::Property),
+            ("isParked".parse().expect("a valid attribute name"), AttributeType::Relationship),
+        ]
+        .into_iter()
+        .collect();
+        let result = TemporalValuesRenderer::new(input, TimeProp::Observed, emptied)
+            .render()
+            .expect("valid temporal values payload");
+        pretty_assertions::assert_eq!(result["speed"], json!({"type": "Property", "values": []}));
+        pretty_assertions::assert_eq!(result["isParked"], json!({"type": "Relationship", "objects": []}));
+        assert!(result.get("unknown").is_none(), "{result}");
+        pretty_assertions::assert_eq!(result["fuel"]["values"], json!([[1, "t1"]]));
     }
 
     #[test]
@@ -434,7 +487,7 @@ mod tests {
             "type": "Vehicle",
             "speed": [{"type": "Property", "value": 25, "observedAt": "t1", "datasetId": "not a URI"}]
         });
-        let error = TemporalValuesRenderer::new(input, TimeProp::Observed)
+        let error = TemporalValuesRenderer::new(input, TimeProp::Observed, IndexMap::new())
             .render()
             .expect_err("malformed datasetId is rejected");
         assert!(matches!(error, TemporalValuesError::InvalidDatasetId));
@@ -447,7 +500,7 @@ mod tests {
             "type": "Vehicle",
             "speed": [{"type": "Unknown", "value": 25, "observedAt": "t1"}]
         });
-        let error = TemporalValuesRenderer::new(input, TimeProp::Observed)
+        let error = TemporalValuesRenderer::new(input, TimeProp::Observed, IndexMap::new())
             .render()
             .expect_err("unknown attribute type is rejected");
         assert!(matches!(error, TemporalValuesError::InvalidAttributeType));

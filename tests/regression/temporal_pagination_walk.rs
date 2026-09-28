@@ -432,6 +432,41 @@ async fn regression_temporal_pagination_a_query_page_is_cut_at_one_instant_acros
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 4.5.9 renders an attribute in `temporalValues` as its family's member
+/// holding "as many array elements as Property instances ... being
+/// represented", so the attribute of an entity whose history lies entirely
+/// beyond the common cut stays, with its `type` and no pair. The renderer
+/// dropped it, so a client reading every entity of the page by attribute -- ETSI
+/// `021_15_07` -- found no `speed` on the later entity.
+#[tokio::test]
+async fn regression_temporal_pagination_a_temporal_values_page_keeps_an_emptied_attribute_with_its_type() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let entity_type = scope.entity_type("PagedValuesFleet");
+    let early = scope.id("PagedValuesFleet:early");
+    let late = scope.id("PagedValuesFleet:late");
+    create_series(client, &early, &entity_type, &short_series()).await;
+    create_series(client, &late, &entity_type, &[("speed", vec![instance(500, origin() + Duration::days(200))])]).await;
+
+    let query = format!("type={entity_type}&timerel=after&timeAt=2020-01-01T00:00:00Z&options=temporalValues");
+    let response = client
+        .query_temporal_entities(&query, Some(TEST_SUITE_CONTEXT))
+        .await
+        .expect("query temporal entities request");
+    assert_eq!(response.status, StatusCode::PARTIAL_CONTENT, "{:?}", response.body);
+    let entities = response.json_value().expect("a temporal query answer");
+    let entities = entities.as_array().expect("a collection");
+    let by_id = |id: &str| entities.iter().find(|entity| entity["id"] == json!(id)).expect("the entity is in the page");
+    assert_eq!(by_id(&early)["speed"]["values"].as_array().map(Vec::len), Some(DEFAULT_PAGE));
+    assert_eq!(
+        by_id(&late)["speed"],
+        json!({"type": "Property", "values": []}),
+        "the entity beyond the cut keeps its attribute, typed and empty"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// A page never splits the instances sharing the timestamp at its edge, so a
 /// group larger than the maximum could not be paged at all: it is refused with
 /// `TooManyResults` (clause 5.5.x, 403) rather than rendered without bound.

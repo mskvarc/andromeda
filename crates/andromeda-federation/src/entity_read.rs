@@ -16,12 +16,15 @@ use crate::{
     read_binding::{ReadBinding, ReadIntent, read_binding_for},
     read_fan_out::{ForwardedGetConditions, ForwardedRead, ReadSelection, ReadServing, expand_registration_targets, read_outcome},
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
-    source_walk::SOURCE_PAGE_SIZE,
+    source_walk::{SOURCE_PAGE_SIZE, WalkedAnswer},
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_model::{
+    entity::Entity,
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
+};
 use andromeda_telemetry::federation_ops::{self, FederationOperation};
 use chrono::Utc;
 use serde_json::Value;
@@ -56,6 +59,31 @@ fn own_loop_outcome() -> ForwardReadOutcome<ForwardedEntities> {
             linked_map: None,
         }],
         sources: MatchedSources::default(),
+    }
+}
+
+/// A Query Entities answer walks page by page as the entities each page carried.
+impl WalkedAnswer for ForwardedEntities {
+    type Element = Entity;
+
+    fn read(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> Option<ForwardedEntities> {
+        FederationService::entities_of(registration, outcome)
+    }
+
+    fn elements(&mut self) -> &mut Vec<Entity> {
+        &mut self.entities
+    }
+
+    fn warnings(&mut self) -> &mut Vec<NgsiLdWarning> {
+        &mut self.warnings
+    }
+
+    fn identifier(element: &Entity) -> Option<&str> {
+        Some(element.id.as_str())
+    }
+
+    fn absorb(&mut self, page: ForwardedEntities) {
+        self.warnings.extend(page.warnings);
     }
 }
 

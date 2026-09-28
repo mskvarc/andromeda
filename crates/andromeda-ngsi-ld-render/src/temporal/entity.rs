@@ -7,6 +7,7 @@ use crate::temporal::{
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
+    attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
     temporal_format::TemporalFormat,
     time_prop::TimeProp,
@@ -35,6 +36,11 @@ pub struct TemporalEntityBuildResult {
     /// The least and most recent instants the representation carries on the
     /// requested axis, Scope history aside.
     pub time_range: Option<TimeRange>,
+    /// The family of every attribute the cut left without an instance, keyed
+    /// by its expanded name: an empty instance array no longer says whether it
+    /// held Properties or Relationships, which clause 4.5.9 still needs to name
+    /// the attribute's `type` and member.
+    pub emptied: IndexMap<AttributeName, AttributeType>,
 }
 
 /// Assembles a temporal entity representation from decoded history rows.
@@ -126,6 +132,16 @@ impl TemporalEntityRenderer<'_> {
 
         project_attrs(&mut attrs, &compiled.projection);
 
+        let emptied = attrs
+            .iter()
+            .filter(|(_, instances)| instances.is_empty())
+            .filter_map(|(attr_name, _)| {
+                rows.iter()
+                    .find(|row| &row.attribute_name == attr_name)
+                    .map(|row| (attr_name.clone(), row.attribute_type)) // clone: the result outlives the map it is read from
+            })
+            .collect();
+
         let mut entity = serde_json::Map::with_capacity(attrs.len() + 2);
         entity.insert("@id".to_string(), json!(entity_id));
         entity.insert("@type".to_string(), json!(entity_types));
@@ -137,6 +153,7 @@ impl TemporalEntityRenderer<'_> {
         TemporalEntityBuildResult {
             entity: Value::Object(entity),
             time_range: min_time.zip(max_time),
+            emptied,
         }
     }
 }
@@ -441,6 +458,11 @@ mod tests {
         assert_eq!(
             built.time_range,
             Some((instant() + chrono::Duration::minutes(1), instant() + chrono::Duration::minutes(2)))
+        );
+        assert_eq!(
+            built.emptied.into_iter().collect::<Vec<_>>(),
+            vec![(attr_name("fuel"), AttributeType::Property)],
+            "the emptied attribute keeps its family for clause 4.5.9"
         );
     }
 }

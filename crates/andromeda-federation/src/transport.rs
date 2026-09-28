@@ -321,6 +321,14 @@ fn interpret_read_response(registration: &ContextSourceRegistration, answered: &
     // Clause 6.3.17 applies along the whole chain: what the source could not
     // reach behind it is as missing from this response as from its own.
     warnings.extend(sent.ngsild_warnings);
+    // Clause 6.3.10: a 206 says where the answer was cut short. One that does
+    // not say it cannot be combined with the rest of the result, so the
+    // client is told the source's part may be incomplete.
+    if sent.status == reqwest::StatusCode::PARTIAL_CONTENT && sent.partial_range.is_none() {
+        warnings.push(NgsiLdWarning::MiscellaneousWarning(format!(
+            "Context source {registration_id} answered 206 without a readable Content-Range; its part of the history may be incomplete"
+        )));
+    }
 
     let text = String::from_utf8_lossy(&sent.body);
     match serde_json::from_str::<serde_json::Value>(&text) {
@@ -329,6 +337,7 @@ fn interpret_read_response(registration: &ContextSourceRegistration, answered: &
             warnings,
             entity_map: sent.entity_map,
             continuation: SourceContinuation::of(sent.next_page.as_ref(), answered, registration.access.endpoint.url()),
+            partial_range: sent.partial_range,
         }),
         Err(e) => {
             warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);

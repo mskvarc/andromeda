@@ -18,7 +18,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, engine::options::CompactOptions};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_ngsi_ld_render::{
@@ -31,7 +31,7 @@ use andromeda_ngsi_ld_render::{
         values::TemporalValuesRenderer,
     },
 };
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use serde_json::Value;
 use std::slice;
 
@@ -222,7 +222,15 @@ impl TemporalService {
         let candidates = collect_candidates(slice::from_ref(&compacted), &IndexSet::new());
 
         let value = if compiled.representation.format == TemporalFormat::TemporalValues {
-            TemporalValuesRenderer::new(compacted, compiled.window.timeproperty)
+            // The renderer names an attribute the cut emptied by the family its
+            // rows recorded, under the name the representation was compacted to.
+            let mut emptied = IndexMap::with_capacity(built.emptied.len());
+            for (attribute, family) in built.emptied {
+                let compacted_name = names.compact_attr_iri(attribute.as_str()).await;
+                let name = compacted_name.parse::<AttributeName>().unwrap_or(attribute);
+                emptied.insert(name, family);
+            }
+            TemporalValuesRenderer::new(compacted, compiled.window.timeproperty, emptied)
                 .render()
                 .map_err(|error| TemporalError::rendering(error.to_string()))?
         } else {

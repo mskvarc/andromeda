@@ -18,11 +18,14 @@ use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_federation::{
     FederationService,
     config::SplitEntities,
+    entity_budget::{EntityBudget, EntityBudgetExceeded},
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
-    request::{EntityMapInUse, TriggeringRequest},
+    query_forwarding_error::QueryForwardingError,
+    request::{EntityMapInUse, SourcePaging, TriggeringRequest},
 };
-use andromeda_http_response::declined_representation::single_source_declined;
+use andromeda_http_response::{classified_report::ClassifiedReport, declined_representation::single_source_declined};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::http::Uri;
 use tracing::warn;
 
@@ -78,21 +81,55 @@ pub(crate) struct TemporalForwarding<'a> {
     pub(crate) map_use: &'a EntityMapUse,
 }
 
+/// What the context sources answered for their part of a queried history, and
+/// the budget their answers were gathered under.
+pub(crate) struct ForwardedHistory {
+    /// One entry per contacted source, each holding every page of its answer.
+    pub(crate) sources: Vec<ForwardedTemporalEntities>,
+    /// The budget the sources were walked under, which bounds the merged
+    /// collection and the local rows read for it too (clause 4.12).
+    pub(crate) budget: EntityBudget,
+}
+
+impl ForwardedHistory {
+    /// Whether any source returned an entity, which is what makes the local
+    /// page an incomplete view of the result (clause 5.5.9).
+    pub(crate) fn holds_remote_entities(&self) -> bool {
+        self.sources.iter().any(|source| !source.entities.is_empty())
+    }
+
+    /// How many local rows the merge needs at most: one past the budget, which
+    /// is all it takes to tell that the merged collection exceeds it.
+    pub(crate) const fn local_row_limit(&self) -> u32 {
+        self.budget.maximum().get().saturating_add(1)
+    }
+}
+
+/// The clause 4.12 `TooManyResults` refusal of a query whose sources, or whose
+/// merged collection, exceed what one request gathers.
+pub(crate) fn too_many_results(exceeded: EntityBudgetExceeded, instance: &Uri) -> ProblemResponse {
+    ClassifiedReport::public(NgsiLdErrorType::TooManyResults, exceeded.to_string()).with_instance(instance.clone())
+}
+
 /// Ask every matching context source for its part of the history, unless the
 /// query stays inside this broker.
 ///
-/// The context source filter selects registrations in its expanded form; the
-/// raw expression travels on as the client wrote it, since clause 5.7.4.4
-/// propagates it into discovery. A source that cannot be reached contributes a
-/// clause 6.3.17 warning rather than failing the operation. A clause 5.5.13
-/// local query contacts nothing and answers with no contribution at all, which
-/// is what the absent result means.
+/// Each source's answer is read to its last page (clauses 4.3.6.7 and
+/// 5.5.9.1), because the client's page is cut from the whole merge; one budget
+/// bounds what all of them gather together (clause 4.12). The context source
+/// filter selects registrations in its expanded form; the raw expression
+/// travels on as the client wrote it, since clause 5.7.4.4 propagates it into
+/// discovery. A source that cannot be reached contributes a clause 6.3.17
+/// warning rather than failing the operation. A clause 5.5.13 local query
+/// contacts nothing and answers with no contribution at all, which is what the
+/// absent result means.
 ///
 /// # Errors
 ///
-/// The classified failure of expanding the context source filter, and the
-/// Table 6.4.3.2-3 `NotImplemented` answer when the one source holding all the
-/// data declined the requested representation.
+/// The classified failure of expanding the context source filter, the clause
+/// 4.12 `TooManyResults` refusal when the sources' answers exceed the budget,
+/// and the Table 6.4.3.2-3 `NotImplemented` answer when the one source holding
+/// all the data declined the requested representation.
 pub(crate) async fn forward_temporal_history(
     sources: TemporalForwarding<'_>,
     scope: QueryScope,
@@ -101,7 +138,7 @@ pub(crate) async fn forward_temporal_history(
     params: &TemporalQueryParameters,
     context: &ContextSpec,
     instance: &Uri,
-) -> Result<Option<Vec<ForwardedTemporalEntities>>, ProblemResponse> {
+) -> Result<Option<ForwardedHistory>, ProblemResponse> {
     let TemporalForwarding {
         forwarding,
         triggering,
@@ -126,7 +163,8 @@ pub(crate) async fn forward_temporal_history(
         }
         None => None,
     };
-    let outcome = forwarding
+    let budget = EntityBudget::new(forwarding.max_query_entities());
+    let forwarded = forwarding
         .forward_temporal_query(
             target,
             ForwardTemporalQueryRequest {
@@ -138,17 +176,28 @@ pub(crate) async fn forward_temporal_history(
                 csf_expr: csf_expr.as_ref(),
                 mode_filter: CsrModeFilter::All,
                 entity_map: EntityMapInUse::from(map_use),
-                source_page: None,
+                paging: SourcePaging::Walk(&budget),
             },
         )
-        .await
-        .unwrap_or_else(|error| {
+        .await;
+    // A truncated collection would make the page window and
+    // `NGSILD-Results-Count` silently wrong, so exceeding the budget refuses
+    // the query (clauses 4.12 and 6.3.13); a forwarding that could not run at
+    // all leaves the query with the local answer.
+    let outcome = match forwarded {
+        Ok(outcome) => outcome,
+        Err(QueryForwardingError::TooManyResults(exceeded)) => return Err(too_many_results(exceeded, instance)),
+        Err(QueryForwardingError::Federation(error)) => {
             warn!(%error, "context source forwarding failed during the temporal query");
             ForwardReadOutcome::empty()
-        });
+        }
+    };
     match outcome.sources.single_source_status {
         Some(status) => Err(single_source_declined(status, instance)),
-        None => Ok(Some(outcome.results)),
+        None => Ok(Some(ForwardedHistory {
+            sources: outcome.results,
+            budget,
+        })),
     }
 }
 
