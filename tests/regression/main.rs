@@ -101,6 +101,7 @@ mod term_declaration_prefix_resolution;
 mod time_value_restrictions;
 mod tls_terminator_deployment;
 mod transient_entity_conflict;
+mod type_membership_selection;
 mod unit_code_family_admission;
 mod uri_comparison;
 mod whitespace_identifiers;

@@ -18,7 +18,21 @@ use andromeda_postgresql_seaquery::{
     postgis::validated_geom_from_ewkb,
     unnest::{UnnestColumn, unnest_call},
 };
-use sea_query::{CaseStatement, CommonTableExpression, Cond, Expr, ExprTrait, FunctionCall, Iden, IntoIden, Keyword, Query, SelectStatement, SimpleExpr};
+use sea_query::{
+    CaseStatement,
+    CommonTableExpression,
+    Cond,
+    Expr,
+    ExprTrait,
+    FunctionCall,
+    Iden,
+    IntoIden,
+    JoinType,
+    Keyword,
+    Query,
+    SelectStatement,
+    SimpleExpr,
+};
 
 /// The staging alias, `d`, each set-write reads its parallel arrays under.
 ///
@@ -104,6 +118,16 @@ pub(super) fn staged(column: StagedColumn) -> SimpleExpr {
 /// A projected column reference, `proj.<column>`.
 pub(super) fn projected(column: impl IntoIden) -> SimpleExpr {
     Expr::col((Proj, column.into_iden()))
+}
+
+/// `FROM ins JOIN proj ON proj.id = ins.id`, the source every child insert of
+/// a create reads: the surrogate key the identity insert minted beside the
+/// projected values of the same staged row.
+pub(super) fn from_inserted() -> SelectStatement {
+    Query::select()
+        .from(Ins)
+        .join(JoinType::Join, Proj, Expr::col((Proj, Entities::Id)).equals((Ins, Entities::Id)))
+        .take()
 }
 
 /// The validated-geometry projection of a staged EWKB column:

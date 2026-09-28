@@ -1,39 +1,69 @@
-//! Which of an entity's three current-state relations a query statement has
-//! to join.
+//! Which relations an entity query statement reads, and which one drives it.
 //!
-//! `entities` is always the driving relation: it carries the identifier the
-//! selectors filter and the ordering breaks ties on. `entity_search` is joined
-//! only when some axis of the query reads an indexed column of it, and
-//! `entity_documents` only when a filter or an ordering reads the payload — a
-//! `q` expression, a sort on an attribute value, or a sort on the `modifiedAt`
-//! column that lives on that row. A projected payload is not
-//! a reason to join: it is read by a scalar lookup on the identity row's key,
-//! which the planner evaluates after the sort and the limit, so a page fetches
-//! only its own documents. A query that asks for identifiers with no filter
-//! joins neither and reads one relation.
+//! A statement is driven by `entities`, which carries the identifier the
+//! selectors filter and the ordering breaks ties on, unless the request selects
+//! by type alone: then it is driven by the type-membership walk of that
+//! selection (clause 4.17), which carries the same `entity_key` and `id` and
+//! yields a type's Entities in identifier order without visiting any other.
+//! `entities` is then joined only for the `createdAt` a sort reads.
+//! `entity_search` is joined only when some axis of the query reads an indexed
+//! column of it, and `entity_documents` only when a filter or an ordering reads
+//! the payload — a `q` expression, a sort on an attribute value, or a sort on
+//! the `modifiedAt` column that lives on that row. A projected payload is not
+//! a reason to join: it is looked up by key for the rows of the cut page alone
+//! (see `crate::entity_page`). A query that asks for identifiers with no filter
+//! joins nothing and reads one relation.
 
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
+    entity_selection::{ConsideredEntities, EntitySelection},
     ordering::term::{CompiledOrderTerm, OrderTarget},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-use andromeda_postgresql_query::entity_row_refs::{DocumentsRef, EntityRowRefs};
+use andromeda_postgresql_query::{
+    dictionary::resolved_names::ResolvedNames,
+    entity_row_refs::{DocumentsRef, EntityRowRefs},
+    type_membership::{drives, members_of_any},
+};
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::branch::qualified;
-use sea_query::{DynIden, Expr, ExprTrait, JoinType, SelectStatement};
+use sea_query::{DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, SelectStatement, SimpleExpr, TableRef};
+
+/// The type-membership walk a type-driven statement reads, `selected`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "selected"]
+pub struct Selected;
 
 /// Whether a relation takes part in the statement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Demand {
-    /// The relation is joined to the driving `entities` row on `entity_key`.
+    /// The relation is joined to the driving row on `entity_key`.
     Joined,
     /// The relation is not named in the statement.
     NotJoined,
 }
 
-/// The join demands of one entity statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The relation a statement is driven by.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RowSource {
+    /// `entities`, walked or probed as the filters choose.
+    Entities,
+    /// The type-membership walk of the request's type selection, read under
+    /// [`Selected`], with `entities` joined as `entities` says.
+    TypeMembers {
+        /// The walk: every Entity the selection selects, as `(entity_key, id)`.
+        walk: Box<SelectStatement>,
+        /// Whether `entities` is joined for a lifecycle column.
+        entities: Demand,
+    },
+}
+
+/// The relations of one entity statement.
+#[derive(Debug, Clone, PartialEq)]
 pub struct EntityRelations {
+    /// The relation that drives the statement.
+    pub source: RowSource,
     /// Whether `entity_documents` is joined.
     pub documents: Demand,
     /// Whether `entity_search` is joined.
@@ -41,89 +71,160 @@ pub struct EntityRelations {
 }
 
 impl EntityRelations {
-    /// The relations a compiled query needs beside `entities`.
+    /// The relations a compiled query reads, in the branch `schema`.
     ///
-    /// The search row is joined for a type selector, an `attrs` term, a
-    /// projection that can leave an entity no member, a geo query, a scope
-    /// query, an ordering on `type` or `scope`, or a distance
-    /// ordering measured to the default `location`. The document row is joined
-    /// when a `q` expression is present (its jsonpath fallback reads the
-    /// payload) or when an ordering sorts on an attribute value or on the
-    /// `modifiedAt` column; a projected payload alone is read by key lookup
-    /// instead.
-    pub fn for_query(query: &CompiledEntityQuery) -> EntityRelations {
+    /// The search row is joined for a type selector the membership walk does
+    /// not answer, an `attrs` term, a projection that can leave an entity no
+    /// member, a geo query, a scope query, an ordering on `type` or `scope`, or
+    /// a distance ordering measured to the default `location`. The document
+    /// row is joined when a `q` expression is present (its jsonpath fallback
+    /// reads the payload) or when an ordering sorts on an attribute value or
+    /// on the `modifiedAt` column; a projected payload alone is read by key
+    /// lookup instead.
+    pub fn for_query(query: &CompiledEntityQuery, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>) -> EntityRelations {
         let selection = &query.selection;
         let terms = &query.ordering.terms;
-        let search = selection.selectors.iter().any(|selector| selector.type_expr.is_some())
-            || !selection.attrs.is_empty()
-            || selection.projected_members.constrains()
-            || selection.geo.is_some()
-            || selection.scope_q.is_some()
-            || terms.iter().any(reads_search_row);
+        let lifecycle = demand(terms.iter().any(reads_lifecycle));
+        let source = source(selection, types, schema, lifecycle);
+        let search = search_demand(selection, &source) || terms.iter().any(reads_search_row);
         let documents = selection.q_expr.is_some() || terms.iter().any(reads_documents_row);
         EntityRelations {
+            source,
             documents: demand(documents),
             search: demand(search),
         }
     }
 
-    /// The relations the fallback count of a paginated query needs: the same
-    /// filters, no projection and no ordering.
+    /// The relations the fallback count of a paginated query reads: the same
+    /// source and filters, no projection and no ordering.
     #[must_use]
-    pub fn for_count(query: &CompiledEntityQuery) -> EntityRelations {
+    pub fn for_count(query: &CompiledEntityQuery, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>) -> EntityRelations {
         let selection = &query.selection;
-        let search = selection.selectors.iter().any(|selector| selector.type_expr.is_some())
-            || !selection.attrs.is_empty()
-            || selection.projected_members.constrains()
-            || selection.geo.is_some()
-            || selection.scope_q.is_some();
+        let source = source(selection, types, schema, Demand::NotJoined);
         EntityRelations {
             documents: demand(selection.q_expr.is_some()),
-            search: demand(search),
+            search: demand(search_demand(selection, &source)),
+            source,
         }
     }
 
-    /// How the statement's fragments reach the three rows, in the given branch
+    /// How the statement's fragments reach the rows, in the given branch
     /// schema: the joined `entity_documents` column when the document row is
-    /// joined, a scalar lookup by `entity_key` when it is not.
+    /// joined, a scalar lookup by `entity_key` when it is not, and the key and
+    /// identifier read from the membership walk when it drives the statement.
     #[must_use]
     pub fn rows(&self, schema: Option<DynIden>) -> EntityRowRefs {
-        match self.documents {
+        let rows = match self.documents {
             Demand::Joined => EntityRowRefs::unaliased(schema),
             Demand::NotJoined => EntityRowRefs::unaliased_with(schema, DocumentsRef::ByKeyLookup),
+        };
+        match self.source {
+            RowSource::Entities => rows,
+            RowSource::TypeMembers { .. } => rows.keyed_by(Selected),
         }
     }
 
-    /// Add `FROM entities` and the joins this demand asks for to `select`, every
-    /// relation qualified by the branch schema (`None` for the live branch).
-    pub fn apply_from(&self, select: &mut SelectStatement, schema: Option<&DynIden>) {
-        select.from(qualified(schema, Entities::Table));
-        match self.search {
-            Demand::Joined => {
-                select.join(
-                    JoinType::Join,
-                    qualified(schema, EntitySearch::Table),
-                    Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
-                );
+    /// Add the driving relation and the joins this demand asks for to
+    /// `select`, every relation qualified by the branch schema (`None` for the
+    /// live branch).
+    pub fn apply_from(self, select: &mut SelectStatement, schema: Option<&DynIden>) {
+        let driving_key: SimpleExpr = match self.source {
+            RowSource::Entities => {
+                select.from(qualified(schema, Entities::Table));
+                Expr::col((Entities::Table, Entities::EntityKey))
             }
-            Demand::NotJoined => {}
-        }
-        match self.documents {
-            Demand::Joined => {
-                select.join(
-                    JoinType::Join,
-                    qualified(schema, EntityDocuments::Table),
-                    Expr::col((EntityDocuments::Table, EntityDocuments::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
+            RowSource::TypeMembers { walk, entities } => {
+                select.from_subquery(*walk, Selected);
+                let key = Expr::col((Selected, Entities::EntityKey));
+                join_on_key(
+                    select,
+                    entities,
+                    qualified(schema, Entities::Table),
+                    (Entities::Table, Entities::EntityKey),
+                    &key,
                 );
+                key
             }
-            Demand::NotJoined => {}
+        };
+        join_on_key(
+            select,
+            self.search,
+            qualified(schema, EntitySearch::Table),
+            (EntitySearch::Table, EntitySearch::EntityKey),
+            &driving_key,
+        );
+        join_on_key(
+            select,
+            self.documents,
+            qualified(schema, EntityDocuments::Table),
+            (EntityDocuments::Table, EntityDocuments::EntityKey),
+            &driving_key,
+        );
+    }
+}
+
+/// The relation a selection is driven by: the membership walk when every
+/// selector selects by a type expression that has a range to walk and names no
+/// identifier, `entities` otherwise.
+///
+/// A selector naming identifiers is already answered by the identifier index,
+/// and a request that considers no Entity (clause 5.5.14) walks nothing.
+fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>, lifecycle: Demand) -> RowSource {
+    let walkable = match selection.considered {
+        ConsideredEntities::Selected => {
+            !selection.selectors.is_empty()
+                && selection
+                    .selectors
+                    .iter()
+                    .all(|selector| selector.ids.is_empty() && selector.type_expr.as_ref().is_some_and(drives))
         }
+        ConsideredEntities::NoEntity => false,
+    };
+    let walk = walkable
+        .then(|| members_of_any(selection.selectors.iter().filter_map(|selector| selector.type_expr.as_ref()), types, schema))
+        .flatten();
+    match walk {
+        Some(walk) => RowSource::TypeMembers {
+            walk: Box::new(walk),
+            entities: lifecycle,
+        },
+        None => RowSource::Entities,
+    }
+}
+
+/// Whether a selection's filters read the search row: a type selector the
+/// membership walk does not answer, or any other search axis.
+fn search_demand(selection: &EntitySelection, source: &RowSource) -> bool {
+    let typed = match source {
+        RowSource::Entities => selection.selectors.iter().any(|selector| selector.type_expr.is_some()),
+        RowSource::TypeMembers { .. } => false,
+    };
+    typed || !selection.attrs.is_empty() || selection.projected_members.constrains() || selection.geo.is_some() || selection.scope_q.is_some()
+}
+
+/// Join `table` on its `entity_key` column `key` to the driving `driving_key`
+/// when `demand` asks for it.
+fn join_on_key(select: &mut SelectStatement, demand: Demand, table: TableRef, key: (impl IntoIden, impl IntoIden), driving_key: &SimpleExpr) {
+    match demand {
+        Demand::Joined => {
+            select.join(JoinType::Join, table, Expr::col(key).eq(driving_key.clone())); // clone: every join correlates on the same key
+        }
+        Demand::NotJoined => {}
     }
 }
 
 /// `Joined` when `needed`.
 const fn demand(needed: bool) -> Demand {
     if needed { Demand::Joined } else { Demand::NotJoined }
+}
+
+/// Whether an ordering term reads a lifecycle column of the `entities` row
+/// other than the key and the identifier the membership walk carries.
+const fn reads_lifecycle(term: &CompiledOrderTerm) -> bool {
+    match &term.target {
+        OrderTarget::CreatedAt => true,
+        OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::ModifiedAt | OrderTarget::Attribute(_) => false,
+    }
 }
 
 /// Whether an ordering term reads a column of the search row.
@@ -151,18 +252,22 @@ const fn reads_documents_row(term: &CompiledOrderTerm) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_relations::{Demand, EntityRelations};
+    use crate::entity_relations::{Demand, EntityRelations, RowSource};
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
-        entity_selection::{EntitySelection, EntitySelector},
+        entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
         filter::{parser, path::AttrPath},
         geo::query::GeoQuery,
         ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+        pattern::Pattern,
         scope::query::ScopeQuery,
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
+    use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_postgresql_schema::current::Entities;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
@@ -180,22 +285,53 @@ mod tests {
     }
 
     fn joined(documents: Demand, search: Demand) -> EntityRelations {
-        EntityRelations { documents, search }
+        EntityRelations {
+            source: RowSource::Entities,
+            documents,
+            search,
+        }
+    }
+
+    fn types() -> ResolvedNames<EntityTypeName> {
+        ResolvedNames::from_pairs([(
+            "https://example.com/T".parse::<EntityTypeName>().expect("valid type name"),
+            EntityTypeNameKey::from(4),
+        )])
+    }
+
+    fn relations(query: &CompiledEntityQuery) -> EntityRelations {
+        EntityRelations::for_query(query, &types(), None)
+    }
+
+    fn typed_query() -> CompiledEntityQuery {
+        let mut query = empty_query();
+        query.selection.selectors = vec![
+            EntitySelector::builder()
+                .type_expr(Some(TypeExpr::Type(IriBuf::new("https://example.com/T".to_string()).expect("valid IRI"))))
+                .build(),
+        ];
+        query
+    }
+
+    /// The FROM clause and joins `relations` renders, selecting the identifier
+    /// the rows it keys read.
+    fn from_clause(relations: EntityRelations) -> String {
+        let mut select = Query::select();
+        select.expr(relations.rows(None).identity_column(Entities::Id));
+        relations.apply_from(&mut select, None);
+        select.to_string(PostgresQueryBuilder)
     }
 
     #[test]
     fn an_identifier_query_with_no_filter_joins_nothing() {
-        assert_eq!(EntityRelations::for_query(&empty_query()), joined(Demand::NotJoined, Demand::NotJoined));
-        let mut select = Query::select();
-        select.column(("entities", "id"));
-        EntityRelations::for_query(&empty_query()).apply_from(&mut select, None);
-        let sql = select.to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("JOIN"), "{sql}");
+        assert_eq!(relations(&empty_query()), joined(Demand::NotJoined, Demand::NotJoined));
+        let sql = from_clause(relations(&empty_query()));
+        assert_eq!(sql, r#"SELECT "entities"."id" FROM "entities""#);
     }
 
     #[test]
     fn a_payload_query_with_no_filter_joins_nothing_and_reads_the_payload_by_key() {
-        let relations = EntityRelations::for_query(&empty_query());
+        let relations = relations(&empty_query());
         assert_eq!(relations, joined(Demand::NotJoined, Demand::NotJoined));
         let sql = Query::select()
             .expr(relations.rows(None).payload_column())
@@ -211,9 +347,8 @@ mod tests {
     fn a_joined_document_row_is_read_as_its_column() {
         let mut filtered = empty_query();
         filtered.selection.q_expr = Some(parser::parse("\"https://example.com/speed\">1").expect("valid q"));
-        let relations = EntityRelations::for_query(&filtered);
         let sql = Query::select()
-            .expr(relations.rows(None).payload_column())
+            .expr(relations(&filtered).rows(None).payload_column())
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(
@@ -224,12 +359,6 @@ mod tests {
 
     #[test]
     fn every_search_axis_joins_the_search_row() {
-        let mut typed = empty_query();
-        typed.selection.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Type(IriBuf::new("https://example.com/T".to_string()).expect("valid IRI"))))
-                .build(),
-        ];
         let mut attrs = empty_query();
         attrs.selection.attrs = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
         let mut geo = empty_query();
@@ -247,22 +376,89 @@ mod tests {
             OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
             OrderDirection::DistAsc,
         )];
-        for query in [typed, attrs, geo, scope, by_type, by_distance] {
-            assert_eq!(EntityRelations::for_query(&query).search, Demand::Joined, "{query:?}");
+        let mut typed_by_identifier = typed_query();
+        typed_by_identifier.selection.selectors[0].ids = vec!["urn:a".parse().expect("valid URI")];
+        for query in [attrs, geo, scope, by_type, by_distance, typed_by_identifier] {
+            assert_eq!(relations(&query).search, Demand::Joined, "{query:?}");
         }
+    }
+
+    /// Clause 4.17: a selection by type alone is driven by the membership walk,
+    /// which answers the type itself, so neither `entities` nor the search row
+    /// is joined and the identifier is read from the walk.
+    #[test]
+    fn a_selection_by_type_alone_is_driven_by_the_membership_walk() {
+        let relations = relations(&typed_query());
+        assert_eq!(relations.search, Demand::NotJoined);
+        assert!(matches!(
+            relations.source,
+            RowSource::TypeMembers {
+                entities: Demand::NotJoined,
+                ..
+            }
+        ));
+        assert_eq!(
+            from_clause(relations),
+            r#"SELECT "selected"."id" FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (4)) AS "selected""#
+        );
+    }
+
+    /// An identifier pattern is a filter on the walk's identifier and keeps the
+    /// walk; the wildcard, and a request that considers no Entity, walk nothing.
+    #[test]
+    fn a_pattern_keeps_the_walk_and_the_wildcard_or_no_entity_does_not() {
+        let mut patterned = typed_query();
+        patterned.selection.selectors[0].id_pattern = Some(Pattern::parse("urn:a.*").expect("valid pattern"));
+        assert!(matches!(relations(&patterned).source, RowSource::TypeMembers { .. }));
+
+        let mut wildcard = empty_query();
+        wildcard.selection.selectors = vec![EntitySelector::builder().type_expr(Some(TypeExpr::Wildcard)).build()];
+        assert_eq!(relations(&wildcard).source, RowSource::Entities);
+
+        let mut nothing = typed_query();
+        nothing.selection.considered = ConsideredEntities::NoEntity;
+        assert_eq!(relations(&nothing).source, RowSource::Entities);
+    }
+
+    /// A `createdAt` sort reads a lifecycle column the walk does not carry, so
+    /// `entities` is joined to the walk on its key.
+    #[test]
+    fn a_created_at_sort_joins_the_entities_row_to_the_walk() {
+        let mut query = typed_query();
+        query.ordering.terms = vec![term(OrderTarget::CreatedAt, OrderDirection::Asc)];
+        let relations = relations(&query);
+        assert!(matches!(relations.source, RowSource::TypeMembers { entities: Demand::Joined, .. }));
+        assert!(from_clause(relations).ends_with(r#"AS "selected" JOIN "entities" ON "entities"."entity_key" = "selected"."entity_key""#));
+    }
+
+    /// Every relation a walked statement joins correlates on the walk's key.
+    #[test]
+    fn a_walked_statement_joins_on_the_walks_key() {
+        let mut query = typed_query();
+        query.selection.q_expr = Some(parser::parse("\"https://example.com/speed\">1").expect("valid q"));
+        query.selection.attrs = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
+        let sql = from_clause(relations(&query));
+        assert!(
+            sql.contains(r#"JOIN "entity_search" ON "entity_search"."entity_key" = "selected"."entity_key""#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"JOIN "entity_documents" ON "entity_documents"."entity_key" = "selected"."entity_key""#),
+            "{sql}"
+        );
     }
 
     #[test]
     fn a_q_filter_and_an_attribute_ordering_join_the_documents() {
         let mut filtered = empty_query();
         filtered.selection.q_expr = Some(parser::parse("\"https://example.com/speed\">1").expect("valid q"));
-        assert_eq!(EntityRelations::for_query(&filtered).documents, Demand::Joined);
+        assert_eq!(relations(&filtered).documents, Demand::Joined);
         let mut ordered = empty_query();
         ordered.ordering.terms = vec![term(
             OrderTarget::Attribute(AttrPath::simple("https://example.com/speed".parse().expect("valid attribute name"))),
             OrderDirection::Asc,
         )];
-        assert_eq!(EntityRelations::for_query(&ordered).documents, Demand::Joined);
+        assert_eq!(relations(&ordered).documents, Demand::Joined);
     }
 
     /// An ordering on `modifiedAt` reads a column of `entity_documents`, so the
@@ -272,33 +468,46 @@ mod tests {
     fn a_modified_at_ordering_joins_the_documents_and_created_at_joins_nothing() {
         let mut by_modified = empty_query();
         by_modified.ordering.terms = vec![term(OrderTarget::ModifiedAt, OrderDirection::Asc)];
-        assert_eq!(EntityRelations::for_query(&by_modified), joined(Demand::Joined, Demand::NotJoined));
+        assert_eq!(relations(&by_modified), joined(Demand::Joined, Demand::NotJoined));
 
         let mut by_created = empty_query();
         by_created.ordering.terms = vec![term(OrderTarget::CreatedAt, OrderDirection::Desc)];
-        assert_eq!(EntityRelations::for_query(&by_created), joined(Demand::NotJoined, Demand::NotJoined));
+        assert_eq!(relations(&by_created), joined(Demand::NotJoined, Demand::NotJoined));
     }
 
     #[test]
     fn a_selector_on_identifiers_alone_needs_no_search_row() {
         let mut query = empty_query();
         query.selection.selectors = vec![EntitySelector::builder().ids(vec!["urn:a".parse().expect("valid URI")]).build()];
-        assert_eq!(EntityRelations::for_query(&query).search, Demand::NotJoined);
+        assert_eq!(relations(&query).search, Demand::NotJoined);
     }
 
     #[test]
     fn the_count_joins_what_its_filters_read_and_never_the_projection() {
         let mut query = empty_query();
         query.selection.attrs = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
-        assert_eq!(EntityRelations::for_count(&query), joined(Demand::NotJoined, Demand::Joined));
+        assert_eq!(EntityRelations::for_count(&query, &types(), None), joined(Demand::NotJoined, Demand::Joined));
+    }
+
+    /// The count of a walked selection counts the walk, and never joins
+    /// `entities` for an ordering it does not have.
+    #[test]
+    fn the_count_of_a_walked_selection_counts_the_walk() {
+        let mut query = typed_query();
+        query.ordering.terms = vec![term(OrderTarget::CreatedAt, OrderDirection::Asc)];
+        let count = EntityRelations::for_count(&query, &types(), None);
+        assert!(matches!(
+            count.source,
+            RowSource::TypeMembers {
+                entities: Demand::NotJoined,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn the_joins_are_on_the_surrogate_key() {
-        let mut select = Query::select();
-        select.column(("entities", "id"));
-        joined(Demand::Joined, Demand::Joined).apply_from(&mut select, None);
-        let sql = select.to_string(PostgresQueryBuilder);
+        let sql = from_clause(joined(Demand::Joined, Demand::Joined));
         assert!(sql.contains(r#"FROM "entities" JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key" JOIN "entity_documents" ON "entity_documents"."entity_key" = "entities"."entity_key""#), "{sql}");
     }
 }

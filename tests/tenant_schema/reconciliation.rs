@@ -64,6 +64,15 @@ const INVARIANTS: &[Invariant] = &[
         count: "SELECT COUNT(*) FROM entity_search s CROSS JOIN LATERAL unnest(s.entity_type_name_keys) AS declared(key) WHERE NOT EXISTS (SELECT 1 FROM entity_type_names n WHERE n.entity_type_name_key = declared.key)",
     },
     Invariant {
+        description: "type memberships out of step with the search row's types, in either direction",
+        count: "SELECT (SELECT COUNT(*) FROM entity_search s JOIN entities e ON e.entity_key = s.entity_key \
+                        CROSS JOIN LATERAL unnest(s.entity_type_name_keys) AS declared(key) \
+                        WHERE NOT EXISTS (SELECT 1 FROM entity_type_members m \
+                                          WHERE m.entity_type_name_key = declared.key AND m.id = e.id AND m.entity_key = e.entity_key)) \
+                + (SELECT COUNT(*) FROM entity_type_members m WHERE NOT EXISTS \
+                        (SELECT 1 FROM entity_search s WHERE s.entity_key = m.entity_key AND m.entity_type_name_key = ANY(s.entity_type_name_keys)))",
+    },
+    Invariant {
         description: "search rows naming an attribute key that does not exist",
         count: "SELECT COUNT(*) FROM entity_search s CROSS JOIN LATERAL unnest(s.attribute_name_keys) AS declared(key) WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =declared.key)",
     },

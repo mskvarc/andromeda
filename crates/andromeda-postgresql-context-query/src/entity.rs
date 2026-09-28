@@ -1,12 +1,18 @@
 //! SQL generation for entity queries using sea-query.
 
-use crate::{entity_relations::EntityRelations, result_ordering};
+use crate::{
+    entity_page::payloads_of,
+    entity_relations::{EntityRelations, RowSource},
+    result_ordering,
+    selector_predicate::condition as selector_condition,
+};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
     entity::compiled::CompiledEntityQuery,
-    entity_selection::{ConsideredEntities, EntitySelector},
+    entity_selection::ConsideredEntities,
+    ordering::sort_direction::SortDirection,
     pagination::CountPolicy,
     projection::projected_members::{ProjectedMembers, ScopeRetention},
 };
@@ -20,16 +26,15 @@ use andromeda_postgresql_query::{
     geo_predicate::GeometrySource,
     q_predicate::{instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
-    type_predicate::condition as type_condition,
+    sort_key::{KeyOrder, NullPlacement, SortKey},
 };
-use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
+use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
-    aggregate::count_over_all,
     literal::false_literal,
-    operator::{array_contained_by_keys, array_contains_key, regex_match},
-    pg_array::{any, has_elements, text_array},
+    operator::{array_contained_by_keys, array_contains_key},
+    pg_array::has_elements,
 };
-use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Order, Query, SelectStatement};
+use sea_query::{Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement};
 
 /// A compiled entity query: the paginated result statement and its optional
 /// fallback count, each a statement tree the store binds and executes on its own.
@@ -62,55 +67,36 @@ pub struct EntityQuery {
 /// anywhere in the query to measure from (clause 4.23).
 pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames) -> Result<EntityQuery, RenderError> {
     let schema = schema_iden(target);
-    let relations = EntityRelations::for_query(query);
+    let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone());
-    let condition = build_entity_conditions(query, names, &rows)?;
+    let condition = build_entity_conditions(query, names, &rows, &relations.source)?;
 
-    let mut select = Query::select();
-    // The payload is projected under the document column's own name whether it
-    // is read from the joined row or looked up by key, so the repository reads
-    // one column name in both shapes.
-    select.expr_as(rows.payload_column(), EntityDocuments::Payload);
-    relations.apply_from(&mut select, schema.as_ref());
+    let mut page = Query::select();
+    relations.apply_from(&mut page, schema.as_ref());
     // clone: the fallback count statement filters on the same condition. The
     // count joins the document row only when a `q` filter reads it, and that
     // is the only way the condition can reference the payload, so a condition
     // rendered against this statement's rows names nothing the count lacks.
-    select.cond_where(condition.clone());
+    page.cond_where(condition.clone());
+    let keys = window_and_sort_keys(&mut page, &rows, query, &names.attributes)?;
 
-    // When a total count is requested, piggyback it on every row as
-    // `COUNT(*) OVER ()` so the common case runs in a single round-trip.
-    // The count column is constant across the result set (PostgreSQL evaluates
-    // the unbounded partition once), so the repository reads it from any row.
-    // A zero-row result still needs the fallback count because the window
-    // function returns no rows when the filter matches nothing.
-    if query.pagination.count == CountPolicy::Emit {
-        select.expr_as(count_over_all(), Alias::new(TOTAL_COUNT_COLUMN));
-    }
+    // When a total count is requested, the page piggybacks it on every row so
+    // the common case runs in a single round-trip. A zero-row result carries
+    // no row to read it from, which is what the fallback count covers.
+    let select = payloads_of(page, &rows, keys, query.pagination.count);
 
-    apply_window_and_order(&mut select, &rows, query, &names.attributes)?;
-
-    // Fallback count query covers the zero-row edge case described above.
     let count = if query.pagination.count == CountPolicy::Emit {
         let mut count_select = Query::select();
         count_select.expr(Func::count(SeaExpr::col(Asterisk)));
-        EntityRelations::for_count(query).apply_from(&mut count_select, schema.as_ref());
+        EntityRelations::for_count(query, &names.types, schema.as_ref()).apply_from(&mut count_select, schema.as_ref());
         count_select.cond_where(condition);
         Some(count_select.take())
     } else {
         None
     };
 
-    Ok(EntityQuery { select: select.take(), count })
+    Ok(EntityQuery { select, count })
 }
-
-/// Column name used for the window-function count attached to each row of a
-/// paginated entity query when `count=true`.
-///
-/// The entity repository reads the count back out under this name, so the two
-/// have to agree; it is a constant rather than a literal for exactly that
-/// reason.
-pub const TOTAL_COUNT_COLUMN: &str = "total_count";
 
 /// Builds a parameterized SQL query to retrieve only entity IDs.
 ///
@@ -127,21 +113,24 @@ pub const TOTAL_COUNT_COLUMN: &str = "total_count";
 /// reference geometry (clause 4.23).
 pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames) -> Result<SelectStatement, RenderError> {
     let schema = schema_iden(target);
-    let relations = EntityRelations::for_query(query);
+    let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone());
-    let condition = build_entity_conditions(query, names, &rows)?;
+    let condition = build_entity_conditions(query, names, &rows, &relations.source)?;
 
     let mut select = Query::select();
-    select.column((Entities::Table, Entities::Id));
+    select.expr_as(rows.identity_column(Entities::Id), Entities::Id);
     relations.apply_from(&mut select, schema.as_ref());
     select.cond_where(condition);
 
-    apply_window_and_order(&mut select, &rows, query, &names.attributes)?;
+    for key in window_and_sort_keys(&mut select, &rows, query, &names.attributes)? {
+        key.order_by(&mut select);
+    }
 
     Ok(select.take())
 }
 
-/// Add the result window and its ordering, in offset mode or keyset mode.
+/// Add the result window to `select` and return the keys it is ordered by, in
+/// offset mode or keyset mode.
 ///
 /// In offset mode (clause 5.5.9.2) the statement carries `LIMIT`/`OFFSET` over
 /// the requested `orderBy` and its `id` tiebreaker. In keyset mode
@@ -156,54 +145,55 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, name
 /// Propagates the [`RenderError`] a distance `orderBy` term raises when it has
 /// no reference geometry to measure from (clause 4.23); keyset mode carries no
 /// `orderBy` and so never fails here.
-fn apply_window_and_order(
+fn window_and_sort_keys(
     select: &mut SelectStatement,
     rows: &EntityRowRefs,
     query: &CompiledEntityQuery,
     attributes: &ResolvedNames<AttributeName>,
-) -> Result<(), RenderError> {
+) -> Result<Vec<SortKey>, RenderError> {
     match &query.keyset {
         None => {
             select.limit(u64::from(query.pagination.limit)).offset(u64::from(query.pagination.offset));
-            result_ordering::apply(select, rows, &query.ordering, query.selection.geo.as_ref(), attributes)?;
+            result_ordering::sort_keys(select, rows, &query.ordering, query.selection.geo.as_ref(), attributes)
         }
         Some(cursor) => {
-            apply_keyset(select, cursor);
             select.limit(u64::from(query.pagination.limit));
+            Ok(vec![keyset_key(select, rows, cursor)])
         }
     }
-    Ok(())
 }
 
-/// Add the keyset predicate and ordering for one cursor direction (clause
-/// 5.5.9.1).
+/// Add the keyset predicate for one cursor direction and return the key its
+/// page is ordered by (clause 5.5.9.1).
 ///
-/// The predicate and the ordering both read `entities.id` bare, so they share
-/// the column's C collation with the implicit `id` tiebreaker and stay driven by
+/// The predicate and the key both read `entities.id` bare, so they share the
+/// column's C collation with the implicit `id` tiebreaker and stay driven by
 /// its unique index in either direction -- an Index Scan Backward for the
 /// descending cases, no sort node and no new index.
-fn apply_keyset(select: &mut SelectStatement, cursor: &PageCursor) {
-    match cursor {
-        PageCursor::After(id) => {
-            select.and_where(SeaExpr::col((Entities::Table, Entities::Id)).gt(SeaExpr::val(id.as_str())));
-            select.order_by((Entities::Table, Entities::Id), Order::Asc);
+fn keyset_key(select: &mut SelectStatement, rows: &EntityRowRefs, cursor: &PageCursor) -> SortKey {
+    let id = rows.identity_column(Entities::Id);
+    let direction = match cursor {
+        PageCursor::After(boundary) => {
+            select.and_where(id.clone().gt(SeaExpr::val(boundary.as_str()))); // clone: the key orders on the same column
+            SortDirection::Ascending
         }
-        PageCursor::Before(id) => {
-            select.and_where(SeaExpr::col((Entities::Table, Entities::Id)).lt(SeaExpr::val(id.as_str())));
-            select.order_by((Entities::Table, Entities::Id), Order::Desc);
+        PageCursor::Before(boundary) => {
+            select.and_where(id.clone().lt(SeaExpr::val(boundary.as_str()))); // clone: the key orders on the same column
+            SortDirection::Descending
         }
-        PageCursor::End => {
-            select.order_by((Entities::Table, Entities::Id), Order::Desc);
-        }
-    }
+        PageCursor::End => SortDirection::Descending,
+    };
+    SortKey::new(id, KeyOrder::new(direction, NullPlacement::Unstated))
 }
 
 /// Builds sea-query `Condition` from compiled entity query filters.
 ///
 /// The branch a statement runs against is chosen by the schema its relations
 /// are qualified with, not by a predicate, so no branch term appears here; the
-/// `rows` carry that schema to any subquery a filter opens.
-fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs) -> Result<Condition, RenderError> {
+/// `rows` carry that schema to any subquery a filter opens, and `source` is
+/// the relation the statement is driven by, which decides what of the
+/// selectors is left to filter.
+fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs, source: &RowSource) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
     // Clause 5.5.14: a request narrowed to an empty identifier set considers no
@@ -217,17 +207,8 @@ fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows
         ConsideredEntities::NoEntity => condition = condition.add(false_literal()),
     }
 
-    // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
-    // where each selector ANDs its own id / idPattern / type. A union that
-    // contains an unconstrained selector places no constraint, so it is
-    // rendered only when every selector constrains — the reading
-    // `EntitySelection::selectors_constrain` shares with the in-memory residual.
-    if query.selection.selectors_constrain() {
-        let mut union = Condition::any();
-        for selector in &query.selection.selectors {
-            union = union.add(selector_condition(rows, selector, &names.types));
-        }
-        condition = condition.add(union);
+    if let Some(selectors) = selector_condition(&query.selection, rows, &names.types, source) {
+        condition = condition.add(selectors);
     }
 
     // Attribute existence filter (clause 5.5.9 `attrs`): the entity carries a
@@ -310,32 +291,6 @@ fn projected_member_condition(projected: &ProjectedMembers, names: &QueryNames, 
         ScopeRetention::Kept => Condition::any().add(attribute).add(has_elements(rows.search_column(EntitySearch::ScopePaths))),
         ScopeRetention::Removed => attribute,
     })
-}
-
-/// Render one selector's identifier, pattern and type predicates, `ANDed`.
-///
-/// The three axes of a single [`EntitySelector`] hold together (clause 5.2.33):
-/// `{id:A,type:T}` selects entity `A` *and only if* it is a `T`. A selector
-/// with no axis set contributes an empty conjunction, which sea-query renders
-/// as always-true — the unconstrained case the caller filters out before it
-/// gets here.
-fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>) -> Condition {
-    let mut condition = Condition::all();
-    if !selector.ids.is_empty() {
-        let ids: Vec<&str> = selector.ids.iter().map(AsRef::as_ref).collect();
-        // A warm spatial prefilter can push tens of thousands of candidate ids
-        // here; `IN ($1, … $N)` would bind one parameter per id and blow past
-        // PostgreSQL's 65535 parameter ceiling. A single bound `text[]` with
-        // `= ANY($1)` keeps it to one parameter regardless of set size.
-        condition = condition.add(rows.identity_column(Entities::Id).eq(any(text_array(&ids))));
-    }
-    if let Some(pattern) = &selector.id_pattern {
-        condition = condition.add(regex_match(rows.identity_column(Entities::Id), SeaExpr::val(pattern.as_str())));
-    }
-    if let Some(type_expr) = &selector.type_expr {
-        condition = condition.add(type_condition(type_expr, &rows.search_column(EntitySearch::EntityTypeNameKeys), types));
-    }
-    condition
 }
 
 #[cfg(test)]
@@ -457,40 +412,84 @@ mod tests {
         // which can repeat and skip rows between pages.
         let q = empty_query();
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("ORDER BY \"entities\".\"id\""), "{}", built.sql);
+        assert!(built.sql.contains(r#""entities"."id" AS "sort_0""#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC LIMIT"#), "{}", built.sql);
     }
 
-    /// A payload query that filters on nothing reads the identity row alone
-    /// and fetches each page row's document by key, under the document column's
-    /// name: the lookup is deferred past the sort and the limit, so a page of
-    /// entities costs a page of document reads rather than a join over every
-    /// candidate.
+    /// A payload query that filters on nothing cuts its page from the identity
+    /// row alone and looks each kept row's document up by key outside the
+    /// window, so an `OFFSET` walks entity keys and never reads the documents
+    /// it skips.
     #[test]
     fn a_payload_query_with_no_filter_joins_nothing_and_reads_the_page_documents_by_key() {
-        let built = build(&empty_query(), &known_types());
-        assert!(
-            built.sql.starts_with(
-                r#"SELECT (SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "entities"."entity_key") AS "payload" FROM "entities" WHERE TRUE ORDER BY"#
-            ),
-            "{}",
-            built.sql
+        let mut q = empty_query();
+        q.pagination.offset = 5000;
+        let built = build(&q, &known_types());
+        assert_eq!(
+            built.sql,
+            concat!(
+                r#"SELECT (SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "page"."entity_key") AS "payload" "#,
+                r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE TRUE "#,
+                r#"ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2) AS "page" ORDER BY "page"."sort_0" ASC"#
+            )
         );
-        assert!(!built.sql.contains("JOIN"), "{}", built.sql);
     }
 
-    /// A `q` filter reads the payload for its jsonpath fallback, so the document
-    /// row is joined and the projection reads the joined column.
+    /// A `q` filter reads the payload for its jsonpath fallback, so the page
+    /// joins the document row, but the payload is still read by key for the
+    /// kept rows only: the page never projects it.
     #[test]
-    fn a_q_filter_joins_the_documents_and_projects_the_joined_column() {
+    fn a_q_filter_joins_the_documents_inside_the_page_and_reads_the_payload_outside_it() {
         let mut q = empty_query();
         q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\">1").expect("valid q"));
         let built = build(&q, &temperature_is_known());
         assert!(built.sql.contains(r#"JOIN "entity_documents" ON"#), "{}", built.sql);
         assert!(
-            built.sql.starts_with(r#"SELECT "entity_documents"."payload" AS "payload" FROM "entities""#),
+            built
+                .sql
+                .starts_with(r#"SELECT (SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "page"."entity_key") AS "payload" FROM (SELECT "entities"."entity_key", "#),
             "{}",
             built.sql
         );
+        assert!(!built.sql.contains(r#""entity_documents"."payload" AS"#), "{}", built.sql);
+    }
+
+    /// Clause 4.23.1 returns the entities sorted, so every key the page is cut
+    /// by is restated on the payload statement in the same direction and null
+    /// placement, ending with the `id` tiebreaker.
+    #[test]
+    fn the_payload_statement_restates_every_key_of_the_page_order() {
+        let mut q = empty_query();
+        q.ordering.terms = vec![CompiledOrderTerm {
+            target: OrderTarget::ModifiedAt,
+            direction: OrderDirection::Desc,
+            collation: None,
+        }];
+        let built = build(&q, &known_types());
+        assert!(
+            built
+                .sql
+                .contains(r#""entity_documents"."modified_at" AS "sort_0", "entities"."id" AS "sort_1""#),
+            "{}",
+            built.sql
+        );
+        assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC NULLS LAST, "sort_1" ASC LIMIT"#), "{}", built.sql);
+        assert!(
+            built.sql.ends_with(r#"ORDER BY "page"."sort_0" DESC NULLS LAST, "page"."sort_1" ASC"#),
+            "{}",
+            built.sql
+        );
+    }
+
+    /// The total is counted inside the page, over every matching entity before
+    /// the window cuts it, and carried out beside each payload.
+    #[test]
+    fn a_counted_query_counts_inside_the_page_and_carries_the_total_out() {
+        let mut q = empty_query();
+        q.pagination.count = CountPolicy::Emit;
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains(r#"COUNT(*) OVER () AS "total_count""#), "{}", built.sql);
+        assert!(built.sql.contains(r#""page"."total_count" AS "total_count" FROM ("#), "{}", built.sql);
     }
 
     /// Clause 5.5.9 `attrs` is answered by the search row's interned attribute
@@ -702,6 +701,9 @@ mod tests {
         assert!(built.sql.contains("\"id\" ~"));
     }
 
+    /// Clauses 4.17 and 5.5.9: a page of one type walks that type's membership
+    /// key range in identifier order, so it reads no Entity of another type,
+    /// and the identifier it sorts and cuts on is the walk's.
     #[test]
     fn build_with_single_type() {
         let mut q = empty_query();
@@ -711,7 +713,16 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("\"entity_type_name_keys\" @> (ARRAY[1])"), "{}", built.sql);
+        assert!(
+            built.sql.contains(concat!(
+                r#"FROM (SELECT "selected"."entity_key", "selected"."id" AS "sort_0" "#,
+                r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1)) AS "selected" "#,
+                r#"WHERE TRUE ORDER BY "sort_0" ASC LIMIT"#
+            )),
+            "{}",
+            built.sql
+        );
+        assert!(!built.sql.contains("entity_search"), "the walk answers the type: {}", built.sql);
         assert!(
             !built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(1)))),
             "the resolved key is inlined, not bound: {:?}",
@@ -720,7 +731,7 @@ mod tests {
     }
 
     /// A type the dictionary has never recorded was never carried by any
-    /// entity, so a selector on it renders an unsatisfiable predicate.
+    /// entity, so a selector on it walks an empty range.
     #[test]
     fn an_unknown_type_selector_matches_nothing() {
         let mut q = empty_query();
@@ -730,12 +741,46 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("WHERE FALSE"), "{}", built.sql);
         assert!(
-            !built.sql.contains("entity_type_name_keys"),
-            "no probe is rendered for an unresolved type: {}",
+            built
+                .sql
+                .contains(r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE FALSE) AS "selected""#),
+            "{}",
             built.sql
         );
+    }
+
+    /// A counted page of one type counts the walk it pages.
+    #[test]
+    fn the_count_of_a_type_page_counts_the_walk() {
+        let mut q = empty_query();
+        q.pagination.count = CountPolicy::Emit;
+        q.selection.selectors = vec![
+            EntitySelector::builder()
+                .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
+                .build(),
+        ];
+        let count = build(&q, &known_types()).count_sql.expect("count requested");
+        assert_eq!(
+            count,
+            r#"SELECT COUNT(*) FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1)) AS "selected" WHERE TRUE"#
+        );
+    }
+
+    /// Clause 5.2.33: a selector naming identifiers is answered by the
+    /// identifier index, so its type stays a filter on the search row.
+    #[test]
+    fn a_typed_selector_naming_identifiers_filters_the_search_row() {
+        let mut q = empty_query();
+        q.selection.selectors = vec![
+            EntitySelector::builder()
+                .ids(ids(&["urn:a"]))
+                .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
+                .build(),
+        ];
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains(r#""entity_search"."entity_type_name_keys" @> (ARRAY[1])"#), "{}", built.sql);
+        assert!(!built.sql.contains("entity_type_members"), "{}", built.sql);
     }
 
     #[test]
@@ -754,9 +799,26 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("\"entity_type_name_keys\" @> (ARRAY["));
-        assert!(built.sql.contains("AND"));
-        assert!(built.sql.contains("OR"));
+        assert!(built.sql.contains(r#"SELECT DISTINCT ON ("typed"."id")"#), "the ranges merge: {}", built.sql);
+        assert!(
+            built.sql.contains(r#"WHERE "entity_type_name_key" = (2)) AS "candidate""#),
+            "the conjunction walks Home: {}",
+            built.sql
+        );
+        assert!(
+            built
+                .sql
+                .contains(r#""type_member"."entity_type_name_key" = (1) AND "type_member"."id" = "candidate"."id""#),
+            "and narrows it to the Entities that are also a Vehicle: {}",
+            built.sql
+        );
+        assert!(
+            built
+                .sql
+                .contains(r#"UNION ALL (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (3))"#),
+            "the Motorhome range merges in: {}",
+            built.sql
+        );
     }
 
     #[test]
@@ -909,8 +971,9 @@ mod tests {
         q.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Building:001")));
         let built = build(&q, &known_types());
         assert!(built.sql.contains(r#""entities"."id" > $"#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "entities"."id" ASC"#), "{}", built.sql);
-        assert!(built.sql.contains("LIMIT"), "{}", built.sql);
+        assert!(built.sql.contains(r#""entities"."id" AS "sort_0""#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC LIMIT"#), "{}", built.sql);
+        assert!(built.sql.ends_with(r#"ORDER BY "page"."sort_0" ASC"#), "{}", built.sql);
         assert!(!built.sql.contains("OFFSET"), "a keyset page never skips: {}", built.sql);
         assert!(
             built
@@ -931,7 +994,8 @@ mod tests {
         q.keyset = Some(PageCursor::Before(boundary("urn:ngsi-ld:Building:042")));
         let built = build(&q, &known_types());
         assert!(built.sql.contains(r#""entities"."id" < $"#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "entities"."id" DESC"#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC LIMIT"#), "{}", built.sql);
+        assert!(built.sql.ends_with(r#"ORDER BY "page"."sort_0" DESC"#), "{}", built.sql);
         assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
     }
 
@@ -943,7 +1007,8 @@ mod tests {
         let mut q = empty_query();
         q.keyset = Some(PageCursor::End);
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(r#"ORDER BY "entities"."id" DESC"#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC LIMIT"#), "{}", built.sql);
+        assert!(built.sql.ends_with(r#"ORDER BY "page"."sort_0" DESC"#), "{}", built.sql);
         assert!(
             !built.sql.contains(r#""entities"."id" >"#) && !built.sql.contains(r#""entities"."id" <"#),
             "no boundary predicate: {}",
@@ -1011,7 +1076,8 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(r#"ORDER BY "entities"."created_at" ASC"#), "{}", built.sql);
+        assert!(built.sql.contains(r#""entities"."created_at" AS "sort_0""#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC, "sort_1" ASC LIMIT"#), "{}", built.sql);
         assert!(!built.sql.contains("jsonb_path_query_first("), "no payload lateral is opened: {}", built.sql);
     }
 
@@ -1025,7 +1091,8 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(r#"ORDER BY "entities"."created_at" DESC"#), "{}", built.sql);
+        assert!(built.sql.contains(r#""entities"."created_at" AS "sort_0""#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC, "sort_1" ASC LIMIT"#), "{}", built.sql);
     }
 
     /// Clause 4.8 `modifiedAt` lives on `entity_documents`, is nullable, and so
@@ -1040,11 +1107,8 @@ mod tests {
         }];
         let built = build(&q, &known_types());
         assert!(built.sql.contains(r#"JOIN "entity_documents" ON"#), "the document row is joined: {}", built.sql);
-        assert!(
-            built.sql.contains(r#"ORDER BY "entity_documents"."modified_at" ASC NULLS LAST"#),
-            "{}",
-            built.sql
-        );
+        assert!(built.sql.contains(r#""entity_documents"."modified_at" AS "sort_0""#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC NULLS LAST"#), "{}", built.sql);
     }
 
     #[test]

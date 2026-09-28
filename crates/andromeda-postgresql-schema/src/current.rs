@@ -79,6 +79,23 @@ pub enum EntitySearch {
     OperationSpace,
 }
 
+/// The `entity_type_members` table - one row per type one current Entity
+/// carries (clause 4.17), keyed by type and then identifier.
+///
+/// A type selection walks one key range of it in identifier order, so a page
+/// of a type reads the rows it skips and keeps and no Entity of another type.
+#[derive(Iden, Clone, Copy)]
+pub enum EntityTypeMembers {
+    /// Table name: `entity_type_members`
+    Table,
+    /// Foreign key to `entities`, cascading on entity deletion
+    EntityKey,
+    /// The `entity_type_names` key of the type carried
+    EntityTypeNameKey,
+    /// The Entity's identifier, copied from `entities` so the walk is ordered by it
+    Id,
+}
+
 /// The `current_attribute_values` table - one row per current attribute
 /// instance of an entity.
 ///
@@ -140,7 +157,7 @@ pub struct E;
 
 #[cfg(test)]
 mod tests {
-    use crate::current::{CurrentAttributeValues, E, Entities, EntityDocuments, EntitySearch};
+    use crate::current::{CurrentAttributeValues, E, Entities, EntityDocuments, EntitySearch, EntityTypeMembers};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -179,6 +196,14 @@ mod tests {
         assert_eq!(EntitySearch::LocationGeography.to_string(), "location_geography");
         assert_eq!(EntitySearch::ObservationSpace.to_string(), "observation_space");
         assert_eq!(EntitySearch::OperationSpace.to_string(), "operation_space");
+    }
+
+    #[test]
+    fn entity_type_members_names() {
+        assert_eq!(EntityTypeMembers::Table.to_string(), "entity_type_members");
+        assert_eq!(EntityTypeMembers::EntityKey.to_string(), "entity_key");
+        assert_eq!(EntityTypeMembers::EntityTypeNameKey.to_string(), "entity_type_name_key");
+        assert_eq!(EntityTypeMembers::Id.to_string(), "id");
     }
 
     #[test]

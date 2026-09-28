@@ -7,7 +7,10 @@ use crate::{
         params::PreparedEntityColumns,
         repo::EntityRepository,
         types_present::{entity_write_failure, types_present},
-        write::staging::{Docs, Ents, ExpectationStaged, Proj, Srch, Staged, StagedColumn, expectation, projected, projection_cte, update_staging_columns},
+        write::{
+            staging::{Docs, Ents, ExpectationStaged, Proj, Srch, Staged, StagedColumn, expectation, projected, projection_cte, update_staging_columns},
+            type_membership::{Mbrs, Strays, added_memberships, dropped_memberships},
+        },
         written_entity::WrittenEntity,
     },
     error::ContextStoreError,
@@ -41,7 +44,10 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 ///                                   min_attribute_expires_at = proj.min_attribute_expires_at
 ///               FROM docs, proj
 ///               WHERE proj.id = docs.id AND entities.entity_key = docs.entity_key
-///                 AND (entities.expires_at IS DISTINCT FROM COALESCE(…) OR entities.min_attribute_expires_at IS DISTINCT FROM proj.min_attribute_expires_at))
+///                 AND (entities.expires_at IS DISTINCT FROM COALESCE(…) OR entities.min_attribute_expires_at IS DISTINCT FROM proj.min_attribute_expires_at)),
+///      strays AS (DELETE FROM entity_type_members WHERE (entity_type_name_key, id) IN
+///                 (SELECT <stored key the projection lacks>, docs.id FROM docs JOIN proj … JOIN entity_search … types changed …)),
+///      mbrs AS (INSERT INTO entity_type_members (…) SELECT docs.entity_key, <projected key the stored row lacked>, docs.id …)
 /// SELECT entity_key, id FROM docs
 /// ```
 ///
@@ -60,8 +66,15 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 /// write leaves both rows and every search index untouched. `expires_at` is
 /// coalesced so an update that omits it keeps the stored value rather than
 /// clearing it; the earliest attribute expiry is replaced, because it is
-/// derived from the payload that was just replaced.
-pub(super) fn entity_update_sql(target: &ContextTarget) -> String {
+/// derived from the payload that was just replaced. The type memberships move
+/// under the same guard as the search row's type array, so they follow a type
+/// change and a value-only write leaves them alone.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Internal`] if the membership insert ever stops
+/// matching its column list, which its fixed shape makes unreachable.
+pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = update_staging_columns();
 
     let mut documents = Query::update();
@@ -131,11 +144,13 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> String {
         .cte(CommonTableExpression::new().table_name(Docs).query(documents).to_owned())
         .cte(CommonTableExpression::new().table_name(Srch).query(search).to_owned())
         .cte(CommonTableExpression::new().table_name(Ents).query(lifecycle).to_owned())
+        .cte(CommonTableExpression::new().table_name(Strays).query(dropped_memberships(target)).to_owned())
+        .cte(CommonTableExpression::new().table_name(Mbrs).query(added_memberships(target)?).to_owned())
         .to_owned()
         .query(Query::select().column(EntityDocuments::EntityKey).column(Entities::Id).from(Docs).take());
 
     let sql = statement.to_string(PostgresQueryBuilder);
-    apply_column_alias(sql, &Staged, &columns)
+    Ok(apply_column_alias(sql, &Staged, &columns))
 }
 
 /// The seven `entity_search` columns the update projects, each written and
@@ -183,7 +198,7 @@ impl EntityRepository {
         types_present(entities)?;
 
         let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
-        let sql = entity_update_sql(target);
+        let sql = entity_update_sql(target)?;
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&ids)
             .bind(&entities.entity_type_name_keys_json)
@@ -212,7 +227,7 @@ mod tests {
 
     #[test]
     fn the_update_binds_twelve_placeholders_and_names_its_staging_columns() {
-        let sql = entity_update_sql(&ContextTarget::Live);
+        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
         pretty_assertions::assert_eq!(placeholders(&sql), (1..=12).collect::<BTreeSet<u32>>());
         assert!(
             sql.contains(
@@ -224,7 +239,7 @@ mod tests {
 
     #[test]
     fn the_document_write_is_the_compare_and_set_anchor_and_names_only_heap_neutral_columns() {
-        let sql = entity_update_sql(&ContextTarget::Live);
+        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
         assert!(
             sql.contains(r#""docs" AS (UPDATE "entity_documents" SET "payload" = "proj"."payload", "modified_at" = NOW() FROM "proj", "entities" WHERE"#),
             "{sql}"
@@ -239,15 +254,15 @@ mod tests {
 
     #[test]
     fn the_search_row_is_rewritten_only_where_a_projected_column_differs() {
-        let sql = entity_update_sql(&ContextTarget::Live);
+        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
         assert!(
             sql.contains(r#""srch" AS (UPDATE "entity_search" SET "entity_type_name_keys" = "proj"."entity_type_name_keys""#),
             "{sql}"
         );
         pretty_assertions::assert_eq!(
             sql.matches("IS DISTINCT FROM").count(),
-            9,
-            "seven search columns and two lifecycle columns are guarded: {sql}"
+            11,
+            "seven search columns, two lifecycle columns and the two membership moves are guarded: {sql}"
         );
         for column in [
             "entity_type_name_keys",
@@ -272,14 +287,14 @@ mod tests {
     /// no projected column changed.
     #[test]
     fn a_rewritten_search_row_is_stamped_with_the_writing_transaction() {
-        let sql = entity_update_sql(&ContextTarget::Live);
+        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
         assert!(sql.contains(r#""written_xid" = pg_current_xact_id() FROM "docs", "proj""#), "{sql}");
         assert!(!sql.contains(r#""written_xid" IS DISTINCT FROM"#), "{sql}");
     }
 
     #[test]
     fn the_lifecycle_row_coalesces_the_expiry_and_replaces_the_attribute_expiry() {
-        let sql = entity_update_sql(&ContextTarget::Live);
+        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
         assert!(sql.contains(r#""ents" AS (UPDATE "entities" SET "expires_at" = COALESCE("proj"."expires_at", "entities"."expires_at"), "min_attribute_expires_at" = "proj"."min_attribute_expires_at""#), "{sql}");
         assert!(
             sql.contains(r#""entities"."expires_at" IS DISTINCT FROM COALESCE("proj"."expires_at", "entities"."expires_at")"#),
@@ -288,9 +303,24 @@ mod tests {
         assert!(!sql.contains(r#"SET "id""#), "the identity is never rewritten: {sql}");
     }
 
+    /// Clause 4.17 selects on membership, so an update that changes an
+    /// Entity's types moves its membership rows in the same statement, and
+    /// only for the Entities whose payload write landed.
+    #[test]
+    fn a_type_change_moves_the_type_memberships_in_the_same_statement() {
+        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
+        assert!(sql.contains(r#""strays" AS (DELETE FROM "entity_type_members""#), "{sql}");
+        assert!(sql.contains(r#""mbrs" AS (INSERT INTO "entity_type_members""#), "{sql}");
+        pretty_assertions::assert_eq!(
+            sql.matches(r#"FROM "docs" JOIN "proj" ON "proj"."id" = "docs"."id""#).count(),
+            2,
+            "both moves read the landed writes: {sql}"
+        );
+    }
+
     #[test]
     fn the_projection_validates_each_geometry_once() {
-        let sql = entity_update_sql(&ContextTarget::Live);
+        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
         pretty_assertions::assert_eq!(sql.matches("ST_MakeValid").count(), 3, "{sql}");
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
     }

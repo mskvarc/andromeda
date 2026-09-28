@@ -3,9 +3,9 @@
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 5.6.1.4, 5.16.1.4
 --
--- The foreign keys from the live relations to `attribute_names` and
--- `unit_codes`. They exist on the live relations only, never on a Snapshot
--- schema's copies.
+-- The foreign keys from the live relations to `attribute_names`,
+-- `entity_type_names` and `unit_codes`. They exist on the live relations only,
+-- never on a Snapshot schema's copies.
 --
 -- A foreign key locks both of its ends. Declaring one takes `SHARE ROW
 -- EXCLUSIVE` on the referenced table, and dropping one, which every
@@ -33,6 +33,11 @@ ALTER TABLE attribute_history_instance_claims
     ADD CONSTRAINT fk_attribute_history_instance_claims_attribute_name
         FOREIGN KEY (attribute_name_key)
         REFERENCES attribute_names(attribute_name_key);
+
+ALTER TABLE entity_type_members
+    ADD CONSTRAINT fk_entity_type_members_entity_type_name
+        FOREIGN KEY (entity_type_name_key)
+        REFERENCES entity_type_names(entity_type_name_key);
 
 ALTER TABLE current_attribute_values
     ADD CONSTRAINT fk_current_attribute_values_attribute_name

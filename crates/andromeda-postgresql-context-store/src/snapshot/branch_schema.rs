@@ -38,13 +38,14 @@ const SEARCH_PATH: &str = "search_path";
 /// clone `INSERT ... SELECT` respect intra-branch foreign keys (parents before
 /// children). The branch migrations create them; this list only orders the
 /// copies and the truncation.
-pub(crate) const BRANCH_TABLES: [&str; 13] = [
+pub(crate) const BRANCH_TABLES: [&str; 14] = [
     "entities",
     "temporal_entities",
     "subscriptions",
     "notification_events",
     "entity_documents",
     "entity_search",
+    "entity_type_members",
     "current_attribute_values",
     "temporal_attribute_streams",
     "attribute_history",

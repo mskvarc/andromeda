@@ -7,7 +7,10 @@ use crate::{
         params::PreparedEntityColumns,
         repo::EntityRepository,
         types_present::{entity_write_failure, types_present},
-        write::staging::{Docs, ExpectationStaged, Ins, Proj, Srch, Staged, insert_staging_columns, projected, projection_cte},
+        write::{
+            staging::{Docs, ExpectationStaged, Ins, Proj, Srch, Staged, from_inserted, insert_staging_columns, projected, projection_cte},
+            type_membership::{Mbrs, created_memberships},
+        },
         written_entity::WrittenEntity,
     },
     error::ContextStoreError,
@@ -18,7 +21,7 @@ use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::unnest::apply_column_alias;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
-use sea_query::{CommonTableExpression, Expr, ExprTrait, JoinType, OnConflict, PostgresQueryBuilder, Query, SelectStatement, WithClause};
+use sea_query::{CommonTableExpression, Expr, OnConflict, PostgresQueryBuilder, Query, WithClause};
 use sqlx::{Postgres, Transaction};
 
 /// The statement name the entity set-insert is observed under.
@@ -33,7 +36,10 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 ///      docs AS (INSERT INTO entity_documents (entity_key, payload)
 ///               SELECT ins.entity_key, proj.payload FROM ins JOIN proj ON proj.id = ins.id),
 ///      srch AS (INSERT INTO entity_search (…)
-///               SELECT ins.entity_key, … FROM ins JOIN proj ON proj.id = ins.id)
+///               SELECT ins.entity_key, … FROM ins JOIN proj ON proj.id = ins.id),
+///      mbrs AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id)
+///               SELECT ins.entity_key, carried.entity_type_name_key, ins.id FROM ins JOIN proj ON proj.id = ins.id
+///               INNER JOIN LATERAL (SELECT UNNEST(proj.entity_type_name_keys) …) AS carried ON TRUE)
 /// SELECT entity_key, id FROM ins
 /// ```
 ///
@@ -43,8 +49,8 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 /// duplicate-key error is what lets one statement serve a batch that is
 /// permitted to succeed partially (clause 5.6.7) and the idempotent
 /// placeholder the Temporal API needs, without three different statements. The
-/// two child inserts read the keys the identity insert returned, so an entity
-/// that already existed lands in no relation at all.
+/// child inserts read the keys the identity insert returned, so an entity that
+/// already existed lands in no relation at all.
 ///
 /// # Errors
 ///
@@ -114,21 +120,12 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
         .cte(CommonTableExpression::new().table_name(Ins).query(identity).to_owned())
         .cte(CommonTableExpression::new().table_name(Docs).query(documents).to_owned())
         .cte(CommonTableExpression::new().table_name(Srch).query(search).to_owned())
+        .cte(CommonTableExpression::new().table_name(Mbrs).query(created_memberships(target)?).to_owned())
         .to_owned()
         .query(Query::select().columns([Entities::EntityKey, Entities::Id]).from(Ins).take());
 
     let sql = statement.to_string(PostgresQueryBuilder);
     Ok(apply_column_alias(sql, &Staged, &columns))
-}
-
-/// `FROM ins JOIN proj ON proj.id = ins.id`, the source both child inserts
-/// read: the surrogate key the identity insert minted beside the projected
-/// values of the same staged row.
-fn from_inserted() -> SelectStatement {
-    Query::select()
-        .from(Ins)
-        .join(JoinType::Join, Proj, Expr::col((Proj, Entities::Id)).equals((Ins, Entities::Id)))
-        .take()
 }
 
 impl EntityRepository {
@@ -249,7 +246,18 @@ mod tests {
     #[test]
     fn the_child_inserts_read_the_minted_key_beside_the_projected_row() {
         let sql = insert();
-        pretty_assertions::assert_eq!(sql.matches(r#"FROM "ins" JOIN "proj" ON "proj"."id" = "ins"."id""#).count(), 2, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#"FROM "ins" JOIN "proj" ON "proj"."id" = "ins"."id""#).count(), 3, "{sql}");
+    }
+
+    /// Clause 4.17 selects on membership, so a create lands one membership row
+    /// per type beside the search row that carries the same keys.
+    #[test]
+    fn a_create_lands_its_type_memberships_in_the_same_statement() {
+        let sql = insert();
+        assert!(
+            sql.contains(r#""mbrs" AS (INSERT INTO "entity_type_members" ("entity_key", "entity_type_name_key", "id")"#),
+            "{sql}"
+        );
     }
 
     /// A Snapshot branch lands its rows in the Snapshot's own schema, so every
@@ -264,5 +272,6 @@ mod tests {
         assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entities""#), "{sql}");
         assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entity_documents""#), "{sql}");
         assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entity_search""#), "{sql}");
+        assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entity_type_members""#), "{sql}");
     }
 }

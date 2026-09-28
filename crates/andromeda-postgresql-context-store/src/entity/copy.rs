@@ -18,6 +18,7 @@ use crate::{
         mapper::stored_written_entity,
         params::PreparedEntityColumns,
         types_present::{entity_write_failure, types_present},
+        write::type_membership::created_memberships,
         written_entity::WrittenEntity,
     },
     error::ContextStoreError,
@@ -34,6 +35,7 @@ use andromeda_postgresql_encoding::copy::{
     write_timestamptz_opt,
     write_trailer,
 };
+use sea_query::PostgresQueryBuilder;
 use sqlx::{Executor, Postgres, Transaction};
 
 /// Number of columns written per staged entity tuple.
@@ -62,13 +64,20 @@ CREATE TEMP TABLE stage_entities (
 const COPY_INTO_STAGE_SQL: &str = "COPY stage_entities (id, entity_type_name_keys_json, attribute_name_keys_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at) FROM STDIN WITH (FORMAT binary)";
 
 /// Materialise staged rows into the three entity relations of the target
-/// branch: the same projection and the same three inserts the `UNNEST` path
-/// performs, read from the staging table instead of parallel arrays. The branch
-/// is selected by qualifying the three relations with `schema` (`""` for the
-/// live branch, `"snap_<key>."` for a Snapshot branch); the temporary staging
-/// table is session-scoped and needs no qualifier.
-fn insert_from_stage_sql(schema: &str) -> String {
-    format!(
+/// branch and the type memberships beside them: the same projection and the
+/// same inserts the `UNNEST` path performs, read from the staging table instead
+/// of parallel arrays. The branch is selected by qualifying the relations with
+/// its schema (none for the live branch, `snap_<key>` for a Snapshot branch);
+/// the temporary staging table is session-scoped and needs no qualifier.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Internal`] if the membership insert ever stops
+/// matching its column list, which its fixed shape makes unreachable.
+fn insert_from_stage_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
+    let schema = schema_prefix(target);
+    let memberships = created_memberships(target)?.to_string(PostgresQueryBuilder);
+    Ok(format!(
         r"
 WITH proj AS (
     SELECT
@@ -99,10 +108,13 @@ srch AS (
     INSERT INTO {schema}entity_search (entity_key, location_expires_at, entity_type_name_keys, attribute_name_keys, scope_paths, location, observation_space, operation_space)
     SELECT ins.entity_key, proj.location_expires_at, proj.entity_type_name_keys, proj.attribute_name_keys, proj.scope_paths, proj.location, proj.observation_space, proj.operation_space
     FROM ins JOIN proj ON proj.id = ins.id
+),
+mbrs AS (
+    {memberships}
 )
 SELECT entity_key, id FROM ins
 "
-    )
+    ))
 }
 
 /// Bulk-insert via binary COPY into a staging table, then materialise into
@@ -141,7 +153,7 @@ pub async fn create_batch_via_copy_in_tx(
         copy.finish().await?;
     }
 
-    let insert_sql = insert_from_stage_sql(&schema_prefix(target));
+    let insert_sql = insert_from_stage_sql(target)?;
     let rows: Vec<(i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(insert_sql.as_str()))
         .fetch_all(&mut **tx)
         .await
@@ -267,21 +279,37 @@ mod tests {
             assert!(CREATE_STAGE_ENTITIES_SQL.contains(column), "{column}");
             assert!(COPY_INTO_STAGE_SQL.contains(column), "{column}");
         }
-        let live = insert_from_stage_sql("");
+        let live = insert_from_stage_sql(&ContextTarget::Live).expect("the fixed insert builds");
         assert!(live.contains("INSERT INTO entities (id, expires_at, min_attribute_expires_at)"));
         assert!(live.contains("INSERT INTO entity_documents (entity_key, payload)"));
         assert!(live.contains("INSERT INTO entity_search (entity_key, location_expires_at, entity_type_name_keys, attribute_name_keys"));
         assert!(live.contains("ON CONFLICT (id) DO NOTHING"));
     }
 
-    /// A Snapshot branch qualifies the three target relations with its schema
-    /// while the session-scoped staging table stays unqualified.
+    /// Clause 4.17 selects on membership, so the COPY path lands one
+    /// membership row per type exactly as the `UNNEST` path does.
+    #[test]
+    fn the_copy_path_lands_the_type_memberships() {
+        let live = insert_from_stage_sql(&ContextTarget::Live).expect("the fixed insert builds");
+        assert!(
+            live.contains(r#"INSERT INTO "entity_type_members" ("entity_key", "entity_type_name_key", "id")"#),
+            "{live}"
+        );
+        assert!(live.contains(r#"FROM "ins" JOIN "proj" ON "proj"."id" = "ins"."id""#), "{live}");
+    }
+
+    /// A Snapshot branch qualifies the target relations with its schema while
+    /// the session-scoped staging table stays unqualified.
     #[test]
     fn a_branch_prefix_qualifies_the_target_relations() {
-        let branch = insert_from_stage_sql("snap_9.");
-        assert!(branch.contains("INSERT INTO snap_9.entities (id"), "{branch}");
-        assert!(branch.contains("INSERT INTO snap_9.entity_documents (entity_key"), "{branch}");
-        assert!(branch.contains("INSERT INTO snap_9.entity_search (entity_key"), "{branch}");
+        use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+        let key = SnapshotKey::try_from(9).expect("positive key");
+        let target = ContextTarget::Snapshot(SnapshotTarget::staging(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")));
+        let branch = insert_from_stage_sql(&target).expect("the fixed insert builds");
+        assert!(branch.contains("INSERT INTO snap_9_stg.entities (id"), "{branch}");
+        assert!(branch.contains("INSERT INTO snap_9_stg.entity_documents (entity_key"), "{branch}");
+        assert!(branch.contains("INSERT INTO snap_9_stg.entity_search (entity_key"), "{branch}");
+        assert!(branch.contains(r#"INSERT INTO "snap_9_stg"."entity_type_members""#), "{branch}");
         assert!(branch.contains("FROM stage_entities s"), "{branch}");
     }
 }

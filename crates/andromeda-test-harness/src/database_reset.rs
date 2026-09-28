@@ -233,6 +233,7 @@ mod tests {
             "entities",
             "entity_documents",
             "entity_search",
+            "entity_type_members",
             "jsonld_contexts",
             "temporal_entities",
             "temporal_attribute_streams",

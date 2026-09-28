@@ -1,4 +1,5 @@
-//! The statements that write the three current-state entity relations.
+//! The statements that write the three current-state entity relations and the
+//! type memberships beside them.
 //!
 //! There is one statement per kind of change, and it serves any number of
 //! entities: a single-entity write is a set of one, which is why no per-row
@@ -32,6 +33,8 @@ mod delete;
 mod insert;
 /// The staging shape every set-write reads its arrays through.
 mod staging;
+/// The type-membership rows each set-write keeps in step with the search row.
+pub(crate) mod type_membership;
 /// The batch update.
 mod update;
 

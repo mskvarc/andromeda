@@ -48,6 +48,11 @@ pub struct EntityRowRefs {
     schema: Option<DynIden>,
     /// The `entities` relation, as the statement names it.
     identity: DynIden,
+    /// The relation the statement reads an Entity's `entity_key` and `id` from:
+    /// `entities` itself, or the type-membership walk that drives the
+    /// statement and carries both, so the walk need not join `entities` for
+    /// the two columns every statement reads.
+    keys: DynIden,
     /// The `entity_search` relation, as the statement names it.
     ///
     /// A statement that filters on no search axis need not join it; the
@@ -69,15 +74,15 @@ impl EntityRowRefs {
     /// names, in the given branch schema, with the payload reached as
     /// `documents` says.
     ///
-    /// A statement that projects the payload but neither filters nor sorts on
-    /// it reads it [`DocumentsRef::ByKeyLookup`]: the planner then defers the
-    /// lookup past the sort and the limit, so a page of a hundred entities
-    /// fetches a hundred documents instead of joining every candidate's.
+    /// A statement that neither filters nor sorts on the payload reads it
+    /// [`DocumentsRef::ByKeyLookup`], so it joins no document row for the
+    /// candidates it walks.
     #[must_use]
     pub fn unaliased_with(schema: Option<DynIden>, documents: DocumentsRef) -> EntityRowRefs {
         EntityRowRefs {
             schema,
             identity: Entities::Table.into_iden(),
+            keys: Entities::Table.into_iden(),
             search: EntitySearch::Table.into_iden(),
             documents,
         }
@@ -86,11 +91,23 @@ impl EntityRowRefs {
     /// The three relations as the statement aliases them, in the given branch
     /// schema.
     pub fn aliased(schema: Option<DynIden>, identity: impl IntoIden, search: impl IntoIden, documents: DocumentsRef) -> EntityRowRefs {
+        let identity = identity.into_iden();
         EntityRowRefs {
             schema,
-            identity: identity.into_iden(),
+            keys: identity.clone(),
+            identity,
             search: search.into_iden(),
             documents,
+        }
+    }
+
+    /// The same relations, with `entity_key` and `id` read from `keys`: the
+    /// relation that drives the statement and carries both.
+    #[must_use]
+    pub fn keyed_by(self, keys: impl IntoIden) -> EntityRowRefs {
+        EntityRowRefs {
+            keys: keys.into_iden(),
+            ..self
         }
     }
 
@@ -117,9 +134,16 @@ impl EntityRowRefs {
     /// one, so `"cav"."entity_key" = "entity_key"` is not a reference to the
     /// outer row at all — it compares the subquery's column with itself and
     /// silently admits every instance in the tenant.
+    ///
+    /// `entity_key` and `id` are read from the relation that drives the
+    /// statement, every other column from `entities` itself.
     #[must_use]
     pub fn identity_column(&self, column: Entities) -> SimpleExpr {
-        Expr::col((self.identity.clone(), column.into_iden()))
+        let relation = match column {
+            Entities::EntityKey | Entities::Id => &self.keys,
+            Entities::Table | Entities::CreatedAt | Entities::ExpiresAt | Entities::MinAttributeExpiresAt => &self.identity,
+        };
+        Expr::col((relation.clone(), column.into_iden()))
     }
 
     /// The row's `entity_key`, the surrogate a correlated subquery binds against.
@@ -168,6 +192,7 @@ impl EntityRowRefs {
 mod tests {
     use crate::entity_row_refs::{DocumentsRef, EntityRowRefs};
     use andromeda_postgresql_schema::current::{Entities, EntitySearch};
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn render(expr: SimpleExpr) -> String {
@@ -189,6 +214,18 @@ mod tests {
         assert!(render(rows.entity_key_column()).contains(r#""ce"."entity_key""#));
         assert!(render(rows.search_column(EntitySearch::Location)).contains(r#""cs"."location""#));
         assert!(render(rows.payload_column()).contains(r#""cd"."payload""#));
+    }
+
+    /// A statement driven by the type-membership walk reads `entity_key` and
+    /// `id` from the walk, and the payload lookup correlates on the walk's key,
+    /// while a lifecycle column still comes from `entities`.
+    #[test]
+    fn a_statement_keyed_by_its_driver_reads_the_key_and_the_identifier_from_it() {
+        let rows = EntityRowRefs::unaliased_with(None, DocumentsRef::ByKeyLookup).keyed_by(Alias::new("selected"));
+        assert_eq!(render(rows.entity_key_column()), r#"SELECT "selected"."entity_key""#);
+        assert_eq!(render(rows.identity_column(Entities::Id)), r#"SELECT "selected"."id""#);
+        assert_eq!(render(rows.identity_column(Entities::CreatedAt)), r#"SELECT "entities"."created_at""#);
+        assert!(render(rows.payload_column()).contains(r#"WHERE "entity_key" = "selected"."entity_key""#));
     }
 
     #[test]

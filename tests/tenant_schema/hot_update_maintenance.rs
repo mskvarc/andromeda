@@ -305,15 +305,17 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Insert one bare entity in all three current-state relations under `prefix`
-/// and return its surrogate key.
+/// Insert one bare entity in all three current-state relations, with its type
+/// membership, under `prefix` and return its surrogate key.
 async fn churn_entity(pool: &PgPool, prefix: &str) -> i64 {
     sqlx::query_scalar(
         "WITH type_name AS ( \
              INSERT INTO entity_type_names (name) VALUES ('https://example.test/tenant-schema/Churn') \
              ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING entity_type_name_key), \
-         ins AS (INSERT INTO entities (id) VALUES ($1::text || ':churn') RETURNING entity_key), \
-         doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, '[]'::jsonb FROM ins) \
+         ins AS (INSERT INTO entities (id) VALUES ($1::text || ':churn') RETURNING entity_key, id), \
+         doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, '[]'::jsonb FROM ins), \
+         mbr AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id) \
+                 SELECT ins.entity_key, type_name.entity_type_name_key, ins.id FROM ins, type_name) \
          INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys) \
          SELECT ins.entity_key, ARRAY[type_name.entity_type_name_key], ARRAY[]::integer[] FROM ins, type_name \
          RETURNING entity_key",

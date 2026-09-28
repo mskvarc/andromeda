@@ -7,9 +7,10 @@
 //! `id` among other members (clause 4.23.3); a temporal query orders by `id`
 //! and nothing else (clause 5.7.4.3). Both reach the same key through here.
 
+use crate::sort_key::{KeyOrder, NullPlacement, SortKey};
 use andromeda_ngsi_ld_query::ordering::{collation::IcuCollation, sort_direction::SortDirection};
 use andromeda_postgresql_seaquery::collation::{PostgresCollation, collate};
-use sea_query::{NullOrdering, Order, SelectStatement, SimpleExpr};
+use sea_query::{Order, SimpleExpr};
 
 /// The SQL sort order one clause-4.23 direction runs in.
 #[must_use]
@@ -32,20 +33,21 @@ pub fn ordering_collation(requested: Option<&IcuCollation>) -> PostgresCollation
     PostgresCollation::new(requested.map_or(IcuCollation::ROOT, IcuCollation::as_str))
 }
 
-/// Add the sort key that orders entities by their `id` member to `select`.
+/// The sort key that orders entities by their `id` member.
 ///
 /// `NULLS LAST` states clause 4.23.2's "null values last" for this key, in both
 /// directions. An entity identifier is never null, so the ordering is the same
 /// with or without it on the entity path; it is written all the same, because
 /// the clause pins the position of an absent value rather than leaving it to
 /// PostgreSQL's direction-dependent default.
-pub fn order_by_entity_identifier(select: &mut SelectStatement, identifier: SimpleExpr, direction: SortDirection, collation: &PostgresCollation) {
-    select.order_by_expr_with_nulls(collate(identifier, collation), sql_order(direction), NullOrdering::Last);
+#[must_use]
+pub fn entity_identifier_key(identifier: SimpleExpr, direction: SortDirection, collation: &PostgresCollation) -> SortKey {
+    SortKey::new(collate(identifier, collation), KeyOrder::new(direction, NullPlacement::Last))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_ordering::{order_by_entity_identifier, ordering_collation, sql_order};
+    use crate::entity_ordering::{entity_identifier_key, ordering_collation, sql_order};
     use andromeda_ngsi_ld_query::ordering::{collation::IcuCollation, sort_direction::SortDirection};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, Order, PostgresQueryBuilder, Query};
@@ -53,7 +55,7 @@ mod tests {
     fn ordered_by_identifier(collation: Option<&IcuCollation>, direction: SortDirection) -> String {
         let mut select = Query::select();
         select.expr(Expr::col(Alias::new("id")));
-        order_by_entity_identifier(&mut select, Expr::col(Alias::new("id")), direction, &ordering_collation(collation));
+        entity_identifier_key(Expr::col(Alias::new("id")), direction, &ordering_collation(collation)).order_by(&mut select);
         select.to_string(PostgresQueryBuilder)
     }
 

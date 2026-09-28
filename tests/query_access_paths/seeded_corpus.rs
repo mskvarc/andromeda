@@ -191,6 +191,33 @@ pub async fn type_dictionary_key(pool: &PgPool, name: &str) -> i32 {
         .expect("type dictionary insert must succeed")
 }
 
+/// The Entity rows of the corpus: `$1` the identifier prefix, `$2`/`$3` the
+/// rare and common type keys, `$4` the Entity count, `$5`/`$6` the city and
+/// alarm attribute keys, `$7`/`$8` their IRIs. Every 997th Entity is of the
+/// rare type, and each type is stated on the search row and as a membership.
+const ENTITY_CORPUS: &str = "WITH seeded AS ( \
+         SELECT g, $1::text || ':seed:' || lpad(g::text, 6, '0') AS id FROM generate_series(1, $4::bigint) AS g), \
+     ins AS ( \
+         INSERT INTO entities (id) SELECT id FROM seeded RETURNING entity_key, id), \
+     docs AS ( \
+         INSERT INTO entity_documents (entity_key, payload) \
+         SELECT ins.entity_key, \
+                jsonb_build_array(jsonb_build_object('@id', ins.id, $7::text, to_jsonb('city-' || (seeded.g % 1000)::text)) \
+                                  || CASE WHEN seeded.g % 1000 = 0 THEN jsonb_build_object($8::text, to_jsonb(true)) ELSE '{}'::jsonb END) \
+         FROM ins JOIN seeded ON seeded.id = ins.id), \
+     typed AS ( \
+         SELECT ins.entity_key, ins.id, seeded.g, CASE WHEN seeded.g % 997 = 0 THEN $2::integer ELSE $3::integer END AS type_key \
+         FROM ins JOIN seeded ON seeded.id = ins.id), \
+     members AS ( \
+         INSERT INTO entity_type_members (entity_key, entity_type_name_key, id) SELECT entity_key, type_key, id FROM typed) \
+     INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, scope_paths, location) \
+     SELECT typed.entity_key, \
+            ARRAY[typed.type_key], \
+            CASE WHEN typed.g % 1000 = 0 THEN ARRAY[$5::integer, $6::integer] ELSE ARRAY[$5::integer] END, \
+            ARRAY[('seed.' || (typed.g % 997)::text)::ltree], \
+            ST_SetSRID(ST_MakePoint(13.0 + (typed.g % 1000) * 0.001, 52.0 + (typed.g % 1000) * 0.001), 4326) \
+     FROM typed";
+
 /// Write the corpus and analyze the relations the plans read.
 ///
 /// Every Entity lands in all three current-state relations: the identity row,
@@ -208,36 +235,18 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     let rare_type = type_dictionary_key(pool, RARE_TYPE).await;
     let common_type = type_dictionary_key(pool, COMMON_TYPE).await;
 
-    sqlx::query(
-        "WITH seeded AS ( \
-             SELECT g, $1::text || ':seed:' || lpad(g::text, 6, '0') AS id FROM generate_series(1, $4::bigint) AS g), \
-         ins AS ( \
-             INSERT INTO entities (id) SELECT id FROM seeded RETURNING entity_key, id), \
-         docs AS ( \
-             INSERT INTO entity_documents (entity_key, payload) \
-             SELECT ins.entity_key, \
-                    jsonb_build_array(jsonb_build_object('@id', ins.id, $7::text, to_jsonb('city-' || (seeded.g % 1000)::text)) \
-                                      || CASE WHEN seeded.g % 1000 = 0 THEN jsonb_build_object($8::text, to_jsonb(true)) ELSE '{}'::jsonb END) \
-             FROM ins JOIN seeded ON seeded.id = ins.id) \
-         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, scope_paths, location) \
-         SELECT ins.entity_key, \
-                ARRAY[CASE WHEN seeded.g % 997 = 0 THEN $2::integer ELSE $3::integer END], \
-                CASE WHEN seeded.g % 1000 = 0 THEN ARRAY[$5::integer, $6::integer] ELSE ARRAY[$5::integer] END, \
-                ARRAY[('seed.' || (seeded.g % 997)::text)::ltree], \
-                ST_SetSRID(ST_MakePoint(13.0 + (seeded.g % 1000) * 0.001, 52.0 + (seeded.g % 1000) * 0.001), 4326) \
-         FROM ins JOIN seeded ON seeded.id = ins.id",
-    )
-    .bind(prefix)
-    .bind(rare_type)
-    .bind(common_type)
-    .bind(SEEDED_ENTITIES)
-    .bind(city)
-    .bind(alarm)
-    .bind(CITY_ATTRIBUTE)
-    .bind(ALARM_ATTRIBUTE)
-    .execute(pool)
-    .await
-    .expect("entity corpus must be writable");
+    sqlx::query(ENTITY_CORPUS)
+        .bind(prefix)
+        .bind(rare_type)
+        .bind(common_type)
+        .bind(SEEDED_ENTITIES)
+        .bind(city)
+        .bind(alarm)
+        .bind(CITY_ATTRIBUTE)
+        .bind(ALARM_ATTRIBUTE)
+        .execute(pool)
+        .await
+        .expect("entity corpus must be writable");
 
     let like = format!("{prefix}:seed:%");
     sqlx::query(

@@ -14,9 +14,11 @@ mod attribute_value_datatype;
 pub mod attribute_value_order;
 pub mod csr;
 pub mod entity;
+pub mod entity_page;
 pub mod entity_relations;
 pub mod order_geography;
 pub mod result_ordering;
+pub mod selector_predicate;
 pub mod snapshot_purge;
 
 #[cfg(test)]

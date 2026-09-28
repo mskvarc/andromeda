@@ -42,9 +42,11 @@ pub mod projected_type_names;
 pub mod q_predicate;
 pub mod scope_predicate;
 pub mod scope_validity;
+pub mod sort_key;
 pub mod temporal_operand;
 pub mod time_column;
 pub mod time_interval_predicate;
+pub mod type_membership;
 pub mod type_predicate;
 
 #[cfg(test)]

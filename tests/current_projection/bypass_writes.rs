@@ -8,8 +8,8 @@
 use serde_json::json;
 use sqlx::PgConnection;
 
-/// Insert a bare current Entity of one expanded type, with its document and
-/// its search row, and return its surrogate key.
+/// Insert a bare current Entity of one expanded type, with its document, its
+/// search row and its type membership, and return its surrogate key.
 pub async fn insert_typed_entity(connection: &mut PgConnection, entity_id: &str, type_iri: &str) -> i64 {
     let payload = json!([{ "@id": entity_id, "@type": [type_iri] }]);
     let type_key: i32 = sqlx::query_scalar(
@@ -21,8 +21,9 @@ pub async fn insert_typed_entity(connection: &mut PgConnection, entity_id: &str,
     .await
     .expect("type dictionary insert must succeed");
     sqlx::query_scalar(
-        "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key), \
-              doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, $3 FROM ins) \
+        "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key, id), \
+              doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, $3 FROM ins), \
+              mbr AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id) SELECT entity_key, $2, id FROM ins) \
          INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys) SELECT entity_key, ARRAY[$2], ARRAY[]::integer[] FROM ins RETURNING entity_key",
     )
     .bind(entity_id)

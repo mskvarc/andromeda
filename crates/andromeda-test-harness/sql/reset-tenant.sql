@@ -64,6 +64,7 @@ DECLARE
         'attribute_history',
         'temporal_attribute_streams',
         'temporal_entities',
+        'entity_type_members',
         'entity_search',
         'entity_documents',
         'entities',

@@ -2,15 +2,15 @@
 -- 0018: Entities
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.7.1, 4.8, 4.10, 4.17, 4.18, 4.22,
---   5.2.23
+--   5.2.23, 5.5.9
 --
 -- Current Entity state, as three rows in three relations sharing
--- `entity_key`. The split follows the write pattern, not the data model:
--- every attribute write rewrites the payload, almost none changes the
--- Entity's types, scopes or geometries, and its identity never changes. The
--- payload therefore lives apart from every indexed column, so a payload write
--- stays a heap-only update and leaves the type, scope and geometry index
--- entries untouched.
+-- `entity_key`, and one membership row per type the Entity carries. The split
+-- follows the write pattern, not the data model: every attribute write
+-- rewrites the payload, almost none changes the Entity's types, scopes or
+-- geometries, and its identity never changes. The payload therefore lives
+-- apart from every indexed column, so a payload write stays a heap-only update
+-- and leaves the type, scope and geometry index entries untouched.
 -- ============================================================================
 
 -- Identity and lifecycle.
@@ -150,3 +150,32 @@ CREATE INDEX idx_entity_search_operation_space ON entity_search USING GIST (oper
 CREATE INDEX idx_entity_search_written_xid ON entity_search (written_xid);
 
 ALTER TABLE entity_search ALTER COLUMN entity_type_name_keys SET STATISTICS 1000;
+
+-- One row per type an Entity carries (clause 4.17 selects on membership),
+-- keyed by type and then identifier. A type selection pages by walking one
+-- range of this key in the clause 5.5.9 `id` order, reading exactly the rows it
+-- skips and keeps. The GIN over `entity_search.entity_type_name_keys` cannot
+-- give that order, and a walk of `uq_entities_id` filtered by type reads every
+-- Entity whose identifier sorts ahead of the type's first. The key carries
+-- `entity_key` so the walk never visits the heap, and the insert-driven vacuum
+-- keeps the visibility map current enough for that to hold.
+CREATE TABLE entity_type_members (
+    entity_key BIGINT NOT NULL,
+    entity_type_name_key INTEGER NOT NULL,
+    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+    CONSTRAINT pk_entity_type_members PRIMARY KEY (entity_type_name_key, id) INCLUDE (entity_key),
+    CONSTRAINT fk_entity_type_members_entity
+        FOREIGN KEY (entity_key)
+        REFERENCES entities(entity_key) ON DELETE CASCADE
+) WITH (
+    autovacuum_vacuum_insert_scale_factor = 0.01,
+    autovacuum_vacuum_insert_threshold = 500,
+    autovacuum_vacuum_scale_factor = 0.02,
+    autovacuum_vacuum_threshold = 500,
+    autovacuum_analyze_scale_factor = 0.02,
+    autovacuum_analyze_threshold = 500,
+    autovacuum_vacuum_cost_delay = 0
+);
+
+-- The cascade from `entities` and a type change find an Entity's rows by key.
+CREATE INDEX idx_entity_type_members_entity_key ON entity_type_members (entity_key);

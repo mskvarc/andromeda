@@ -34,7 +34,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-    entity_ordering::{order_by_entity_identifier, ordering_collation},
+    entity_ordering::{entity_identifier_key, ordering_collation},
     error::RenderError,
     geo_predicate::relation_expression,
     q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection as q_filter},
@@ -102,12 +102,12 @@ pub fn build_stage1_entity_ids(schema: Option<&DynIden>, compiled: &CompiledTemp
     match &compiled.keyset {
         None => {
             if let Some(ordering) = compiled.ordering.as_ref() {
-                order_by_entity_identifier(
-                    &mut select,
+                entity_identifier_key(
                     SeaExpr::col((E, TemporalEntities::Id)),
                     ordering.direction,
                     &ordering_collation(ordering.collation.as_ref()),
-                );
+                )
+                .order_by(&mut select);
             }
 
             // Clause 5.5.9 asks for a consistent order across pages whether or not
@@ -714,14 +714,20 @@ mod tests {
         }
     }
 
-    /// Each Query Term is its own existential, combined by the q tree.
+    /// The Query Terms of an OR share one windowed existential, each arm
+    /// pairing its own attribute key with its own test: an instance satisfying
+    /// either term is what the disjunction asks for (clause 4.9).
     #[test]
-    fn each_term_of_an_or_is_its_own_windowed_existential() {
+    fn the_terms_of_an_or_share_one_windowed_existential() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100|\"https://example.com/speed\"<10").unwrap());
         let (sql, _) = built(&compiled, &speed_and_address());
-        pretty_assertions::assert_eq!(sql.matches(r#"AS "qh""#).count(), 2, "{sql}");
-        assert!(sql.contains(" OR EXISTS"), "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#"AS "qh""#).count(), 1, "{sql}");
+        assert!(
+            sql.contains(r#"(("qs"."attribute_name_key" = $1 AND "qh"."value_number" > $2) OR ("qs"."attribute_name_key" = $3 AND "qh"."value_number" < $4))"#),
+            "{sql}"
+        );
+        assert!(!sql.contains(" OR EXISTS"), "{sql}");
     }
 
     #[test]

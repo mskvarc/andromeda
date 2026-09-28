@@ -68,10 +68,9 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
         // the GIN; the inlined key is what keeps the probe.
         PlannedShape {
             shape: "rare attrs page",
-            statement: format!(
-                "SELECT (SELECT d.payload FROM entity_documents AS d WHERE d.entity_key = e.entity_key) AS payload \
-                 FROM entities AS e JOIN entity_search AS s ON s.entity_key = e.entity_key \
-                 WHERE s.attribute_name_keys @> ARRAY[{alarm}] ORDER BY e.id LIMIT 100"
+            statement: payload_page(
+                &format!("FROM entities AS e JOIN entity_search AS s USING (entity_key) WHERE s.attribute_name_keys @> ARRAY[{alarm}]"),
+                0,
             ),
             index: "idx_entity_search_attribute_name_keys",
         },
@@ -187,6 +186,40 @@ async fn entity_access_path_for_a_type_filter_uses_the_types_gin_index() {
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clauses 4.17 and 5.5.9: a page of one type walks that type's membership key
+/// range in identifier order, so its cost follows the rows it skips and keeps
+/// and never the Entities of other types whose identifiers sort ahead of it,
+/// which a walk of `uq_entities_id` filtered by type would read. The
+/// memberships select exactly the Entities the search row's types do.
+#[tokio::test]
+async fn a_type_page_walks_the_membership_key_in_identifier_order() {
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let pool = scope.database_pool();
+    let corpus = seed(pool, SEED_PREFIX).await;
+
+    for type_key in [corpus.rare_type(), corpus.common_type()] {
+        let walk = format!("FROM (SELECT entity_key, id FROM entity_type_members WHERE entity_type_name_key = {type_key}) AS e");
+        let plan = explain(pool, &payload_page(&walk, 10)).await;
+        assert!(plan.contains("pk_entity_type_members"), "the page walks the membership key: {plan}");
+        assert!(!plan.contains("uq_entities_id"), "the page reads no other type's identifiers: {plan}");
+        assert!(!plan.contains("Sort "), "the walk yields identifier order, so nothing is sorted: {plan}");
+
+        let members: i64 = sqlx::query_scalar("SELECT count(*) FROM entity_type_members WHERE entity_type_name_key = $1")
+            .bind(type_key)
+            .fetch_one(pool)
+            .await
+            .expect("membership count must be readable");
+        let searched: i64 = sqlx::query_scalar("SELECT count(*) FROM entity_search WHERE entity_type_name_keys @> ARRAY[$1::integer]")
+            .bind(type_key)
+            .fetch_one(pool)
+            .await
+            .expect("search count must be readable");
+        assert_eq!(members, searched, "the memberships and the search rows select the same Entities");
+    }
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// Clause 5.7.2.4 lets any `location` instance match, so a `location`
 /// geo-query is a semi-join over two arms: the hoisted default instance and
 /// every instance row carrying a `datasetId`. Each arm must reach its own `GiST`
@@ -253,17 +286,64 @@ fn string_equality(operand: &str) -> String {
     )
 }
 
-/// The page shape a Query Entities `q` issues: type-selected, ordered by
-/// identifier, limited, with the probe the compiler emits.
-fn q_page(probe: &str) -> String {
+/// The payload statement a Query Entities page issues over `source` (its
+/// `FROM` and `WHERE`, the identity row aliased `e`): the page of 100 entity
+/// keys is cut in identifier order past `offset` rows, and each kept row's
+/// payload is looked up by key outside the window.
+fn payload_page(source: &str, offset: u32) -> String {
     format!(
-        "SELECT d.payload FROM entities AS e JOIN entity_search AS s ON s.entity_key = e.entity_key \
-         JOIN entity_documents AS d ON d.entity_key = e.entity_key \
-         WHERE EXISTS (SELECT 1 FROM current_attribute_values AS c \
-                       WHERE (c.expires_at IS NULL OR c.expires_at > NOW()) AND {probe} \
-                         AND c.entity_key = e.entity_key) \
-         ORDER BY e.id LIMIT 100"
+        "SELECT (SELECT d.payload FROM entity_documents AS d WHERE d.entity_key = page.entity_key) AS payload \
+         FROM (SELECT e.entity_key, e.id AS sort_0 {source} ORDER BY sort_0 ASC LIMIT 100 OFFSET {offset}) AS page \
+         ORDER BY page.sort_0 ASC"
     )
+}
+
+/// The page shape a Query Entities `q` issues: ordered by identifier, limited,
+/// with the probe the compiler emits and the document row it joins.
+fn q_page(probe: &str) -> String {
+    payload_page(
+        &format!(
+            "FROM entities AS e JOIN entity_search AS s ON s.entity_key = e.entity_key \
+             JOIN entity_documents AS d ON d.entity_key = e.entity_key \
+             WHERE EXISTS (SELECT 1 FROM current_attribute_values AS c \
+                           WHERE (c.expires_at IS NULL OR c.expires_at > NOW()) AND {probe} \
+                             AND c.entity_key = e.entity_key)"
+        ),
+        0,
+    )
+}
+
+/// A page past an `OFFSET` reads the documents of the rows it keeps and no
+/// others: the payload lookup runs outside the window, once per kept row,
+/// rather than once for every row the offset walks past. Whether the outer
+/// statement re-sorts the page or the planner carries its order through, the
+/// rows come back in the order the page was cut in (clause 4.23.1).
+#[tokio::test]
+async fn an_offset_page_reads_the_documents_of_its_kept_rows_only() {
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let pool = scope.database_pool();
+    seed(pool, SEED_PREFIX).await;
+
+    let plan = explain(pool, &payload_page("FROM entities AS e", 5_000)).await;
+    let lookup = plan
+        .lines()
+        .find(|line| line.contains("pk_entity_documents"))
+        .unwrap_or_else(|| panic!("the payload is looked up by key: {plan}"));
+    assert!(lookup.contains("loops=100)"), "one lookup per kept row, not per skipped row: {plan}");
+
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT page.id FROM (SELECT e.id, e.id AS sort_0 FROM entities AS e ORDER BY sort_0 ASC LIMIT 100 OFFSET 5000) AS page \
+         ORDER BY page.sort_0 ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("the page must be readable");
+    let mut sorted = ids.clone(); // clone: compared against the order the statement returned
+    sorted.sort();
+    assert_eq!(ids, sorted);
+    assert_eq!(ids.len(), 100);
+
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// A clause 4.9 equality tests every column its target value can occupy, the

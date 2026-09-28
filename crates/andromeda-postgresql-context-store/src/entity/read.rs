@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_context_query::entity as entity_sql;
+use andromeda_postgresql_context_query::{entity as entity_sql, entity_page::TOTAL_COUNT_COLUMN};
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     projected_attribute_names::projected_attribute_names,
@@ -273,7 +273,7 @@ fn extract_payloads(rows: Vec<PgRow>, read_total_count: bool) -> Result<(Vec<Val
     let mut row_iter = rows.into_iter();
     if read_total_count {
         if let Some(first) = row_iter.next() {
-            let count = first.try_get::<i64, _>(entity_sql::TOTAL_COUNT_COLUMN).ok();
+            let count = first.try_get::<i64, _>(TOTAL_COUNT_COLUMN).ok();
             let mut results = Vec::with_capacity(row_iter.size_hint().0 + 1);
             results.push(first.try_get::<Value, _>("payload")?);
             for row in row_iter {
