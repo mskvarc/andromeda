@@ -27,9 +27,9 @@ dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["debug"] }
 headers = "0.4.1"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-jsonld = { version = "0.22.1", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
-jsonld-core = "0.22.1"
-jsonld-syntax = { version = "0.22.1", features = ["serde-json"] }
+jsonld = { version = "0.23.1", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
+jsonld-core = "0.23.1"
+jsonld-syntax = { version = "0.23.1", features = ["serde-json"] }
 mediatype = "0.23.0"
 moka = { version = "0.12.16", features = ["future"] }
 rdfx = "0.24.0"

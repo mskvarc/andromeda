@@ -15,11 +15,11 @@
 
 use crate::{
     entity::{
-        mapper::stored_written_entity,
+        inserted_entity::InsertedEntity,
+        mapper::stored_inserted_entity,
         params::PreparedEntityColumns,
         types_present::{entity_write_failure, types_present},
         write::type_membership::created_memberships,
-        written_entity::WrittenEntity,
     },
     error::ContextStoreError,
 };
@@ -138,7 +138,7 @@ pub async fn create_batch_via_copy_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
     columns: &PreparedEntityColumns,
-) -> Result<Vec<WrittenEntity>, ContextStoreError> {
+) -> Result<Vec<InsertedEntity>, ContextStoreError> {
     if columns.ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -158,7 +158,7 @@ pub async fn create_batch_via_copy_in_tx(
         .fetch_all(&mut **tx)
         .await
         .map_err(entity_write_failure)?;
-    rows.iter().map(|(key, id)| stored_written_entity(*key, id)).collect()
+    rows.iter().map(|(key, id)| stored_inserted_entity(*key, id)).collect()
 }
 
 /// Encode a set of entity columns into the Postgres binary COPY format.

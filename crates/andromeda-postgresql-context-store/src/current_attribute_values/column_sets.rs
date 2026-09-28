@@ -13,7 +13,7 @@ use andromeda_postgresql_seaquery::{pg_type::PostgresType, unnest::UnnestColumn}
 /// is a difference on two fields at once, and `expires_at` is among them, so an
 /// instance whose value is unchanged but whose clause 4.22 `expiresAt` moved is
 /// rewritten.
-pub(super) const REFRESHED_COLUMNS: [CurrentAttributeValues; 12] = [
+pub(crate) const REFRESHED_COLUMNS: [CurrentAttributeValues; 12] = [
     CurrentAttributeValues::AttributeKind,
     CurrentAttributeValues::ValueKind,
     CurrentAttributeValues::ValueDateTime,
@@ -29,7 +29,7 @@ pub(super) const REFRESHED_COLUMNS: [CurrentAttributeValues; 12] = [
 ];
 
 /// All persisted projection columns, in table order.
-pub(super) const PROJECTION_COLUMNS: [CurrentAttributeValues; 15] = [
+pub(crate) const PROJECTION_COLUMNS: [CurrentAttributeValues; 15] = [
     CurrentAttributeValues::EntityKey,
     CurrentAttributeValues::AttributeNameKey,
     CurrentAttributeValues::AttributeKind,
@@ -52,7 +52,7 @@ pub(super) const PROJECTION_COLUMNS: [CurrentAttributeValues; 15] = [
 /// Each pairs the name the row column takes in the `AS d(…)` alias with the
 /// array element type its `UNNEST` argument casts to. The `value_number` array
 /// is `numeric[]`, so exact decimals are bound without a text or binary64 hop.
-pub(super) fn staging_columns() -> [UnnestColumn; 15] {
+pub(crate) fn staging_columns() -> [UnnestColumn; 15] {
     [
         UnnestColumn::new(CurrentAttributeValues::EntityKey, PostgresType::BigintArray),
         UnnestColumn::new(CurrentAttributeValues::AttributeNameKey, PostgresType::IntegerArray),

@@ -2058,7 +2058,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2069,7 +2069,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3398,7 +3398,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4738,9 +4738,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6655d31a99eeffb541d5be7da4fdb07cc0a13fbcdb05ddc66b7171ba91a7f2f"
+checksum = "2a31ecd1f0b8a2a77db9bb8450e625749ce76607ccbc384c87e3b606c454ebd0"
 dependencies = [
  "contextual",
  "iri-rs",
@@ -4760,9 +4760,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-compaction"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae8d3ab6ba875996446dceec47e82e996f9eda44a03eafec1843cccd9dce41d5"
+checksum = "0c826cde4c55681ac9d9b8cd791bff891f26e529a8e0f7ec2885fe62b4f0e017"
 dependencies = [
  "contextual",
  "jsonld-context-processing",
@@ -4777,9 +4777,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-context-processing"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b77c555b7d65479c6b27bc4d5076e8f3dcc0f4dc6ba2aeda39800efb203154eb"
+checksum = "e884ffe7bf5cf00f5d22039670d7b49dee26a3ad2a7b0c9533d74f8cc2455bc8"
 dependencies = [
  "contextual",
  "foldhash",
@@ -4793,9 +4793,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-core"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab67bb265ab94fa6f184b1130f8dc50c4edb79e6b3209f64c7641a5ec18ca1cc"
+checksum = "00bc8379defaddd5e3d870677fe4743ab58f2b17578b70e63ce0bb9a4b5a679a"
 dependencies = [
  "contextual",
  "derive-where",
@@ -4825,9 +4825,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expandable"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce18c272c34d4e9fc633f1b9e21d0721fb84be093b6dc614b3cc4815852752c7"
+checksum = "72a9f13fa3022b47bdc1e1749e09cd17920bebb68a065bf4c85646ec05ea4a95"
 dependencies = [
  "jsonld-expandable-core",
  "proc-macro-crate",
@@ -4838,9 +4838,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expandable-core"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ec84b8db213eab7e8401d0d267072feca562297a6b71cab2b1fa2ec077c6df2"
+checksum = "70b88b76e067560aa07b63deca38f2d81e8ff29b4b8da6e47893da9ee9ceda3f"
 dependencies = [
  "chrono",
  "proc-macro2",
@@ -4851,9 +4851,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expansion"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02a073b6b300964a13d764b684a4dc6ed7c4b029d67c6b7b304f0ed022096def"
+checksum = "718d81fc0956c7e547bdfe5732656603a5b01b33d51b6d0426f2025c28a7951e"
 dependencies = [
  "contextual",
  "jsonld-context-processing",
@@ -4868,9 +4868,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-serialization"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a4fd15d4fbe771b7b59188ece8e3de07e8d5b7a17d8ebb61f0b4126e3236cd3"
+checksum = "3effce108f01f1597b7df8a0ee8d52d9e43df4765ea4ce41626f06cf9b118835"
 dependencies = [
  "iri-rs",
  "jsonld-core",
@@ -4883,9 +4883,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-syntax"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20010425e3f04eac9a2e12cb1a2fd2bf5babbfb9017fbbdf1590c73984a43992"
+checksum = "d08f79a5fe7ac7c0070324c442c1d98915cfe837a7ff9430f37bd4654f24b31e"
 dependencies = [
  "contextual",
  "hashbrown 0.17.1",
@@ -4902,9 +4902,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-vocab"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdfb6c44741de99d31a4593d54f25277e1b9c8d0b51c15354d03370c5b532300"
+checksum = "31ee367411e2d309d13812fb8c9c3a1bb03db30e97862478cd4988683e86397c"
 dependencies = [
  "heck 0.5.0",
  "proc-macro-crate",
@@ -5443,7 +5443,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5822,7 +5822,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6299,7 +6299,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6366,7 +6366,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6839,9 +6839,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
+checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 dependencies = [
  "serde",
 ]
@@ -6853,7 +6853,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7283,10 +7283,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7296,7 +7296,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -8094,7 +8094,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

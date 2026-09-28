@@ -11,7 +11,12 @@
 //! current state is deleted, so the temporal catalogue has to be able to exist
 //! without it.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, temporal_stream::TemporalCatalogUpsert};
+use crate::{
+    error::TemporalStoreError,
+    repo::TemporalRepository,
+    resolved_evolutions::{EvolutionOrigin, ResolvedEvolutions},
+    temporal_stream::TemporalCatalogUpsert,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_postgresql_branch::table_of;
@@ -37,6 +42,12 @@ use std::collections::HashMap;
 #[derive(Iden, Clone, Copy)]
 #[iden = "d"]
 struct D;
+
+/// The pre-image a PostgreSQL 18 `RETURNING` clause reads, `old`: NULL for a
+/// row the insert created, the stored row for one its conflict action updated.
+#[derive(Iden, Clone, Copy)]
+#[iden = "old"]
+struct Old;
 
 /// The staging columns of one temporal-entity upsert, named as the `AS d(…)`
 /// alias spells them rather than as the columns they land in.
@@ -86,8 +97,8 @@ impl TemporalRepository {
         target: &ContextTarget,
         upserts: &[TemporalCatalogUpsert],
         recorded_at: DateTime<Utc>,
-    ) -> Result<HashMap<Uri, TemporalEntityKey>, TemporalStoreError> {
-        let mut entity_keys = HashMap::with_capacity(upserts.len());
+    ) -> Result<ResolvedEvolutions, TemporalStoreError> {
+        let mut resolved = ResolvedEvolutions::default();
         let (creating, resolving): (Vec<&TemporalCatalogUpsert>, Vec<&TemporalCatalogUpsert>) =
             upserts.iter().partition(|upsert| match evolution_resolution(upsert) {
                 EvolutionResolution::Create => true,
@@ -101,27 +112,36 @@ impl TemporalRepository {
                 .map_err(|error| TemporalStoreError::NameLookup(error.to_string()))?;
             let binds = entity_upsert_binds(&creating, recorded_at, &type_keys)?;
             let sql = temporal_entity_upsert_batch_sql(target)?;
-            let rows: Vec<(i64, String)> = sqlx::query_as(AssertSqlSafe(sql))
+            let rows: Vec<(i64, String, bool)> = sqlx::query_as(AssertSqlSafe(sql))
                 .bind(&binds.ids)
                 .bind(&binds.recorded_ats)
                 .bind(&binds.entity_type_name_keys_json)
                 .fetch_all(&mut **tx)
                 .await?;
-            harvest_keys(&mut entity_keys, rows)?;
+            for (stored, id, inserted) in rows {
+                harvest_key(&mut resolved, stored, &id, origin_of(inserted))?;
+            }
         }
         if !resolving.is_empty() {
             let ids: Vec<&str> = resolving.iter().map(|upsert| upsert.entity_id.as_str()).collect();
             let sql = temporal_entity_keys_lookup_sql(target);
             let rows: Vec<(i64, String)> = sqlx::query_as(AssertSqlSafe(sql)).bind(&ids).fetch_all(&mut **tx).await?;
-            harvest_keys(&mut entity_keys, rows)?;
-            if let Some(missing) = first_missing_typeless_observation(&resolving, &entity_keys) {
+            for (stored, id) in rows {
+                harvest_key(&mut resolved, stored, &id, EvolutionOrigin::Existing)?;
+            }
+            if let Some(missing) = first_missing_typeless_observation(&resolving, resolved.keys()) {
                 return Err(TemporalStoreError::NotFound(format!(
                     "Temporal evolution of {missing} does not exist and the write declares no entity type to create it with"
                 )));
             }
         }
-        Ok(entity_keys)
+        Ok(resolved)
     }
+}
+
+/// The origin the upsert's `old.temporal_entity_key IS NULL` column reports.
+const fn origin_of(inserted: bool) -> EvolutionOrigin {
+    if inserted { EvolutionOrigin::Created } else { EvolutionOrigin::Existing }
 }
 
 /// Whether resolving one upsert's narrow key may create the temporal entity.
@@ -158,15 +178,13 @@ const fn evolution_resolution(upsert: &TemporalCatalogUpsert) -> EvolutionResolu
     }
 }
 
-/// Record every harvested `(entity_key, id)` pair under its typed identifier.
-fn harvest_keys(entity_keys: &mut HashMap<Uri, TemporalEntityKey>, rows: Vec<(i64, String)>) -> Result<(), TemporalStoreError> {
-    for (stored, id) in rows {
-        let key = TemporalEntityKey::try_from(stored).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
-        let id = id
-            .parse::<Uri>()
-            .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.id '{id}': {error}")))?;
-        entity_keys.insert(id, key);
-    }
+/// Record one harvested `(entity_key, id)` pair under its typed identifier.
+fn harvest_key(resolved: &mut ResolvedEvolutions, stored: i64, id: &str, origin: EvolutionOrigin) -> Result<(), TemporalStoreError> {
+    let key = TemporalEntityKey::try_from(stored).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
+    let id = id
+        .parse::<Uri>()
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.id '{id}': {error}")))?;
+    resolved.record(id, key, origin);
     Ok(())
 }
 
@@ -258,7 +276,9 @@ fn entity_staging_columns() -> [UnnestColumn; 3] {
 /// staged once per entity and read for both `created_at` and `modified_at`; the
 /// type keys arrive as a JSONB array per entity and are expanded to `integer[]`
 /// in the insert, the same interning `temporal_entities.entity_type_name_keys` carries. Every
-/// minted key is harvested with `RETURNING`, so no read-back is needed.
+/// minted key is harvested with `RETURNING`, so no read-back is needed, beside
+/// `old.temporal_entity_key IS NULL`, which is true exactly for a row the insert
+/// created rather than one its conflict action refreshed.
 fn temporal_entity_upsert_batch_sql(target: &ContextTarget) -> Result<String, TemporalStoreError> {
     let columns = entity_staging_columns();
     let call = unnest_call([
@@ -299,7 +319,11 @@ fn temporal_entity_upsert_batch_sql(target: &ContextTarget) -> Result<String, Te
                 .update_columns([TemporalEntities::ModifiedAt, TemporalEntities::EntityTypeNameKeys])
                 .to_owned(),
         )
-        .returning(Query::returning().columns([TemporalEntities::TemporalEntityKey, TemporalEntities::Id]));
+        .returning(Query::returning().exprs([
+            Expr::col(TemporalEntities::TemporalEntityKey),
+            Expr::col(TemporalEntities::Id),
+            Expr::col((Old, TemporalEntities::TemporalEntityKey)).is_null(),
+        ]));
 
     let sql = insert.to_string(PostgresQueryBuilder);
     Ok(apply_column_alias(sql, &D, &columns))
@@ -379,6 +403,17 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains("AS d(id, recorded_at, entity_type_name_keys_json)"), "{sql}");
+    }
+
+    /// The pre-image is NULL exactly for a row the insert created, which is how
+    /// the chunk learns that an evolution owns no stream yet.
+    #[test]
+    fn the_batched_entity_upsert_reports_which_evolutions_it_created() {
+        let sql = temporal_entity_upsert_batch_sql(&ContextTarget::Live).expect("the batched entity upsert builds");
+        assert!(
+            sql.ends_with(r#"RETURNING "temporal_entity_key", "id", "old"."temporal_entity_key" IS NULL"#),
+            "{sql}"
+        );
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub mod intent_store;
 /// Removing the side-effect job a replayed commit settles.
 mod job_settlement;
 mod name_resolution;
+mod projected_entity_key;
 mod projection;
 
 #[cfg(test)]

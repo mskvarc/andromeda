@@ -2,10 +2,10 @@
 //! already exists is locked, updated in place by `ctid` when it differs, and
 //! kept out of the insert.
 
-use crate::current_attribute_values::upsert::{
+use crate::current_attribute_values::{
     column_sets::{PROJECTION_COLUMNS, REFRESHED_COLUMNS},
-    no_op_guard::stored_row_differs_from,
     staging::{Input, InputId},
+    upsert::no_op_guard::stored_row_differs_from,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;

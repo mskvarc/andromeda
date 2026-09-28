@@ -56,6 +56,8 @@ pub mod reader;
 pub mod recorder;
 /// SQL-only repository for the NGSI-LD Temporal API.
 pub mod repo;
+/// The Temporal Evolutions a chunk resolved, and which of them it created.
+pub(crate) mod resolved_evolutions;
 /// Operator retention: ageing temporal storage out without NGSI-LD semantics.
 pub mod retention_sweep;
 /// TimescaleDB procedural DDL SeaQuery has no form for.
@@ -77,6 +79,8 @@ pub(crate) mod stored_attribute_shape;
 pub(crate) mod stored_decimal;
 /// Splitting one stored instance identity across its two history columns.
 pub mod stored_instance_columns;
+/// The stream grains one chunk requests, bound column-major and indexed back.
+pub(crate) mod stream_grain_binds;
 /// Reading the temporal catalogue.
 pub mod temporal_catalog_read;
 /// Coordinating one chunk's temporal-entity and temporal-stream catalogue writes.

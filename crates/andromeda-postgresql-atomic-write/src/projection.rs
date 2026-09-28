@@ -14,7 +14,10 @@
 //! whose write did not land carries no key and contributes nothing here, and
 //! the dictionary keys were minted from those same intents in this transaction.
 
-use crate::commit_refusal::{context_store, unit_code};
+use crate::{
+    commit_refusal::{context_store, unit_code},
+    projected_entity_key::ProjectedEntityKey,
+};
 use andromeda_context_commit::error::CommitError;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
@@ -22,6 +25,7 @@ use andromeda_ngsi_ld_model::expanded::attribute_expiry::instance_expires_at;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_store::current_attribute_values::{
     delete::delete_instances_in_tx,
+    minted_insert::{MintedProjection, insert_minted_projection_in_tx},
     row::{ProjectedAttributeKey, ProjectedAttributeRow, ProjectedAttributeValue},
     upsert::upsert_projection_in_tx,
 };
@@ -34,7 +38,11 @@ use std::collections::HashMap;
 /// The projection work one commit's intents amount to.
 #[derive(Debug, Default)]
 struct ProjectionWork {
-    /// Instances whose current value the mutation restates.
+    /// Instances of entities the commit's own insert created, which own no row
+    /// to match and are inserted outright.
+    minted: MintedProjection,
+    /// Instances of entities that existed before the commit, whose current
+    /// value the mutation restates.
     upserts: Vec<ProjectedAttributeRow>,
     /// Instances the mutation removed from current entity state.
     removals: Vec<ProjectedAttributeKey>,
@@ -54,10 +62,10 @@ pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
     intents: &[&TemporalAppendIntent],
-    keys: &HashMap<Uri, EntityKey>,
+    keys: &HashMap<Uri, ProjectedEntityKey>,
     dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<(), CommitError> {
-    let projected: Vec<(&TemporalAppendIntent, EntityKey)> = intents
+    let projected: Vec<(&TemporalAppendIntent, ProjectedEntityKey)> = intents
         .iter()
         .copied()
         .filter_map(|intent| keys.get(&intent.entity_id).map(|key| (intent, *key)))
@@ -77,6 +85,7 @@ pub(crate) async fn apply(
     // sides: an instance the mutation gives a value to is not one it removed.
     delete_instances_in_tx(tx, target, &work.removals).await.map_err(context_store)?;
     upsert_projection_in_tx(tx, target, &work.upserts).await.map_err(context_store)?;
+    insert_minted_projection_in_tx(tx, target, &work.minted).await.map_err(context_store)?;
     Ok(())
 }
 
@@ -84,33 +93,39 @@ pub(crate) async fn apply(
 fn collect(
     work: &mut ProjectionWork,
     intent: &TemporalAppendIntent,
-    entity_key: EntityKey,
+    entity: ProjectedEntityKey,
     dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<(), CommitError> {
     for entry in &intent.entries {
         match entry {
             TemporalAppendEntry::Observation { row } => {
-                let key = grain(entity_key, &row.attribute_name, row.dataset_id.as_ref(), dictionary)?;
+                let key = grain(entity.key(), &row.attribute_name, row.dataset_id.as_ref(), dictionary)?;
                 match ProjectedAttributeValue::try_from(&row.value) {
                     // An observation that ends the instance is a deletion in
                     // observation clothing (clauses 4.5.7 and 4.5.8): current
                     // state loses the row rather than storing a marker.
                     Err(_) => work.removals.push(key),
-                    Ok(value) => work.upserts.push(ProjectedAttributeRow {
-                        key,
-                        attribute_kind: stored_attribute_kind(row.attribute_type),
-                        value,
-                        unit_code_id: unit_code_in(row.metadata.as_ref()).map_err(unit_code)?,
-                        // The instance's own members other than its value are
-                        // its metadata, so its clause 4.22 `expiresAt` is read
-                        // from there exactly as the payload carries it.
-                        expires_at: row.metadata.as_ref().and_then(instance_expires_at),
-                    }),
+                    Ok(value) => {
+                        let projected = ProjectedAttributeRow {
+                            key,
+                            attribute_kind: stored_attribute_kind(row.attribute_type),
+                            value,
+                            unit_code_id: unit_code_in(row.metadata.as_ref()).map_err(unit_code)?,
+                            // The instance's own members other than its value
+                            // are its metadata, so its clause 4.22 `expiresAt`
+                            // is read from there exactly as the payload carries it.
+                            expires_at: row.metadata.as_ref().and_then(instance_expires_at),
+                        };
+                        match entity {
+                            ProjectedEntityKey::Minted(minted) => work.minted.push(minted, projected).map_err(context_store)?,
+                            ProjectedEntityKey::Existing(_) => work.upserts.push(projected),
+                        }
+                    }
                 }
             }
             TemporalAppendEntry::Tombstone {
                 attribute_name, dataset_id, ..
-            } => work.removals.push(grain(entity_key, attribute_name, dataset_id.as_ref(), dictionary)?),
+            } => work.removals.push(grain(entity.key(), attribute_name, dataset_id.as_ref(), dictionary)?),
             TemporalAppendEntry::Scope { .. } => {}
         }
     }
@@ -136,7 +151,10 @@ fn grain(
 
 #[cfg(test)]
 mod tests {
-    use crate::projection::{ProjectionWork, collect};
+    use crate::{
+        projected_entity_key::ProjectedEntityKey,
+        projection::{ProjectionWork, collect},
+    };
     use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
@@ -165,8 +183,9 @@ mod tests {
         HashMap::from([(speed(), AttributeNameKey::from(7))])
     }
 
-    fn entity_key() -> EntityKey {
-        EntityKey::try_from(1).expect("a positive surrogate key")
+    /// An entity that existed before the commit, whose rows are upserted.
+    fn entity_key() -> ProjectedEntityKey {
+        ProjectedEntityKey::Existing(EntityKey::try_from(1).expect("a positive surrogate key"))
     }
 
     fn intent(entries: Vec<TemporalAppendEntry>) -> TemporalAppendIntent {

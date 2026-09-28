@@ -1,24 +1,23 @@
 //! Writing an entity mutation's attribute instances into the projection.
 //!
-//! One set-based statement per batch, built in stages: [`staging`] unnests and
+//! One set-based statement per batch, built in stages: the shared
+//! [`staging`](crate::current_attribute_values::staging) unnests and
 //! deduplicates the batch, [`update_first`] updates the grains that already
 //! exist, and the final insert writes the rest under the conflict action
-//! [`no_op_guard`] shares with the update. [`column_sets`] holds the column
-//! lists all three agree on.
+//! [`no_op_guard`] shares with the update. The column lists all three agree on
+//! are [`column_sets`](crate::current_attribute_values::column_sets)'.
 
-mod column_sets;
 mod no_op_guard;
-mod staging;
 mod update_first;
 
 use crate::{
     current_attribute_values::{
+        column_sets::{PROJECTION_COLUMNS, staging_columns},
         columns::ProjectionBinds,
         row::ProjectedAttributeRow,
+        staging::{Ordinality, Staging, input_cte},
         upsert::{
-            column_sets::{PROJECTION_COLUMNS, staging_columns},
             no_op_guard::concurrent_insert_conflict,
-            staging::{Ordinality, Staging, input_cte},
             update_first::{matched_cte, unmatched_input_select, updated_cte},
         },
     },
@@ -84,23 +83,7 @@ pub async fn upsert_projection_in_tx(
 
     let binds = ProjectionBinds::from_rows(rows)?;
     let sql = projection_upsert_sql(target)?;
-    let statement = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-        .bind(&binds.entity_keys)
-        .bind(&binds.attribute_name_keys)
-        .bind(&binds.attribute_kinds)
-        .bind(&binds.value_kinds)
-        .bind(&binds.value_date_times)
-        .bind(&binds.expires_ats)
-        .bind(&binds.unit_code_ids)
-        .bind(&binds.value_booleans)
-        .bind(&binds.dataset_ids)
-        .bind(&binds.value_numbers)
-        .bind(&binds.value_strings)
-        .bind(&binds.value_geometries)
-        .bind(&binds.value_objects)
-        .bind(&binds.value_uris)
-        .bind(&binds.value_long_texts)
-        .execute(&mut **tx);
+    let statement = binds.bind_to(sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))).execute(&mut **tx);
     observe_statement(CAV_UPSERT, statement).await?;
 
     Ok(())

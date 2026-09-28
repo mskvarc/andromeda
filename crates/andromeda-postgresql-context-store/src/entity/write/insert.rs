@@ -3,7 +3,8 @@
 
 use crate::{
     entity::{
-        mapper::stored_written_entity,
+        inserted_entity::InsertedEntity,
+        mapper::stored_inserted_entity,
         params::PreparedEntityColumns,
         repo::EntityRepository,
         types_present::{entity_write_failure, types_present},
@@ -11,7 +12,6 @@ use crate::{
             staging::{Docs, ExpectationStaged, Ins, Proj, Srch, Staged, from_inserted, insert_staging_columns, projected, projection_cte},
             type_membership::{Mbrs, created_memberships},
         },
-        written_entity::WrittenEntity,
     },
     error::ContextStoreError,
 };
@@ -141,7 +141,7 @@ impl EntityRepository {
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         entities: &PreparedEntityColumns,
-    ) -> Result<Vec<WrittenEntity>, ContextStoreError> {
+    ) -> Result<Vec<InsertedEntity>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -164,7 +164,7 @@ impl EntityRepository {
             .fetch_all(&mut **tx);
         let rows: Vec<(i64, String)> = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
 
-        rows.iter().map(|(key, id)| stored_written_entity(*key, id)).collect()
+        rows.iter().map(|(key, id)| stored_inserted_entity(*key, id)).collect()
     }
 }
 

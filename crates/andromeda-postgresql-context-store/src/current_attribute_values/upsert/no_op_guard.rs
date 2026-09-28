@@ -1,7 +1,7 @@
 //! The no-op guard of the projection upsert: a stored row whose projection is
 //! value-identical to the proposed one is not rewritten.
 
-use crate::current_attribute_values::upsert::column_sets::REFRESHED_COLUMNS;
+use crate::current_attribute_values::column_sets::REFRESHED_COLUMNS;
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::pg_operator::PgBinaryOperator;
 use sea_query::{Expr, Iden, OnConflict, SimpleExpr};

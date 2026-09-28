@@ -6,6 +6,8 @@ pub mod copy;
 pub mod discovery;
 /// Removing entities and attribute instances whose `expiresAt` has passed.
 pub mod expiry;
+/// The identity the fused entity insert hands back, with its minted key.
+pub mod inserted_entity;
 /// Resolving surrogate keys of entities a commit touched without writing them.
 pub mod keys;
 /// Row-to-domain conversions for the `entities` table.

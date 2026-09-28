@@ -20,6 +20,7 @@ use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use sqlx::{Postgres, postgres::PgArguments, query::Query};
 
 /// The typed columns one projected value occupies.
 ///
@@ -154,6 +155,32 @@ impl<'a> ProjectionBinds<'a> {
             binds.value_long_texts.push(value.long_text);
         }
         Ok(binds)
+    }
+
+    /// Bind the fifteen column arrays to `query`, in the marker order the
+    /// projection statements' shared staging emits
+    /// ([`staging_columns`](crate::current_attribute_values::column_sets::staging_columns)).
+    ///
+    /// The arrays bind through `sqlx` rather than sea-query because eleven of
+    /// them carry NULLs (`Vec<Option<T>>`), which `sea-query-sqlx` cannot
+    /// represent.
+    pub(crate) fn bind_to<'q>(&'q self, query: Query<'q, Postgres, PgArguments>) -> Query<'q, Postgres, PgArguments> {
+        query
+            .bind(&self.entity_keys)
+            .bind(&self.attribute_name_keys)
+            .bind(&self.attribute_kinds)
+            .bind(&self.value_kinds)
+            .bind(&self.value_date_times)
+            .bind(&self.expires_ats)
+            .bind(&self.unit_code_ids)
+            .bind(&self.value_booleans)
+            .bind(&self.dataset_ids)
+            .bind(&self.value_numbers)
+            .bind(&self.value_strings)
+            .bind(&self.value_geometries)
+            .bind(&self.value_objects)
+            .bind(&self.value_uris)
+            .bind(&self.value_long_texts)
     }
 }
 

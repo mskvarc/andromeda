@@ -11,7 +11,7 @@ workspace = true
 [dependencies]
 geo = "0.33.1"
 geojson = "1.0.0"
-jsonld-expandable-core = { version = "0.22.1", features = ["serde-json"] }
+jsonld-expandable-core = { version = "0.23.1", features = ["serde-json"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 strum = { version = "0.28.0", features = ["derive"] }

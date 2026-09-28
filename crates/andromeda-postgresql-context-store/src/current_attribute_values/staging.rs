@@ -2,7 +2,7 @@
 //! unnested under the `d` alias, deduplicated to the clause 4.5.5 grain and
 //! with their geometries validated.
 
-use crate::current_attribute_values::upsert::column_sets::PROJECTION_COLUMNS;
+use crate::current_attribute_values::column_sets::PROJECTION_COLUMNS;
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::{
     placeholder::external_placeholder,
@@ -18,25 +18,25 @@ use sea_query::{CaseStatement, CommonTableExpression, Expr, ExprTrait, Iden, Key
 /// `AS "d"` the table source emits is the one [`apply_with_ordinality`] rewrites.
 #[derive(Iden, Clone, Copy)]
 #[iden = "d"]
-pub(super) struct Staging;
+pub(crate) struct Staging;
 
 /// The row-position column `WITH ORDINALITY` appends to the staging alias.
 #[derive(Iden, Clone, Copy)]
 #[iden = "ordinality"]
-pub(super) struct Ordinality;
+pub(crate) struct Ordinality;
 
 /// The deduplicated and geometry-validated batch rows.
 #[derive(Iden, Clone, Copy)]
 #[iden = "input"]
-pub(super) struct Input;
+pub(crate) struct Input;
 
 /// The source row's position in the caller's batch.
 #[derive(Iden, Clone, Copy)]
 #[iden = "input_id"]
-pub(super) struct InputId;
+pub(crate) struct InputId;
 
 /// A staging column reference, `d.<column>`.
-pub(super) fn staged(column: CurrentAttributeValues) -> SimpleExpr {
+pub(crate) fn staged(column: CurrentAttributeValues) -> SimpleExpr {
     Expr::col((Staging, column))
 }
 
@@ -54,7 +54,7 @@ pub(super) fn staged(column: CurrentAttributeValues) -> SimpleExpr {
 /// `CASE WHEN d.value_geometry IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geometry)) ELSE NULL END`:
 /// the EWKB already carries its SRID, so no re-SRID is applied, and a NULL EWKB
 /// projects to a NULL geometry rather than a call on a NULL argument.
-pub(super) fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
+pub(crate) fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
     let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
 
     let geometry: SimpleExpr = CaseStatement::new()

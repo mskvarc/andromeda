@@ -14,13 +14,19 @@
 //! or 5.6.13 removes has its projection row deleted, and an entity that goes
 //! takes its rows with it through the one foreign key the table declares.
 
+/// The column lists every projection write shares.
+pub(crate) mod column_sets;
 /// The column-major binds one projection batch is written from.
 pub mod columns;
 /// Removing projection rows an entity mutation no longer stands behind.
 pub mod delete;
+/// Writing the projection rows of entities this transaction's insert created.
+pub mod minted_insert;
 /// Deriving a projected value from a neutral observation value.
 pub mod observed_value;
 /// One projected attribute instance, and the grain it is written at.
 pub mod row;
+/// Unnesting, deduplicating and validating one projection batch.
+pub(crate) mod staging;
 /// Writing an entity mutation's attribute instances into the projection.
 pub mod upsert;

@@ -7,7 +7,13 @@
 //! broker only ever writes valid values, so a parse failure is an internal
 //! fault rather than client input.
 
-use crate::{entity::written_entity::WrittenEntity, error::ContextStoreError};
+use crate::{
+    entity::{
+        inserted_entity::{InsertedEntity, MintedEntityKey},
+        written_entity::WrittenEntity,
+    },
+    error::ContextStoreError,
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use std::str::FromStr;
@@ -41,6 +47,20 @@ pub fn stored_entity_key(raw: i64) -> Result<EntityKey, ContextStoreError> {
 pub fn stored_written_entity(key: i64, id: &str) -> Result<WrittenEntity, ContextStoreError> {
     Ok(WrittenEntity {
         key: stored_entity_key(key)?,
+        id: stored_uri(id)?,
+    })
+}
+
+/// Build the [`InsertedEntity`] the fused insert's `RETURNING` reports for one
+/// entity it created.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Internal`] when the returned key is not a valid
+/// surrogate key or the returned identifier is not a valid URI.
+pub(crate) fn stored_inserted_entity(key: i64, id: &str) -> Result<InsertedEntity, ContextStoreError> {
+    Ok(InsertedEntity {
+        key: MintedEntityKey::new(stored_entity_key(key)?),
         id: stored_uri(id)?,
     })
 }
