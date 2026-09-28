@@ -162,6 +162,12 @@ CREATE INDEX idx_cav_value_long_text_trgm
     WITH (fastupdate = off)
     WHERE value_long_text IS NOT NULL;
 
+-- The containment arm of every `q` equality (clause 4.9).
+CREATE INDEX idx_cav_value_object
+    ON current_attribute_values USING GIN (attribute_name_key int4_ops, value_object jsonb_path_ops)
+    WITH (fastupdate = off)
+    WHERE value_object IS NOT NULL;
+
 -- Geo-queries against a named GeoProperty (clause 4.10).
 CREATE INDEX idx_cav_value_geometry
     ON current_attribute_values USING GIST (attribute_name_key, value_geometry)

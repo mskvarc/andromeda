@@ -5,7 +5,7 @@
 //! rows whose value column is null, and the two relations a value-only write
 //! must never touch an index of carry no index but their key.
 
-use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, SEEDED_ENTITIES, explain, explain_rolled_back, seed, seed_essays};
+use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, SEEDED_ENTITIES, explain, explain_rolled_back, owner_object, seed, seed_essays};
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
@@ -243,6 +243,66 @@ async fn every_arm_of_a_location_geo_query_reaches_its_gist_index() {
     scope.finish().await.expect("cleanup failed");
 }
 
+/// The value test of a compiled clause 4.9 string equality: every column the
+/// target value can occupy, the structured column by containment.
+fn string_equality(operand: &str) -> String {
+    format!(
+        "(c.value_string = '{operand}' OR c.value_uri = '{operand}' \
+          OR c.value_object @> jsonb_build_array('{operand}'::text) \
+          OR c.value_object @> jsonb_build_array(jsonb_build_object('@value', '{operand}'::text)))"
+    )
+}
+
+/// The page shape a Query Entities `q` issues: type-selected, ordered by
+/// identifier, limited, with the probe the compiler emits.
+fn q_page(probe: &str) -> String {
+    format!(
+        "SELECT d.payload FROM entities AS e JOIN entity_search AS s ON s.entity_key = e.entity_key \
+         JOIN entity_documents AS d ON d.entity_key = e.entity_key \
+         WHERE EXISTS (SELECT 1 FROM current_attribute_values AS c \
+                       WHERE (c.expires_at IS NULL OR c.expires_at > NOW()) AND {probe} \
+                         AND c.entity_key = e.entity_key) \
+         ORDER BY e.id LIMIT 100"
+    )
+}
+
+/// A clause 4.9 equality tests every column its target value can occupy, the
+/// structured one by containment, so the probe is driven from the value indexes
+/// only when every arm has one: a `BitmapOr` over the typed B-trees and the
+/// `value_object` GIN. A disjunction of Query Terms shares that one probe, each
+/// arm keeping its own attribute key, so it is driven the same way instead of
+/// filtering every Entity in identifier order.
+#[tokio::test]
+async fn a_q_equality_and_a_q_disjunction_are_driven_from_every_value_index() {
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let pool = scope.database_pool();
+    let corpus = seed(pool, SEED_PREFIX).await;
+    let owner = corpus.owner();
+
+    let first = owner_object(7);
+    let second = owner_object(11);
+    let shapes = [
+        ("equality", format!("c.attribute_name_key = {owner} AND {}", string_equality(&first))),
+        (
+            "disjunction",
+            format!(
+                "((c.attribute_name_key = {owner} AND {}) OR (c.attribute_name_key = {owner} AND {}))",
+                string_equality(&first),
+                string_equality(&second)
+            ),
+        ),
+    ];
+    for (shape, probe) in shapes {
+        let plan = explain(pool, &q_page(&probe)).await;
+        for fragment in ["BitmapOr", "idx_cav_value_uri", "idx_cav_value_string ", "idx_cav_value_object"] {
+            assert!(plan.contains(fragment), "the {shape} probe must use {fragment}: {plan}");
+        }
+        assert!(!plan.contains("uq_entities_id"), "the {shape} probe must not walk every Entity: {plan}");
+    }
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 #[tokio::test]
 async fn typed_value_indexes_exclude_rows_whose_value_column_is_null() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
@@ -257,6 +317,7 @@ async fn typed_value_indexes_exclude_rows_whose_value_column_is_null() {
         ("idx_cav_value_uri", "value_uri"),
         ("idx_cav_value_long_text", "value_long_text"),
         ("idx_cav_value_long_text_trgm", "value_long_text"),
+        ("idx_cav_value_object", "value_object"),
         ("idx_cav_value_geometry", "value_geometry"),
         ("idx_cav_entity_geometry", "value_geometry"),
     ] {

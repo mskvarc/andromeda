@@ -6,7 +6,12 @@
 //! condition written against [`projection_column`] composes into either without
 //! knowing which.
 
-use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, instance_expiry::instance_stands};
+use crate::{
+    attribute_name_key::AttributeNameKey,
+    entity_row_refs::EntityRowRefs,
+    instance_expiry::instance_stands,
+    q_predicate::instance_test::{InstanceTest, non_empty},
+};
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::literal::int_literal;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Iden, Query, SimpleExpr};
@@ -22,17 +27,6 @@ pub(crate) fn projection_column(column: CurrentAttributeValues) -> SimpleExpr {
     SeaExpr::col((Cav, column))
 }
 
-/// The `EXISTS` probe that answers presence alone: a row for this attribute
-/// under the enclosing statement's entity.
-///
-/// The probe reads the leading `(entity_key, attribute_name_key)` columns of the
-/// clause 4.5.5 grain constraint, so it is an index-only lookup on the same
-/// index the write path conflicts against.
-#[must_use]
-pub fn attribute_row_exists(id: AttributeNameKey, rows: &EntityRowRefs) -> Condition {
-    exists_on_projection(id, Condition::all(), rows)
-}
-
 /// Wrap a value condition in the correlated `current_attribute_values` probe.
 ///
 /// The probe is an `EXISTS` over the projection, narrowed to the attribute's
@@ -41,17 +35,50 @@ pub fn attribute_row_exists(id: AttributeNameKey, rows: &EntityRowRefs) -> Condi
 /// its dictionary key binds ahead of the value's operands, and the correlation
 /// is added last so it binds nothing after them. An instance whose clause 4.22
 /// `expiresAt` has passed is not probed at all.
+///
+/// With no value condition the probe answers presence alone, on the leading
+/// `(entity_key, attribute_name_key)` columns of the clause 4.5.5 grain
+/// constraint: an index-only lookup on the index the write path conflicts
+/// against.
 #[must_use]
 pub fn exists_on_projection(id: AttributeNameKey, value: Condition, rows: &EntityRowRefs) -> Condition {
+    projection_probe(Condition::all().add(of_attribute(id)).add(standing()).add_option(non_empty(value)), rows)
+}
+
+/// The correlated probe that holds when one current instance passes any of
+/// `tests`, each read under its own attribute key.
+///
+/// The attribute key moves into each test rather than narrowing the scan, so
+/// every test is a conjunction the value index of its own column leads with,
+/// and the planner can drive the whole probe from a bitmap over all of them.
+#[must_use]
+pub(crate) fn exists_any_on_projection(tests: Vec<InstanceTest>, rows: &EntityRowRefs) -> Condition {
+    let any = tests.into_iter().fold(Condition::any(), |any, test| {
+        let of_attribute = of_attribute(test.attribute);
+        any.add(test.arm(of_attribute))
+    });
+    projection_probe(Condition::all().add(standing()).add(any), rows)
+}
+
+/// An instance of the attribute with this dictionary key.
+fn of_attribute(id: AttributeNameKey) -> SimpleExpr {
+    SeaExpr::expr(projection_column(CurrentAttributeValues::AttributeNameKey)).eq(id.get())
+}
+
+/// Clause 4.22: a past-due instance neither carries the attribute nor holds its
+/// value, whether or not the sweep has deleted it yet.
+fn standing() -> SimpleExpr {
+    instance_stands(projection_column(CurrentAttributeValues::ExpiresAt))
+}
+
+/// The `EXISTS` over the projection's instances that pass `filter`, correlated
+/// last on the enclosing statement's entity key.
+fn projection_probe(filter: Condition, rows: &EntityRowRefs) -> Condition {
     let mut probe = Query::select();
     probe
         .expr(int_literal(1))
         .from(rows.table(CurrentAttributeValues::Table).alias(Cav))
-        .and_where(SeaExpr::expr(projection_column(CurrentAttributeValues::AttributeNameKey)).eq(id.get()))
-        // Clause 4.22: a past-due instance neither carries the attribute nor
-        // holds its value, whether or not the sweep has deleted it yet.
-        .and_where(instance_stands(projection_column(CurrentAttributeValues::ExpiresAt)))
-        .cond_where(value)
+        .cond_where(filter)
         .and_where(SeaExpr::expr(projection_column(CurrentAttributeValues::EntityKey)).eq(rows.entity_key_column()));
     Condition::all().add(SeaExpr::exists(probe))
 }
@@ -61,7 +88,10 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
-        q_predicate::projection_probe::{attribute_row_exists, exists_on_projection, projection_column},
+        q_predicate::{
+            instance_test::InstanceTest,
+            projection_probe::{exists_any_on_projection, exists_on_projection, projection_column},
+        },
     };
     use andromeda_postgresql_schema::current::{CurrentAttributeValues, Entities};
     use sea_query::{Condition, ExprTrait, PostgresQueryBuilder, Query};
@@ -80,7 +110,11 @@ mod tests {
     #[test]
     fn a_presence_probe_tests_the_attribute_key_and_the_correlation_and_nothing_else() {
         pretty_assertions::assert_eq!(
-            render(attribute_row_exists(AttributeNameKey::from(7), &EntityRowRefs::unaliased(None))),
+            render(exists_on_projection(
+                AttributeNameKey::from(7),
+                Condition::all(),
+                &EntityRowRefs::unaliased(None)
+            )),
             concat!(
                 r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
                 r#"WHERE "cav"."attribute_name_key" = $1 AND ("cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW()) "#,
@@ -100,6 +134,29 @@ mod tests {
                 r#""cav"."attribute_name_key" = $1 AND ("cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW()) AND "cav"."value_string" = $2 AND "cav"."entity_key""#
             ),
             "{sql}"
+        );
+    }
+
+    /// A shared probe tests expiry once and then each attribute key beside its
+    /// own value, so every arm leads with the columns of its value index, and
+    /// the arms bind in order before the correlation.
+    #[test]
+    fn a_shared_probe_pairs_each_attribute_key_with_its_own_value() {
+        let test = |attribute: i32, value: &str| InstanceTest {
+            attribute: AttributeNameKey::from(attribute),
+            value: Condition::all().add(projection_column(CurrentAttributeValues::ValueUri).eq(value)),
+        };
+        pretty_assertions::assert_eq!(
+            render(exists_any_on_projection(
+                vec![test(7, "urn:a"), test(8, "urn:b")],
+                &EntityRowRefs::unaliased(None)
+            )),
+            concat!(
+                r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
+                r#"WHERE ("cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW()) "#,
+                r#"AND (("cav"."attribute_name_key" = $1 AND "cav"."value_uri" = $2) OR ("cav"."attribute_name_key" = $3 AND "cav"."value_uri" = $4)) "#,
+                r#"AND "cav"."entity_key" = "entities"."entity_key")"#,
+            )
         );
     }
 }

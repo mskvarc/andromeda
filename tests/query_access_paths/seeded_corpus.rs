@@ -43,6 +43,13 @@ pub const CITY_ATTRIBUTE: &str = "https://example.test/query-access-paths/city";
 /// enough that an `attrs` term on it prefers the index.
 pub const ALARM_ATTRIBUTE: &str = "https://example.test/query-access-paths/alarm";
 
+/// Expanded IRI of the seeded Relationship, whose object every ten Entities
+/// share, so an equality on one object is selective.
+pub const OWNER_ATTRIBUTE: &str = "https://example.test/query-access-paths/owner";
+
+/// Identifier prefix of the seeded Relationship objects.
+pub const OWNER_PREFIX: &str = "urn:ngsi-ld:test:query-access-paths:Owner:";
+
 /// Expanded IRI of the attribute whose seeded values are all longer than the
 /// 2048-octet indexed bound, so every one of them is projected into
 /// `value_long_text`.
@@ -85,6 +92,8 @@ pub struct SeededCorpus {
     city: i32,
     /// Dictionary identifier of [`ALARM_ATTRIBUTE`].
     alarm: i32,
+    /// Dictionary identifier of [`OWNER_ATTRIBUTE`].
+    owner: i32,
 }
 
 impl SeededCorpus {
@@ -123,6 +132,11 @@ impl SeededCorpus {
         self.alarm
     }
 
+    /// Dictionary identifier of the seeded Relationship.
+    pub const fn owner(&self) -> i32 {
+        self.owner
+    }
+
     /// Identifier of one seeded Entity by ordinal.
     pub fn entity_id(&self, ordinal: usize) -> String {
         format!("{}:seed:{ordinal:06}", self.prefix)
@@ -148,6 +162,11 @@ impl SeededEssays {
     pub fn probe(&self) -> &str {
         &self.probe
     }
+}
+
+/// The object of the seeded Relationship ten Entities share, by ordinal.
+pub fn owner_object(ordinal: usize) -> String {
+    format!("{OWNER_PREFIX}{ordinal}")
 }
 
 /// Resolve, creating if necessary, the dictionary identifier of an attribute
@@ -178,12 +197,14 @@ pub async fn type_dictionary_key(pool: &PgPool, name: &str) -> i32 {
 /// a document row carrying a payload with the city attribute (and, on every
 /// 1000th Entity, the alarm attribute), and a search row carrying the type,
 /// the attribute keys, the location and the scope. The projection receives a
-/// numeric reading, a `GeoProperty` entrance and the city string per Entity.
+/// numeric reading, a `GeoProperty` entrance, the city string and the owner
+/// Relationship per Entity.
 pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     let reading = dictionary_key(pool, READING_ATTRIBUTE).await;
     let entrance = dictionary_key(pool, ENTRANCE_ATTRIBUTE).await;
     let city = dictionary_key(pool, CITY_ATTRIBUTE).await;
     let alarm = dictionary_key(pool, ALARM_ATTRIBUTE).await;
+    let owner = dictionary_key(pool, OWNER_ATTRIBUTE).await;
     let rare_type = type_dictionary_key(pool, RARE_TYPE).await;
     let common_type = type_dictionary_key(pool, COMMON_TYPE).await;
 
@@ -256,6 +277,19 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     .await
     .expect("string projection corpus must be writable");
 
+    sqlx::query(
+        "INSERT INTO current_attribute_values \
+         (entity_key, attribute_name_key, attribute_kind, value_kind, value_uri) \
+         SELECT e.entity_key, $1, 2, 7, $3::text || (e.entity_key % 2000)::text \
+         FROM entities AS e WHERE e.id LIKE $2::text",
+    )
+    .bind(owner)
+    .bind(&like)
+    .bind(OWNER_PREFIX)
+    .execute(pool)
+    .await
+    .expect("relationship projection corpus must be writable");
+
     analyze(pool).await;
 
     SeededCorpus {
@@ -266,6 +300,7 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
         common_type,
         city,
         alarm,
+        owner,
     }
 }
 

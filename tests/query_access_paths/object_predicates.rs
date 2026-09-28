@@ -1,11 +1,11 @@
-//! Object GIN operator class: no object predicate relies on an absent index.
+//! Object GIN operator class: every object predicate is one the index serves.
 //!
 //! `jsonb_path_ops` indexes containment (`@>`) and nothing else; the default
-//! `jsonb_ops` class also serves key existence (`?`, `?|`, `?&`). The schema
-//! deliberately carries no GIN index on `current_attribute_values.value_object`
-//! because no predicate is compiled against it, so the test states both halves:
-//! the absent index has no silent consumer, and the two operator classes behave
-//! as declared when they are present.
+//! `jsonb_ops` class also serves key existence (`?`, `?|`, `?&`). Every
+//! predicate compiled against `current_attribute_values.value_object` is a
+//! containment test, so its GIN index uses the smaller `jsonb_path_ops` class.
+//! The test states both halves: the two operator classes behave as declared, and
+//! the projection's index is the containment one.
 
 use crate::seeded_corpus::explain;
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
@@ -65,12 +65,11 @@ async fn object_containment_uses_path_ops_and_key_existence_needs_the_default_cl
 }
 
 #[tokio::test]
-async fn the_projection_carries_no_unconsumed_object_index() {
+async fn the_projection_indexes_value_object_for_containment_alone() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
 
     let object_indexes: Vec<String> = sqlx::query_scalar(
-        "SELECT c.relname FROM pg_index AS i \
-         JOIN pg_class AS c ON c.oid = i.indexrelid \
+        "SELECT pg_get_indexdef(i.indexrelid) FROM pg_index AS i \
          JOIN pg_class AS t ON t.oid = i.indrelid \
          WHERE t.relname = 'current_attribute_values' \
            AND pg_get_indexdef(i.indexrelid) LIKE '%value_object%'",
@@ -79,9 +78,13 @@ async fn the_projection_carries_no_unconsumed_object_index() {
     .await
     .expect("index list must be readable");
     assert_eq!(
-        object_indexes,
-        Vec::<String>::new(),
-        "no predicate compiles against value_object, so it must carry no index to miss"
+        object_indexes.len(),
+        1,
+        "one index serves the containment arm of a q equality: {object_indexes:?}"
+    );
+    assert!(
+        object_indexes.iter().all(|definition| definition.contains("value_object jsonb_path_ops")),
+        "every compiled object predicate is containment, which jsonb_path_ops serves: {object_indexes:?}"
     );
 
     scope.finish().await.expect("cleanup failed");

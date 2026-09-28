@@ -87,6 +87,15 @@
 //! selection and requested Temporal Property, and the AND/OR tree combines
 //! them.
 //!
+//! # Disjunctions
+//!
+//! The Query Terms of a disjunction that each read one attribute's instances
+//! share one probe, each arm keeping its attribute key beside its value test
+//! (see [`instance_test`]). A disjunction of separate `EXISTS` can only be
+//! evaluated as a filter on every entity row; one `EXISTS` is a semi-join the
+//! planner drives from a `BitmapOr` over every arm's value index. Hops and
+//! payload readings read other rows, so they stay beside the shared probe.
+//!
 //! # Multi-instance semantics
 //!
 //! `EXISTS` matches when *any* row for the attribute satisfies the predicate.
@@ -98,6 +107,7 @@ pub mod attribute_names;
 pub mod fallback;
 pub mod history_window;
 pub mod instance_scan;
+pub mod instance_test;
 pub mod local_target;
 pub mod projection;
 pub mod projection_probe;

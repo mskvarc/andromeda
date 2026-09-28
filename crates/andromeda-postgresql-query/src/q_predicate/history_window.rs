@@ -23,7 +23,7 @@
 //! A deletion is recorded in history as an instance with no value (clause
 //! 4.5.7), so it is never a target value and never satisfies a Query Term.
 
-use crate::{attribute_name_key::AttributeNameKey, time_interval_predicate::within_interval};
+use crate::{attribute_name_key::AttributeNameKey, q_predicate::instance_test::InstanceTest, time_interval_predicate::within_interval};
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBJECT, OBSERVED_AT, VALUE};
 use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams};
@@ -34,7 +34,20 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, CaseStatement, Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, Query, QueryStatementBuilder, SimpleExpr};
+use sea_query::{
+    Alias,
+    CaseStatement,
+    Condition,
+    DynIden,
+    Expr as SeaExpr,
+    ExprTrait,
+    Func,
+    JoinType,
+    Query,
+    QueryStatementBuilder,
+    SelectStatement,
+    SimpleExpr,
+};
 use typed_builder::TypedBuilder;
 
 /// The instances of one Temporal Evolution a temporal `q` is checked against.
@@ -113,15 +126,40 @@ impl HistoryWindow {
     pub(crate) fn exists(&self, id: AttributeNameKey, value: Condition, aliases: &HistoryAliases) -> Condition {
         let mut probe = self.instances_of(id, aliases);
         probe.cond_where(value);
-        probe.and_where(SeaExpr::expr(aliases.stream_column(TemporalAttributeStreams::TemporalEntityKey)).eq(self.temporal_entity_key.clone())); // clone: every probe of the query correlates on the same outer column
-        Condition::all().add(SeaExpr::exists(probe.take()))
+        self.correlated(probe, aliases)
     }
 
-    /// The window's instances of one attribute, before any correlation: the
-    /// stream rows of the attribute joined to their history rows, of every
-    /// dataset, narrowed to the instances valid within the interval that carry
-    /// a value.
-    pub(crate) fn instances_of(&self, id: AttributeNameKey, aliases: &HistoryAliases) -> sea_query::SelectStatement {
+    /// Wrap several tests in one correlated probe over the window's instances,
+    /// holding when one instance passes any of them under its own attribute key.
+    pub(crate) fn exists_any(&self, tests: Vec<InstanceTest>, aliases: &HistoryAliases) -> Condition {
+        let any = tests.into_iter().fold(Condition::any(), |any, test| {
+            let of_attribute = Self::of_attribute(test.attribute, aliases);
+            any.add(test.arm(of_attribute))
+        });
+        self.correlated(self.instances_matching(any, aliases), aliases)
+    }
+
+    /// The `EXISTS` over `probe`, correlated last on the enclosing statement's
+    /// temporal entity.
+    fn correlated(&self, mut probe: SelectStatement, aliases: &HistoryAliases) -> Condition {
+        probe.and_where(SeaExpr::expr(aliases.stream_column(TemporalAttributeStreams::TemporalEntityKey)).eq(self.temporal_entity_key.clone())); // clone: every probe of the query correlates on the same outer column
+        Condition::all().add(SeaExpr::exists(probe))
+    }
+
+    /// The window's instances of one attribute, before any correlation.
+    pub(crate) fn instances_of(&self, id: AttributeNameKey, aliases: &HistoryAliases) -> SelectStatement {
+        self.instances_matching(Condition::all().add(Self::of_attribute(id, aliases)), aliases)
+    }
+
+    /// A stream of the attribute with this dictionary key.
+    fn of_attribute(id: AttributeNameKey, aliases: &HistoryAliases) -> SimpleExpr {
+        SeaExpr::expr(aliases.stream_column(TemporalAttributeStreams::AttributeNameKey)).eq(id.get())
+    }
+
+    /// The window's instances that pass `attribute`, before any correlation:
+    /// the stream rows joined to their history rows, of every dataset,
+    /// narrowed to the instances valid within the interval that carry a value.
+    fn instances_matching(&self, attribute: Condition, aliases: &HistoryAliases) -> SelectStatement {
         let stream = || Alias::new(aliases.stream.as_str());
         let instance = || Alias::new(aliases.instance.as_str());
         let mut probe = Query::select();
@@ -134,7 +172,7 @@ impl HistoryWindow {
                 instance(),
                 SeaExpr::col((instance(), AttributeHistory::StreamKey)).equals((stream(), TemporalAttributeStreams::StreamKey)),
             )
-            .and_where(SeaExpr::expr(aliases.stream_column(TemporalAttributeStreams::AttributeNameKey)).eq(id.get()))
+            .cond_where(attribute)
             // Clause 4.5.7: a deletion records no value, so it is no target value.
             .and_where(SeaExpr::expr(aliases.instance_column(AttributeHistory::DeletedAt)).is_null())
             .cond_where(self.valid_within(aliases));

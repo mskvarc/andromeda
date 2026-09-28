@@ -15,7 +15,8 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         history_window::{HistoryAliases, HistoryWindow, instance_document},
-        projection_probe::{attribute_row_exists, exists_on_projection, projection_column},
+        instance_test::InstanceTest,
+        projection_probe::{exists_any_on_projection, exists_on_projection, projection_column},
         value_column::ValueColumn,
     },
 };
@@ -71,11 +72,20 @@ impl InstanceScan<'_> {
         }
     }
 
-    /// Whether the attribute has an instance at all.
-    pub(crate) fn attribute_present(&self, id: AttributeNameKey) -> Condition {
-        match self {
-            InstanceScan::Current(rows) => attribute_row_exists(id, rows),
-            InstanceScan::History(window) => window.exists(id, Condition::all(), &HistoryAliases::top_level()),
+    /// Whether one instance passes any of `tests`, or `None` when there is no
+    /// test to pass.
+    ///
+    /// A lone test is the single-attribute probe [`InstanceScan::exists`]
+    /// renders; several share one probe whose instances each test reads under
+    /// its own attribute key.
+    pub(crate) fn exists_any(&self, tests: Vec<InstanceTest>) -> Option<Condition> {
+        match <[InstanceTest; 1]>::try_from(tests) {
+            Ok([test]) => Some(self.exists(test.attribute, test.value)),
+            Err(tests) if tests.is_empty() => None,
+            Err(tests) => Some(match self {
+                InstanceScan::Current(rows) => exists_any_on_projection(tests, rows),
+                InstanceScan::History(window) => window.exists_any(tests, &HistoryAliases::top_level()),
+            }),
         }
     }
 
@@ -107,7 +117,7 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
-        q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, value_column::ValueColumn},
+        q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, instance_test::InstanceTest, value_column::ValueColumn},
     };
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
@@ -149,8 +159,42 @@ mod tests {
     #[test]
     fn presence_over_history_is_an_in_window_instance_of_the_attribute() {
         let window = history();
-        let sql = render(InstanceScan::History(&window).attribute_present(AttributeNameKey::from(3)));
+        let sql = render(InstanceScan::History(&window).exists(AttributeNameKey::from(3), Condition::all()));
         assert!(sql.contains(r#""qs"."attribute_name_key" = 3"#), "{sql}");
         assert!(sql.contains(r#""qh"."deleted_at" IS NULL"#), "{sql}");
+    }
+
+    /// Tests that share a probe keep their own attribute keys inside it, over
+    /// the one set of instances the scan reads.
+    #[test]
+    fn several_tests_share_one_probe_over_either_scan() {
+        let tests = || {
+            vec![
+                InstanceTest {
+                    attribute: AttributeNameKey::from(3),
+                    value: Condition::all(),
+                },
+                InstanceTest {
+                    attribute: AttributeNameKey::from(4),
+                    value: Condition::all(),
+                },
+            ]
+        };
+        let rows = EntityRowRefs::unaliased(None);
+        let window = history();
+        for (scan, key) in [
+            (InstanceScan::Current(&rows), r#""cav"."attribute_name_key""#),
+            (InstanceScan::History(&window), r#""qs"."attribute_name_key""#),
+        ] {
+            let sql = render(scan.exists_any(tests()).expect("two tests make a probe"));
+            assert_eq!(sql.matches("EXISTS").count(), 1, "{sql}");
+            assert!(sql.contains(&format!("{key} = 3")) && sql.contains(&format!("{key} = 4")), "{sql}");
+        }
+    }
+
+    #[test]
+    fn no_test_makes_no_probe() {
+        let rows = EntityRowRefs::unaliased(None);
+        assert!(InstanceScan::Current(&rows).exists_any(Vec::new()).is_none());
     }
 }

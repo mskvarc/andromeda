@@ -10,6 +10,7 @@ use crate::{
     q_predicate::{
         fallback::{fallback_equality, fallback_exists, fallback_ordering, fallback_pattern},
         instance_scan::InstanceScan,
+        instance_test::{CompiledTerm, Disjunction, InstanceTest},
         local_target::{LocalTarget, local_target},
         structured_target::{StructuredTarget, carries_operand, carries_target_language, omits_operand},
         traversal::LinkedHop,
@@ -42,18 +43,32 @@ use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 /// Attribute instances resulting from the initial filtering", so `a>1;b<2`
 /// holds when some in-window instance of `a` exceeds 1 and some in-window
 /// instance of `b` is below 2, not necessarily at the same instant.
+///
+/// The existentials of a disjunction are one probe rather than several, which
+/// says the same thing (see [`Disjunction`]) in the one shape the planner can
+/// drive from the value indexes.
 #[must_use]
 pub fn compile(expr: &Expr, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
     match expr {
         Expr::And(terms) => terms.iter().fold(Condition::all(), |cond, term| cond.add(compile(term, scan, names))),
-        Expr::Or(terms) => terms.iter().fold(Condition::any(), |cond, term| cond.add(compile(term, scan, names))),
-        Expr::Pred(pred) => compile_predicate(pred, scan, names),
+        Expr::Or(terms) => disjunction(terms, Disjunction::default(), scan, names).into_condition(scan),
+        Expr::Pred(pred) => compile_predicate(pred, scan, names).into_condition(scan),
     }
+}
+
+/// Gather the terms of a disjunction, and of every disjunction nested directly
+/// in it, into `gathered`.
+fn disjunction(terms: &[Expr], gathered: Disjunction, scan: &InstanceScan<'_>, names: &QueryNames) -> Disjunction {
+    terms.iter().fold(gathered, |gathered, term| match term {
+        Expr::Or(inner) => disjunction(inner, gathered, scan, names),
+        Expr::And(_) => gathered.with(CompiledTerm::Standalone(compile(term, scan, names))),
+        Expr::Pred(pred) => gathered.with(compile_predicate(pred, scan, names)),
+    })
 }
 
 /// Compile one leaf predicate, descending any linked-entity hops its axis
 /// carries before compiling the comparison against the entity it lands on.
-fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
     compile_along_path(pred, pred.path(), scan, names, 0)
 }
 
@@ -66,7 +81,7 @@ fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNam
 /// decide which entities the Relationship named, and the linked entity is then
 /// asked about its current state, because a window selects instances of the
 /// entity being queried and says nothing of the entities it points at.
-fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_>, names: &QueryNames, depth: usize) -> Condition {
+fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_>, names: &QueryNames, depth: usize) -> CompiledTerm {
     match path {
         QueryPath::Local(local) => compile_local_predicate(pred, local, scan, names),
         QueryPath::Linked {
@@ -78,31 +93,32 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_
                 // No `attribute_names` row means no instance of the
                 // Relationship was ever written, so no entity can be reached
                 // through it.
-                return unsatisfiable();
+                return unsatisfiable_term();
             };
             let hop = LinkedHop::at_depth(depth + 1);
             let inner_rows = hop.inner_rows(scan.schema().cloned());
-            let inner_condition = compile_along_path(pred, inner, &InstanceScan::Current(&inner_rows), names, depth + 1);
-            hop.probe(relationship_id, guard_types, &names.types, scan, inner_condition)
+            let inner_scan = InstanceScan::Current(&inner_rows);
+            let inner_condition = compile_along_path(pred, inner, &inner_scan, names, depth + 1).into_condition(&inner_scan);
+            CompiledTerm::Standalone(hop.probe(relationship_id, guard_types, &names.types, scan, inner_condition))
         }
     }
 }
 
 /// Compile the comparison itself, routing it to the projection or the fallback.
-fn compile_local_predicate(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+fn compile_local_predicate(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
     match pred {
         Predicate::Exists(_) => compile_exists(path, scan, names),
         Predicate::Equality { membership, rhs, .. } => compile_equality(path, *membership, rhs, scan, names),
         Predicate::Ordering { op, rhs, .. } => match local_target(path) {
             LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
-                Some(id) => compile_ordering_on_projection(id, *op, rhs, scan),
-                None => unsatisfiable(),
+                Some(id) => CompiledTerm::Instances(compile_ordering_on_projection(id, *op, rhs, scan)),
+                None => unsatisfiable_term(),
             },
             // An ordering comparison against one member of a structure is not a
             // containment test, so nothing in the projection answers it and the
             // payload is the only reader left.
             LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember => {
-                scan.document_condition(&path.attr, names, |document| fallback_ordering(path, *op, rhs, &document))
+                CompiledTerm::Standalone(scan.document_condition(&path.attr, names, |document| fallback_ordering(path, *op, rhs, &document)))
             }
         },
         Predicate::MatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::Match, scan, names),
@@ -121,27 +137,39 @@ fn compile_local_predicate(pred: &Predicate, path: &AttrPath, scan: &InstanceSca
 /// no `hasValue` for the fallback's jsonpath to reach, and a compound value's
 /// member nodes carry no `@language` for the containment to match — so the
 /// disjunction is exact rather than merely permissive.
-fn compile_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+fn compile_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
     let fallback = || scan.document_condition(&path.attr, names, |document| fallback_equality(path, membership, rhs, &document));
     match local_target(path) {
         LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
-            Some(id) => compile_equality_on_projection(id, StructuredTarget::AnyValue, membership, rhs, scan),
-            None => unsatisfiable(),
+            Some(id) => CompiledTerm::Instances(compile_equality_on_projection(id, StructuredTarget::AnyValue, membership, rhs, scan)),
+            None => unsatisfiable_term(),
         },
         LocalTarget::TrailingMember(member) => {
             let tagged = match names.attributes.get(&path.attr) {
-                Some(id) => compile_equality_on_projection(id, StructuredTarget::TargetLanguage(member), membership, rhs, scan),
+                Some(id) => CompiledTerm::Instances(compile_equality_on_projection(
+                    id,
+                    StructuredTarget::TargetLanguage(member),
+                    membership,
+                    rhs,
+                    scan,
+                ))
+                .into_condition(scan),
                 None => unsatisfiable(),
             };
-            Condition::any().add(tagged).add(fallback())
+            CompiledTerm::Standalone(Condition::any().add(tagged).add(fallback()))
         }
-        LocalTarget::PayloadMember => fallback(),
+        LocalTarget::PayloadMember => CompiledTerm::Standalone(fallback()),
     }
 }
 
 /// A predicate that no row can satisfy.
 fn unsatisfiable() -> Condition {
     Condition::all().add(false_literal())
+}
+
+/// A Query Term that no row can satisfy.
+fn unsatisfiable_term() -> CompiledTerm {
+    CompiledTerm::Standalone(unsatisfiable())
 }
 
 // ---------------------------------------------------------------------------
@@ -158,12 +186,15 @@ fn unsatisfiable() -> Condition {
 /// `payload`: GIN's `jsonb_ops` only serves `?` when the left operand is the
 /// bare indexed column, and `payload->0` is an expression. It is a sequential
 /// scan.
-fn compile_exists(path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+fn compile_exists(path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
     let fallback = || scan.document_condition(&path.attr, names, |document| fallback_exists(path, &document));
     match local_target(path) {
         LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
-            Some(id) => scan.attribute_present(id),
-            None => unsatisfiable(),
+            Some(id) => CompiledTerm::Instances(InstanceTest {
+                attribute: id,
+                value: Condition::all(),
+            }),
+            None => unsatisfiable_term(),
         },
         // Clause 4.9's target element for a language-selected path is the
         // matching key-value pair, so its presence is what existence asks —
@@ -174,9 +205,9 @@ fn compile_exists(path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) 
                 Some(id) => scan.exists(id, carries_target_language(&scan.value(ValueColumn::Object), member)),
                 None => unsatisfiable(),
             };
-            Condition::any().add(tagged).add(fallback())
+            CompiledTerm::Standalone(Condition::any().add(tagged).add(fallback()))
         }
-        LocalTarget::PayloadMember => fallback(),
+        LocalTarget::PayloadMember => CompiledTerm::Standalone(fallback()),
     }
 }
 
@@ -192,7 +223,7 @@ fn compile_equality_on_projection(
     membership: SetMembership,
     rhs: &CompareValue,
     scan: &InstanceScan<'_>,
-) -> Condition {
+) -> InstanceTest {
     let value = match rhs {
         CompareValue::Scalar(scalar) => equality_condition(target, scalar, membership, scan),
         CompareValue::Range { min, max } => range_condition(target, min, max, membership, scan),
@@ -212,7 +243,7 @@ fn compile_equality_on_projection(
             }),
         },
     };
-    scan.exists(id, value)
+    InstanceTest { attribute: id, value }
 }
 
 /// One equality comparison against every column the target value can occupy.
@@ -293,8 +324,11 @@ fn within_range(min: &Scalar, max: &Scalar, scan: &InstanceScan<'_>) -> Conditio
 
 /// Compile an ordering comparison (`>`/`>=`/`<`/`<=`) against the typed columns
 /// of the scanned instances.
-fn compile_ordering_on_projection(id: AttributeNameKey, op: OrderingOp, rhs: &Scalar, scan: &InstanceScan<'_>) -> Condition {
-    scan.exists(id, Condition::all().add(typed_column_condition(rhs, op.as_cmp_op(), scan)))
+fn compile_ordering_on_projection(id: AttributeNameKey, op: OrderingOp, rhs: &Scalar, scan: &InstanceScan<'_>) -> InstanceTest {
+    InstanceTest {
+        attribute: id,
+        value: Condition::all().add(typed_column_condition(rhs, op.as_cmp_op(), scan)),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -329,23 +363,23 @@ fn compile_ordering_on_projection(id: AttributeNameKey, op: OrderingOp, rhs: &Sc
 /// `attribute_name_key` prefix of `idx_cav_value_string` before any regex is
 /// evaluated. `idx_cav_value_long_text_trgm` serves the overflow arm the same
 /// way.
-fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
     match local_target(path) {
         LocalTarget::OwnValue => (),
         // A regex is not a containment test, so the projection cannot answer a
         // pattern against one member of a structure; the payload can reach it.
         LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember => {
-            return scan.document_condition(&path.attr, names, |document| fallback_pattern(path, pattern, polarity, &document));
+            return CompiledTerm::Standalone(scan.document_condition(&path.attr, names, |document| fallback_pattern(path, pattern, polarity, &document)));
         }
     }
     let Some(id) = names.attributes.get(&path.attr) else {
-        return unsatisfiable();
+        return unsatisfiable_term();
     };
 
     let value = scan.string_columns().iter().fold(Condition::any(), |value, column| {
         value.add(pattern_predicate(scan.value(*column), polarity, SeaExpr::val(pattern.as_str())))
     });
-    scan.exists(id, value)
+    CompiledTerm::Instances(InstanceTest { attribute: id, value })
 }
 
 #[cfg(test)]
@@ -939,6 +973,72 @@ mod tests {
         assert_eq!(sql.matches("EXISTS").count(), 3, "one probe per predicate: {sql}");
         assert!(sql.contains(" AND "), "{sql}");
         assert!(sql.contains(" OR "), "{sql}");
+    }
+
+    /// Some instance matching one Query Term or some instance matching another
+    /// is some instance matching either (clause 4.9), so a disjunction is one
+    /// probe whose arms each keep their own attribute key.
+    #[test]
+    fn a_disjunction_of_terms_shares_one_probe() {
+        for expression in [
+            "\"https://example.com/color\"==\"red\"|\"https://example.com/color\"==\"blue\"",
+            "\"https://example.com/color\"==\"red\"|\"https://example.com/name\"!=\"x\"|\"https://example.com/a\">1",
+            "\"https://example.com/color\"|\"https://example.com/name\"~=\"^A\"",
+            "(\"https://example.com/color\"==\"red\"|\"https://example.com/name\"==\"x\")|\"https://example.com/a\"==1",
+        ] {
+            let (sql, _) = render(expression);
+            assert_eq!(sql.matches("EXISTS").count(), 1, "{expression}: {sql}");
+            assert!(
+                sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\" AS \"cav\" WHERE (\"cav\".\"expires_at\" IS NULL"),
+                "the attribute key moves into each arm: {expression}: {sql}"
+            );
+        }
+    }
+
+    /// The arms of a shared probe bind in the order the terms were written, each
+    /// attribute key ahead of its own operands.
+    #[test]
+    fn a_shared_probe_binds_each_attribute_key_ahead_of_its_operands() {
+        let (sql, binds) = render("\"https://example.com/color\"==\"red\"|\"https://example.com/name\"==\"x\"");
+        assert!(sql.contains("(\"cav\".\"attribute_name_key\" = $1 AND "), "{sql}");
+        assert!(matches!(binds[0], Value::Int(Some(13))), "{binds:?}");
+        let second = binds
+            .iter()
+            .position(|bind| matches!(bind, Value::Int(Some(14))))
+            .expect("the second key binds");
+        assert!(
+            binds[1..second]
+                .iter()
+                .all(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "red")),
+            "{binds:?}"
+        );
+    }
+
+    /// A linked-entity hop reads other rows than the scan does, and a payload
+    /// reading reads no instance row at all, so neither joins the shared probe.
+    #[test]
+    fn hops_and_payload_readings_stand_beside_the_shared_probe() {
+        let (sql, _) = render(&format!(
+            "{}{{{}==\"x\"}}|\"https://example.com/color\"==\"red\"|\"https://example.com/name\"==\"y\"|\"https://example.com/address\"[street]>\"a\"",
+            quoted(IS_PARKED_IN),
+            quoted(CATEGORY)
+        ));
+        assert!(sql.contains("\"cav_ln1\""), "the hop keeps its own probe: {sql}");
+        assert!(sql.contains("jsonb_path_query_first"), "the payload reading stays: {sql}");
+        assert_eq!(
+            sql.matches("FROM \"current_attribute_values\" AS \"cav\" WHERE (\"cav\".\"expires_at\"")
+                .count(),
+            1,
+            "the two plain terms share one probe: {sql}"
+        );
+    }
+
+    /// Two terms one instance must pass together are not two terms two
+    /// instances pass separately, so a conjunction keeps a probe per term.
+    #[test]
+    fn a_conjunction_keeps_one_probe_per_term() {
+        let (sql, _) = render("\"https://example.com/color\"==\"red\";\"https://example.com/name\"==\"x\"");
+        assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
     }
 
     // -- correlation ---------------------------------------------------------
