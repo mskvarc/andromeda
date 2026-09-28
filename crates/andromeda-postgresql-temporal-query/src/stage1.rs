@@ -15,11 +15,15 @@
 //! S1 removes an Entity, and only for having no data in the window. So neither
 //! the window match, nor `q`, nor the geoquery narrows by dataset here: an
 //! Entity whose instances the parameter all filters out is selected, counted
-//! and paged, and answers with no Attribute.
+//! and paged, and answers with no Attribute. The one criterion that reads the
+//! parameter is a `pick` / `omit` projection's (`crate::projected_members`):
+//! clause 5.7.4.5 reduces the Entity after step S8, so whether the projection
+//! leaves it a member depends on the instances S8 kept.
 
 use crate::{
     alias::{Ah, Ahg, An, Ang, EntityIdColumn, S, Sg},
     axis::axis_column,
+    projected_members::projected_member_condition,
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
@@ -222,6 +226,13 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
 
     if let Some(probe) = temporal_geo_existential(schema, compiled)? {
         condition = condition.add(SeaExpr::exists(probe));
+    }
+
+    // Clauses 5.7.4.5 and 6.3.13: an entity the `pick` / `omit` projection
+    // would reduce to no member is not selected, so it is left out here, where
+    // the count and the page are taken.
+    if let Some(members) = projected_member_condition(schema, compiled) {
+        condition = condition.add(members);
     }
 
     Ok(condition)

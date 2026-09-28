@@ -59,6 +59,7 @@ mod ordering_local_scope;
 mod pagination_link_header;
 mod prefer_version_representation;
 mod prior_findings;
+mod projection_emptied_entity_selection;
 mod projection_linked_entities;
 mod projection_selector_exclusivity;
 mod proof_seal_representation;

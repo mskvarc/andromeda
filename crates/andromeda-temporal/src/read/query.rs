@@ -14,7 +14,6 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_render::structural_projection::{RenderedEntityMembers, rendered_entity_members};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use chrono::{DateTime, Utc};
@@ -53,7 +52,6 @@ impl TemporalService {
             // state a clause 5.6.6 deletion has already removed.
             let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
 
-            let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
             let dataset_step = DatasetStep::of(&compiled);
             let names = NameCompactor::new(&self.engine, context);
             let mut warnings = Vec::new();
@@ -103,14 +101,13 @@ impl TemporalService {
                 // step S8, after stage one selected the entity, and S8 removes
                 // "all Attributes without remaining Attribute instances", never
                 // the Entity.
-                if rendered.presence == HistoryPresence::Absent && dataset_step == DatasetStep::Absent {
-                    continue;
-                }
+                //
                 // Clause 5.7.4.5 reduces "every Entity within the payload body"
-                // to the members the projection defines, so an Entity reduced
-                // to none of them is not in the payload -- the query's answer to
-                // what a retrieval answers with `ResourceNotFound`.
-                if projected && rendered_entity_members(&rendered.value) == RenderedEntityMembers::None {
+                // to the members the projection defines. An Entity it would
+                // reduce to none of them was never selected
+                // (`EntitySelection::projected_members`), so none is left out
+                // here, after the page was cut.
+                if rendered.presence == HistoryPresence::Absent && dataset_step == DatasetStep::Absent {
                     continue;
                 }
                 cut = cut.or(rendered.cut);

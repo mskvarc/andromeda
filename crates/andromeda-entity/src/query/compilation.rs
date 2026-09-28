@@ -28,6 +28,7 @@ use andromeda_ngsi_ld_query::{
     projection::{
         compiled::Projection,
         expansion::{expand_attrs, expand_projection_terms},
+        projected_members::ProjectedMembers,
     },
 };
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::parameters::EntityQueryParameters};
@@ -114,6 +115,7 @@ impl EntityQueryService {
             count: if opts.count { CountPolicy::Emit } else { CountPolicy::Omit },
         };
 
+        let projection = Projection::builder().pick(pick).omit(omit).build();
         let compiled = CompiledEntityQuery::builder()
             .selection(
                 EntitySelection::builder()
@@ -126,9 +128,12 @@ impl EntityQueryService {
                     // set considers no entity, which the selectors' identifier
                     // lists cannot say on their own.
                     .considered(ConsideredEntities::of_request(params.id.as_deref()))
+                    // Clause 5.7.2.5: an entity the projection reduces to no
+                    // member is not selected, so it is left out before the page.
+                    .projected_members(ProjectedMembers::of(&projection))
                     .build(),
             )
-            .projection(Projection::builder().pick(pick).omit(omit).build())
+            .projection(projection)
             .ordering(ResultOrdering::builder().terms(order_by).geometry(ordering_geometry).build())
             .pagination(pagination)
             .build();

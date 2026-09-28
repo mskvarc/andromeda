@@ -12,10 +12,10 @@
 //! contain the defined Entity members", so an `omit` naming every member it
 //! has leaves nothing to answer with either.
 //!
-//! A query answers the same question differently: clause 5.7.2.5 reduces
-//! "every Entity within the payload body", and an Entity reduced to nothing is
-//! simply not in the payload, the result staying a `200` with the entity
-//! dropped from it.
+//! A query answers the same question as a selection instead: an Entity the
+//! projection would reduce to nothing is not selected at all
+//! (`andromeda_ngsi_ld_query::projection::projected_members`), so the count and
+//! the page are taken over the entities that keep a member.
 
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
@@ -39,29 +39,18 @@ pub enum ProjectionRemainder {
 /// [`project_entity`]: crate::query::attribute_projection::project_entity
 #[must_use]
 pub fn projection_remainder(entity: &Entity, projection: &Projection) -> ProjectionRemainder {
-    if projection.pick.is_empty() && projection.omit.is_empty() {
+    if projection.is_empty() {
         return ProjectionRemainder::Members;
     }
     // `scope` is already gone if the projection excluded it; `id` and `type`
     // are members of the rendered representation rather than of the typed
     // entity, so the keyword rule is what decides whether they will be written.
-    let survives =
-        entity.has_attribute_members() || entity.scope.is_some() || keeps(projection, &ProjectionTerm::Id) || keeps(projection, &ProjectionTerm::Type);
+    let survives = entity.has_attribute_members() || entity.scope.is_some() || projection.keeps(&ProjectionTerm::Id) || projection.keeps(&ProjectionTerm::Type);
     if survives {
         ProjectionRemainder::Members
     } else {
         ProjectionRemainder::Nothing
     }
-}
-
-/// Whether a structural member survives the clause 4.21 keyword rule: a
-/// non-empty `pick` keeps it only when it is listed, and an `omit` drops it
-/// when it is.
-fn keeps(projection: &Projection, keyword: &ProjectionTerm) -> bool {
-    if !projection.pick.is_empty() && !projection.pick.contains(keyword) {
-        return false;
-    }
-    !projection.omit.contains(keyword)
 }
 
 #[cfg(test)]

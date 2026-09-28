@@ -22,6 +22,7 @@ use andromeda_postgresql_query::{
 };
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments};
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
+use iri_rs::IriBuf;
 use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
@@ -222,7 +223,8 @@ impl EntityRepository {
     /// dictionary key.
     ///
     /// A clause 5.5.9 `attrs` term is answered by the search row's interned
-    /// attribute names, so every term resolves. A clause 4.9 linked-entity
+    /// attribute names, so every term resolves, and so is every name a clause
+    /// 4.21 projection keeps an entity alive by. A clause 4.9 linked-entity
     /// traversal contributes more than one name per predicate: the Relationship
     /// each hop descends through is probed by dictionary key just as the
     /// terminal attribute is, and both come back from the same collection walk.
@@ -238,8 +240,14 @@ impl EntityRepository {
     /// name that resolves to nothing is a name nothing has ever written, not
     /// one written moments ago.
     async fn resolve_names(&self, compiled: &CompiledEntityQuery) -> Result<QueryNames, ContextStoreError> {
+        let members = compiled
+            .selection
+            .attrs
+            .iter()
+            .map(IriBuf::as_str)
+            .chain(compiled.selection.projected_members.names());
         let attribute_names = projected_attribute_names(
-            &compiled.selection.attrs,
+            members,
             compiled.selection.q_expr.as_ref(),
             compiled.selection.geo.as_ref(),
             &compiled.ordering.terms,

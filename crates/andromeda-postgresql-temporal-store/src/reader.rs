@@ -153,7 +153,7 @@ impl TemporalHistoryReader for TemporalRepository {
         // Clause 5.7.4.3 confines a temporal ordering to the `id` member, which
         // is a column of the temporal catalogue and names no attribute, so the
         // dictionary lookup below has no ordering term to resolve.
-        let attribute_names = projected_attribute_names(&[], compiled.entities.q_expr.as_ref(), compiled.entities.geo.as_ref(), &[]);
+        let attribute_names = projected_attribute_names([], compiled.entities.q_expr.as_ref(), compiled.entities.geo.as_ref(), &[]);
         // The projection is written inside the transaction that writes the
         // entity, so a dictionary hit is already backed by committed projection
         // rows and there is nothing to wait for.

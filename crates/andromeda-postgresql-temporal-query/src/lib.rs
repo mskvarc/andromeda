@@ -20,6 +20,7 @@ pub mod aggregation_grouping;
 pub mod alias;
 pub mod axis;
 pub mod history;
+pub mod projected_members;
 pub mod recorded_shape;
 pub mod scope_history;
 pub mod stage1;

@@ -51,14 +51,24 @@ pub fn build_temporal_history_query(schema: Option<&DynIden>, entity_id: &Uri, c
 }
 
 /// The row-level filter shared by the ranked, unranked and aggregated shapes, so
-/// none can reach a row the others cannot.
+/// none can reach a row the others cannot: one entity's rows among the
+/// [`represented_instances`].
+fn stage2_conditions(schema: Option<&DynIden>, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Condition {
+    Condition::all()
+        .add(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.to_string()))
+        .add(represented_instances(schema, compiled))
+}
+
+/// The Attribute instances the temporal representation of an entity carries,
+/// over the joins of [`base_history_source`]: stage 2 reads them, and stage 1
+/// asks whether a projection leaves an entity any of them.
 ///
 /// Clause 5.2.21: an instance is placed on the requested axis by the column that
 /// holds it. `deletedAt` exists only on a row that records a deletion, so asking
 /// for that axis asks for those rows and no others; the deletion is recognised
 /// by the axis itself rather than by a sentinel value.
-fn stage2_conditions(schema: Option<&DynIden>, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Condition {
-    let mut condition = Condition::all().add(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.to_string()));
+pub(crate) fn represented_instances(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> Condition {
+    let mut condition = Condition::all();
 
     if compiled.window.timeproperty == TimeProp::Deleted {
         condition = condition.add(Expr::col((Ah, AttributeHistory::DeletedAt)).is_not_null());

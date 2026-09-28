@@ -23,6 +23,10 @@ const ARRAY_CONTAINS: &str = "@>";
 /// The array-overlap operator `&&`, true when two arrays share any element.
 const ARRAY_OVERLAPS: &str = "&&";
 
+/// The array-contained-by operator `<@`, true when every element of the left
+/// array is an element of the right one.
+const ARRAY_CONTAINED_BY: &str = "<@";
+
 /// The null-aware equality operator `IS NOT DISTINCT FROM`, which treats two
 /// NULLs as equal rather than as the unknown `=` yields.
 const NOT_DISTINCT_FROM: &str = "IS NOT DISTINCT FROM";
@@ -68,6 +72,9 @@ pub trait PgBinaryOperator {
     fn array_contains(self, element: SimpleExpr) -> SimpleExpr;
     /// `self && other` - whether the arrays `self` and `other` share any element.
     fn array_overlaps(self, other: SimpleExpr) -> SimpleExpr;
+    /// `self <@ other` - whether every element of the array `self` is an
+    /// element of the array `other`.
+    fn array_contained_by(self, other: SimpleExpr) -> SimpleExpr;
     /// `self IS NOT DISTINCT FROM other` - null-aware equality, where two NULLs
     /// compare equal. Clause 4.5.5's default instance carries no `datasetId`, so
     /// its column is NULL, and a plain `=` against NULL yields unknown rather
@@ -115,6 +122,10 @@ impl PgBinaryOperator for SimpleExpr {
 
     fn array_overlaps(self, other: SimpleExpr) -> SimpleExpr {
         self.binary(BinOper::Custom(ARRAY_OVERLAPS), other)
+    }
+
+    fn array_contained_by(self, other: SimpleExpr) -> SimpleExpr {
+        self.binary(BinOper::Custom(ARRAY_CONTAINED_BY), other)
     }
 
     fn not_distinct_from(self, other: SimpleExpr) -> SimpleExpr {
@@ -181,6 +192,12 @@ mod tests {
     fn array_contains_renders_the_containment_operator() {
         let sql = render(SimpleExpr::from(Expr::col(Alias::new("types"))).array_contains(Expr::val("Vehicle")));
         assert!(sql.contains(" @> "), "{sql}");
+    }
+
+    #[test]
+    fn array_contained_by_renders_the_contained_by_operator() {
+        let sql = render(SimpleExpr::from(Expr::col(Alias::new("keys"))).array_contained_by(Expr::col(Alias::new("allowed"))));
+        assert!(sql.contains(r#""keys" <@ "allowed""#), "{sql}");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 use crate::{
     error::EntityError,
-    query::{EntityQueryService, attribute_expansion::AttributeExpansions, projection_remainder::projection_remainder},
+    query::{EntityQueryService, attribute_expansion::AttributeExpansions},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -17,33 +17,30 @@ impl EntityQueryService {
     /// Apply `attrs`, `pick` and `omit` to every entity in a result set.
     ///
     /// The context is prepared once for the whole set, and each distinct
-    /// member name is expanded once however many entities carry it.
-    pub(super) async fn apply_projection(&self, entities: Vec<Entity>, query: &CompiledEntityQuery, context: &ContextSpec) -> Result<Vec<Entity>, EntityError> {
-        if query.projection.pick.is_empty() && query.projection.omit.is_empty() && query.selection.attrs.is_empty() {
+    /// member name is expanded once however many entities carry it. Clause
+    /// 5.7.2.5 reduces "every Entity within the payload body" to the members
+    /// the projection defines; an entity it would reduce to none of them was
+    /// never selected (`EntitySelection::projected_members`), so every entity
+    /// here keeps one and the page stays the size the store cut it to.
+    pub(super) async fn apply_projection(
+        &self,
+        mut entities: Vec<Entity>,
+        query: &CompiledEntityQuery,
+        context: &ContextSpec,
+    ) -> Result<Vec<Entity>, EntityError> {
+        if query.projection.is_empty() && query.selection.attrs.is_empty() {
             return Ok(entities);
         }
 
         let prepared = self.engine().prepare_term_context(context);
         let mut expansions = AttributeExpansions::new(self.engine(), &prepared);
-        let mut projected = Vec::with_capacity(entities.len());
-        for mut entity in entities {
+        for entity in &mut entities {
             if !query.selection.attrs.is_empty() {
-                filter_entity_attrs(&mut entity, &query.selection.attrs, &mut expansions).await?;
+                filter_entity_attrs(entity, &query.selection.attrs, &mut expansions).await?;
             }
-
-            project_entity(&mut entity, &query.projection, &mut expansions).await?;
-            // Clause 5.7.2.5 reduces "every Entity within the payload body" to
-            // the members the projection defines. An Entity reduced to none of
-            // them is not in the payload, so it is dropped from the result
-            // rather than emitted as an empty object -- the query's answer to
-            // the question clause 5.7.1.4 answers with `ResourceNotFound` on a
-            // single retrieval.
-            if projection_remainder(&entity, &query.projection).is_members() {
-                projected.push(entity);
-            }
+            project_entity(entity, &query.projection, &mut expansions).await?;
         }
-
-        Ok(projected)
+        Ok(entities)
     }
 }
 

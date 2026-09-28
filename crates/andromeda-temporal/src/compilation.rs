@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_query::{
     projection::{
         compiled::Projection,
         expansion::{expand_attrs, expand_projection_terms},
+        projected_members::ProjectedMembers,
     },
     temporal::{
         compiled::CompiledTemporalQuery,
@@ -97,6 +98,9 @@ impl TemporalService {
                     // set considers no entity, which the selectors' identifier
                     // lists cannot say on their own.
                     .considered(ConsideredEntities::of_request(params.id.as_deref()))
+                    // Clause 5.7.4.5: an entity the projection reduces to no
+                    // member is not selected, so it is left out before the page.
+                    .projected_members(ProjectedMembers::of(&projection))
                     .build(),
             )
             .window(

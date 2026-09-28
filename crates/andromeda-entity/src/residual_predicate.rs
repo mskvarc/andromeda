@@ -11,9 +11,9 @@ use strum::Display;
 /// Every predicate an `EntitySelection` can carry is named, not just the three
 /// `StorageProfile` has axes for today. The residual *is* a selection, so
 /// `ResidualFilter::kinds` must be able to name whatever a selection can
-/// carry; a shorter enum would make some selections unnameable. Four of the
-/// seven therefore have no production constructor, and the in-memory readings
-/// of those four are held to the pushed-down renderings by the profile-driven
+/// carry; a shorter enum would make some selections unnameable. Five of the
+/// eight therefore have no production constructor, and the in-memory readings
+/// of those five are held to the pushed-down renderings by the profile-driven
 /// conformance tests rather than by a live caller. The clause 5.5.14 narrowing
 /// of a map-scoped request is an identifier predicate and is named by
 /// [`ResidualPredicate::Identifier`] with the `id` list itself.
@@ -40,4 +40,8 @@ pub enum ResidualPredicate {
     /// The `scopeQ` expression (clause 4.18).
     #[strum(serialize = "scopeQ")]
     ScopeQuery,
+    /// The `pick` / `omit` projection, as far as it leaves an entity no member
+    /// to answer with (clause 4.21).
+    #[strum(serialize = "pick/omit")]
+    ProjectedMembers,
 }

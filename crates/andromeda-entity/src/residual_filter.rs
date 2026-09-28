@@ -20,6 +20,7 @@ use andromeda_ngsi_ld_query::{
     filter::{eval, expression::Expr},
     geo::query::GeoQuery,
     pattern::Pattern,
+    projection::projected_members::{ProjectedMembers, ScopeRetention},
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExpr,
 };
@@ -47,13 +48,15 @@ pub fn matches(residual: &ResidualFilter, expanded: &Value) -> Result<bool, Enti
         default_location: _,
         scope_q,
         considered,
+        projected_members,
     } = residual.selection();
     Ok(considers_any_entity(*considered)
         && selectors_match(selectors, expanded)?
         && attributes_present(attrs, expanded)
         && value_filter_matches(q_expr.as_ref(), expanded)
         && geo_matches(geo.as_ref(), expanded)
-        && scope_matches(scope_q.as_ref(), expanded))
+        && scope_matches(scope_q.as_ref(), expanded)
+        && projection_leaves_a_member(projected_members, expanded))
 }
 
 /// Clause 5.5.14: a request narrowed to an empty identifier set considers no
@@ -146,6 +149,35 @@ fn scope_matches(scope_q: Option<&ScopeQuery>, expanded: &Value) -> bool {
     scope_q.is_none_or(|scope_q| scope_q.matches(&extract_scopes(expanded)))
 }
 
+/// Clause 4.21 read as a selection criterion: the projection leaves the entity
+/// a member to answer with (clauses 5.7.2.5 and 5.7.4.5).
+///
+/// The pushed-down rendering reads the same names off the entity's recorded
+/// member names, so the two agree on which keys are Attributes.
+fn projection_leaves_a_member(projected: &ProjectedMembers, expanded: &Value) -> bool {
+    match projected {
+        ProjectedMembers::Unconditional => true,
+        ProjectedMembers::AnyOf { scope, .. } => keeps_scope(*scope, expanded) || carries_member(expanded, |key| projected.names().any(|name| name == key)),
+        ProjectedMembers::AnyBesides { scope, .. } => {
+            keeps_scope(*scope, expanded) || carries_member(expanded, |key| projected.names().all(|name| name != key))
+        }
+    }
+}
+
+/// Whether the entity keeps a `scope` member through the projection.
+fn keeps_scope(scope: ScopeRetention, expanded: &Value) -> bool {
+    match scope {
+        ScopeRetention::Kept => !extract_scopes(expanded).is_empty(),
+        ScopeRetention::Removed => false,
+    }
+}
+
+/// Whether the entity carries a member, other than a JSON-LD keyword, that
+/// `admits` accepts.
+fn carries_member(expanded: &Value, admits: impl Fn(&str) -> bool) -> bool {
+    expanded_object_ref(expanded).is_some_and(|obj| obj.keys().filter(|key| !key.starts_with('@')).any(|key| admits(key)))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{query_residual::ResidualFilter, residual_filter::matches};
@@ -155,6 +187,7 @@ mod tests {
         filter::{eval, expression::Expr, parser},
         geo::query::GeoQuery,
         pattern::Pattern,
+        projection::{compiled::Projection, projected_members::ProjectedMembers, term::ProjectionTerm},
         scope::query::ScopeQuery,
         type_selection::grammar::TypeExpr,
     };
@@ -563,10 +596,73 @@ mod tests {
         ]
     }
 
+    /// A selection carrying only what `projection` requires of an entity.
+    fn projected(projection: &Projection) -> EntitySelection {
+        EntitySelection::builder().projected_members(ProjectedMembers::of(projection)).build()
+    }
+
+    fn attribute_term(iri: &str) -> ProjectionTerm {
+        ProjectionTerm::Attribute {
+            iri: iri.parse().expect("valid IRI"),
+            linked: Vec::new(),
+        }
+    }
+
+    /// The clause 4.21 projection read as a selection (clauses 5.7.2.5 and
+    /// 5.7.4.5, ETSI TP `019_17_01`).
+    fn projected_member_cases() -> Vec<ConformanceCase> {
+        vec![
+            (
+                "clause 4.21 pick: the entity carries the picked attribute",
+                projected(&Projection::builder().pick(vec![attribute_term(TEMPERATURE)]).build()),
+                true,
+            ),
+            (
+                "clause 4.21 pick: the entity carries none of the picked attributes",
+                projected(&Projection::builder().pick(vec![attribute_term("https://example.com/humidity")]).build()),
+                false,
+            ),
+            (
+                "clause 4.21 pick: a picked scope keeps the entity through its scope",
+                projected(&Projection::builder().pick(vec![ProjectionTerm::Scope]).build()),
+                true,
+            ),
+            (
+                "clause 4.21 omit: every member the entity has is omitted",
+                projected(
+                    &Projection::builder()
+                        .omit(vec![
+                            ProjectionTerm::Id,
+                            ProjectionTerm::Type,
+                            ProjectionTerm::Scope,
+                            attribute_term(TEMPERATURE),
+                            attribute_term(LOCATION),
+                        ])
+                        .build(),
+                ),
+                false,
+            ),
+            (
+                "clause 4.21 omit: an attribute the omit does not name survives",
+                projected(
+                    &Projection::builder()
+                        .omit(vec![
+                            ProjectionTerm::Id,
+                            ProjectionTerm::Type,
+                            ProjectionTerm::Scope,
+                            attribute_term(TEMPERATURE),
+                        ])
+                        .build(),
+                ),
+                true,
+            ),
+        ]
+    }
+
     #[test]
     fn every_predicate_kind_reads_its_clause_the_way_the_specification_states_it() {
         // One table over every predicate an `EntitySelection` can carry,
-        // including the four no `StorageProfile` axis can produce today. The expected
+        // including the five no `StorageProfile` axis can produce today. The expected
         // verdicts are read off the specification rather than off the
         // implementation, which is what makes this a check and not a restatement
         // -- an earlier reading of `attrs` as a conjunction passed every test
@@ -577,7 +673,8 @@ mod tests {
             .chain(type_selection_cases())
             .chain(attribute_selection_cases())
             .chain(value_and_geo_selection_cases())
-            .chain(scope_selection_cases());
+            .chain(scope_selection_cases())
+            .chain(projected_member_cases());
 
         for (clause, selection, expected) in cases {
             pretty_assertions::assert_eq!(admits(&ResidualFilter::over(selection), &entity), expected, "{clause}");

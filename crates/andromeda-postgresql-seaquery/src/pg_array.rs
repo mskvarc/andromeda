@@ -1,6 +1,6 @@
 //! PostgreSQL array constructs sea-query has no native form for.
 
-use sea_query::{Expr, Func, Iden, PostgresQueryBuilder, QueryStatementBuilder, SelectStatement, SimpleExpr};
+use sea_query::{Expr, ExprTrait, Func, Iden, PostgresQueryBuilder, QueryStatementBuilder, SelectStatement, SimpleExpr};
 
 /// `ARRAY(subquery)` where the subquery carries bound values, collecting a
 /// single-column result set into one Postgres array.
@@ -34,6 +34,20 @@ struct ArrayPosition;
 #[must_use]
 pub fn array_position(array: SimpleExpr, element: SimpleExpr) -> SimpleExpr {
     Func::cust(ArrayPosition).args([array, element]).into()
+}
+
+/// The `cardinality` function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "cardinality"]
+struct Cardinality;
+
+/// `cardinality(array) > 0` - whether `array` holds any element.
+///
+/// A NULL array has no cardinality, so the comparison is unknown and the
+/// enclosing `WHERE` drops the row: the answer an empty array gets.
+#[must_use]
+pub fn has_elements(array: SimpleExpr) -> SimpleExpr {
+    SimpleExpr::from(Func::cust(Cardinality).args([array])).gt(0)
 }
 
 /// The `array_append` function.
@@ -121,12 +135,18 @@ pub fn nullable_text_array(values: &[Option<&str>]) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::pg_array::{any, array_append, array_position, array_subquery, nullable_text_array};
+    use crate::pg_array::{any, array_append, array_position, array_subquery, has_elements, nullable_text_array};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn render_expr(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    }
+
+    #[test]
+    fn an_element_test_compares_the_array_cardinality() {
+        let sql = render_expr(has_elements(Expr::col(Alias::new("scope_paths"))));
+        assert_eq!(sql, "SELECT cardinality(\"scope_paths\") > 0");
     }
 
     #[test]

@@ -43,8 +43,9 @@ pub struct EntityRelations {
 impl EntityRelations {
     /// The relations a compiled query needs beside `entities`.
     ///
-    /// The search row is joined for a type selector, an `attrs` term, a geo
-    /// query, a scope query, an ordering on `type` or `scope`, or a distance
+    /// The search row is joined for a type selector, an `attrs` term, a
+    /// projection that can leave an entity no member, a geo query, a scope
+    /// query, an ordering on `type` or `scope`, or a distance
     /// ordering measured to the default `location`. The document row is joined
     /// when a `q` expression is present (its jsonpath fallback reads the
     /// payload) or when an ordering sorts on an attribute value or on the
@@ -55,6 +56,7 @@ impl EntityRelations {
         let terms = &query.ordering.terms;
         let search = selection.selectors.iter().any(|selector| selector.type_expr.is_some())
             || !selection.attrs.is_empty()
+            || selection.projected_members.constrains()
             || selection.geo.is_some()
             || selection.scope_q.is_some()
             || terms.iter().any(reads_search_row);
@@ -72,6 +74,7 @@ impl EntityRelations {
         let selection = &query.selection;
         let search = selection.selectors.iter().any(|selector| selector.type_expr.is_some())
             || !selection.attrs.is_empty()
+            || selection.projected_members.constrains()
             || selection.geo.is_some()
             || selection.scope_q.is_some();
         EntityRelations {

@@ -1,6 +1,6 @@
 //! The predicates a store declined to apply.
 //!
-//! A newtype over `EntitySelection` rather than a second seven-field struct:
+//! A newtype over `EntitySelection` rather than a second eight-field struct:
 //! the residual is drawn from exactly the same vocabulary of predicates, and
 //! restating them would be two definitions of one concept. The wrapper exists
 //! so a call site cannot confuse what was asked for with what is left over.
@@ -13,6 +13,7 @@ use crate::residual_predicate::ResidualPredicate;
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection},
     geo::default_location_narrowing::DefaultLocationNarrowing,
+    projection::projected_members::ProjectedMembers,
 };
 
 /// The subset of an [`EntitySelection`] a store did not apply.
@@ -56,6 +57,7 @@ impl ResidualFilter {
             default_location: _,
             scope_q,
             considered,
+            projected_members,
         } = &self.0;
         // The selector axes are the same across every selector, so a residual
         // that carries one clears that axis from every selector of the target.
@@ -92,6 +94,9 @@ impl ResidualFilter {
         if scope_q.is_some() {
             selection.scope_q = None;
         }
+        if projected_members.constrains() {
+            selection.projected_members = ProjectedMembers::Unconditional;
+        }
     }
 
     /// Which kinds of predicate are outstanding, in the order they are
@@ -108,6 +113,7 @@ impl ResidualFilter {
             default_location: _,
             scope_q,
             considered,
+            projected_members,
         } = &self.0;
         let mut kinds = Vec::new();
         // Clause 5.5.14: considering no entity is a predicate over identifiers,
@@ -133,6 +139,9 @@ impl ResidualFilter {
         }
         if scope_q.is_some() {
             kinds.push(ResidualPredicate::ScopeQuery);
+        }
+        if projected_members.constrains() {
+            kinds.push(ResidualPredicate::ProjectedMembers);
         }
         kinds
     }

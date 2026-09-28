@@ -4,6 +4,7 @@ use crate::{
     filter::expression::Expr,
     geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
     pattern::Pattern,
+    projection::projected_members::ProjectedMembers,
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExpr,
 };
@@ -94,8 +95,9 @@ impl ConsideredEntities {
 ///
 /// The identifier, pattern and type axes are grouped into [`EntitySelector`]s
 /// and combined as a union (clause 5.2.33): an entity matches when it satisfies
-/// any selector. The remaining members — `attrs`, `q`, `geo`, `scopeQ` and
-/// `considered` — are global, and hold for every selector at once;
+/// any selector. The remaining members — `attrs`, `q`, `geo`, `scopeQ`,
+/// `considered` and the projected members — are global, and hold for every
+/// selector at once;
 /// `default_location` only narrows what `geo` already requires. One type
 /// serves the entity and temporal paths; a selection with no member set matches
 /// every entity, which is what makes `Default` meaningful here: it is the empty
@@ -133,6 +135,13 @@ pub struct EntitySelection {
     /// intersection of a request and a reused `EntityMap` reaches the store as
     /// a predicate rather than dissolving into "no identifier constraint".
     pub considered: ConsideredEntities,
+    /// What an entity has to carry for the request's clause 4.21 projection to
+    /// leave it any member.
+    ///
+    /// An entity the projection would reduce to nothing is not selected, so it
+    /// is left out where the count and the page are taken rather than after
+    /// them (clauses 5.5.9.1 and 6.3.13).
+    pub projected_members: ProjectedMembers,
 }
 
 impl EntitySelection {

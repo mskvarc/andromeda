@@ -8,9 +8,11 @@ use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{ConsideredEntities, EntitySelector},
     pagination::CountPolicy,
+    projection::projected_members::{ProjectedMembers, ScopeRetention},
 };
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
+    attribute_name_key::AttributeNameKey,
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_row_refs::EntityRowRefs,
     error::RenderError,
@@ -24,8 +26,8 @@ use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySear
 use andromeda_postgresql_seaquery::{
     aggregate::count_over_all,
     literal::false_literal,
-    operator::{array_contains_key, regex_match},
-    pg_array::{any, text_array},
+    operator::{array_contained_by_keys, array_contains_key, regex_match},
+    pg_array::{any, has_elements, text_array},
 };
 use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Order, Query, SelectStatement};
 
@@ -244,6 +246,13 @@ fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows
         condition = condition.add(attr_cond);
     }
 
+    // Clauses 5.7.2.5 and 6.3.13: an entity the `pick` / `omit` projection
+    // would reduce to no member is not selected, so it is left out here, where
+    // the count and the page are taken.
+    if let Some(members) = projected_member_condition(&query.selection.projected_members, names, rows) {
+        condition = condition.add(members);
+    }
+
     if let Some(q_expr) = &query.selection.q_expr {
         condition = condition.add(q_filter::compile(q_expr, &InstanceScan::Current(rows), names));
     }
@@ -264,6 +273,43 @@ fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows
     }
 
     Ok(condition)
+}
+
+/// The clause 4.21 projection read as a selection: the entity keeps a member
+/// the projection leaves it. `None` when every entity does.
+///
+/// The Attributes are read off the search row's interned member names, as
+/// `attrs` is: a `pick` keeps an entity carrying one of the names it lists, and
+/// an `omit` one carrying a name outside those it and clause 5.2.4 set apart,
+/// which is the negation of the member keys being contained by them. A name the
+/// dictionary never recorded is carried by no entity, so it neither keeps one
+/// nor has to be set apart. The `scope` the projection keeps is read off the
+/// search row's scope paths.
+fn projected_member_condition(projected: &ProjectedMembers, names: &QueryNames, rows: &EntityRowRefs) -> Option<Condition> {
+    let (attribute, scope) = match projected {
+        ProjectedMembers::Unconditional => return None,
+        ProjectedMembers::AnyOf { scope, .. } => {
+            let carried = projected
+                .names()
+                .filter_map(|name| names.attributes.get_str(name))
+                .map(|key| array_contains_key(rows.search_column(EntitySearch::AttributeNameKeys), key.get()))
+                .fold(Condition::any().add(false_literal()), Condition::add);
+            (carried, *scope)
+        }
+        ProjectedMembers::AnyBesides { scope, .. } => {
+            let set_apart: Vec<i32> = projected
+                .names()
+                .filter_map(|name| names.attributes.get_str(name))
+                .map(AttributeNameKey::get)
+                .collect();
+            let other = array_contained_by_keys(rows.search_column(EntitySearch::AttributeNameKeys), &set_apart).not();
+            (Condition::all().add(other), *scope)
+        }
+    };
+    Some(match scope {
+        ScopeRetention::Kept => Condition::any().add(attribute).add(has_elements(rows.search_column(EntitySearch::ScopePaths))),
+        ScopeRetention::Removed => attribute,
+    })
 }
 
 /// Render one selector's identifier, pattern and type predicates, `ANDed`.
@@ -315,6 +361,7 @@ mod tests {
         },
         pagination::CountPolicy,
         pattern::Pattern,
+        projection::{compiled::Projection, projected_members::ProjectedMembers, term::ProjectionTerm},
         scope::query::ScopeQuery,
         type_selection::grammar::TypeExpr,
     };
@@ -475,6 +522,95 @@ mod tests {
             "the key is inlined, not bound: {:?}",
             built.bind_values
         );
+    }
+
+    /// The dictionary the projection tests resolve against: `speed` at key 11
+    /// and `scope` at key 12, the latter recorded as an entity member name.
+    fn speed_and_scope_are_known() -> QueryNames {
+        attributes_only(ResolvedNames::from_pairs([
+            ("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(11)),
+            (
+                "https://uri.etsi.org/ngsi-ld/scope".parse().expect("valid attribute name"),
+                AttributeNameKey::from(12),
+            ),
+        ]))
+    }
+
+    fn projected(projection: &Projection) -> CompiledEntityQuery {
+        let mut q = empty_query();
+        q.pagination.count = CountPolicy::Emit;
+        q.selection.projected_members = ProjectedMembers::of(projection);
+        q
+    }
+
+    fn speed_term() -> ProjectionTerm {
+        ProjectionTerm::Attribute {
+            iri: iri("https://example.com/speed"),
+            linked: Vec::new(),
+        }
+    }
+
+    /// Clauses 5.7.2.5 and 6.3.13 (ETSI TP `019_17_01`): a `pick` of Attributes
+    /// selects the entities carrying one of them, in the page and in the count
+    /// alike; a name never recorded keeps no entity.
+    #[test]
+    fn a_pick_of_attributes_selects_the_entities_carrying_one_of_them() {
+        let q = projected(
+            &Projection::builder()
+                .pick(vec![
+                    speed_term(),
+                    ProjectionTerm::Attribute {
+                        iri: iri("https://example.com/neverWritten"),
+                        linked: Vec::new(),
+                    },
+                ])
+                .build(),
+        );
+        let built = build(&q, &speed_and_scope_are_known());
+        assert!(built.sql.contains(r#"JOIN "entity_search" ON"#), "{}", built.sql);
+        assert!(built.sql.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[11])"#), "{}", built.sql);
+        let count = built.count_sql.expect("count requested");
+        assert!(
+            count.contains(r#""attribute_name_keys" @> (ARRAY[11])"#),
+            "the count selects the same entities: {count}"
+        );
+    }
+
+    /// Clause 4.21: an `omit` of `id` and `type` keeps the entities carrying a
+    /// member name outside those it and clause 5.2.4 set apart.
+    #[test]
+    fn an_omit_of_id_and_type_selects_the_entities_carrying_another_attribute() {
+        let q = projected(
+            &Projection::builder()
+                .omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope, speed_term()])
+                .build(),
+        );
+        let built = build(&q, &speed_and_scope_are_known());
+        assert!(
+            built
+                .sql
+                .contains(r#"NOT ("entity_search"."attribute_name_keys" <@ (ARRAY[11, 12]::integer[]))"#),
+            "{}",
+            built.sql
+        );
+        assert!(!built.sql.contains("cardinality"), "the omitted scope keeps no entity: {}", built.sql);
+    }
+
+    /// A projection that keeps `scope` keeps an entity through its scope paths.
+    #[test]
+    fn a_pick_of_scope_selects_the_scoped_entities() {
+        let q = projected(&Projection::builder().pick(vec![ProjectionTerm::Scope]).build());
+        let built = build(&q, &speed_and_scope_are_known());
+        assert!(built.sql.contains(r#"cardinality("entity_search"."scope_paths") > "#), "{}", built.sql);
+    }
+
+    /// Every entity has an `id`, so a projection keeping it selects them all.
+    #[test]
+    fn a_pick_of_id_selects_every_entity() {
+        let q = projected(&Projection::builder().pick(vec![ProjectionTerm::Id, speed_term()]).build());
+        let built = build(&q, &speed_and_scope_are_known());
+        assert!(!built.sql.contains("attribute_name_keys"), "{}", built.sql);
+        assert!(!built.sql.contains("entity_search"), "{}", built.sql);
     }
 
     #[test]

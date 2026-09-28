@@ -1,6 +1,6 @@
 //! The generic SQL operators sea-query has no native form for: array
-//! containment, POSIX regex, the presence-and-value conjunction, and the total
-//! negation of a predicate over nullable columns.
+//! containment in both directions, POSIX regex, the presence-and-value
+//! conjunction, and the total negation of a predicate over nullable columns.
 
 use crate::{literal::false_literal, pg_operator::PgBinaryOperator, pg_type::PostgresType};
 use sea_query::{Expr, ExprTrait, Func, Iden, SimpleExpr};
@@ -55,6 +55,19 @@ pub fn array_contains(array_col: SimpleExpr, value: SimpleExpr, element_type: Po
 #[must_use]
 pub fn array_contains_key(array_col: SimpleExpr, key: i32) -> SimpleExpr {
     array_col.array_contains(Expr::cust(format!("ARRAY[{key}]")))
+}
+
+/// Whether every dictionary key of `array_col` is one of `keys`:
+/// `array_col <@ ARRAY[k, …]::integer[]`, the keys rendered inline.
+///
+/// Inlined for the reason [`array_contains_key`] gives, and cast so an empty
+/// key list still names the element type: `ARRAY[]` alone has none, and
+/// PostgreSQL refuses it. An empty `array_col` is contained by any array,
+/// the empty one included.
+#[must_use]
+pub fn array_contained_by_keys(array_col: SimpleExpr, keys: &[i32]) -> SimpleExpr {
+    let keys = keys.iter().map(i32::to_string).collect::<Vec<_>>().join(", ");
+    array_col.array_contained_by(Expr::cust(format!("ARRAY[{keys}]::integer[]")))
 }
 
 /// Regex: `col ~ pattern` - tests if column matches POSIX regex.
@@ -116,6 +129,24 @@ mod tests {
         let (sql, values) = Query::select().expr(expr).to_owned().build(PostgresQueryBuilder);
         assert!(sql.contains("\"entity_type_name_keys\" @> (ARRAY[7])"), "{sql}");
         assert!(values.0.is_empty(), "the key must not be bound: {sql}");
+    }
+
+    /// The keys are inlined with the element type, so the list the planner
+    /// reads is a typed constant, the empty one included.
+    #[test]
+    fn a_key_subset_test_renders_an_inline_typed_array() {
+        let (sql, values) = Query::select()
+            .expr(array_contained_by_keys(Expr::col("attribute_name_keys"), &[3, 5]))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert!(sql.contains("\"attribute_name_keys\" <@ (ARRAY[3, 5]::integer[])"), "{sql}");
+        assert!(values.0.is_empty(), "the keys must not be bound: {sql}");
+
+        let sql = Query::select()
+            .expr(array_contained_by_keys(Expr::col("attribute_name_keys"), &[]))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains("<@ (ARRAY[]::integer[])"), "{sql}");
     }
 
     #[test]

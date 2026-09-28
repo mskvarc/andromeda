@@ -29,7 +29,12 @@ impl TemporalResidual {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         let selection = &self.0;
-        !selection.selectors_constrain() && selection.attrs.is_empty() && selection.q_expr.is_none() && selection.geo.is_none() && selection.scope_q.is_none()
+        !selection.selectors_constrain()
+            && selection.attrs.is_empty()
+            && selection.q_expr.is_none()
+            && selection.geo.is_none()
+            && selection.scope_q.is_none()
+            && !selection.projected_members.constrains()
     }
 }
 
