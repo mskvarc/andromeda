@@ -142,7 +142,6 @@ mod tests {
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, typed_column::typed_column_condition},
     };
     use andromeda_ngsi_ld_query::{
-        dataset::DatasetFilter,
         filter::{
             predicate::CmpOp,
             scalar::{Scalar, parse_date, parse_time},
@@ -221,7 +220,6 @@ mod tests {
             .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
             .axis(AttributeHistory::ObservedAt)
             .interval(TimeInterval::Unbounded)
-            .datasets(DatasetFilter::Unfiltered)
             .build();
         let long = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
         let sql = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, &InstanceScan::History(&window)));

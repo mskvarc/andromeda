@@ -91,6 +91,7 @@ mod temporal_observed_at_sub_second;
 mod temporal_pagination_walk;
 mod temporal_prefer_version;
 mod temporal_q_window;
+mod temporal_query_dataset_filter_keeps_entity;
 mod temporal_retrieve_term_expansion;
 mod temporal_scope_evolution;
 mod term_declaration_prefix_resolution;

@@ -10,17 +10,21 @@
 //! deletion. Annex C clause C.5.5 relies on exactly this -- `brandName`,
 //! observed an hour before the window and never since, still answers
 //! `q=brandName!=Mercedes` -- while the in-effect instance is only evaluated,
-//! never rendered. When the query names `datasetId`s, only the instances of
-//! those datasets count. A Query Term matches when one such instance satisfies
-//! it, which is clause 4.9's multi-instance reading ("the target value shall be
-//! any Value of such instances") applied to the instances valid in the window
+//! never rendered. A Query Term matches when one such instance satisfies it,
+//! which is clause 4.9's multi-instance reading ("the target value shall be any
+//! Value of such instances") applied to the instances valid in the window
 //! rather than to the single current one.
+//!
+//! Every `datasetId` counts. Clause 5.7.4.4 checks `q` at step S2, before the
+//! `datasetId` parameter "filter[s] the Attribute instances" at step S8, and
+//! clause 4.9 addresses no dataset: with none "explicitly addressed, the target
+//! value shall be any Value of such instances".
 //!
 //! A deletion is recorded in history as an instance with no value (clause
 //! 4.5.7), so it is never a target value and never satisfies a Query Term.
 
-use crate::{attribute_name_key::AttributeNameKey, dataset_predicate::dataset_condition, time_interval_predicate::within_interval};
-use andromeda_ngsi_ld_query::{dataset::DatasetFilter, temporal::window::TimeInterval};
+use crate::{attribute_name_key::AttributeNameKey, time_interval_predicate::within_interval};
+use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBJECT, OBSERVED_AT, VALUE};
 use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams};
 use andromeda_postgresql_seaquery::{
@@ -46,8 +50,6 @@ pub struct HistoryWindow {
     axis: AttributeHistory,
     /// The interval the query selected on that axis.
     interval: TimeInterval,
-    /// The `datasetId`s the query selected (clause 4.5.5).
-    datasets: DatasetFilter,
 }
 
 /// The two relations one history probe scans, under the names it gives them.
@@ -116,9 +118,9 @@ impl HistoryWindow {
     }
 
     /// The window's instances of one attribute, before any correlation: the
-    /// stream rows of the attribute joined to their history rows, narrowed to
-    /// the selected datasets, to the instances valid within the interval, and
-    /// to instances that carry a value.
+    /// stream rows of the attribute joined to their history rows, of every
+    /// dataset, narrowed to the instances valid within the interval that carry
+    /// a value.
     pub(crate) fn instances_of(&self, id: AttributeNameKey, aliases: &HistoryAliases) -> sea_query::SelectStatement {
         let stream = || Alias::new(aliases.stream.as_str());
         let instance = || Alias::new(aliases.instance.as_str());
@@ -133,7 +135,6 @@ impl HistoryWindow {
                 SeaExpr::col((instance(), AttributeHistory::StreamKey)).equals((stream(), TemporalAttributeStreams::StreamKey)),
             )
             .and_where(SeaExpr::expr(aliases.stream_column(TemporalAttributeStreams::AttributeNameKey)).eq(id.get()))
-            .cond_where(dataset_condition(&aliases.stream_column(TemporalAttributeStreams::DatasetId), &self.datasets))
             // Clause 4.5.7: a deletion records no value, so it is no target value.
             .and_where(SeaExpr::expr(aliases.instance_column(AttributeHistory::DeletedAt)).is_null())
             .cond_where(self.valid_within(aliases));
@@ -232,18 +233,17 @@ mod tests {
         attribute_name_key::AttributeNameKey,
         q_predicate::history_window::{HistoryAliases, HistoryWindow, instance_document},
     };
-    use andromeda_ngsi_ld_query::{dataset::DatasetFilter, temporal::window::TimeInterval};
+    use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
     use chrono::{DateTime, Utc};
     use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
 
-    fn window(interval: TimeInterval, datasets: DatasetFilter) -> HistoryWindow {
+    fn window(interval: TimeInterval) -> HistoryWindow {
         HistoryWindow::builder()
             .schema(None)
             .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
             .axis(AttributeHistory::ObservedAt)
             .interval(interval)
-            .datasets(datasets)
             .build()
     }
 
@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn the_probe_reads_the_in_window_instances_of_the_attribute() {
         let value = Condition::all().add(Expr::col((Alias::new("qh"), Alias::new("value_number"))).gt(100));
-        let sql = render(window(after_2019(), DatasetFilter::Unfiltered).exists(AttributeNameKey::from(7), value, &HistoryAliases::top_level()));
+        let sql = render(window(after_2019()).exists(AttributeNameKey::from(7), value, &HistoryAliases::top_level()));
         for fragment in [
             r#"FROM "temporal_attribute_streams" AS "qs" JOIN "attribute_history" AS "qh" ON "qh"."stream_key" = "qs"."stream_key""#,
             r#""qs"."attribute_name_key" = 7"#,
@@ -286,7 +286,7 @@ mod tests {
     /// before the start, deletions included in finding it.
     #[test]
     fn an_interval_with_a_start_admits_the_instance_in_effect_when_it_opens() {
-        let sql = render(window(after_2019(), DatasetFilter::Unfiltered).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
+        let sql = render(window(after_2019()).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
         for fragment in [
             r#""qh"."observed_at" >= '2019-01-01"#,
             r#"OR ("qh"."observed_at" < '2019-01-01"#,
@@ -307,7 +307,7 @@ mod tests {
                 .with_timezone(&Utc),
         );
         for interval in [before, TimeInterval::Unbounded] {
-            let sql = render(window(interval, DatasetFilter::Unfiltered).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
+            let sql = render(window(interval).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
             assert!(!sql.contains(r#""qp""#), "{sql}");
         }
     }
@@ -315,29 +315,25 @@ mod tests {
     /// A nested hop seeks its prior instance under its own alias.
     #[test]
     fn a_hop_seeks_its_prior_instance_under_its_own_alias() {
-        let sql = render(window(after_2019(), DatasetFilter::Unfiltered).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::at_depth(2)));
+        let sql = render(window(after_2019()).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::at_depth(2)));
         assert!(sql.contains(r#"AS "qp_ln2""#), "{sql}");
     }
 
-    /// Clause 4.5.5: the probe honours the query's `datasetId` selection.
+    /// Clause 5.7.4.4 checks `q` at step S2, before the `datasetId` parameter
+    /// filters instances at step S8, so the probe reads the instances of every
+    /// dataset.
     #[test]
-    fn the_probe_honours_the_dataset_selection() {
-        let sql = render(window(TimeInterval::Unbounded, DatasetFilter::DefaultOnly).exists(
-            AttributeNameKey::from(7),
-            Condition::all(),
-            &HistoryAliases::top_level(),
-        ));
-        assert!(sql.contains(r#""qs"."dataset_id" IS NULL"#), "{sql}");
+    fn the_probe_reads_the_instances_of_every_dataset() {
+        for interval in [TimeInterval::Unbounded, after_2019()] {
+            let sql = render(window(interval).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
+            assert!(!sql.contains("dataset_id"), "{sql}");
+        }
     }
 
     /// A nested hop's probe takes its own aliases.
     #[test]
     fn a_hop_probe_takes_aliases_of_its_own() {
-        let sql = render(window(TimeInterval::Unbounded, DatasetFilter::Unfiltered).exists(
-            AttributeNameKey::from(7),
-            Condition::all(),
-            &HistoryAliases::at_depth(1),
-        ));
+        let sql = render(window(TimeInterval::Unbounded).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::at_depth(1)));
         assert!(sql.contains(r#"AS "qs_ln1""#) && sql.contains(r#"AS "qh_ln1""#), "{sql}");
     }
 

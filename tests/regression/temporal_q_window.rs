@@ -14,8 +14,8 @@
 //! an empty set.
 //!
 //! Each Query Term is its own existential over the window's instances of its
-//! attribute, honouring the query's `datasetId` selection and `timeproperty`,
-//! and the AND/OR tree combines them.
+//! attribute on the query's `timeproperty`, of every `datasetId`, and the
+//! AND/OR tree combines them.
 //!
 //! Naming convention: `regression_<finding>_<scenario>`.
 
@@ -231,10 +231,14 @@ async fn regression_temporal_q_window_and_and_or_combine_per_term_existentials()
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.5: the instances a term is checked against are those of the
-/// `datasetId`s the query selected.
+/// Clause 5.7.4.4 checks `q` at step S2, against "all the Attribute instances
+/// resulting from the initial filtering performed by the temporal query", and
+/// clause 4.9 makes the target value "any Value of such instances" when no
+/// `datasetId` is addressed. The `datasetId` parameter is step S8, after it: it
+/// narrows the instances the selected Entity is rendered with, never the
+/// instances `q` reads.
 #[tokio::test]
-async fn regression_temporal_q_window_the_dataset_selection_narrows_the_instances() {
+async fn regression_temporal_q_window_q_reads_every_dataset_and_the_dataset_step_narrows_the_answer() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let entity_type = scope.entity_type("TqDataset");
     let id = scope.id(&format!("{entity_type}:1"));
@@ -252,20 +256,32 @@ async fn regression_temporal_q_window_the_dataset_selection_narrows_the_instance
     )
     .await;
 
-    assert_eq!(matched(scope.client(), &entity_type, &format!("q=v>100&{AFTER_2019}")).await, vec![id.clone()]);
+    for dataset in ["", "&datasetId=@none", "&datasetId=urn:ngsi-ld:Dataset:sensor"] {
+        assert_eq!(
+            matched(scope.client(), &entity_type, &format!("q=v>100{dataset}&{AFTER_2019}")).await,
+            vec![id.clone()],
+            "the sensor instance satisfies q whatever the dataset step keeps: {dataset}"
+        );
+    }
     assert_eq!(
-        matched(scope.client(), &entity_type, &format!("q=v>100&datasetId=@none&{AFTER_2019}")).await,
-        Vec::<String>::new()
+        matched(scope.client(), &entity_type, &format!("q=v>300&datasetId=@none&{AFTER_2019}")).await,
+        Vec::<String>::new(),
+        "q still selects"
     );
-    assert_eq!(
-        matched(
-            scope.client(),
-            &entity_type,
-            &format!("q=v>100&datasetId=urn:ngsi-ld:Dataset:sensor&{AFTER_2019}")
+
+    // S8 then keeps the default instance alone: the entity answers with 10,
+    // the value q did not match, and without the 200 that it did.
+    let response = scope
+        .client()
+        .query_temporal_entities(
+            &format!("type={entity_type}&q=v>100&datasetId=@none&{AFTER_2019}&options=temporalValues"),
+            Some(CORE_CONTEXT),
         )
-        .await,
-        vec![id]
-    );
+        .await
+        .expect("temporal query request");
+    assert_eq!(response.status, StatusCode::OK, "{:?}", response.body);
+    let answer = response.json_value().expect("a temporal query answer is JSON");
+    assert_eq!(answer[0]["v"]["values"], json!([[10, "2020-01-01T00:00:00Z"]]), "{answer}");
 
     scope.finish().await.expect("cleanup failed");
 }

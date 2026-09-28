@@ -970,8 +970,13 @@ async fn temporal_query_dataset_default_instance_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 5.7.4.4: `attrs=speed` selects the Vehicle (S1), and the `datasetId`
+/// step (S8) then removes `speed`, which carries no `fuel` instance: "Remove all
+/// Attributes without remaining Attribute instances". S8 removes Attributes,
+/// never the Entity, so the Vehicle answers with its `id` and `type` alone.
+/// ETSI `021_18_07` expects an empty array, which the clause does not allow.
 #[tokio::test]
-async fn temporal_query_dataset_no_match_returns_empty() {
+async fn temporal_query_dataset_no_match_keeps_the_entity_without_attributes() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
     let id = scope.id("Vehicle:query_021_18_07");
@@ -988,8 +993,10 @@ async fn temporal_query_dataset_no_match_returns_empty() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    // speed attribute does not have datasetId=urn:ngsi-ld:Dataset:fuel
-    assert!(arr.is_empty(), "no match should return empty result");
+    assert_eq!(arr.len(), 1, "the Vehicle stays in the result set: {body}");
+    assert_eq!(arr[0]["id"], json!(id), "{body}");
+    assert!(arr[0].get("type").is_some(), "{body}");
+    assert!(arr[0].get("speed").is_none(), "speed has no fuel instance: {body}");
     scope.finish().await.expect("cleanup failed");
 }
 

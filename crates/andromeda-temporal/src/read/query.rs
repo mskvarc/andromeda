@@ -5,6 +5,7 @@ use crate::{
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,
     read::{
+        dataset_step::DatasetStep,
         ensure_aggregation_supported,
         rendered_entity::{HistoryPresence, RenderedTemporalEntity},
     },
@@ -53,6 +54,7 @@ impl TemporalService {
             let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
 
             let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
+            let dataset_step = DatasetStep::of(&compiled);
             let names = NameCompactor::new(&self.engine, context);
             let mut warnings = Vec::new();
             let rendered = if compiled.representation.format.is_aggregated() {
@@ -96,8 +98,12 @@ impl TemporalService {
             for rendered in rendered {
                 // An entity the window selects no history for is simply not part
                 // of the result set. One the page's common cut emptied is: its
-                // history continues on the next page.
-                if rendered.presence == HistoryPresence::Absent {
+                // history continues on the next page. So is one only the
+                // `datasetId` parameter emptied: clause 5.7.4.4 applies it at
+                // step S8, after stage one selected the entity, and S8 removes
+                // "all Attributes without remaining Attribute instances", never
+                // the Entity.
+                if rendered.presence == HistoryPresence::Absent && dataset_step == DatasetStep::Absent {
                     continue;
                 }
                 // Clause 5.7.4.5 reduces "every Entity within the payload body"

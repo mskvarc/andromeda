@@ -19,7 +19,10 @@ use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
     temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, window::TimeInterval},
 };
-use andromeda_postgresql_query::scope_predicate::{ScopeTarget, condition as scope_condition};
+use andromeda_postgresql_query::{
+    dataset_predicate::dataset_condition,
+    scope_predicate::{ScopeTarget, condition as scope_condition},
+};
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
@@ -76,18 +79,13 @@ fn stage2_conditions(schema: Option<&DynIden>, entity_id: &Uri, compiled: &Compi
         condition = condition.add(Expr::col((An, AttributeNames::Name)).is_in(names));
     }
 
-    // datasetId filter (clause 4.5.5): the default instance is stored as a
-    // NULL `dataset_id`, so it is tested separately from the named ones.
-    condition = match DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter) {
-        DatasetFilter::Unfiltered => condition,
-        DatasetFilter::DefaultOnly => condition.add(Expr::col((S, TemporalAttributeStreams::DatasetId)).is_null()),
-        DatasetFilter::NamedOnly(named) => condition.add(Expr::col((S, TemporalAttributeStreams::DatasetId)).is_in(named.iter().map(ToString::to_string))),
-        DatasetFilter::DefaultOrNamed(named) => condition.add(
-            Condition::any()
-                .add(Expr::col((S, TemporalAttributeStreams::DatasetId)).is_in(named.iter().map(ToString::to_string)))
-                .add(Expr::col((S, TemporalAttributeStreams::DatasetId)).is_null()),
-        ),
-    };
+    // Clause 5.7.4.4 step S8 (5.7.3.4 for a retrieval): the `datasetId`
+    // parameter keeps only the instances of the datasets it names. It filters
+    // the instances an Entity is represented with, never which Entities are.
+    condition = condition.add(dataset_condition(
+        &Expr::col((S, TemporalAttributeStreams::DatasetId)),
+        &DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter),
+    ));
 
     // Annex C, clause C.5.16 closes with "Vehicle A8311 only entered the Scope
     // within the request interval. Thus in the latter case only Property values

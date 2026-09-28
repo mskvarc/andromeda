@@ -109,7 +109,7 @@ mod tests {
         entity_row_refs::EntityRowRefs,
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, value_column::ValueColumn},
     };
-    use andromeda_ngsi_ld_query::{dataset::DatasetFilter, temporal::window::TimeInterval};
+    use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
     use sea_query::{Alias, Condition, Expr, PostgresQueryBuilder, Query};
 
@@ -119,7 +119,6 @@ mod tests {
             .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
             .axis(AttributeHistory::ModifiedAt)
             .interval(TimeInterval::Unbounded)
-            .datasets(DatasetFilter::Unfiltered)
             .build()
     }
 

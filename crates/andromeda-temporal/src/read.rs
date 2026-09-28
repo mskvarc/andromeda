@@ -4,7 +4,7 @@ use crate::{
     aggregation_eligibility::ensure_aggregation_eligible,
     error::TemporalError,
     port::history_reader::TemporalHistoryReader,
-    read::rendered_entity::HistoryPresence,
+    read::{dataset_step::DatasetStep, rendered_entity::HistoryPresence},
     requested_identifiers::RequestedIdentifiers,
     service::{TemporalRange, TemporalReadResult, TemporalService},
     temporal_not_found_reason::TemporalNotFoundReason,
@@ -143,7 +143,7 @@ impl TemporalService {
         compiled: &CompiledTemporalQuery,
         presence: HistoryPresence,
     ) -> Result<HistoryPresence, TemporalError> {
-        if presence == HistoryPresence::Present || compiled.instances.dataset_id_filter.is_empty() {
+        if presence == HistoryPresence::Present || DatasetStep::of(compiled) == DatasetStep::Absent {
             return Ok(presence);
         }
         // clone: the S1 probe reads the same query without the dataset step that follows it
@@ -306,6 +306,8 @@ fn ensure_aggregation_supported(reader: &dyn TemporalHistoryReader, requested: &
     }
 }
 
+/// Whether a temporal read carries the `datasetId` step.
+mod dataset_step;
 /// Query Temporal Evolution of Entities (clause 5.7.4).
 mod query;
 /// Rendering the temporal evolution of one entity over a compiled window.

@@ -8,6 +8,14 @@
 //! evolution too: clause 5.7.4.4 checks `q` (step S2) and the geoquery (step S3)
 //! against the Attribute instances inside the temporal window, which are the
 //! `attribute_history` rows, never against current state.
+//!
+//! The `datasetId` parameter selects no Entity. Clause 5.7.4.4 applies it at
+//! step S8, after every selection step, to "filter the Attribute instances" and
+//! "[r]emove all Attributes without remaining Attribute instances"; only step
+//! S1 removes an Entity, and only for having no data in the window. So neither
+//! the window match, nor `q`, nor the geoquery narrows by dataset here: an
+//! Entity whose instances the parameter all filters out is selected, counted
+//! and paged, and answers with no Attribute.
 
 use crate::{
     alias::{Ah, Ahg, An, Ang, EntityIdColumn, S, Sg},
@@ -16,13 +24,11 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
-    dataset::DatasetFilter,
     entity_selection::{ConsideredEntities, EntitySelector},
     pagination::CountPolicy,
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
-    dataset_predicate::dataset_condition,
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_ordering::{order_by_entity_identifier, ordering_collation},
     error::RenderError,
@@ -222,18 +228,14 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
 }
 
 /// The Attribute instances a temporal `q` is checked against (clause 5.7.4.4
-/// step S2): the entity's history rows inside the window on the requested
-/// Temporal Property, of the `datasetId`s the query selected.
-///
-/// The window is the one the instance match itself applies, so a `q` term can
-/// only be satisfied by an instance the query could also return.
+/// step S2): the entity's history rows valid within the window on the
+/// requested Temporal Property, of every `datasetId`.
 fn windowed_instances(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> HistoryWindow {
     HistoryWindow::builder()
         .schema(schema.cloned())
         .temporal_entity_key(SeaExpr::col((E, TemporalEntities::TemporalEntityKey)))
         .axis(axis_column(compiled.window.timeproperty))
         .interval(compiled.window.interval)
-        .datasets(DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter))
         .build()
 }
 
@@ -320,7 +322,8 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
     condition
 }
 
-/// Build temporal-specific conditions for Stage 1 (attribute filters, `datasetId`, timerel, `scopeQ`).
+/// Build the clause 5.7.4.4 step S1 conditions of Stage 1 (the concerned
+/// attributes and the window), plus the `scopeQ` of step S4.
 fn build_temporal_stage1_conditions(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> Condition {
     let mut condition = Condition::all();
 
@@ -329,12 +332,6 @@ fn build_temporal_stage1_conditions(schema: Option<&DynIden>, compiled: &Compile
         let names: Vec<&str> = compiled.instances.attr_filter.iter().map(IriBuf::as_str).collect();
         condition = condition.add(SeaExpr::col((An, AttributeNames::Name)).is_in(names));
     }
-
-    // datasetId filter (clause 4.5.5).
-    condition = condition.add(dataset_condition(
-        &SeaExpr::col((S, TemporalAttributeStreams::DatasetId)),
-        &DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter),
-    ));
 
     // Temporal filters (timerel + time_at), on the requested axis alone.
     let axis = axis_column(compiled.window.timeproperty);
@@ -667,18 +664,43 @@ mod tests {
         assert!(!sql.contains(r#""entities""#), "{sql}");
     }
 
-    /// The window a `q` term reads is on the requested Temporal Property and
-    /// honours the query's `datasetId` selection.
+    /// The window a `q` term reads is on the requested Temporal Property.
     #[test]
-    fn stage1_q_filter_honours_the_timeproperty_and_the_dataset_selection() {
+    fn stage1_q_filter_reads_the_window_on_the_requested_timeproperty() {
         let mut compiled = minimal_compiled();
         compiled.window.timeproperty = TimeProp::Modified;
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
-        compiled.instances.dataset_id_filter = vec![DatasetSelector::parse("@none").expect("the default instance selector")];
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\"==1").unwrap());
         let (sql, _) = built(&compiled, &speed_and_address());
         assert!(sql.contains(r#""qh"."modified_at" <"#), "{sql}");
-        assert!(sql.contains(r#""qs"."dataset_id" IS NULL"#), "{sql}");
+    }
+
+    /// Clause 5.7.4.4: the `datasetId` parameter is step S8, which filters
+    /// Attribute instances after every selection step and removes no Entity.
+    /// Neither the step S1 window match, nor the step S2 `q`, nor the step S3
+    /// geoquery, nor the count names a dataset, for every form of the
+    /// parameter.
+    #[test]
+    fn no_selection_step_narrows_by_the_dataset_parameter() {
+        for selectors in [&["@none"][..], &["urn:ngsi-ld:Dataset:one"], &["@none", "urn:ngsi-ld:Dataset:one"]] {
+            let mut compiled = minimal_compiled();
+            compiled.pagination.count = CountPolicy::Emit;
+            compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
+            compiled.instances.dataset_id_filter = selectors
+                .iter()
+                .map(|selector| DatasetSelector::parse(selector).expect("a valid dataset selector"))
+                .collect();
+            compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
+            compiled.entities.geo = Some(GeoQuery {
+                georel: GeoRel::Within,
+                geometry: point(&serde_json::json!([1.0, 2.0])),
+                geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+            });
+            let (sql, _) = built(&compiled, &speed_and_address());
+            assert!(!sql.contains("dataset_id"), "{selectors:?}: {sql}");
+            let count = built_count(&compiled, &speed_and_address());
+            assert!(!count.contains("dataset_id"), "{selectors:?}: {count}");
+        }
     }
 
     /// Each Query Term is its own existential, combined by the q tree.
