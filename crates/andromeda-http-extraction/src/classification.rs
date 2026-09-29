@@ -117,6 +117,7 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::PatternRegex(_)
         | QueryError::PatternRepeatedQuantifier
         | QueryError::PatternNonPosixConstruct { .. }
+        | QueryError::PatternTranslation(_)
         | QueryError::GeoRel(_)
         | QueryError::GeoCoordinatesInvalid(_)
         | QueryError::ReferenceGeometry(_)

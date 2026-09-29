@@ -65,6 +65,7 @@ pub(crate) fn context_store(error: ContextStoreError) -> CommitError {
         | ContextStoreError::Migration(_)
         | ContextStoreError::SchemaContract(_)
         | ContextStoreError::BranchVersion(_)
+        | ContextStoreError::StoredRegistrationInformation(_)
         | ContextStoreError::Internal(_) => persistence(error),
     }
 }

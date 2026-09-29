@@ -198,6 +198,7 @@ const BASE_SUITES: &[Suite] = &[
     Suite::parallel("notification"),
     Suite::parallel("notification_join"),
     Suite::parallel("pagination"),
+    Suite::parallel("pattern_case_folding"),
     Suite::parallel("prefer"),
     Suite::parallel("profile"),
     Suite::parallel("query_access_paths"),

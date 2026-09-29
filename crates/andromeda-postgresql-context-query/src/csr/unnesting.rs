@@ -28,6 +28,21 @@ pub(crate) fn ent() -> SimpleExpr {
     SeaExpr::col((Alias::new("ent"), Alias::new("value")))
 }
 
+/// The restatement of the current `entities` entry's `idPattern`, which is what
+/// a registered pattern is evaluated as:
+/// `context_source_registrations.entity_id_pattern_forms ->> (ent->>'idPattern')`.
+///
+/// The registered text is never handed to PostgreSQL's regular-expression
+/// engine, which reads `(?i)` and `(?m)` differently from the broker's
+/// in-memory engine (clause 4.9); the registration stores each pattern's
+/// portable restatement keyed by its text, and this looks it up for the entry
+/// being tested. An entry without an `idPattern` looks up `NULL`, which no
+/// identifier matches. The column is qualified because the lookup sits inside
+/// nested set-returning subqueries correlated with the registration row.
+pub(crate) fn registered_pattern_form() -> SimpleExpr {
+    SeaExpr::col((Csr::Table, Csr::EntityIdPatternForms)).json_get_text(ent().json_get_text(text_literal("idPattern")))
+}
+
 /// `NOT jsonb_exists(target, 'key')` - whether `target` lacks `key`.
 pub(crate) fn lacks_key(target: SimpleExpr, key: &str) -> SimpleExpr {
     Condition::all().add(jsonb_exists(target, text_literal(key))).not().into()

@@ -139,6 +139,7 @@ impl PostgresPendingWorkProbe {
                 | ContextStoreError::ContextMapper(_)
                 | ContextStoreError::Migration(_)
                 | ContextStoreError::BranchVersion(_)
+                | ContextStoreError::StoredRegistrationInformation(_)
                 | ContextStoreError::Internal(_)),
             ) => Err(PendingWorkError::ProbeFailed {
                 database: database.clone(), // clone: the error outlives this borrow

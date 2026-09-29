@@ -10,18 +10,24 @@
 //! # Two dialects
 //!
 //! A pattern is evaluated by two engines. In memory the broker uses the `regex`
-//! crate; in the store PostgreSQL applies its POSIX ARE operators (`~`, `!~`).
-//! Clause 4.9 and Table 5.2.8-1 both mandate IEEE 1003.2, which the two engines
-//! implement alike, but each extends it in its own direction and the extensions
-//! do not agree.
+//! crate; in the store PostgreSQL applies its Advanced Regular Expression
+//! operators (`~`, `!~`). Clause 4.9 and Table 5.2.8-1 both mandate IEEE
+//! 1003.2, which the two engines implement alike, but each extends it in its
+//! own direction and the extensions do not agree.
 //!
-//! Validation is therefore in two parts, and a pattern has to pass both: the
-//! `regex` crate compiles it, which is what the in-memory evaluator will run,
-//! and [`check_posix_dialect`] refuses the constructs PostgreSQL's engine either
-//! cannot run or reads differently. Accepting a pattern on one engine's terms
-//! alone let `\p{L}` reach SQL, where PostgreSQL's refusal surfaced as a
-//! `500 InternalError`, and let `\b` mean a word boundary in memory and a
-//! backspace in the store.
+//! The two engines therefore never read the same text. The `regex` crate
+//! compiles the pattern as the client wrote it, and the store is handed a
+//! [`PortablePattern`] rendered from what the `regex` crate compiled, with every
+//! embedded option applied and every class written out, so the store runs the
+//! reading the in-memory engine runs. That is what lets `(?i)` fold `Č` to `č`
+//! in the store as it does in memory, where PostgreSQL's own case-insensitive
+//! option folds only ASCII.
+//!
+//! [`check_posix_dialect`] decides which patterns are admitted at all: IEEE
+//! 1003.2, less the handful of its constructs the `regex` crate reads
+//! differently from POSIX.2, plus the extensions the broker supports. Accepting
+//! a pattern on the `regex` crate's terms alone would let `\b` mean a word
+//! boundary where IEEE 1003.2 gives it no meaning.
 //!
 //! One divergence is settled by configuration rather than by refusal, because
 //! the construct is POSIX.2 itself and cannot be turned away: `.` matches a
@@ -30,14 +36,12 @@
 //! is therefore built with `dot_matches_new_line`, so `name~="a.b"` selects a
 //! value spelled `a\nb` on both sides.
 //!
-//! What survives is IEEE 1003.2, less the handful of its constructs the two
-//! engines cannot be made to agree on, plus the extensions they share.
 //! `crate::posix_dialect` names each narrowing and
 //! `docs/spec-conformance-sweep.md` records why.
 
-use crate::{error::QueryError, posix_dialect::check_posix_dialect};
+use crate::{error::QueryError, portable_pattern::PortablePattern, posix_dialect::check_posix_dialect};
 use regex::{Regex, RegexBuilder};
-use regex_syntax::ast::parse::Parser;
+use regex_syntax::{ast::parse::Parser, hir::translate::TranslatorBuilder};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -53,19 +57,25 @@ use std::{fmt, str::FromStr};
 /// (5.2.23) — gives back exactly what the client sent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct Pattern(Regex);
+pub struct Pattern {
+    /// The client's text, compiled for the in-memory engine.
+    compiled: Regex,
+    /// The restatement the store evaluates.
+    portable: PortablePattern,
+}
 
 impl Pattern {
-    /// Compile and validate a pattern, rejecting one either engine could not
-    /// run and one the two would read differently.
+    /// Compile and validate a pattern, rejecting one outside the admitted
+    /// dialect, and render the restatement the store evaluates.
     ///
     /// # Errors
     ///
     /// Returns [`QueryError::PatternRegex`] when the `regex` crate rejects the
-    /// pattern, and [`QueryError::PatternRepeatedQuantifier`] or
-    /// [`QueryError::PatternNonPosixConstruct`] when
-    /// [`check_posix_dialect`] finds a construct PostgreSQL's POSIX engine does
-    /// not share.
+    /// pattern, [`QueryError::PatternRepeatedQuantifier`] or
+    /// [`QueryError::PatternNonPosixConstruct`] when [`check_posix_dialect`]
+    /// finds a construct outside the admitted dialect, and
+    /// [`QueryError::PatternTranslation`] when the pattern cannot be translated
+    /// for rendering.
     pub fn parse(pattern: &str) -> Result<Pattern, QueryError> {
         // `dot_matches_new_line` is PostgreSQL's default and the POSIX.2
         // reading of `.`; the `regex` crate's default excludes a newline, which
@@ -74,22 +84,32 @@ impl Pattern {
         let compiled = RegexBuilder::new(pattern).dot_matches_new_line(true).build()?;
         let ast = Parser::new().parse(pattern).map_err(|_| QueryError::PatternRepeatedQuantifier)?;
         check_posix_dialect(&ast)?;
-        Ok(Pattern(compiled))
+        // The translator is configured as `compiled` was built, so the
+        // restatement is rendered from the reading the in-memory engine runs.
+        let hir = TranslatorBuilder::new().dot_matches_new_line(true).build().translate(pattern, &ast)?;
+        let portable = PortablePattern::render(&hir)?;
+        Ok(Pattern { compiled, portable })
     }
 
     /// The pattern as the client wrote it.
     ///
-    /// This is what binds into SQL, where PostgreSQL compiles it again under
-    /// POSIX rules.
+    /// This is the wire form: what a resource storing the pattern gives back,
+    /// and what a request forwarded to a Context Source carries.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        self.0.as_str()
+        self.compiled.as_str()
+    }
+
+    /// The restatement a store evaluates in place of the client's text.
+    #[must_use]
+    pub const fn portable(&self) -> &PortablePattern {
+        &self.portable
     }
 
     /// Whether the pattern matches anywhere in `haystack`.
     #[must_use]
     pub fn is_match(&self, haystack: &str) -> bool {
-        self.0.is_match(haystack)
+        self.compiled.is_match(haystack)
     }
 }
 
@@ -115,7 +135,7 @@ impl TryFrom<String> for Pattern {
 // field, which is where the source text lives.
 impl fmt::Display for Pattern {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.0.as_str())
+        formatter.write_str(self.compiled.as_str())
     }
 }
 
@@ -123,7 +143,7 @@ impl fmt::Display for Pattern {
 // `#[serde(into = "String")]` demands an `Into<String>`.
 impl From<Pattern> for String {
     fn from(pattern: Pattern) -> String {
-        pattern.0.as_str().to_string()
+        pattern.compiled.as_str().to_string()
     }
 }
 
@@ -131,7 +151,7 @@ impl From<Pattern> for String {
 // over the source text of a private field of a foreign type.
 impl PartialEq for Pattern {
     fn eq(&self, other: &Pattern) -> bool {
-        self.0.as_str() == other.0.as_str()
+        self.compiled.as_str() == other.compiled.as_str()
     }
 }
 
@@ -194,6 +214,27 @@ mod tests {
     fn a_dot_matches_a_newline_as_posix_and_the_store_both_read_it() {
         assert!(Pattern::parse("a.b").expect("valid").is_match("a\nb"));
         assert!(Pattern::parse("^a.b$").expect("valid").is_match("a\nb"));
+    }
+
+    /// `(?i)` folds by Unicode simple case folding, so the letters of European
+    /// languages outside ASCII compare case-insensitively too.
+    #[test]
+    fn a_case_insensitive_pattern_folds_letters_outside_ascii() {
+        let pattern = Pattern::parse("(?i)^čebela$").expect("valid");
+        for subject in ["čebela", "Čebela", "ČEBELA"] {
+            assert!(pattern.is_match(subject), "{subject}");
+        }
+        assert!(!pattern.is_match("cebela"), "folding is not accent stripping");
+    }
+
+    /// The wire form stays the client's text; the store evaluates the
+    /// restatement instead.
+    #[test]
+    fn a_case_insensitive_pattern_keeps_its_text_beside_its_restatement() {
+        let pattern = Pattern::parse("(?i)čer").expect("valid");
+        assert_eq!(pattern.as_str(), "(?i)čer");
+        assert_eq!(pattern.portable().as_str(), "[Čč][Ee][Rr]");
+        assert_eq!(serde_json::to_string(&pattern).expect("serialises"), "\"(?i)čer\"");
     }
 
     /// `^` and `$` anchor the whole subject in both engines unless `(?m)` asks

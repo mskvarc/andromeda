@@ -197,9 +197,10 @@ impl RegistrationService {
 /// The registration trimmed to the `RegistrationInfo` elements the compiled
 /// query matches (clause 5.10.2.5), or nothing when none match.
 ///
-/// The statement preselects on the clause 5.12 reading, but it decides the two
-/// regular-expression cases in the database's dialect; the typed evaluation
-/// here is the authority, and it is what settles the response.
+/// The statement preselects on the clause 5.12 reading, evaluating the two
+/// regular-expression cases on the portable restatements of the patterns, which
+/// agree with the in-memory engine; the typed evaluation here is the authority,
+/// and it is what settles the response.
 ///
 /// Clause 5.10.2.5 states the trimming as a recommendation -- implementations
 /// "should return filtered Context Source Registrations, which only contain

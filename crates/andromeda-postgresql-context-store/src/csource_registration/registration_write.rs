@@ -2,6 +2,7 @@
 //! rewrites the routing projection in the same transaction as the payload.
 
 use crate::csource_registration::{
+    entity_id_pattern_forms::stored_pattern_forms,
     mapper::row_to_csr,
     registration_read::expired_select,
     registration_statements::{
@@ -89,6 +90,7 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
 /// in one transaction.
 pub(super) async fn create(store: &PostgresRegistrationStore, id: &Uri, params: &CreateCsrParams) -> Result<(), RegistrationError> {
     let information = serde_json::to_value(&params.information)?;
+    let pattern_forms = stored_pattern_forms(&params.information);
     let observation_interval = params.observation_interval.map(serde_json::to_value).transpose()?;
     let management_interval = params.management_interval.map(serde_json::to_value).transpose()?;
     let management = params.management.as_ref().map(serde_json::to_value).transpose()?;
@@ -122,6 +124,8 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Uri, params: 
         .bind(params.jsonld_context.as_ref().map(DereferenceableUri::as_str))
         .bind(params.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(&params.additional_properties)
+        .bind(pattern_forms.as_ref().map(|stored| &stored.forms))
+        .bind(pattern_forms.as_ref().map(|stored| stored.revision.get()))
         .execute(&mut *transaction)
         .await
         .map_err(|error| create_error(error, id))?;
@@ -141,6 +145,7 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Uri, params: 
 /// Replace a registration with a resolved value set and rebuild its routing projection in one transaction.
 pub(super) async fn update(store: &PostgresRegistrationStore, id: &Uri, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {
     let information = serde_json::to_value(&values.information)?;
+    let pattern_forms = stored_pattern_forms(&values.information);
     let observation_interval = values.observation_interval.map(serde_json::to_value).transpose()?;
     let management_interval = values.management_interval.map(serde_json::to_value).transpose()?;
     let management = values.management.as_ref().map(serde_json::to_value).transpose()?;
@@ -174,6 +179,8 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Uri, values: 
         .bind(values.jsonld_context.as_ref().map(DereferenceableUri::as_str))
         .bind(values.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(&values.additional_properties)
+        .bind(pattern_forms.as_ref().map(|stored| &stored.forms))
+        .bind(pattern_forms.as_ref().map(|stored| stored.revision.get()))
         .execute(&mut *transaction)
         .await
         .map_err(persistence_error)?;

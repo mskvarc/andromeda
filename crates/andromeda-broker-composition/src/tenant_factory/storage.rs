@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_atomic_write::config::BulkWriteMode;
 use andromeda_postgresql_context_store::{
     context_space::resolve_live_target,
-    csource_registration::registration_store::PostgresRegistrationStore,
+    csource_registration::{pattern_forms_refresh::refresh_stale_pattern_forms, registration_store::PostgresRegistrationStore},
     entity::repo::EntityRepository,
     entity_map::repo::EntityMapRepository,
     jsonld_context::repo::JsonLdContextRepository,
@@ -129,6 +129,23 @@ async fn bring_schema_current(pool: &PgPool, migration_url: &Url, acquire_timeou
     Ok(())
 }
 
+/// Render again the stored restatements of registered identifier patterns an
+/// older rendering produced.
+///
+/// Runs before any request is served: discovery and forwarding evaluate the
+/// stored restatements, which must be the ones this build renders.
+async fn bring_pattern_forms_current(pool: &PgPool) -> Result<(), TenantAssemblyError> {
+    let refreshed = refresh_stale_pattern_forms(pool).await?;
+    if refreshed > 0 {
+        tracing::info!(
+            refreshed,
+            event = "registration_pattern_forms_refreshed",
+            "registered idPattern restatements rendered again"
+        );
+    }
+    Ok(())
+}
+
 /// Open, migrate, validate, and warm every storage component for a tenant.
 ///
 /// The database is migrated over `migration_url`, which reaches PostgreSQL
@@ -160,6 +177,7 @@ pub(super) async fn initialize_storage(
         .connect(serving_url.as_str())
         .await?;
     bring_schema_current(&pool, migration_url, config.database.acquire_timeout()).await?;
+    bring_pattern_forms_current(&pool).await?;
     let live_target = resolve_live_target();
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = config.jsonld.build_engine(Arc::clone(&context_repo))?;

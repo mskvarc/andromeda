@@ -53,8 +53,8 @@ fn csr_pred_to_condition(pred: &Predicate) -> Condition {
         Predicate::Exists(_) => Condition::all().add(jsonb_key_exists(additional_properties(), SeaExpr::val(path.attr.as_str()))),
         Predicate::Equality { membership, rhs, .. } => csr_equality_condition(path, *membership, rhs),
         Predicate::Ordering { op, rhs, .. } => csr_ordering_condition(path, *op, rhs),
-        Predicate::MatchPattern { pattern, .. } => csr_pattern_condition(path, pattern.as_str(), PatternPolarity::Match),
-        Predicate::NotMatchPattern { pattern, .. } => csr_pattern_condition(path, pattern.as_str(), PatternPolarity::NotMatch),
+        Predicate::MatchPattern { pattern, .. } => csr_pattern_condition(path, pattern.portable().as_str(), PatternPolarity::Match),
+        Predicate::NotMatchPattern { pattern, .. } => csr_pattern_condition(path, pattern.portable().as_str(), PatternPolarity::NotMatch),
     }
 }
 

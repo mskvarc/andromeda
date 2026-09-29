@@ -1,5 +1,7 @@
 //! Persistence layer for context source registrations.
 
+/// The portable restatement of every `idPattern` a registration declares.
+mod entity_id_pattern_forms;
 /// The routing projection derived from a registration's `information`.
 pub mod information_projection;
 /// Row-to-domain mapping for context source registrations.
@@ -8,6 +10,9 @@ pub mod mapper;
 pub mod mode_code;
 /// The number a registration stores a clause 4.20 operation as.
 pub mod operation_code;
+/// Rendering stored identifier-pattern restatements again after a rendering
+/// change.
+pub mod pattern_forms_refresh;
 /// The read side of the registration store.
 mod registration_read;
 /// The statements the registration store builds on.

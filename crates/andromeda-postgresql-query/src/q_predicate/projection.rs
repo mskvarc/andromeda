@@ -377,7 +377,7 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
     };
 
     let value = scan.string_columns().iter().fold(Condition::any(), |value, column| {
-        value.add(pattern_predicate(scan.value(*column), polarity, SeaExpr::val(pattern.as_str())))
+        value.add(pattern_predicate(scan.value(*column), polarity, SeaExpr::val(pattern.portable().as_str())))
     });
     CompiledTerm::Instances(InstanceTest { attribute: id, value })
 }

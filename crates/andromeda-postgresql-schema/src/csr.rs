@@ -23,6 +23,11 @@ pub enum Csr {
     Description,
     /// The `information` array of registered entity/attribute coverage.
     Information,
+    /// Each `idPattern` the `information` declares, mapped from the text as
+    /// written to the portable restatement the store evaluates in its place.
+    EntityIdPatternForms,
+    /// The rendering revision that produced `EntityIdPatternForms`.
+    EntityIdPatternFormsRevision,
     /// The `datasetId` list of attribute instances the source provides.
     DatasetId,
     /// Owning tenant.

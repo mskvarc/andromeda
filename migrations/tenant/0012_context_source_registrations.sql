@@ -51,6 +51,17 @@ CREATE TABLE context_source_registrations (
     -- The authority for every response body, rendered back verbatim.
     -- `registration_information` is its routing projection.
     information JSONB COMPRESSION lz4 NOT NULL,
+    -- Each `idPattern` in `information`, keyed by the text as written, mapped
+    -- to the restatement the broker renders for this engine: every embedded
+    -- option applied and every class written out, so `~` here reads the
+    -- pattern as the broker's in-memory engine does (clause 4.9; PostgreSQL's
+    -- own `(?i)` folds only ASCII). NULL when `information` declares none.
+    -- The broker writes it beside `information`; nothing here derives it.
+    entity_id_pattern_forms JSONB COMPRESSION lz4,
+    -- The revision of the broker's rendering that produced
+    -- `entity_id_pattern_forms`, NULL exactly when it is. A broker renders
+    -- again, when it opens the tenant, every row an older revision produced.
+    entity_id_pattern_forms_revision SMALLINT,
     -- The tenant to address at the context source; NULL means its default
     -- tenant.
     tenant TEXT COMPRESSION lz4,
@@ -85,6 +96,10 @@ CREATE TABLE context_source_registrations (
     CONSTRAINT pk_context_source_registrations PRIMARY KEY (id),
     CONSTRAINT chk_context_source_registrations_id_length CHECK (octet_length(id) <= 1024),
     CONSTRAINT chk_csr_mode CHECK (mode BETWEEN 1 AND 4),
+    CONSTRAINT chk_csr_entity_id_pattern_forms_object CHECK (
+        entity_id_pattern_forms IS NULL OR jsonb_typeof(entity_id_pattern_forms) = 'object'),
+    CONSTRAINT chk_csr_entity_id_pattern_forms_revision CHECK (
+        (entity_id_pattern_forms IS NULL) = (entity_id_pattern_forms_revision IS NULL)),
     CONSTRAINT chk_csr_operations CHECK (
         operations IS NULL
         OR (cardinality(operations) > 0

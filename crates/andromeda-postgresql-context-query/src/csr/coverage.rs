@@ -23,7 +23,7 @@
 use crate::csr::{
     entity_specification::entity_type_admits,
     projection::{entity_id_candidate, entity_type_candidate},
-    unnesting::{ent, entities_of_item, information_covers, lacks_key},
+    unnesting::{ent, entities_of_item, information_covers, lacks_key, registered_pattern_form},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_seaquery::{jsonb::jsonb_exists, literal::text_literal, operator::regex_match, pg_operator::PgBinaryOperator};
@@ -55,7 +55,9 @@ pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
 /// expression matches it. An `idPattern`-only entry therefore covers only the
 /// ids its pattern admits, not every id — the trap a bare `NOT jsonb_exists(ent,
 /// 'id')` disjunct falls into, since an entry that carries an `idPattern` but no
-/// `id` would otherwise match every entity.
+/// `id` would otherwise match every entity. The pattern is evaluated as its
+/// stored restatement ([`registered_pattern_form`]), so `(?i)` folds as the
+/// in-memory engine folds it.
 ///
 /// The projection preselect that runs first admits every pattern row without
 /// looking at the pattern, so the regular expression is evaluated exactly once,
@@ -70,7 +72,7 @@ pub fn entity_id_coverage(entity_id: &Uri) -> SimpleExpr {
             .add(
                 Condition::all()
                     .add(jsonb_exists(ent(), text_literal("idPattern")))
-                    .add(regex_match(SeaExpr::val(entity_id.as_str()), ent().json_get_text(text_literal("idPattern")))),
+                    .add(regex_match(SeaExpr::val(entity_id.as_str()), registered_pattern_form())),
             ),
     );
     entity_id_candidate(slice::from_ref(entity_id)).and(information_covers(entities_match))
@@ -120,6 +122,17 @@ mod tests {
         assert!(sql.contains("'idPattern'"), "{sql}");
         assert!(sql.contains("'urn:ngsi-ld:Vehicle:1'"), "the exact-id disjunct binds the identifier: {sql}");
         assert!(sql.contains(" ~ "), "the idPattern regex disjunct must be present: {sql}");
+    }
+
+    /// The registered pattern is evaluated as its stored restatement, looked up
+    /// by the entry's own `idPattern` text, never as the text itself.
+    #[test]
+    fn id_coverage_evaluates_the_stored_restatement_of_the_registered_pattern() {
+        let sql = render(entity_id_coverage(&uri("urn:ngsi-ld:Vehicle:1")));
+        assert!(
+            sql.contains(r#"'urn:ngsi-ld:Vehicle:1' ~ ("context_source_registrations"."entity_id_pattern_forms" ->> ("ent"."value" ->> ('idPattern')))"#),
+            "{sql}"
+        );
     }
 
     #[test]

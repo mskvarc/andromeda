@@ -89,6 +89,7 @@ dependencies = [
  "andromeda-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
  "andromeda-notification",
  "andromeda-postgresql-atomic-write",
  "andromeda-postgresql-codes",

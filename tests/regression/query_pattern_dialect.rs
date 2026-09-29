@@ -191,10 +191,10 @@ async fn regression_query_pattern_every_construct_only_one_engine_supports_is_re
         r"\P{L}",
         r"a\z",
         r"\x{61}",
-        "(?i:ab)",
+        "(?m:ab)",
         "(?u)a",
         "(?U)a+",
-        "(?-i)a",
+        "(?-s)a",
         r"Merc\x33de",
         "[[:^alpha:]]",
         "[a-b-c]",
@@ -250,18 +250,19 @@ async fn regression_query_pattern_a_bracket_expression_the_two_engines_read_diff
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The Perl shorthand classes and `(?i)` compile in both engines and classify
-/// differently: the `regex` crate applies Unicode properties and Unicode case
-/// folding, so `\w` matches `é`, `\d` matches `٣`, `\s` matches U+00A0 and
-/// `(?i)é` matches `É`; PostgreSQL, over the `COLLATE "C"` operand every stored
-/// pattern is applied to, matches none of them.
+/// The Perl shorthand classes compile in both engines and classify
+/// differently: the `regex` crate applies Unicode properties, so `\w` matches
+/// `é`, `\d` matches `٣` and `\s` matches U+00A0; PostgreSQL, over the
+/// `COLLATE "C"` operand every stored pattern is applied to, matches none of
+/// them. The case-insensitive option, which diverged the same way, is now
+/// admitted and folded identically by both (`tests/pattern_case_folding`).
 #[tokio::test]
 async fn regression_query_pattern_a_unicode_aware_shorthand_the_two_engines_read_differently_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let id = create_named(&scope, client, "dialect-shorthand", "Mercedes").await;
 
-    for pattern in [r"Merc\dde", r"Merc\w", r"Merc\s", r"Merc\D", "(?i)MERC"] {
+    for pattern in [r"Merc\dde", r"Merc\w", r"Merc\s", r"Merc\D"] {
         let (status, body) = query(client, &pattern_filter(&[&id], pattern)).await;
         assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR, "{pattern} must not be a broker fault: {body}");
         assert_eq!(status, StatusCode::BAD_REQUEST, "{pattern} classifies two ways: {body}");
@@ -282,7 +283,7 @@ async fn regression_query_pattern_the_subscription_entry_point_refuses_the_same_
         .await
         .expect("notification server must start");
 
-    for (index, pattern) in ["^[[=a=]]$", r"Merc\w", "(?i)MERC", r"\bMer", r"\p{L}"].iter().enumerate() {
+    for (index, pattern) in ["^[[=a=]]$", r"Merc\w", "(?m:Merc)", r"\bMer", r"\p{L}"].iter().enumerate() {
         let filter = subscription_filter(pattern);
         let local_id = format!("Subscription:pattern-refused-{index}");
         let (status, body) = create_pattern_subscription(&scope, &receiver, &local_id, &filter).await;

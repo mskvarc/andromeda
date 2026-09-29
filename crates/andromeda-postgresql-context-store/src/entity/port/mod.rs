@@ -48,6 +48,7 @@ fn classify(error: &ContextStoreError) -> EntityError {
         | ContextStoreError::Migration(_)
         | ContextStoreError::SchemaContract(_)
         | ContextStoreError::BranchVersion(_)
+        | ContextStoreError::StoredRegistrationInformation(_)
         | ContextStoreError::Internal(_) => EntityError::persistence(error.to_string()),
     }
 }

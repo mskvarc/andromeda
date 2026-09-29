@@ -325,7 +325,7 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
         condition = condition.add(SeaExpr::col((E, TemporalEntities::Id)).is_in(ids));
     }
     if let Some(pattern) = &selector.id_pattern {
-        condition = condition.add(regex_match(SeaExpr::col((E, TemporalEntities::Id)), SeaExpr::val(pattern.as_str())));
+        condition = condition.add(regex_match(SeaExpr::col((E, TemporalEntities::Id)), SeaExpr::val(pattern.portable().as_str())));
     }
     if let Some(type_expr) = &selector.type_expr {
         condition = condition.add(type_condition(type_expr, &SeaExpr::col((E, TemporalEntities::EntityTypeNameKeys)), types));

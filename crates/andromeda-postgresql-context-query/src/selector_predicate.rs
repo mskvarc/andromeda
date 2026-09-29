@@ -80,7 +80,7 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
         condition = condition.add(rows.identity_column(Entities::Id).eq(any(text_array(&ids))));
     }
     if let Some(pattern) = &selector.id_pattern {
-        condition = condition.add(regex_match(rows.identity_column(Entities::Id), Expr::val(pattern.as_str())));
+        condition = condition.add(regex_match(rows.identity_column(Entities::Id), Expr::val(pattern.portable().as_str())));
     }
     if let Some(type_expr) = &selector.type_expr {
         match test {

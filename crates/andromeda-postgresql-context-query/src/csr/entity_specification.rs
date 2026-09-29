@@ -5,8 +5,13 @@
 //! type(s) and one of the five clause 5.12 identifier conditions holds. Clause
 //! 5.2.8 adds that `id` takes precedence over `idPattern`, so an entry carrying
 //! both is matched through its `id` alone.
+//!
+//! Neither side's pattern text reaches PostgreSQL's regular-expression engine:
+//! a queried `idPattern` binds its portable restatement, and a registered one
+//! is evaluated as the restatement the registration stored, so both read
+//! `(?i)` and `(?m)` as the broker's in-memory engine does (clause 4.9).
 
-use crate::csr::unnesting::{ent, entities_of_item, lacks_key};
+use crate::csr::unnesting::{ent, entities_of_item, lacks_key, registered_pattern_form};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_seaquery::{
@@ -80,7 +85,7 @@ impl EntitySpecification<'_> {
             axis = axis.add(
                 Condition::all()
                     .add(jsonb_exists(ent(), text_literal("id")))
-                    .add(regex_match(registered_id(), SeaExpr::val(pattern.as_str()))),
+                    .add(regex_match(registered_id(), SeaExpr::val(pattern.portable().as_str()))),
             );
             // Fifth bullet: both sides carry a pattern; whether two regular
             // expressions admit a common identifier is not decidable cheaply,
@@ -113,14 +118,14 @@ pub(crate) fn entity_type_admits(entity_type: &IriBuf) -> SimpleExpr {
     jsonb_exists(ent().json_get(text_literal("type")), SeaExpr::val(entity_type.as_str()))
 }
 
-/// `EXISTS (SELECT 1 FROM unnest(ids) AS queried WHERE queried ~ ent->>'idPattern')`.
+/// `EXISTS (SELECT 1 FROM unnest(ids) AS queried WHERE queried ~ <restatement of ent->>'idPattern'>)`.
 fn some_identifier_matches_registered_pattern(ids: &[&str]) -> SelectStatement {
     let mut scan = Query::select();
     scan.expr(int_literal(1))
         .from_function(unnest_of(text_array(ids)), Alias::new("queried"))
         .and_where(regex_match(
             SeaExpr::col((Alias::new("queried"), Alias::new("queried"))),
-            ent().json_get_text(text_literal("idPattern")),
+            registered_pattern_form(),
         ));
     scan
 }
@@ -178,7 +183,10 @@ mod tests {
             sql.contains("UNNEST(ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2']) AS \"queried\""),
             "{sql}"
         );
-        assert!(sql.contains("\"queried\".\"queried\" ~ (\"ent\".\"value\" ->> ('idPattern'))"), "{sql}");
+        assert!(
+            sql.contains("\"queried\".\"queried\" ~ (\"context_source_registrations\".\"entity_id_pattern_forms\" ->> (\"ent\".\"value\" ->> ('idPattern')))"),
+            "the registered pattern is evaluated as its stored restatement: {sql}"
+        );
     }
 
     /// Clause 5.2.8: `id` takes precedence over `idPattern`, so an entry that

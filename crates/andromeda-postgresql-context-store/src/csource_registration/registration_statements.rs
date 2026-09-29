@@ -60,6 +60,8 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
         Csr::JsonldContext,
         Csr::ContextSourceAlias,
         Csr::AdditionalProperties,
+        Csr::EntityIdPatternForms,
+        Csr::EntityIdPatternFormsRevision,
         Csr::CreatedAt,
         Csr::ModifiedAt,
     ]);
@@ -88,6 +90,8 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
             external_placeholder(21),
             external_placeholder(22),
             external_placeholder(23),
+            external_placeholder(24),
+            external_placeholder(25),
             now(),
             now(),
         ])
@@ -123,6 +127,8 @@ pub(super) fn csr_update_sql() -> String {
             (Csr::JsonldContext, external_placeholder(21)),
             (Csr::ContextSourceAlias, external_placeholder(22)),
             (Csr::AdditionalProperties, external_placeholder(23)),
+            (Csr::EntityIdPatternForms, external_placeholder(24)),
+            (Csr::EntityIdPatternFormsRevision, external_placeholder(25)),
             (Csr::ModifiedAt, now()),
         ])
         .and_where(SeaExpr::col(Csr::Id).eq(external_placeholder(1)));
@@ -247,9 +253,21 @@ mod tests {
             );
         }
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
-        for marker in 1..=23 {
+        for marker in 1..=25 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
+    }
+
+    /// The restatement of the registration's identifier patterns is written in
+    /// the statement that writes the `information` it is derived from, on
+    /// create and on replacement alike.
+    #[test]
+    fn the_identifier_pattern_forms_are_written_with_the_information_they_restate() {
+        let create = csr_create_sql().expect("the fixed registration insert builds");
+        assert!(create.contains(r#""entity_id_pattern_forms""#), "{create}");
+        let update = csr_update_sql();
+        assert!(update.contains(r#""entity_id_pattern_forms" = $24"#), "{update}");
+        assert!(update.contains(r#""entity_id_pattern_forms_revision" = $25"#), "{update}");
     }
 
     #[test]

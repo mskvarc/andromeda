@@ -160,7 +160,7 @@ pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, document
 pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, document: &SimpleExpr) -> Condition {
     let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
     let extract = whole_text(jsonb_path_query_first(document.clone(), &jsonpath)); // clone: the presence test reads the same document
-    let value = pattern_predicate(cast_compound(extract, PostgresType::Text), polarity, SeaExpr::val(pattern.as_str()));
+    let value = pattern_predicate(cast_compound(extract, PostgresType::Text), polarity, SeaExpr::val(pattern.portable().as_str()));
     let present = jsonb_path_exists(document.clone(), &jsonpath); // clone: sea-query owns every operand
     Condition::all().add(present_and(present, value))
 }

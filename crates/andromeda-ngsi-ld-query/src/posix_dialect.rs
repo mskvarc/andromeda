@@ -1,5 +1,4 @@
-//! Which regular expressions PostgreSQL's POSIX engine runs the same way the
-//! `regex` crate does (clause 4.9 `RegExp`).
+//! Which regular expressions the broker admits (clause 4.9 `RegExp`).
 //!
 //! Clause 4.9 states that "`RegExp` shall be a regular expression as mandated by
 //! IEEE 1003.2 [11]", and Table 5.2.8-1 says the same of `idPattern`. IEEE
@@ -10,33 +9,35 @@
 //! reaches POSIX.2 in full, either: the `regex` crate has no parse path at all
 //! for a bracket expression's equivalence classes and collating symbols.
 //!
-//! Validating in one dialect and executing in the other has two failure modes,
-//! and this module closes both:
+//! The store never compiles the client's text: it runs the
+//! [`crate::portable_pattern::PortablePattern`] rendered from what the `regex`
+//! crate compiled, so whatever is admitted here means the same in memory and in
+//! the store. What this module decides is what a pattern may mean at all. It
+//! admits IEEE 1003.2 as the `regex` crate reads it, plus the extensions the
+//! two engines share and the case-insensitive option, and refuses two kinds of
+//! construct:
 //!
-//! * A construct the `regex` crate compiles and PostgreSQL refuses reached SQL
-//!   execution, where the refusal is a database error rather than a rejected
-//!   request. `idPattern=\p{L}` answered `500 InternalError`; a malformed
-//!   pattern is client input and owes the client a `400`.
-//! * A construct both engines compile but read differently returns different
-//!   entities depending on which engine answered, with nothing to signal it.
-//!   `\b` is a word boundary to the `regex` crate and a literal backspace to
-//!   PostgreSQL, so one filter silently means two things.
+//! * An extension the broker does not support. `\p{L}`, `\x61` or a named group
+//!   has no meaning in IEEE 1003.2, and a client relying on one is relying on
+//!   whichever engine it last used; `\b` is a word boundary to the `regex` crate
+//!   and a backspace to PostgreSQL, so no reading of it is the obvious one.
+//! * An IEEE 1003.2 construct the `regex` crate reads differently from POSIX.2.
+//!   Rendering follows the `regex` crate's reading, so admitting one would make
+//!   both engines agree on something the client did not write.
 //!
-//! Most of what is rejected here is outside POSIX.2 — an extension of one engine
-//! the other cannot run, or cannot run the same way. Three rejections are not,
-//! and are stated plainly because they narrow what clause 4.9 mandates:
-//! a bracket expression nested inside another, which is how the `regex` crate
-//! parses POSIX.2's equivalence classes (`[[=a=]]`) and collating symbols
-//! (`[[.a.]]`); a hyphen in a position where POSIX.2 makes it a range operator
-//! and the `regex` crate makes it a literal; and a negated POSIX character
-//! class, which POSIX.2 does not define but PostgreSQL is asked to run.
+//! Three rejections of the second kind are stated plainly because they narrow
+//! what clause 4.9 mandates: a bracket expression nested inside another, which
+//! is how the `regex` crate parses POSIX.2's equivalence classes (`[[=a=]]`)
+//! and collating symbols (`[[.a.]]`); a hyphen in a position where POSIX.2 makes
+//! it a range operator and the `regex` crate makes it a literal; and a negated
+//! POSIX character class, which POSIX.2 does not define.
 //! `docs/spec-conformance-sweep.md` records why each is refused rather than
 //! translated.
 //!
-//! Every rejection was established by executing the construct against both
-//! engines — PostgreSQL 18.3 over a `COLLATE "C"` operand, which is the
-//! collation `docs/text-collation-invariant.md` pins on every column a pattern
-//! is applied to — rather than from either engine's documentation.
+//! Every reading recorded here was established by executing the construct
+//! against both engines — PostgreSQL 18 over a `COLLATE "C"` operand, which is
+//! the collation `docs/text-collation-invariant.md` pins on every column a
+//! pattern is applied to — rather than from either engine's documentation.
 
 use crate::error::QueryError;
 use regex_syntax::ast::{
@@ -49,31 +50,34 @@ use regex_syntax::ast::{
     ClassSetRange,
     ClassSetUnion,
     Flag,
+    Flags,
     FlagsItemKind,
     Group,
     GroupKind,
     Literal,
     LiteralKind,
+    RepetitionKind,
+    RepetitionRange,
     SetFlags,
 };
 
-/// Reject a pattern PostgreSQL's POSIX engine cannot run, or would run
-/// differently from the `regex` crate.
+/// Reject a pattern outside the dialect the broker admits.
 ///
 /// # Errors
 ///
 /// Returns [`QueryError::PatternRepeatedQuantifier`] when a repetition operator
 /// is applied directly to another repetition, and
-/// [`QueryError::PatternNonPosixConstruct`] for a construct the two engines do
-/// not run identically.
+/// [`QueryError::PatternNonPosixConstruct`] for a construct the broker does not
+/// admit.
 pub fn check_posix_dialect(ast: &Ast) -> Result<(), QueryError> {
     match ast {
         Ast::Repetition(repetition) => {
-            // PostgreSQL answers `a**` with "quantifier operand invalid";
-            // the `regex` crate compiles it.
+            // IEEE 1003.2 gives `a**` no meaning and PostgreSQL answers it with
+            // "quantifier operand invalid"; the `regex` crate compiles it.
             if matches!(repetition.ast.as_ref(), Ast::Repetition(_)) {
                 return Err(QueryError::PatternRepeatedQuantifier);
             }
+            check_repetition_count(&repetition.op.kind)?;
             check_posix_dialect(&repetition.ast)
         }
         Ast::Group(group) => check_group(group),
@@ -93,53 +97,91 @@ pub fn check_posix_dialect(ast: &Ast) -> Result<(), QueryError> {
     }
 }
 
-/// Reject a group whose delimiter only one engine parses.
+/// Reject a repetition count above the POSIX.2 bound.
 ///
-/// A plain capture and `(?:…)` are common to both. A named capture is spelled
-/// `(?P<name>…)` or `(?<name>…)`, and an inline flag group `(?i:…)`; PostgreSQL
-/// answers all three with "invalid embedded option" or "quantifier operand
-/// invalid".
+/// IEEE 1003.2 guarantees counts up to `RE_DUP_MAX`, at least 255, and
+/// PostgreSQL stops there: `a{256}` is "invalid repetition count(s)". The
+/// `regex` crate accepts far larger counts, and the restatement the store runs
+/// carries the count unchanged.
+const fn check_repetition_count(kind: &RepetitionKind) -> Result<(), QueryError> {
+    match kind {
+        RepetitionKind::ZeroOrOne | RepetitionKind::ZeroOrMore | RepetitionKind::OneOrMore => Ok(()),
+        RepetitionKind::Range(RepetitionRange::Exactly(count) | RepetitionRange::AtLeast(count)) => bounded_count(*count),
+        RepetitionKind::Range(RepetitionRange::Bounded(min, max)) => bounded_count(if *min > *max { *min } else { *max }),
+    }
+}
+
+/// Whether one repetition count is within `RE_DUP_MAX`.
+const fn bounded_count(count: u32) -> Result<(), QueryError> {
+    if count > RE_DUP_MAX { Err(unsupported(REPETITION_COUNT)) } else { Ok(()) }
+}
+
+/// The largest repetition count IEEE 1003.2 guarantees and PostgreSQL accepts.
+const RE_DUP_MAX: u32 = 255;
+
+/// Reject a group the broker does not admit.
+///
+/// A plain capture and `(?:…)` are IEEE 1003.2 and its common extension. A
+/// named capture, spelled `(?P<name>…)` or `(?<name>…)`, is an extension of the
+/// `regex` crate alone. A flag group is admitted only for the case-insensitive
+/// option, see [`check_group_flags`].
 fn check_group(group: &Group) -> Result<(), QueryError> {
     match &group.kind {
         GroupKind::CaptureIndex(_) => {}
         GroupKind::CaptureName { .. } => return Err(unsupported(NAMED_CAPTURE_GROUP)),
-        GroupKind::NonCapturing(flags) => {
-            if !flags.items.is_empty() {
-                return Err(unsupported(INLINE_FLAG_GROUP));
-            }
-        }
+        GroupKind::NonCapturing(flags) => check_group_flags(flags)?,
     }
     check_posix_dialect(&group.ast)
 }
 
-/// Reject a standalone flag directive PostgreSQL does not define or reads
-/// differently.
+/// Reject a flag group other than `(?i:…)`, `(?-i:…)` or their combination.
 ///
-/// PostgreSQL has no negated embedded option at all: `(?-s)`, `(?-i)` and
-/// `(?-x)` are each answered with "quantifier operand invalid", because its
-/// parser reads the `-` as a quantifier applied to nothing.
+/// Scoping the case-insensitive option to a group is how a client folds case
+/// in one part of a pattern, such as a name, and not in another, such as an
+/// identifier prefix. The store never sees the group:
+/// [`crate::portable_pattern::PortablePattern`] writes out the fold sets it
+/// governs. Scoping `m`, `s` or `x` would render as faithfully, but the
+/// admitted set is kept to the option the both-engine integration suite
+/// (`tests/pattern_case_folding`) verifies.
+fn check_group_flags(flags: &Flags) -> Result<(), QueryError> {
+    flags.items.iter().try_for_each(|item| match &item.kind {
+        FlagsItemKind::Negation | FlagsItemKind::Flag(Flag::CaseInsensitive) => Ok(()),
+        FlagsItemKind::Flag(Flag::MultiLine | Flag::DotMatchesNewLine | Flag::IgnoreWhitespace) => Err(unsupported(INLINE_FLAG_GROUP)),
+        FlagsItemKind::Flag(Flag::Unicode | Flag::SwapGreed | Flag::CRLF) => Err(unsupported(NON_POSIX_FLAG)),
+    })
+}
+
+/// Reject a standalone flag directive the broker does not admit.
+///
+/// Every option may be set; only the case-insensitive one may be cleared,
+/// `(?-i)`, which is how a pattern ends a case-insensitive span. Clearing `m`,
+/// `s` or `x` is refused for the reason [`check_group_flags`] gives.
 fn check_set_flags(flags: &SetFlags) -> Result<(), QueryError> {
+    let mut negated = false;
     for item in &flags.flags.items {
         match &item.kind {
-            FlagsItemKind::Negation => return Err(unsupported(NEGATED_EMBEDDED_OPTION)),
+            FlagsItemKind::Negation => negated = true,
+            FlagsItemKind::Flag(Flag::CaseInsensitive) => {}
+            FlagsItemKind::Flag(flag) if negated => {
+                check_flag(*flag)?;
+                return Err(unsupported(NEGATED_EMBEDDED_OPTION));
+            }
             FlagsItemKind::Flag(flag) => check_flag(*flag)?,
         }
     }
     Ok(())
 }
 
-/// Reject one flag letter PostgreSQL does not define or reads differently.
+/// Reject one flag letter the broker does not admit.
 ///
-/// `(?m)`, `(?s)` and `(?x)` are embedded options both engines read the same
-/// way. `(?i)` is not: the `regex` crate case-folds by Unicode simple case
-/// folding, so `(?i)é` matches `É` in memory, while PostgreSQL over a
-/// `COLLATE "C"` operand folds only ASCII and does not. `(?u)`, `(?U)` and
-/// `(?R)` are `regex`-crate extensions PostgreSQL answers with "invalid
-/// embedded option".
+/// `(?i)`, `(?m)`, `(?s)` and `(?x)` are admitted: the store runs a
+/// restatement with each already applied, so it reads them as the `regex` crate
+/// does, including `(?i)`'s Unicode simple case folding and `(?m)`'s line
+/// anchors, which PostgreSQL's own options read differently. `(?u)`, `(?U)` and
+/// `(?R)` are `regex`-crate extensions with no counterpart in IEEE 1003.2.
 const fn check_flag(flag: Flag) -> Result<(), QueryError> {
     match flag {
-        Flag::MultiLine | Flag::DotMatchesNewLine | Flag::IgnoreWhitespace => Ok(()),
-        Flag::CaseInsensitive => Err(unsupported(CASE_INSENSITIVE_FLAG)),
+        Flag::CaseInsensitive | Flag::MultiLine | Flag::DotMatchesNewLine | Flag::IgnoreWhitespace => Ok(()),
         Flag::Unicode | Flag::SwapGreed | Flag::CRLF => Err(unsupported(NON_POSIX_FLAG)),
     }
 }
@@ -150,8 +192,9 @@ const fn check_flag(flag: Flag) -> Result<(), QueryError> {
 /// spelling PostgreSQL answers with "invalid escape \ sequence" — it spells the
 /// same anchor `\Z`. The word-boundary assertions are the dangerous case: they
 /// compile in both, but PostgreSQL reads `\b` as a backspace character and
-/// `\B` as a literal, so the filter matches different entities depending on
-/// which engine evaluated it.
+/// `\B` as a literal, so the same text means two different filters depending
+/// on the engine a client last used, and no portable construct restates the
+/// `regex` crate's reading.
 const fn check_assertion(assertion: &Assertion) -> Result<(), QueryError> {
     match assertion.kind {
         AssertionKind::StartLine | AssertionKind::EndLine | AssertionKind::StartText => Ok(()),
@@ -172,9 +215,9 @@ const fn check_assertion(assertion: &Assertion) -> Result<(), QueryError> {
 ///
 /// PostgreSQL's `\xhhh` consumes every hexadecimal digit that follows it and
 /// yields one character, while the `regex` crate's `\xhh` is exactly two
-/// digits: `Merc\x33de` is `Merc` followed by U+33DE in the store and
-/// `Merc3de` in memory, so it selects `Merc3des` from one engine and nothing
-/// from the other. The braced form `\x{61}` PostgreSQL answers outright with
+/// digits: `Merc\x33de` is `Merc` followed by U+33DE to PostgreSQL and
+/// `Merc3de` to the `regex` crate, so the same text selects `Merc3des` from one
+/// engine and nothing from the other. The braced form `\x{61}` PostgreSQL answers outright with
 /// "invalid escape \ sequence", and the octal form has widths of its own.
 /// None of the three is IEEE 1003.2, which gives a backslash no meaning beyond
 /// escaping a metacharacter, so refusing them turns away nothing clause 4.9
@@ -193,9 +236,9 @@ const fn check_literal(literal: &Literal) -> Result<(), QueryError> {
 ///
 /// A set operation between two class sets — `[a-z&&b-d]`, `[[a-z]--[aeiou]]`,
 /// `[[a-z]~~[a-c]]` — is a `regex`-crate extension with no POSIX.2 counterpart.
-/// PostgreSQL reads `&`, `-` and `~` as ordinary members, so `[a-z&&b-d]` is
-/// the intersection `[b-d]` in memory and the union of `a-z`, `&` and `b-d` in
-/// the store.
+/// IEEE 1003.2 and PostgreSQL read `&`, `-` and `~` as ordinary members, so
+/// `[a-z&&b-d]` is the intersection `[b-d]` to the `regex` crate and the union
+/// of `a-z`, `&` and `b-d` to POSIX.2.
 fn check_class_set(set: &ClassSet) -> Result<(), QueryError> {
     match set {
         ClassSet::Item(item) => check_class_set_item(item),
@@ -246,11 +289,11 @@ fn check_class_set_range(range: &ClassSetRange) -> Result<(), QueryError> {
 /// it and a member follows it, and a literal only when it opens or closes the
 /// list. The `regex` crate stops earlier: after a range or a character class it
 /// reads the next `-` as a literal. So `[a-b-c]` and `[[:alpha:]-z]` are a
-/// malformed range to PostgreSQL — "invalid character range", reaching the
-/// client as `500 InternalError` — and three ordinary members to the `regex`
-/// crate, while `[]-a]` and `[--/]` are ranges to PostgreSQL and member lists
-/// to the `regex` crate. A `-` that opens or closes the list, and an escaped
-/// `\-` anywhere, are read the same way by both.
+/// malformed range to POSIX.2 and PostgreSQL ("invalid character range") and
+/// three ordinary members to the `regex` crate, while `[]-a]` and `[--/]` are
+/// ranges to POSIX.2 and member lists to the `regex` crate. A `-` that opens or
+/// closes the list, and an escaped `\-` anywhere, are read the same way by
+/// both.
 fn check_class_set_union(union: &ClassSetUnion) -> Result<(), QueryError> {
     let last = union.items.len().saturating_sub(1);
     for (position, item) in union.items.iter().enumerate() {
@@ -297,19 +340,19 @@ const NUMERIC_CHARACTER_ESCAPE: &str = "a numeric character escape (\\x61, \\x{6
 const NAMED_CAPTURE_GROUP: &str = "a named capture group";
 
 /// How the rejection names an inline flag group.
-const INLINE_FLAG_GROUP: &str = "an inline flag group ((?i:...))";
+const INLINE_FLAG_GROUP: &str = "an inline flag group other than (?i:...) and (?-i:...) ((?m:...), (?s:...), (?x:...))";
 
-/// How the rejection names a flag letter PostgreSQL does not define.
-const NON_POSIX_FLAG: &str = "an embedded option other than m, s and x";
+/// How the rejection names a flag letter IEEE 1003.2 has no counterpart for.
+const NON_POSIX_FLAG: &str = "an embedded option other than i, m, s and x";
 
 /// How the rejection names a negated embedded option.
-const NEGATED_EMBEDDED_OPTION: &str = "a negated embedded option ((?-i), (?-s), (?-x))";
+const NEGATED_EMBEDDED_OPTION: &str = "a negated embedded option other than (?-i) ((?-m), (?-s), (?-x))";
 
-/// How the rejection names the case-insensitive flag.
-const CASE_INSENSITIVE_FLAG: &str = "the case-insensitive option ((?i)), which folds only ASCII in the store";
+/// How the rejection names a repetition count above `RE_DUP_MAX`.
+const REPETITION_COUNT: &str = "a repetition count above 255";
 
 /// How the rejection names a Perl shorthand class.
-const PERL_SHORTHAND_CLASS: &str = "a Perl shorthand class (\\d, \\w, \\s and their negations), which matches only ASCII in the store";
+const PERL_SHORTHAND_CLASS: &str = "a Perl shorthand class (\\d, \\w, \\s and their negations)";
 
 /// How the rejection names a bracket expression nested inside another.
 const NESTED_BRACKET_EXPRESSION: &str = "a bracket expression nested inside another ([[=a=]], [[.a.]], [[abc]])";
@@ -336,13 +379,13 @@ mod tests {
         }
     }
 
-    /// Every one of these was executed against PostgreSQL 18 and refused with
-    /// "invalid escape \ sequence", "invalid embedded option", "invalid
-    /// character class", "invalid character range" or "quantifier operand
-    /// invalid". Accepting them made the pattern reach SQL, where the refusal
-    /// surfaced as `500 InternalError` rather than a rejected request.
+    /// Every one of these is outside IEEE 1003.2, and PostgreSQL 18 refuses
+    /// each with "invalid escape \ sequence", "invalid embedded option",
+    /// "invalid character class", "invalid character range" or "quantifier
+    /// operand invalid": a client relying on one relies on the `regex` crate
+    /// alone.
     #[test]
-    fn a_construct_postgresql_cannot_run_is_refused_before_it_reaches_sql() {
+    fn a_construct_outside_posix_that_postgresql_cannot_run_is_refused() {
         each_is_refused(&[
             "\\p{L}",
             "\\P{L}",
@@ -351,18 +394,43 @@ mod tests {
             "\\x{61}",
             "(?P<name>ab)",
             "(?<name>ab)",
-            "(?i:ab)",
             "(?u)a",
             "(?U)a+",
             "(?R)a",
-            "(?-i)a",
-            "(?-s)a.b",
-            "(?-x)a b",
-            "\\x{61}",
+            "(?-u)a",
             "[[:^alpha:]]",
             "[a-b-c]",
             "[[:alpha:]-z]",
         ]);
+    }
+
+    /// Only the case-insensitive option may be scoped to a group or cleared;
+    /// the other options may only be set for the rest of the pattern.
+    #[test]
+    fn a_scoped_or_cleared_option_other_than_case_insensitivity_is_refused() {
+        each_is_refused(&[
+            "(?m:^a)", "(?s:a.b)", "(?x:a b)", "(?im:a)", "(?-m)a", "(?-s)a.b", "(?-x)a b", "(?i-s)a", "(?-is)a",
+        ]);
+    }
+
+    /// The case-insensitive option is admitted set, scoped and cleared, alone
+    /// or beside the options that may be set.
+    #[test]
+    fn the_case_insensitive_option_is_admitted_set_scoped_and_cleared() {
+        for pattern in ["(?i)čer", "(?i:č)er", "(?-i)a", "a(?i)b(?-i)c", "(?-i:a)", "(?im)^a", "(?is)a.b", "(?xi)a b"] {
+            assert!(Pattern::parse(pattern).is_ok(), "{pattern} is admitted");
+        }
+    }
+
+    /// IEEE 1003.2 guarantees repetition counts up to 255 and PostgreSQL
+    /// refuses larger ones with "invalid repetition count(s)", which reached
+    /// the client as `500 InternalError`.
+    #[test]
+    fn a_repetition_count_above_255_is_refused_and_255_is_admitted() {
+        each_is_refused(&["a{256}", "a{256,}", "a{1,256}", "a{300,400}", "(ab){1000}"]);
+        for pattern in ["a{255}", "a{0,255}", "a{255,}"] {
+            assert!(Pattern::parse(pattern).is_ok(), "{pattern} is admitted");
+        }
     }
 
     /// `\b` compiles in both engines and means two different things: a word
@@ -377,17 +445,17 @@ mod tests {
     /// The `regex` crate has no parse path for POSIX.2's equivalence classes or
     /// collating symbols, so it reads `[[=a=]]` as a nested class over
     /// `{'=', 'a'}` and `[[.hyphen.]]` as one over `{'.','h','y','p','e','n'}`,
-    /// while PostgreSQL reads them as `a` and `-`. Nesting a plain bracket
-    /// expression is the `regex` crate's own extension and diverges the same
-    /// way: `[[abc]]` is `[abc]` in memory and `[abc]` followed by a literal
-    /// `]` in the store. A mistyped or unknown class name — `[[:alpha]]`,
-    /// `[[:foo:]]` — takes the same parse and is refused outright by
-    /// PostgreSQL.
+    /// while POSIX.2 and PostgreSQL read them as `a` and `-`. Nesting a plain
+    /// bracket expression is the `regex` crate's own extension and diverges the
+    /// same way: `[[abc]]` is `[abc]` to the `regex` crate and `[abc]` followed
+    /// by a literal `]` to POSIX.2. A mistyped or unknown class name —
+    /// `[[:alpha]]`, `[[:foo:]]` — takes the same parse and is refused outright
+    /// by PostgreSQL.
     ///
-    /// Refusing these narrows what clause 4.9 mandates. It is deliberate: no
-    /// reading of `[[=a=]]` exists that both engines share, and translating one
-    /// engine's reading into the other's would depend on the collating-element
-    /// table of whichever collation the store happens to hold.
+    /// Refusing these narrows what clause 4.9 mandates. It is deliberate: the
+    /// restatement the store runs follows the `regex` crate's reading, which is
+    /// not the POSIX.2 one, and translating POSIX.2's reading instead would
+    /// depend on the collating-element table of some collation.
     #[test]
     fn a_bracket_expression_nested_inside_another_is_refused() {
         each_is_refused(&[
@@ -406,9 +474,9 @@ mod tests {
     }
 
     /// A set operation between two class sets is a `regex`-crate extension with
-    /// no POSIX.2 counterpart. PostgreSQL reads its operator characters as
-    /// ordinary members: `[a-z&&b-d]` selects `b`, `c` and `d` in memory and
-    /// also `a`, `e`…`z` and `&` in the store.
+    /// no POSIX.2 counterpart. POSIX.2 reads its operator characters as
+    /// ordinary members: `[a-z&&b-d]` selects `b`, `c` and `d` to the `regex`
+    /// crate and also `a`, `e`…`z` and `&` to POSIX.2.
     #[test]
     fn a_class_set_operation_is_refused() {
         each_is_refused(&["[a-z&&b-d]", "[[a-z]--[aeiou]]", "[[a-z]~~[a-c]]", "[+--]", "[a-b--d]"]);
@@ -417,34 +485,34 @@ mod tests {
     /// POSIX.2 makes an unescaped `-` a range operator wherever a member
     /// precedes it and a member follows it; the `regex` crate reads it as a
     /// literal once a range or a character class precedes it. `[]-a]` is the
-    /// range `]`…`a` in the store and the three members `]`, `-`, `a` in
-    /// memory, and `[--/]` is the range `-`…`/` in the store and two members in
-    /// memory.
+    /// range `]`…`a` to POSIX.2 and the three members `]`, `-`, `a` to the
+    /// `regex` crate, and `[--/]` is the range `-`…`/` to POSIX.2 and two
+    /// members to the `regex` crate.
     #[test]
     fn a_hyphen_the_two_engines_place_differently_is_refused() {
         each_is_refused(&["[]-a]", "[--/]", "[a-b-c]", "[[:alpha:]-z]"]);
     }
 
     /// PostgreSQL's `\xhhh` consumes every hexadecimal digit that follows it,
-    /// so `Merc\x33de` is `Merc` followed by U+33DE in the store; the `regex`
-    /// crate reads exactly two digits, so the same pattern is `Merc3de` in
-    /// memory and selects the stored `Merc3des` the store does not. A lone
+    /// so `Merc\x33de` is `Merc` followed by U+33DE to PostgreSQL; the `regex`
+    /// crate reads exactly two digits, so the same pattern is `Merc3de` to it
+    /// and selects `Merc3des`, which PostgreSQL's reading does not. A lone
     /// `\x61` happens to agree, but the escape has one width or the other and
-    /// the parse cannot see what follows it, so the form is refused.
+    /// IEEE 1003.2 defines neither, so the form is refused.
     #[test]
     fn a_numeric_character_escape_the_two_engines_size_differently_is_refused() {
         each_is_refused(&["\\x61", "Merc\\x33de", "[\\x61]", "\\x{61}", "a[\\x41-\\x5A]"]);
     }
 
-    /// The Perl shorthand classes compile in both engines and classify
-    /// differently: the `regex` crate applies Unicode properties, so `\w`
-    /// matches `é` and `ß`, `\d` matches `٣` (U+0663) and `\s` matches U+00A0,
-    /// while PostgreSQL over the `COLLATE "C"` operand every pattern is applied
-    /// to classifies only ASCII and matches none of them. `(?i)` diverges the
-    /// same way: `(?i)é` matches `É` in memory and nothing but `é` in the store.
+    /// The Perl shorthand classes are outside IEEE 1003.2 and classify
+    /// differently from engine to engine: the `regex` crate applies Unicode
+    /// properties, so `\w` matches `é` and `ß`, `\d` matches `٣` (U+0663) and
+    /// `\s` matches U+00A0, while PostgreSQL over the `COLLATE "C"` operand
+    /// every pattern is applied to classifies only ASCII and matches none of
+    /// them.
     #[test]
     fn a_unicode_aware_shorthand_the_two_engines_read_differently_is_refused() {
-        each_is_refused(&["\\d+", "\\w", "\\s", "\\D", "\\W", "\\S", "[\\d]", "[\\w]", "[\\s]", "(?i)ab"]);
+        each_is_refused(&["\\d+", "\\w", "\\s", "\\D", "\\W", "\\S", "[\\d]", "[\\w]", "[\\s]"]);
     }
 
     /// Clause 4.9 mandates IEEE 1003.2, so every POSIX.2 extended regular

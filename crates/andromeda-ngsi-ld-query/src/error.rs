@@ -34,6 +34,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::UriParseError,
 };
 use andromeda_ngsi_ld_number::JsonNumberError;
+use regex_syntax::hir;
 
 /// Errors raised while validating, parsing, compiling or planning a query.
 #[derive(Debug, thiserror::Error)]
@@ -215,19 +216,22 @@ pub enum QueryError {
     /// A repetition operator immediately followed another repetition operator, which PostgreSQL's POSIX engine rejects.
     #[error("invalid POSIX regular expression: a repetition operator cannot follow another repetition operator")]
     PatternRepeatedQuantifier,
-    /// The pattern used a construct the broker's two regular-expression engines
-    /// do not run identically.
+    /// The pattern used a construct outside the dialect the broker admits.
     ///
     /// Clause 4.9 mandates IEEE 1003.2. The construct named here is either an
-    /// extension of one engine the other cannot run, or one of the few IEEE
-    /// 1003.2 constructs the two read differently; admitting it would make the
-    /// filter fail or mean something different depending on which engine
-    /// answered the request. `crate::posix_dialect` names each case.
+    /// extension the broker does not support, or one of the few IEEE 1003.2
+    /// constructs the `regex` crate reads differently from POSIX.2; admitting
+    /// it would make the filter mean something other than what IEEE 1003.2 or
+    /// the client intended. `crate::posix_dialect` names each case.
     #[error("invalid POSIX regular expression: {construct} is not supported")]
     PatternNonPosixConstruct {
         /// How the unsupported construct is spelled.
         construct: &'static str,
     },
+    /// A pattern the `regex` crate compiled could not be translated into the
+    /// intermediate representation its store restatement is rendered from.
+    #[error("invalid regular expression: {0}")]
+    PatternTranslation(#[from] hir::Error),
 
     // -----------------------------------------------------------------------
     // Geo query (NGSI-LD 4.10)
