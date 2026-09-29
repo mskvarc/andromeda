@@ -17,6 +17,7 @@
 
 use crate::dictionary_growth::DictionaryGrowthExceeded;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
+use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
 use sqlx::PgConnection;
 use std::{collections::HashMap, fmt::Debug};
@@ -24,9 +25,14 @@ use std::{collections::HashMap, fmt::Debug};
 /// Why a name resolution did not answer.
 #[derive(Debug, thiserror::Error)]
 pub enum NameLookupError {
+    /// A connection could not be acquired from the dictionary's pool within its
+    /// acquire deadline. The pool is at capacity, not broken, so the caller
+    /// sheds the request as backpressure it can retry rather than as a fault.
+    #[error("name dictionary connection pool saturated")]
+    Saturated,
     /// A dictionary statement failed.
     #[error("name dictionary statement failed: {0}")]
-    Statement(#[from] sqlx::Error),
+    Statement(sqlx::Error),
     /// A dictionary statement could not be assembled, which a column/value arity
     /// mismatch is the only cause of.
     #[error("name dictionary statement could not be built: {0}")]
@@ -55,6 +61,18 @@ pub enum NameLookupError {
     /// its configured bound.
     #[error(transparent)]
     Growth(#[from] DictionaryGrowthExceeded),
+}
+
+// Written by hand because the variant depends on the error's content: a
+// pool-acquire timeout is saturation, every other driver failure a statement
+// fault, and no derive can route one source type to two variants.
+impl From<sqlx::Error> for NameLookupError {
+    fn from(error: sqlx::Error) -> NameLookupError {
+        if is_pool_saturated(&error) {
+            return NameLookupError::Saturated;
+        }
+        NameLookupError::Statement(error)
+    }
 }
 
 /// Port for resolving interned names of type `N` to their dictionary keys.
@@ -88,4 +106,20 @@ pub trait NameLookup<N: InternedName>: Send + Sync + Debug {
     /// unreadable.
     #[must_use = "name resolution must be awaited"]
     async fn resolve_or_create(&self, connection: &mut PgConnection, names: &[N]) -> Result<HashMap<N, N::Key>, NameLookupError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::name_lookup::NameLookupError;
+
+    #[test]
+    fn a_pool_timeout_becomes_dictionary_saturation() {
+        assert!(matches!(NameLookupError::from(sqlx::Error::PoolTimedOut), NameLookupError::Saturated));
+    }
+
+    #[test]
+    fn other_driver_failures_stay_statement_failures() {
+        assert!(matches!(NameLookupError::from(sqlx::Error::RowNotFound), NameLookupError::Statement(_)));
+        assert!(matches!(NameLookupError::from(sqlx::Error::PoolClosed), NameLookupError::Statement(_)));
+    }
 }

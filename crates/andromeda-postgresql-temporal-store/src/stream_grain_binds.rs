@@ -123,7 +123,7 @@ impl<'a> StreamGrainBinds<'a> {
             };
             for grain in &upsert.streams {
                 let attribute_name_key = *name_to_id.get(&grain.attribute_name).ok_or_else(|| {
-                    TemporalStoreError::NameLookup(format!("Attribute name '{}' not found in dictionary after resolve", grain.attribute_name))
+                    TemporalStoreError::UnresolvedName(format!("Attribute name '{}' not found in dictionary after resolve", grain.attribute_name))
                 })?;
                 let stored = (entity_key.get(), attribute_name_key.get(), grain.dataset_id.as_ref().map(Uri::as_str));
                 if binds.positions.contains_key(&stored) {

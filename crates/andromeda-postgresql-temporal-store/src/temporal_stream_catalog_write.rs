@@ -93,11 +93,7 @@ impl TemporalRepository {
         // its attribute's dictionary key, so the key has to be part of the same
         // write, and taking a second pooled connection while holding this one
         // would put the write at the mercy of the pool's remaining capacity.
-        let name_to_id = self
-            .attribute_names
-            .resolve_or_create(tx, &names)
-            .await
-            .map_err(|error| TemporalStoreError::NameLookup(error.to_string()))?;
+        let name_to_id = self.attribute_names.resolve_or_create(tx, &names).await?;
         let binds = StreamGrainBinds::new(upserts, evolutions, &name_to_id)?;
         if binds.is_empty() {
             return Ok(HashMap::new());

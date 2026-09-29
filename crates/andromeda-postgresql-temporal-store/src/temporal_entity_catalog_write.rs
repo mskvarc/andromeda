@@ -100,11 +100,7 @@ impl TemporalRepository {
                 EvolutionResolution::Lookup => false,
             });
         if !creating.is_empty() {
-            let type_keys = self
-                .entity_type_names
-                .resolve_or_create(tx, &distinct_types(&creating))
-                .await
-                .map_err(|error| TemporalStoreError::NameLookup(error.to_string()))?;
+            let type_keys = self.entity_type_names.resolve_or_create(tx, &distinct_types(&creating)).await?;
             let binds = entity_upsert_binds(&creating, recorded_at, &type_keys)?;
             let sql = temporal_entity_upsert_batch_sql(target)?;
             let rows: Vec<(i64, String, bool)> = sqlx::query_as(AssertSqlSafe(sql))
@@ -244,7 +240,7 @@ fn entity_upsert_binds<'a>(
                 type_keys
                     .get(entity_type)
                     .map(|key| key.get())
-                    .ok_or_else(|| TemporalStoreError::NameLookup(format!("Entity type '{entity_type}' not found in dictionary after resolve")))
+                    .ok_or_else(|| TemporalStoreError::UnresolvedName(format!("Entity type '{entity_type}' not found in dictionary after resolve")))
             })
             .collect::<Result<Vec<i32>, TemporalStoreError>>()?;
         binds.ids.push(upsert.entity_id.as_str());

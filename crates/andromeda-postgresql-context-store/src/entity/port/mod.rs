@@ -85,12 +85,19 @@ mod tests {
     fn a_pool_timeout_becomes_store_saturated() {
         use crate::{entity::port::classify, error::ContextStoreError};
         use andromeda_entity::error::EntityError;
+        use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
         assert!(matches!(
             classify(&ContextStoreError::from(sqlx::Error::PoolTimedOut)),
             EntityError::StoreSaturated
         ));
         assert!(!matches!(
             classify(&ContextStoreError::from(sqlx::Error::RowNotFound)),
+            EntityError::StoreSaturated
+        ));
+        // A query resolves its names before its own statement runs, and a
+        // saturated pool there is the same backpressure.
+        assert!(matches!(
+            classify(&ContextStoreError::from(NameLookupError::from(sqlx::Error::PoolTimedOut))),
             EntityError::StoreSaturated
         ));
     }

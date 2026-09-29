@@ -111,6 +111,8 @@ pub(crate) fn temporal_store(error: TemporalStoreError) -> CommitError {
 /// there is contention like anywhere else in the commit.
 pub(crate) fn name_lookup(error: NameLookupError) -> CommitError {
     match &error {
+        // Pool saturation is backpressure the client can retry, not a fault.
+        NameLookupError::Saturated => CommitError::StoreSaturated,
         NameLookupError::Statement(inner) if is_transaction_rolled_back(inner) => CommitError::TransactionContended,
         NameLookupError::Statement(_)
         | NameLookupError::StatementBuild(_)
@@ -208,6 +210,10 @@ mod tests {
         use crate::commit_refusal::database;
         assert!(matches!(database(sqlx::Error::PoolTimedOut), CommitError::StoreSaturated));
         assert!(matches!(database(sqlx::Error::RowNotFound), CommitError::Persistence { .. }));
+        assert!(matches!(
+            name_lookup(NameLookupError::from(sqlx::Error::PoolTimedOut)),
+            CommitError::StoreSaturated
+        ));
     }
 
     /// A transaction the datastore rolled back is re-run by the committer, so

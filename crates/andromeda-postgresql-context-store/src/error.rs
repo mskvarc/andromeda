@@ -52,9 +52,10 @@ pub enum ContextStoreError {
     #[error("context store render: {0}")]
     Render(#[from] RenderError),
     /// A name dictionary resolution failed, which includes a resolution
-    /// refused for taking the tenant's dictionary past its bound.
+    /// refused for taking the tenant's dictionary past its bound. A saturated
+    /// dictionary pool never lands here: it is [`ContextStoreError::Saturated`].
     #[error("context store name lookup: {0}")]
-    NameLookup(#[from] NameLookupError),
+    NameLookup(NameLookupError),
     /// An entity write carried no type, which clause 4.5.1 forbids and the
     /// `entities` table refuses.
     #[error("context store entity types: {0}")]
@@ -90,6 +91,23 @@ impl From<sqlx::Error> for ContextStoreError {
             }
         }
         ContextStoreError::Database(error)
+    }
+}
+
+// Written by hand because the variant depends on the error's content: a
+// dictionary lookup that timed out acquiring a connection is the same
+// backpressure as any other statement of this store, so it joins
+// `Saturated` and every consumer that sheds saturation as a 503 sees it.
+impl From<NameLookupError> for ContextStoreError {
+    fn from(error: NameLookupError) -> ContextStoreError {
+        match error {
+            NameLookupError::Saturated => ContextStoreError::Saturated,
+            NameLookupError::Statement(_)
+            | NameLookupError::StatementBuild(_)
+            | NameLookupError::StoredAttributeName { .. }
+            | NameLookupError::StoredEntityTypeName { .. }
+            | NameLookupError::Growth(_) => ContextStoreError::NameLookup(error),
+        }
     }
 }
 
@@ -155,10 +173,22 @@ impl ContextStoreError {
 #[cfg(test)]
 mod tests {
     use crate::{error::ContextStoreError, schema_contract::error::SchemaContractError};
+    use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
         assert!(matches!(ContextStoreError::from(sqlx::Error::PoolTimedOut), ContextStoreError::Saturated));
+    }
+
+    #[test]
+    fn a_saturated_name_dictionary_becomes_store_saturated() {
+        // The name-dictionary lookup a query runs before its statement acquires
+        // its own connection; running out of connections there is the same
+        // backpressure as on the query itself, not a persistence fault.
+        let saturated = ContextStoreError::from(NameLookupError::from(sqlx::Error::PoolTimedOut));
+        assert!(matches!(saturated, ContextStoreError::Saturated));
+        let failed = ContextStoreError::from(NameLookupError::from(sqlx::Error::RowNotFound));
+        assert!(matches!(failed, ContextStoreError::NameLookup(NameLookupError::Statement(_))));
     }
 
     #[test]

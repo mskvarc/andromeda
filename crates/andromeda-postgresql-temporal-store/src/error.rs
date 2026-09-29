@@ -5,6 +5,7 @@ use andromeda_context_commit::write_id::WriteId;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_date_time::NgsiLdDateTimeError;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
 use andromeda_postgresql_pool::{is_pool_saturated, is_transaction_rolled_back};
 use andromeda_postgresql_temporal_query::aggregation_group::MixedAggregationGroup;
 use andromeda_temporal::{error::TemporalError, temporal_not_found_reason::TemporalNotFoundReason, temporal_validation_reason::TemporalValidationReason};
@@ -37,9 +38,13 @@ pub enum TemporalStoreError {
     /// serialise.
     #[error("temporal store COPY field: {0}")]
     CopyField(#[from] CopyFieldError),
-    /// An attribute name could not be resolved in the dictionary.
-    #[error("temporal store attribute lookup: {0}")]
-    NameLookup(String),
+    /// A name dictionary resolution failed.
+    #[error("temporal store name lookup: {0}")]
+    NameLookup(#[from] NameLookupError),
+    /// A name the dictionary was asked to resolve is missing from its answer,
+    /// which a resolution that returned successfully never leaves.
+    #[error("temporal store name resolution: {0}")]
+    UnresolvedName(String),
     /// An extracted attribute value was invalid.
     #[error("temporal store validation: {0}")]
     Validation(String),
@@ -88,9 +93,15 @@ impl From<TemporalStoreError> for TemporalError {
         {
             return TemporalError::StoreSaturated;
         }
+        // The name dictionary resolves a read's names on its own pool, so it can
+        // run out of connections before the statement it resolves for does.
+        if let TemporalStoreError::NameLookup(NameLookupError::Saturated) = &error {
+            return TemporalError::StoreSaturated;
+        }
         // A deadlock or serialization victim was rolled back whole and can run
-        // again; it is contention, not a persistence fault.
-        if let TemporalStoreError::Database(inner) = &error
+        // again; it is contention, not a persistence fault. Minting names runs
+        // inside the write's transaction, so it can be that victim too.
+        if let TemporalStoreError::Database(inner) | TemporalStoreError::NameLookup(NameLookupError::Statement(inner)) = &error
             && is_transaction_rolled_back(inner)
         {
             return TemporalError::TransactionContended;
@@ -134,6 +145,7 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::CopyField(_)
             | TemporalStoreError::Collation(CollationProvisioningError::Statement { .. })
             | TemporalStoreError::NameLookup(_)
+            | TemporalStoreError::UnresolvedName(_)
             | TemporalStoreError::WriteRecordMismatch { .. }
             | TemporalStoreError::ColumnstoreSettingsDrift { .. } => TemporalError::persistence(error.to_string()),
         }
@@ -143,12 +155,25 @@ impl From<TemporalStoreError> for TemporalError {
 #[cfg(test)]
 mod tests {
     use crate::error::TemporalStoreError;
+    use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
     use andromeda_temporal::error::TemporalError;
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
         let saturated = TemporalError::from(TemporalStoreError::Database(sqlx::Error::PoolTimedOut));
         assert!(matches!(saturated, TemporalError::StoreSaturated));
+    }
+
+    #[test]
+    fn a_saturated_name_dictionary_becomes_store_saturated() {
+        let saturated = TemporalError::from(TemporalStoreError::from(NameLookupError::from(sqlx::Error::PoolTimedOut)));
+        assert!(matches!(saturated, TemporalError::StoreSaturated));
+    }
+
+    #[test]
+    fn a_failed_name_dictionary_statement_stays_a_persistence_fault() {
+        let persistence = TemporalError::from(TemporalStoreError::from(NameLookupError::from(sqlx::Error::RowNotFound)));
+        assert!(matches!(persistence, TemporalError::Persistence(_)));
     }
 
     #[test]

@@ -160,10 +160,7 @@ impl TemporalHistoryReader for TemporalRepository {
         let attributes = if attribute_names.is_empty() {
             ResolvedNames::default()
         } else {
-            self.attribute_names
-                .lookup(&attribute_names)
-                .await
-                .map_err(|e| TemporalStoreError::Query(e.to_string()))?
+            self.attribute_names.lookup(&attribute_names).await.map_err(TemporalStoreError::from)?
         };
         // The catalogue carries type keys, so a type selection resolves through
         // the same dictionary the write path minted them in.
@@ -171,10 +168,7 @@ impl TemporalHistoryReader for TemporalRepository {
         let types = if type_names.is_empty() {
             ResolvedNames::default()
         } else {
-            self.entity_type_names
-                .lookup(&type_names)
-                .await
-                .map_err(|e| TemporalStoreError::Query(e.to_string()))?
+            self.entity_type_names.lookup(&type_names).await.map_err(TemporalStoreError::from)?
         };
         let names = QueryNames { attributes, types };
 

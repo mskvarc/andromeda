@@ -1,7 +1,8 @@
 //! Resilience of the pooled request path to pooler churn: a reconnect under
 //! load loses no request, a pause stalls then resumes cleanly, terminated
 //! server backends are replaced, pool saturation is a 503 with Retry-After
-//! rather than a 500, and a killed database pool recovers.
+//! rather than a 500 -- including when it is the name dictionary lookup that
+//! finds the pool saturated -- and a killed database pool recovers.
 //!
 //! Everything drives the pooled `broker` and the pooler admin console on the
 //! `pgbouncer` stack.
@@ -283,6 +284,98 @@ async fn pool_saturation_is_a_503_with_retry_after_never_a_500() {
     assert!(
         bystander_status.is_success(),
         "a bystander tenant must be unaffected by another tenant's saturation: {bystander_status:?}"
+    );
+    reset(&client, &pool).await;
+    pool.close().await;
+}
+
+/// Query `path` under `tenant` for a type no entity carries, so the name
+/// dictionary misses its cache and resolves it against the database -- the first
+/// statement the request runs.
+async fn query_uninterned_type(client: &Client, broker: &str, tenant: &str, path: &str) -> Result<(u16, bool), TransportFailure> {
+    client
+        .get(format!("{broker}{path}"))
+        .header("NGSILD-Tenant", tenant)
+        .header("Accept", "application/ld+json")
+        .header("Link", link_header())
+        .send()
+        .await
+        .map(|response| (response.status().as_u16(), response.headers().contains_key("Retry-After")))
+        .map_err(|error| TransportFailure::from_error(&error))
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_saturated_name_dictionary_lookup_is_a_503_never_a_500() {
+    let client = client();
+    let pool = control_pool().await;
+    reset(&client, &pool).await;
+    let broker = endpoints::broker();
+
+    let target = tenant_load::tenant_names("pgbdict", 1).remove(0);
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&target), CORE_CONTEXT, 1)
+        .await
+        .expect("every tenant is provisioned");
+    let target_db: String = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .expect("target tenant database exists");
+
+    // Occupy the target database's whole pooler pool (default_pool_size +
+    // reserve = 3) for longer than the pooler's fifteen-second
+    // query_wait_timeout, so a statement queued behind it is shed.
+    let pooler_target = endpoints::pgbouncer_admin_url().replace("/pgbouncer", &format!("/{target_db}"));
+    let hog = PgPool::connect_lazy(&pooler_target).expect("lazy pooler pool");
+    let mut sleeps = Vec::new();
+    for _ in 0..3 {
+        let hog = hog.clone();
+        sleeps.push(tokio::spawn(async move { sqlx::query("SELECT pg_sleep(20)").execute(&hog).await }));
+    }
+    sleep(Duration::from_secs(1)).await;
+
+    // The type was never written, so no dictionary cache holds it: both the
+    // entity and the temporal query resolve it on the saturated pool before
+    // their own statement runs.
+    let paths = [
+        "entities?type=UninternedDictionaryProbe",
+        "entities?type=UninternedDictionaryProbe&q=neverWritten==1",
+        "entities?type=UninternedDictionaryProbe&count=true",
+        "temporal/entities?type=UninternedDictionaryProbe&timerel=before&timeAt=2100-01-01T00:00:00Z",
+        "temporal/entities?type=UninternedDictionaryProbe&q=neverWritten==1&timerel=before&timeAt=2100-01-01T00:00:00Z",
+    ];
+    let requests: Vec<_> = paths
+        .into_iter()
+        .map(|path| {
+            let client = client.clone();
+            let broker = broker.clone();
+            let target = target.clone();
+            tokio::spawn(async move { query_uninterned_type(&client, &broker, &target, path).await })
+        })
+        .collect();
+    let mut outcomes = Vec::new();
+    for request in requests {
+        outcomes.push(request.await.expect("request task completes"));
+    }
+
+    for handle in sleeps {
+        let _ = handle.await;
+    }
+    hog.close().await;
+
+    println!("saturated dictionary lookups: {outcomes:?}");
+    let answered: Vec<(u16, bool)> = outcomes.iter().filter_map(|outcome| outcome.as_ref().ok().copied()).collect();
+    assert_eq!(answered.len(), paths.len(), "no lookup may hang or drop the request: {outcomes:?}");
+    assert!(
+        answered.iter().all(|(status, _)| *status == 200 || *status == 503),
+        "a saturated name dictionary lookup must be a 2xx or a 503, never a 500: {answered:?}"
+    );
+    assert!(
+        answered.iter().any(|(status, _)| *status == 503),
+        "every lookup queued behind the saturated pool, so at least one must have been shed: {answered:?}"
+    );
+    assert!(
+        answered.iter().filter(|(status, _)| *status == 503).all(|(_, retry_after)| *retry_after),
+        "every 503 must carry a Retry-After header: {answered:?}"
     );
     reset(&client, &pool).await;
     pool.close().await;
