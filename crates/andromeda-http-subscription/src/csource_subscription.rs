@@ -179,11 +179,7 @@ fn keyset_page_links(incoming: Option<&PageCursor>, boundary: Option<(Uri, Uri)>
     let (first, last) = boundary?;
     let full = returned >= limit as usize;
     let neighbours = PageCursor::neighbours(incoming, first, last, full);
-    Some(PageLinks::Cursor(CursorPointers {
-        prev: neighbours.prev.map(|cursor| cursor.encode()),
-        next: neighbours.next.map(|cursor| cursor.encode()),
-        last: Some(neighbours.last.encode()),
-    }))
+    Some(PageLinks::Cursor(CursorPointers::from(neighbours)))
 }
 
 /// PATCH /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Update a context source subscription.

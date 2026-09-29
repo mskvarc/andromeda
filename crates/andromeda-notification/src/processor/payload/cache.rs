@@ -7,6 +7,7 @@ use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
         context_compactor::ContextCompactor,
+        expanded_input::ExpandedInput,
         options::{CompactOptions, ContextStripping},
     },
     error::JsonLdError,
@@ -128,7 +129,9 @@ pub(super) async fn compact_entity_with_cache(
 ) -> Result<Value, JsonLdError> {
     let Some(cache) = cache else {
         // clone: compaction consumes the document while the notification keeps the entity
-        return compactor.compact(entity.clone(), CompactOptions { strip_context }).await;
+        return compactor
+            .compact(ExpandedInput::Assembled(entity.clone()), CompactOptions { strip_context })
+            .await;
     };
     let key = compaction_cache_key(entity, compactor.context(), strip_context);
     // As in the linked resolution above, the entry guard never spans the
@@ -138,7 +141,9 @@ pub(super) async fn compact_entity_with_cache(
         return Ok(hit.clone()); // clone: the caller owns its payload, the cache keeps serving the entry
     }
     // clone: compaction consumes the document while the notification keeps the entity
-    let compacted = compactor.compact(entity.clone(), CompactOptions { strip_context }).await?;
+    let compacted = compactor
+        .compact(ExpandedInput::Assembled(entity.clone()), CompactOptions { strip_context })
+        .await?;
     // clone: the cached entry stays behind for the notifications still to come
     Ok(cache.entries.entry(key).or_insert(compacted).clone())
 }

@@ -18,6 +18,7 @@ use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
         context_compactor::ContextCompactor,
+        expanded_input::ExpandedInput,
         options::{CompactOptions, ContextStripping},
         processor::JsonLdEngine,
     },
@@ -237,7 +238,7 @@ async fn apply_show_changes(compacted: &mut Value, params: &NotificationBuildPar
     };
     let Ok(previous_compacted) = compactor
         .compact(
-            expanded_entity_node(previous),
+            ExpandedInput::Assembled(expanded_entity_node(previous)),
             CompactOptions {
                 strip_context: ContextStripping::Strip,
             },

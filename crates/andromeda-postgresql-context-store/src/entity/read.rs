@@ -14,7 +14,10 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_context_query::{entity as entity_sql, entity_page::TOTAL_COUNT_COLUMN};
+use andromeda_postgresql_context_query::{
+    entity::{self as entity_sql, EntityTotal},
+    entity_page::TOTAL_COUNT_COLUMN,
+};
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     projected_attribute_names::projected_attribute_names,
@@ -175,25 +178,34 @@ impl EntityRepository {
         let names = self.resolve_names(&planned.query).await?;
         let built = entity_sql::build_query(target, &planned.query, &names)?;
 
-        let has_count = built.count.is_some();
         let (sql, values) = built.select.build_sqlx(PostgresQueryBuilder);
         let result_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
-        let (rows, window_count) = extract_payloads(result_rows, has_count)?;
+        let on_page_rows = matches!(built.total, EntityTotal::OnPageRows { .. });
+        let (rows, window_count) = extract_payloads(result_rows, on_page_rows)?;
 
-        let total_count = match (built.count, window_count, rows.is_empty()) {
-            (Some(_), Some(count), _) => Some(count),
-            (Some(count), None, true) => {
-                let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
-                Some(
-                    sqlx::query_scalar_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
-                        .fetch_one(&self.pool)
-                        .await?,
-                )
-            }
-            (Some(_), None, false) | (None, _, _) => None,
+        let total_count = match built.total {
+            EntityTotal::Omitted => None,
+            EntityTotal::OnPageRows { empty_page } => match (window_count, rows.is_empty()) {
+                (Some(count), _) => Some(count),
+                (None, true) => Some(self.count_matches(empty_page).await?),
+                (None, false) => None,
+            },
+            EntityTotal::Counted(count) => Some(self.count_matches(count).await?),
         };
 
         Ok(planned.outcome(rows, total_count))
+    }
+
+    /// Run a `COUNT` statement and read back its one value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the statement fails.
+    async fn count_matches(&self, count: SelectStatement) -> Result<i64, ContextStoreError> {
+        let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
+        Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
+            .fetch_one(&self.pool)
+            .await?)
     }
 
     /// Execute a compiled query and return only the matching entity identifiers.

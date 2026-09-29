@@ -1,6 +1,6 @@
 //! The NGSI-LD compacted-name grammar and the reference type built on it.
 
-use crate::{identifier_length::IdentifierTooLong, name::grammar::NameBuf, uri::Uri};
+use crate::{identifier_length::IdentifierTooLong, name::grammar::Name, uri::Uri};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, Into};
 use iri_rs::IriBuf;
@@ -43,17 +43,23 @@ pub fn validate_ngsi_ld_name(value: &str) -> Result<(), NgsiLdReferenceError> {
         return Err(NgsiLdReferenceError::Empty);
     }
     IdentifierTooLong::check(value)?;
-    if Uri::from_str(value).is_ok() || IriBuf::from_str(value).is_ok() || NameBuf::new(value.to_string()).is_ok() {
-        return Ok(());
-    }
-    if let Some((prefix, suffix)) = value.split_once(':')
-        && NameBuf::new(prefix.to_string()).is_ok()
-        && !suffix.is_empty()
-        && !suffix.chars().any(char::is_whitespace)
-    {
+    // The four forms are alternatives, so they are tried cheapest first: the
+    // compact-IRI and short-name forms are a grammar match on the borrowed text,
+    // and they already accept every absolute IRI whose scheme is a term -- the
+    // expanded attribute names a stored payload is keyed by -- before the URI
+    // and IRI parsers, which build a parsed value, are consulted.
+    if is_compact_iri(value) || Name::new(value).is_ok() || Uri::from_str(value).is_ok() || IriBuf::from_str(value).is_ok() {
         return Ok(());
     }
     Err(NgsiLdReferenceError::Invalid(value.to_string()))
+}
+
+/// Whether a value is a compact IRI `prefix:suffix` whose prefix is a term and
+/// whose suffix is present and holds no whitespace.
+fn is_compact_iri(value: &str) -> bool {
+    value
+        .split_once(':')
+        .is_some_and(|(prefix, suffix)| Name::new(prefix).is_ok() && !suffix.is_empty() && !suffix.chars().any(char::is_whitespace))
 }
 
 validated_ngsi_name! {

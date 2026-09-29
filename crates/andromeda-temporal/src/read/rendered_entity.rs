@@ -17,7 +17,10 @@ use crate::{
     service::TemporalService,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, engine::options::CompactOptions};
+use andromeda_jsonld::{
+    compaction::NameCompactor,
+    engine::{expanded_input::ExpandedInput, options::CompactOptions},
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
@@ -209,7 +212,10 @@ impl TemporalService {
         // full IRI; it is not truncated to a bare fragment, since a fragment is
         // not a term the client could expand back (clause 5.7.6 renders type
         // and attribute discovery the same way).
-        let compacted = names.compactor().compact(built.entity, CompactOptions::default()).await?;
+        let compacted = names
+            .compactor()
+            .compact(ExpandedInput::Assembled(built.entity), CompactOptions::default())
+            .await?;
         let mut compacted = TemporalArrayNormalizer::new(compacted).render();
         // Clause 4.21, `id` / `type` half: the attribute half of the
         // projection already ran inside `TemporalEntityRenderer` on the

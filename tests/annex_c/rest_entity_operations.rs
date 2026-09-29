@@ -110,13 +110,41 @@ async fn annex_c_5_4_query_entities_pagination_example() {
         );
     }
 
+    // Clause C.5.4.3 prints the `next` pointer in its transparent `offset`
+    // spelling; clause 5.5.9.2 makes that spelling one option beside the
+    // opaque pointer of clause 5.5.9.1, which the broker offers on a query in
+    // the default order. What the example shows either way is a pointer to the
+    // page that follows the two Entities already returned, so the pointer is
+    // followed and must answer the third seeded Vehicle alone.
     let next = headers
         .get_all("Link")
         .iter()
         .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
         .find(|value| value.contains("rel=\"next\""))
         .expect("clause C.5.4.3 prints a next-page Link header");
-    assert!(next.contains("offset=2"), "the next page starts after the two already returned: {next}");
+    let target = next
+        .split_once('<')
+        .and_then(|(_, rest)| rest.split_once('>'))
+        .map(|(target, _)| target)
+        .expect("the next pointer carries a target");
+    let query = target.split_once('?').map(|(_, query)| query).expect("the next pointer carries the query");
+    let (status, _, following) = get_with_headers(&environment.client(), &format!("/entities/?{query}"), "application/ld+json", Some(&link)).await;
+    assert_eq!(status, StatusCode::OK, "the next page failed: {following}");
+    let ids = |entities: &serde_json::Value| -> Vec<String> {
+        entities
+            .as_array()
+            .expect("a query answer is an array")
+            .iter()
+            .map(|entity| entity["id"].as_str().expect("an Entity has an id").to_owned())
+            .collect()
+    };
+    let (first, rest) = (ids(&actual), ids(&following));
+    assert_eq!(rest.len(), 1, "three seeded Vehicles leave one for the next page: {rest:?}");
+    assert!(
+        !first.contains(&rest[0]),
+        "the next page starts after the two already returned: {first:?} then {rest:?}"
+    );
 
     environment.finish().await;
 }

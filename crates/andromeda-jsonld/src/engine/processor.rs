@@ -212,7 +212,7 @@ mod tests {
     use crate::{
         context_spec::ContextSpec,
         core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
-        engine::{options::CompactOptions, processor::JsonLdEngine},
+        engine::{expanded_input::ExpandedInput, options::CompactOptions, processor::JsonLdEngine},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
@@ -264,7 +264,7 @@ mod tests {
 
         let compacted = engine
             .compactor(&context)
-            .compact(expanded, CompactOptions::default())
+            .compact(ExpandedInput::Assembled(expanded), CompactOptions::default())
             .await
             .expect("compaction succeeds");
         let compacted_json = serde_json::to_string(&compacted).expect("compacted JSON");

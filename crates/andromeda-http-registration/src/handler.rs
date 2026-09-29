@@ -159,11 +159,7 @@ pub(crate) async fn query(
         append_pagination_links(&mut response, &uri, limit, links, accept.media_type());
     } else if let Some((first, last)) = boundary {
         let neighbours = PageCursor::neighbours(incoming_cursor.as_ref(), first, last, page_full);
-        let links = PageLinks::Cursor(CursorPointers {
-            prev: neighbours.prev.map(|cursor| cursor.encode()),
-            next: neighbours.next.map(|cursor| cursor.encode()),
-            last: Some(neighbours.last.encode()),
-        });
+        let links = PageLinks::Cursor(CursorPointers::from(neighbours));
         append_pagination_links(&mut response, &uri, limit, links, accept.media_type());
     }
     Ok(response)

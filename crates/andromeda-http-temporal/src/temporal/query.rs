@@ -304,7 +304,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     .await?;
 
     let deferred = defer_split_filters(&mut params, filtering);
-    let merged_page_bounds = hold_page_until_merge(&mut params, forwarded.as_ref());
+    let merged_page_window = hold_page_until_merge(&mut params, forwarded.as_ref(), &page);
 
     let local_result = service.query(&target, &params, &context).await.with_instance(&uri)?;
     log_query_warnings(&local_result.warnings);
@@ -321,7 +321,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         MergedPageCut {
             deferred,
             filtering,
-            bounds: merged_page_bounds,
+            window: merged_page_window,
             local_total,
         },
         &params,

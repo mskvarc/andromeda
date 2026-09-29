@@ -11,7 +11,11 @@ use crate::{
     temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::options::CompactOptions};
+use andromeda_jsonld::{
+    compaction::NameCompactor,
+    context_spec::ContextSpec,
+    engine::{expanded_input::ExpandedInput, options::CompactOptions},
+};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{
@@ -172,7 +176,10 @@ impl TemporalService {
             let mut skeleton = serde_json::Map::new();
             skeleton.insert("@id".to_string(), json!(entity_id));
             skeleton.insert(attr_iri.to_string(), json!([{"@type": [expanded_classes::PROPERTY]}]));
-            if let Ok(compacted) = names.compactor().compact(Value::Object(skeleton), CompactOptions::default()).await
+            if let Ok(compacted) = names
+                .compactor()
+                .compact(ExpandedInput::Assembled(Value::Object(skeleton)), CompactOptions::default())
+                .await
                 && let Some(obj) = compacted.as_object()
             {
                 for key in obj.keys() {
@@ -202,7 +209,11 @@ impl TemporalService {
         let type_skeleton = json!({"@id": entity_id, "@type": entity_types});
         // The type is compacted against the request @context; an undeclared
         // type stays a full IRI rather than a bare fragment (clause 5.7.3).
-        let compacted_type = if let Ok(compacted) = names.compactor().compact(type_skeleton, CompactOptions::default()).await {
+        let compacted_type = if let Ok(compacted) = names
+            .compactor()
+            .compact(ExpandedInput::Assembled(type_skeleton), CompactOptions::default())
+            .await
+        {
             compacted.as_object().and_then(|o| o.get("type")).cloned().unwrap_or(json!(entity_types)) // clone: need owned Value from borrowed compacted object
         } else {
             json!(entity_types)

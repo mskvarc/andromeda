@@ -29,6 +29,7 @@ use crate::{
     engine::{
         context_compactor::ContextCompactor,
         context_url::is_full_iri,
+        expanded_input::ExpandedInput,
         options::{CompactOptions, ContextStripping},
         processor::JsonLdEngine,
         term_lookup::PreparedTermContext,
@@ -142,7 +143,7 @@ impl<'a> NameCompactor<'a> {
     async fn vocabulary_position_term(&self, iri: &str) -> Option<String> {
         let document = serde_json::json!([{ "@id": PROBE_ID.as_str(), NAME_CARRIER.as_str(): [{ "@id": iri }] }]);
 
-        let compacted = match self.compactor.compact(document, TERM_ONLY).await {
+        let compacted = match self.compactor.compact(ExpandedInput::Assembled(document), TERM_ONLY).await {
             Ok(compacted) => compacted,
             Err(error) => {
                 tracing::debug!(error = %error, iri, "name did not compact; answering it verbatim");

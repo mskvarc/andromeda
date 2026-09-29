@@ -32,6 +32,7 @@ pub mod filter;
 pub mod geo;
 pub mod identifier;
 pub mod ordering;
+pub mod page_window;
 pub mod pagination;
 pub mod pattern;
 pub mod posix_dialect;

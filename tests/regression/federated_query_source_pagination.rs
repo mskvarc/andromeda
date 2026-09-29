@@ -137,19 +137,21 @@ fn page_ids(response: &TestResponse) -> Vec<String> {
         .collect()
 }
 
-/// The target of the page's `Link rel="next"`, if it has one.
-fn next_link(response: &TestResponse) -> Option<String> {
+/// The query string of the page's `Link rel="<relation>"` target, if it has
+/// one.
+fn link_query(response: &TestResponse, relation: &str) -> Option<String> {
+    let needle = format!("rel=\"{relation}\"");
     response
         .headers
         .get_all("link")
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(','))
-        .find(|link| link.contains("rel=\"next\""))
+        .find(|link| link.contains(&needle))
         .and_then(|link| {
             link.split_once('<')
                 .and_then(|(_, rest)| rest.split_once('>'))
-                .map(|(target, _)| target.to_owned())
+                .map(|(target, _)| target.split_once('?').map_or(target, |(_, query)| query).to_owned())
         })
 }
 
@@ -224,30 +226,35 @@ async fn regression_federated_query_source_pagination_every_hub_page_is_the_wind
 
 /// Clause 6.3.10: following the hub's own `next` pointers from the first page
 /// walks the whole union exactly once, and the last page carries no pointer.
+///
+/// Clause 5.5.9.1: the pointers are opaque cursors even though a source
+/// contributes, because the merged collection is paged in the same identifier
+/// order as the local one (clause 4.23.1 withholds only a client-requested
+/// Entity ordering from distributed operations).
 #[tokio::test]
 async fn regression_federated_query_source_pagination_the_hub_next_pointer_walks_the_whole_union() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let entity_type = scope.entity_type("PagedSourceWalkProbe");
     let source = ContextSourceAdapter::start().await;
 
-    let (setup, walked, pages) = {
+    let (setup, walked, pointers) = {
         let client = scope.client();
         let setup = set_up(client, &scope, &source, &entity_type).await;
         stub_source_answers(&source, &scope, &entity_type, 5).await;
         let mut walked = Vec::new();
-        let mut pages = 0_usize;
+        let mut pointers = Vec::new();
         let mut query = Some(format!("type={entity_type}&limit=1000"));
         while let Some(current) = query.take() {
             let response = hub_page(client, &current).await;
             assert_eq!(response.status, StatusCode::OK, "{current}");
             walked.extend(page_ids(&response));
-            pages += 1;
-            query = next_link(&response).map(|target| target.split_once('?').map(|(_, query)| query.to_owned()).unwrap_or(target));
-            if pages > 5 {
+            query = link_query(&response, "next");
+            pointers.extend(query.clone());
+            if pointers.len() > 5 {
                 break;
             }
         }
-        (setup, walked, pages)
+        (setup, walked, pointers)
     };
     source.shutdown().await;
     let union = union(&scope);
@@ -256,8 +263,85 @@ async fn regression_federated_query_source_pagination_the_hub_next_pointer_walks
     for status in setup {
         assert!(status.is_success(), "a setup request failed: {status}");
     }
-    assert_eq!(pages, 3, "2,504 entities at 1,000 per page");
+    assert_eq!(pointers.len(), 2, "2,504 entities at 1,000 per page are three pages");
+    for pointer in &pointers {
+        assert!(
+            pointer.contains("cursor=") && !pointer.contains("offset="),
+            "the hub points by cursor: {pointer}"
+        );
+    }
     assert_eq!(walked, union, "the walk answers every entity exactly once, in identifier order");
+}
+
+/// Clause 5.5.9.1: from the hub's `last` page, `prev` walks back through the
+/// merged union page by page, each page the window of the identifier-ordered
+/// union before the boundary it came from, and the short first page offers no
+/// further `prev`.
+#[tokio::test]
+async fn regression_federated_query_source_pagination_last_then_prev_pages_back_through_the_union() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let entity_type = scope.entity_type("PagedSourceBackwardProbe");
+    let source = ContextSourceAdapter::start().await;
+
+    let (setup, pages, first_offers_prev) = {
+        let client = scope.client();
+        let setup = set_up(client, &scope, &source, &entity_type).await;
+        stub_source_answers(&source, &scope, &entity_type, 4).await;
+        let opening = hub_page(client, &format!("type={entity_type}&limit=1000")).await;
+        let mut pages = Vec::new();
+        let mut query = link_query(&opening, "last");
+        let mut first_offers_prev = true;
+        while let Some(current) = query.take() {
+            let response = hub_page(client, &current).await;
+            assert_eq!(response.status, StatusCode::OK, "{current}");
+            pages.push(page_ids(&response));
+            query = link_query(&response, "prev");
+            first_offers_prev = query.is_some();
+            if pages.len() > 4 {
+                break;
+            }
+        }
+        (setup, pages, first_offers_prev)
+    };
+    source.shutdown().await;
+    let union = union(&scope);
+    scope.finish().await.expect("cleanup failed");
+
+    for status in setup {
+        assert!(status.is_success(), "a setup request failed: {status}");
+    }
+    let expected: Vec<Vec<String>> = vec![union[1_504..].to_vec(), union[504..1_504].to_vec(), union[..504].to_vec()];
+    assert_eq!(pages, expected, "the final page, then each page before it");
+    assert!(!first_offers_prev, "the short first page offers no prev");
+}
+
+/// Clause 6.3.13: a cursor page of the merged union still counts the whole
+/// union, not the page and not what lies past the cursor.
+#[tokio::test]
+async fn regression_federated_query_source_pagination_a_cursor_page_counts_the_whole_union() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let entity_type = scope.entity_type("PagedSourceCursorCountProbe");
+    let source = ContextSourceAdapter::start().await;
+
+    let (setup, page, count) = {
+        let client = scope.client();
+        let setup = set_up(client, &scope, &source, &entity_type).await;
+        stub_source_answers(&source, &scope, &entity_type, 2).await;
+        let opening = hub_page(client, &format!("type={entity_type}&limit=100")).await;
+        let next = link_query(&opening, "next").expect("the first page offers next");
+        let response = hub_page(client, &format!("{next}&count=true")).await;
+        assert_eq!(response.status, StatusCode::OK, "{next}");
+        (setup, page_ids(&response), results_count(&response.headers))
+    };
+    source.shutdown().await;
+    let union = union(&scope);
+    scope.finish().await.expect("cleanup failed");
+
+    for status in setup {
+        assert!(status.is_success(), "a setup request failed: {status}");
+    }
+    assert_eq!(page, union[100..200].to_vec(), "the second page of the union");
+    assert_eq!(count, Some(union.len()), "the count is the whole union");
 }
 
 /// Clause 4.5.5: an entity both the hub and the source hold is one entity of

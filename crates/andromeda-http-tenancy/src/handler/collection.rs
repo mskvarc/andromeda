@@ -101,9 +101,5 @@ fn cursor_links(incoming: Option<&PageCursor>, boundary: Option<(Uri, Uri)>, ret
     let (first, last) = boundary?;
     let full = returned == usize::try_from(limit).unwrap_or(usize::MAX);
     let neighbours = PageCursor::neighbours(incoming, first, last, full);
-    Some(PageLinks::Cursor(CursorPointers {
-        prev: neighbours.prev.map(|cursor| cursor.encode()),
-        next: neighbours.next.map(|cursor| cursor.encode()),
-        last: Some(neighbours.last.encode()),
-    }))
+    Some(PageLinks::Cursor(CursorPointers::from(neighbours)))
 }

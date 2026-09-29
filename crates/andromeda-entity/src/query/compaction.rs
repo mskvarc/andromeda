@@ -3,7 +3,7 @@
 //! [`Entity`]: andromeda_ngsi_ld_model::entity::Entity
 
 use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, query::EntityQueryService};
-use andromeda_jsonld::engine::{context_compactor::ContextCompactor, options::CompactOptions};
+use andromeda_jsonld::engine::{context_compactor::ContextCompactor, expanded_input::ExpandedInput, options::CompactOptions};
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::attribute_system_time::strip_attribute_instants};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -31,7 +31,9 @@ impl EntityQueryService {
         if sys_attrs == SysAttrsInclusion::Strip {
             strip_attribute_instants(&mut expanded);
         }
-        let compacted = compactor.compact(expanded, CompactOptions::default()).await?;
+        // The payload is the store's, as the broker's own expansion wrote it,
+        // so compaction reads it as it stands rather than expanding it again.
+        let compacted = compactor.compact(ExpandedInput::Canonical(expanded), CompactOptions::default()).await?;
 
         let mut obj = match compacted {
             Value::Array(mut arr) if !arr.is_empty() => match arr.swap_remove(0) {

@@ -83,17 +83,17 @@ fn without_system_times(instance: &Value) -> Value {
 /// consulted before its match, carries a `datasetId` that is not an identifier:
 /// its predecessor cannot be told, so neither can its `createdAt`.
 pub fn stamp_attribute_instants(entity: &mut Value, previous: &Value, now: DateTime<Utc>) -> Result<(), InstanceDatasetIdError> {
-    // The predecessor is read before the target is borrowed mutably, so it is
-    // captured as an owned map rather than held as a borrow across the write.
-    let previous_obj = expanded_object_ref(previous).cloned();
+    let previous_obj = expanded_object_ref(previous);
     let Some(object) = expanded_object_mut(entity) else {
         return Ok(());
     };
 
-    let keys: Vec<String> = object.keys().filter(|key| attribute_name(key).is_some()).cloned().collect(); // clone: the write below mutates the map the keys index
-    for key in keys {
-        let previous_instances = previous_obj.as_ref().and_then(|previous| previous.get(&key)).and_then(Value::as_array);
-        let Some(instances) = object.get_mut(&key).and_then(Value::as_array_mut) else {
+    for (key, member) in object.iter_mut() {
+        if attribute_name(key).is_none() {
+            continue;
+        }
+        let previous_instances = previous_obj.and_then(|previous| previous.get(key)).and_then(Value::as_array);
+        let Some(instances) = member.as_array_mut() else {
             continue;
         };
 
@@ -137,9 +137,11 @@ pub fn strip_attribute_instants(entity: &mut Value) {
     let Some(object) = expanded_object_mut(entity) else {
         return;
     };
-    let keys: Vec<String> = object.keys().filter(|key| attribute_name(key).is_some()).cloned().collect(); // clone: the removal below mutates the map the keys index
-    for key in keys {
-        let Some(instances) = object.get_mut(&key).and_then(Value::as_array_mut) else {
+    for (key, member) in object.iter_mut() {
+        if attribute_name(key).is_none() {
+            continue;
+        }
+        let Some(instances) = member.as_array_mut() else {
             continue;
         };
         for instance in instances.iter_mut() {

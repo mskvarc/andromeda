@@ -22,6 +22,7 @@ pub(crate) mod compaction_context_cache;
 pub mod context_compactor;
 pub mod context_url;
 pub mod core_term_semantics;
+pub mod expanded_input;
 pub mod fast_attribute;
 pub mod fast_entity;
 pub mod options;

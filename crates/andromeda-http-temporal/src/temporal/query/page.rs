@@ -16,37 +16,22 @@
 //! each of them carries, so a response may carry either, both or neither.
 
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_http_response::pagination::{CursorPointers, PageExtent, PageLinks, PagePointers, append_pagination_links};
+use andromeda_http_response::pagination::{PageLinks, PagePointers, append_pagination_links};
 use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
-use andromeda_ngsi_ld_query::cursor::PageCursor;
+use andromeda_ngsi_ld_query::{
+    cursor::PageCursor,
+    page_window::{PageStart, PageWindow},
+};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
 use axum::{http::Uri, response::Response};
 
-/// How the element page points at its neighbouring pages.
-enum PageMode {
-    /// Offset pointers: `limit`/`offset`, with `first`/`last` when a total is
-    /// known (clause 5.5.9.2).
-    Offset,
-    /// Opaque keyset cursors over the default `id` order (clause 5.5.9.1),
-    /// carrying the cursor the page was fetched under (absent on the first
-    /// page of the walk).
-    Cursor {
-        /// The cursor this page was fetched under, `None` on the first page.
-        incoming: Option<PageCursor>,
-    },
-}
-
 /// The window of matching entities a temporal query returned.
 pub(crate) struct QueriedPage {
-    /// The clause 6.3.10 page size the query resolved to.
-    limit: u32,
-    /// The clause 6.3.10 page start the query resolved to.
-    offset: u32,
+    /// The clause 6.3.10 page size and where the element page starts.
+    window: PageWindow,
     /// Whether the binding the query arrived on can carry a pointer to the
     /// neighbouring pages at all.
     pointers: PagePointers,
-    /// How the element page points at its neighbours.
-    mode: PageMode,
 }
 
 impl QueriedPage {
@@ -59,24 +44,30 @@ impl QueriedPage {
     /// links point at either way.
     ///
     /// Clause 5.5.9.1: the element page walks by opaque cursor when it continues
-    /// a walk (a cursor arrived) or when a fresh, locally-scoped query in the
-    /// default `id` order asks for no offset. Clause 4.23.1 forbids a stable
-    /// order under distribution, so a cursor is offered only for a local scope,
-    /// which is also the scope that never merges a source's history in. Anything
-    /// else keeps the offset pointers.
+    /// a walk (a cursor arrived) or when a fresh query in the default `id` order
+    /// asks for no offset. A merged collection is paged in that same `id` order,
+    /// so a cursor serves it as well as the local one; clause 4.23.1 withholds
+    /// only the client-requested Entity ordering from distributed operations,
+    /// and an explicit `orderBy` or offset keeps the offset pointers.
     pub(crate) fn of(params: &TemporalQueryParameters, pointers: PagePointers, incoming: Option<PageCursor>) -> QueriedPage {
-        let fresh_eligible = params.ordering.order_by.is_empty() && params.offset.is_none();
-        let mode = if params.is_local() && (incoming.is_some() || fresh_eligible) {
-            PageMode::Cursor { incoming }
-        } else {
-            PageMode::Offset
+        let start = match incoming {
+            Some(cursor) => PageStart::Cursor(Some(cursor)),
+            None if params.ordering.order_by.is_empty() && params.offset.is_none() => PageStart::Cursor(None),
+            None => PageStart::Offset(params.effective_offset()),
         };
         QueriedPage {
-            limit: params.effective_limit(),
-            offset: params.effective_offset(),
+            window: PageWindow {
+                limit: params.effective_limit(),
+                start,
+            },
             pointers,
-            mode,
         }
+    }
+
+    /// The page size and start the client asked for, which a merged collection
+    /// is cut to.
+    pub(crate) const fn window(&self) -> &PageWindow {
+        &self.window
     }
 
     /// Add the clause 6.3.10 pagination links over this element page.
@@ -106,34 +97,14 @@ impl QueriedPage {
         boundary: Option<(NgsiLdUri, NgsiLdUri)>,
     ) {
         match self.pointers {
-            PagePointers::NotDereferenceable => return,
-            PagePointers::OverRequestUri => {}
-        }
-        let links = match &self.mode {
-            PageMode::Offset => {
+            PagePointers::NotDereferenceable => {}
+            PagePointers::OverRequestUri => {
                 let total = total.map(|count| i64::try_from(count).unwrap_or(i64::MAX));
-                PageLinks::Offset {
-                    offset: i64::from(self.offset),
-                    extent: PageExtent::of_page(total, returned),
+                if let Some(links) = PageLinks::of_window(&self.window, total, returned, boundary) {
+                    append_pagination_links(response, instance, i64::from(self.window.limit), links, media_type);
                 }
             }
-            PageMode::Cursor { incoming } => {
-                // An empty element page has no boundary to page from, so it
-                // carries no cursor pointers, matching the offset path's silence
-                // on an empty collection.
-                let Some((first, last)) = boundary else {
-                    return;
-                };
-                let full = returned >= self.limit as usize;
-                let neighbours = PageCursor::neighbours(incoming.as_ref(), first, last, full);
-                PageLinks::Cursor(CursorPointers {
-                    prev: neighbours.prev.map(|cursor| cursor.encode()),
-                    next: neighbours.next.map(|cursor| cursor.encode()),
-                    last: Some(neighbours.last.encode()),
-                })
-            }
-        };
-        append_pagination_links(response, instance, i64::from(self.limit), links, media_type);
+        }
     }
 }
 
@@ -356,14 +327,38 @@ mod tests {
         pretty_assertions::assert_eq!(links(&response), String::new());
     }
 
-    /// A distributed (non-local) query is not eligible for a stable cursor
-    /// (clause 4.23.1), so it keeps the offset pointers even with no offset given.
+    /// A distributed query is paged in the same identifier order as a local one
+    /// (clause 4.23.1 withholds only the client-requested Entity ordering), so
+    /// with no offset given it walks by cursor too.
     #[test]
-    fn a_distributed_query_keeps_offset_pointers() {
+    fn a_distributed_query_walks_by_cursor() {
         let params = TemporalQueryParameters {
             limit: Some(2),
             offset: None,
             local: Some(false),
+            ..TemporalQueryParameters::default()
+        };
+        let page = QueriedPage::of(&params, PagePointers::OverRequestUri, None);
+        let mut response = StatusCode::OK.into_response();
+
+        let boundary = Some((element_id("urn:ngsi-ld:E:001"), element_id("urn:ngsi-ld:E:002")));
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 2, boundary);
+
+        let link = links(&response);
+        assert!(link.contains("rel=\"next\""), "{link}");
+        assert!(link.contains("cursor="), "{link}");
+        assert!(!link.contains("offset="), "{link}");
+    }
+
+    /// Clause 4.23: a client-requested Entity ordering keeps the offset
+    /// pointers, since a cursor walks the identifier order alone.
+    #[test]
+    fn an_explicit_ordering_keeps_offset_pointers() {
+        let params = TemporalQueryParameters {
+            limit: Some(2),
+            offset: None,
+            local: Some(true),
+            ordering: serde_urlencoded::from_str("orderBy=speed").expect("a valid ordering"),
             ..TemporalQueryParameters::default()
         };
         let page = QueriedPage::of(&params, PagePointers::OverRequestUri, None);

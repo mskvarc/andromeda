@@ -191,7 +191,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // surfacing from the store. Its mutual exclusion with offset was already
         // held by validation.
         let incoming_cursor = decode_cursor(query.cursor.as_deref()).with_entity_instance(&uri)?;
-        let page = QueryPage::of(&mut query, forwarded.as_ref(), binding.page_pointers(), is_local, incoming_cursor);
+        let page = QueryPage::of(&mut query, forwarded.as_ref(), binding.page_pointers(), incoming_cursor);
 
         let (local_entities, local_total) = service.query(&target, &query, &context).await.with_entity_instance(&uri)?;
         let MergedEntities {

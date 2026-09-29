@@ -6,18 +6,21 @@
 //! no longer the collection being paged: the local query then runs unpaged and
 //! the window is cut from the merged collection instead.
 //!
-//! How the page points at its neighbours depends on the effective order and
-//! scope. A locally-scoped query in the default `id` order walks the collection
-//! with opaque, keyset-backed cursors (clause 5.5.9.1); everything else keeps
-//! the offset pointers (clause 5.5.9.2). See
-//! `docs/conformance/stable-pagination.md`.
+//! How the page points at its neighbours depends on the request alone. A query
+//! in the default `id` order that names no offset walks the collection with
+//! opaque, keyset-backed cursors (clause 5.5.9.1), whether the collection is
+//! the local one or a merged one; an explicit offset or `orderBy` keeps the
+//! offset pointers (clause 5.5.9.2). See `docs/conformance/stable-pagination.md`.
 
 use crate::entity::query_forwarding::ForwardedQueryResults;
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_http_response::pagination::{CursorPointers, PageExtent, PageLinks, PagePointers, append_pagination_links};
+use andromeda_http_response::pagination::{PageLinks, PagePointers, append_pagination_links};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::cursor::PageCursor;
+use andromeda_ngsi_ld_query::{
+    cursor::PageCursor,
+    page_window::{PageStart, PageWindow},
+};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::parameters::EntityQueryParameters};
 use axum::{http::Uri as HttpUri, response::Response};
 
@@ -40,26 +43,10 @@ enum PageCut {
     AfterMerge,
 }
 
-/// How the page points at its neighbouring pages.
-enum PageMode {
-    /// Offset pointers: `limit`/`offset`, with `first`/`last` when a total is
-    /// known (clause 5.5.9.2).
-    Offset,
-    /// Opaque keyset cursors over the default `id` order (clause 5.5.9.1),
-    /// carrying the cursor the page was fetched under (absent on the first page
-    /// of the walk).
-    Cursor {
-        /// The cursor this page was fetched under, `None` on the first page.
-        incoming: Option<PageCursor>,
-    },
-}
-
 /// The window an entity query asked for, and where it is cut.
 pub(crate) struct QueryPage {
-    /// The clause 6.3.10 page size.
-    limit: u32,
-    /// The clause 6.3.10 page start.
-    offset: u32,
+    /// The page size and where the page starts.
+    window: PageWindow,
     /// Whether the total is reported.
     count: ResultCount,
     /// Which collection the window is cut from.
@@ -67,8 +54,6 @@ pub(crate) struct QueryPage {
     /// Whether the binding the query arrived on can carry a pointer to the
     /// neighbouring pages at all.
     pointers: PagePointers,
-    /// How the page points at its neighbours.
-    mode: PageMode,
 }
 
 impl QueryPage {
@@ -76,50 +61,48 @@ impl QueryPage {
     ///
     /// Clause 5.5.9: once sources contribute entities the page is cut from the
     /// merged collection rather than from the local rows, so the local query is
-    /// widened to the whole result here and the requested window is applied by
-    /// [`QueryPage::cut`] once the merge is done. The widening stops one row past
-    /// the budget the sources were walked under (clause 4.12): one more is all
-    /// it takes to tell that the collection is too large, and reading the rest
-    /// could only be discarded.
+    /// widened to the whole result here, cursor and all, and the requested
+    /// window is applied by [`QueryPage::cut`] once the merge is done. The
+    /// widening stops one row past the budget the sources were walked under
+    /// (clause 4.12): one more is all it takes to tell that the collection is
+    /// too large, and reading the rest could only be discarded.
     ///
     /// Clause 5.5.9.1: the page walks by opaque cursor when it continues a walk
-    /// (a cursor arrived) or when a fresh, locally-scoped query in the default
-    /// `id` order asks for no offset -- clause 4.23.1 forbids a stable order
-    /// under distribution, so a cursor is never offered once a source could
-    /// contribute. Otherwise it keeps the offset pointers.
+    /// (a cursor arrived) or when a fresh query in the default `id` order asks
+    /// for no offset. The merged collection is paged in that same `id` order, so
+    /// a cursor serves it as well as the local one. Clause 4.23.1's "sort
+    /// ordering is never applied to distributed operations" concerns the
+    /// clause 4.23 Entity ordering a client requests with `orderBy`, which keeps
+    /// the offset pointers.
     pub(crate) fn of(
         query: &mut EntityQueryParameters,
         forwarded: Option<&ForwardedQueryResults>,
         pointers: PagePointers,
-        is_local: bool,
         incoming: Option<PageCursor>,
     ) -> QueryPage {
         let merged = forwarded.filter(|results| results.holds_remote_entities());
         let cut_at = if merged.is_some() { PageCut::AfterMerge } else { PageCut::Local };
-        // A continuation carries the cursor; a fresh page is cursor-eligible when
-        // it names the default order and no offset. Either way the collection
-        // must be the local one, which clause 4.23.1's no-order-under-
-        // distribution rule reduces to a page cut locally.
-        let fresh_eligible = is_local && query.ordering.order_by.is_empty() && query.offset.is_none();
-        let mode = if matches!(cut_at, PageCut::Local) && (incoming.is_some() || fresh_eligible) {
-            PageMode::Cursor { incoming }
-        } else {
-            PageMode::Offset
+        let start = match incoming {
+            Some(cursor) => PageStart::Cursor(Some(cursor)),
+            None if query.ordering.order_by.is_empty() && query.offset.is_none() => PageStart::Cursor(None),
+            None => PageStart::Offset(query.effective_offset()),
         };
         let page = QueryPage {
-            limit: query.effective_limit(),
-            offset: query.effective_offset(),
+            window: PageWindow {
+                limit: query.effective_limit(),
+                start,
+            },
             count: match query.count {
                 Some(true) => ResultCount::Requested,
                 Some(false) | None => ResultCount::NotRequested,
             },
             cut_at,
             pointers,
-            mode,
         };
         if let Some(results) = merged {
             query.limit = Some(results.local_row_limit());
             query.offset = Some(0);
+            query.cursor = None;
         }
         page
     }
@@ -147,24 +130,15 @@ impl QueryPage {
                 let mut entities = entities;
                 entities.sort_unstable_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
                 let entities = entities;
-                let page = entities
-                    .into_iter()
-                    .skip(usize::try_from(self.offset).unwrap_or(usize::MAX))
-                    .take(usize::try_from(self.limit).unwrap_or(usize::MAX))
-                    .collect();
-                (page, total)
+                (self.window.cut(entities, |entity| entity.id.as_str()), total)
             }
         }
     }
 
     /// Add the clause 6.3.10 pagination links over this page.
     ///
-    /// In offset mode a query that asked for a count knows its total and drives
-    /// `next` from it; one that did not signals a following page by the page
-    /// coming back full, and a counted query additionally carries the Andromeda
-    /// `first`/`last` pair. In cursor mode the neighbouring cursors are computed
-    /// from the page's boundary identifiers and whether it filled the limit
-    /// (clause 5.5.9.1), then encoded into the pointers.
+    /// `boundary` is the first and last identifier of the page as displayed,
+    /// from which the neighbouring cursors of a cursor page are computed.
     ///
     /// A binding that carried its query in the request body emits no link:
     /// clause 6.3.10 asks for a target "that could be dereferenced by an
@@ -180,53 +154,47 @@ impl QueryPage {
         boundary: Option<(Uri, Uri)>,
     ) {
         match self.pointers {
-            PagePointers::NotDereferenceable => return,
-            PagePointers::OverRequestUri => {}
-        }
-        let links = match &self.mode {
-            PageMode::Offset => PageLinks::Offset {
-                offset: i64::from(self.offset),
-                extent: PageExtent::of_page(total, returned),
-            },
-            PageMode::Cursor { incoming } => {
-                // An empty page has no boundary to page from, so it carries no
-                // cursor pointers, matching the offset path's silence on an empty
-                // collection.
-                let Some((first, last)) = boundary else {
-                    return;
-                };
-                let full = returned >= self.limit as usize;
-                let neighbours = PageCursor::neighbours(incoming.as_ref(), first, last, full);
-                PageLinks::Cursor(CursorPointers {
-                    prev: neighbours.prev.map(|cursor| cursor.encode()),
-                    next: neighbours.next.map(|cursor| cursor.encode()),
-                    last: Some(neighbours.last.encode()),
-                })
+            PagePointers::NotDereferenceable => {}
+            PagePointers::OverRequestUri => {
+                if let Some(links) = PageLinks::of_window(&self.window, total, returned, boundary) {
+                    append_pagination_links(response, instance, i64::from(self.window.limit), links, media_type);
+                }
             }
-        };
-        append_pagination_links(response, instance, i64::from(self.limit), links, media_type);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::entity::query_page::{PageCut, PageMode, QueryPage, ResultCount};
+    use crate::entity::query_page::{PageCut, QueryPage, ResultCount};
     use andromeda_http_response::pagination::PagePointers;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::entity::Entity;
+    use andromeda_ngsi_ld_query::{
+        cursor::PageCursor,
+        page_window::{PageStart, PageWindow},
+    };
+    use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use serde_json::json;
 
     fn entity(id: &str) -> Entity {
         serde_json::from_value(json!({"id": id, "type": "Vehicle"})).expect("a valid entity")
     }
 
-    fn merged_page(limit: u32, offset: u32, count: ResultCount) -> QueryPage {
+    fn uri(id: &str) -> Uri {
+        id.parse().expect("valid URI")
+    }
+
+    fn parameters(query: &str) -> EntityQueryParameters {
+        serde_urlencoded::from_str(query).expect("a valid entity query")
+    }
+
+    fn merged_page(limit: u32, start: PageStart, count: ResultCount) -> QueryPage {
         QueryPage {
-            limit,
-            offset,
+            window: PageWindow { limit, start },
             count,
             cut_at: PageCut::AfterMerge,
             pointers: PagePointers::OverRequestUri,
-            mode: PageMode::Offset,
         }
     }
 
@@ -234,26 +202,49 @@ mod tests {
         entities.iter().map(|entity| entity.id.as_str()).collect()
     }
 
+    fn five_merged() -> Vec<Entity> {
+        vec![entity("urn:c"), entity("urn:e"), entity("urn:a"), entity("urn:d"), entity("urn:b")]
+    }
+
     /// Clause 4.3.6.7: the merged collection -- local entities first, then
     /// what each source answered, in arrival order -- is paged in one
     /// deterministic order, the `id` order the local store pages in.
     #[test]
     fn a_merged_collection_is_cut_from_its_identifier_order() {
-        let merged = vec![entity("urn:c"), entity("urn:e"), entity("urn:a"), entity("urn:d"), entity("urn:b")];
-        let (page, total) = merged_page(2, 1, ResultCount::Requested).cut(merged, None);
+        let (page, total) = merged_page(2, PageStart::Offset(1), ResultCount::Requested).cut(five_merged(), None);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:b", "urn:c"]);
         pretty_assertions::assert_eq!(total, Some(5));
     }
 
-    /// Clause 6.3.13: the count is the size of the whole merged collection,
+    /// Clause 5.5.9.1: a cursor continues a walk over the merged collection
+    /// from its boundary, in the same identifier order the offset cut uses,
+    /// and the count stays the size of the whole collection (clause 6.3.13).
+    #[test]
+    fn a_cursor_continues_a_walk_over_the_merged_collection() {
+        let start = PageStart::Cursor(Some(PageCursor::After(uri("urn:b"))));
+        let (page, total) = merged_page(2, start, ResultCount::Requested).cut(five_merged(), None);
+        pretty_assertions::assert_eq!(ids(&page), vec!["urn:c", "urn:d"]);
+        pretty_assertions::assert_eq!(total, Some(5));
+    }
+
+    /// A backward cursor over the merged collection returns the page before its
+    /// boundary, in ascending order.
+    #[test]
+    fn a_backward_cursor_pages_back_through_the_merged_collection() {
+        let start = PageStart::Cursor(Some(PageCursor::Before(uri("urn:d"))));
+        let (page, _) = merged_page(2, start, ResultCount::NotRequested).cut(five_merged(), None);
+        pretty_assertions::assert_eq!(ids(&page), vec!["urn:b", "urn:c"]);
+    }
+
+    /// Clause 6.3.13: the count of a merged collection is its whole size,
     /// whatever window is cut from it, and only when it was asked for.
     #[test]
     fn the_count_of_a_merged_collection_is_its_whole_size() {
         let merged = vec![entity("urn:a"), entity("urn:b"), entity("urn:c")];
-        let (page, total) = merged_page(10, 3, ResultCount::Requested).cut(merged, Some(1));
+        let (page, total) = merged_page(10, PageStart::Offset(3), ResultCount::Requested).cut(merged, Some(1));
         assert!(page.is_empty());
         pretty_assertions::assert_eq!(total, Some(3));
-        let (_, total) = merged_page(10, 0, ResultCount::NotRequested).cut(vec![entity("urn:a")], Some(1));
+        let (_, total) = merged_page(10, PageStart::Offset(0), ResultCount::NotRequested).cut(vec![entity("urn:a")], Some(1));
         pretty_assertions::assert_eq!(total, None);
     }
 
@@ -262,10 +253,46 @@ mod tests {
     fn a_locally_cut_page_is_left_as_the_store_ordered_it() {
         let page = QueryPage {
             cut_at: PageCut::Local,
-            ..merged_page(10, 0, ResultCount::Requested)
+            ..merged_page(10, PageStart::Offset(0), ResultCount::Requested)
         };
         let (entities, total) = page.cut(vec![entity("urn:b"), entity("urn:a")], Some(7));
         pretty_assertions::assert_eq!(ids(&entities), vec!["urn:b", "urn:a"]);
         pretty_assertions::assert_eq!(total, Some(7));
+    }
+
+    /// Clause 5.5.9.1: a fresh query in the default order with no offset walks
+    /// by cursor whatever its scope, since a distributed query is paged in the
+    /// same identifier order as a local one.
+    #[test]
+    fn a_fresh_default_order_query_walks_by_cursor_whatever_its_scope() {
+        let mut query = parameters("type=Vehicle&local=false");
+        let page = QueryPage::of(&mut query, None, PagePointers::OverRequestUri, None);
+        pretty_assertions::assert_eq!(page.window.start, PageStart::Cursor(None));
+    }
+
+    /// Clause 5.5.9.2: an explicit offset keeps the transparent pointers.
+    #[test]
+    fn an_explicit_offset_keeps_the_offset_pointers() {
+        let mut query = parameters("type=Vehicle&offset=4");
+        let page = QueryPage::of(&mut query, None, PagePointers::OverRequestUri, None);
+        pretty_assertions::assert_eq!(page.window.start, PageStart::Offset(4));
+    }
+
+    /// Clause 4.23: a client-requested Entity ordering keeps the offset
+    /// pointers, since a cursor walks the identifier order alone.
+    #[test]
+    fn an_explicit_ordering_keeps_the_offset_pointers() {
+        let mut query = parameters("type=Vehicle&orderBy=speed");
+        let page = QueryPage::of(&mut query, None, PagePointers::OverRequestUri, None);
+        pretty_assertions::assert_eq!(page.window.start, PageStart::Offset(0));
+    }
+
+    /// A continuation keeps walking by the cursor it arrived with.
+    #[test]
+    fn a_continuation_keeps_its_incoming_cursor() {
+        let mut query = parameters("type=Vehicle");
+        let incoming = PageCursor::After(uri("urn:b"));
+        let page = QueryPage::of(&mut query, None, PagePointers::OverRequestUri, Some(incoming.clone()));
+        pretty_assertions::assert_eq!(page.window.start, PageStart::Cursor(Some(incoming)));
     }
 }

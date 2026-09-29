@@ -442,3 +442,123 @@ async fn pagination_entities_cursor_mode_still_reports_the_count() {
     assert_cursor_links(&response.headers);
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Clause 5.5.9.1: a plain query -- no `local`, default order, no offset -- on
+/// a tenant where no Context Source Registration can contribute offers opaque
+/// cursor pointers, not offsets. The cursor used to be withheld from every
+/// request that did not say `local=true`.
+#[tokio::test]
+async fn pagination_entities_default_scope_first_page_offers_opaque_cursor_pointers() {
+    let (scope, client) = make_scope().await;
+    for index in 0..3 {
+        create_one(&client, &stable_id("ds", index)).await;
+    }
+
+    let (page, headers) = query_page(&client, "type=Building&limit=2").await;
+    assert_eq!(page, vec![stable_id("ds", 0), stable_id("ds", 1)], "the first page is the two least ids");
+    assert_cursor_links(&headers);
+    let links = joined_links(&headers);
+    assert!(links.contains("rel=\"next\""), "{links}");
+    assert!(links.contains("rel=\"last\""), "{links}");
+    assert!(!links.contains("rel=\"prev\""), "the first page has no prev: {links}");
+    assert!(!links.contains("rel=\"first\""), "the first page has no self-pointing first: {links}");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Following the plain query's `next` pointers to exhaustion returns every
+/// entity exactly once, in ascending identifier order.
+#[tokio::test]
+async fn pagination_entities_default_scope_full_walk_returns_every_entity_in_order() {
+    let (scope, client) = make_scope().await;
+    for index in 0..7 {
+        create_one(&client, &stable_id("dsw", index)).await;
+    }
+
+    let seen = walk_forward(&client, "type=Building&limit=2").await;
+    let expected: Vec<String> = (0..7).map(|index| stable_id("dsw", index)).collect();
+    assert_eq!(seen, expected, "the walk returns every entity once, ascending");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.9.1 asks for pointers to "both the following page ... and the
+/// previous one": from the plain query's `last` page, `prev` walks back page by
+/// page, and the short first page offers no further `prev`.
+#[tokio::test]
+async fn pagination_entities_default_scope_last_then_prev_pages_back_to_the_start() {
+    let (scope, client) = make_scope().await;
+    for index in 0..5 {
+        create_one(&client, &stable_id("dsb", index)).await;
+    }
+
+    let (_, headers) = query_page(&client, "type=Building&limit=2").await;
+    let last = link_target(&headers, "last").expect("the first page offers last");
+    let (final_page, final_headers) = query_page(&client, query_string_of(&last)).await;
+    assert_eq!(final_page, vec![stable_id("dsb", 3), stable_id("dsb", 4)]);
+    let prev = link_target(&final_headers, "prev").expect("the final page offers prev");
+    let (middle, middle_headers) = query_page(&client, query_string_of(&prev)).await;
+    assert_eq!(middle, vec![stable_id("dsb", 1), stable_id("dsb", 2)]);
+    let prev = link_target(&middle_headers, "prev").expect("a full backward page offers prev");
+    let (first, first_headers) = query_page(&client, query_string_of(&prev)).await;
+    assert_eq!(first, vec![stable_id("dsb", 0)]);
+    assert!(link_target(&first_headers, "prev").is_none(), "the short first page offers no prev");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.9.2: a plain query naming an explicit offset keeps the
+/// transparent `limit`/`offset` pointers.
+#[tokio::test]
+async fn pagination_entities_default_scope_explicit_offset_keeps_offset_pointers() {
+    let (scope, client) = make_scope().await;
+    for index in 0..5 {
+        create_one(&client, &stable_id("dso", index)).await;
+    }
+
+    let (page, headers) = query_page(&client, "type=Building&limit=2&offset=2").await;
+    assert_eq!(page, vec![stable_id("dso", 2), stable_id("dso", 3)]);
+    let links = joined_links(&headers);
+    assert!(links.contains("offset=4"), "next steps by offset: {links}");
+    assert!(links.contains("offset=0"), "prev steps by offset: {links}");
+    assert!(!links.contains("cursor="), "an explicit offset offers no cursor: {links}");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 4.23: a client-requested Entity ordering keeps the offset pointers on
+/// a plain query too, since a cursor walks the identifier order alone.
+#[tokio::test]
+async fn pagination_entities_default_scope_explicit_ordering_keeps_offset_pointers() {
+    let (scope, client) = make_scope().await;
+    for index in 0..3 {
+        create_one(&client, &stable_id("dsr", index)).await;
+    }
+
+    let (_, headers) = query_page(&client, "type=Building&orderBy=name&limit=2").await;
+    let links = joined_links(&headers);
+    assert!(links.contains("rel=\"next\""), "{links}");
+    assert!(links.contains("offset="), "an explicit orderBy keeps offset pointers: {links}");
+    assert!(!links.contains("cursor="), "no cursor is offered for an explicit orderBy: {links}");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 6.3.13: a plain cursor page still counts the whole collection, not
+/// the page and not what lies past the cursor.
+#[tokio::test]
+async fn pagination_entities_default_scope_cursor_page_counts_the_whole_collection() {
+    let (scope, client) = make_scope().await;
+    for index in 0..5 {
+        create_one(&client, &stable_id("dsc", index)).await;
+    }
+
+    let (_, headers) = query_page(&client, "type=Building&limit=2").await;
+    let next = link_target(&headers, "next").expect("the first page offers next");
+    let response = client
+        .query_entities(&format!("{}&count=true", query_string_of(&next)), "application/ld+json", Some(CORE_CONTEXT))
+        .await
+        .expect("query entities failed");
+    assert_eq!(response.status, StatusCode::OK);
+    assert_eq!(
+        ids_of(&response.json_value().expect("valid JSON body")),
+        vec![stable_id("dsc", 2), stable_id("dsc", 3)]
+    );
+    assert_eq!(results_count(&response.headers), Some(5), "the count is the whole collection");
+    scope.finish().await.expect("cleanup failed");
+}

@@ -14,7 +14,7 @@ use crate::error::FederationError;
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
-    engine::{options::CompactOptions, processor::JsonLdEngine},
+    engine::{expanded_input::ExpandedInput, options::CompactOptions, processor::JsonLdEngine},
 };
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfo;
 use andromeda_ngsi_ld_render::version::renderer::VersionRenderer;
@@ -163,7 +163,10 @@ pub(crate) async fn build_forwarded_payload(
             // mandatory, and the forwarded body carries no `@context` member.
             let expanded = engine.expand(value, inbound).await?;
             let configured = ContextSpec::from_links(vec![url.clone()]); // clone: the Link header names the same IRI
-            let compacted = engine.compactor(&configured).compact(expanded, CompactOptions::default()).await?;
+            let compacted = engine
+                .compactor(&configured)
+                .compact(ExpandedInput::Canonical(expanded), CompactOptions::default())
+                .await?;
             (vec![url], compacted)
         }
         TargetContext::InboundUrls(urls) => (urls, value),

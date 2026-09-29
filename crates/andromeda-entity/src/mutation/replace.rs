@@ -116,8 +116,13 @@ fn identified_as(mut expanded: Value, target: &Uri) -> Result<Value, EntityError
             | ExpandedMemberError::AttributeName { .. }),
         ) => return Err(EntityError::Validation(EntityValidationReason::ExpandedMember(error))),
     }
-    let node = expanded_object_mut(&mut expanded).ok_or_else(|| EntityError::internal("an admitted replacement is not an entity node"))?;
-    node.insert("@id".to_owned(), Value::String(target.to_string()));
+    // JSON-LD expansion drops a top-level node that carries nothing but its
+    // `@id`, so a payload holding only an `id` expands to no node at all. It is
+    // left as it is for the entity validation that follows to refuse, the
+    // clause 6.4.3.3 `BadRequestData` of a replacement with no content.
+    if let Some(node) = expanded_object_mut(&mut expanded) {
+        node.insert("@id".to_owned(), Value::String(target.to_string()));
+    }
     Ok(expanded)
 }
 
@@ -143,6 +148,15 @@ mod tests {
     fn a_replacement_repeating_the_targets_id_keeps_it() {
         let replaced = identified_as(json!([{"@id": "urn:ngsi-ld:Vehicle:1"}]), &target()).expect("admitted");
         pretty_assertions::assert_eq!(replaced[0]["@id"], "urn:ngsi-ld:Vehicle:1");
+    }
+
+    /// A payload holding only an `id` expands to no node; it passes through
+    /// untouched so the entity validation refuses it as a bad request rather
+    /// than it failing here as an internal error.
+    #[test]
+    fn a_replacement_that_expands_to_no_node_is_left_for_validation() {
+        let replaced = identified_as(json!([]), &target()).expect("left for validation");
+        pretty_assertions::assert_eq!(replaced, json!([]));
     }
 
     /// Clause 5.6.18.4 keeps "the same Entity ID", so a payload naming another

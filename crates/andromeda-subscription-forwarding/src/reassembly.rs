@@ -29,6 +29,7 @@ use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
         context_compactor::ContextCompactor,
+        expanded_input::ExpandedInput,
         options::{CompactOptions, ContextStripping},
     },
 };
@@ -124,7 +125,7 @@ impl SubscriptionForwardingService {
         let expanded = self.engine.expand(value.clone(), inbound).await?;
         let compacted = local
             .compact(
-                expanded,
+                ExpandedInput::Canonical(expanded),
                 CompactOptions {
                     strip_context: ContextStripping::Strip,
                 },

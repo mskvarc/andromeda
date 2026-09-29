@@ -10,6 +10,7 @@ use crate::{
     context_spec::ContextSpec,
     engine::{
         compaction_context::{CompactionContext, CompactionContextError, ContextEmbedding},
+        expanded_input::ExpandedInput,
         options::{CompactOptions, ContextStripping},
         processor::JsonLdEngine,
     },
@@ -17,6 +18,7 @@ use crate::{
 };
 use iri_rs::IriBuf;
 use jsonld::{CompactError, ExpandedDocument, JsonLdProcessor, Options, RemoteDocument};
+use jsonld_core::{Node, Object, TryFromJson};
 use rdfx::{BlankIdBuf, vocabulary::no_vocabulary_mut};
 use serde_json::Value;
 use std::sync::Arc;
@@ -83,8 +85,8 @@ impl<'a> ContextCompactor<'a> {
     /// reason, [`JsonLdError::InlineContextInvalid`] when the resolved
     /// `@context` is not a JSON-LD context, or a context-loading variant when a
     /// context did not resolve.
-    pub async fn compact(&self, document: Value, options: CompactOptions) -> Result<Value, JsonLdError> {
-        let expanded = self.expand(document).await?;
+    pub async fn compact(&self, document: ExpandedInput, options: CompactOptions) -> Result<Value, JsonLdError> {
+        let expanded = self.read(document).await?;
         let prepared = self.prepared().await?;
         let embedding = match options.strip_context {
             ContextStripping::Strip => ContextEmbedding::Omit,
@@ -111,13 +113,40 @@ impl<'a> ContextCompactor<'a> {
 
     /// Read an expanded document into the processor's own form.
     ///
-    /// The document is already expanded, but it is taken through the
-    /// expansion algorithm rather than read verbatim: expansion also
-    /// normalizes it (a lone value becomes an array, a member whose key is not
-    /// an absolute IRI is dropped), and the documents handed here are built by
-    /// several producers that rely on that.
-    async fn expand(&self, document: Value) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
-        let remote: RemoteDocument<IriBuf> = RemoteDocument::new(None, None, jsonld_syntax::Value::from_serde_json(document));
+    /// A canonical document is read as it stands, which costs a fraction of
+    /// expanding it again. The direct reader refuses a lone value where
+    /// expanded form has an array, and it keeps a member key that is not an
+    /// absolute IRI where expansion would drop it; a document showing either
+    /// is not what the broker's expansion produces, so it is logged and
+    /// expanded like an assembled one, which keeps its compaction exactly what
+    /// it was.
+    async fn read(&self, document: ExpandedInput) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
+        match document {
+            ExpandedInput::Assembled(document) => self.expand(jsonld_syntax::Value::from_serde_json(document)).await,
+            ExpandedInput::Canonical(document) => {
+                let json = jsonld_syntax::Value::from_serde_json(document);
+                // clone: the direct reader consumes the document, and the one
+                // it cannot take as it stands is expanded instead.
+                match ExpandedDocument::try_from_json_in(no_vocabulary_mut(), json.clone()) {
+                    Ok(read) if every_member_key_is_an_identifier(&read) => Ok(read),
+                    Ok(_) => {
+                        tracing::warn!("A canonical document carries a member key that is not an absolute IRI; expanding it");
+                        self.expand(json).await
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error, "A canonical document is not in expanded form; expanding it");
+                        self.expand(json).await
+                    }
+                }
+            }
+        }
+    }
+
+    /// Take a document through the expansion algorithm into the processor's
+    /// own form, normalizing it: a lone value becomes an array, and a member
+    /// whose key is not an absolute IRI is dropped.
+    async fn expand(&self, document: jsonld_syntax::Value) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
+        let remote: RemoteDocument<IriBuf> = RemoteDocument::new(None, None, document);
         JsonLdProcessor::expand_full(&remote, no_vocabulary_mut(), self.engine.loader(), Options::default(), ())
             .await
             .map_err(|error| {
@@ -168,6 +197,44 @@ impl<'a> ContextCompactor<'a> {
     }
 }
 
+/// Whether every member key of every node in the document names an IRI or a
+/// blank node, as a key expansion keeps does.
+///
+/// The direct reader keeps a key that is neither as an invalid identifier,
+/// where expansion drops the member, so a document carrying one would compact
+/// differently read than expanded.
+fn every_member_key_is_an_identifier(document: &ExpandedDocument<IriBuf, BlankIdBuf>) -> bool {
+    document.iter().all(|object| object_keys_are_identifiers(object.inner()))
+}
+
+/// Whether every member key below an object names an IRI or a blank node.
+fn object_keys_are_identifiers(object: &Object<IriBuf, BlankIdBuf>) -> bool {
+    match object {
+        Object::Value(_) => true,
+        Object::List(list) => list.iter().all(|item| object_keys_are_identifiers(item.inner())),
+        Object::Node(node) => node_keys_are_identifiers(node),
+    }
+}
+
+/// Whether every member key of a node, and of every node below it, names an
+/// IRI or a blank node.
+fn node_keys_are_identifiers(node: &Node<IriBuf, BlankIdBuf>) -> bool {
+    node.properties()
+        .iter()
+        .all(|(key, objects)| key.is_valid() && objects.iter().all(|object| object_keys_are_identifiers(object.inner())))
+        && node.reverse_properties().is_none_or(|reverse| {
+            reverse
+                .iter()
+                .all(|(key, nodes)| key.is_valid() && nodes.iter().all(|node| node_keys_are_identifiers(node.inner())))
+        })
+        && node
+            .graph()
+            .is_none_or(|graph| graph.iter().all(|object| object_keys_are_identifiers(object.inner())))
+        && node
+            .included()
+            .is_none_or(|included| included.iter().all(|node| node_keys_are_identifiers(node.inner())))
+}
+
 /// The identifier of a document's first node, for a failure diagnostic.
 fn document_id(document: &ExpandedDocument<IriBuf, BlankIdBuf>) -> &str {
     document.iter().find_map(|object| object.id()).map_or("<unknown>", |id| id.as_str())
@@ -179,6 +246,7 @@ mod tests {
         context_spec::{ContextSpec, CoreContextPolicy},
         core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
         engine::{
+            expanded_input::ExpandedInput,
             options::{CompactOptions, ContextStripping},
             processor::JsonLdEngine,
         },
@@ -281,7 +349,7 @@ mod tests {
             for options in [STRIP, KEEP] {
                 let prepared = engine
                     .compactor(spec)
-                    .compact(expanded.clone(), options)
+                    .compact(ExpandedInput::Assembled(expanded.clone()), options)
                     .await
                     .expect("prepared compaction succeeds");
                 let reference = per_document_compaction(&engine, expanded.clone(), spec, options).await;
@@ -310,7 +378,10 @@ mod tests {
             .expect("expansion succeeds");
 
         for document in [first, second] {
-            let prepared = compactor.compact(document.clone(), STRIP).await.expect("prepared compaction succeeds");
+            let prepared = compactor
+                .compact(ExpandedInput::Assembled(document.clone()), STRIP)
+                .await
+                .expect("prepared compaction succeeds");
             pretty_assertions::assert_eq!(prepared, per_document_compaction(&engine, document, &spec, STRIP).await);
         }
     }
@@ -322,8 +393,11 @@ mod tests {
         let compactor = engine.compactor(&spec);
         let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
 
-        let mut kept = compactor.compact(expanded.clone(), KEEP).await.expect("compaction succeeds");
-        let stripped = compactor.compact(expanded, STRIP).await.expect("compaction succeeds");
+        let mut kept = compactor
+            .compact(ExpandedInput::Assembled(expanded.clone()), KEEP)
+            .await
+            .expect("compaction succeeds");
+        let stripped = compactor.compact(ExpandedInput::Assembled(expanded), STRIP).await.expect("compaction succeeds");
         let context = kept.as_object_mut().and_then(|object| object.remove("@context"));
 
         pretty_assertions::assert_eq!(context, spec.to_context_value());
@@ -337,9 +411,15 @@ mod tests {
         let compactor = engine.compactor(&spec);
         let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
 
-        compactor.compact(expanded.clone(), STRIP).await.expect("first compaction succeeds");
+        compactor
+            .compact(ExpandedInput::Assembled(expanded.clone()), STRIP)
+            .await
+            .expect("first compaction succeeds");
         let first = Arc::clone(compactor.prepared.get().expect("the first document prepared the context"));
-        compactor.compact(expanded, STRIP).await.expect("second compaction succeeds");
+        compactor
+            .compact(ExpandedInput::Assembled(expanded), STRIP)
+            .await
+            .expect("second compaction succeeds");
         let second = compactor.prepared.get().expect("the context stays prepared");
 
         assert!(Arc::ptr_eq(&first, second), "the second document must reuse the context the first one prepared");
@@ -354,8 +434,14 @@ mod tests {
         let first = engine.compactor(&none);
         let second = engine.compactor(&versioned);
 
-        first.compact(expanded.clone(), STRIP).await.expect("first compaction succeeds");
-        second.compact(expanded, STRIP).await.expect("second compaction succeeds");
+        first
+            .compact(ExpandedInput::Assembled(expanded.clone()), STRIP)
+            .await
+            .expect("first compaction succeeds");
+        second
+            .compact(ExpandedInput::Assembled(expanded), STRIP)
+            .await
+            .expect("second compaction succeeds");
 
         assert!(Arc::ptr_eq(first.prepared.get().expect("prepared"), second.prepared.get().expect("prepared")));
         pretty_assertions::assert_eq!(engine.compaction_contexts().len().await, 1);
@@ -367,7 +453,11 @@ mod tests {
         let spec = example_body_context();
         let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
 
-        engine.compactor(&spec).compact(expanded, STRIP).await.expect("compaction succeeds");
+        engine
+            .compactor(&spec)
+            .compact(ExpandedInput::Assembled(expanded), STRIP)
+            .await
+            .expect("compaction succeeds");
 
         pretty_assertions::assert_eq!(engine.compaction_contexts().len().await, 0);
     }
@@ -388,8 +478,8 @@ mod tests {
         let compactor = engine.compactor(&spec);
         let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
 
-        let first = compactor.compact(expanded.clone(), STRIP).await;
-        let second = compactor.compact(expanded, STRIP).await;
+        let first = compactor.compact(ExpandedInput::Assembled(expanded.clone()), STRIP).await;
+        let second = compactor.compact(ExpandedInput::Assembled(expanded), STRIP).await;
 
         assert!(first.as_ref().is_err_and(JsonLdError::is_context_not_available), "got {first:?}");
         assert!(second.as_ref().is_err_and(JsonLdError::is_context_not_available), "got {second:?}");
@@ -407,7 +497,11 @@ mod tests {
             .with_core_policy(CoreContextPolicy::Omit);
         let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
 
-        let compacted = engine.compactor(&spec).compact(expanded.clone(), STRIP).await.expect("the fallback compacts");
+        let compacted = engine
+            .compactor(&spec)
+            .compact(ExpandedInput::Assembled(expanded.clone()), STRIP)
+            .await
+            .expect("the fallback compacts");
         let core_only = per_document_compaction(&engine, expanded, &ContextSpec::core_only(), STRIP).await;
 
         pretty_assertions::assert_eq!(compacted, core_only);
@@ -439,8 +533,11 @@ mod tests {
             .await
             .expect("expansion succeeds");
 
-        let vehicle_compacted = compactor.compact(vehicle.clone(), STRIP).await.expect("the fallback compacts");
-        let bicycle_compacted = compactor.compact(bicycle, STRIP).await.expect("compaction succeeds");
+        let vehicle_compacted = compactor
+            .compact(ExpandedInput::Assembled(vehicle.clone()), STRIP)
+            .await
+            .expect("the fallback compacts");
+        let bicycle_compacted = compactor.compact(ExpandedInput::Assembled(bicycle), STRIP).await.expect("compaction succeeds");
 
         pretty_assertions::assert_eq!(
             vehicle_compacted,
@@ -450,5 +547,162 @@ mod tests {
             bicycle_compacted.get("speed").is_some(),
             "the request context still applies: {bicycle_compacted}"
         );
+    }
+
+    /// A number no binary float spells exactly, which must survive both
+    /// readings digit for digit.
+    fn exact_number() -> Value {
+        serde_json::from_str("0.100000000000000005").expect("an exact JSON number")
+    }
+
+    /// An entity carrying every attribute family, multi-instance `datasetId`
+    /// attributes, nested sub-attributes, `unitCode`, `observedAt`, the
+    /// attribute-instance system times a `sysAttrs` representation keeps, an
+    /// `expiresAt` and a `scope`.
+    fn every_family_entity() -> Value {
+        json!({
+            "id": "urn:ngsi-ld:Vehicle:every-family",
+            "type": ["Vehicle", "http://example.org/vehicle/Car"],
+            "scope": ["/Madrid/Gardens", "/Company/Fleet"],
+            "brandName": {
+                "type": "Property", "value": "Mercedes", "observedAt": "2020-08-01T12:03:00Z",
+                "createdAt": "2020-08-01T12:03:00.123456Z", "modifiedAt": "2020-08-02T12:03:00.5Z",
+                "rating": {"type": "Property", "value": 4.5, "unitCode": "C62", "reviewedBy": {"type": "Relationship", "object": "urn:ngsi-ld:Person:1"}}
+            },
+            "speed": [
+                {"type": "Property", "value": 55, "datasetId": "urn:ngsi-ld:Dataset:gps", "unitCode": "KMH"},
+                {"type": "Property", "value": exact_number(), "datasetId": "urn:ngsi-ld:Dataset:obd", "createdAt": "2021-01-01T00:00:00Z"}
+            ],
+            "isParked": {"type": "Relationship", "object": "urn:ngsi-ld:OffStreetParking:Downtown1", "objectType": "OffStreetParking", "providedBy": {"type": "Relationship", "object": "urn:ngsi-ld:Person:Bob"}},
+            "passengers": {"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Person:1"}, {"object": "urn:ngsi-ld:Person:2"}]},
+            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [-8.5, 41.2]}},
+            "route": {"type": "GeoProperty", "value": {"type": "LineString", "coordinates": [[-8.5, 41.2], [-8.6, 41.3]]}},
+            "street": {"type": "LanguageProperty", "languageMap": {"fr": "Grand Place", "nl": "Grote Markt", "@none": "Main"}},
+            "config": {"type": "JsonProperty", "json": {"nested": {"n": 0.5, "list": [1, "two", null, true]}}},
+            "readings": {"type": "ListProperty", "valueList": [1, 2.5, "three"]},
+            "category": {"type": "VocabProperty", "vocab": "commercial"},
+            "tags": {"type": "Property", "value": ["a", "b"]},
+            "nothing": {"type": "Property", "value": {"nested": null, "@language": "not-a-keyword-here"}},
+            "expiresAt": "2099-01-01T00:00:00Z"
+        })
+    }
+
+    /// The compact document with every `createdAt` and `modifiedAt` removed,
+    /// as a representation that did not ask for `sysAttrs` carries it.
+    fn without_system_times(document: Value) -> Value {
+        match document {
+            Value::Object(object) => Value::Object(
+                object
+                    .into_iter()
+                    .filter(|(key, _)| key != "createdAt" && key != "modifiedAt")
+                    .map(|(key, value)| (key, without_system_times(value)))
+                    .collect(),
+            ),
+            Value::Array(items) => Value::Array(items.into_iter().map(without_system_times).collect()),
+            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => other,
+        }
+    }
+
+    /// Compact the same expanded document read directly as canonical and taken
+    /// through expansion as assembled, rendered to JSON text.
+    async fn both_readings(engine: &JsonLdEngine, spec: &ContextSpec, expanded: &Value, options: CompactOptions) -> (String, String) {
+        let compactor = engine.compactor(spec);
+        let canonical = compactor
+            .compact(ExpandedInput::Canonical(expanded.clone()), options)
+            .await
+            .expect("canonical compaction succeeds");
+        let assembled = compactor
+            .compact(ExpandedInput::Assembled(expanded.clone()), options)
+            .await
+            .expect("assembled compaction succeeds");
+        (
+            serde_json::to_string(&canonical).expect("canonical JSON"),
+            serde_json::to_string(&assembled).expect("assembled JSON"),
+        )
+    }
+
+    /// A canonical document read directly compacts byte for byte as it does when
+    /// taken through expansion, for every attribute family, with and without
+    /// the attribute-instance system times, under every kind of context and
+    /// either context embedding.
+    #[tokio::test]
+    async fn a_canonical_document_read_directly_compacts_exactly_as_expanded() {
+        let engine = offline_engine();
+        let with_times = engine.expand(every_family_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
+        let without_times = engine
+            .expand(without_system_times(every_family_entity()), &ContextSpec::none())
+            .await
+            .expect("expansion succeeds");
+        let type_scoped = ContextSpec::none().with_body_context(Some(json!({
+            "Vehicle": {"@id": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle", "@context": {"speed": "http://example.org/scoped/speed"}},
+            "speed": "https://uri.etsi.org/ngsi-ld/default-context/speed"
+        })));
+        let protected_term_redefinition = ContextSpec::none()
+            .with_body_context(Some(json!([NGSI_LD_CORE_CONTEXT_URL.as_str(), {"type": "http://example.org/redefined/type"}])))
+            .with_core_policy(CoreContextPolicy::Omit);
+        let specs = [
+            ContextSpec::none(),
+            ContextSpec::core_only(),
+            example_body_context(),
+            type_scoped,
+            protected_term_redefinition,
+        ];
+        for expanded in [&with_times, &without_times] {
+            for spec in &specs {
+                for options in [STRIP, KEEP] {
+                    let (canonical, assembled) = both_readings(&engine, spec, expanded, options).await;
+                    pretty_assertions::assert_eq!(canonical, assembled, "spec {spec:?} with {options:?}");
+                }
+            }
+        }
+    }
+
+    /// A canonical document carrying a lone value where expanded form has an
+    /// array is refused by the direct reader and expanded instead, so it still
+    /// compacts exactly as an assembled one.
+    #[tokio::test]
+    async fn a_canonical_document_with_a_lone_value_compacts_as_expanded() {
+        let engine = offline_engine();
+        let lone = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:lone",
+            "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"],
+            "https://uri.etsi.org/ngsi-ld/default-context/speed": {
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": {"@value": 12}
+            }
+        }]);
+        for spec in [ContextSpec::none(), example_body_context()] {
+            let (canonical, assembled) = both_readings(&engine, &spec, &lone, STRIP).await;
+            pretty_assertions::assert_eq!(canonical, assembled);
+        }
+    }
+
+    /// A canonical document carrying a member key that is not an absolute IRI is
+    /// read by the direct reader with the member kept, where expansion drops
+    /// it, so it is expanded instead and compacts exactly as an assembled one,
+    /// wherever in the document the key sits.
+    #[tokio::test]
+    async fn a_canonical_document_with_a_relative_key_compacts_as_expanded() {
+        let engine = offline_engine();
+        let top_level = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:relative",
+            "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"],
+            "speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 12}]}]
+        }]);
+        let nested = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:relative-nested",
+            "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"],
+            "https://uri.etsi.org/ngsi-ld/default-context/speed": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 12}],
+                "accuracy": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
+            }]
+        }]);
+        let (canonical, assembled) = both_readings(&engine, &ContextSpec::core_only(), &top_level, STRIP).await;
+        pretty_assertions::assert_eq!(canonical, assembled);
+        assert!(!canonical.contains("speed"), "the relative top-level key is dropped: {canonical}");
+        let (canonical, assembled) = both_readings(&engine, &ContextSpec::core_only(), &nested, STRIP).await;
+        pretty_assertions::assert_eq!(canonical, assembled);
+        assert!(!canonical.contains("accuracy"), "the relative nested key is dropped: {canonical}");
     }
 }

@@ -15,6 +15,11 @@ use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType, value::LinkValue},
     media_type::ResponseMediaType,
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+use andromeda_ngsi_ld_query::{
+    cursor::{NeighbourCursors, PageCursor},
+    page_window::{PageStart, PageWindow},
+};
 use axum::{
     http::{Uri, header::LINK},
     response::Response,
@@ -108,7 +113,8 @@ pub struct CursorPointers {
 ///
 /// The two are mutually exclusive per response: a page walks either by
 /// `limit`/`offset` (clause 5.5.9.2) or by opaque cursor (clause 5.5.9.1), never
-/// both, and the handler decides which from the effective order and scope.
+/// both, and the handler decides which from the effective order and whether
+/// the request named an offset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageLinks {
     /// Classic offset pointers: `limit`/`offset`, with `first`/`last` when the
@@ -123,6 +129,52 @@ pub enum PageLinks {
     /// the boundary relations each carrying a `cursor` token in place of an
     /// `offset` and `first`/`last` suppressed where they would name this page.
     Cursor(CursorPointers),
+}
+
+impl PageLinks {
+    /// The pointers of a page cut by `window` from a collection in the default
+    /// identifier order.
+    ///
+    /// An offset window points by `limit`/`offset` and decides `next` from the
+    /// total when one is known, and from the page having come back full
+    /// otherwise. A cursor window points by the neighbouring cursors of the
+    /// page's boundary identifiers, `first` and `last` as displayed, and
+    /// decides `next` from whether the page filled its limit (clause 5.5.9.1).
+    /// An empty cursor page has no boundary to point from, so it carries no
+    /// pointer, just as an empty offset collection carries none.
+    #[must_use]
+    pub fn of_window(window: &PageWindow, total: Option<i64>, returned: usize, boundary: Option<(NgsiLdUri, NgsiLdUri)>) -> Option<PageLinks> {
+        match &window.start {
+            PageStart::Offset(offset) => Some(PageLinks::Offset {
+                offset: i64::from(*offset),
+                extent: PageExtent::of_page(total, returned),
+            }),
+            PageStart::Cursor(incoming) => {
+                let (first, last) = boundary?;
+                let full = returned >= usize::try_from(window.limit).unwrap_or(usize::MAX);
+                Some(PageLinks::Cursor(CursorPointers::from(PageCursor::neighbours(
+                    incoming.as_ref(),
+                    first,
+                    last,
+                    full,
+                ))))
+            }
+        }
+    }
+}
+
+// Hand-written because each pointer is the encoded token of its cursor, a
+// mapping no derive expresses.
+impl From<NeighbourCursors> for CursorPointers {
+    /// Encode the neighbouring cursors of a page into the tokens its pointers
+    /// carry.
+    fn from(neighbours: NeighbourCursors) -> CursorPointers {
+        CursorPointers {
+            prev: neighbours.prev.map(|cursor| cursor.encode()),
+            next: neighbours.next.map(|cursor| cursor.encode()),
+            last: Some(neighbours.last.encode()),
+        }
+    }
 }
 
 /// Pagination parameter keys a rebuilt link replaces; every other query-string
@@ -286,8 +338,86 @@ fn cursor_targets(uri: &Uri, limit: i64, cursors: &CursorPointers) -> Vec<(Relat
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use axum::{http::StatusCode, response::IntoResponse};
+    use crate::pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links};
+    use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType};
+    use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+    use andromeda_ngsi_ld_query::{
+        cursor::{NeighbourCursors, PageCursor},
+        page_window::{PageStart, PageWindow},
+    };
+    use axum::{
+        http::{StatusCode, Uri, header::LINK},
+        response::{IntoResponse, Response},
+    };
+    use iri_rs::IriRefBuf;
+
+    fn ngsi_ld_uri(value: &str) -> NgsiLdUri {
+        value.parse().expect("valid URI")
+    }
+
+    /// The neighbouring cursors of a page are carried as their encoded tokens,
+    /// the from-end anchor always among them.
+    #[test]
+    fn neighbouring_cursors_become_their_encoded_tokens() {
+        let neighbours = NeighbourCursors {
+            prev: Some(PageCursor::Before(ngsi_ld_uri("urn:e:1"))),
+            next: None,
+            last: PageCursor::End,
+        };
+        pretty_assertions::assert_eq!(
+            CursorPointers::from(neighbours),
+            CursorPointers {
+                prev: Some(PageCursor::Before(ngsi_ld_uri("urn:e:1")).encode()),
+                next: None,
+                last: Some(PageCursor::End.encode()),
+            }
+        );
+    }
+
+    /// An offset window points by offset, deciding `next` from the total.
+    #[test]
+    fn an_offset_window_points_by_offset() {
+        let window = PageWindow {
+            limit: 10,
+            start: PageStart::Offset(20),
+        };
+        pretty_assertions::assert_eq!(
+            PageLinks::of_window(&window, Some(45), 10, None),
+            Some(PageLinks::Offset {
+                offset: 20,
+                extent: PageExtent::Total(45),
+            })
+        );
+    }
+
+    /// A cursor window points by the cursors around the page's boundary, and a
+    /// full first page offers `next` past its last identifier (clause 5.5.9.1).
+    #[test]
+    fn a_full_cursor_page_points_past_its_last_identifier() {
+        let window = PageWindow {
+            limit: 2,
+            start: PageStart::Cursor(None),
+        };
+        let boundary = Some((ngsi_ld_uri("urn:e:1"), ngsi_ld_uri("urn:e:2")));
+        pretty_assertions::assert_eq!(
+            PageLinks::of_window(&window, None, 2, boundary),
+            Some(PageLinks::Cursor(CursorPointers {
+                prev: None,
+                next: Some(PageCursor::After(ngsi_ld_uri("urn:e:2")).encode()),
+                last: Some(PageCursor::End.encode()),
+            }))
+        );
+    }
+
+    /// An empty cursor page has no boundary and carries no pointer.
+    #[test]
+    fn an_empty_cursor_page_carries_no_pointer() {
+        let window = PageWindow {
+            limit: 2,
+            start: PageStart::Cursor(Some(PageCursor::After(ngsi_ld_uri("urn:e:9")))),
+        };
+        pretty_assertions::assert_eq!(PageLinks::of_window(&window, None, 0, None), None);
+    }
 
     fn empty_response() -> Response {
         StatusCode::OK.into_response()

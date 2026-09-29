@@ -6,7 +6,7 @@
 //! its own private tenant, whose collection starts empty.
 
 use crate::cursor_walk::{assert_cursor_links, ids_of, joined_links, link_target, query_string_of};
-use andromeda_test_client::test_client::TestClient;
+use andromeda_test_client::{entity::results_count, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use pretty_assertions::assert_eq;
@@ -175,5 +175,57 @@ async fn pagination_temporal_cursor_with_offset_is_bad_request() {
         .await
         .expect("query temporal entities failed");
     assert_eq!(response.status, StatusCode::BAD_REQUEST);
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.9.1: a plain temporal query -- no `local`, default order, no
+/// offset -- on a tenant where no registration can contribute walks the element
+/// dimension by opaque cursor, returning every entity exactly once.
+#[tokio::test]
+async fn pagination_temporal_default_scope_walks_by_cursor_over_every_entity() {
+    let (scope, client) = make_scope().await;
+    create_sensors(&client, 7).await;
+
+    let (_, headers) = query_page(&client, &format!("type=Sensor&{WINDOW}&limit=2")).await;
+    assert_cursor_links(&headers);
+    let seen = walk_forward(&client, &format!("type=Sensor&{WINDOW}&limit=2")).await;
+    let expected: Vec<String> = (0..7).map(sensor_id).collect();
+    assert_eq!(seen, expected, "the walk returns every entity once, ascending");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Following `prev` from a plain temporal query's second page returns to the
+/// first page.
+#[tokio::test]
+async fn pagination_temporal_default_scope_following_prev_returns_to_the_same_page() {
+    let (scope, client) = make_scope().await;
+    create_sensors(&client, 6).await;
+
+    let (page1, headers1) = query_page(&client, &format!("type=Sensor&{WINDOW}&limit=2")).await;
+    let next = link_target(&headers1, "next").expect("first page has a next");
+    let (page2, headers2) = query_page(&client, query_string_of(&next)).await;
+    assert_eq!(page2, vec![sensor_id(2), sensor_id(3)]);
+    let prev = link_target(&headers2, "prev").expect("a mid-collection page has a prev");
+    let (back, _) = query_page(&client, query_string_of(&prev)).await;
+    assert_eq!(back, page1, "following prev returns to the same items");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 6.3.13: a counted cursor page of a plain temporal query counts the
+/// whole collection, not the page and not what lies past the cursor.
+#[tokio::test]
+async fn pagination_temporal_default_scope_cursor_page_counts_the_whole_collection() {
+    let (scope, client) = make_scope().await;
+    create_sensors(&client, 5).await;
+
+    let (_, headers) = query_page(&client, &format!("type=Sensor&{WINDOW}&limit=2")).await;
+    let next = link_target(&headers, "next").expect("first page has a next");
+    let response = client
+        .query_temporal_entities(&format!("{}&count=true", query_string_of(&next)), Some(CORE_CONTEXT))
+        .await
+        .expect("query temporal entities failed");
+    assert_eq!(response.status, StatusCode::OK);
+    assert_eq!(ids_of(&response.json_value().expect("valid JSON body")), vec![sensor_id(2), sensor_id(3)]);
+    assert_eq!(results_count(&response.headers), Some(5), "the count is the whole collection");
     scope.finish().await.expect("cleanup failed");
 }

@@ -36,18 +36,33 @@ use andromeda_postgresql_seaquery::{
 };
 use sea_query::{Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement};
 
-/// A compiled entity query: the paginated result statement and its optional
-/// fallback count, each a statement tree the store binds and executes on its own.
-///
-/// The result piggybacks its total on every row as `COUNT(*) OVER ()`, but a
-/// zero-row result carries no row to read it from, so the count is a separate
-/// statement rather than a shared placeholder sequence - which a paginated
-/// result and an unpaginated count could not be anyway.
+/// A compiled entity query: the paginated result statement and how the total
+/// it reports is read, each a statement tree the store binds and executes on
+/// its own.
 pub struct EntityQuery {
     /// The paginated statement selecting the matching entity payloads.
     pub select: SelectStatement,
-    /// The fallback `COUNT`, present when clause 5.5.9 asks for a total.
-    pub count: Option<SelectStatement>,
+    /// How the clause 6.3.13 total is read, when the query asked for one.
+    pub total: EntityTotal,
+}
+
+/// How the store reads the total a counted entity query reports (clause
+/// 6.3.13).
+pub enum EntityTotal {
+    /// The query asked for no total.
+    Omitted,
+    /// Every row of an offset page carries the total as `COUNT(*) OVER ()`,
+    /// so the common case runs in one round-trip. An empty page carries no row
+    /// to read it from, and only then is this statement run.
+    OnPageRows {
+        /// The count run when the page comes back empty.
+        empty_page: SelectStatement,
+    },
+    /// The page is a keyset window (clause 5.5.9.1), whose predicate keeps only
+    /// the entities past its cursor, so a window count over it would count
+    /// those alone. The total is always this separate statement over the whole
+    /// selection.
+    Counted(SelectStatement),
 }
 
 /// Builds a parameterized SQL query to retrieve entity payloads.
@@ -80,22 +95,30 @@ pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &
     page.cond_where(condition.clone());
     let keys = window_and_sort_keys(&mut page, &rows, query, &names.attributes)?;
 
-    // When a total count is requested, the page piggybacks it on every row so
-    // the common case runs in a single round-trip. A zero-row result carries
-    // no row to read it from, which is what the fallback count covers.
-    let select = payloads_of(page, &rows, keys, query.pagination.count);
+    // An offset page piggybacks a requested total on every row; a keyset page
+    // cannot, since its rows are only those past the cursor.
+    let on_page_rows = match (query.pagination.count, &query.keyset) {
+        (CountPolicy::Emit, None) => CountPolicy::Emit,
+        (CountPolicy::Emit, Some(_)) | (CountPolicy::Omit, _) => CountPolicy::Omit,
+    };
+    let select = payloads_of(page, &rows, keys, on_page_rows);
 
-    let count = if query.pagination.count == CountPolicy::Emit {
-        let mut count_select = Query::select();
-        count_select.expr(Func::count(SeaExpr::col(Asterisk)));
-        EntityRelations::for_count(query, &names.types, schema.as_ref()).apply_from(&mut count_select, schema.as_ref());
-        count_select.cond_where(condition);
-        Some(count_select.take())
-    } else {
-        None
+    let total = match query.pagination.count {
+        CountPolicy::Omit => EntityTotal::Omitted,
+        CountPolicy::Emit => {
+            let mut count_select = Query::select();
+            count_select.expr(Func::count(SeaExpr::col(Asterisk)));
+            EntityRelations::for_count(query, &names.types, schema.as_ref()).apply_from(&mut count_select, schema.as_ref());
+            count_select.cond_where(condition);
+            let count_select = count_select.take();
+            match query.keyset {
+                None => EntityTotal::OnPageRows { empty_page: count_select },
+                Some(_) => EntityTotal::Counted(count_select),
+            }
+        }
     };
 
-    Ok(EntityQuery { select, count })
+    Ok(EntityQuery { select, total })
 }
 
 /// Builds a parameterized SQL query to retrieve only entity IDs.
@@ -342,7 +365,10 @@ mod tests {
         let target = ContextTarget::Live;
         let entity_query = build_query(&target, query, names).expect("valid entity query");
         let (sql, values) = entity_query.select.build(PostgresQueryBuilder);
-        let count_sql = entity_query.count.map(|count| count.build(PostgresQueryBuilder).0);
+        let count_sql = match entity_query.total {
+            EntityTotal::Omitted => None,
+            EntityTotal::OnPageRows { empty_page: count } | EntityTotal::Counted(count) => Some(count.build(PostgresQueryBuilder).0),
+        };
         Built {
             sql,
             count_sql,
@@ -1016,6 +1042,42 @@ mod tests {
         );
         assert!(built.sql.contains("LIMIT"), "{}", built.sql);
         assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
+    }
+
+    /// Clause 6.3.13: a counted keyset page counts the whole selection with a
+    /// separate statement. A window count over the page would see only the
+    /// entities past the cursor, so the page carries none, and the count
+    /// statement carries no boundary predicate.
+    #[test]
+    fn a_counted_keyset_page_counts_the_whole_selection_separately() {
+        let mut q = empty_query();
+        q.pagination.count = CountPolicy::Emit;
+        q.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Building:001")));
+        let target = ContextTarget::Live;
+        let entity_query = build_query(&target, &q, &known_types()).expect("valid entity query");
+        let (sql, _) = entity_query.select.build(PostgresQueryBuilder);
+        assert!(!sql.contains("OVER ()"), "a keyset page carries no window count: {sql}");
+        let count = match entity_query.total {
+            EntityTotal::Counted(count) => Some(count),
+            EntityTotal::Omitted | EntityTotal::OnPageRows { .. } => None,
+        }
+        .expect("a counted keyset page is counted separately");
+        let (count_sql, _) = count.build(PostgresQueryBuilder);
+        assert!(count_sql.contains("COUNT(*)"), "{count_sql}");
+        assert!(!count_sql.contains(r#""id" >"#), "the count carries no boundary predicate: {count_sql}");
+    }
+
+    /// A counted offset page keeps carrying its total on the page rows, with
+    /// the separate count kept for an empty page.
+    #[test]
+    fn a_counted_offset_page_carries_its_total_on_the_page_rows() {
+        let mut q = empty_query();
+        q.pagination.count = CountPolicy::Emit;
+        let target = ContextTarget::Live;
+        let entity_query = build_query(&target, &q, &known_types()).expect("valid entity query");
+        let (sql, _) = entity_query.select.build(PostgresQueryBuilder);
+        assert!(sql.contains("COUNT(*) OVER ()"), "{sql}");
+        assert!(matches!(entity_query.total, EntityTotal::OnPageRows { .. }));
     }
 
     /// The ids-only statement pages by keyset the same way the payload one does.
