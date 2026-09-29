@@ -15,11 +15,12 @@
 
 use crate::{
     entity::{
+        census::delta::{CensusChange, CensusStatements},
         inserted_entity::InsertedEntity,
         mapper::stored_inserted_entity,
         params::PreparedEntityColumns,
         types_present::{entity_write_failure, types_present},
-        write::type_membership::created_memberships,
+        write::{staging::Srch, type_membership::created_memberships},
     },
     error::ContextStoreError,
 };
@@ -35,11 +36,11 @@ use andromeda_postgresql_encoding::copy::{
     write_timestamptz_opt,
     write_trailer,
 };
-use sea_query::PostgresQueryBuilder;
+use sea_query::{Iden, PostgresQueryBuilder};
 use sqlx::{Executor, Postgres, Transaction};
 
 /// Number of columns written per staged entity tuple.
-const STAGE_ENTITIES_FIELD_COUNT: i16 = 11;
+const STAGE_ENTITIES_FIELD_COUNT: i16 = 13;
 
 /// DDL for the per-transaction staging table. Dropped automatically on
 /// transaction commit, so concurrent chunk writes on separate pool
@@ -47,8 +48,10 @@ const STAGE_ENTITIES_FIELD_COUNT: i16 = 11;
 const CREATE_STAGE_ENTITIES_SQL: &str = r"
 CREATE TEMP TABLE stage_entities (
     id text,
-    entity_type_name_keys_json jsonb,
-    attribute_name_keys_json jsonb,
+    entity_type_name_keys_literal text,
+    attribute_name_keys_literal text,
+    attribute_instance_name_keys_literal text,
+    attribute_instance_kinds_literal text,
     scope_paths_json jsonb,
     payload jsonb,
     loc bytea,
@@ -61,12 +64,14 @@ CREATE TEMP TABLE stage_entities (
 ";
 
 /// Binary COPY statement targeting the staging table.
-const COPY_INTO_STAGE_SQL: &str = "COPY stage_entities (id, entity_type_name_keys_json, attribute_name_keys_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at) FROM STDIN WITH (FORMAT binary)";
+const COPY_INTO_STAGE_SQL: &str = "COPY stage_entities (id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at) FROM STDIN WITH (FORMAT binary)";
 
 /// Materialise staged rows into the three entity relations of the target
-/// branch and the type memberships beside them: the same projection and the
-/// same inserts the `UNNEST` path performs, read from the staging table instead
-/// of parallel arrays. The branch is selected by qualifying the relations with
+/// branch, the type memberships and the discovery census beside them: the same
+/// projection and the same inserts the `UNNEST` path performs, read from the
+/// staging table instead of parallel arrays. The membership and census inserts
+/// are the very statements the `UNNEST` path runs, rendered by the same
+/// builders, so the two paths cannot count differently. The branch is selected by qualifying the relations with
 /// its schema (none for the live branch, `snap_<key>` for a Snapshot branch);
 /// the temporary staging table is session-scoped and needs no qualifier.
 ///
@@ -77,13 +82,21 @@ const COPY_INTO_STAGE_SQL: &str = "COPY stage_entities (id, entity_type_name_key
 fn insert_from_stage_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let schema = schema_prefix(target);
     let memberships = created_memberships(target)?.to_string(PostgresQueryBuilder);
+    let census = CensusStatements::of(target, Srch, CensusChange::Added)?
+        .rendered()
+        .into_iter()
+        .map(|(name, statement)| format!(",\n\"{}\" AS (\n    {statement}\n)", name.to_string()))
+        .collect::<Vec<String>>()
+        .concat();
     Ok(format!(
         r"
 WITH proj AS (
     SELECT
         s.id,
-        ARRAY(SELECT jsonb_array_elements_text(s.entity_type_name_keys_json)::integer) AS entity_type_name_keys,
-        ARRAY(SELECT jsonb_array_elements_text(s.attribute_name_keys_json)::integer) AS attribute_name_keys,
+        s.entity_type_name_keys_literal::integer[] AS entity_type_name_keys,
+        s.attribute_name_keys_literal::integer[] AS attribute_name_keys,
+        s.attribute_instance_name_keys_literal::integer[] AS attribute_instance_name_keys,
+        s.attribute_instance_kinds_literal::smallint[] AS attribute_instance_kinds,
         ARRAY(SELECT jsonb_array_elements_text(s.scope_paths_json)::ltree) AS scope_paths,
         s.payload,
         CASE WHEN s.loc IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(s.loc)) ELSE NULL END AS location,
@@ -104,14 +117,15 @@ docs AS (
     INSERT INTO {schema}entity_documents (entity_key, payload)
     SELECT ins.entity_key, proj.payload FROM ins JOIN proj ON proj.id = ins.id
 ),
-srch AS (
-    INSERT INTO {schema}entity_search (entity_key, location_expires_at, entity_type_name_keys, attribute_name_keys, scope_paths, location, observation_space, operation_space)
-    SELECT ins.entity_key, proj.location_expires_at, proj.entity_type_name_keys, proj.attribute_name_keys, proj.scope_paths, proj.location, proj.observation_space, proj.operation_space
+srch (entity_key, new_types, new_instance_names, new_instance_kinds) AS (
+    INSERT INTO {schema}entity_search (entity_key, location_expires_at, entity_type_name_keys, attribute_name_keys, attribute_instance_name_keys, attribute_instance_kinds, scope_paths, location, observation_space, operation_space)
+    SELECT ins.entity_key, proj.location_expires_at, proj.entity_type_name_keys, proj.attribute_name_keys, proj.attribute_instance_name_keys, proj.attribute_instance_kinds, proj.scope_paths, proj.location, proj.observation_space, proj.operation_space
     FROM ins JOIN proj ON proj.id = ins.id
+    RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds
 ),
 mbrs AS (
     {memberships}
-)
+){census}
 SELECT entity_key, id FROM ins
 "
     ))
@@ -174,8 +188,10 @@ fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Result<Vec<u8
     for index in 0..columns.ids.len() {
         write_field_count(&mut buf, STAGE_ENTITIES_FIELD_COUNT);
         write_text(&mut buf, columns.ids[index].as_str())?;
-        write_jsonb(&mut buf, &columns.entity_type_name_keys_json[index])?;
-        write_jsonb(&mut buf, &columns.attribute_name_keys_json[index])?;
+        write_text(&mut buf, columns.entity_type_name_keys[index].as_str())?;
+        write_text(&mut buf, columns.attribute_name_keys[index].as_str())?;
+        write_text(&mut buf, columns.attribute_instance_name_keys[index].as_str())?;
+        write_text(&mut buf, columns.attribute_instance_kinds[index].as_str())?;
         write_jsonb(&mut buf, &columns.scope_paths_json[index])?;
         write_jsonb_text(&mut buf, &columns.payload_json[index])?;
         write_bytea_opt(&mut buf, columns.locations[index].as_deref())?;
@@ -197,20 +213,38 @@ const fn estimated_stream_bytes(columns: &PreparedEntityColumns) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::entity::{
+        census::delta::{CensusChange, CensusStatements},
+        copy::{COPY_INTO_STAGE_SQL, CREATE_STAGE_ENTITIES_SQL, STAGE_ENTITIES_FIELD_COUNT, encode_entities_copy_stream, insert_from_stage_sql},
+        params::PreparedEntityColumns,
+        write::staging::Srch,
+    };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use andromeda_postgresql_codes::attribute_kind::AttributeKind;
     use andromeda_postgresql_encoding::copy::COPY_HEADER_SIGNATURE;
-    use chrono::{TimeZone, Utc};
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+    use chrono::{DateTime, TimeZone, Utc};
+    use sea_query::Iden;
+
+    fn instant() -> DateTime<Utc> {
+        Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant")
+    }
 
     /// Build a two-row sample for encoding tests.
     fn sample_columns() -> PreparedEntityColumns {
         let mut columns = PreparedEntityColumns::with_capacity(2);
         columns.ids.push("urn:ngsi-ld:Building:1".parse().expect("entity URI"));
         columns.ids.push("urn:ngsi-ld:Building:2".parse().expect("entity URI"));
-        columns.entity_type_name_keys_json.push(serde_json::json!([7]));
-        columns.entity_type_name_keys_json.push(serde_json::json!([7]));
-        columns.attribute_name_keys_json.push(serde_json::json!([3, 4]));
-        columns.attribute_name_keys_json.push(serde_json::json!([]));
+        columns.push_entity_type_name_keys([EntityTypeNameKey::from(7)]);
+        columns.push_entity_type_name_keys([EntityTypeNameKey::from(7)]);
+        columns.push_attribute_name_keys([AttributeNameKey::from(3), AttributeNameKey::from(4)]);
+        columns.push_attribute_name_keys([]);
+        columns.push_attribute_instances(vec![
+            (AttributeNameKey::from(4), AttributeKind::Relationship),
+            (AttributeNameKey::from(3), AttributeKind::Property),
+        ]);
+        columns.push_attribute_instances(Vec::new());
         columns.scope_paths_json.push(serde_json::json!(["root.a"]));
         columns.scope_paths_json.push(serde_json::json!([]));
         columns
@@ -224,10 +258,10 @@ mod tests {
         columns.push_geometries(None, None, None).expect("geometry encodes");
         columns.location_expires_ats.push(None);
         columns.location_expires_ats.push(None);
-        columns.expires_ats.push(Some(Utc.timestamp_opt(1_700_000_000, 0).unwrap()));
+        columns.expires_ats.push(Some(instant()));
         columns.expires_ats.push(None);
         columns.min_attribute_expires_ats.push(None);
-        columns.min_attribute_expires_ats.push(Some(Utc.timestamp_opt(1_700_000_000, 0).unwrap()));
+        columns.min_attribute_expires_ats.push(Some(instant()));
         columns
     }
 
@@ -246,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn every_row_carries_the_eleven_staged_fields() {
+    fn every_row_carries_the_thirteen_staged_fields() {
         let stream = encode_entities_copy_stream(&sample_columns()).expect("the sample columns encode");
         // The first tuple's field count follows the 19-byte header.
         let field_count = u8::try_from(STAGE_ENTITIES_FIELD_COUNT).expect("the staged field count fits one byte");
@@ -265,8 +299,10 @@ mod tests {
     fn the_staged_columns_and_the_copy_column_list_agree() {
         for column in [
             "id",
-            "entity_type_name_keys_json",
-            "attribute_name_keys_json",
+            "entity_type_name_keys_literal",
+            "attribute_name_keys_literal",
+            "attribute_instance_name_keys_literal",
+            "attribute_instance_kinds_literal",
             "scope_paths_json",
             "payload",
             "loc",
@@ -298,6 +334,29 @@ mod tests {
         assert!(live.contains(r#"FROM "ins" JOIN "proj" ON "proj"."id" = "ins"."id""#), "{live}");
     }
 
+    /// The COPY path counts what it inserted into the census with the very
+    /// statements the `UNNEST` path renders, reading the rows its search insert
+    /// returned.
+    #[test]
+    fn the_copy_path_counts_the_census_like_the_unnest_path() {
+        let live = insert_from_stage_sql(&ContextTarget::Live).expect("the fixed insert builds");
+        assert!(
+            live.contains("srch (entity_key, new_types, new_instance_names, new_instance_kinds) AS ("),
+            "{live}"
+        );
+        assert!(
+            live.contains("RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds"),
+            "{live}"
+        );
+        for (name, statement) in CensusStatements::of(&ContextTarget::Live, Srch, CensusChange::Added)
+            .expect("builds")
+            .rendered()
+        {
+            let name = name.to_string();
+            assert!(live.contains(&format!("\"{name}\" AS (\n    {statement}\n)")), "{name} missing: {live}");
+        }
+    }
+
     /// A Snapshot branch qualifies the target relations with its schema while
     /// the session-scoped staging table stays unqualified.
     #[test]
@@ -310,6 +369,7 @@ mod tests {
         assert!(branch.contains("INSERT INTO snap_9_stg.entity_documents (entity_key"), "{branch}");
         assert!(branch.contains("INSERT INTO snap_9_stg.entity_search (entity_key"), "{branch}");
         assert!(branch.contains(r#"INSERT INTO "snap_9_stg"."entity_type_members""#), "{branch}");
+        assert!(branch.contains(r#"INSERT INTO "snap_9_stg"."attribute_census""#), "{branch}");
         assert!(branch.contains("FROM stage_entities s"), "{branch}");
     }
 }

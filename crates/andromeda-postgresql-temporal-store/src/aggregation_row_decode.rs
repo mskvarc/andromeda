@@ -14,7 +14,6 @@
 //! aggregate when in truth the broker could not read the one it computed.
 
 use crate::{
-    attribute_kind_code::attribute_type_of,
     error::TemporalStoreError,
     history_row_decode::{decode_attribute_name, decode_dataset_id, decode_unit_code_id},
     stored_decimal::json_number_of,
@@ -22,7 +21,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::ngsi_ld_time::NgsiLdTime;
 use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, registry::UnknownCompactCode};
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, registry::UnknownCompactCode};
 use andromeda_postgresql_temporal_query::{
     aggregation_group::{AggregationGroupSpan, CodeSpan, ObservedUnits},
     recorded_shape::RecordedShape,

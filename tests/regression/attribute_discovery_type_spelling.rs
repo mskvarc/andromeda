@@ -19,8 +19,14 @@
 //!
 //! Each test writes that spelling into the stored payload directly, because the
 //! ingest path expands what it is given and so cannot produce it through the
-//! API. That is the shape the defect reaches a read through -- a row the broker
-//! reads back -- and it is what the aggregate has to be total over.
+//! API. That is the shape the defect reached a read through -- a row the broker
+//! reads back.
+//!
+//! Discovery no longer reads the payloads at all: it answers from the census
+//! the entity writes keep, which records the family each instance declared when
+//! it was written (clause 4.5.2 makes an instance without one a Property). A
+//! payload rewritten behind the broker therefore cannot fail a listing any
+//! more, and cannot change what it reports either; the tests hold it to both.
 //!
 //! Naming convention: `regression_<finding>_<scenario>`.
 
@@ -183,12 +189,13 @@ async fn regression_attribute_discovery_one_node_never_decides_another_attribute
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.2.28 makes `attributeTypes` the families the attribute was seen
-/// with. A `@type` that is neither of the two JSON-LD spellings names no family
-/// at all, which is reported as none rather than as a failed read: an attribute
-/// no instance declared a type for is already answered that way.
+/// Clause 5.2.28 makes `attributeTypes` the families the instances declare,
+/// and the census records the family each write declared. A stored `@type`
+/// rewritten behind the broker to something no JSON-LD spelling allows neither
+/// fails the listing nor changes the family reported: the instance was written
+/// as a Property, and a Property is what discovery says it is.
 #[tokio::test]
-async fn regression_attribute_discovery_an_unreadable_at_type_names_no_family() {
+async fn regression_attribute_discovery_an_unreadable_at_type_changes_no_answer() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let vocabulary = RunVocabulary::allocate();
@@ -210,17 +217,14 @@ async fn regression_attribute_discovery_an_unreadable_at_type_names_no_family() 
 
         let (info_status, info) = attribute_info(client, &stated).await;
         assert_eq!(info_status, StatusCode::OK, "{spelling}: {info}");
-        assert!(
-            info["attributeTypes"].as_array().is_none_or(|families| !families.contains(&json!("Property"))),
-            "{spelling} names no family through this entity: {info}"
-        );
+        assert_eq!(info["attributeTypes"], json!(["Property"]), "{spelling}: {info}");
     }
 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// An empty `@type` array is the third spelling the aggregate has to be total
-/// over, and it names no family either.
+/// An empty `@type` array is the third spelling a listing has to be total
+/// over; the instance is still counted, as the one it was written as.
 #[tokio::test]
 async fn regression_attribute_discovery_an_empty_at_type_array_names_no_family() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

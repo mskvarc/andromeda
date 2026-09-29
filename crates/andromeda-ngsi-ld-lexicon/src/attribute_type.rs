@@ -218,18 +218,6 @@ impl AttributeType {
         }
     }
 
-    /// Parse strings ending with "/Property", "/Relationship", etc. (for discovery).
-    #[must_use]
-    pub fn from_iri_suffix(s: &str) -> Option<AttributeType> {
-        for variant in Self::ALL {
-            let name = variant.to_string();
-            if s.ends_with(&format!("/{name}")) || s.ends_with(&format!("#{name}")) {
-                return Some(variant);
-            }
-        }
-        None
-    }
-
     /// Returns the reserved compacted field names for this attribute type.
     #[must_use]
     pub const fn reserved_fields(self) -> &'static [&'static str] {
@@ -351,27 +339,6 @@ mod tests {
             let iri = variant.iri();
             assert!(iri.as_str().ends_with(&variant.to_string()), "IRI {iri} should end with {variant}");
         }
-    }
-
-    #[test]
-    fn from_iri_suffix_slash() {
-        pretty_assertions::assert_eq!(
-            AttributeType::from_iri_suffix("https://uri.etsi.org/ngsi-ld/Property"),
-            Some(AttributeType::Property)
-        );
-    }
-
-    #[test]
-    fn from_iri_suffix_hash() {
-        pretty_assertions::assert_eq!(
-            AttributeType::from_iri_suffix("https://example.com#Relationship"),
-            Some(AttributeType::Relationship)
-        );
-    }
-
-    #[test]
-    fn from_iri_suffix_unknown() {
-        pretty_assertions::assert_eq!(AttributeType::from_iri_suffix("Unknown"), None);
     }
 
     #[test]

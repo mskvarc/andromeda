@@ -7,16 +7,27 @@
 //! row per type, and an update moves only the types that changed, which a
 //! value-only write never does. A delete needs nothing here; the rows cascade
 //! from `entities`.
+//!
+//! An update reads the types an Entity had and has from the images its search
+//! row write returned ([`SearchImage`]), never from `entity_search` itself: the
+//! row the write replaced is the one it found after waiting on any concurrent
+//! writer, while the relation read in the same `WITH` is the statement's
+//! snapshot, which can predate that writer's commit. Moving memberships from the
+//! snapshot would keep a type the concurrent writer had already dropped, or
+//! insert a membership the concurrent writer had already added.
 
 use crate::{
-    entity::write::staging::{Docs, Ins, Proj, from_inserted, projected},
+    entity::write::{
+        search_image::SearchImage,
+        staging::{Ins, Srch, from_inserted, projected},
+    },
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch, EntityTypeMembers};
-use andromeda_postgresql_seaquery::{pg_array::any, pg_operator::PgBinaryOperator, unnest::unnest_of};
-use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Iden, InsertStatement, JoinType, Query, SelectStatement, SimpleExpr};
+use andromeda_postgresql_schema::current::{Entities, EntitySearch, EntityTypeMembers};
+use andromeda_postgresql_seaquery::{pg_array::any, unnest::unnest_of};
+use sea_query::{DeleteStatement, Expr, ExprTrait, Iden, InsertStatement, JoinType, Query, SelectStatement, SimpleExpr};
 
 /// The membership CTE of a create or an update, `mbrs`, whose only purpose is
 /// to run.
@@ -35,9 +46,9 @@ pub(super) struct Strays;
 #[iden = "carried"]
 struct Carried;
 
-/// The membership rows of the Entities `rows` names: one per key of the
-/// projected `entity_type_name_keys` (for which `admitted` holds, when given),
-/// keyed by `entity_key` and identified by `id`.
+/// The membership rows of the Entities `rows` names: one per key of `keys`
+/// (for which `admitted` holds, when given), keyed by `entity_key` and
+/// identified by `id`.
 ///
 /// # Errors
 ///
@@ -46,11 +57,12 @@ struct Carried;
 fn membership_insert(
     target: &ContextTarget,
     mut rows: SelectStatement,
+    keys: SimpleExpr,
     entity_key: SimpleExpr,
     id: SimpleExpr,
     admitted: Option<SimpleExpr>,
 ) -> Result<InsertStatement, ContextStoreError> {
-    unnest_keys(&mut rows, projected(EntitySearch::EntityTypeNameKeys));
+    unnest_keys(&mut rows, keys);
     rows.expr(entity_key).expr(carried_key()).expr(id);
     if let Some(admitted) = admitted {
         rows.and_where(admitted);
@@ -74,66 +86,42 @@ pub(crate) fn created_memberships(target: &ContextTarget) -> Result<InsertStatem
     membership_insert(
         target,
         from_inserted(),
+        projected(EntitySearch::EntityTypeNameKeys),
         Expr::col((Ins, Entities::EntityKey)),
         Expr::col((Ins, Entities::Id)),
         None,
     )
 }
 
-/// The membership rows an update adds: the projected types the stored search
-/// row did not carry, for the Entities whose payload write landed.
+/// The membership rows an update adds: the types the rewritten search row
+/// holds that the row it replaced did not.
 ///
 /// # Errors
 ///
 /// As [`membership_insert`].
 pub(super) fn added_memberships(target: &ContextTarget) -> Result<InsertStatement, ContextStoreError> {
-    let carried_before = SimpleExpr::from(Expr::col((EntitySearch::Table, EntitySearch::EntityTypeNameKeys)));
     membership_insert(
         target,
-        retyped(target),
-        Expr::col((Docs, EntityDocuments::EntityKey)),
-        Expr::col((Docs, Entities::Id)),
-        Some(carried_key().eq(any(carried_before)).not()),
+        Query::select().from(Srch).take(),
+        Expr::col((Srch, SearchImage::NewTypes)),
+        Expr::col((Srch, EntitySearch::EntityKey)),
+        Expr::col((Srch, Entities::Id)),
+        Some(carried_key().eq(any(Expr::col((Srch, SearchImage::OldTypes)))).not()),
     )
 }
 
-/// The membership rows an update removes: the stored types the projection no
-/// longer carries, for the Entities whose payload write landed, found by the
-/// membership key.
+/// The membership rows an update removes: the types the replaced search row
+/// held that the rewritten one does not, found by the membership key.
 pub(super) fn dropped_memberships(target: &ContextTarget) -> DeleteStatement {
-    let mut stale = retyped(target);
-    unnest_keys(&mut stale, Expr::col((EntitySearch::Table, EntitySearch::EntityTypeNameKeys)));
+    let mut stale = Query::select().from(Srch).take();
+    unnest_keys(&mut stale, Expr::col((Srch, SearchImage::OldTypes)));
     stale
         .expr(carried_key())
-        .expr(Expr::col((Docs, Entities::Id)))
-        .and_where(carried_key().eq(any(projected(EntitySearch::EntityTypeNameKeys))).not());
+        .expr(Expr::col((Srch, Entities::Id)))
+        .and_where(carried_key().eq(any(Expr::col((Srch, SearchImage::NewTypes)))).not());
     Query::delete()
         .from_table(table_of(target, EntityTypeMembers::Table))
         .and_where(Expr::tuple([Expr::col(EntityTypeMembers::EntityTypeNameKey), Expr::col(EntityTypeMembers::Id)]).in_subquery(stale.take()))
-        .take()
-}
-
-/// The Entities of an update whose types changed: every landed payload write
-/// (`docs`) beside its projected row and its stored search row, where the two
-/// type arrays differ.
-///
-/// The stored search row is read as the statement found it, which is what an
-/// update's sibling expressions see whatever the search CTE writes, so the
-/// comparison is always with the types before this write.
-fn retyped(target: &ContextTarget) -> SelectStatement {
-    Query::select()
-        .from(Docs)
-        .join(JoinType::Join, Proj, Expr::col((Proj, Entities::Id)).equals((Docs, Entities::Id)))
-        .join(
-            JoinType::Join,
-            table_of(target, EntitySearch::Table),
-            Condition::all()
-                .add(Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Docs, EntityDocuments::EntityKey)))
-                .add(
-                    SimpleExpr::from(Expr::col((EntitySearch::Table, EntitySearch::EntityTypeNameKeys)))
-                        .distinct_from(projected(EntitySearch::EntityTypeNameKeys)),
-                ),
-        )
         .take()
 }
 
@@ -178,41 +166,45 @@ mod tests {
         );
     }
 
-    /// An update adds only the types the stored search row lacked, and only for
-    /// an Entity whose types changed, so a value-only write inserts nothing.
+    /// An update adds only the types the rewritten search row holds and the
+    /// replaced one lacked, read from the images the search write returned.
     #[test]
-    fn an_update_adds_only_the_types_the_stored_row_lacked() {
+    fn an_update_adds_only_the_types_the_replaced_row_lacked() {
         let sql = added_memberships(&ContextTarget::Live)
             .expect("the membership insert builds")
             .to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#""entity_search"."entity_type_name_keys" IS DISTINCT FROM "proj"."entity_type_name_keys""#),
+            sql.contains(r#"SELECT "srch"."entity_key", "carried"."entity_type_name_key", "srch"."id" FROM "srch""#),
             "{sql}"
         );
-        assert!(sql.contains(r#"UNNEST("proj"."entity_type_name_keys")"#), "{sql}");
-        assert!(
-            sql.contains(r#"NOT "carried"."entity_type_name_key" = ANY("entity_search"."entity_type_name_keys")"#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#"UNNEST("srch"."new_types")"#), "{sql}");
+        assert!(sql.contains(r#"NOT "carried"."entity_type_name_key" = ANY("srch"."old_types")"#), "{sql}");
     }
 
-    /// An update drops, by the membership key, only the stored types the
-    /// projection no longer carries.
+    /// An update drops, by the membership key, only the types the replaced
+    /// search row held and the rewritten one no longer does.
     #[test]
-    fn an_update_drops_only_the_types_the_projection_no_longer_carries() {
+    fn an_update_drops_only_the_types_the_rewritten_row_no_longer_holds() {
         let sql = dropped_memberships(&ContextTarget::Live).to_string(PostgresQueryBuilder);
         assert!(
             sql.starts_with(
-                r#"DELETE FROM "entity_type_members" WHERE ("entity_type_name_key", "id") IN (SELECT "carried"."entity_type_name_key", "docs"."id""#
+                r#"DELETE FROM "entity_type_members" WHERE ("entity_type_name_key", "id") IN (SELECT "carried"."entity_type_name_key", "srch"."id" FROM "srch""#
             ),
             "{sql}"
         );
-        assert!(sql.contains(r#"UNNEST("entity_search"."entity_type_name_keys")"#), "{sql}");
-        assert!(
-            sql.contains(r#"NOT "carried"."entity_type_name_key" = ANY("proj"."entity_type_name_keys")"#),
-            "{sql}"
-        );
-        assert!(sql.contains("IS DISTINCT FROM"), "{sql}");
+        assert!(sql.contains(r#"UNNEST("srch"."old_types")"#), "{sql}");
+        assert!(sql.contains(r#"NOT "carried"."entity_type_name_key" = ANY("srch"."new_types")"#), "{sql}");
+    }
+
+    /// The moves never read `entity_search`: the statement's snapshot of it can
+    /// predate a concurrent writer the search write waited for.
+    #[test]
+    fn the_membership_moves_never_read_the_search_relation() {
+        let added = added_memberships(&ContextTarget::Live).expect("builds").to_string(PostgresQueryBuilder);
+        let dropped = dropped_memberships(&ContextTarget::Live).to_string(PostgresQueryBuilder);
+        for sql in [added, dropped] {
+            assert!(!sql.contains("entity_search"), "{sql}");
+        }
     }
 
     /// A Snapshot branch keeps its memberships in its own schema.
@@ -224,7 +216,6 @@ mod tests {
         let added = added_memberships(&target).expect("builds").to_string(PostgresQueryBuilder);
         let dropped = dropped_memberships(&target).to_string(PostgresQueryBuilder);
         assert!(added.contains(r#"INSERT INTO "snap_5_stg"."entity_type_members""#), "{added}");
-        assert!(added.contains(r#"JOIN "snap_5_stg"."entity_search""#), "{added}");
         assert!(dropped.contains(r#"DELETE FROM "snap_5_stg"."entity_type_members""#), "{dropped}");
     }
 }

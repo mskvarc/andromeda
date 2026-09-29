@@ -12,7 +12,6 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::entity_type_list::{EntityType, EntityTypeType};
 use serde_json::Value;
 
@@ -24,27 +23,11 @@ impl EntityDiscoveryService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::Persistence`] when a summary page or the registry
+    /// Reports [`EntityError::Persistence`] when the store or the registry
     /// could not be read, and [`EntityError::Internal`] when a stored type or
     /// attribute name does not read back as one.
     pub async fn type_details(&self, target: &ContextTarget, scope: DiscoveryScope, context: &ContextSpec) -> Result<Value, EntityError> {
-        // Keyset-paginate the aggregation so a very large set of distinct
-        // types does not require a single large result set.
-        const PAGE: u32 = 500;
-        let mut summaries: Vec<(EntityTypeName, Vec<AttributeName>)> = Vec::new();
-        let mut cursor: Option<EntityTypeName> = None;
-        loop {
-            let page = self.store.get_entity_type_summaries(target, cursor.as_ref(), PAGE).await?;
-            if page.is_empty() {
-                break;
-            }
-            cursor = page.last().map(|(t, _)| t.clone()); // clone: own cursor for next loop iteration
-            let page_len = page.len();
-            summaries.extend(page);
-            if page_len < usize::try_from(PAGE).unwrap_or(usize::MAX) {
-                break;
-            }
-        }
+        let mut summaries = self.store.entity_type_attributes(target).await?;
         union_type_summaries(&mut summaries, self.registered_types(scope).await?);
 
         let names = NameCompactor::new(&self.engine, context);

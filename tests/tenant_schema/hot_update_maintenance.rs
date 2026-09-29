@@ -316,8 +316,8 @@ async fn churn_entity(pool: &PgPool, prefix: &str) -> i64 {
          doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, '[]'::jsonb FROM ins), \
          mbr AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id) \
                  SELECT ins.entity_key, type_name.entity_type_name_key, ins.id FROM ins, type_name) \
-         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys) \
-         SELECT ins.entity_key, ARRAY[type_name.entity_type_name_key], ARRAY[]::integer[] FROM ins, type_name \
+         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, attribute_instance_name_keys, attribute_instance_kinds) \
+         SELECT ins.entity_key, ARRAY[type_name.entity_type_name_key], ARRAY[]::integer[], ARRAY[]::integer[], ARRAY[]::smallint[] FROM ins, type_name \
          RETURNING entity_key",
     )
     .bind(prefix)

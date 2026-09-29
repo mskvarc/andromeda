@@ -9,7 +9,7 @@
 //! not accumulate across a run.
 
 use crate::{
-    configuration::{ConfigurationError, TestRunConfiguration},
+    configuration::{ConfigurationError, DatabaseEndpoint, TestRunConfiguration},
     database_isolation::{DatabaseIsolationError, connect_pool},
     identifiers::{IdentifierError, TestSuiteName},
     readiness::{ReadinessError, ReadinessPolicy, wait_until_ready_once},
@@ -29,7 +29,11 @@ pub struct TenantScopedEnvironment {
     client: TestClient,
     scope: Scope,
     label: String,
+    /// The platform database, from which the tenant's own database is found
+    /// and dropped.
     pool: PgPool,
+    /// The endpoint the tenant's own database is reached through, by name.
+    database: DatabaseEndpoint,
 }
 
 impl TenantScopedEnvironment {
@@ -57,7 +61,33 @@ impl TenantScopedEnvironment {
         wait_until_ready_once(&client, ReadinessPolicy::default()).await?;
         let pool = connect_pool(configuration.database()).await?;
         sweep_stale_tenant_databases_once(&pool).await;
-        Ok(TenantScopedEnvironment { client, scope, label, pool })
+        Ok(TenantScopedEnvironment {
+            client,
+            scope,
+            label,
+            pool,
+            database: configuration.database().clone(), // clone: the environment keeps the endpoint it later opens the tenant database through.
+        })
+    }
+
+    /// Open a pool on the private tenant's own database, for a test that
+    /// checks what the broker stored rather than what it rendered.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenantScopedEnvironmentError::Catalogue`] when the database
+    /// catalogue cannot be read, [`TenantScopedEnvironmentError::NoTenantDatabase`]
+    /// before the broker has created the tenant's database, and
+    /// [`TenantScopedEnvironmentError::Isolation`] when the pool cannot be opened.
+    pub async fn tenant_database(&self) -> Result<PgPool, TenantScopedEnvironmentError> {
+        let like = format!("andromeda_tenant_{}_%", self.label);
+        let database: Option<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE $1")
+            .bind(&like)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| TenantScopedEnvironmentError::Catalogue(Box::new(error)))?;
+        let database = database.ok_or_else(|| TenantScopedEnvironmentError::NoTenantDatabase { tenant: self.label.clone() })?; // clone: the error owns the tenant it names.
+        Ok(connect_pool(&self.database.with_database(&database)).await?)
     }
 
     /// Borrow the tenant-bound HTTP client.
@@ -197,4 +227,16 @@ pub enum TenantScopedEnvironmentError {
     /// Database connection could not be obtained.
     #[error(transparent)]
     Isolation(#[from] DatabaseIsolationError),
+    /// The database catalogue could not be read.
+    ///
+    /// Boxed because an `sqlx::Error` is 56 bytes and this enum is the `Err` of
+    /// every environment call.
+    #[error("the database catalogue could not be read: {0}")]
+    Catalogue(#[source] Box<sqlx::Error>),
+    /// The broker has not created the private tenant's database yet.
+    #[error("the private tenant {tenant} has no database yet")]
+    NoTenantDatabase {
+        /// The tenant whose database is missing.
+        tenant: String,
+    },
 }

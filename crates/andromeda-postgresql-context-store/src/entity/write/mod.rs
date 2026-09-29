@@ -11,7 +11,12 @@
 //! this same transaction and must not have to read the row back to find it.
 //! Delete returns neither: the projection is removed by the single ownership
 //! edge that cascades from `entities`, and clause 5.6.6 leaves the temporal
-//! evolution standing, so an Entity deletion touches no other relation.
+//! evolution standing.
+//!
+//! Every statement also keeps the discovery census
+//! ([`census`](crate::entity::census)) in step with the search rows it writes,
+//! in the same statement, counting from the images its own search write
+//! returned ([`search_image`]).
 //!
 //! No statement here reads. A read-modify-write takes its "before" snapshot
 //! outside the transaction and states what it assumed in a precondition, which
@@ -31,8 +36,10 @@ use std::collections::BTreeSet;
 mod delete;
 /// The batch insert.
 mod insert;
+/// The images of an `entity_search` row a set-write hands on.
+pub(crate) mod search_image;
 /// The staging shape every set-write reads its arrays through.
-mod staging;
+pub(crate) mod staging;
 /// The type-membership rows each set-write keeps in step with the search row.
 pub(crate) mod type_membership;
 /// The batch update.

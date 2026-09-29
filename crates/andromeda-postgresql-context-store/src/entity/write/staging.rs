@@ -58,10 +58,12 @@ pub(super) struct Ins;
 #[iden = "docs"]
 pub(super) struct Docs;
 
-/// The `entity_search` CTE, `srch`.
+/// The `entity_search` CTE, `srch`: the rows a set-write wrote there, returned
+/// as the images ([`SearchImage`](crate::entity::write::search_image::SearchImage))
+/// the memberships and the census are derived from.
 #[derive(Iden, Clone, Copy)]
 #[iden = "srch"]
-pub(super) struct Srch;
+pub(crate) struct Srch;
 
 /// The `entities` lifecycle CTE, `ents`.
 #[derive(Iden, Clone, Copy)]
@@ -77,19 +79,26 @@ pub(super) struct Doomed;
 /// The staging columns of the entity set-writes, named as the `AS d(…)` alias
 /// spells them rather than as the columns they land in.
 ///
-/// The key and scope arrays arrive as JSONB (`entity_type_name_keys_json`,
-/// `attribute_name_keys_json`, `scope_paths_json`) and are expanded to
-/// `integer[]`/`ltree[]` in the projection; the geometries arrive as EWKB
+/// The key and instance arrays arrive as PostgreSQL array literals
+/// (`entity_type_name_keys_literal`, `attribute_name_keys_literal`,
+/// `attribute_instance_name_keys_literal`, `attribute_instance_kinds_literal`)
+/// and are cast to `integer[]`/`smallint[]` in the projection; the scope paths
+/// arrive as JSONB (`scope_paths_json`) and are expanded to `ltree[]` there; the geometries arrive as EWKB
 /// (`loc`, `obs`, `ops`) and are validated there. Not every statement uses
 /// every column: the delete stages only `id` and the expectation.
 #[derive(Iden, Clone, Copy)]
 pub(super) enum StagedColumn {
     /// Entity identifier.
     Id,
-    /// Type dictionary-key array as JSONB.
-    EntityTypeNameKeysJson,
-    /// Attribute-name dictionary-key array as JSONB.
-    AttributeNameKeysJson,
+    /// Type dictionary-key array, as an array literal.
+    EntityTypeNameKeysLiteral,
+    /// Attribute-name dictionary-key array, as an array literal.
+    AttributeNameKeysLiteral,
+    /// Attribute-instance name dictionary-key array, as an array literal.
+    AttributeInstanceNameKeysLiteral,
+    /// Attribute-instance family code array, as an array literal aligned with
+    /// the names.
+    AttributeInstanceKindsLiteral,
     /// Scope-path array as JSONB, in `ltree` dot notation.
     ScopePathsJson,
     /// Payload as JSON text, cast to `jsonb` in the projection.
@@ -142,19 +151,21 @@ fn geometry(column: StagedColumn) -> SimpleExpr {
         .into()
 }
 
-/// The `integer[]`/`ltree[]` projection of a staged JSONB array column:
+/// The `ltree[]` projection of a staged JSONB array column:
 /// `ARRAY(SELECT jsonb_array_elements_text(d.<col>)::element_type)`.
 fn array_of(column: StagedColumn, element_type: PostgresType) -> SimpleExpr {
     let element: SimpleExpr = jsonb_array_elements_text(staged(column)).into();
     array_subquery(&Query::select().expr(cast(element, element_type)).to_owned())
 }
 
-/// The eleven staging columns every insert and update stages, in bind order.
-const fn value_staging_columns() -> [(StagedColumn, PostgresType); 11] {
+/// The thirteen staging columns every insert and update stages, in bind order.
+const fn value_staging_columns() -> [(StagedColumn, PostgresType); 13] {
     [
         (StagedColumn::Id, PostgresType::TextArray),
-        (StagedColumn::EntityTypeNameKeysJson, PostgresType::JsonbArray),
-        (StagedColumn::AttributeNameKeysJson, PostgresType::JsonbArray),
+        (StagedColumn::EntityTypeNameKeysLiteral, PostgresType::TextArray),
+        (StagedColumn::AttributeNameKeysLiteral, PostgresType::TextArray),
+        (StagedColumn::AttributeInstanceNameKeysLiteral, PostgresType::TextArray),
+        (StagedColumn::AttributeInstanceKindsLiteral, PostgresType::TextArray),
         (StagedColumn::ScopePathsJson, PostgresType::JsonbArray),
         (StagedColumn::Payload, PostgresType::TextArray),
         (StagedColumn::Loc, PostgresType::ByteaArray),
@@ -166,7 +177,7 @@ const fn value_staging_columns() -> [(StagedColumn, PostgresType); 11] {
     ]
 }
 
-/// The eleven staging columns of the insert, in bind order.
+/// The thirteen staging columns of the insert, in bind order.
 pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
     value_staging_columns()
         .into_iter()
@@ -174,7 +185,7 @@ pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
         .collect()
 }
 
-/// The twelve staging columns of the update: the insert's eleven plus the
+/// The fourteen staging columns of the update: the insert's thirteen plus the
 /// expectation the compare-and-set reads.
 pub(super) fn update_staging_columns() -> Vec<UnnestColumn> {
     let mut columns = insert_staging_columns();
@@ -205,12 +216,20 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], expectation: ExpectationS
     select
         .expr_as(staged(StagedColumn::Id), Entities::Id)
         .expr_as(
-            array_of(StagedColumn::EntityTypeNameKeysJson, PostgresType::Integer),
+            cast(staged(StagedColumn::EntityTypeNameKeysLiteral), PostgresType::IntegerArray),
             EntitySearch::EntityTypeNameKeys,
         )
         .expr_as(
-            array_of(StagedColumn::AttributeNameKeysJson, PostgresType::Integer),
+            cast(staged(StagedColumn::AttributeNameKeysLiteral), PostgresType::IntegerArray),
             EntitySearch::AttributeNameKeys,
+        )
+        .expr_as(
+            cast(staged(StagedColumn::AttributeInstanceNameKeysLiteral), PostgresType::IntegerArray),
+            EntitySearch::AttributeInstanceNameKeys,
+        )
+        .expr_as(
+            cast(staged(StagedColumn::AttributeInstanceKindsLiteral), PostgresType::SmallintArray),
+            EntitySearch::AttributeInstanceKinds,
         )
         .expr_as(array_of(StagedColumn::ScopePathsJson, PostgresType::Ltree), EntitySearch::ScopePaths)
         .expr_as(cast(staged(StagedColumn::Payload), PostgresType::Jsonb), EntityDocuments::Payload)

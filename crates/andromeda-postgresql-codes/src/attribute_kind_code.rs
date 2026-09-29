@@ -1,16 +1,17 @@
 //! Translation between the NGSI-LD attribute family and the code stored on a row.
 //!
 //! [`AttributeType`] is the specification's vocabulary and [`AttributeKind`] is
-//! the migration-owned number a history row keeps it in. The two are separate on
-//! purpose — one may gain a member from a future revision of the specification
-//! while the other may only ever be appended to — so the translation is written
-//! out rather than derived, and lives in the store adapter that is the only
-//! thing allowed to know both.
+//! the migration-owned number a stored row keeps it in: a history row, a current
+//! attribute value, the attribute instances an entity's search row records and
+//! the discovery census. The two are separate on purpose — one may gain a member
+//! from a future revision of the specification while the other may only ever be
+//! appended to — so the translation is written out rather than derived, and it
+//! lives beside the code so every store reads and writes the one mapping.
 
+use crate::attribute_kind::AttributeKind;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 
-/// The code a history row records for an attribute of this family.
+/// The code a stored row records for an attribute of this family.
 #[must_use]
 pub const fn stored_attribute_kind(attribute_type: AttributeType) -> AttributeKind {
     match attribute_type {
@@ -42,8 +43,10 @@ pub const fn attribute_type_of(kind: AttributeKind) -> AttributeType {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_kind_code::{attribute_type_of, stored_attribute_kind};
-    use andromeda_postgresql_codes::attribute_kind::AttributeKind;
+    use crate::{
+        attribute_kind::AttributeKind,
+        attribute_kind_code::{attribute_type_of, stored_attribute_kind},
+    };
 
     #[test]
     fn every_stored_kind_round_trips_through_the_attribute_family() {

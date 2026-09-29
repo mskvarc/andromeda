@@ -45,6 +45,8 @@ pub mod lease_holder;
 pub mod lease_pass_clock;
 /// Preconditions and retry classification for entity mutations.
 pub mod precondition;
+/// The attributes a payload carries, with the family of every instance.
+pub mod projected_attributes;
 /// The identity of one durable side-effect job.
 pub mod side_effect_job_id;
 /// The narrow key a stored Subscription is referenced by.

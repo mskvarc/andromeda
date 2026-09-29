@@ -20,8 +20,9 @@ use serde_json::Value;
 struct AttributeFacts {
     /// The clause 5.2.28 attribute families the local instances carry.
     attribute_types: Vec<AttributeType>,
-    /// The number of local entities carrying the attribute.
-    entity_count: i64,
+    /// Table 5.2.28-1 `attributeCount`: the number of local instances of the
+    /// attribute.
+    instance_count: u64,
     /// The entity types carrying or registering the attribute.
     entity_types: Vec<EntityTypeName>,
 }
@@ -55,7 +56,7 @@ impl EntityDiscoveryService {
         let attr_iri_buf = self.engine.expand_term(attr_id.as_str(), &prepared_context).await?;
         let attr_iri = parse_attribute_name(attr_iri_buf.as_str())?;
 
-        let local = self.store.get_attribute_info(target, &attr_iri).await?;
+        let local = self.store.attribute_summary(target, &attr_iri).await?;
         let registered = self
             .registered_attributes(scope)
             .await?
@@ -65,12 +66,12 @@ impl EntityDiscoveryService {
             (None, None) => return Err(EntityError::attribute_not_found(attr_id)),
             (Some(row), None) => AttributeFacts {
                 attribute_types: row.attribute_types,
-                entity_count: row.entity_count,
+                instance_count: row.instance_count,
                 entity_types: row.entity_types,
             },
             (None, Some(registered)) => AttributeFacts {
                 attribute_types: Vec::new(),
-                entity_count: 0,
+                instance_count: 0,
                 entity_types: registered.entity_types,
             },
             (Some(row), Some(registered)) => {
@@ -78,7 +79,7 @@ impl EntityDiscoveryService {
                 extend_without_repetition(&mut entity_types, registered.entity_types);
                 AttributeFacts {
                     attribute_types: row.attribute_types,
-                    entity_count: row.entity_count,
+                    instance_count: row.instance_count,
                     entity_types,
                 }
             }
@@ -90,7 +91,7 @@ impl EntityDiscoveryService {
             .attribute_name(compacted_attribute_name(&names, &attr_iri).await?)
             .id(attr_iri_buf)
             .attribute_types(facts.attribute_types)
-            .attribute_count(Some(facts.entity_count))
+            .attribute_count(Some(facts.instance_count))
             .type_names(compacted_type_names(&names, facts.entity_types).await?)
             .build();
 

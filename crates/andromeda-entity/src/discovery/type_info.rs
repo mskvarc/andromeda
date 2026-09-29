@@ -5,26 +5,24 @@ use crate::{
         DiscoveryScope,
         EntityDiscoveryService,
         rendered_names::{compacted_attribute_name, compacted_type_name},
-        stored_names::{extract_attribute_types, parse_discovery_iri, parse_type_name},
+        stored_names::{parse_discovery_iri, parse_type_name},
     },
+    entity_type_summary::AttributeFamilies,
     error::EntityError,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::{
     attribute_list::{AttributeDetail, AttributeResourceType},
     entity_type_list::{EntityTypeInfo, EntityTypeInfoType},
 };
 use serde_json::Value;
-use std::{
-    collections::{HashMap, HashSet},
-    str::FromStr,
-};
 
 impl EntityDiscoveryService {
     /// Return detailed information for a single entity type (clause 5.2.26):
-    /// its entity count and the details of the attributes its instances have.
+    /// the number of entities carrying it and the attributes those entities
+    /// carry, each with the families its instances on them declare.
     ///
     /// The type is not found only when neither the local store nor the
     /// registry knows it. A type only the registry knows has no instances
@@ -45,79 +43,57 @@ impl EntityDiscoveryService {
         scope: DiscoveryScope,
         context: &ContextSpec,
     ) -> Result<Value, EntityError> {
-        // Expand the type name first — DB stores expanded IRIs
         let prepared_context = self.engine.prepare_term_context(context);
         let names = NameCompactor::new(&self.engine, context);
         let type_iri = self.engine.expand_type(type_name.as_str(), &prepared_context).await?;
         let type_key = parse_type_name(type_iri.as_str())?;
 
-        let entities = self.store.get_entities_by_type(target, &type_key, None, None).await?;
-        let count = self.store.count_by_type(target, &type_key).await?;
+        let local = self.store.entity_type_summary(target, &type_key).await?;
         let registered = self.registered_types(scope).await?.into_iter().find(|registered| registered.name == type_key);
-
-        if count == 0 && registered.is_none() {
-            return Err(EntityError::type_not_found(type_name));
-        }
-
-        // Extract unique attributes from all entities, keyed by their expanded
-        // attribute IRI. A key that is not a valid attribute name is not an
-        // attribute and is skipped.
-        let mut attributes: HashMap<AttributeName, HashSet<AttributeType>> = HashMap::with_capacity(entities.len().saturating_mul(4));
-
-        for entity in &entities {
-            // Handle array wrapper from expanded JSON-LD (expand always returns an array)
-            let entity_obj = match entity {
-                Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
-                Value::Object(obj) => Some(obj),
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-            };
-
-            if let Some(map) = entity_obj {
-                for (key, value) in map {
-                    // Skip JSON-LD keywords
-                    if key.starts_with('@') {
-                        continue;
-                    }
-                    let Ok(attr_name) = AttributeName::from_str(key) else {
-                        continue;
-                    };
-                    // Extract attribute type from @type field
-                    if let Some(attr_types) = extract_attribute_types(value) {
-                        attributes.entry(attr_name).or_default().extend(attr_types);
-                    }
-                }
+        let (entity_count, mut attributes) = match (local, registered) {
+            (None, None) => return Err(EntityError::type_not_found(type_name)),
+            (Some(local), None) => (local.entity_count, local.attributes),
+            (None, Some(registered)) => (0, possibly_available(registered.attribute_names)),
+            (Some(local), Some(registered)) => {
+                let mut attributes = local.attributes;
+                // Clause 5.7.11: a registered attribute the instances do not
+                // show is possibly available, reported with the families the
+                // registry cannot give left empty.
+                let unseen: Vec<_> = registered
+                    .attribute_names
+                    .into_iter()
+                    .filter(|name| !attributes.iter().any(|attribute| attribute.name == *name))
+                    .collect();
+                attributes.extend(possibly_available(unseen));
+                (local.entity_count, attributes)
             }
-        }
-        // Clause 5.7.11: a registered attribute the instances do not show is
-        // possibly available, reported with the families the registry cannot
-        // give left empty.
-        for name in registered.into_iter().flat_map(|registered| registered.attribute_names) {
-            attributes.entry(name).or_default();
-        }
+        };
+        attributes.sort_by(|left, right| left.name.as_str().cmp(right.name.as_str()));
+        let attributes = attributes;
 
-        // Build typed attribute details
         let mut attribute_details: Vec<AttributeDetail> = Vec::with_capacity(attributes.len());
-        for (name, types) in &attributes {
+        for attribute in attributes {
             attribute_details.push(AttributeDetail {
-                id: parse_discovery_iri(name.to_string())?,
+                attribute_name: compacted_attribute_name(&names, &attribute.name).await?,
+                id: parse_discovery_iri(attribute.name.to_string())?,
                 type_: AttributeResourceType,
-                attribute_name: compacted_attribute_name(&names, name).await?,
-                attribute_types: types.iter().copied().collect(),
+                attribute_types: attribute.families,
             });
         }
 
-        // Sort for consistent output
-        attribute_details.sort_by(|a, b| a.id.cmp(&b.id));
-
-        // Build typed response
         let type_info = EntityTypeInfo::builder()
             .id(type_iri)
             .type_(EntityTypeInfoType)
             .type_name(compacted_type_name(&names, &type_key).await?)
-            .entity_count(count)
+            .entity_count(entity_count)
             .attribute_details(attribute_details)
             .build();
 
         Ok(serde_json::to_value(type_info)?)
     }
+}
+
+/// Registered attribute names the registry cannot give families for.
+fn possibly_available(names: Vec<AttributeName>) -> Vec<AttributeFamilies> {
+    names.into_iter().map(|name| AttributeFamilies { name, families: Vec::new() }).collect()
 }

@@ -1,7 +1,6 @@
 //! Retrieve Available Attributes and their details (clauses 5.7.8 and 5.7.9).
 
 use crate::{
-    attribute_summary::AttributeSummary,
     discovery::{
         AttributeCollectionRepresentation,
         DiscoveryScope,
@@ -34,7 +33,7 @@ impl EntityDiscoveryService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::Persistence`] when a summary page or the registry
+    /// Reports [`EntityError::Persistence`] when the store or the registry
     /// could not be read, [`EntityError::Identifier`] or
     /// [`EntityError::AttributeListIdentifier`] when the generated list
     /// identifier is not a well-formed NGSI-LD URN, and
@@ -46,32 +45,10 @@ impl EntityDiscoveryService {
         scope: DiscoveryScope,
         context: &ContextSpec,
     ) -> Result<Value, EntityError> {
-        // Keyset-paginate attribute summary aggregation.
-        const PAGE: u32 = 500;
-        let mut summary_rows: Vec<AttributeSummary> = Vec::new();
-        let mut cursor: Option<AttributeName> = None;
-        loop {
-            let page = self.store.get_attribute_summary(target, cursor.as_ref(), PAGE).await?;
-            if page.is_empty() {
-                break;
-            }
-            cursor = page.last().map(|r| r.attr_iri.clone()); // clone: own cursor for next loop iteration
-            let page_len = page.len();
-            summary_rows.extend(page);
-            if page_len < usize::try_from(PAGE).unwrap_or(usize::MAX) {
-                break;
-            }
-        }
-
-        // Build the same HashMap structure from SQL aggregation results
-        let mut attr_data: HashMap<AttributeName, AttributeMetadata> = HashMap::with_capacity(summary_rows.len());
-        for row in summary_rows {
-            attr_data.insert(
-                row.attr_iri,
-                AttributeMetadata {
-                    entity_types: row.entity_types,
-                },
-            );
+        let local = self.store.attribute_entity_types(target).await?;
+        let mut attr_data: HashMap<AttributeName, AttributeMetadata> = HashMap::with_capacity(local.len());
+        for (attribute, entity_types) in local {
+            attr_data.insert(attribute, AttributeMetadata { entity_types });
         }
         for registered in self.registered_attributes(scope).await? {
             let metadata = attr_data

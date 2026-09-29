@@ -3,11 +3,13 @@
 
 use crate::{
     entity::{
+        census::delta::{CensusChange, CensusStatements},
         mapper::stored_written_entity,
-        params::PreparedEntityColumns,
+        params::{PreparedEntityColumns, literal_texts},
         repo::EntityRepository,
         types_present::{entity_write_failure, types_present},
         write::{
+            search_image::SearchImage,
             staging::{Docs, Ents, ExpectationStaged, Proj, Srch, Staged, StagedColumn, expectation, projected, projection_cte, update_staging_columns},
             type_membership::{Mbrs, Strays, added_memberships, dropped_memberships},
         },
@@ -19,10 +21,16 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
-use andromeda_postgresql_seaquery::{clock::now, pg_operator::PgBinaryOperator, transaction_id::current_transaction_id, unnest::apply_column_alias};
+use andromeda_postgresql_seaquery::{
+    clock::now,
+    pg_operator::PgBinaryOperator,
+    returning_image::{New, Old},
+    transaction_id::current_transaction_id,
+    unnest::apply_column_alias,
+};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
-use sea_query::{CommonTableExpression, Cond, Expr, ExprTrait, Func, PostgresQueryBuilder, Query, SimpleExpr, WithClause};
+use sea_query::{CommonTableExpression, Cond, Expr, ExprTrait, Func, IntoIden, PostgresQueryBuilder, Query, SimpleExpr, WithClause};
 use sqlx::{Postgres, Transaction};
 
 /// The statement name the entity set-update is observed under.
@@ -37,17 +45,21 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 ///               WHERE entities.id = proj.id AND entity_documents.entity_key = entities.entity_key
 ///                 AND (proj.expected_modified_at IS NULL OR entity_documents.modified_at = proj.expected_modified_at)
 ///               RETURNING entity_documents.entity_key, entities.id),
-///      srch AS (UPDATE entity_search SET entity_type_name_keys = proj.entity_type_name_keys, …, written_xid = pg_current_xact_id() FROM docs, proj
+///      srch(entity_key, id, old_types, new_types, old_instance_names, …) AS
+///              (UPDATE entity_search SET entity_type_name_keys = proj.entity_type_name_keys, …, written_xid = pg_current_xact_id() FROM docs, proj
 ///               WHERE proj.id = docs.id AND entity_search.entity_key = docs.entity_key
-///                 AND (entity_search.entity_type_name_keys IS DISTINCT FROM proj.entity_type_name_keys OR … )),
+///                 AND (entity_search.entity_type_name_keys IS DISTINCT FROM proj.entity_type_name_keys OR … )
+///               RETURNING entity_search.entity_key, docs.id, old.entity_type_name_keys, new.entity_type_name_keys, …),
 ///      ents AS (UPDATE entities SET expires_at = COALESCE(proj.expires_at, entities.expires_at),
 ///                                   min_attribute_expires_at = proj.min_attribute_expires_at
 ///               FROM docs, proj
 ///               WHERE proj.id = docs.id AND entities.entity_key = docs.entity_key
 ///                 AND (entities.expires_at IS DISTINCT FROM COALESCE(…) OR entities.min_attribute_expires_at IS DISTINCT FROM proj.min_attribute_expires_at)),
 ///      strays AS (DELETE FROM entity_type_members WHERE (entity_type_name_key, id) IN
-///                 (SELECT <stored key the projection lacks>, docs.id FROM docs JOIN proj … JOIN entity_search … types changed …)),
-///      mbrs AS (INSERT INTO entity_type_members (…) SELECT docs.entity_key, <projected key the stored row lacked>, docs.id …)
+///                 (SELECT <old type the new row lacks>, srch.id FROM srch …)),
+///      mbrs AS (INSERT INTO entity_type_members (…) SELECT srch.entity_key, <new type the old row lacked>, srch.id FROM srch …),
+///      census_shapes AS (SELECT <image arrays>, SUM(±1) FROM srch … GROUP BY <image arrays>),
+///      census_types AS (INSERT INTO entity_type_census …), census_type_attributes AS (…), census_attributes AS (…)
 /// SELECT entity_key, id FROM docs
 /// ```
 ///
@@ -66,9 +78,12 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 /// write leaves both rows and every search index untouched. `expires_at` is
 /// coalesced so an update that omits it keeps the stored value rather than
 /// clearing it; the earliest attribute expiry is replaced, because it is
-/// derived from the payload that was just replaced. The type memberships move
-/// under the same guard as the search row's type array, so they follow a type
-/// change and a value-only write leaves them alone.
+/// derived from the payload that was just replaced. The type memberships and
+/// the discovery census move with the search row: both are derived from the
+/// pre- and post-image its write returns (PostgreSQL 18 `RETURNING old.*,
+/// new.*`), which is the row the write actually replaced, found after any
+/// concurrent writer it waited on. A value-only write rewrites no search row,
+/// so it moves no membership and counts nothing.
 ///
 /// # Errors
 ///
@@ -111,6 +126,16 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, Contex
                 changed.add(SimpleExpr::from(Expr::col((EntitySearch::Table, column))).distinct_from(projected(column)))
             })),
     );
+    search.returning(Query::returning().exprs([
+        Expr::col((EntitySearch::Table, EntitySearch::EntityKey)),
+        Expr::col((Docs, Entities::Id)),
+        Expr::col((Old, EntitySearch::EntityTypeNameKeys)),
+        Expr::col((New, EntitySearch::EntityTypeNameKeys)),
+        Expr::col((Old, EntitySearch::AttributeInstanceNameKeys)),
+        Expr::col((New, EntitySearch::AttributeInstanceNameKeys)),
+        Expr::col((Old, EntitySearch::AttributeInstanceKinds)),
+        Expr::col((New, EntitySearch::AttributeInstanceKinds)),
+    ]));
 
     let coalesced_expiry = || {
         SimpleExpr::from(Func::coalesce([
@@ -139,26 +164,45 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, Contex
                 ),
         );
 
-    let statement = WithClause::new()
-        .cte(projection_cte(&columns, ExpectationStaged::Yes))
+    let mut with = WithClause::new();
+    with.cte(projection_cte(&columns, ExpectationStaged::Yes))
         .cte(CommonTableExpression::new().table_name(Docs).query(documents).to_owned())
-        .cte(CommonTableExpression::new().table_name(Srch).query(search).to_owned())
+        .cte(
+            CommonTableExpression::new()
+                .table_name(Srch)
+                .columns([
+                    EntitySearch::EntityKey.into_iden(),
+                    Entities::Id.into_iden(),
+                    SearchImage::OldTypes.into_iden(),
+                    SearchImage::NewTypes.into_iden(),
+                    SearchImage::OldInstanceNames.into_iden(),
+                    SearchImage::NewInstanceNames.into_iden(),
+                    SearchImage::OldInstanceKinds.into_iden(),
+                    SearchImage::NewInstanceKinds.into_iden(),
+                ])
+                .query(search)
+                .to_owned(),
+        )
         .cte(CommonTableExpression::new().table_name(Ents).query(lifecycle).to_owned())
         .cte(CommonTableExpression::new().table_name(Strays).query(dropped_memberships(target)).to_owned())
-        .cte(CommonTableExpression::new().table_name(Mbrs).query(added_memberships(target)?).to_owned())
-        .to_owned()
-        .query(Query::select().column(EntityDocuments::EntityKey).column(Entities::Id).from(Docs).take());
+        .cte(CommonTableExpression::new().table_name(Mbrs).query(added_memberships(target)?).to_owned());
+    for census in CensusStatements::of(target, Srch, CensusChange::Replaced)?.ctes() {
+        with.cte(census);
+    }
+    let statement = with.query(Query::select().column(EntityDocuments::EntityKey).column(Entities::Id).from(Docs).take());
 
     let sql = statement.to_string(PostgresQueryBuilder);
     Ok(apply_column_alias(sql, &Staged, &columns))
 }
 
-/// The seven `entity_search` columns the update projects, each written and
+/// The nine `entity_search` columns the update projects, each written and
 /// guarded by the same list so no column can be rewritten without being
 /// compared, or compared without being written.
-const SEARCH_COLUMNS: [EntitySearch; 7] = [
+const SEARCH_COLUMNS: [EntitySearch; 9] = [
     EntitySearch::EntityTypeNameKeys,
     EntitySearch::AttributeNameKeys,
+    EntitySearch::AttributeInstanceNameKeys,
+    EntitySearch::AttributeInstanceKinds,
     EntitySearch::ScopePaths,
     EntitySearch::Location,
     EntitySearch::ObservationSpace,
@@ -201,8 +245,10 @@ impl EntityRepository {
         let sql = entity_update_sql(target)?;
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&ids)
-            .bind(&entities.entity_type_name_keys_json)
-            .bind(&entities.attribute_name_keys_json)
+            .bind(literal_texts(&entities.entity_type_name_keys))
+            .bind(literal_texts(&entities.attribute_name_keys))
+            .bind(literal_texts(&entities.attribute_instance_name_keys))
+            .bind(literal_texts(&entities.attribute_instance_kinds))
             .bind(&entities.scope_paths_json)
             .bind(&entities.payload_json)
             .bind(&entities.locations)
@@ -226,12 +272,12 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn the_update_binds_twelve_placeholders_and_names_its_staging_columns() {
+    fn the_update_binds_fourteen_placeholders_and_names_its_staging_columns() {
         let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
-        pretty_assertions::assert_eq!(placeholders(&sql), (1..=12).collect::<BTreeSet<u32>>());
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=14).collect::<BTreeSet<u32>>());
         assert!(
             sql.contains(
-                "AS d(id, entity_type_name_keys_json, attribute_name_keys_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at, expected_modified_at)"
+                "AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at, expected_modified_at)"
             ),
             "{sql}"
         );
@@ -256,17 +302,19 @@ mod tests {
     fn the_search_row_is_rewritten_only_where_a_projected_column_differs() {
         let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
         assert!(
-            sql.contains(r#""srch" AS (UPDATE "entity_search" SET "entity_type_name_keys" = "proj"."entity_type_name_keys""#),
+            sql.contains(r#""srch" ("entity_key", "id", "old_types", "new_types", "old_instance_names", "new_instance_names", "old_instance_kinds", "new_instance_kinds") AS (UPDATE "entity_search" SET "entity_type_name_keys" = "proj"."entity_type_name_keys""#),
             "{sql}"
         );
         pretty_assertions::assert_eq!(
             sql.matches("IS DISTINCT FROM").count(),
             11,
-            "seven search columns, two lifecycle columns and the two membership moves are guarded: {sql}"
+            "nine search columns and two lifecycle columns are guarded: {sql}"
         );
         for column in [
             "entity_type_name_keys",
             "attribute_name_keys",
+            "attribute_instance_name_keys",
+            "attribute_instance_kinds",
             "scope_paths",
             "location",
             "observation_space",
@@ -304,18 +352,34 @@ mod tests {
     }
 
     /// Clause 4.17 selects on membership, so an update that changes an
-    /// Entity's types moves its membership rows in the same statement, and
-    /// only for the Entities whose payload write landed.
+    /// Entity's types moves its membership rows in the same statement, from
+    /// the images the search write returned.
     #[test]
     fn a_type_change_moves_the_type_memberships_in_the_same_statement() {
         let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
         assert!(sql.contains(r#""strays" AS (DELETE FROM "entity_type_members""#), "{sql}");
         assert!(sql.contains(r#""mbrs" AS (INSERT INTO "entity_type_members""#), "{sql}");
         pretty_assertions::assert_eq!(
-            sql.matches(r#"FROM "docs" JOIN "proj" ON "proj"."id" = "docs"."id""#).count(),
-            2,
-            "both moves read the landed writes: {sql}"
+            sql.matches(r#"JOIN "entity_search""#).count(),
+            0,
+            "no sibling reads the search relation's snapshot: {sql}"
         );
+    }
+
+    /// The search write returns both images of every row it rewrote, and the
+    /// census counts the difference of the rows whose types or instances
+    /// changed.
+    #[test]
+    fn the_search_write_returns_both_images_and_the_census_reads_them() {
+        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
+        assert!(
+            sql.contains(r#"RETURNING "entity_search"."entity_key", "docs"."id", "old"."entity_type_name_keys", "new"."entity_type_name_keys", "old"."attribute_instance_name_keys", "new"."attribute_instance_name_keys", "old"."attribute_instance_kinds", "new"."attribute_instance_kinds")"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""census_shapes" AS (SELECT"#), "{sql}");
+        for ledger in ["entity_type_census", "entity_type_attribute_census", "attribute_census"] {
+            assert!(sql.contains(&format!(r#"INSERT INTO "{ledger}""#)), "{ledger}: {sql}");
+        }
     }
 
     #[test]

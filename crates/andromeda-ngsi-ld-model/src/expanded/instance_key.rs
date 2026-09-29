@@ -3,6 +3,7 @@
 use crate::expanded::{
     dataset_id::{InstanceDatasetIdError, get_instance_dataset_id, position_of_dataset},
     node::expanded_object_ref,
+    reserved_member::is_reserved_member,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -53,10 +54,15 @@ pub struct AttributeInstanceKey {
 /// read it from. An instance that declares no family is a Property (clause
 /// 4.5.2).
 ///
-/// Skips JSON-LD keywords, NGSI-LD system attributes, and `scope` (which is not
-/// an attribute — clause 4.5.4). Attribute names that are not valid IRIs are
-/// skipped too: they cannot correspond to a temporal catalogue row, whose
-/// `attribute_name` is IRI-validated on read.
+/// Skips JSON-LD keywords and every member NGSI-LD reserves for itself
+/// ([`is_reserved_member`]): the system attributes of clause 4.8, the two
+/// Entity members that are not attributes (`scope`, clause 4.18, and the
+/// Entity's own `expiresAt`, clause 4.22) and the proof seals of clause
+/// 4.5.2.2. An Entity-level `expiresAt` read as an instance would be diffed,
+/// tombstoned and counted as an attribute named `expiresAt` that the Entity
+/// never had. Attribute names that are not valid IRIs are skipped too: they
+/// cannot correspond to a temporal catalogue row, whose `attribute_name` is
+/// IRI-validated on read.
 ///
 /// # Errors
 ///
@@ -78,7 +84,7 @@ pub fn attribute_instance_families(expanded: &Value) -> Result<HashMap<Attribute
         let Ok(attr) = attr_name.parse::<AttributeName>() else {
             continue;
         };
-        if is_system_attribute(&attr) || attr.as_str() == properties::SCOPE.as_str() {
+        if is_reserved_member(&attr) {
             continue;
         }
         for instance in instances {
@@ -94,6 +100,25 @@ pub fn attribute_instance_families(expanded: &Value) -> Result<HashMap<Attribute
     }
 
     Ok(instances_by_key)
+}
+
+/// The family of every attribute instance one named member of an expanded
+/// payload holds, in order; none when NGSI-LD reserves the member, which holds
+/// no attribute instance.
+///
+/// `name` is a member name already read as an attribute name (as
+/// `extract_attribute_names` reads the payload's), so a caller that has it
+/// parses no name twice. The members skipped and the family read are those of
+/// [`attribute_instance_families`]. The instances are not keyed by
+/// `datasetId`: a payload the write path admitted holds each instance of a name
+/// once (clause 4.5.5), and a caller counting instances needs every one.
+pub fn member_instance_families<'a>(expanded: &'a Value, name: &AttributeName) -> impl Iterator<Item = AttributeType> + use<'a> {
+    let instances = if is_reserved_member(name) {
+        None
+    } else {
+        expanded_object_ref(expanded).and_then(|node| node.get(name.as_str())).and_then(Value::as_array)
+    };
+    instances.into_iter().flatten().map(declared_attribute_type)
 }
 
 /// The family one named attribute instance declares in an expanded payload.
@@ -131,8 +156,8 @@ pub(crate) fn declared_attribute_type(instance: &Value) -> AttributeType {
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::instance_key::attribute_instance_families;
-    use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+    use crate::expanded::instance_key::{attribute_instance_families, member_instance_families};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
     use serde_json::json;
 
     #[test]
@@ -150,6 +175,60 @@ mod tests {
         let indexed = attribute_instance_families(&payload).expect("readable datasetIds");
         pretty_assertions::assert_eq!(indexed.len(), 1);
         assert!(indexed.keys().all(|key| key.attr.as_str() == "https://example.com/a"));
+    }
+
+    /// Clause 4.22 puts an `expiresAt` on the Entity itself and clause 4.5.2.2
+    /// seals its identifier and types; neither is an attribute instance, so a
+    /// replacement or a deletion never tombstones one and discovery never
+    /// counts one.
+    #[test]
+    fn the_entity_expiry_and_the_proof_seals_are_not_attribute_instances() {
+        let payload = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2030-01-01T00:00:00Z"}],
+            "https://uri.etsi.org/ngsi-ld/entityIdSealed": [{"@id": "urn:ngsi-ld:Vehicle:1"}],
+            "https://uri.etsi.org/ngsi-ld/entityTypeSealed": [{"@id": "https://example.com/Vehicle"}],
+            "https://example.com/a": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}],
+        }]);
+        let indexed = attribute_instance_families(&payload).expect("readable datasetIds");
+        let names: Vec<&str> = indexed.keys().map(|key| key.attr.as_str()).collect();
+        pretty_assertions::assert_eq!(names, vec!["https://example.com/a"]);
+    }
+
+    /// The shapes walk reads the same members and families as the keyed walk,
+    /// one entry per instance, from names the caller already parsed.
+    #[test]
+    fn the_instance_shapes_agree_with_the_keyed_instance_families() {
+        let payload = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/A"}],
+            "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@value": "2030-01-01T00:00:00Z"}],
+            "https://example.com/rel": [
+                {"@type": ["https://uri.etsi.org/ngsi-ld/Relationship"]},
+                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:a"}]}
+            ],
+            "https://example.com/plain": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}],
+        }]);
+        let names: Vec<AttributeName> = payload[0]
+            .as_object()
+            .expect("a node")
+            .keys()
+            .filter(|key| !key.starts_with('@'))
+            .map(|key| key.parse().expect("a valid attribute name"))
+            .collect();
+        let mut shapes: Vec<(String, AttributeType)> = names
+            .iter()
+            .flat_map(|name| member_instance_families(&payload, name).map(move |family| (name.as_str().to_owned(), family)))
+            .collect();
+        shapes.sort_by(|left, right| (left.0.as_str(), left.1.to_string()).cmp(&(right.0.as_str(), right.1.to_string())));
+        let mut keyed: Vec<(String, AttributeType)> = attribute_instance_families(&payload)
+            .expect("readable datasetIds")
+            .into_iter()
+            .map(|(key, family)| (key.attr.as_str().to_owned(), family))
+            .collect();
+        keyed.sort_by(|left, right| (left.0.as_str(), left.1.to_string()).cmp(&(right.0.as_str(), right.1.to_string())));
+        pretty_assertions::assert_eq!(shapes, keyed);
+        pretty_assertions::assert_eq!(shapes.len(), 3);
     }
 
     /// Clauses 4.5.7 and 4.5.8 render an ended instance with the null member of

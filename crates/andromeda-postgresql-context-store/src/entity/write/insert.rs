@@ -3,12 +3,14 @@
 
 use crate::{
     entity::{
+        census::delta::{CensusChange, CensusStatements},
         inserted_entity::InsertedEntity,
         mapper::stored_inserted_entity,
-        params::PreparedEntityColumns,
+        params::{PreparedEntityColumns, literal_texts},
         repo::EntityRepository,
         types_present::{entity_write_failure, types_present},
         write::{
+            search_image::SearchImage,
             staging::{Docs, ExpectationStaged, Ins, Proj, Srch, Staged, from_inserted, insert_staging_columns, projected, projection_cte},
             type_membership::{Mbrs, created_memberships},
         },
@@ -21,7 +23,7 @@ use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::unnest::apply_column_alias;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
-use sea_query::{CommonTableExpression, Expr, OnConflict, PostgresQueryBuilder, Query, WithClause};
+use sea_query::{CommonTableExpression, Expr, IntoIden, OnConflict, PostgresQueryBuilder, Query, WithClause};
 use sqlx::{Postgres, Transaction};
 
 /// The statement name the entity set-insert is observed under.
@@ -35,11 +37,16 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 ///              SELECT … FROM proj ON CONFLICT (id) DO NOTHING RETURNING entity_key, id),
 ///      docs AS (INSERT INTO entity_documents (entity_key, payload)
 ///               SELECT ins.entity_key, proj.payload FROM ins JOIN proj ON proj.id = ins.id),
-///      srch AS (INSERT INTO entity_search (…)
-///               SELECT ins.entity_key, … FROM ins JOIN proj ON proj.id = ins.id),
+///      srch(entity_key, new_types, new_instance_names, new_instance_kinds) AS
+///              (INSERT INTO entity_search (…)
+///               SELECT ins.entity_key, … FROM ins JOIN proj ON proj.id = ins.id
+///               RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds),
 ///      mbrs AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id)
 ///               SELECT ins.entity_key, carried.entity_type_name_key, ins.id FROM ins JOIN proj ON proj.id = ins.id
-///               INNER JOIN LATERAL (SELECT UNNEST(proj.entity_type_name_keys) …) AS carried ON TRUE)
+///               INNER JOIN LATERAL (SELECT UNNEST(proj.entity_type_name_keys) …) AS carried ON TRUE),
+///      census_types AS (INSERT INTO entity_type_census … FROM srch …),
+///      census_type_attributes AS (INSERT INTO entity_type_attribute_census … FROM srch …),
+///      census_attributes AS (INSERT INTO attribute_census … FROM srch …)
 /// SELECT entity_key, id FROM ins
 /// ```
 ///
@@ -50,7 +57,9 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 /// permitted to succeed partially (clause 5.6.7) and the idempotent
 /// placeholder the Temporal API needs, without three different statements. The
 /// child inserts read the keys the identity insert returned, so an entity that
-/// already existed lands in no relation at all.
+/// already existed lands in no relation at all — and, because the census reads
+/// only the search rows the statement returned, is counted by no census ledger
+/// either.
 ///
 /// # Errors
 ///
@@ -96,6 +105,8 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
             EntitySearch::LocationExpiresAt,
             EntitySearch::EntityTypeNameKeys,
             EntitySearch::AttributeNameKeys,
+            EntitySearch::AttributeInstanceNameKeys,
+            EntitySearch::AttributeInstanceKinds,
             EntitySearch::ScopePaths,
             EntitySearch::Location,
             EntitySearch::ObservationSpace,
@@ -107,6 +118,8 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
                 .expr(projected(EntitySearch::LocationExpiresAt))
                 .expr(projected(EntitySearch::EntityTypeNameKeys))
                 .expr(projected(EntitySearch::AttributeNameKeys))
+                .expr(projected(EntitySearch::AttributeInstanceNameKeys))
+                .expr(projected(EntitySearch::AttributeInstanceKinds))
                 .expr(projected(EntitySearch::ScopePaths))
                 .expr(projected(EntitySearch::Location))
                 .expr(projected(EntitySearch::ObservationSpace))
@@ -114,15 +127,34 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
                 .take(),
         )
         .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+    search.returning(Query::returning().columns([
+        EntitySearch::EntityKey,
+        EntitySearch::EntityTypeNameKeys,
+        EntitySearch::AttributeInstanceNameKeys,
+        EntitySearch::AttributeInstanceKinds,
+    ]));
 
-    let statement = WithClause::new()
-        .cte(projection_cte(&columns, ExpectationStaged::No))
+    let mut with = WithClause::new();
+    with.cte(projection_cte(&columns, ExpectationStaged::No))
         .cte(CommonTableExpression::new().table_name(Ins).query(identity).to_owned())
         .cte(CommonTableExpression::new().table_name(Docs).query(documents).to_owned())
-        .cte(CommonTableExpression::new().table_name(Srch).query(search).to_owned())
-        .cte(CommonTableExpression::new().table_name(Mbrs).query(created_memberships(target)?).to_owned())
-        .to_owned()
-        .query(Query::select().columns([Entities::EntityKey, Entities::Id]).from(Ins).take());
+        .cte(
+            CommonTableExpression::new()
+                .table_name(Srch)
+                .columns([
+                    EntitySearch::EntityKey.into_iden(),
+                    SearchImage::NewTypes.into_iden(),
+                    SearchImage::NewInstanceNames.into_iden(),
+                    SearchImage::NewInstanceKinds.into_iden(),
+                ])
+                .query(search)
+                .to_owned(),
+        )
+        .cte(CommonTableExpression::new().table_name(Mbrs).query(created_memberships(target)?).to_owned());
+    for census in CensusStatements::of(target, Srch, CensusChange::Added)?.ctes() {
+        with.cte(census);
+    }
+    let statement = with.query(Query::select().columns([Entities::EntityKey, Entities::Id]).from(Ins).take());
 
     let sql = statement.to_string(PostgresQueryBuilder);
     Ok(apply_column_alias(sql, &Staged, &columns))
@@ -151,8 +183,10 @@ impl EntityRepository {
         let sql = entity_insert_sql(target)?;
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&ids)
-            .bind(&entities.entity_type_name_keys_json)
-            .bind(&entities.attribute_name_keys_json)
+            .bind(literal_texts(&entities.entity_type_name_keys))
+            .bind(literal_texts(&entities.attribute_name_keys))
+            .bind(literal_texts(&entities.attribute_instance_name_keys))
+            .bind(literal_texts(&entities.attribute_instance_kinds))
             .bind(&entities.scope_paths_json)
             .bind(&entities.payload_json)
             .bind(&entities.locations)
@@ -176,16 +210,16 @@ mod tests {
 
     /// The rendered insert, unwrapped for assertion.
     fn insert() -> String {
-        entity_insert_sql(&ContextTarget::Live).expect("the fixed eleven-wide insert builds")
+        entity_insert_sql(&ContextTarget::Live).expect("the fixed thirteen-wide insert builds")
     }
 
     #[test]
     fn the_insert_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = insert();
-        pretty_assertions::assert_eq!(placeholders(&sql), (1..=11).collect::<BTreeSet<u32>>());
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=13).collect::<BTreeSet<u32>>());
         assert!(
             sql.contains(
-                "AS d(id, entity_type_name_keys_json, attribute_name_keys_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at)"
+                "AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at)"
             ),
             "{sql}"
         );
@@ -200,7 +234,11 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""docs" AS (INSERT INTO "entity_documents" ("entity_key", "payload")"#), "{sql}");
-        assert!(sql.contains(r#""srch" AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "scope_paths", "location", "observation_space", "operation_space")"#), "{sql}");
+        assert!(sql.contains(r#""srch" ("entity_key", "new_types", "new_instance_names", "new_instance_kinds") AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds", "scope_paths", "location", "observation_space", "operation_space")"#), "{sql}");
+        assert!(
+            sql.contains(r#"RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
+            "{sql}"
+        );
         assert!(sql.ends_with(r#"SELECT "entity_key", "id" FROM "ins""#), "{sql}");
         pretty_assertions::assert_eq!(
             sql.matches("ST_MakeValid").count(),
@@ -209,21 +247,36 @@ mod tests {
         );
     }
 
+    /// The census counts the search rows the insert returned, so an entity the
+    /// conflict clause skipped is counted by no ledger.
     #[test]
-    fn the_insert_expands_the_key_and_scope_arrays_and_casts_each_to_its_element_type() {
+    fn the_insert_counts_what_it_inserted_into_the_census() {
         let sql = insert();
-        assert!(
-            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."entity_type_name_keys_json")::integer) AS "entity_type_name_keys""#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."attribute_name_keys_json")::integer) AS "attribute_name_keys""#),
-            "{sql}"
-        );
+        for ledger in ["entity_type_census", "entity_type_attribute_census", "attribute_census"] {
+            assert!(sql.contains(&format!(r#"INSERT INTO "{ledger}""#)), "{ledger}: {sql}");
+        }
+        pretty_assertions::assert_eq!(sql.matches(r#"FROM "srch""#).count(), 1, "the census reads the returned rows once: {sql}");
+    }
+
+    /// The integer arrays are cast from their array literals, which the array
+    /// type's input function reads at once; the scope paths still expand from
+    /// their JSON array.
+    #[test]
+    fn the_insert_casts_the_key_literals_and_expands_the_scope_array() {
+        let sql = insert();
+        for (literal, column, element) in [
+            ("entity_type_name_keys_literal", "entity_type_name_keys", "integer"),
+            ("attribute_name_keys_literal", "attribute_name_keys", "integer"),
+            ("attribute_instance_name_keys_literal", "attribute_instance_name_keys", "integer"),
+            ("attribute_instance_kinds_literal", "attribute_instance_kinds", "smallint"),
+        ] {
+            assert!(sql.contains(&format!(r#""d"."{literal}"::{element}[] AS "{column}""#)), "{column}: {sql}");
+        }
         assert!(
             sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."scope_paths_json")::ltree) AS "scope_paths""#),
             "{sql}"
         );
+        assert!(!sql.contains("_json\")::integer"), "no key array is expanded from JSON: {sql}");
     }
 
     #[test]
@@ -273,5 +326,6 @@ mod tests {
         assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entity_documents""#), "{sql}");
         assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entity_search""#), "{sql}");
         assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entity_type_members""#), "{sql}");
+        assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entity_type_attribute_census""#), "{sql}");
     }
 }

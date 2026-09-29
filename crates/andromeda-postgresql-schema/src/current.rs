@@ -67,6 +67,12 @@ pub enum EntitySearch {
     /// Array of `attribute_names` keys, one per attribute the payload carries
     /// (clause 5.5.9 `attrs`)
     AttributeNameKeys,
+    /// Array of `attribute_names` keys, one per attribute instance the payload
+    /// carries (clause 4.5.5), aligned with `attribute_instance_kinds`
+    AttributeInstanceNameKeys,
+    /// Array of attribute family codes, one per attribute instance, aligned
+    /// with `attribute_instance_name_keys`
+    AttributeInstanceKinds,
     /// Array of `ltree` scope paths an entity currently belongs to (clause 4.18).
     ScopePaths,
     /// The default `GeoProperty` geometry (clause 4.10).
@@ -191,6 +197,8 @@ mod tests {
         assert_eq!(EntitySearch::LocationExpiresAt.to_string(), "location_expires_at");
         assert_eq!(EntitySearch::EntityTypeNameKeys.to_string(), "entity_type_name_keys");
         assert_eq!(EntitySearch::AttributeNameKeys.to_string(), "attribute_name_keys");
+        assert_eq!(EntitySearch::AttributeInstanceNameKeys.to_string(), "attribute_instance_name_keys");
+        assert_eq!(EntitySearch::AttributeInstanceKinds.to_string(), "attribute_instance_kinds");
         assert_eq!(EntitySearch::ScopePaths.to_string(), "scope_paths");
         assert_eq!(EntitySearch::Location.to_string(), "location");
         assert_eq!(EntitySearch::LocationGeography.to_string(), "location_geography");

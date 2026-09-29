@@ -29,6 +29,7 @@ use andromeda_postgresql_seaquery::{
     pg_array::{any, array_subquery},
     pg_type::PostgresType,
     placeholder::external_placeholder,
+    returning_image::Old,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
 use andromeda_temporal::write_purpose::TemporalWritePurpose;
@@ -42,12 +43,6 @@ use std::collections::HashMap;
 #[derive(Iden, Clone, Copy)]
 #[iden = "d"]
 struct D;
-
-/// The pre-image a PostgreSQL 18 `RETURNING` clause reads, `old`: NULL for a
-/// row the insert created, the stored row for one its conflict action updated.
-#[derive(Iden, Clone, Copy)]
-#[iden = "old"]
-struct Old;
 
 /// The staging columns of one temporal-entity upsert, named as the `AS d(…)`
 /// alias spells them rather than as the columns they land in.

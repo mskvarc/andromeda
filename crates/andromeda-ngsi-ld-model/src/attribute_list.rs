@@ -56,10 +56,11 @@ pub struct AttributeInfo {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[builder(default = Default::default())]
     pub attribute_types: Vec<AttributeType>,
-    /// Number of entity instances carrying this attribute.
+    /// Table 5.2.28-1 `attributeCount`: the number of attribute instances with
+    /// this name, each `datasetId` instance counted (clause 4.5.5).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
-    pub attribute_count: Option<i64>,
+    pub attribute_count: Option<u64>,
     /// Entity types on which this attribute appears.
     ///
     /// Table 5.2.28-1 gives the member cardinality 0..1, so a record that

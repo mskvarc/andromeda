@@ -10,7 +10,6 @@
 
 use crate::{entity::params::PreparedEntityColumns, error::ContextStoreError};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use serde_json::Value;
 use thiserror::Error;
 
 /// The name of the database check constraint that carries this invariant.
@@ -31,21 +30,16 @@ pub enum EntityTypesMissing {
 
 /// Refuse a column set in which any entity carries no type.
 ///
-/// A type column is a JSON array of type dictionary keys; anything that is not
-/// a non-empty array would land in the table as an empty `integer[]`, which is
-/// the state the constraint forbids.
+/// A type column is an array of type dictionary keys; an empty one would land
+/// in the table as an empty `integer[]`, which is the state the constraint
+/// forbids.
 ///
 /// # Errors
 ///
 /// Returns [`EntityTypesMissing::Rejected`] naming the first entity whose type
-/// column is not a non-empty JSON array.
+/// column is empty.
 pub fn types_present(columns: &PreparedEntityColumns) -> Result<(), EntityTypesMissing> {
-    match columns
-        .ids
-        .iter()
-        .zip(&columns.entity_type_name_keys_json)
-        .find(|(_, types)| !matches!(types, Value::Array(types) if !types.is_empty()))
-    {
+    match columns.ids.iter().zip(&columns.entity_type_name_keys).find(|(_, types)| types.is_empty()) {
         Some((id, _)) => Err(EntityTypesMissing::Rejected(Uri::clone(id))), // clone: the error outlives the borrowed column set.
         None => Ok(()),
     }
@@ -69,31 +63,26 @@ mod tests {
         params::PreparedEntityColumns,
         types_present::{EntityTypesMissing, types_present},
     };
+    use andromeda_postgresql_encoding::array_literal::IntegerArrayLiteral;
     use pretty_assertions::assert_eq;
-    use serde_json::json;
 
-    /// Build a one-row column set carrying the given type array.
-    fn columns_with_types(types: serde_json::Value) -> PreparedEntityColumns {
+    /// Build a one-row column set carrying the given type keys.
+    fn columns_with_types(types: &[i64]) -> PreparedEntityColumns {
         let mut columns = PreparedEntityColumns::with_capacity(1);
         columns.ids.push("urn:ngsi-ld:Building:1".parse().expect("entity URI"));
-        columns.entity_type_name_keys_json.push(types);
+        columns.entity_type_name_keys.push(IntegerArrayLiteral::of(types.iter().copied()));
         columns
     }
 
     #[test]
     fn a_typed_entity_satisfies_the_invariant() {
-        assert_eq!(types_present(&columns_with_types(json!([7]))), Ok(()));
+        assert_eq!(types_present(&columns_with_types(&[7])), Ok(()));
     }
 
     #[test]
     fn an_entity_with_an_empty_type_array_is_named_in_the_rejection() {
         let expected = "urn:ngsi-ld:Building:1".parse().expect("entity URI");
-        assert_eq!(types_present(&columns_with_types(json!([]))), Err(EntityTypesMissing::Rejected(expected)));
-    }
-
-    #[test]
-    fn a_type_column_that_is_not_an_array_is_refused_as_typeless() {
-        assert!(types_present(&columns_with_types(json!(null))).is_err());
+        assert_eq!(types_present(&columns_with_types(&[])), Err(EntityTypesMissing::Rejected(expected)));
     }
 
     #[test]

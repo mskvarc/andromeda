@@ -9,7 +9,6 @@
 
 use crate::{
     attribute_instance::{collect_metadata, detect_attribute_type, extract_observed_at},
-    attribute_kind_code::stored_attribute_kind,
     attribute_value::{AttributeValue, HistoryValueColumns, extract_attribute_value},
     error::TemporalStoreError,
     repo::TemporalRepository,
@@ -24,7 +23,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::Uri,
 };
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_codes::value_kind::ValueKind;
+use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,

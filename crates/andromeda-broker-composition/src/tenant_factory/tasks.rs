@@ -1,6 +1,7 @@
 //! Construction and supervision of one tenant's background tasks.
 
 mod csource_notification;
+mod discovery_census;
 mod entity_notification;
 mod expiry;
 mod maintenance;
@@ -20,6 +21,7 @@ use crate::tenant_factory::{
     storage::TenantStorage,
     tasks::{
         csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
+        discovery_census::register_discovery_census_fold,
         entity_notification::{compose_notification_processor, register_interval_notification, register_notification_workers},
         expiry::register_expiry_workers,
         maintenance::{register_entity_side_effects, register_spatial_workers},
@@ -146,6 +148,8 @@ pub(super) fn supervise_tasks(
     register_pool_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
     // clone: PgPool is a shared handle sampled by the size-gauge task, which consults the tenant's one pacer.
     register_table_size_gauges(&task_supervisor, Arc::clone(&pacer), storage.pool.clone(), &storage.tenant)?;
+    // clone: PgPool is a shared handle the census fold acquires from, and the fold consults the tenant's one pacer.
+    register_discovery_census_fold(&task_supervisor, Arc::clone(&pacer), storage.pool.clone())?;
     // clone: every background pass of the tenant consults its one pacer.
     register_entity_side_effects(&task_supervisor, config, storage, writes, &entity, side_effect_wake, Arc::clone(&pacer))?;
     let health_shutdown = if storage.tenant.is_unnamed_default() {

@@ -10,6 +10,7 @@ use andromeda_entity::{
     port::{
         discovery::EntityDiscoveryStore,
         expiry::EntityExpirySource,
+        payload_pages::EntityPayloadPages,
         query::EntityQueryStore,
         reader::EntityReader,
         registry_types::RegistryTypeSource,
@@ -105,6 +106,7 @@ pub(super) struct EntityStoragePorts {
     pub(super) reader: Arc<dyn EntityReader>,
     pub(super) query: Arc<dyn EntityQueryStore>,
     pub(super) discovery: Arc<dyn EntityDiscoveryStore>,
+    pub(super) payload_pages: Arc<dyn EntityPayloadPages>,
     pub(super) expiry: Arc<dyn EntityExpirySource>,
     pub(super) spatial_snapshots: Arc<dyn EntitySpatialSnapshotSource>,
 }
@@ -225,6 +227,7 @@ pub(super) async fn initialize_storage(
         reader: Arc::clone(&entity_repository) as Arc<dyn EntityReader>, // clone: every focused port shares one repository and pool.
         query: Arc::clone(&entity_repository) as Arc<dyn EntityQueryStore>, // clone: every focused port shares one repository and pool.
         discovery: Arc::clone(&entity_repository) as Arc<dyn EntityDiscoveryStore>, // clone: every focused port shares one repository and pool.
+        payload_pages: Arc::clone(&entity_repository) as Arc<dyn EntityPayloadPages>, // clone: every focused port shares one repository and pool.
         expiry: Arc::clone(&entity_repository) as Arc<dyn EntityExpirySource>, // clone: every focused port shares one repository and pool.
         spatial_snapshots: entity_repository as Arc<dyn EntitySpatialSnapshotSource>,
     };

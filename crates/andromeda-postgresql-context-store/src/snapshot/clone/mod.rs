@@ -12,6 +12,13 @@
 //! target schema -- the branch this binary's migrations built, which a source
 //! behind it is refused for -- so a schema change moves the copy with it
 //! rather than leaving a stale column list behind.
+//!
+//! A published Snapshot branch accepts writes, and each copy is its own
+//! statement, so the source's relations are locked `SHARE` before the first
+//! copy: a writer cannot commit between two copies, and every relation is copied
+//! as of the same moment. That is what keeps a copied discovery census equal to
+//! the copied search rows it counts, and a copied membership row beside the
+//! copied Entity it belongs to.
 
 use crate::{error::ContextStoreError, snapshot::branch_schema::BRANCH_TABLES};
 use sqlx::{Executor, PgConnection, Row};
@@ -23,6 +30,9 @@ use sqlx::{Executor, PgConnection, Row};
 /// Returns [`ContextStoreError`] when reading a relation's columns or executing
 /// one of the copies fails.
 pub(crate) async fn clone_branch(conn: &mut PgConnection, source_schema: &str, target_schema: &str) -> Result<(), ContextStoreError> {
+    let source_tables: Vec<String> = BRANCH_TABLES.iter().map(|table| format!("{source_schema}.{table}")).collect();
+    let lock = format!("LOCK TABLE {} IN SHARE MODE", source_tables.join(", "));
+    conn.execute(sqlx::query(sqlx::AssertSqlSafe(lock.as_str()))).await?;
     for table in BRANCH_TABLES {
         let plan = column_plan(conn, target_schema, table).await?;
         if plan.columns.is_empty() {

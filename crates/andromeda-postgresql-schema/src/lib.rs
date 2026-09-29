@@ -17,6 +17,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod census;
 pub mod csr;
 pub mod current;
 pub mod entity_map;

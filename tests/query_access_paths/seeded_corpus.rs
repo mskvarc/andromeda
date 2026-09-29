@@ -210,10 +210,12 @@ const ENTITY_CORPUS: &str = "WITH seeded AS ( \
          FROM ins JOIN seeded ON seeded.id = ins.id), \
      members AS ( \
          INSERT INTO entity_type_members (entity_key, entity_type_name_key, id) SELECT entity_key, type_key, id FROM typed) \
-     INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, scope_paths, location) \
+     INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, attribute_instance_name_keys, attribute_instance_kinds, scope_paths, location) \
      SELECT typed.entity_key, \
             ARRAY[typed.type_key], \
             CASE WHEN typed.g % 1000 = 0 THEN ARRAY[$5::integer, $6::integer] ELSE ARRAY[$5::integer] END, \
+            CASE WHEN typed.g % 1000 = 0 THEN ARRAY[$5::integer, $6::integer] ELSE ARRAY[$5::integer] END, \
+            CASE WHEN typed.g % 1000 = 0 THEN ARRAY[1, 1]::smallint[] ELSE ARRAY[1]::smallint[] END, \
             ARRAY[('seed.' || (typed.g % 997)::text)::ltree], \
             ST_SetSRID(ST_MakePoint(13.0 + (typed.g % 1000) * 0.001, 52.0 + (typed.g % 1000) * 0.001), 4326) \
      FROM typed";

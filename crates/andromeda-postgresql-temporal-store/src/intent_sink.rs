@@ -3,7 +3,6 @@
 use crate::{
     attribute_history_row::AttributeHistoryRow,
     attribute_history_value::AttributeHistoryValue,
-    attribute_kind_code::stored_attribute_kind,
     error::TemporalStoreError,
     repo::TemporalRepository,
     scope_history_entry::ScopeHistoryEntry,
@@ -18,7 +17,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
-use andromeda_postgresql_codes::{stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
+use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity},
     error::TemporalError,

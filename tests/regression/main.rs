@@ -73,6 +73,7 @@ mod query_string_escapes;
 mod registration_discovery_information;
 mod registration_discovery_query_breadth;
 mod registration_health_members;
+mod replace_entity_identity;
 mod resting_tenant_obligations;
 mod scope_null_sentinel;
 mod scoped_user_context;

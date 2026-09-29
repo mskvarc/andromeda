@@ -36,6 +36,8 @@
 pub mod attribute_change_kind;
 /// The persisted attribute family of one history row.
 pub mod attribute_kind;
+/// Translation between the NGSI-LD attribute family and its stored code.
+pub mod attribute_kind_code;
 /// The persisted distributed-operation mode of one registration.
 pub mod csr_mode;
 /// The persisted operation set of one context-source registration.

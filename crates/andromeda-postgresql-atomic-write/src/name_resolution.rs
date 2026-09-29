@@ -53,7 +53,7 @@ pub(crate) async fn resolve_write_names(
     for record in writes.iter().filter_map(|write| write.entity.record()) {
         // clone: the dictionary request owns the names it resolves.
         types.extend(record.projection.types.iter().cloned());
-        attributes.extend(record.projection.attribute_names.iter().cloned());
+        attributes.extend(record.projection.attributes.names().iter().cloned());
     }
     types.sort_unstable();
     types.dedup();

@@ -22,7 +22,7 @@ use andromeda_context_commit::error::CommitError;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::attribute_expiry::instance_expires_at;
-use andromeda_postgresql_codes::entity_key::EntityKey;
+use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, entity_key::EntityKey};
 use andromeda_postgresql_context_store::current_attribute_values::{
     delete::delete_instances_in_tx,
     minted_insert::{MintedProjection, insert_minted_projection_in_tx},
@@ -30,7 +30,7 @@ use andromeda_postgresql_context_store::current_attribute_values::{
     upsert::upsert_projection_in_tx,
 };
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
-use andromeda_postgresql_temporal_store::{attribute_kind_code::stored_attribute_kind, unit_code_metadata::unit_code_in};
+use andromeda_postgresql_temporal_store::unit_code_metadata::unit_code_in;
 use andromeda_temporal::append_intent::{TemporalAppendEntry, TemporalAppendIntent};
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;

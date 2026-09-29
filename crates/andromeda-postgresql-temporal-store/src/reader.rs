@@ -9,7 +9,6 @@
 use crate::{
     aggregation_group_key_decode::decode_group_keys,
     aggregation_row_decode::{decode_aggregation_group_span, decode_aggregation_row},
-    attribute_kind_code::attribute_type_of,
     error::TemporalStoreError,
     history_row_decode::decode_history_row,
     repo::TemporalRepository,
@@ -22,6 +21,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{cursor::PageCursor, pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_branch::schema_iden;
+use andromeda_postgresql_codes::attribute_kind_code::attribute_type_of;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     projected_attribute_names::projected_attribute_names,

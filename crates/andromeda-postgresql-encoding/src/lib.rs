@@ -14,6 +14,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod array_literal;
 pub mod copy;
 pub mod ewkb;
 pub mod ewkb_binding;

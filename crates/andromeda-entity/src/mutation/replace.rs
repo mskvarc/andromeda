@@ -3,6 +3,7 @@
 use crate::{
     EntityService,
     admitted_write::AdmittedEntity,
+    entity_validation_reason::EntityValidationReason,
     error::EntityError,
     expanded_member::written_entity_types,
     notification_plan::modification,
@@ -13,11 +14,14 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
+    entity_member::{ExpandedMemberError, extract_id},
     mutation::{error::ExpandedEntityError, selection::OverwritePolicy},
+    node::expanded_object_mut,
     written_observation::AddressedInstances,
 };
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
+use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
@@ -32,7 +36,8 @@ impl EntityService {
     /// # Errors
     ///
     /// Reports [`EntityError::NotFound`] when no entity carries `id`,
-    /// [`EntityError::Validation`] when the payload's members cannot be read,
+    /// [`EntityError::Validation`] when the payload's members cannot be read or
+    /// it names an entity other than `id`,
     /// [`EntityError::Contention`] when concurrent writers superseded the
     /// computed write on every attempt, and [`EntityError::Persistence`] when
     /// the store could not apply it.
@@ -43,7 +48,7 @@ impl EntityService {
             if self.reader.get_snapshot(target, &entity_uri).await?.is_none() {
                 return Err(EntityError::not_found(&entity_uri));
             }
-            let expanded = admitted.into_expanded();
+            let expanded = identified_as(admitted.into_expanded(), &entity_uri)?;
 
             let entity_id = Arc::new(entity_uri.clone()); // clone: repeated computed-write attempts share the validated identifier.
             let now = Utc::now();
@@ -87,5 +92,67 @@ impl EntityService {
         .await;
         timer.finish_result(&result);
         result
+    }
+}
+
+/// The replacement payload, identified as the entity it replaces.
+///
+/// Clause 5.6.18.4 replaces the target "with the same Entity ID with the new
+/// Entity content provided", and the target is named by the request URL. A
+/// payload may repeat that `id` or leave it out; either way the stored payload
+/// carries it, because every read that returns an entity from a query takes
+/// its `id` from the payload. A payload naming another entity contradicts the
+/// URL and is refused rather than silently rewritten.
+fn identified_as(mut expanded: Value, target: &Uri) -> Result<Value, EntityError> {
+    match extract_id(&expanded) {
+        Ok(named) if named != *target => {
+            return Err(EntityError::Validation(EntityValidationReason::ReplacementNamesAnotherEntity { named }));
+        }
+        Ok(_) | Err(ExpandedMemberError::MissingId) => {}
+        Err(
+            error @ (ExpandedMemberError::Id { .. }
+            | ExpandedMemberError::TypeNotString
+            | ExpandedMemberError::Type { .. }
+            | ExpandedMemberError::AttributeName { .. }),
+        ) => return Err(EntityError::Validation(EntityValidationReason::ExpandedMember(error))),
+    }
+    let node = expanded_object_mut(&mut expanded).ok_or_else(|| EntityError::internal("an admitted replacement is not an entity node"))?;
+    node.insert("@id".to_owned(), Value::String(target.to_string()));
+    Ok(expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, mutation::replace::identified_as};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use serde_json::json;
+
+    fn target() -> Uri {
+        "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI")
+    }
+
+    /// A replacement that leaves out its `id` is stored under the target's, so
+    /// a query that reads the entity back finds its identifier.
+    #[test]
+    fn a_replacement_without_an_id_takes_the_targets() {
+        let replaced = identified_as(json!([{"@type": ["https://example.org/Vehicle"]}]), &target()).expect("admitted");
+        pretty_assertions::assert_eq!(replaced[0]["@id"], "urn:ngsi-ld:Vehicle:1");
+    }
+
+    #[test]
+    fn a_replacement_repeating_the_targets_id_keeps_it() {
+        let replaced = identified_as(json!([{"@id": "urn:ngsi-ld:Vehicle:1"}]), &target()).expect("admitted");
+        pretty_assertions::assert_eq!(replaced[0]["@id"], "urn:ngsi-ld:Vehicle:1");
+    }
+
+    /// Clause 5.6.18.4 keeps "the same Entity ID", so a payload naming another
+    /// entity contradicts the request and is refused.
+    #[test]
+    fn a_replacement_naming_another_entity_is_refused() {
+        let refused = identified_as(json!([{"@id": "urn:ngsi-ld:Vehicle:2"}]), &target()).expect_err("refused");
+        assert!(
+            matches!(refused, EntityError::Validation(EntityValidationReason::ReplacementNamesAnotherEntity { ref named }) if named.as_str() == "urn:ngsi-ld:Vehicle:2"),
+            "{refused:?}"
+        );
     }
 }

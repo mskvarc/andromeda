@@ -6,6 +6,7 @@ pub mod configuration;
 pub mod database_access;
 pub mod database_isolation;
 pub mod database_reset;
+pub mod discovery_census;
 pub mod environment;
 pub mod identifiers;
 pub mod multi_broker;

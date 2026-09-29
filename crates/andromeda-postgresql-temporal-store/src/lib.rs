@@ -23,8 +23,6 @@ pub mod attribute_history_value;
 pub mod attribute_history_write;
 /// Reading the parts of one expanded NGSI-LD attribute instance.
 pub mod attribute_instance;
-/// Translation between the NGSI-LD attribute family and its stored code.
-pub mod attribute_kind_code;
 /// Deleting the Temporal Evolution of one attribute.
 pub mod attribute_stream_deletion;
 /// The value an attribute instance carries, and the column it lands in.

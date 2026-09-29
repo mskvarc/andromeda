@@ -3,9 +3,13 @@
 
 use crate::{
     entity::{
+        census::delta::{CensusChange, CensusStatements},
         mapper::stored_uri,
         repo::EntityRepository,
-        write::staging::{Doomed, Staged, StagedColumn, delete_staging_columns, expectation, staged, staging_source},
+        write::{
+            search_image::SearchImage,
+            staging::{Doomed, Srch, Staged, StagedColumn, delete_staging_columns, expectation, staged, staging_source},
+        },
     },
     error::ContextStoreError,
 };
@@ -13,7 +17,7 @@ use andromeda_context_commit::deleted_entity::DeletedEntity;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_schema::current::{E, Entities, EntityDocuments};
+use andromeda_postgresql_schema::current::{E, Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::unnest::apply_column_alias;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
@@ -43,7 +47,11 @@ struct Gone;
 ///                 JOIN entity_documents doc ON doc.entity_key = e.entity_key
 ///                 WHERE d.expected_modified_at IS NULL OR doc.modified_at = d.expected_modified_at
 ///                 FOR UPDATE OF e, doc),
-///      gone AS (DELETE FROM entities WHERE entity_key IN (SELECT entity_key FROM doomed))
+///      srch(entity_key, old_types, old_instance_names, old_instance_kinds) AS
+///              (DELETE FROM entity_search WHERE entity_key IN (SELECT entity_key FROM doomed)
+///               RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds),
+///      gone AS (DELETE FROM entities WHERE entity_key IN (SELECT entity_key FROM doomed)),
+///      census_types AS (INSERT INTO entity_type_census … FROM srch …), census_type_attributes AS (…), census_attributes AS (…)
 /// SELECT id, payload, created_at, modified_at, expires_at FROM doomed
 /// ```
 ///
@@ -54,13 +62,21 @@ struct Gone;
 /// delete so a concurrent payload write cannot slip between the expectation
 /// check and the removal.
 ///
-/// Only `entities` is named in the delete: the document and search rows go
-/// through the ownership edges that cascade from it, and so does the current
-/// attribute projection. Clause 5.6.6 leaves the temporal evolution standing,
-/// so no history relation is touched. The payload and system attributes come
-/// back because the clause 5.6.10 notification carries both and cannot read
-/// them once the rows are gone.
-pub(super) fn entity_delete_sql(target: &ContextTarget) -> String {
+/// The search row is deleted by name so that the rows it held come back: the
+/// discovery census counts every one of their types and attribute instances
+/// out, from the row the delete removed rather than from the statement's
+/// snapshot of it. Everything else goes through the ownership edges that
+/// cascade from `entities`: the document row, the type memberships and the
+/// current attribute projection. Clause 5.6.6 leaves the temporal evolution
+/// standing, so no history relation is touched. The payload and system
+/// attributes come back because the clause 5.6.10 notification carries both
+/// and cannot read them once the rows are gone.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Internal`] if a census ledger insert ever stops
+/// matching its column list, which the fixed shapes make unreachable.
+pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = delete_staging_columns();
 
     let mut doomed = Query::select();
@@ -87,41 +103,67 @@ pub(super) fn entity_delete_sql(target: &ContextTarget) -> String {
         .cond_where(expectation(staged(StagedColumn::ExpectedModifiedAt), Doc))
         .lock_with_tables(LockType::Update, [E.into_iden(), Doc.into_iden()]);
 
+    let doomed_keys = || Query::select().column(Entities::EntityKey).from(Doomed).take();
+    let search = Query::delete()
+        .from_table(table_of(target, EntitySearch::Table))
+        .and_where(Expr::col(EntitySearch::EntityKey).in_subquery(doomed_keys()))
+        .returning(Query::returning().columns([
+            EntitySearch::EntityKey,
+            EntitySearch::EntityTypeNameKeys,
+            EntitySearch::AttributeInstanceNameKeys,
+            EntitySearch::AttributeInstanceKinds,
+        ]))
+        .take();
     let gone = Query::delete()
         .from_table(table_of(target, Entities::Table))
-        .and_where(Expr::col(Entities::EntityKey).in_subquery(Query::select().column(Entities::EntityKey).from(Doomed).take()))
+        .and_where(Expr::col(Entities::EntityKey).in_subquery(doomed_keys()))
         .take();
 
-    let statement = WithClause::new()
-        .cte(CommonTableExpression::new().table_name(Doomed).query(doomed.take()).to_owned())
-        .cte(CommonTableExpression::new().table_name(Gone).query(gone).to_owned())
-        .to_owned()
-        .query(
-            Query::select()
+    let mut with = WithClause::new();
+    with.cte(CommonTableExpression::new().table_name(Doomed).query(doomed.take()).to_owned())
+        .cte(
+            CommonTableExpression::new()
+                .table_name(Srch)
                 .columns([
-                    Entities::Id.into_iden(),
-                    EntityDocuments::Payload.into_iden(),
-                    Entities::CreatedAt.into_iden(),
-                    EntityDocuments::ModifiedAt.into_iden(),
-                    Entities::ExpiresAt.into_iden(),
+                    EntitySearch::EntityKey.into_iden(),
+                    SearchImage::OldTypes.into_iden(),
+                    SearchImage::OldInstanceNames.into_iden(),
+                    SearchImage::OldInstanceKinds.into_iden(),
                 ])
-                .from(Doomed)
-                .take(),
-        );
+                .query(search)
+                .to_owned(),
+        )
+        .cte(CommonTableExpression::new().table_name(Gone).query(gone).to_owned());
+    for census in CensusStatements::of(target, Srch, CensusChange::Removed)?.ctes() {
+        with.cte(census);
+    }
+    let statement = with.query(
+        Query::select()
+            .columns([
+                Entities::Id.into_iden(),
+                EntityDocuments::Payload.into_iden(),
+                Entities::CreatedAt.into_iden(),
+                EntityDocuments::ModifiedAt.into_iden(),
+                Entities::ExpiresAt.into_iden(),
+            ])
+            .from(Doomed)
+            .take(),
+    );
 
     let sql = statement.to_string(PostgresQueryBuilder);
-    apply_column_alias(sql, &Staged, &columns)
+    Ok(apply_column_alias(sql, &Staged, &columns))
 }
 
 impl EntityRepository {
     /// Delete every entity in `ids` whose expectation still holds, returning
     /// what each one held.
     ///
-    /// Nothing else is deleted here. The document, search and current attribute
-    /// rows the entity owns go with it through the foreign keys that cascade
-    /// from `entities`, and the entity's temporal evolution deliberately
-    /// survives: clause 5.6.6 deletes the Entity, and only clause 5.6.16
-    /// deletes its history.
+    /// The search row is deleted beside the identity row so the discovery
+    /// census can count out what it held; the document, membership and current
+    /// attribute rows the entity owns go with it through the foreign keys that
+    /// cascade from `entities`, and the entity's temporal evolution
+    /// deliberately survives: clause 5.6.6 deletes the Entity, and only clause
+    /// 5.6.16 deletes its history.
     ///
     /// `expected_modified_at` is positionally aligned with `ids`; a `None` entry
     /// deletes unconditionally.
@@ -129,8 +171,9 @@ impl EntityRepository {
     /// # Errors
     ///
     /// Returns [`ContextStoreError::Internal`] when the expectation slice is not
-    /// the same length as `ids` or a returned identifier is no longer a valid
-    /// URI, and [`ContextStoreError::Database`] when the delete fails.
+    /// the same length as `ids`, a returned identifier is no longer a valid URI
+    /// or the statement cannot be built, and [`ContextStoreError::Database`]
+    /// when the delete fails.
     pub async fn delete_batch_in_tx(
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
@@ -149,7 +192,7 @@ impl EntityRepository {
         }
 
         let ids = ids.iter().map(Uri::as_str).collect::<Vec<_>>();
-        let sql = entity_delete_sql(target);
+        let sql = entity_delete_sql(target)?;
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(ids)
             .bind(expected_modified_at)
@@ -178,7 +221,7 @@ mod tests {
 
     #[test]
     fn the_delete_locks_its_candidates_and_honours_the_expectation() {
-        let sql = entity_delete_sql(&ContextTarget::Live);
+        let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
         pretty_assertions::assert_eq!(placeholders(&sql), (1..=2).collect::<BTreeSet<u32>>());
         assert!(
             sql.starts_with(
@@ -200,7 +243,7 @@ mod tests {
 
     #[test]
     fn the_delete_removes_identity_rows_by_key_and_returns_what_the_notification_needs() {
-        let sql = entity_delete_sql(&ContextTarget::Live);
+        let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
         assert!(
             sql.contains(r#""gone" AS (DELETE FROM "entities" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed"))"#),
             "{sql}"
@@ -211,18 +254,35 @@ mod tests {
         );
     }
 
+    /// Clause 5.6.6 leaves the temporal evolution standing, and the document,
+    /// membership and projection rows cascade from `entities`.
     #[test]
-    fn the_delete_touches_no_other_relation() {
-        let sql = entity_delete_sql(&ContextTarget::Live);
+    fn the_delete_names_only_the_identity_the_search_row_and_the_census() {
+        let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
         for relation in [
             "current_attribute_values",
             "attribute_history",
             "temporal_entities",
             "temporal_attribute_streams",
-            "entity_search",
+            "entity_type_members",
         ] {
             assert!(!sql.contains(relation), "entity deletion must not name {relation}: {sql}");
         }
         assert!(!sql.contains(r#"DELETE FROM "entity_documents""#), "the document row cascades: {sql}");
+    }
+
+    /// The census counts out the search rows the delete removed, read from its
+    /// own `RETURNING`.
+    #[test]
+    fn the_delete_counts_the_removed_search_rows_out_of_the_census() {
+        let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
+        assert!(
+            sql.contains(r#""srch" ("entity_key", "old_types", "old_instance_names", "old_instance_kinds") AS (DELETE FROM "entity_search" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed") RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
+            "{sql}"
+        );
+        for ledger in ["entity_type_census", "entity_type_attribute_census", "attribute_census"] {
+            assert!(sql.contains(&format!(r#"INSERT INTO "{ledger}""#)), "{ledger}: {sql}");
+        }
+        assert!(sql.contains("-1 AS \"sign\""), "{sql}");
     }
 }

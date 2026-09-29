@@ -15,13 +15,13 @@
 //! later release must be reported as unreadable instead of being silently
 //! reinterpreted.
 
-use crate::{attribute_kind_code::attribute_type_of, error::TemporalStoreError, stored_decimal::json_number_of, unit_code_metadata::restore_unit_code};
+use crate::{error::TemporalStoreError, stored_decimal::json_number_of, unit_code_metadata::restore_unit_code};
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb::Ewkb;
 use andromeda_temporal::{append_intent::TemporalObservationIdentity, port::history_reader::TemporalHistoryObservation};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;

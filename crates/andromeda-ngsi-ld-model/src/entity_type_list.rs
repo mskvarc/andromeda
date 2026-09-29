@@ -65,8 +65,9 @@ pub struct EntityTypeInfo {
     pub type_: EntityTypeInfoType,
     /// Compacted name of the entity type.
     pub type_name: EntityTypeName,
-    /// Number of entities currently held for this type.
-    pub entity_count: i64,
+    /// Table 5.2.26-1 `entityCount`: the number of entities currently holding
+    /// this type, an unsigned integer.
+    pub entity_count: u64,
     /// One record per attribute seen on entities of this type.
     #[builder(default = Default::default())]
     pub attribute_details: Vec<AttributeDetail>,

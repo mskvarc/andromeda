@@ -9,7 +9,7 @@ mod admission_fixture;
 pub mod admitted_write;
 /// Checking attribute instance envelopes (clause 5.2.5).
 pub mod attribute_envelope;
-/// Aggregated attribute discovery values.
+/// What the existing Entities carry of one attribute name.
 pub mod attribute_summary;
 /// Attribute-level writes (clauses 5.6.2 to 5.6.5 and 5.6.19).
 pub mod attrs;
@@ -40,6 +40,8 @@ pub mod entity_operation_unsupported;
 pub mod entity_snapshot;
 /// Whether a stored entity is the one a clause 4.17 type selector names.
 mod entity_type_match;
+/// What the existing Entities carrying one type hold.
+pub mod entity_type_summary;
 /// The concrete reasons an entity payload or operation is rejected as invalid.
 pub mod entity_validation_reason;
 /// Entity policy failures.

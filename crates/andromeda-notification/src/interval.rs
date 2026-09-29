@@ -12,7 +12,7 @@ use crate::{
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_entity::{
-    port::{discovery::EntityDiscoveryStore, reader::EntityReader},
+    port::{payload_pages::EntityPayloadPages, reader::EntityReader},
     sys_attrs::inject_sys_attrs,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -51,7 +51,7 @@ pub struct IntervalNotificationOperation {
     target: ContextTarget,
     sub_repo: Arc<dyn SubscriptionStore>,
     entity_reader: Arc<dyn EntityReader>,
-    entity_discovery: Arc<dyn EntityDiscoveryStore>,
+    entity_pages: Arc<dyn EntityPayloadPages>,
     transport: Arc<TransportDispatcher>,
     engine: JsonLdEngine,
     tenant: TenantRef,
@@ -63,7 +63,7 @@ impl IntervalNotificationOperation {
         target: ContextTarget,
         sub_repo: Arc<dyn SubscriptionStore>,
         entity_reader: Arc<dyn EntityReader>,
-        entity_discovery: Arc<dyn EntityDiscoveryStore>,
+        entity_pages: Arc<dyn EntityPayloadPages>,
         engine: JsonLdEngine,
         transport: Arc<TransportDispatcher>,
         tenant: TenantRef,
@@ -72,7 +72,7 @@ impl IntervalNotificationOperation {
             target,
             sub_repo,
             entity_reader,
-            entity_discovery,
+            entity_pages,
             transport,
             engine,
             tenant,
@@ -281,12 +281,12 @@ impl IntervalNotificationOperation {
         loop {
             let page = match entity_type {
                 Some(type_name) => self
-                    .entity_discovery
+                    .entity_pages
                     .get_entities_by_type(&self.target, type_name, Some(limit), Some(offset))
                     .await
                     .map_err(NotificationError::from)?,
                 None => self
-                    .entity_discovery
+                    .entity_pages
                     .get_all_entities(&self.target, Some(limit), Some(offset))
                     .await
                     .map_err(NotificationError::from)?,

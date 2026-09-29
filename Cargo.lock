@@ -1358,6 +1358,7 @@ name = "andromeda-postgresql-codes"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-lexicon",
  "derive_more",
  "pretty_assertions",
  "thiserror 2.0.21",

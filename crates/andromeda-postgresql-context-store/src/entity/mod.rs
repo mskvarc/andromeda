@@ -1,9 +1,9 @@
 //! Persistence layer for NGSI-LD entities.
 
+/// The discovery census the entity statements keep beside the search rows.
+pub mod census;
 /// Binary COPY path for bulk entity inserts.
 pub mod copy;
-/// The clauses 5.7.5-5.7.10 type and attribute discovery aggregations.
-pub mod discovery;
 /// Removing entities and attribute instances whose `expiresAt` has passed.
 pub mod expiry;
 /// The identity the fused entity insert hands back, with its minted key.
@@ -14,6 +14,8 @@ pub mod keys;
 pub mod mapper;
 /// The parallel bind vectors every entity statement is driven from.
 pub mod params;
+/// Reading whole entity payloads a page at a time.
+pub mod payload_listing;
 /// Direct implementations of entity policy ports.
 mod port;
 /// Deciding what to ask PostgreSQL for, and what to hand back unanswered.

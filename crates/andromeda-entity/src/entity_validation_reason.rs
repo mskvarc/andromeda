@@ -212,6 +212,13 @@ pub enum EntityValidationReason {
     /// The entity representation omitted its `id`.
     #[error("entity is missing an id")]
     EntityMissingId,
+    /// A Replace Entity payload names an entity other than the one it replaces:
+    /// clause 5.6.18.4 replaces the target "with the same Entity ID".
+    #[error("the replacement names the entity '{named}', not the entity its URL names")]
+    ReplacementNamesAnotherEntity {
+        /// The entity the payload names.
+        named: Uri,
+    },
     /// A distance ordering was requested with nothing to measure from (clause 5.7.2.4).
     #[error("distance-based ordering requires either a geo-query or an orderFrom parameter")]
     DistanceOrderingWithoutReference,

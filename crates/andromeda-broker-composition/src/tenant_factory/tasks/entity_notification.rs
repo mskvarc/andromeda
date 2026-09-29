@@ -148,7 +148,7 @@ pub(super) fn register_interval_notification(
         storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
         subscriptions,
         Arc::clone(&storage.entity_ports.reader),
-        Arc::clone(&storage.entity_ports.discovery),
+        Arc::clone(&storage.entity_ports.payload_pages),
         storage.engine.clone(), // clone: interval policy owns its engine handle.
         Arc::clone(transport),  // clone: every worker delivers through one dispatcher.
         storage.tenant.clone(), // clone: interval policy owns its tenant partition.

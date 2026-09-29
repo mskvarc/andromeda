@@ -9,6 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-ngsi-ld-lexicon.workspace = true
 derive_more = { version = "2.1.1", features = ["display"] }
 thiserror = "2.0.21"
 

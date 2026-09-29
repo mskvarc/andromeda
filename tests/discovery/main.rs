@@ -14,6 +14,9 @@
 mod attribute_details;
 mod attribute_info;
 mod attributes;
+mod census;
+mod census_concurrency;
+mod census_random;
 mod entity_type_details;
 mod entity_type_info;
 mod entity_types;

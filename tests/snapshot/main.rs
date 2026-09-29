@@ -4,6 +4,7 @@
 
 mod branch_schema;
 mod capture;
+mod census;
 mod core;
 mod coverage;
 mod deferred_history;

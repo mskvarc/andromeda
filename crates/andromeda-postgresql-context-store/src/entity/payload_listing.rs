@@ -16,6 +16,7 @@ use andromeda_postgresql_seaquery::operator::array_contains_key;
 use sea_query::{Expr, ExprTrait, JoinType, Order, PostgresQueryBuilder};
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
+use std::slice::from_ref;
 
 /// The unsigned page bound a signed `limit` or `offset` names.
 ///
@@ -39,7 +40,8 @@ impl EntityRepository {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<Value>, ContextStoreError> {
-        let Some(type_key) = self.type_key(entity_type).await? else {
+        // A type the dictionary never interned was never carried by any entity.
+        let Some(type_key) = self.entity_type_names.lookup(from_ref(entity_type)).await?.get(entity_type) else {
             return Ok(Vec::new());
         };
         let mut statement = identity_with_documents(target);
@@ -84,7 +86,7 @@ impl EntityRepository {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity::discovery::entity_listing::page_bound;
+    use crate::entity::payload_listing::page_bound;
     use pretty_assertions::assert_eq;
 
     /// A negative bound names no page at all, and clamping rather than wrapping

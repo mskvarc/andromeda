@@ -24,7 +24,8 @@ pub async fn insert_typed_entity(connection: &mut PgConnection, entity_id: &str,
         "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key, id), \
               doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, $3 FROM ins), \
               mbr AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id) SELECT entity_key, $2, id FROM ins) \
-         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys) SELECT entity_key, ARRAY[$2], ARRAY[]::integer[] FROM ins RETURNING entity_key",
+         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, attribute_instance_name_keys, attribute_instance_kinds) \
+         SELECT entity_key, ARRAY[$2], ARRAY[]::integer[], ARRAY[]::integer[], ARRAY[]::smallint[] FROM ins RETURNING entity_key",
     )
     .bind(entity_id)
     .bind(type_key)

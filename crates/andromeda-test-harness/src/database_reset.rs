@@ -2,6 +2,7 @@
 
 use crate::{
     database_isolation::{DatabaseIsolationError, SerializedLease},
+    discovery_census::rebuild_live_census,
     identifiers::TestIdentifiers,
 };
 use sqlx::{Executor, PgPool, Postgres, Transaction};
@@ -130,6 +131,10 @@ const PREFIX_DELETES: &[&str] = &[
 
 /// Delete every row discoverably owned by one isolated identifier prefix.
 ///
+/// The Entities go by a raw delete the broker's discovery census never sees,
+/// so the live census is rebuilt from the search rows that remain, in the same
+/// transaction (see [`rebuild_live_census`]).
+///
 /// # Errors
 ///
 /// Returns [`DatabaseResetError::Sqlx`] when the transaction cannot be opened, when any prefix-scoped delete fails, or when the commit fails.
@@ -144,6 +149,7 @@ pub async fn cleanup_prefix(pool: &PgPool, identifiers: &TestIdentifiers) -> Res
             .await
             .map_err(DatabaseResetError::from_sqlx)?;
     }
+    rebuild_live_census(&mut transaction).await.map_err(DatabaseResetError::from_sqlx)?;
     transaction.commit().await.map_err(DatabaseResetError::from_sqlx)?;
     Ok(())
 }

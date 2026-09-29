@@ -1,87 +1,62 @@
-//! Entity-type and attribute discovery reads.
+//! Entity-type and attribute discovery reads (clauses 5.7.5 to 5.7.10).
 
-use crate::{attribute_summary::AttributeSummary, error::EntityError};
+use crate::{attribute_summary::AttributeSummary, entity_type_summary::EntityTypeSummary, error::EntityError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use futures::future::BoxFuture;
-use serde_json::Value;
 
 /// One entity type and the attributes carried by entities of that type.
 pub type EntityTypeAttributes = (EntityTypeName, Vec<AttributeName>);
 
-/// Reads the aggregates and payload pages used by clause 5.7 discovery.
+/// One attribute and the types of the entities carrying it.
+pub type AttributeEntityTypes = (AttributeName, Vec<EntityTypeName>);
+
+/// Reads what the existing entities carry, as clause 5.7 discovery reports it.
+///
+/// Every answer covers only what exists when it is read: a type no entity
+/// carries any more and an attribute no instance is left of are absent.
 pub trait EntityDiscoveryStore: Send + Sync + 'static {
-    /// List every stored entity type.
+    /// Every entity type at least one entity carries, in name order.
     fn types<'life0, 'life1, 'async_trait>(&'life0 self, target: &'life1 ContextTarget) -> BoxFuture<'async_trait, Result<Vec<EntityTypeName>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
-    /// Read one ordered page of entity-type summaries.
-    fn get_entity_type_summaries<'life0, 'life1, 'life2, 'async_trait>(
+    /// Every entity type with the attributes its entities carry, in type name order.
+    fn entity_type_attributes<'life0, 'life1, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        after: Option<&'life2 EntityTypeName>,
-        limit: u32,
     ) -> BoxFuture<'async_trait, Result<Vec<EntityTypeAttributes>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
-        'life2: 'async_trait,
         Self: 'async_trait;
-    /// Read one ordered page of attribute summaries.
-    fn get_attribute_summary<'life0, 'life1, 'life2, 'async_trait>(
+    /// What the entities carrying one type hold, or `None` when none does.
+    fn entity_type_summary<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        after: Option<&'life2 AttributeName>,
-        limit: u32,
-    ) -> BoxFuture<'async_trait, Result<Vec<AttributeSummary>, EntityError>>
+        entity_type: &'life2 EntityTypeName,
+    ) -> BoxFuture<'async_trait, Result<Option<EntityTypeSummary>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
         Self: 'async_trait;
-    /// Read one attribute summary.
-    fn get_attribute_info<'life0, 'life1, 'life2, 'async_trait>(
+    /// Every attribute with the types of the entities carrying it, in attribute name order.
+    fn attribute_entity_types<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        target: &'life1 ContextTarget,
+    ) -> BoxFuture<'async_trait, Result<Vec<AttributeEntityTypes>, EntityError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
+    /// What the entities carry of one attribute, or `None` when no instance of it exists.
+    fn attribute_summary<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
         attribute: &'life2 AttributeName,
     ) -> BoxFuture<'async_trait, Result<Option<AttributeSummary>, EntityError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait;
-    /// Read expanded entity payloads carrying one type.
-    fn get_entities_by_type<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        target: &'life1 ContextTarget,
-        entity_type: &'life2 EntityTypeName,
-        limit: Option<i64>,
-        offset: Option<i64>,
-    ) -> BoxFuture<'async_trait, Result<Vec<Value>, EntityError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait;
-    /// Read all expanded entity payloads with pagination.
-    fn get_all_entities<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        target: &'life1 ContextTarget,
-        limit: Option<i64>,
-        offset: Option<i64>,
-    ) -> BoxFuture<'async_trait, Result<Vec<Value>, EntityError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait;
-    /// Count entities carrying one type.
-    fn count_by_type<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        target: &'life1 ContextTarget,
-        entity_type: &'life2 EntityTypeName,
-    ) -> BoxFuture<'async_trait, Result<i64, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
