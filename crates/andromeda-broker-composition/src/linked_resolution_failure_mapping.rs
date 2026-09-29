@@ -1,7 +1,7 @@
 //! Reading a forwarding warning as the reason a Linked Entity stayed unresolved.
 
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 
 /// Restate one forwarding warning as the domain-level reason a Linked Entity
@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResoluti
 /// never learns that response headers exist. The mapping is the same whether
 /// the traversal was over current entities or over their history, so it is
 /// stated once.
-pub(crate) fn resolution_failure(id: &Uri, warning: NgsiLdWarning) -> LinkedResolutionFailure {
+pub(crate) fn resolution_failure(id: &Identifier, warning: NgsiLdWarning) -> LinkedResolutionFailure {
     let (kind, detail) = match warning {
         NgsiLdWarning::ResponseIsStale(detail) => (LinkedResolutionFailureKind::StaleData, detail),
         NgsiLdWarning::RevalidationFailed(detail) => (LinkedResolutionFailureKind::UnusableResponse, detail),
@@ -31,10 +31,10 @@ pub(crate) fn resolution_failure(id: &Uri, warning: NgsiLdWarning) -> LinkedReso
 mod tests {
     use crate::linked_resolution_failure_mapping::resolution_failure;
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailureKind;
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

@@ -2,7 +2,7 @@
 
 use crate::{entity_snapshot::EntitySnapshot, error::EntityError, expiry::EntityExpiryBatchSize};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 
@@ -14,7 +14,7 @@ pub trait EntityExpirySource: Send + Sync + 'static {
         target: &'life1 ContextTarget,
         cutoff: DateTime<Utc>,
         batch_size: EntityExpiryBatchSize,
-    ) -> BoxFuture<'async_trait, Result<Vec<Uri>, EntityError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<Identifier>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -25,7 +25,7 @@ pub trait EntityExpirySource: Send + Sync + 'static {
         target: &'life1 ContextTarget,
         cutoff: DateTime<Utc>,
         batch_size: EntityExpiryBatchSize,
-    ) -> BoxFuture<'async_trait, Result<Vec<(Uri, EntitySnapshot)>, EntityError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<(Identifier, EntitySnapshot)>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

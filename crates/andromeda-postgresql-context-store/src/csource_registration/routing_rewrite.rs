@@ -8,7 +8,7 @@ use crate::{
     csource_registration::information_projection::{RegistrationInformationRow, derive_routing, projected_attribute_names},
     error::ContextStoreError,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
@@ -18,7 +18,7 @@ use sea_query_sqlx::{SqlxBinder, SqlxValues};
 use sqlx::PgConnection;
 
 /// The delete half of the wholesale rewrite: every row of one registration.
-fn delete_rows_statement(registration: &Uri) -> (String, SqlxValues) {
+fn delete_rows_statement(registration: &Identifier) -> (String, SqlxValues) {
     Query::delete()
         .from_table(RegistrationInformation::Table)
         .and_where(Expr::col(RegistrationInformation::RegistrationId).eq(registration.as_str()))
@@ -27,7 +27,7 @@ fn delete_rows_statement(registration: &Uri) -> (String, SqlxValues) {
 
 /// The insert half of the wholesale rewrite: one `VALUES` row per routing row,
 /// every array bound as one typed value.
-fn insert_rows_statement(registration: &Uri, rows: &[RegistrationInformationRow<'_>]) -> Result<(String, SqlxValues), ContextStoreError> {
+fn insert_rows_statement(registration: &Identifier, rows: &[RegistrationInformationRow<'_>]) -> Result<(String, SqlxValues), ContextStoreError> {
     let mut insert = Query::insert();
     insert.into_table(RegistrationInformation::Table).columns([
         RegistrationInformation::RegistrationId,
@@ -73,7 +73,7 @@ fn insert_rows_statement(registration: &Uri, rows: &[RegistrationInformationRow<
 /// caller's connection.
 pub async fn replace_registration_information(
     connection: &mut PgConnection,
-    registration: &Uri,
+    registration: &Identifier,
     information: &[RegistrationInfo],
     attribute_names: &dyn NameLookup<AttributeName>,
 ) -> Result<(), ContextStoreError> {
@@ -104,7 +104,7 @@ mod tests {
         information_projection::{RegistrationInformationRow, RegistrationRouting, derive_routing},
         routing_rewrite::insert_rows_statement,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{
         entity_info::{EntityInfo, EntityTypeSelection},
         registration::info::RegistrationInfo,
@@ -120,7 +120,7 @@ mod tests {
     /// sentinels where a row constrains nothing.
     #[test]
     fn the_insert_writes_one_values_row_per_routing_row_with_typed_array_binds() {
-        let registration: Uri = "urn:ngsi-ld:ContextSourceRegistration:1".parse().expect("valid URI");
+        let registration: Identifier = "urn:ngsi-ld:ContextSourceRegistration:1".parse().expect("valid URI");
         let speed: AttributeName = SPEED.parse().expect("valid attribute name");
         let dictionary = HashMap::from([(speed.clone(), AttributeNameKey::from(11))]); // clone: the dictionary key is owned beside the declared name.
         let information = vec![RegistrationInfo {

@@ -9,8 +9,8 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
+    identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
-    uri::{Uri, UriParseError},
 };
 use andromeda_ngsi_ld_model::{
     entity_change::EntityChange,
@@ -37,7 +37,7 @@ pub struct ClaimedDelivery {
     /// Key of the claimed delivery row.
     pub delivery_key: DeliveryKey,
     /// Subscription this delivery answers.
-    pub subscription_id: Uri,
+    pub subscription_id: Identifier,
     /// Delivery attempts already made.
     pub attempt_count: i32,
     /// Earliest instant a further attempt may be made.
@@ -51,7 +51,7 @@ pub struct ClaimedDelivery {
     /// What the write did to the Entity (clause 5.8.6).
     pub change: EntityChange,
     /// Entity whose change the event records.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// Expanded entity state after the change.
     pub entity_snapshot: Option<Value>,
     /// Expanded entity state before the change, for `showChanges`.
@@ -85,7 +85,7 @@ pub enum ClaimedDeliveryError {
         value: String,
         /// URI validation failure.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// The entity identifier is not a URI permitted by clause 4.6.2.
     #[error("references invalid entity URI `{value}`")]
@@ -94,7 +94,7 @@ pub enum ClaimedDeliveryError {
         value: String,
         /// URI validation failure.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// The stored number names no Entity lifecycle transition, which is what a
     /// row written by a release that knows more transitions looks like.
@@ -145,7 +145,7 @@ pub enum ClaimedDeliveryError {
         value: String,
         /// URI validation failure.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
 }
 
@@ -298,7 +298,7 @@ pub struct NewNotificationEvent<'a> {
     /// What the write did to the Entity (clause 5.8.6).
     pub change: &'a EntityChange,
     /// Entity whose change the event records.
-    pub entity_id: &'a Uri,
+    pub entity_id: &'a Identifier,
     /// Dictionary key of each changed instance's attribute, position for
     /// position with `change.instances`.
     pub change_attribute_name_keys: Vec<AttributeNameKey>,
@@ -315,7 +315,7 @@ mod tests {
     use crate::notification_delivery::rows::{ClaimedDelivery, ClaimedDeliveryError, RawClaimedDeliveryRow, UnreadableClaimedDelivery};
     use andromeda_context_commit::write_ordinal::WriteOrdinal;
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind};
     use andromeda_notification::delivery_entry::DeliveryKey;
     use chrono::Utc;
@@ -353,7 +353,7 @@ mod tests {
         assert!(record.change.instances[0].key.dataset_id.is_none());
         pretty_assertions::assert_eq!(record.change.instances[1].kind, AttributeChangeKind::Deleted);
         pretty_assertions::assert_eq!(
-            record.change.instances[1].key.dataset_id.as_ref().map(Uri::as_str),
+            record.change.instances[1].key.dataset_id.as_ref().map(Identifier::as_str),
             Some("urn:ngsi-ld:Dataset:a")
         );
         pretty_assertions::assert_eq!(record.delivery_key, DeliveryKey::from(7));

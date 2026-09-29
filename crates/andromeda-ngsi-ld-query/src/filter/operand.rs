@@ -22,7 +22,7 @@ use crate::{
     },
     pattern::Pattern,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_number::JsonNumber;
 
 /// Parse the right-hand side of a comparison: a scalar, a range, or a list.
@@ -62,7 +62,7 @@ pub fn parse_compare_value(cursor: &mut TokenCursor<'_>) -> Result<CompareValue,
 /// RFC 3986 section 6".
 ///
 /// The false negatives the broker had were its own doing. A Relationship object
-/// is parsed as a [`Uri`] before it is stored, and that parse applies the
+/// is parsed as a [`Identifier`] before it is stored, and that parse applies the
 /// RFC 3986 section 6.2.2 syntax-based normalisation and section 6.2.3
 /// scheme-based normalisation for the schemes that define one — case
 /// normalisation of scheme and host, removal of a default port, `.`/`..`
@@ -84,7 +84,7 @@ fn uri_equivalent_spellings(operand: Scalar) -> CompareValue {
     let Scalar::Str(ref written) = operand else {
         return CompareValue::Scalar(operand);
     };
-    let Ok(parsed) = written.parse::<Uri>() else {
+    let Ok(parsed) = written.parse::<Identifier>() else {
         return CompareValue::Scalar(operand);
     };
     if parsed.as_str() == written {
@@ -175,7 +175,7 @@ mod tests {
         rhs
     }
 
-    /// The broker normalises a Relationship object through `Uri` before storing
+    /// The broker normalises a Relationship object through `Identifier` before storing
     /// it, so an operand compared only as written could not find the entity the
     /// same text created. RFC 3986 section 6 asks that such false negatives be
     /// minimised, so both spellings are compared.

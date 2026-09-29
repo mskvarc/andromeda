@@ -1,7 +1,7 @@
 //! Focused immutable state for context source identity retrieval.
 
 use andromeda_extensions::{advertisement::enabled_extension_extras, enabled::EnabledExtensions};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType, uptime_duration};
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use chrono::{DateTime, Utc};
@@ -34,7 +34,7 @@ struct ConfiguredIdentity {
     /// identifying a Tenant within that Context Source" -- so the identifier
     /// names the context source and the alias names the tenant within it. This
     /// one is therefore the same for every tenant.
-    id: Uri,
+    id: Identifier,
     /// The pseudonyms placed in `Via` chains, one per tenant.
     aliases: ContextSourceAliases,
     /// The instant the broker became available.
@@ -50,7 +50,13 @@ impl SourceIdentityState {
     /// Construct the context source identity exposed by the broker, available
     /// since `started_at`.
     #[must_use]
-    pub fn new(id: Uri, aliases: ContextSourceAliases, started_at: DateTime<Utc>, extras: Option<Value>, enabled: EnabledExtensions) -> SourceIdentityState {
+    pub fn new(
+        id: Identifier,
+        aliases: ContextSourceAliases,
+        started_at: DateTime<Utc>,
+        extras: Option<Value>,
+        enabled: EnabledExtensions,
+    ) -> SourceIdentityState {
         SourceIdentityState {
             configured: Arc::new(ConfiguredIdentity {
                 id,
@@ -88,7 +94,7 @@ impl SourceIdentityState {
 mod tests {
     use crate::state::SourceIdentityState;
     use andromeda_extensions::{advertisement::EXTENSION_KEY, enabled::EnabledExtensions};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, tenant::TenantName};
     use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
     use chrono::{Duration, Utc};
     use std::error::Error;
@@ -99,7 +105,7 @@ mod tests {
 
     fn state_with(enabled: EnabledExtensions) -> Result<SourceIdentityState, Box<dyn Error>> {
         Ok(SourceIdentityState::new(
-            "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Uri>()?,
+            "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Identifier>()?,
             ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
             Utc::now() - Duration::hours(2),
             Some(serde_json::json!({"node": 1})),

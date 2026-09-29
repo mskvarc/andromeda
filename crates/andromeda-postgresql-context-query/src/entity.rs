@@ -320,7 +320,7 @@ fn projected_member_condition(projected: &ProjectedMembers, names: &QueryNames, 
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_query::{
         cursor::PageCursor,
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
@@ -376,7 +376,7 @@ mod tests {
         }
     }
 
-    fn ids(raw: &[&str]) -> Vec<Uri> {
+    fn ids(raw: &[&str]) -> Vec<Identifier> {
         raw.iter().map(|id| id.parse().expect("valid URI")).collect()
     }
 
@@ -984,7 +984,7 @@ mod tests {
         assert!(!built.bind_values.is_empty(), "should have bind values for limit/offset");
     }
 
-    fn boundary(id: &str) -> Uri {
+    fn boundary(id: &str) -> Identifier {
         id.parse().expect("valid URI")
     }
 

@@ -25,10 +25,10 @@ use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
     attribute_name::AttributeName,
+    identifier::Identifier,
     temporal_format::TemporalFormat,
     time_prop::TimeProp,
     time_rel::TimeRel,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -72,7 +72,7 @@ pub struct TemporalQueryParameters {
     // --- Entity filters ---
     /// Entity identifiers to select, comma-separated (clause 6.3.x `id`).
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
-    pub id: Option<Vec<Uri>>,
+    pub id: Option<Vec<Identifier>>,
     /// Entity types to select, as a type-selection expression (clause 4.17 `type`).
     #[serde(rename = "type")]
     pub entity_type: Option<TypeExprRaw>,
@@ -179,7 +179,7 @@ pub struct TemporalQueryParameters {
     /// not retrieve again (`containedBy`).
     #[serde(rename = "containedBy")]
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
-    pub contained_by: Option<Vec<Uri>>,
+    pub contained_by: Option<Vec<Identifier>>,
 
     // --- Other ---
     /// Dataset instances to select, comma-separated (`datasetId`).
@@ -240,7 +240,7 @@ mod tests {
         params_from_query,
         query::{SharedQueryParams, temporal::TemporalQueryParameters},
     };
-    use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
@@ -536,7 +536,7 @@ mod tests {
         pretty_assertions::assert_eq!(p.join, Some(JoinMode::Flat));
         pretty_assertions::assert_eq!(p.join_level.map(NonZeroU32::get), Some(3));
         pretty_assertions::assert_eq!(
-            p.contained_by.as_deref().map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()),
+            p.contained_by.as_deref().map(|ids| ids.iter().map(Identifier::as_str).collect::<Vec<_>>()),
             Some(vec!["urn:ngsi-ld:T:1", "urn:ngsi-ld:T:2"])
         );
     }

@@ -8,7 +8,7 @@ use crate::entity_map::{
     repo::EntityMapRepository,
 };
 use andromeda_entity_map::store::{EntityMapMutation, EntityMapStore, EntityMapStoreFuture};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use chrono::{DateTime, Utc};
 
@@ -27,7 +27,7 @@ impl EntityMapStore for EntityMapRepository {
         })
     }
 
-    fn get<'a>(&'a self, identifier: &'a Uri) -> EntityMapStoreFuture<'a, Option<EntityMap>> {
+    fn get<'a>(&'a self, identifier: &'a Identifier) -> EntityMapStoreFuture<'a, Option<EntityMap>> {
         Box::pin(async move {
             let Some(control) = read_live_control(self.pool(), identifier).await? else {
                 return Ok(None);
@@ -39,19 +39,19 @@ impl EntityMapStore for EntityMapRepository {
         })
     }
 
-    fn update<'a>(&'a self, identifier: &'a Uri, expires_at: DateTime<Utc>) -> EntityMapStoreFuture<'a, EntityMapMutation> {
+    fn update<'a>(&'a self, identifier: &'a Identifier, expires_at: DateTime<Utc>) -> EntityMapStoreFuture<'a, EntityMapMutation> {
         Box::pin(async move { update_expiry(self.pool(), identifier, expires_at).await })
     }
 
-    fn link<'a>(&'a self, identifier: &'a Uri, registration: &'a Uri, linked_map: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation> {
+    fn link<'a>(&'a self, identifier: &'a Identifier, registration: &'a Identifier, linked_map: &'a Identifier) -> EntityMapStoreFuture<'a, EntityMapMutation> {
         Box::pin(async move { upsert_link(self.pool(), identifier, registration, linked_map).await })
     }
 
-    fn prune<'a>(&'a self, identifier: &'a Uri, entity_ids: &'a [Uri]) -> EntityMapStoreFuture<'a, ()> {
+    fn prune<'a>(&'a self, identifier: &'a Identifier, entity_ids: &'a [Identifier]) -> EntityMapStoreFuture<'a, ()> {
         Box::pin(async move { prune_entries(self.pool(), identifier, entity_ids).await })
     }
 
-    fn delete<'a>(&'a self, identifier: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation> {
+    fn delete<'a>(&'a self, identifier: &'a Identifier) -> EntityMapStoreFuture<'a, EntityMapMutation> {
         Box::pin(async move { delete_live(self.pool(), identifier).await })
     }
 

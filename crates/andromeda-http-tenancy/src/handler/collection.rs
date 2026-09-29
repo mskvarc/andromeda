@@ -13,7 +13,7 @@ use andromeda_http_response::{
     pagination::{CursorPointers, PageLinks, append_pagination_links},
     problem_response::ProblemResponse,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::tenant::{Tenant, tenant_id};
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_ngsi_ld_request::pagination_cursor::decode_cursor;
@@ -80,7 +80,7 @@ pub async fn query(
 
 /// The identifiers of the first and last tenant on the page, from which the
 /// cursor pointers are built, or `None` for an empty page.
-fn collection_boundary(views: &[TenantView], uri: &RequestUri) -> Result<Option<(Uri, Uri)>, ProblemResponse> {
+fn collection_boundary(views: &[TenantView], uri: &RequestUri) -> Result<Option<(Identifier, Identifier)>, ProblemResponse> {
     match (views.first(), views.last()) {
         (Some(first), Some(last)) => {
             let first_id = tenant_id(&first.record.tenant_name).map_err(|error| classify(&TenancyHttpError::from(error)).with_instance(uri.clone()))?;
@@ -97,7 +97,7 @@ fn collection_boundary(views: &[TenantView], uri: &RequestUri) -> Result<Option<
 /// which is how a keyset walk with no total decides `next` exists. Clause
 /// 5.5.9.1's self-pointing suppression is enforced downstream by
 /// [`append_pagination_links`].
-fn cursor_links(incoming: Option<&PageCursor>, boundary: Option<(Uri, Uri)>, returned: usize, limit: u32) -> Option<PageLinks> {
+fn cursor_links(incoming: Option<&PageCursor>, boundary: Option<(Identifier, Identifier)>, returned: usize, limit: u32) -> Option<PageLinks> {
     let (first, last) = boundary?;
     let full = returned == usize::try_from(limit).unwrap_or(usize::MAX);
     let neighbours = PageCursor::neighbours(incoming, first, last, full);

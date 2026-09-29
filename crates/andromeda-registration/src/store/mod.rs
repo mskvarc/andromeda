@@ -56,7 +56,7 @@ use crate::{
     resolved_update::ResolvedCsrUpdate,
     store::{create_params::CreateCsrParams, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation, page::RegistrationPage},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
 use chrono::{DateTime, Utc};
@@ -98,7 +98,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Whether a registration with this identifier exists.
-    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, RegistrationError>>
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<bool, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -111,7 +111,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// visible without the rows that make it discoverable.
     fn create<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         params: &'life2 CreateCsrParams,
     ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
     where
@@ -123,7 +123,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// Retrieve a registration by identifier.
     fn get<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
     ) -> BoxFuture<'async_trait, Result<Option<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
@@ -155,7 +155,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// survive it.
     fn update<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         values: &'life2 ResolvedCsrUpdate,
     ) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
     where
@@ -175,7 +175,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         entity_type: Option<&'life1 IriBuf>,
-        entity_id: Option<&'life2 Uri>,
+        entity_id: Option<&'life2 Identifier>,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
@@ -193,7 +193,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// collides. A `None` identifier places no entity constraint.
     fn find_overlapping<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        entity_id: Option<&'life1 Uri>,
+        entity_id: Option<&'life1 Identifier>,
         attributes: &'life2 [IriBuf],
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
@@ -207,7 +207,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// `after` is the last identifier of the previous page, exclusive.
     fn find_all_active<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        after: Option<&'life1 Uri>,
+        after: Option<&'life1 Identifier>,
         limit: u32,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
@@ -219,7 +219,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     ///
     /// Removes that registration's routing projection rows in the same
     /// transaction as the payload.
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -232,7 +232,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// deleted while the operation was in flight.
     fn record_forwarding_outcome<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         outcome: ForwardingOutcome,
         at: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
@@ -245,10 +245,10 @@ pub trait RegistrationStore: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use crate::{error::RegistrationError, store::RegistrationMutation};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
     /// Parse the fixed valid registration identifier used by mutation tests.
-    fn registration_identifier() -> Option<Uri> {
+    fn registration_identifier() -> Option<Identifier> {
         let parsed = "urn:ngsi-ld:ContextSourceRegistration:test".parse();
         assert!(parsed.is_ok());
         parsed.ok()

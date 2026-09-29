@@ -11,7 +11,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::Geometry, position::Position, positive_distance::PositiveDistance};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{EntitySelection, EntitySelector},
@@ -46,7 +46,7 @@ pub(super) fn point(longitude: f64) -> Geometry {
     Geometry::new(GeometryForm::Point(Position::new(longitude, 0.0, None)))
 }
 
-pub(super) fn uri(raw: &str) -> Uri {
+pub(super) fn uri(raw: &str) -> Identifier {
     raw.parse().expect("a well-formed URI")
 }
 
@@ -101,7 +101,7 @@ pub(super) fn near_origin(id: &str) -> Arc<CompiledEntityQuery> {
 /// Whatever it holds, the narrowing leaves the request's own identifiers and
 /// the geo-query itself untouched, so the store still evaluates every
 /// `location` instance carrying a `datasetId`.
-pub(super) async fn narrowed_ids(spatial: SpatialAcceleration, query: &Arc<CompiledEntityQuery>) -> Option<Vec<Uri>> {
+pub(super) async fn narrowed_ids(spatial: SpatialAcceleration, query: &Arc<CompiledEntityQuery>) -> Option<Vec<Identifier>> {
     let narrowed = service_narrowing_through(spatial).spatial_prefilter(&ContextTarget::Live, query).await;
     assert_eq!(
         narrowed.selection.selectors[0].ids, query.selection.selectors[0].ids,

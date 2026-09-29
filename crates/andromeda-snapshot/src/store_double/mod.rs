@@ -17,7 +17,7 @@ use crate::{
     store::SnapshotPreparationJob,
     store_double::entry::{Entry, Stage},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, Snapshot, SnapshotStatus};
 use serde_json::Value;
 use std::{
@@ -42,7 +42,7 @@ pub(crate) enum ClaimHold {
 #[derive(Debug)]
 pub(crate) struct RecordedStatus {
     /// The Snapshot it was recorded for.
-    pub(crate) id: Uri,
+    pub(crate) id: Identifier,
     /// The status recorded.
     pub(crate) status: SnapshotStatus,
     /// The entity query execution details recorded with it.
@@ -55,7 +55,7 @@ pub(crate) struct RecordedStatus {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct CloneCopy {
     /// The clone the source was copied into.
-    pub(crate) target: Uri,
+    pub(crate) target: Identifier,
     /// The source's status at the time of the copy.
     pub(crate) source_status: SnapshotStatus,
 }
@@ -85,7 +85,7 @@ impl StoreDouble {
     }
 
     /// Also hold `clone`, a clone job of `source`.
-    pub(crate) fn with_clone(self, clone: Snapshot, source: &Uri) -> StoreDouble {
+    pub(crate) fn with_clone(self, clone: Snapshot, source: &Identifier) -> StoreDouble {
         if let Ok(mut entries) = self.entries.lock() {
             entries.push(Entry::new(clone, Some(source.clone()))); // clone: the stored job owns its source identifier.
         }
@@ -116,7 +116,7 @@ impl StoreDouble {
     /// status; 0 when the Snapshot is gone, not preparing, or the claim lost.
     fn end_preparation(
         &self,
-        id: &Uri,
+        id: &Identifier,
         status: SnapshotStatus,
         queries_details: Option<&[ExecutionResultDetails]>,
         temporal_queries_details: Option<&[ExecutionResultDetails]>,
@@ -145,7 +145,7 @@ impl StoreDouble {
     /// `preparing` or is gone -- the store's claim predicate.
     fn claim_next(&self) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
         let mut entries = self.entries()?;
-        let source_preparing = |source: &Uri, entries: &[Entry]| {
+        let source_preparing = |source: &Identifier, entries: &[Entry]| {
             entries
                 .iter()
                 .any(|entry| entry.snapshot.id == *source && entry.status() == SnapshotStatus::Preparing)
@@ -167,7 +167,7 @@ impl StoreDouble {
 
     /// Copy `source` into the claimed clone `target` and end it `success`, or
     /// refuse as the store does when the source is gone.
-    fn copy_clone(&self, source: &Uri, target: &Uri) -> Result<(), SnapshotError> {
+    fn copy_clone(&self, source: &Identifier, target: &Identifier) -> Result<(), SnapshotError> {
         let source_status = self
             .entries()?
             .iter()

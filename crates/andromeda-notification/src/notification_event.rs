@@ -13,7 +13,7 @@
 //! Entity matched no subscription produces no event at all.
 
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::EntityChange;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
@@ -46,7 +46,7 @@ pub struct NotificationEvent {
     /// instance it touched (clause 5.8.6).
     pub change: EntityChange,
     /// Entity whose change produced the event.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// Expanded entity snapshot at the time of the mutation.
     #[builder(default = Default::default())]
     pub entity_snapshot: Option<Value>,

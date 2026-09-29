@@ -2,7 +2,7 @@
 
 use crate::{error::TenancyHttpError, options::TenantOptions};
 use andromeda_http_response::classified_report::ClassifiedReport;
-use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
 use andromeda_ngsi_ld_model::tenant::{Tenant, TenantState, TenantUsage, tenant_id, tenant_name_from_id};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::cursor::PageCursor;
@@ -51,7 +51,7 @@ pub fn keyset_from_cursor(cursor: Option<&PageCursor>) -> Result<TenantKeyset, C
 }
 
 /// The tenant name a cursor boundary identifier carries, or an `InvalidRequest`.
-fn name_from_boundary(id: &Uri) -> Result<TenantName, ClassifiedReport> {
+fn name_from_boundary(id: &Identifier) -> Result<TenantName, ClassifiedReport> {
     tenant_name_from_id(id).ok_or_else(|| {
         ClassifiedReport::public(
             NgsiLdErrorType::InvalidRequest,

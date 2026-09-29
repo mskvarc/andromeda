@@ -6,7 +6,7 @@
 
 use crate::tenant_factory::BrokerTenantFactory;
 use andromeda_http_notification_receiver::state::{LeasedForwarding, NotificationReceiverResolver, ReceiverResolutionError};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_tenancy::{
@@ -34,7 +34,7 @@ impl BrokerNotificationReceiverResolver {
 }
 
 impl NotificationReceiverResolver for BrokerNotificationReceiverResolver {
-    fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>> {
+    fn resolve<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>> {
         Box::pin(async move {
             let tenant = self
                 .router

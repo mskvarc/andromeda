@@ -21,7 +21,7 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_map::EntityMap, entity_map_fingerprint::RequestFingerprint};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
@@ -35,7 +35,7 @@ use std::sync::Arc;
 /// What one creation request resolved to.
 pub(crate) struct MapCreation<'a> {
     /// The entities this broker holds that match.
-    pub(crate) local_ids: Vec<Uri>,
+    pub(crate) local_ids: Vec<Identifier>,
     /// The requested lifetime, if any.
     pub(crate) lifetime: Option<&'a Iso8601Duration>,
     /// The digest of the creating request's filters (clause 5.5.14).
@@ -45,7 +45,7 @@ pub(crate) struct MapCreation<'a> {
     /// Compact entity type for registration matching.
     pub(crate) entity_type: Option<&'a TypeExprRaw>,
     /// Entity identifiers for registration matching.
-    pub(crate) entity_ids: Option<&'a [Uri]>,
+    pub(crate) entity_ids: Option<&'a [Identifier]>,
     /// The query string forwarded to each source.
     pub(crate) forwarded_query: String,
     /// Whether the request asked for local scope (clause 5.5.13).

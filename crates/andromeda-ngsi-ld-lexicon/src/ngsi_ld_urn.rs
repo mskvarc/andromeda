@@ -1,6 +1,6 @@
 //! The `urn:ngsi-ld:<Kind>:<id>` identifiers the broker generates for its own resources.
 
-use crate::{identifier_length::IdentifierTooLong, uri::Uri};
+use crate::{identifier::Identifier, identifier_length::IdentifierTooLong};
 use derive_more::{AsRef, Deref, Display};
 use serde::{Deserialize, Serialize, Serializer};
 use std::str::FromStr;
@@ -15,7 +15,7 @@ use uuid::Uuid;
 /// deserialisation, any value that is not a URN, does not use the `ngsi-ld`
 /// namespace, does not carry the given kind as its first NSS segment, or is
 /// longer than [`IDENTIFIER_BYTE_LIMIT`] -- the last so that every such
-/// identifier converts into a [`Uri`] without a second, fallible check.
+/// identifier converts into an [`Identifier`] without a second, fallible check.
 ///
 /// [`IDENTIFIER_BYTE_LIMIT`]: crate::identifier_length::IDENTIFIER_BYTE_LIMIT
 macro_rules! ngsi_ld_urn_id {
@@ -125,9 +125,9 @@ macro_rules! ngsi_ld_urn_id {
             }
         }
 
-        impl From<$name> for Uri {
-            fn from(value: $name) -> Uri {
-                Uri::from_bounded_urn(value.0)
+        impl From<$name> for Identifier {
+            fn from(value: $name) -> Identifier {
+                Identifier::from_bounded_urn(value.0)
             }
         }
 

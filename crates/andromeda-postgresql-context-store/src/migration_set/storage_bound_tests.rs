@@ -9,7 +9,7 @@
 
 use crate::migration_set::declared_schema::every_migration_sql;
 use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
-use andromeda_postgresql_schema::projected_string_column::INDEXED_STRING_BYTE_LIMIT;
+use andromeda_postgresql_schema::{projected_string_column::INDEXED_STRING_BYTE_LIMIT, projected_uri_column::INDEXED_URI_BYTE_LIMIT};
 use pretty_assertions::assert_eq;
 
 /// The longest identifier PostgreSQL keeps without truncating it.
@@ -19,8 +19,19 @@ const POSTGRESQL_IDENTIFIER_BYTE_LIMIT: usize = 63;
 /// B-tree placement rather than the identifier bound.
 const PROJECTED_STRING_COLUMNS: [&str; 2] = ["value_string", "value_long_text"];
 
+/// The two Relationship-object columns of `current_attribute_values`, whose
+/// bound is the B-tree placement of [`INDEXED_URI_BYTE_LIMIT`].
+const PROJECTED_URI_COLUMNS: [&str; 2] = ["value_uri", "value_long_uri"];
+
+/// The constraints that place a Relationship object in exactly one of
+/// [`PROJECTED_URI_COLUMNS`].
+const PROJECTED_URI_CONSTRAINTS: [&str; 2] = [
+    "chk_current_attribute_values_value_uri_length",
+    "chk_current_attribute_values_value_long_uri_length",
+];
+
 /// Every constraint that holds an identifier column to [`IDENTIFIER_BYTE_LIMIT`].
-const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 34] = [
+const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 33] = [
     "chk_forwarded_subscription_routes_minted_id_length",
     "chk_attribute_names_name_length",
     "chk_entity_type_names_name_length",
@@ -44,7 +55,6 @@ const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 34] = [
     "chk_attribute_history_verbatim_instance_id_length",
     "chk_attribute_history_instance_claims_id_length",
     "chk_scope_history_verbatim_instance_id_length",
-    "chk_current_attribute_values_value_uri_length",
     "chk_current_attribute_values_dataset_id_length",
     "chk_subscriptions_id_length",
     "chk_notification_events_entity_id_length",
@@ -100,24 +110,36 @@ fn every_octet_length_bound_in_the_migrations_equals_its_rust_constant() {
     let bounds: Vec<OctetLengthBound> = every_migration_sql().into_iter().flat_map(octet_length_bounds).collect();
     assert!(bounds.len() >= IDENTIFIER_LENGTH_CONSTRAINTS.len(), "the scan found too few bounds: {bounds:?}");
     for bound in &bounds {
-        let expected = if PROJECTED_STRING_COLUMNS.contains(&bound.column.as_str()) {
+        let column = bound.column.as_str();
+        let expected = if PROJECTED_STRING_COLUMNS.contains(&column) {
             INDEXED_STRING_BYTE_LIMIT
+        } else if PROJECTED_URI_COLUMNS.contains(&column) {
+            INDEXED_URI_BYTE_LIMIT
         } else {
             IDENTIFIER_BYTE_LIMIT
         };
         assert_eq!(bound.bound, expected, "{bound:?} disagrees with its Rust constant");
     }
-    let long_text = bounds
-        .iter()
-        .find(|bound| bound.column == "value_long_text")
-        .expect("the overflow column is bounded");
-    assert_eq!(long_text.operator, ">", "the overflow column admits only what the indexed one refuses");
+    for overflow in ["value_long_text", "value_long_uri"] {
+        let bound = bounds
+            .iter()
+            .find(|bound| bound.column == overflow)
+            .unwrap_or_else(|| panic!("the overflow column {overflow} is bounded"));
+        assert_eq!(bound.operator, ">", "{overflow} admits only what its indexed column refuses");
+    }
+    for indexed in ["value_string", "value_uri"] {
+        let bound = bounds
+            .iter()
+            .find(|bound| bound.column == indexed)
+            .unwrap_or_else(|| panic!("the indexed column {indexed} is bounded"));
+        assert_eq!(bound.operator, "<=", "{indexed} admits only what its B-tree holds");
+    }
 }
 
 #[test]
 fn every_identifier_column_declares_its_length_constraint() {
     let declared: Vec<&str> = every_migration_sql().into_iter().flat_map(declared_constraint_names).collect();
-    for constraint in IDENTIFIER_LENGTH_CONSTRAINTS {
+    for constraint in IDENTIFIER_LENGTH_CONSTRAINTS.into_iter().chain(PROJECTED_URI_CONSTRAINTS) {
         assert!(declared.contains(&constraint), "no migration declares {constraint}");
     }
 }
@@ -133,9 +155,10 @@ fn every_declared_constraint_name_fits_a_postgresql_identifier() {
     }
 }
 
-/// `value_uri` holds a Relationship object, an identifier, so it must never
-/// need the overflow column the String value kind has.
+/// A Relationship traversal joins `entities.id` on `value_uri` alone, so every
+/// object that can name a local Entity -- one no longer than an identifier --
+/// must be placed in `value_uri` rather than in `value_long_uri`.
 #[test]
-fn a_relationship_object_never_needs_the_overflow_column() {
-    const { assert!(IDENTIFIER_BYTE_LIMIT < INDEXED_STRING_BYTE_LIMIT) };
+fn every_object_that_can_name_a_local_entity_is_placed_in_the_traversed_column() {
+    assert_eq!(INDEXED_URI_BYTE_LIMIT, IDENTIFIER_BYTE_LIMIT);
 }

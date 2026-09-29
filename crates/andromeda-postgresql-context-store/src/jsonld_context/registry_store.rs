@@ -28,7 +28,7 @@ use andromeda_context_registry::{
     store::{ContextRegistryFuture, ContextRegistryStore},
     stored_context::StoredContext,
 };
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_pool::is_pool_saturated;
@@ -49,7 +49,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
 
     fn list<'a>(&'a self, query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ListedContexts> {
         Box::pin(async move {
-            let after = query.after.map(Uri::as_str);
+            let after = query.after.map(Identifier::as_str);
             let limit = i64::from(query.limit);
             let kind = query.kind.map(stored_kind);
             match query.detail_level {
@@ -75,7 +75,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
                     let identifiers = rows
                         .into_iter()
                         .map(row_to_identifier)
-                        .collect::<Result<Vec<Uri>, _>>()
+                        .collect::<Result<Vec<Identifier>, _>>()
                         .map_err(persistence_error)?;
                     Ok(ListedContexts::Summary(identifiers))
                 }
@@ -83,7 +83,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
         })
     }
 
-    fn get<'a>(&'a self, identifier: &'a Uri, detail_level: ContextDetailLevel) -> ContextRegistryFuture<'a, Option<FetchedContext>> {
+    fn get<'a>(&'a self, identifier: &'a Identifier, detail_level: ContextDetailLevel) -> ContextRegistryFuture<'a, Option<FetchedContext>> {
         Box::pin(async move {
             match detail_level {
                 ContextDetailLevel::Full => {
@@ -107,7 +107,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
         })
     }
 
-    fn record_access<'a>(&'a self, identifier: &'a Uri) -> ContextRegistryFuture<'a, ContextMutation> {
+    fn record_access<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
             let (sql, values) = record_access_update(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
             let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -118,7 +118,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
         })
     }
 
-    fn lookup<'a>(&'a self, identifier: &'a Uri) -> ContextRegistryFuture<'a, Option<StoredContext>> {
+    fn lookup<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, Option<StoredContext>> {
         Box::pin(async move {
             let (sql, values) = stored_context_query(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
             let row: Option<(String, i16, Option<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -126,7 +126,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
                 .await
                 .map_err(persistence_error)?;
             row.map(|(identifier, kind, source_url)| {
-                let identifier = identifier.parse::<Uri>().map_err(persistence_error)?;
+                let identifier = identifier.parse::<Identifier>().map_err(persistence_error)?;
                 let kind = kind_of(JsonldContextKindCode::try_from(kind).map_err(persistence_error)?);
                 let source_url = source_url.map(IriBuf::new).transpose().map_err(|error| ContextRegistryError::Persistence {
                     detail: format!("stored Context URL is invalid: {}", error.0),
@@ -137,7 +137,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
         })
     }
 
-    fn delete<'a>(&'a self, identifier: &'a Uri) -> ContextRegistryFuture<'a, ContextMutation> {
+    fn delete<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
             let (sql, values) = delete_by_identifier(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
             let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -148,7 +148,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
         })
     }
 
-    fn replace_payload<'a>(&'a self, identifier: &'a Uri, payload: Value) -> ContextRegistryFuture<'a, ContextMutation> {
+    fn replace_payload<'a>(&'a self, identifier: &'a Identifier, payload: Value) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
             let (sql, values) = replace_payload_update(identifier.as_str(), payload).build_sqlx(PostgresQueryBuilder);
             let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)

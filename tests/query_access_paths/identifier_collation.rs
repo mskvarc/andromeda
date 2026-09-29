@@ -41,6 +41,7 @@ async fn identifier_columns_declare_byte_wise_collation() {
         ("current_attribute_values", "value_string"),
         ("current_attribute_values", "value_uri"),
         ("current_attribute_values", "value_long_text"),
+        ("current_attribute_values", "value_long_uri"),
         ("attribute_history", "value_string"),
         ("attribute_history", "value_uri"),
         ("attribute_history", "verbatim_instance_id"),

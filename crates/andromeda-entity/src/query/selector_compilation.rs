@@ -9,7 +9,7 @@ use andromeda_jsonld::{
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
     term_expansion::ContextualExpander,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelector,
     error::QueryError,
@@ -34,7 +34,7 @@ pub async fn compile_entity_selectors(
     engine: &JsonLdEngine,
     context: &PreparedTermContext,
     entity_selectors: &[EntitySelectorParams],
-    flat_ids: Vec<Uri>,
+    flat_ids: Vec<Identifier>,
     flat_id_pattern: Option<&Pattern>,
     flat_type: Option<&TypeExprRaw>,
 ) -> Result<Vec<EntitySelector>, QueryError> {
@@ -54,7 +54,7 @@ pub async fn compile_entity_selectors(
 async fn compile_one(
     engine: &JsonLdEngine,
     context: &PreparedTermContext,
-    ids: Vec<Uri>,
+    ids: Vec<Identifier>,
     id_pattern: Option<&Pattern>,
     type_raw: Option<&TypeExprRaw>,
 ) -> Result<EntitySelector, QueryError> {

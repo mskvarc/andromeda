@@ -34,7 +34,7 @@ use crate::{
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_postgresql_branch::table_of;
@@ -57,7 +57,7 @@ macro_rules! impl_subscription_store {
     ($type:ty, kind: $kind:expr, has_dataset_id: $hdi:expr, create_sql: $create:path, update_sql: $update:path, create_binds: $create_fn:path, update_binds: $update_fn:path) => {
         #[async_trait::async_trait]
         impl SubscriptionStore for $type {
-            async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
+            async fn get(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
                 let mut select = projected_select($kind, target);
                 select.cond_where(one_of(id, $kind));
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
@@ -135,7 +135,7 @@ macro_rules! impl_subscription_store {
                 Ok((subscriptions, total))
             }
 
-            async fn delete(&self, target: &ContextTarget, id: &Uri) -> Result<u64, SubscriptionError> {
+            async fn delete(&self, target: &ContextTarget, id: &Identifier) -> Result<u64, SubscriptionError> {
                 let statement = Query::delete()
                     .from_table(table_of(target, Subscriptions::Table))
                     .cond_where(one_of(id, $kind))
@@ -148,7 +148,7 @@ macro_rules! impl_subscription_store {
                 Ok(result.rows_affected())
             }
 
-            async fn exists(&self, target: &ContextTarget, id: &Uri) -> Result<bool, SubscriptionError> {
+            async fn exists(&self, target: &ContextTarget, id: &Identifier) -> Result<bool, SubscriptionError> {
                 let inner = Query::select()
                     .expr(Expr::val(1))
                     .from(table_of(target, Subscriptions::Table))
@@ -177,7 +177,7 @@ macro_rules! impl_subscription_store {
             async fn claim_notification_slot(
                 &self,
                 target: &ContextTarget,
-                id: &Uri,
+                id: &Identifier,
                 gate: NotificationSlotGate,
             ) -> Result<NotificationSlot, SubscriptionError> {
                 let (sql, values) = claim_statement(target, id, $kind, gate).build_sqlx(PostgresQueryBuilder);
@@ -194,7 +194,7 @@ macro_rules! impl_subscription_store {
                 }
             }
 
-            async fn mark_success(&self, target: &ContextTarget, id: &Uri) -> Result<(), SubscriptionError> {
+            async fn mark_success(&self, target: &ContextTarget, id: &Identifier) -> Result<(), SubscriptionError> {
                 let (sql, values) = mark_statement(DeliveryOutcome::Success, target, id, $kind).build_sqlx(PostgresQueryBuilder);
                 sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .execute(&self.pool)
@@ -203,7 +203,7 @@ macro_rules! impl_subscription_store {
                 Ok(())
             }
 
-            async fn mark_failure(&self, target: &ContextTarget, id: &Uri) -> Result<(), SubscriptionError> {
+            async fn mark_failure(&self, target: &ContextTarget, id: &Identifier) -> Result<(), SubscriptionError> {
                 let (sql, values) = mark_statement(DeliveryOutcome::Failure, target, id, $kind).build_sqlx(PostgresQueryBuilder);
                 sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .execute(&self.pool)
@@ -212,7 +212,7 @@ macro_rules! impl_subscription_store {
                 Ok(())
             }
 
-            async fn expire_due(&self, target: &ContextTarget, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+            async fn expire_due(&self, target: &ContextTarget, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
                 let statement = Query::update()
                     .table(table_of(target, Subscriptions::Table))
                     .value(Subscriptions::Status, stored_status(SubscriptionStatus::Expired).code())
@@ -244,7 +244,7 @@ macro_rules! impl_subscription_store {
             async fn create_subscription(
                 &self,
                 target: &ContextTarget,
-                id: &Uri,
+                id: &Identifier,
                 fields: &SubscriptionFields<'_>,
                 status: SubscriptionStatus,
             ) -> Result<(), SubscriptionError> {
@@ -268,7 +268,7 @@ macro_rules! impl_subscription_store {
             async fn update_subscription(
                 &self,
                 target: &ContextTarget,
-                id: &Uri,
+                id: &Identifier,
                 fields: &SubscriptionFields<'_>,
                 status: SubscriptionStatus,
             ) -> Result<u64, SubscriptionError> {
@@ -325,7 +325,12 @@ macro_rules! impl_subscription_store {
                 Ok(earliest)
             }
 
-            async fn advance_interval_anchor(&self, target: &ContextTarget, id: &Uri, cutoff: chrono::DateTime<chrono::Utc>) -> Result<(), SubscriptionError> {
+            async fn advance_interval_anchor(
+                &self,
+                target: &ContextTarget,
+                id: &Identifier,
+                cutoff: chrono::DateTime<chrono::Utc>,
+            ) -> Result<(), SubscriptionError> {
                 let (sql, values) = advance_interval_anchor_statement(target, id, $kind, cutoff).build_sqlx(PostgresQueryBuilder);
                 sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .execute(&self.pool)

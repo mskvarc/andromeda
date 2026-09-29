@@ -21,7 +21,7 @@
 
 use crate::error::TemporalError;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
@@ -142,9 +142,9 @@ pub trait RemoteTemporalLinkedSource: fmt::Debug + Send + Sync + 'static {
     #[must_use = "non-local Linked Entity resolutions must be awaited"]
     async fn fetch_linked_temporal(
         &self,
-        id: &Uri,
+        id: &Identifier,
         remaining_depth: NonZeroU32,
-        visited: &[Uri],
+        visited: &[Identifier],
         window: &TemporalLinkedWindow,
         context: &ContextSpec,
     ) -> Result<RemoteTemporalLinkedEntities, TemporalError>;

@@ -4,7 +4,7 @@
 
 use crate::entity_map::persistence_error;
 use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_postgresql_schema::entity_map::EntityMaps;
 use andromeda_postgresql_seaquery::clock::now;
@@ -62,7 +62,7 @@ const fn mutation_outcome(rows_affected: u64) -> EntityMapMutation {
 
 /// Remove any previous map with the same identifier; the children go with it
 /// through the cascading foreign keys.
-pub(crate) async fn delete_map_row(connection: &mut PgConnection, id: &Uri) -> Result<EntityMapMutation, EntityMapError> {
+pub(crate) async fn delete_map_row(connection: &mut PgConnection, id: &Identifier) -> Result<EntityMapMutation, EntityMapError> {
     let (sql, values) = Query::delete()
         .from_table(EntityMaps::Table)
         .and_where(Expr::col(EntityMaps::Id).eq(id.as_str()))
@@ -93,7 +93,7 @@ pub(crate) async fn insert_map_row(connection: &mut PgConnection, map: &EntityMa
 }
 
 /// The control record of a live map, or `None` when the map is absent or expired.
-pub(crate) async fn read_live_control(pool: &PgPool, id: &Uri) -> Result<Option<MapControlRecord>, EntityMapError> {
+pub(crate) async fn read_live_control(pool: &PgPool, id: &Identifier) -> Result<Option<MapControlRecord>, EntityMapError> {
     let (sql, values) = Query::select()
         .column((EntityMaps::Table, EntityMaps::ExpiresAt))
         .column((EntityMaps::Table, EntityMaps::RequestFingerprint))
@@ -115,7 +115,7 @@ pub(crate) async fn read_live_control(pool: &PgPool, id: &Uri) -> Result<Option<
 }
 
 /// Move a live map's expiry.
-pub(crate) async fn update_expiry(pool: &PgPool, id: &Uri, expires_at: DateTime<Utc>) -> Result<EntityMapMutation, EntityMapError> {
+pub(crate) async fn update_expiry(pool: &PgPool, id: &Identifier, expires_at: DateTime<Utc>) -> Result<EntityMapMutation, EntityMapError> {
     let (sql, values) = Query::update()
         .table(EntityMaps::Table)
         .value(EntityMaps::ExpiresAt, expires_at)
@@ -130,7 +130,7 @@ pub(crate) async fn update_expiry(pool: &PgPool, id: &Uri, expires_at: DateTime<
 }
 
 /// Remove a live map.
-pub(crate) async fn delete_live(pool: &PgPool, id: &Uri) -> Result<EntityMapMutation, EntityMapError> {
+pub(crate) async fn delete_live(pool: &PgPool, id: &Identifier) -> Result<EntityMapMutation, EntityMapError> {
     let (sql, values) = Query::delete()
         .from_table(EntityMaps::Table)
         .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id.as_str()))

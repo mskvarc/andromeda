@@ -18,7 +18,7 @@ use crate::{
     write_kind::BatchWriteKind,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity};
 use serde_json::Value;
 
@@ -54,7 +54,7 @@ pub(super) struct AdmittedBatchEntity {
 
 impl AdmittedBatchEntity {
     /// The entity's identifier.
-    pub(super) const fn id(&self) -> &Uri {
+    pub(super) const fn id(&self) -> &Identifier {
         &self.entity.id
     }
 }
@@ -100,7 +100,7 @@ impl<W: BatchWriteKind> AdmittedBatch<W> {
     /// their attributes (clauses 5.6.7.4 and following: "any remaining input
     /// data"): each entity without the attributes `proxied_for` names for it,
     /// and none of the entities left without an attribute.
-    pub fn retain_local(&mut self, mut proxied_for: impl FnMut(&Uri) -> Vec<AttributeName>) {
+    pub fn retain_local(&mut self, mut proxied_for: impl FnMut(&Identifier) -> Vec<AttributeName>) {
         self.entities.retain_mut(|admitted| {
             let proxied = proxied_for(&admitted.entity.id);
             if proxied.is_empty() {
@@ -142,7 +142,7 @@ impl EntityService {
         kind: W,
         rendered: Vec<RenderedEntity>,
         context: &ContextSpec,
-    ) -> (AdmittedBatch<W>, Vec<(Uri, EntityError)>) {
+    ) -> (AdmittedBatch<W>, Vec<(Identifier, EntityError)>) {
         let slot_count = rendered.len();
         let (entities, entries): (Vec<Entity>, Vec<ClassifiedEntry>) = rendered
             .into_iter()
@@ -190,7 +190,7 @@ impl EntityService {
         chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
         admission: NullSentinelAdmission,
-    ) -> (Vec<PreparedEntity>, Vec<(Uri, EntityError)>) {
+    ) -> (Vec<PreparedEntity>, Vec<(Identifier, EntityError)>) {
         let mut slots: Vec<Option<PreparedEntity>> = Vec::with_capacity(chunk.len());
         let mut narrowed: Vec<Entity> = Vec::new();
         for AdmittedBatchEntity { entity, preparation } in chunk {
@@ -239,7 +239,7 @@ mod tests {
         write_kind::{BatchCreate, BatchUpsert},
     };
     use andromeda_jsonld::context_spec::ContextSpec;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::entity::Entity;
     use serde_json::{Value, json};
 
@@ -280,7 +280,7 @@ mod tests {
     /// The narrowing a batch goes through once its forwarding phase answered:
     /// V1 loses `speed`, V2 loses every attribute, V3 is claimed by nothing, and
     /// V4 is claimed only for an attribute it does not carry.
-    fn proxied(id: &Uri) -> Vec<AttributeName> {
+    fn proxied(id: &Identifier) -> Vec<AttributeName> {
         match id.as_str() {
             "urn:ngsi-ld:Vehicle:1" => names(&["speed"]),
             "urn:ngsi-ld:Vehicle:2" => names(&["speed", "brandName"]),

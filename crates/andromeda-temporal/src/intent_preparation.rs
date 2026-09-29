@@ -12,11 +12,11 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
+    identifier::Identifier,
     instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
     ngsi_ld_date_time::NgsiLdDateTime,
     scope::path::ScopePath,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_model::{
     expanded::{instance_key::is_system_attribute, null_sentinel::instance_is_null_sentinel},
@@ -39,7 +39,7 @@ use std::slice::from_ref;
 /// and the observed payload of an ordinary attribute write is an Entity
 /// Fragment whose `type` clauses 5.6.2.4, 5.6.3.4 and 5.6.17.4 leave optional.
 pub(crate) fn prepare(
-    entity_id: &Uri,
+    entity_id: &Identifier,
     entity_types: &[EntityTypeName],
     history: &[HistoryRecord],
     record: WriteRecord,
@@ -152,7 +152,7 @@ fn append_observation(
     let dataset_id = extract_dataset_id(instance)?;
     let observed_at = extract_observed_at(instance)?;
     let instance_identity = extract_instance_id(instance)?.map_or_else(InstanceIdentity::generate, |provided| {
-        InstanceIdentity::from_uri(provided, InstanceFamily::Attribute)
+        InstanceIdentity::from_identifier(provided, InstanceFamily::Attribute)
     });
     entries.push(TemporalAppendEntry::Observation {
         row: TemporalHistoryRow {
@@ -282,7 +282,7 @@ fn detect_attribute_type(instance: &Value) -> AttributeType {
 }
 
 /// Decode the optional expanded dataset identifier.
-fn extract_dataset_id(instance: &Value) -> Result<Option<Uri>, TemporalError> {
+fn extract_dataset_id(instance: &Value) -> Result<Option<Identifier>, TemporalError> {
     instance
         .get(expanded_properties::DATASET_ID.as_str())
         .and_then(Value::as_array)
@@ -290,7 +290,7 @@ fn extract_dataset_id(instance: &Value) -> Result<Option<Uri>, TemporalError> {
         .and_then(|value| value.get("@id"))
         .and_then(Value::as_str)
         .map(|raw| {
-            raw.parse::<Uri>()
+            raw.parse::<Identifier>()
                 .map_err(|source| TemporalError::Validation(TemporalValidationReason::DatasetId { raw: raw.to_string(), source }))
         })
         .transpose()
@@ -318,7 +318,7 @@ fn extract_observed_at(instance: &Value) -> Result<Option<DateTime<Utc>>, Tempor
 }
 
 /// Decode the optional client-supplied expanded instance identifier.
-fn extract_instance_id(instance: &Value) -> Result<Option<Uri>, TemporalError> {
+fn extract_instance_id(instance: &Value) -> Result<Option<Identifier>, TemporalError> {
     instance
         .get(expanded_properties::INSTANCE_ID.as_str())
         .and_then(Value::as_array)
@@ -326,7 +326,7 @@ fn extract_instance_id(instance: &Value) -> Result<Option<Uri>, TemporalError> {
         .and_then(|value| value.get("@id"))
         .and_then(Value::as_str)
         .map(|raw| {
-            raw.parse::<Uri>()
+            raw.parse::<Identifier>()
                 .map_err(|source| TemporalError::Validation(TemporalValidationReason::InstanceId { raw: raw.to_string(), source }))
         })
         .transpose()
@@ -341,7 +341,7 @@ mod tests {
         write_ordinal::WriteOrdinal,
         write_record::WriteRecord,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, scope::path::ScopePath, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, scope::path::ScopePath};
     use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
     use andromeda_ngsi_ld_number::JsonNumber;
     use chrono::{DateTime, TimeZone, Utc};
@@ -358,7 +358,7 @@ mod tests {
     /// API is dated at the write ("a copy of the modifiedAt").
     #[test]
     fn scopes_are_prepared_with_their_observed_at_or_dated_at_the_write() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity identifier");
         let payload = Arc::new(json!([{
             "@id": entity_id,
             "https://uri.etsi.org/ngsi-ld/scope": [
@@ -399,9 +399,9 @@ mod tests {
 
     #[test]
     fn null_sentinel_is_not_decoded_as_a_geoproperty_observation() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity identifier");
         let attribute_name = "https://example.com/location".parse::<AttributeName>().expect("valid attribute name");
-        let dataset_id = "urn:ngsi-ld:Dataset:a".parse::<Uri>().expect("valid dataset identifier");
+        let dataset_id = "urn:ngsi-ld:Dataset:a".parse::<Identifier>().expect("valid dataset identifier");
         let payload = Arc::new(json!([{
             "@id": entity_id,
             "https://example.com/location": [{
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn plural_temporal_values_are_prepared_as_individual_observations() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity identifier");
         let payload = Arc::new(json!([{
             "@id": entity_id,
             "https://example.com/speed": [{
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn percent_encoded_relationship_target_is_validated_after_decoding() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity identifier");
         let payload = Arc::new(json!([{
             "@id": entity_id,
             "https://example.com/ref": [{
@@ -522,7 +522,7 @@ mod tests {
     /// `@id` nodes under a coercing context. Both are the same list of targets.
     #[test]
     fn an_object_list_keeps_its_targets_however_the_context_expanded_them() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity identifier");
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         for member in [json!({"@id": "urn:ngsi-ld:Part:1"}), json!({"@value": "urn:ngsi-ld:Part:1"})] {
             let payload = Arc::new(json!([{
@@ -565,7 +565,7 @@ mod tests {
     /// Entities than the client wrote.
     #[test]
     fn an_object_list_member_without_a_target_refuses_the_write() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity identifier");
         let payload = Arc::new(json!([{
             "@id": entity_id,
             "https://example.com/parts": [{
@@ -588,7 +588,7 @@ mod tests {
     }
 
     /// Build the expanded payload of one `DateTime`-typed Property value.
-    fn datetime_property_payload(entity_id: &Uri, raw: &str) -> Arc<Value> {
+    fn datetime_property_payload(entity_id: &Identifier, raw: &str) -> Arc<Value> {
         Arc::new(json!([{
             "@id": entity_id,
             "https://example.com/installedAt": [{
@@ -607,7 +607,7 @@ mod tests {
     /// silently reinterpreted into the `timestamptz` column.
     #[test]
     fn a_datetime_property_value_with_a_non_utc_offset_is_refused() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity identifier");
         let payload = datetime_property_payload(&entity_id, "2026-07-25T12:00:00+02:00");
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
@@ -627,7 +627,7 @@ mod tests {
     /// is on instance PATCH, rather than rounded by the storage column.
     #[test]
     fn a_datetime_property_value_with_seven_fractional_digits_is_refused() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity identifier");
         let payload = datetime_property_payload(&entity_id, "2026-07-25T12:00:00.1234567Z");
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 

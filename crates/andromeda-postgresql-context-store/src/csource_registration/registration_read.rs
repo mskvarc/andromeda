@@ -5,7 +5,7 @@ use crate::csource_registration::{
     registration_statements::proxied_mode,
     registration_store::{PostgresRegistrationStore, persistence_error, registration_count},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, cursor::PageCursor, pagination::Pagination};
 use andromeda_postgresql_context_query::csr::{
@@ -45,7 +45,7 @@ pub(super) async fn find_expired(store: &PostgresRegistrationStore, cutoff: Date
 }
 
 /// Whether a registration with `id` exists.
-pub(super) async fn exists(store: &PostgresRegistrationStore, id: &Uri) -> Result<bool, RegistrationError> {
+pub(super) async fn exists(store: &PostgresRegistrationStore, id: &Identifier) -> Result<bool, RegistrationError> {
     let inner = Query::select()
         .expr(SeaExpr::val(1))
         .from(Csr::Table)
@@ -61,7 +61,7 @@ pub(super) async fn exists(store: &PostgresRegistrationStore, id: &Uri) -> Resul
 }
 
 /// Read one registration by identifier.
-pub(super) async fn get(store: &PostgresRegistrationStore, id: &Uri) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
+pub(super) async fn get(store: &PostgresRegistrationStore, id: &Identifier) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
     let mut select = registration_select();
     // Clause 5.9.2.4: an expired registration reads as deleted even before
     // the expiry sweep removes its row.
@@ -140,7 +140,7 @@ pub(super) async fn query_compiled(store: &PostgresRegistrationStore, compiled: 
 pub(super) async fn find_matching(
     store: &PostgresRegistrationStore,
     entity_type: Option<&IriBuf>,
-    entity_id: Option<&Uri>,
+    entity_id: Option<&Identifier>,
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
     let mut select = registration_select();
     select.cond_where(not_expired());
@@ -162,7 +162,7 @@ pub(super) async fn find_matching(
 /// The unexpired proxied registrations that may collide with an `(entity, attributes)` footprint (clauses 4.3.6.3, 5.9.2.4), a superset decided by the caller.
 pub(super) async fn find_overlapping(
     store: &PostgresRegistrationStore,
-    entity_id: Option<&Uri>,
+    entity_id: Option<&Identifier>,
     attributes: &[IriBuf],
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
     let mut select = registration_select();
@@ -190,7 +190,7 @@ pub(super) async fn find_overlapping(
 /// One keyset page of unexpired registrations, ordered by identifier.
 pub(super) async fn find_all_active(
     store: &PostgresRegistrationStore,
-    after: Option<&Uri>,
+    after: Option<&Identifier>,
     limit: u32,
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
     let mut select = registration_select();

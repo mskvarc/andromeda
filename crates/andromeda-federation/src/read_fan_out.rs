@@ -19,7 +19,7 @@ use crate::{
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate as eval_q_expr, expression::Expr},
@@ -38,9 +38,9 @@ pub(crate) struct ReadSelection<'a> {
     /// The clause 4.17 type selector, whose single type is matched expanded.
     pub(crate) entity_type: Option<&'a TypeExprRaw>,
     /// The entity identifiers; the first one drives the store's matching.
-    pub(crate) entity_ids: Option<&'a [Uri]>,
+    pub(crate) entity_ids: Option<&'a [Identifier]>,
     /// A registration never contacted (clause 5.8.6 re-assembly).
-    pub(crate) exclude_registration: Option<&'a Uri>,
+    pub(crate) exclude_registration: Option<&'a Identifier>,
     /// The expanded context source filter, evaluated against each
     /// registration's Context Source Properties (clause 4.9).
     pub(crate) csf: Option<&'a Expr>,

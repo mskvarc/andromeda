@@ -397,6 +397,7 @@ async fn typed_value_indexes_exclude_rows_whose_value_column_is_null() {
         ("idx_cav_value_uri", "value_uri"),
         ("idx_cav_value_long_text", "value_long_text"),
         ("idx_cav_value_long_text_trgm", "value_long_text"),
+        ("idx_cav_value_long_uri", "value_long_uri"),
         ("idx_cav_value_object", "value_object"),
         ("idx_cav_value_geometry", "value_geometry"),
         ("idx_cav_entity_geometry", "value_geometry"),

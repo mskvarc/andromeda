@@ -3,7 +3,7 @@
 
 use crate::error::EntityError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use futures::future::BoxFuture;
 
 /// A position in the store's commit history below which every change is
@@ -35,7 +35,7 @@ impl ChangeHorizon {
 #[derive(Debug)]
 pub struct EntityLocation {
     /// Entity identifier.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// Entity types the entity carries.
     pub entity_types: Vec<EntityTypeName>,
     /// The geometry of the entity's default `location` instance, exactly as the

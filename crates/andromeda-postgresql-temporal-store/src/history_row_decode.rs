@@ -18,7 +18,7 @@
 use crate::{error::TemporalStoreError, stored_decimal::json_number_of, unit_code_metadata::restore_unit_code};
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, value_kind::ValueKind};
@@ -77,11 +77,11 @@ pub(crate) fn decode_attribute_name(row: &PgRow) -> Result<AttributeName, Tempor
 }
 
 /// Read the stream's multi-attribute discriminator.
-pub(crate) fn decode_dataset_id(row: &PgRow) -> Result<Option<Uri>, TemporalStoreError> {
+pub(crate) fn decode_dataset_id(row: &PgRow) -> Result<Option<Identifier>, TemporalStoreError> {
     row.try_get::<Option<String>, _>("dataset_id")
         .map_err(|error| TemporalStoreError::Decode(error.to_string()))?
         .map(|raw| {
-            raw.parse::<Uri>()
+            raw.parse::<Identifier>()
                 .map_err(|error| TemporalStoreError::Decode(format!("invalid dataset_id '{raw}': {error}")))
         })
         .transpose()
@@ -101,7 +101,7 @@ fn decode_instance_identity(row: &PgRow) -> Result<InstanceIdentity, TemporalSto
         .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.verbatim_instance_id: {error}")))?;
     match (generated, verbatim) {
         (Some(uuid), None) => Ok(InstanceIdentity::Generated(uuid)),
-        (None, Some(raw)) => Ok(InstanceIdentity::Verbatim(raw.parse::<Uri>().map_err(|error| {
+        (None, Some(raw)) => Ok(InstanceIdentity::Verbatim(raw.parse::<Identifier>().map_err(|error| {
             TemporalStoreError::Decode(format!("invalid attribute_history.verbatim_instance_id '{raw}': {error}"))
         })?)),
         (Some(_), Some(_)) => Err(TemporalStoreError::Decode(

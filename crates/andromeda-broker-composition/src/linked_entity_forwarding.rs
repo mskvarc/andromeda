@@ -20,7 +20,7 @@ use andromeda_federation::{
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use async_trait::async_trait;
@@ -47,7 +47,7 @@ impl ForwardedLinkedEntitySource {
 
 /// The parameters of the forwarded retrieval, which are the traversal
 /// continuation and nothing else.
-fn linked_retrieval_parameters(depth: NonZeroU32, visited: &[Uri]) -> GetEntityParams {
+fn linked_retrieval_parameters(depth: NonZeroU32, visited: &[Identifier]) -> GetEntityParams {
     let (join, join_level, contained_by) = traversal_continuation(depth, visited);
     GetEntityParams {
         join,
@@ -59,7 +59,13 @@ fn linked_retrieval_parameters(depth: NonZeroU32, visited: &[Uri]) -> GetEntityP
 
 #[async_trait]
 impl RemoteLinkedEntitySource for ForwardedLinkedEntitySource {
-    async fn fetch_linked(&self, id: &Uri, remaining_depth: NonZeroU32, visited: &[Uri], context: &ContextSpec) -> Result<RemoteLinkedEntities, EntityError> {
+    async fn fetch_linked(
+        &self,
+        id: &Identifier,
+        remaining_depth: NonZeroU32,
+        visited: &[Identifier],
+        context: &ContextSpec,
+    ) -> Result<RemoteLinkedEntities, EntityError> {
         let parameters = linked_retrieval_parameters(remaining_depth, visited);
         let forwarded = self
             .federation
@@ -115,11 +121,11 @@ impl RemoteLinkedEntitySource for ForwardedLinkedEntitySource {
 #[cfg(test)]
 mod tests {
     use crate::linked_entity_forwarding::linked_retrieval_parameters;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 
@@ -151,7 +157,7 @@ mod tests {
 
         assert!(parameters.join.is_none());
         assert!(parameters.join_level.is_none());
-        pretty_assertions::assert_eq!(parameters.contained_by.as_deref().map(<[Uri]>::len), Some(1));
+        pretty_assertions::assert_eq!(parameters.contained_by.as_deref().map(<[Identifier]>::len), Some(1));
     }
 
     /// A traversal that has visited nothing yet sends no `containedBy` at all,

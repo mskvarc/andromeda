@@ -2,7 +2,7 @@
 
 use andromeda_entity::sys_attrs::expanded_entity_object_mut;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::attribute_change::AttributeChange;
 use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, prefix};
 use serde_json::Value;
@@ -19,7 +19,7 @@ pub fn filter_entity_attributes(entity: &Value, attrs: &[AttributeName]) -> Valu
     Value::Object(filtered)
 }
 
-pub(super) fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[Uri]) {
+pub(super) fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[Identifier]) {
     let Some(obj) = expanded_entity_object_mut(entity) else { return };
     let default_context_prefix = format!("{}default-context/", prefix::NGSI_LD.as_str());
 
@@ -94,7 +94,7 @@ pub(super) async fn inject_previous_values(current: &mut Value, previous: &Value
                 let changed: Vec<Option<&str>> = instances
                     .iter()
                     .filter(|instance| Some(&instance.key.attr) == expanded.as_ref() || Some(&instance.key.attr) == compact.as_ref())
-                    .map(|instance| instance.key.dataset_id.as_ref().map(Uri::as_str))
+                    .map(|instance| instance.key.dataset_id.as_ref().map(Identifier::as_str))
                     .collect();
                 if changed.is_empty() {
                     continue;
@@ -210,13 +210,13 @@ fn extract_previous_value(previous: &Value, attribute_type: AttributeType) -> Op
 #[cfg(test)]
 mod tests {
     use super::inject_previous_for_dataset;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
     #[test]
     fn show_changes_marks_only_the_changed_dataset_instance() {
-        let dataset = "urn:dataset:named".parse::<Uri>().expect("valid dataset URI");
+        let dataset = "urn:dataset:named".parse::<Identifier>().expect("valid dataset URI");
         let mut current = json!([
             {"type": "Property", "value": 10},
             {"type": "Property", "value": 20, "datasetId": dataset.as_str()}
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn an_entity_lifecycle_event_marks_every_dataset_instance() {
-        let dataset = "urn:dataset:named".parse::<Uri>().expect("valid dataset URI");
+        let dataset = "urn:dataset:named".parse::<Identifier>().expect("valid dataset URI");
         let mut current = json!([
             {"type": "Property", "value": null},
             {"type": "Property", "value": null, "datasetId": dataset.as_str()}

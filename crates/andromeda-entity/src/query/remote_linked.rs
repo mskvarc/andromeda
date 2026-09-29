@@ -14,7 +14,7 @@
 
 use crate::error::EntityError;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use futures::future::BoxFuture;
@@ -67,9 +67,9 @@ pub trait RemoteLinkedEntitySource: fmt::Debug + Send + Sync + 'static {
     /// than failing the retrieval.
     fn fetch_linked<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         remaining_depth: NonZeroU32,
-        visited: &'life2 [Uri],
+        visited: &'life2 [Identifier],
         context: &'life3 ContextSpec,
     ) -> BoxFuture<'async_trait, Result<RemoteLinkedEntities, EntityError>>
     where

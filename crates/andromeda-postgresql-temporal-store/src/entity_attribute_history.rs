@@ -3,12 +3,17 @@
 use crate::repo::TemporalRepository;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{error::EntityError, port::attribute_history::AttributeDatasetHistory};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use async_trait::async_trait;
 
 #[async_trait]
 impl AttributeDatasetHistory for TemporalRepository {
-    async fn dataset_identifiers(&self, target: &ContextTarget, entity: &Uri, attribute: &AttributeName) -> Result<Vec<Option<Uri>>, EntityError> {
+    async fn dataset_identifiers(
+        &self,
+        target: &ContextTarget,
+        entity: &Identifier,
+        attribute: &AttributeName,
+    ) -> Result<Vec<Option<Identifier>>, EntityError> {
         TemporalRepository::attribute_dataset_ids(self, target, entity, attribute)
             .await
             .map_err(|error| EntityError::persistence(error.to_string()))

@@ -67,7 +67,7 @@
 //! capabilities of a single information item are spread across sibling rows and
 //! demanding one row satisfy two dimensions would exclude legitimate candidates.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::{
     csr::{Csr, RegistrationInformation},
     name_dictionary::AttributeNames,
@@ -139,8 +139,8 @@ pub fn entity_type_candidate(entity_type: &IriBuf) -> SimpleExpr {
 /// `idx_registration_information_entity_id_pattern`, because deciding it needs
 /// the clause-4.9 regular-expression engine, which is the caller's residual
 /// evaluation, not the preselect's.
-pub fn entity_id_candidate(entity_ids: &[Uri]) -> SimpleExpr {
-    let named = entity_ids.iter().map(Uri::as_str).chain([ANY_IDENTIFIER]);
+pub fn entity_id_candidate(entity_ids: &[Identifier]) -> SimpleExpr {
+    let named = entity_ids.iter().map(Identifier::as_str).chain([ANY_IDENTIFIER]);
     any_row(
         ri_col(RegistrationInformation::EntityId)
             .is_in(named)
@@ -193,7 +193,7 @@ mod tests {
         IriBuf::new(value.to_string()).expect("valid IRI")
     }
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

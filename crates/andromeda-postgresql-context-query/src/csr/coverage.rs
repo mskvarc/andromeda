@@ -25,7 +25,7 @@ use crate::csr::{
     projection::{entity_id_candidate, entity_type_candidate},
     unnesting::{ent, entities_of_item, information_covers, lacks_key, registered_pattern_form},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_seaquery::{jsonb::jsonb_exists, literal::text_literal, operator::regex_match, pg_operator::PgBinaryOperator};
 use iri_rs::IriBuf;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
@@ -63,7 +63,7 @@ pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
 /// looking at the pattern, so the regular expression is evaluated exactly once,
 /// here, where the coverage decision is made.
 #[must_use]
-pub fn entity_id_coverage(entity_id: &Uri) -> SimpleExpr {
+pub fn entity_id_coverage(entity_id: &Identifier) -> SimpleExpr {
     let mut entities_match = entities_of_item();
     entities_match.cond_where(
         Condition::any()
@@ -87,7 +87,7 @@ mod tests {
         IriBuf::new(value.to_string()).expect("valid IRI")
     }
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

@@ -5,7 +5,7 @@ use crate::{
     resolved_update::ResolvedCsrUpdate,
     store::{RegistrationStore, create_params::CreateCsrParams, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation, page::RegistrationPage},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
 use chrono::{DateTime, Utc};
@@ -29,7 +29,7 @@ pub(crate) struct FixedStore {
     /// The `information` of every update applied, in order.
     updated_information: Mutex<Vec<Vec<RegistrationInfo>>>,
     /// Every identifier deleted, in order.
-    deleted: Mutex<Vec<Uri>>,
+    deleted: Mutex<Vec<Identifier>>,
 }
 
 impl FixedStore {
@@ -43,7 +43,7 @@ impl FixedStore {
     }
 
     /// Every identifier deleted so far.
-    pub(crate) fn deleted(&self) -> Vec<Uri> {
+    pub(crate) fn deleted(&self) -> Vec<Identifier> {
         self.deleted.lock().expect("deletion log").clone() // clone: the test reads what the fake recorded
     }
 
@@ -74,7 +74,7 @@ impl RegistrationStore for FixedStore {
         Box::pin(async { Ok(Vec::new()) })
     }
 
-    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, RegistrationError>>
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<bool, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -84,7 +84,7 @@ impl RegistrationStore for FixedStore {
 
     fn create<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Uri,
+        _id: &'life1 Identifier,
         _params: &'life2 CreateCsrParams,
     ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
     where
@@ -95,7 +95,10 @@ impl RegistrationStore for FixedStore {
         Box::pin(async { Ok(()) })
     }
 
-    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<ContextSourceRegistration>, RegistrationError>>
+    fn get<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -134,7 +137,7 @@ impl RegistrationStore for FixedStore {
 
     fn update<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Uri,
+        _id: &'life1 Identifier,
         values: &'life2 ResolvedCsrUpdate,
     ) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
     where
@@ -149,7 +152,7 @@ impl RegistrationStore for FixedStore {
     fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         _entity_type: Option<&'life1 IriBuf>,
-        _entity_id: Option<&'life2 Uri>,
+        _entity_id: Option<&'life2 Identifier>,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
@@ -161,7 +164,7 @@ impl RegistrationStore for FixedStore {
 
     fn find_overlapping<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _entity_id: Option<&'life1 Uri>,
+        _entity_id: Option<&'life1 Identifier>,
         _attributes: &'life2 [IriBuf],
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
@@ -174,7 +177,7 @@ impl RegistrationStore for FixedStore {
 
     fn find_all_active<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        _after: Option<&'life1 Uri>,
+        _after: Option<&'life1 Identifier>,
         _limit: u32,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
@@ -184,7 +187,7 @@ impl RegistrationStore for FixedStore {
         Box::pin(async { Ok(Vec::new()) })
     }
 
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -200,7 +203,7 @@ impl RegistrationStore for FixedStore {
 
     fn record_forwarding_outcome<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Uri,
+        _id: &'life1 Identifier,
         _outcome: ForwardingOutcome,
         _at: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>

@@ -4,7 +4,7 @@ use crate::{
     entity_probe::{EntityPresence, RegisteredEntityProbe},
     error::RegistrationError,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_info::EntityInfo;
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
@@ -37,7 +37,7 @@ impl FixedProbe {
 impl RegisteredEntityProbe for FixedProbe {
     fn holds_any_attribute<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        entity_id: &'life1 Uri,
+        entity_id: &'life1 Identifier,
         _attributes: &'life2 [IriBuf],
     ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
     where

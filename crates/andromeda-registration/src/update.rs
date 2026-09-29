@@ -11,7 +11,7 @@ use crate::{
     validation::{RegistrationShape, validate_shape},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     notification::{CsrChangeEvent, CsrTriggerReason},
     registration::ContextSourceRegistrationType,
@@ -34,7 +34,7 @@ impl RegistrationService {
     /// [`RegistrationError::Internal`] when the pre-update snapshot cannot be
     /// serialised, and [`RegistrationError::Persistence`] when the store
     /// rejects the read or the write.
-    pub async fn update(&self, id: &Uri, payload: Value, context: &ContextSpec) -> Result<(), RegistrationError> {
+    pub async fn update(&self, id: &Identifier, payload: Value, context: &ContextSpec) -> Result<(), RegistrationError> {
         // A fragment may omit `type`, but one it carries has to be the
         // registration type (clause 5.2.9).
         if let Some(type_value) = payload.get("type") {
@@ -92,7 +92,7 @@ mod tests {
         store::RegistrationStore,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use iri_rs::IriRefBuf;
     use serde_json::json;
     use std::sync::Arc;
@@ -111,7 +111,7 @@ mod tests {
         )
     }
 
-    fn registration_id() -> Uri {
+    fn registration_id() -> Identifier {
         REGISTRATION_ID.parse().expect("valid URI")
     }
 

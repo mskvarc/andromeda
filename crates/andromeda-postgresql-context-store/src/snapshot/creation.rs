@@ -3,7 +3,7 @@
 
 use crate::snapshot::{branch_schema::create_branch_schema, branch_version::current_version, persistence_error, status_code::stored_status};
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::placeholder::external_placeholder;
 use andromeda_snapshot::{error::SnapshotError, store::InsertSnapshotParams};
@@ -78,7 +78,7 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
         .bind(params.snapshot_priority)
         .bind(params.endpoint.map(Url::as_str))
         .bind(params.receiver_info_json)
-        .bind(params.clone_source_id.map(Uri::as_str))
+        .bind(params.clone_source_id.map(Identifier::as_str))
         .bind(params.created_at)
         .bind(params.expires_at)
         .fetch_one(&mut *tx)
@@ -117,7 +117,7 @@ fn is_duplicate_snapshot_id(code: Option<&str>, constraint: Option<&str>) -> boo
 }
 
 /// Preserve the protocol-visible duplicate-id classification from PostgreSQL.
-fn snapshot_create_error(error: sqlx::Error, id: &Uri) -> SnapshotError {
+fn snapshot_create_error(error: sqlx::Error, id: &Identifier) -> SnapshotError {
     if let sqlx::Error::Database(database_error) = &error
         && is_duplicate_snapshot_id(database_error.code().as_deref(), database_error.constraint())
     {

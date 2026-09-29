@@ -7,7 +7,7 @@
 
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_subscription::{
@@ -80,7 +80,7 @@ pub(crate) fn subscription_key() -> SubscriptionKey {
 
 #[async_trait]
 impl SubscriptionStore for SingleSubscriptionStore {
-    async fn get(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
+    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
         Err(unused_store_call("get"))
     }
 
@@ -92,11 +92,11 @@ impl SubscriptionStore for SingleSubscriptionStore {
         Err(unused_store_call("list_keyset"))
     }
 
-    async fn delete(&self, _target: &ContextTarget, _id: &Uri) -> Result<u64, SubscriptionError> {
+    async fn delete(&self, _target: &ContextTarget, _id: &Identifier) -> Result<u64, SubscriptionError> {
         Err(unused_store_call("delete"))
     }
 
-    async fn exists(&self, _target: &ContextTarget, _id: &Uri) -> Result<bool, SubscriptionError> {
+    async fn exists(&self, _target: &ContextTarget, _id: &Identifier) -> Result<bool, SubscriptionError> {
         Err(unused_store_call("exists"))
     }
 
@@ -104,19 +104,24 @@ impl SubscriptionStore for SingleSubscriptionStore {
         Ok(vec![stored_building_subscription()?])
     }
 
-    async fn claim_notification_slot(&self, _target: &ContextTarget, _id: &Uri, _gate: NotificationSlotGate) -> Result<NotificationSlot, SubscriptionError> {
+    async fn claim_notification_slot(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        _gate: NotificationSlotGate,
+    ) -> Result<NotificationSlot, SubscriptionError> {
         Err(unused_store_call("claim_notification_slot"))
     }
 
-    async fn mark_success(&self, _target: &ContextTarget, _id: &Uri) -> Result<(), SubscriptionError> {
+    async fn mark_success(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
         Err(unused_store_call("mark_success"))
     }
 
-    async fn mark_failure(&self, _target: &ContextTarget, _id: &Uri) -> Result<(), SubscriptionError> {
+    async fn mark_failure(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
         Err(unused_store_call("mark_failure"))
     }
 
-    async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+    async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
         Err(unused_store_call("expire_due"))
     }
 
@@ -128,14 +133,14 @@ impl SubscriptionStore for SingleSubscriptionStore {
         Err(unused_store_call("next_interval_due"))
     }
 
-    async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Uri, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
+    async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
         Err(unused_store_call("advance_interval_anchor"))
     }
 
     async fn create_subscription(
         &self,
         _target: &ContextTarget,
-        _id: &Uri,
+        _id: &Identifier,
         _fields: &SubscriptionFields<'_>,
         _status: SubscriptionStatus,
     ) -> Result<(), SubscriptionError> {
@@ -145,7 +150,7 @@ impl SubscriptionStore for SingleSubscriptionStore {
     async fn update_subscription(
         &self,
         _target: &ContextTarget,
-        _id: &Uri,
+        _id: &Identifier,
         _fields: &SubscriptionFields<'_>,
         _status: SubscriptionStatus,
     ) -> Result<u64, SubscriptionError> {

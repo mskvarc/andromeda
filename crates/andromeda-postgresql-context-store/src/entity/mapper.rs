@@ -14,18 +14,18 @@ use crate::{
     },
     error::ContextStoreError,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use std::str::FromStr;
 
-/// Parse a stored entity identifier into a [`Uri`].
+/// Parse a stored entity identifier into a [`Identifier`].
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Internal`] when the stored text is not a valid
 /// URI, which means the column holds a value the broker never wrote.
-pub fn stored_uri(raw: &str) -> Result<Uri, ContextStoreError> {
-    Uri::from_str(raw).map_err(|error| ContextStoreError::Internal(format!("stored entity identifier is not a valid URI: {error}")))
+pub fn stored_uri(raw: &str) -> Result<Identifier, ContextStoreError> {
+    Identifier::from_str(raw).map_err(|error| ContextStoreError::Internal(format!("stored entity identifier is not a valid URI: {error}")))
 }
 
 /// Parse a stored surrogate key into an [`EntityKey`].

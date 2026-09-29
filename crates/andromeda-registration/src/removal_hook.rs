@@ -9,7 +9,7 @@
 //! ignorant of subscriptions, forwarding and transport.
 
 use crate::error::RegistrationError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use futures::future::BoxFuture;
 
@@ -18,9 +18,9 @@ use futures::future::BoxFuture;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForwardedSubscriptionCopy {
     /// The local subscription the copy reduces.
-    pub local_subscription: Uri,
+    pub local_subscription: Identifier,
     /// The identifier the copy carries at the context source.
-    pub remote_subscription: Uri,
+    pub remote_subscription: Identifier,
 }
 
 /// What removing one registration must tear down at its context source,

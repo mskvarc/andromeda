@@ -18,7 +18,7 @@ use crate::{
     temporal_stream::TemporalCatalogUpsert,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
@@ -173,7 +173,7 @@ const fn evolution_resolution(upsert: &TemporalCatalogUpsert) -> EvolutionResolu
 fn harvest_key(resolved: &mut ResolvedEvolutions, stored: i64, id: &str, origin: EvolutionOrigin) -> Result<(), TemporalStoreError> {
     let key = TemporalEntityKey::try_from(stored).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
     let id = id
-        .parse::<Uri>()
+        .parse::<Identifier>()
         .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.id '{id}': {error}")))?;
     resolved.record(id, key, origin);
     Ok(())
@@ -189,7 +189,10 @@ fn harvest_key(resolved: &mut ResolvedEvolutions, stored: i64, id: &str, origin:
 /// state, each on its own, so an entity whose evolution a client already deleted
 /// holds no instance for the deletion to end and is passed over rather than
 /// refused.
-fn first_missing_typeless_observation<'a>(resolving: &[&'a TemporalCatalogUpsert], entity_keys: &HashMap<Uri, TemporalEntityKey>) -> Option<&'a Uri> {
+fn first_missing_typeless_observation<'a>(
+    resolving: &[&'a TemporalCatalogUpsert],
+    entity_keys: &HashMap<Identifier, TemporalEntityKey>,
+) -> Option<&'a Identifier> {
     resolving
         .iter()
         .filter(|upsert| match upsert.purpose {
@@ -347,7 +350,7 @@ mod tests {
         temporal_stream::TemporalCatalogUpsert,
     };
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
     use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
     use andromeda_temporal::write_purpose::TemporalWritePurpose;
@@ -366,19 +369,19 @@ mod tests {
 
     fn upsert(entity_id: &str, types: &[&str], purpose: TemporalWritePurpose) -> TemporalCatalogUpsert {
         TemporalCatalogUpsert {
-            entity_id: entity_id.parse::<Uri>().expect("valid entity URI"),
+            entity_id: entity_id.parse::<Identifier>().expect("valid entity URI"),
             types: types.iter().map(|raw| raw.parse::<EntityTypeName>().expect("valid entity type")).collect(),
             purpose,
             streams: Vec::new(),
         }
     }
 
-    fn resolved(entries: &[(&str, i64)]) -> HashMap<Uri, TemporalEntityKey> {
+    fn resolved(entries: &[(&str, i64)]) -> HashMap<Identifier, TemporalEntityKey> {
         entries
             .iter()
             .map(|(id, key)| {
                 (
-                    id.parse::<Uri>().expect("valid entity URI"),
+                    id.parse::<Identifier>().expect("valid entity URI"),
                     TemporalEntityKey::try_from(*key).expect("a positive narrow key"),
                 )
             })

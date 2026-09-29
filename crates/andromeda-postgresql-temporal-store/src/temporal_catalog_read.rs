@@ -9,7 +9,7 @@
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_attribute_shape::StoredAttributeShape};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_query::dictionary::names_in_key_order::type_names_of;
@@ -36,7 +36,7 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails.
-    pub(crate) async fn temporal_entity_exists(&self, target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalStoreError> {
+    pub(crate) async fn temporal_entity_exists(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalStoreError> {
         let (sql, values) = temporal_entity_exists_query(schema_iden(target).as_ref(), entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
         let exists = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
         Ok(exists)
@@ -57,12 +57,12 @@ impl TemporalRepository {
     pub(crate) async fn temporal_entity_types(
         &self,
         target: &ContextTarget,
-        entity_ids: &[Uri],
-    ) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalStoreError> {
+        entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalStoreError> {
         if entity_ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let identifiers: Vec<&str> = entity_ids.iter().map(Uri::as_str).collect();
+        let identifiers: Vec<&str> = entity_ids.iter().map(Identifier::as_str).collect();
         let (sql, values) = temporal_entity_types_query(schema_iden(target).as_ref(), &identifiers).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         let mut types_by_entity = HashMap::with_capacity(rows.len());
@@ -71,7 +71,7 @@ impl TemporalRepository {
                 .try_get("id")
                 .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.id: {error}")))?;
             let entity_id = raw_id
-                .parse::<Uri>()
+                .parse::<Identifier>()
                 .map_err(|error| TemporalStoreError::Decode(format!("temporal_entities.id '{raw_id}': {error}")))?;
             let raw_types: Vec<String> = row
                 .try_get("types")
@@ -146,7 +146,7 @@ impl TemporalRepository {
     pub(crate) async fn attribute_stream_exists(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
     ) -> Result<bool, TemporalStoreError> {
         let (sql, values) =
@@ -164,9 +164,9 @@ impl TemporalRepository {
     pub(crate) async fn attribute_dataset_ids(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
-    ) -> Result<Vec<Option<Uri>>, TemporalStoreError> {
+    ) -> Result<Vec<Option<Identifier>>, TemporalStoreError> {
         let (sql, values) =
             attribute_dataset_ids_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute_name.as_str()).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
@@ -175,7 +175,7 @@ impl TemporalRepository {
                 row.try_get::<Option<String>, _>("dataset_id")
                     .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_attribute_streams.dataset_id: {error}")))?
                     .map(|raw| {
-                        raw.parse::<Uri>()
+                        raw.parse::<Identifier>()
                             .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_attribute_streams.dataset_id '{raw}': {error}")))
                     })
                     .transpose()
@@ -189,7 +189,7 @@ impl TemporalRepository {
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails and
     /// [`TemporalStoreError::Decode`] when a stored name is not an attribute IRI.
-    pub(crate) async fn temporal_attribute_names(&self, target: &ContextTarget, entity_id: &Uri) -> Result<Vec<AttributeName>, TemporalStoreError> {
+    pub(crate) async fn temporal_attribute_names(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<Vec<AttributeName>, TemporalStoreError> {
         let (sql, values) = temporal_attribute_names_query(schema_iden(target).as_ref(), entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         rows.into_iter()

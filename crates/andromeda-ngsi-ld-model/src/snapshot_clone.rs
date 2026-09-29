@@ -4,7 +4,7 @@ use crate::{
     key_value_pair::KeyValuePair,
     snapshot::{SnapshotPriority, SnapshotType},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::Deserialize;
 use url::Url;
@@ -18,7 +18,7 @@ pub struct SnapshotCloneInput {
     pub type_: SnapshotType,
     /// Optional target identifier.
     #[serde(default)]
-    pub id: Option<Uri>,
+    pub id: Option<Identifier>,
     /// Optional target lifetime.
     #[serde(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,

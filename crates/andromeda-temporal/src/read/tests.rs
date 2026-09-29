@@ -14,7 +14,7 @@ use crate::{
     read::ensure_aggregation_supported,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use async_trait::async_trait;
@@ -38,12 +38,12 @@ impl TemporalHistoryReader for RefusingReader {
         }
     }
 
-    async fn entity_exists(&self, _target: &ContextTarget, _entity_id: &Uri) -> Result<bool, TemporalError> {
+    async fn entity_exists(&self, _target: &ContextTarget, _entity_id: &Identifier) -> Result<bool, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         Err(TemporalError::internal("query must not execute"))
     }
 
-    async fn entity_types(&self, _target: &ContextTarget, _entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+    async fn entity_types(&self, _target: &ContextTarget, _entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         Err(TemporalError::internal("query must not execute"))
     }
@@ -56,7 +56,7 @@ impl TemporalHistoryReader for RefusingReader {
     async fn query_entity_history(
         &self,
         _target: &ContextTarget,
-        _entity_id: &Uri,
+        _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
@@ -66,7 +66,7 @@ impl TemporalHistoryReader for RefusingReader {
     async fn query_entity_aggregation(
         &self,
         _target: &ContextTarget,
-        _entity_id: &Uri,
+        _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);

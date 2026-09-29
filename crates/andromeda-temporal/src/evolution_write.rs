@@ -33,7 +33,7 @@ use andromeda_entity::{
     entity_snapshot::EntitySnapshot,
     notification_plan::{creation, modification},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
     current_state_fold::{CurrentStateFold, CurrentStateFoldError, fold_into_current_state},
@@ -59,7 +59,7 @@ impl TemporalService {
     /// [`TemporalError::TransactionContended`] when concurrent writers
     /// superseded the fold on every attempt, and [`TemporalError::Commit`] or
     /// [`TemporalError::Persistence`] when the write cannot be landed.
-    pub(crate) async fn commit_evolution(&self, target: &ContextTarget, entity_id: &Uri, evolution: Arc<Value>) -> Result<(), TemporalError> {
+    pub(crate) async fn commit_evolution(&self, target: &ContextTarget, entity_id: &Identifier, evolution: Arc<Value>) -> Result<(), TemporalError> {
         for lost_attempts in 0..WRITE_ATTEMPTS {
             if lost_attempts > 0 {
                 self.retry_delay.wait(backoff_after_lost_attempts(lost_attempts)).await;
@@ -100,7 +100,7 @@ impl TemporalService {
 fn evolution_write(
     notifier: &ChangeNotifier,
     target: &ContextTarget,
-    entity_id: &Uri,
+    entity_id: &Identifier,
     evolution: Arc<Value>,
     current: Option<&EntitySnapshot>,
 ) -> Result<EvolutionWrite, TemporalError> {
@@ -180,7 +180,7 @@ mod tests {
     use andromeda_context_commit::entity_mutation::EntityMutation;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_entity::{change_notifier::ChangeNotifier, entity_snapshot::EntitySnapshot};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind};
     use chrono::Utc;
     use serde_json::{Value, json};
@@ -190,7 +190,7 @@ mod tests {
     const HEADING: &str = "https://example.org/heading";
     const OBSERVED_AT: &str = "https://uri.etsi.org/ngsi-ld/observedAt";
 
-    fn entity_id() -> Uri {
+    fn entity_id() -> Identifier {
         "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity identifier")
     }
 

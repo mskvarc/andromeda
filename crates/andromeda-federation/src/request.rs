@@ -10,7 +10,7 @@ use crate::{
 use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_http_headers::via::Via;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_ngsi_ld_query::filter::expression::Expr;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
@@ -103,7 +103,7 @@ impl EntityMapInUse<'_> {
 
     /// The `NGSILD-EntityMap` a forwarded request to `registration` carries.
     #[must_use]
-    pub fn location_for(&self, registration: &Uri) -> Option<&Uri> {
+    pub fn location_for(&self, registration: &Identifier) -> Option<&Identifier> {
         match self {
             EntityMapInUse::Referenced(map) => Some(map.linked_map_for(registration).unwrap_or(&map.id)),
             EntityMapInUse::Minting(map) => Some(&map.id),
@@ -118,7 +118,7 @@ pub struct ForwardProvisionRequest<'a> {
     /// evolution.
     pub resource: ProvisionResource,
     /// Entity ID to target, if applicable.
-    pub entity_id: &'a Uri,
+    pub entity_id: &'a Identifier,
     /// Compact entity type for CSR matching.
     pub entity_type_compact: Option<&'a EntityTypeName>,
     /// Attribute name used to filter registration information entries.
@@ -206,10 +206,10 @@ pub struct ForwardQueryRequest<'a> {
 /// Parameters for forwarding a single-entity retrieval, current or temporal.
 pub struct ForwardRetrieveRequest<'a> {
     /// The entity to retrieve.
-    pub entity_id: &'a Uri,
+    pub entity_id: &'a Identifier,
     /// A registration that is not contacted: the sender of a notification
     /// being re-assembled already supplied its part (clause 5.8.6).
-    pub exclude_registration: Option<&'a Uri>,
+    pub exclude_registration: Option<&'a Identifier>,
     /// The client's retrieval parameters, narrowed per registration before
     /// they are forwarded (clause 4.3.6.1). Clauses 5.7.1.4 and 5.7.3.4 know
     /// no split entities, so every parameter that is not narrowed travels.

@@ -14,7 +14,7 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{snapshot_clone::SnapshotCloneInput, snapshot_input::SnapshotInput, snapshot_patch::SnapshotPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_render::response::ResponsePayload;
@@ -50,7 +50,7 @@ pub async fn get(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
-    TypedPath(snapshot_id): TypedPath<Uri>,
+    TypedPath(snapshot_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
     let snapshot = state.snapshots.get(&snapshot_id).await.with_snapshot_instance(&uri)?;
 
@@ -67,7 +67,7 @@ pub async fn update(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
-    TypedPath(snapshot_id): TypedPath<Uri>,
+    TypedPath(snapshot_id): TypedPath<Identifier>,
     JsonLd { value: patch, context: _ }: JsonLd<SnapshotPatch>,
 ) -> Result<Response, ProblemResponse> {
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_snapshot_instance(&uri)?;
@@ -84,7 +84,7 @@ pub async fn update(
 pub async fn delete(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(snapshot_id): TypedPath<Uri>,
+    TypedPath(snapshot_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
     state.snapshots.delete(&snapshot_id).await.with_snapshot_instance(&uri)?;
 
@@ -132,7 +132,7 @@ pub async fn purge(
 pub async fn clone(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(snapshot_id): TypedPath<Uri>,
+    TypedPath(snapshot_id): TypedPath<Identifier>,
     JsonLd { value: input, context: _ }: JsonLd<SnapshotCloneInput>,
 ) -> Result<Response, ProblemResponse> {
     let cloned = state.snapshots.clone_snapshot(&snapshot_id, input).await.with_snapshot_instance(&uri)?;

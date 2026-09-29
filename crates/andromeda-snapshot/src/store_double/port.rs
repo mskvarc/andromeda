@@ -8,7 +8,7 @@ use crate::{
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
@@ -26,7 +26,7 @@ fn unused<T: Send + 'static>(method: &'static str) -> BoxFuture<'static, Result<
 }
 
 impl SnapshotStore for StoreDouble {
-    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<Snapshot>, SnapshotError>>
+    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<Option<Snapshot>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -40,7 +40,10 @@ impl SnapshotStore for StoreDouble {
         Box::pin(async move { found })
     }
 
-    fn branch_condition<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<BranchCondition>, SnapshotError>>
+    fn branch_condition<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<BranchCondition>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -51,7 +54,7 @@ impl SnapshotStore for StoreDouble {
         Box::pin(async move { condition })
     }
 
-    fn touch_last_used<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
+    fn touch_last_used<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -61,7 +64,7 @@ impl SnapshotStore for StoreDouble {
 
     fn restart_preparation<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Uri,
+        _id: &'life1 Identifier,
         _claimed_by: LeaseHolder,
         _lease_until: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
@@ -76,7 +79,7 @@ impl SnapshotStore for StoreDouble {
 
     fn release_preparation<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         _claimed_by: LeaseHolder,
     ) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
     where
@@ -93,7 +96,7 @@ impl SnapshotStore for StoreDouble {
 
     fn update_status<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         _claimed_by: LeaseHolder,
         status: SnapshotStatus,
         queries_details: Option<&'life2 [ExecutionResultDetails]>,
@@ -109,7 +112,7 @@ impl SnapshotStore for StoreDouble {
         Box::pin(async move { outcome })
     }
 
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -130,7 +133,7 @@ impl SnapshotStore for StoreDouble {
         unused("create")
     }
 
-    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -138,7 +141,7 @@ impl SnapshotStore for StoreDouble {
         unused("exists")
     }
 
-    fn target<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<SnapshotTarget>, SnapshotError>>
+    fn target<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<Option<SnapshotTarget>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -146,7 +149,10 @@ impl SnapshotStore for StoreDouble {
         unused("target")
     }
 
-    fn staging_target<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<SnapshotTarget>, SnapshotError>>
+    fn staging_target<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        _id: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<SnapshotTarget>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -168,7 +174,7 @@ impl SnapshotStore for StoreDouble {
 
     fn renew_preparation_lease<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Uri,
+        _id: &'life1 Identifier,
         _claimed_by: LeaseHolder,
         _lease_until: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
@@ -181,7 +187,7 @@ impl SnapshotStore for StoreDouble {
 
     fn update_metadata<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Uri,
+        _id: &'life1 Identifier,
         _lifetime: Option<&'life2 Iso8601Duration>,
         _priority: Option<SnapshotPriority>,
         _endpoint: Option<Option<&'life3 Url>>,
@@ -199,7 +205,7 @@ impl SnapshotStore for StoreDouble {
 
     fn promote_capture<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         _claimed_by: LeaseHolder,
         status: SnapshotStatus,
         queries_details: Option<&'life2 [ExecutionResultDetails]>,
@@ -222,7 +228,7 @@ impl SnapshotStore for StoreDouble {
     fn match_by_filter<'life0, 'life1, 'async_trait>(
         &'life0 self,
         _filter: &'life1 SnapshotPurgeFilter,
-    ) -> BoxFuture<'async_trait, Result<Vec<Uri>, SnapshotError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<Identifier>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -230,7 +236,7 @@ impl SnapshotStore for StoreDouble {
         unused("match_by_filter")
     }
 
-    fn delete_one<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
+    fn delete_one<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -240,8 +246,8 @@ impl SnapshotStore for StoreDouble {
 
     fn promote_clone<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        source_id: &'life1 Uri,
-        target_id: &'life2 Uri,
+        source_id: &'life1 Identifier,
+        target_id: &'life2 Identifier,
         _claimed_by: LeaseHolder,
     ) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
     where
@@ -264,7 +270,7 @@ impl SnapshotStore for StoreDouble {
         &'life0 self,
         _count_quota: Option<usize>,
         _byte_quota: Option<u64>,
-    ) -> BoxFuture<'async_trait, Result<Vec<Uri>, SnapshotError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<Identifier>, SnapshotError>>
     where
         'life0: 'async_trait,
     {

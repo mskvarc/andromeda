@@ -8,7 +8,7 @@ use crate::{
     registration_selection::{covered_attribute_members, csr_has_matching_information, is_entity_control_member, retain_covered_attributes},
     term_resolver::TermResolver,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -17,7 +17,7 @@ use std::{collections::HashMap, slice::from_ref};
 /// One entity of the array narrowed for one registration.
 pub(super) struct NarrowedEntity {
     /// The entity identifier.
-    pub(super) id: Uri,
+    pub(super) id: Identifier,
     /// The narrowed entity; none for a deletion.
     pub(super) body: Option<Value>,
     /// The attributes a proxied registration claims from it.

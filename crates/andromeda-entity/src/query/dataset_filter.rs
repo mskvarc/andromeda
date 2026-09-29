@@ -1,6 +1,6 @@
 //! Narrowing an entity's attribute instances by `datasetId` (clause 4.5.5).
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 
@@ -35,7 +35,7 @@ pub(super) fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[Da
 }
 
 /// Whether one instance's `datasetId` is among those the caller named.
-fn selected(dataset_id: Option<&Uri>, wanted: &[DatasetSelector]) -> bool {
+fn selected(dataset_id: Option<&Identifier>, wanted: &[DatasetSelector]) -> bool {
     wanted.iter().any(|candidate| match candidate {
         DatasetSelector::Default => dataset_id.is_none(),
         DatasetSelector::Id(uri) => dataset_id == Some(uri),

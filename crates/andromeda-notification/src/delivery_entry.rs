@@ -9,7 +9,7 @@
 
 use crate::notification_event::NotificationEvent;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
 use typed_builder::TypedBuilder;
@@ -34,7 +34,7 @@ pub struct DeliveryEntry {
     /// Database-generated delivery key, the subject of every acknowledgement.
     pub key: DeliveryKey,
     /// Subscription that matched the change and must be notified.
-    pub subscription_id: Uri,
+    pub subscription_id: Identifier,
     /// Number of delivery attempts already made for this subscription.
     pub attempt_count: i32,
     /// Earliest instant at which the next attempt may be made.

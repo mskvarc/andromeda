@@ -26,7 +26,7 @@ use andromeda_context_commit::{
     entity_mutation::EntityMutation,
 };
 use andromeda_entity::side_effect_drain::EntitySideEffectDrainConfig;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     expanded::{
@@ -99,7 +99,7 @@ async fn durable_queue_a_job_hands_each_write_its_whole_change_back() {
         .origin(ChangeOrigin::Local)
         .current_payload(Some(Arc::new(modified_entity())))
         .build();
-    let entity_id: Uri = ENTITY_ID.parse().expect("a valid entity identifier");
+    let entity_id: Identifier = ENTITY_ID.parse().expect("a valid entity identifier");
     let write = AtomicWrite::builder()
         .entity_id(Arc::new(entity_id))
         .entity(EntityMutation::None)

@@ -46,7 +46,7 @@ mod tests {
         mqtt::envelope::build_envelope,
         request::{DeliveryRequest, NotificationDelivery},
     };
-    use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use mediatype::MediaTypeBuf;
@@ -57,7 +57,7 @@ mod tests {
     fn request(accept: &str, receiver_info: Option<&[KeyValuePair]>, tenant: Option<&TenantName>) -> DeliveryRequest {
         let media = MediaTypeBuf::from_str(accept).expect("a well-formed media type");
         let endpoint = Url::parse("mqtt://broker:1883/topic").expect("a well-formed endpoint URI");
-        let subscription = Uri::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
+        let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
         NotificationDelivery {
             payload: &json!({"id": "urn:ngsi-ld:Notification:1", "type": "Notification"}),
             endpoint_uri: &endpoint,

@@ -3,7 +3,7 @@
 //! Carries the snapshot identifier for snapshot-scoped requests and responses.
 //! The value must be a valid URI.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use http::{HeaderName, HeaderValue};
 use std::iter;
 
@@ -15,18 +15,18 @@ static NGSILD_SNAPSHOT: HeaderName = HeaderName::from_static("ngsild-snapshot");
 /// Carries the snapshot identifier URI that scopes a request to a frozen
 /// data snapshot, or indicates that a response is from a snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NgsiLdSnapshot(Uri);
+pub struct NgsiLdSnapshot(Identifier);
 
 impl NgsiLdSnapshot {
     /// Create a new `NGSILD-Snapshot` header from a validated URI.
     #[must_use]
-    pub const fn new(value: Uri) -> NgsiLdSnapshot {
+    pub const fn new(value: Identifier) -> NgsiLdSnapshot {
         NgsiLdSnapshot(value)
     }
 
     /// Consume the header and return the inner URI.
     #[must_use]
-    pub fn into_inner(self) -> Uri {
+    pub fn into_inner(self) -> Identifier {
         self.0
     }
 
@@ -54,7 +54,7 @@ impl headers::Header for NgsiLdSnapshot {
         if trimmed.is_empty() || trimmed != s || trimmed.chars().any(char::is_whitespace) {
             return Err(headers::Error::invalid());
         }
-        let Ok(snapshot_id) = trimmed.parse::<Uri>() else {
+        let Ok(snapshot_id) = trimmed.parse::<Identifier>() else {
             return Err(headers::Error::invalid());
         };
         Ok(NgsiLdSnapshot(snapshot_id))
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn encode_roundtrip() {
-        let snapshot_id = "urn:ngsi-ld:Snapshot:x".parse::<Uri>().expect("valid snapshot id");
+        let snapshot_id = "urn:ngsi-ld:Snapshot:x".parse::<Identifier>().expect("valid snapshot id");
         let header = NgsiLdSnapshot::new(snapshot_id);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);

@@ -1,7 +1,7 @@
 //! Row-to-domain conversions for snapshot records.
 
 use crate::{error::ContextStoreError, snapshot::status_code::status_of};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     query::body::Query,
@@ -39,7 +39,7 @@ pub fn deserialize_json_column<T: DeserializeOwned>(row: &PgRow, column: &str) -
 pub fn row_to_snapshot(row: &PgRow) -> Result<Snapshot, ContextStoreError> {
     let id_str: String = row.try_get("id")?;
     let id = id_str
-        .parse::<Uri>()
+        .parse::<Identifier>()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid snapshot id '{id_str}': {e}")))?;
 
     // An unassigned status code is a typed decode failure naming the registry

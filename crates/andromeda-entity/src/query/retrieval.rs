@@ -17,7 +17,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
@@ -66,7 +66,13 @@ impl EntityQueryService {
     /// exists, when its types fall outside the requested type selector, or when
     /// `attrs` selected none of the attributes it has, and
     /// otherwise whatever the store or the context expansion failed with.
-    pub async fn get_inner(&self, target: &ContextTarget, id: &Uri, narrowing: &RetrievalNarrowing<'_>, context: &ContextSpec) -> Result<Entity, EntityError> {
+    pub async fn get_inner(
+        &self,
+        target: &ContextTarget,
+        id: &Identifier,
+        narrowing: &RetrievalNarrowing<'_>,
+        context: &ContextSpec,
+    ) -> Result<Entity, EntityError> {
         let timer = entity::start(EntityOperation::Retrieve);
         let result: Result<Entity, EntityError> = async {
             let Some(expanded_entity) = self.reader.get(target, id).await? else {
@@ -119,7 +125,13 @@ impl EntityQueryService {
     /// Returns [`EntityError::not_found`] when the selection leaves the entity
     /// with nothing to answer with, and whatever the context expansion failed
     /// with otherwise.
-    async fn narrow_to_selection(&self, entity: &mut Entity, id: &Uri, narrowing: &RetrievalNarrowing<'_>, context: &ContextSpec) -> Result<(), EntityError> {
+    async fn narrow_to_selection(
+        &self,
+        entity: &mut Entity,
+        id: &Identifier,
+        narrowing: &RetrievalNarrowing<'_>,
+        context: &ContextSpec,
+    ) -> Result<(), EntityError> {
         let prepared = self.engine().prepare_term_context(context);
         let mut expansions = AttributeExpansions::new(self.engine(), &prepared);
         if !narrowing.attrs.is_empty() {
@@ -201,7 +213,7 @@ impl EntityQueryService {
 
             // One batch read rather than one per entity.
             let sys_attrs_map = if sys_attrs == SysAttrsInclusion::Include {
-                let ids: Vec<Uri> = page
+                let ids: Vec<Identifier> = page
                     .rows
                     .iter()
                     .filter_map(|row| {
@@ -209,7 +221,7 @@ impl EntityQueryService {
                             .as_object()
                             .and_then(|obj| obj.get("@id"))
                             .and_then(Value::as_str)
-                            .and_then(|id| id.parse::<Uri>().ok())
+                            .and_then(|id| id.parse::<Identifier>().ok())
                     })
                     .collect();
                 self.reader.get_sys_attrs_batch(target, &ids).await?
@@ -224,7 +236,7 @@ impl EntityQueryService {
                     .as_object()
                     .and_then(|obj| obj.get("@id"))
                     .and_then(Value::as_str)
-                    .and_then(|id| id.parse::<Uri>().ok());
+                    .and_then(|id| id.parse::<Identifier>().ok());
 
                 let mut entity = self.compact_to_entity(value, &compactor, None, sys_attrs).await?;
 
@@ -261,7 +273,7 @@ impl EntityQueryService {
     /// Reports [`EntityError::OperationNotSupported`] when the store cannot
     /// narrow a predicate of `compiled` at all (clause 5.5.2), and
     /// [`EntityError::Persistence`] when the store could not answer the query.
-    pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<Vec<Uri>, EntityError> {
+    pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<Vec<Identifier>, EntityError> {
         refuse_unnarrowable(*self.query_store.profile(), &compiled.selection)?;
         let outcome = self.query_store.query_ids(target, compiled).await?;
         self.finish_ids(target, outcome, compiled.pagination).await

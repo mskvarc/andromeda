@@ -3,7 +3,7 @@
 
 use crate::classified_report::ClassifiedReport;
 use andromeda_federation::outcome::{ForwardedWriteOutcome, TransportFailure};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::{
     batch_operation::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
     error_type::NgsiLdErrorType,
@@ -13,13 +13,13 @@ use serde::Deserialize;
 use serde_json::Value;
 
 /// Project one policy error through its binding-supplied exhaustive classifier.
-pub fn batch_entity_error<E>(entity_id: Uri, error: &E, classify: impl FnOnce(&E) -> ClassifiedReport) -> BatchEntityError {
+pub fn batch_entity_error<E>(entity_id: Identifier, error: &E, classify: impl FnOnce(&E) -> ClassifiedReport) -> BatchEntityError {
     let report = classify(error);
     BatchEntityError::new(entity_id, report.error_type(), report.detail())
 }
 
 /// Project a complete policy batch outcome into the clause 5.2.16 wire envelope.
-pub fn batch_operation_result<E>(success: Vec<Uri>, errors: Vec<(Uri, E)>, classify: impl Fn(&E) -> ClassifiedReport) -> BatchOperationResult {
+pub fn batch_operation_result<E>(success: Vec<Identifier>, errors: Vec<(Identifier, E)>, classify: impl Fn(&E) -> ClassifiedReport) -> BatchOperationResult {
     let errors = errors
         .into_iter()
         .map(|(entity_id, error)| batch_entity_error(entity_id, &error, &classify))
@@ -36,7 +36,7 @@ pub fn batch_operation_result<E>(success: Vec<Uri>, errors: Vec<(Uri, E)>, class
 /// response. Every error names the registration it came from (Table
 /// 5.2.17-1 `registrationId`).
 #[must_use]
-pub fn forwarded_write_error(entity_id: Uri, registration_id: &Uri, outcome: &ForwardedWriteOutcome) -> Option<BatchEntityError> {
+pub fn forwarded_write_error(entity_id: Identifier, registration_id: &Identifier, outcome: &ForwardedWriteOutcome) -> Option<BatchEntityError> {
     let error = match outcome {
         ForwardedWriteOutcome::Completed { .. } => return None,
         ForwardedWriteOutcome::RemoteHttpFailure { status, body } => match body.as_ref().and_then(|body| BatchProblemDetail::deserialize(body).ok()) {
@@ -107,7 +107,7 @@ mod tests {
     use serde_json::json;
     use std::error::Error;
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
     }
 
@@ -196,8 +196,8 @@ mod tests {
 
     #[test]
     fn projection_preserves_successes_failures_and_supplied_classification() -> Result<(), Box<dyn Error>> {
-        let success = "urn:ngsi-ld:Entity:1".parse::<Uri>()?;
-        let failed = "urn:ngsi-ld:Entity:2".parse::<Uri>()?;
+        let success = "urn:ngsi-ld:Entity:1".parse::<Identifier>()?;
+        let failed = "urn:ngsi-ld:Entity:2".parse::<Identifier>()?;
         let result = batch_operation_result(vec![success], vec![(failed, "invalid")], |detail| {
             ClassifiedReport::public(NgsiLdErrorType::BadRequestData, *detail)
         });

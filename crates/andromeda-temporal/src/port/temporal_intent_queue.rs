@@ -5,7 +5,7 @@
 
 use crate::{append_intent::KeyedTemporalAppendIntent, error::TemporalError};
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::num::NonZeroU32;
@@ -63,7 +63,7 @@ pub trait TemporalIntentQueue: Send + Sync {
     async fn claim_for_entity(
         &self,
         owner: LeaseHolder,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError>;

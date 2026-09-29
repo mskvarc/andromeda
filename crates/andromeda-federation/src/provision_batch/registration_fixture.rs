@@ -1,7 +1,7 @@
 //! The registrations and entities the batch forwarding tests share.
 
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use serde_json::{Value, json};
 
@@ -11,7 +11,7 @@ pub(super) fn offline_engine() -> JsonLdEngine {
 }
 
 /// Parse a fixture identifier.
-pub(super) fn uri(raw: &str) -> Uri {
+pub(super) fn uri(raw: &str) -> Identifier {
     raw.parse().expect("valid URI")
 }
 

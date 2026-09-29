@@ -10,7 +10,7 @@ use crate::{
 };
 use andromeda_federation::subscription::{SubscriptionForward, SubscriptionForwardAdmission};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     notification::{CsourceNotification, CsrTriggerReason},
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
@@ -27,12 +27,12 @@ pub(crate) enum ForwardDecision {
     /// Update the copy the source already holds.
     Update {
         /// The identifier of the copy at the source.
-        remote: Uri,
+        remote: Identifier,
     },
     /// Remove the copy the source holds.
     Delete {
         /// The identifier of the copy at the source.
-        remote: Uri,
+        remote: Identifier,
     },
     /// Nothing to do: an auxiliary registration, or a change to a source
     /// holding no copy.
@@ -41,7 +41,7 @@ pub(crate) enum ForwardDecision {
 
 /// Decide what a trigger reason calls for, given whether a copy already exists
 /// at the registration's source (clause 5.8.1.4).
-pub(crate) fn decide(trigger: CsrTriggerReason, mode: ForwardingMode, existing: Option<Uri>) -> ForwardDecision {
+pub(crate) fn decide(trigger: CsrTriggerReason, mode: ForwardingMode, existing: Option<Identifier>) -> ForwardDecision {
     // Clause 5.8.1.4 names exclusive, redirect and inclusive registrations;
     // an auxiliary source never receives a subscription.
     if mode == ForwardingMode::Auxiliary {
@@ -62,7 +62,7 @@ pub(crate) fn decide(trigger: CsrTriggerReason, mode: ForwardingMode, existing: 
 
 impl SubscriptionForwardingService {
     /// Look a registration up by identifier.
-    pub(crate) async fn federation_registration(&self, registration: &Uri) -> Result<Option<ContextSourceRegistration>, SubscriptionForwardingError> {
+    pub(crate) async fn federation_registration(&self, registration: &Identifier) -> Result<Option<ContextSourceRegistration>, SubscriptionForwardingError> {
         self.federation
             .registration_store()
             .get(registration)
@@ -192,10 +192,10 @@ impl SubscriptionForwardingService {
 #[cfg(test)]
 mod tests {
     use crate::forwarder::{ForwardDecision, decide};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::forwarding_mode::ForwardingMode};
 
-    fn remote() -> Uri {
+    fn remote() -> Identifier {
         "urn:ngsi-ld:Subscription:forwarded:1".parse().expect("valid URI")
     }
 

@@ -5,7 +5,7 @@ use crate::{
     error_type::NgsiLdErrorType,
     problem_detail::{ProblemClassification, WireProblemClassification},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use iri_rs::IriRefBuf;
 use serde::{
     Deserialize,
@@ -25,7 +25,7 @@ use std::fmt;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BatchOperationResult {
     /// Identifiers of the entities the operation applied to.
-    pub success: Vec<Uri>,
+    pub success: Vec<Identifier>,
     /// One entry per entity the operation could not apply to.
     pub errors: Vec<BatchEntityError>,
 }
@@ -35,10 +35,10 @@ pub struct BatchOperationResult {
 pub struct BatchEntityError {
     /// The entity the failure is about.
     #[serde(rename = "entityId")]
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// Registration responsible for a failed distributed operation.
     #[serde(rename = "registrationId", skip_serializing_if = "Option::is_none")]
-    pub registration_id: Option<Uri>,
+    pub registration_id: Option<Identifier>,
     /// What went wrong with it.
     pub error: BatchProblemDetail,
 }
@@ -46,7 +46,7 @@ pub struct BatchEntityError {
 impl BatchEntityError {
     /// Report `error_type` against `entity_id`, with a human-readable detail.
     #[must_use]
-    pub fn new(entity_id: Uri, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
+    pub fn new(entity_id: Identifier, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
         BatchEntityError::from_classification(entity_id, ProblemClassification::Category(error_type), detail)
     }
 
@@ -54,7 +54,7 @@ impl BatchEntityError {
     /// clause 6.3.17 statuses a forwarded part of a distributed operation can
     /// fail with (502, 504, 508) beside the ordinary clause 5.5.2 categories.
     #[must_use]
-    pub fn from_classification(entity_id: Uri, classification: ProblemClassification, detail: &str) -> BatchEntityError {
+    pub fn from_classification(entity_id: Identifier, classification: ProblemClassification, detail: &str) -> BatchEntityError {
         BatchEntityError {
             entity_id,
             registration_id: None,
@@ -67,7 +67,7 @@ impl BatchEntityError {
 
     /// Attach the registration responsible for a failed distributed operation.
     #[must_use]
-    pub fn with_registration_id(mut self, registration_id: Uri) -> BatchEntityError {
+    pub fn with_registration_id(mut self, registration_id: Identifier) -> BatchEntityError {
         self.registration_id = Some(registration_id);
         self
     }
@@ -207,12 +207,12 @@ mod tests {
         error_type::NgsiLdErrorType,
         problem_detail::ProblemClassification,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use iri_rs::IriRefBuf;
     use serde_json::json;
     use strum::IntoEnumIterator;
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid test URI")
     }
 

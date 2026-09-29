@@ -16,10 +16,7 @@ use andromeda_entity::{
     sys_attrs::inject_sys_attrs,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::{
-    entity_type_name::EntityTypeName,
-    uri::{NGSI_LD_URN_NID, Uri},
-};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, uri::NGSI_LD_URN_NID};
 use andromeda_ngsi_ld_model::{notification::Notification, subscription::Subscription};
 use andromeda_ngsi_ld_render::notification_conformance::amend_notification_entities;
 use andromeda_subscription::{
@@ -154,7 +151,7 @@ impl IntervalNotificationOperation {
                     }
                 }
 
-                let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() else {
+                let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Identifier>() else {
                     error!("Failed to construct notification URN for {}", sub.id);
                     return;
                 };

@@ -1,7 +1,7 @@
 //! Explicit residual and pagination outcomes returned by temporal readers.
 
 use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     pagination::{CountPolicy, Pagination},
@@ -90,7 +90,7 @@ impl TemporalEntityIdOutcome {
     /// candidates cannot be evaluated against the predicate that remains; and
     /// [`InvalidTemporalOutcome::UnreadableCandidate`] for a candidate whose
     /// identity the residual predicate cannot read.
-    pub fn complete(self, pagination: Pagination) -> Result<(Vec<Uri>, Option<i64>), InvalidTemporalOutcome> {
+    pub fn complete(self, pagination: Pagination) -> Result<(Vec<Identifier>, Option<i64>), InvalidTemporalOutcome> {
         self.validate()?;
         let mut candidates = self.candidates;
         if !self.residual.is_empty() {
@@ -118,7 +118,7 @@ impl TemporalEntityIdOutcome {
 #[derive(Debug)]
 pub struct TemporalEntityCandidate {
     /// Candidate entity identifier.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// Expanded selection value for the requested temporal window when any predicate remains residual.
     pub selection_value: Option<Value>,
 }
@@ -152,7 +152,7 @@ mod tests {
     use crate::outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual};
     use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         filter::parser,
@@ -191,7 +191,7 @@ mod tests {
             .build()
     }
 
-    fn candidates(values: &[(Uri, Value)], pushed: &EntitySelection) -> Vec<TemporalEntityCandidate> {
+    fn candidates(values: &[(Identifier, Value)], pushed: &EntitySelection) -> Vec<TemporalEntityCandidate> {
         let pushed = ResidualFilter::over(pushed.clone());
         values
             .iter()

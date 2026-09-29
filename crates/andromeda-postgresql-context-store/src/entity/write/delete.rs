@@ -15,7 +15,7 @@ use crate::{
 };
 use andromeda_context_commit::deleted_entity::DeletedEntity;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{E, Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::unnest::apply_column_alias;
@@ -177,7 +177,7 @@ impl EntityRepository {
     pub async fn delete_batch_in_tx(
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
-        ids: &[Uri],
+        ids: &[Identifier],
         expected_modified_at: &[Option<DateTime<Utc>>],
     ) -> Result<Vec<DeletedEntity>, ContextStoreError> {
         if ids.is_empty() {
@@ -191,7 +191,7 @@ impl EntityRepository {
             )));
         }
 
-        let ids = ids.iter().map(Uri::as_str).collect::<Vec<_>>();
+        let ids = ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
         let sql = entity_delete_sql(target)?;
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(ids)

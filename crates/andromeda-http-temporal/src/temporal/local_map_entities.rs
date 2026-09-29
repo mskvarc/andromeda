@@ -10,7 +10,7 @@
 use crate::{error::TemporalResultExt, history_read::TemporalHistoryRead};
 use andromeda_entity_map::recording::{LocalMapEntities, MapListing, PageFiltering};
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_temporal::requested_identifiers::RequestedIdentifiers;
 use axum::http::Uri;
 
@@ -21,7 +21,7 @@ use axum::http::Uri;
 /// asks for it.
 pub(crate) enum LocalHistoryEntities<'a> {
     /// The single history a retrieval held locally, if it held one.
-    Retrieved(Option<&'a NgsiLdUri>),
+    Retrieved(Option<&'a Identifier>),
     /// Every history a query matched locally, which is the whole result and not
     /// merely the page (clause 5.5.14), together with the Linked Entities the
     /// clause 4.5.23 join reached, which belong to the same unitary request.
@@ -29,7 +29,7 @@ pub(crate) enum LocalHistoryEntities<'a> {
         /// The read the identifiers are listed through.
         read: &'a TemporalHistoryRead<'a>,
         /// The Linked Entities the join resolved.
-        linked: &'a [NgsiLdUri],
+        linked: &'a [Identifier],
         /// The request URI a failed listing names.
         instance: &'a Uri,
     },
@@ -54,7 +54,7 @@ impl LocalHistoryEntities<'_> {
 impl LocalMapEntities for LocalHistoryEntities<'_> {
     type Error = ProblemResponse;
 
-    async fn identifiers(&self, listing: MapListing) -> Result<Vec<NgsiLdUri>, ProblemResponse> {
+    async fn identifiers(&self, listing: MapListing) -> Result<Vec<Identifier>, ProblemResponse> {
         match *self {
             LocalHistoryEntities::Retrieved(entity_id) => Ok(entity_id.cloned().into_iter().collect()), // clone: the map owns its identifiers
             LocalHistoryEntities::Queried { read, linked, instance } => {

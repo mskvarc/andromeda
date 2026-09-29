@@ -11,7 +11,7 @@ use crate::{
 };
 use andromeda_context_commit::{change_event::ChangeEvent, history_record::mutation_history};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
     mutation::{entity::update_entity_attrs, error::ExpandedEntityError, selection::OverwritePolicy},
@@ -55,7 +55,7 @@ impl EntityService {
     pub async fn update_attrs(
         &self,
         target: &ContextTarget,
-        id: &Uri,
+        id: &Identifier,
         admitted: AdmittedEntity<UpdateAttributes>,
     ) -> Result<(Vec<AttributeName>, Vec<AttributeName>), EntityError> {
         let entity_uri = id.clone(); // clone: notification and computed write own the identifier

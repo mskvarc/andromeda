@@ -14,7 +14,7 @@
 //! the current-state and the temporal bindings scope a follow-up here so the
 //! two cannot disagree on what a map fixes.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 
@@ -25,7 +25,7 @@ use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 /// the whole map: a follow-up may name its own identifiers but never widen past
 /// what the map fixed.
 #[must_use]
-pub fn scope_query_ids(map: &EntityMap, existing_ids: Option<&[Uri]>) -> Vec<Uri> {
+pub fn scope_query_ids(map: &EntityMap, existing_ids: Option<&[Identifier]>) -> Vec<Identifier> {
     match existing_ids {
         Some(existing) => existing
             .iter()
@@ -45,7 +45,7 @@ pub fn scope_query_ids(map: &EntityMap, existing_ids: Option<&[Uri]>) -> Vec<Uri
 /// list. A selector left with no identifier admits nothing and so contributes
 /// nothing to the union; a union emptied that way leaves the request
 /// considering no entity at all, which only the flat list can express.
-pub fn hold_selection_to_map(map: &EntityMap, id: &mut Option<Vec<Uri>>, selectors: &mut Vec<EntitySelectorParams>) {
+pub fn hold_selection_to_map(map: &EntityMap, id: &mut Option<Vec<Identifier>>, selectors: &mut Vec<EntitySelectorParams>) {
     if selectors.is_empty() {
         *id = Some(scope_query_ids(map, id.as_deref()));
         return;
@@ -70,13 +70,13 @@ pub fn hold_selection_to_map(map: &EntityMap, id: &mut Option<Vec<Uri>>, selecto
 #[cfg(test)]
 mod tests {
     use crate::query_scoping::{hold_selection_to_map, scope_query_ids};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_map::EntityMap;
     use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
     use chrono::{TimeDelta, Utc};
 
     /// An entity identifier, as the request boundary would have validated it.
-    fn identifier(raw: &str) -> Uri {
+    fn identifier(raw: &str) -> Identifier {
         raw.parse().expect("a valid NGSI-LD URI")
     }
 
@@ -101,13 +101,13 @@ mod tests {
     fn selector_ids(selectors: &[EntitySelectorParams]) -> Vec<Vec<&str>> {
         selectors
             .iter()
-            .map(|selector| selector.id.as_deref().unwrap_or_default().iter().map(Uri::as_str).collect())
+            .map(|selector| selector.id.as_deref().unwrap_or_default().iter().map(Identifier::as_str).collect())
             .collect()
     }
 
     /// The identifiers a flat list was narrowed to, as wire text.
-    fn flat_ids(id: Option<&Vec<Uri>>) -> Vec<&str> {
-        id.map(|ids| ids.iter().map(Uri::as_str).collect()).unwrap_or_default()
+    fn flat_ids(id: Option<&Vec<Identifier>>) -> Vec<&str> {
+        id.map(|ids| ids.iter().map(Identifier::as_str).collect()).unwrap_or_default()
     }
 
     /// The intersection keeps the order the incoming query wrote, because the
@@ -132,7 +132,7 @@ mod tests {
     fn a_request_naming_nothing_the_map_lists_is_narrowed_to_an_empty_set() {
         let map = map_over(&["urn:a"]);
         let incoming = [identifier("urn:outside")];
-        pretty_assertions::assert_eq!(scope_query_ids(&map, Some(&incoming)), Vec::<Uri>::new());
+        pretty_assertions::assert_eq!(scope_query_ids(&map, Some(&incoming)), Vec::<Identifier>::new());
     }
 
     /// Clause 5.5.14: a query string names its entities in the flat identifier

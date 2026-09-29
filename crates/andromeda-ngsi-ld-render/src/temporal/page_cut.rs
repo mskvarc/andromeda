@@ -13,7 +13,7 @@
 //! suite reads (ETSI TP `020_14` and `021_15`).
 
 use crate::temporal::entity::is_scope_attribute;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::temporal::instance_page::PageDirection;
 use chrono::{DateTime, Utc};
@@ -104,7 +104,7 @@ impl PageCut {
 }
 
 /// One attribute stream: an attribute and the `datasetId` of its instances.
-type StreamKey<'a> = (&'a AttributeName, Option<&'a Uri>);
+type StreamKey<'a> = (&'a AttributeName, Option<&'a Identifier>);
 
 /// What one stream's page holds.
 #[derive(Debug, Default)]

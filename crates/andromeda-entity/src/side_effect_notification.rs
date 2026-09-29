@@ -83,7 +83,7 @@ mod tests {
     };
     use andromeda_context_commit::change_event::ChangeEvent;
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         expanded::{
@@ -128,7 +128,7 @@ mod tests {
             kind,
         };
         ChangeEvent::builder()
-            .entity_id(ENTITY_ID.parse::<Uri>().expect("a valid entity URI"))
+            .entity_id(ENTITY_ID.parse::<Identifier>().expect("a valid entity URI"))
             .entity_types(types.iter().map(|raw| raw.parse::<EntityTypeName>().expect("a valid type name")).collect())
             .change(EntityChange::new(lifecycle, vec![category]))
             .occurred_at(Utc::now())

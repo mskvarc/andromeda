@@ -1,7 +1,7 @@
 //! One scope observation offered to the scope-history bulk insert.
 
 use crate::{scope_history_value::ScopeHistoryValue, semantic_time_axes::SemanticTimeAxes};
-use andromeda_ngsi_ld_lexicon::{instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_temporal::append_intent::TemporalObservationIdentity;
 use chrono::{DateTime, Utc};
 
@@ -17,7 +17,7 @@ pub struct ScopeHistoryEntry {
     /// The instant the broker durably accepted the write this row belongs to.
     pub recorded_at: DateTime<Utc>,
     /// The entity whose scope this observation records.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// The atomic write that produced this row, and this row's place in it.
     pub identity: TemporalObservationIdentity,
     /// What the row records.

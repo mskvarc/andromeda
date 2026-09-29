@@ -16,7 +16,7 @@
 //! source.
 
 use crate::{attribute_instance_merge::MergePolicy, entity_result::policy_of, outcome::ForwardedEntities};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -107,7 +107,7 @@ fn parties<'a>(held: &'a [Entity], received: &'a [ForwardedEntities]) -> impl It
 /// The versions carrying an entity-level `expiresAt` that their peers do not
 /// duplicate, which are exactly the ones clause 4.5.5.2 differentiates.
 fn conflicting_versions(held: &[Entity], received: &[ForwardedEntities]) -> Vec<VersionPosition> {
-    let mut agreement: HashMap<&Uri, ExpiryAgreement> = HashMap::new();
+    let mut agreement: HashMap<&Identifier, ExpiryAgreement> = HashMap::new();
     for (_, version) in parties(held, received) {
         let folded = agreement
             .get(&version.id)

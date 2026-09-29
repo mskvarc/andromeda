@@ -1,7 +1,7 @@
 //! The identifier this broker mints for a subscription it hands to a peer.
 
 use crate::error::SubscriptionForwardingError;
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
@@ -14,9 +14,9 @@ use uuid::Uuid;
 /// Returns [`SubscriptionForwardingError::Internal`] when the minted
 /// namespace-specific string is not a valid URN component or the minted URN is
 /// past the identifier bound.
-pub(crate) fn mint_subscription_id() -> Result<Uri, SubscriptionForwardingError> {
+pub(crate) fn mint_subscription_id() -> Result<Identifier, SubscriptionForwardingError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:forwarded:{}", Uuid::new_v4()))
         .build()
         .map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
-    Uri::try_from(urn).map_err(|error| SubscriptionForwardingError::internal(error.to_string()))
+    Identifier::try_from(urn).map_err(|error| SubscriptionForwardingError::internal(error.to_string()))
 }

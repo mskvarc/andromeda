@@ -14,7 +14,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_family::InstanceFamily, instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_family::InstanceFamily, instance_identity::InstanceIdentity};
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use serde_json::Value;
 
@@ -34,7 +34,7 @@ impl TemporalService {
     pub async fn modify_attr_instance(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attr_id: &AttributeName,
         instance: &InstanceIdentity,
         payload: Value,
@@ -50,7 +50,7 @@ impl TemporalService {
     async fn modify_attr_instance_inner(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attr_id: &AttributeName,
         instance: &InstanceIdentity,
         payload: Value,
@@ -95,7 +95,7 @@ impl TemporalService {
     pub async fn delete_attr_instance(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attr_id: &AttributeName,
         instance: &InstanceIdentity,
         context: &ContextSpec,
@@ -110,7 +110,7 @@ impl TemporalService {
     async fn delete_attr_instance_inner(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attr_id: &AttributeName,
         instance: &InstanceIdentity,
         context: &ContextSpec,

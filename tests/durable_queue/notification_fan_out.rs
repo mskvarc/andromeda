@@ -15,7 +15,7 @@ use crate::{
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     expanded::{
@@ -36,7 +36,7 @@ use uuid::Uuid;
 const HIGH_FAN_OUT: usize = 100;
 
 /// An Entity snapshot large enough that repeating it per subscriber would dominate the queue.
-fn large_snapshot(entity: &Uri) -> Value {
+fn large_snapshot(entity: &Identifier) -> Value {
     let members: Vec<Value> = (0..2_000).map(|index| json!({"@value": format!("{index}-{}", Uuid::new_v4())})).collect();
     let mut snapshot = entity_snapshot(entity);
     snapshot["https://uri.etsi.org/ngsi-ld/default-context/readings"] = json!([{
@@ -135,7 +135,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
     assert_eq!(events_of(&pool, &one_subscriber).await, 1, "one affected Entity produces one event");
     assert_eq!(deliveries_of(&pool, single_key).await, 1, "one matching Subscription owes one delivery");
 
-    let many: Vec<Uri> = (0..HIGH_FAN_OUT).map(|_| subscription_id()).collect();
+    let many: Vec<Identifier> = (0..HIGH_FAN_OUT).map(|_| subscription_id()).collect();
     let mut many_keys = Vec::with_capacity(HIGH_FAN_OUT);
     for identifier in &many {
         many_keys.push(subscription(&pool, identifier.as_str()).await);
@@ -212,7 +212,7 @@ async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_absorbs_a_r
     let first_key = subscription(&pool, first.as_str()).await;
     let second_key = subscription(&pool, second.as_str()).await;
 
-    let entities: Vec<Uri> = (0..3).map(|_| entity_id()).collect();
+    let entities: Vec<Identifier> = (0..3).map(|_| entity_id()).collect();
     let snapshots: Vec<Value> = entities.iter().map(entity_snapshot).collect();
     let record = WriteRecord::mint(Utc::now());
     let change = EntityChange::new(EntityLifecycle::Modified, Vec::new());

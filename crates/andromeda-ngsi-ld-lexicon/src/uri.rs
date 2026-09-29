@@ -1,6 +1,5 @@
-//! The identifier type every NGSI-LD resource is named by (ETSI GS CIM 009 clause 4.6.2).
+//! The URI every NGSI-LD resource is named and referenced by (ETSI GS CIM 009 clause 4.6.2).
 
-use crate::identifier_length::IdentifierTooLong;
 use derive_more::Display;
 use iri_rs::{Iri, IriBuf};
 use serde::{Deserialize, Serialize};
@@ -12,9 +11,9 @@ use urn_rs::Urn;
 /// The Namespace Identifier for NGSI-LD URNs.
 pub const NGSI_LD_URN_NID: &str = "ngsi-ld";
 
-/// NGSI-LD entity identifier (ETSI GS CIM 009 clause 4.6.2).
+/// A URI as ETSI GS CIM 009 clause 4.6.2 admits it.
 ///
-/// An identifier is a URN (e.g. `urn:ngsi-ld:Building:001`) or a URL
+/// A URI is a URN (e.g. `urn:ngsi-ld:Building:001`) or a URL
 /// (e.g. `https://example.com/entity/1`). Clause 4.6.2 NOTE 2 makes the term
 /// "URI" also cover an Internationalized Resource Identifier (IETF RFC 3987),
 /// so an identifier whose characters run beyond ASCII -- `urn:ngsi-ld:Ciudad:PARIS`
@@ -24,12 +23,14 @@ pub const NGSI_LD_URN_NID: &str = "ngsi-ld";
 /// non-ASCII octet as a percent escape, so those identifiers are held verbatim
 /// as an [`IriBuf`] instead.
 ///
-/// Every value is at most [`IDENTIFIER_BYTE_LIMIT`] octets long in the spelling
-/// it is stored and compared in. The representation is private so that no
-/// construction path can bypass that bound; [`Uri::view`] borrows the form it
-/// was parsed as.
+/// Neither clause 4.6.2 nor IETF RFC 3986 and RFC 3987 bound a URI's length,
+/// and neither does this type: a `Uri` is whatever the grammar admits, and only
+/// the request-body limit bounds how long one can be. The URI a stored resource
+/// is named by is an [`Identifier`], which holds a `Uri` to the bound its index
+/// needs. The representation is private so that no construction path can
+/// bypass the grammar; [`Uri::view`] borrows the form it was parsed as.
 ///
-/// [`IDENTIFIER_BYTE_LIMIT`]: crate::identifier_length::IDENTIFIER_BYTE_LIMIT
+/// [`Identifier`]: crate::identifier::Identifier
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Display)]
 #[serde(try_from = "String", into = "String")]
 #[display("{_0}")]
@@ -65,16 +66,10 @@ pub enum UriView<'a> {
     Iri(&'a IriBuf),
 }
 
-/// Error returned when a string cannot be parsed as a [`Uri`].
+/// The string is not a URN, a URL or an IRI.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub enum UriParseError {
-    /// The string is not a URN, a URL or an IRI.
-    #[error("invalid URI: not a valid URN, URL or IRI")]
-    Malformed,
-    /// The string is a URI, but longer than an identifier may be.
-    #[error(transparent)]
-    TooLong(#[from] IdentifierTooLong),
-}
+#[error("invalid URI: not a valid URN, URL or IRI")]
+pub struct UriParseError;
 
 impl Uri {
     /// The identifier as a string slice, in whichever form it was parsed.
@@ -114,33 +109,6 @@ impl Uri {
             UriForm::Urn(_) | UriForm::Iri(_) => None,
         }
     }
-
-    /// An identifier from a fixed IRI literal the caller wrote.
-    ///
-    /// The literal's grammar is checked at compile time by `iri!`; its length
-    /// is not, so the caller passing a literal it wrote is the guarantor that it
-    /// is within [`IDENTIFIER_BYTE_LIMIT`]. This exists for built-in
-    /// configuration defaults, where the literal is compile-time fixed and
-    /// covered by a test, so no fallible construction belongs on the path.
-    ///
-    /// [`IDENTIFIER_BYTE_LIMIT`]: crate::identifier_length::IDENTIFIER_BYTE_LIMIT
-    #[must_use]
-    pub fn from_static(iri: Iri<&'static str>) -> Uri {
-        Uri(UriForm::Iri(IriBuf::from(iri)))
-    }
-
-    /// Wrap a URN whose spelling a crate-local parser has already held to the
-    /// identifier bound.
-    pub(crate) const fn from_bounded_urn(urn: Urn) -> Uri {
-        Uri(UriForm::Urn(urn))
-    }
-
-    /// Admit `form` once its spelling is within the identifier bound.
-    fn bounded(form: UriForm) -> Result<Uri, IdentifierTooLong> {
-        let uri = Uri(form);
-        IdentifierTooLong::check(uri.as_str())?;
-        Ok(uri)
-    }
 }
 
 // `#[as_ref(str)]` applies to a single field; this is a sum of foreign types
@@ -160,7 +128,7 @@ impl AsRef<str> for Uri {
 /// `urn:ngsi-ld:Building:has space` would otherwise be an identifier. No form
 /// is parsed before the grammar admits the whole string.
 fn well_formed(raw: &str) -> Result<(), UriParseError> {
-    Iri::parse(raw).map(drop).map_err(|_| UriParseError::Malformed)
+    Iri::parse(raw).map(drop).map_err(|_| UriParseError)
 }
 
 // Validating parser: clause 4.6.2 admits a URN or a URL, and NOTE 2 extends
@@ -168,9 +136,7 @@ fn well_formed(raw: &str) -> Result<(), UriParseError> {
 // NID case-folding (Annex A.3) applies. An all-ASCII remainder is a URL, whose
 // parser normalises scheme and authority; a remainder carrying non-ASCII is kept
 // verbatim as an IRI, because the URL parser would percent-escape it and break
-// the round trip. The length bound applies to the normalised spelling, because
-// that is the one stored: the URL parser lengthens a string by percent-encoding
-// an apostrophe in the query of a special scheme.
+// the round trip.
 impl FromStr for Uri {
     type Err = UriParseError;
 
@@ -179,42 +145,37 @@ impl FromStr for Uri {
         let form = if let Ok(urn) = s.parse::<Urn>() {
             UriForm::Urn(urn)
         } else if s.is_ascii() {
-            s.parse::<Url>().map(UriForm::Url).map_err(|_| UriParseError::Malformed)?
+            s.parse::<Url>().map(UriForm::Url).map_err(|_| UriParseError)?
         } else {
-            IriBuf::new(s.to_string()).map(UriForm::Iri).map_err(|_| UriParseError::Malformed)?
+            IriBuf::new(s.to_string()).map(UriForm::Iri).map_err(|_| UriParseError)?
         };
-        Ok(Uri::bounded(form)?)
+        Ok(Uri(form))
     }
 }
 
-// A URN is always a valid identifier form; only its length can refuse it.
-impl TryFrom<Urn> for Uri {
-    type Error = IdentifierTooLong;
-
-    fn try_from(urn: Urn) -> Result<Uri, IdentifierTooLong> {
-        Uri::bounded(UriForm::Urn(urn))
+// A URN is always a URI.
+impl From<Urn> for Uri {
+    fn from(urn: Urn) -> Uri {
+        Uri(UriForm::Urn(urn))
     }
 }
 
 // A WHATWG URL is not always a URI: an opaque path such as the one of
 // `urn:a b` keeps its literal space. Its serialisation is held to the grammar
-// like any other spelling, then to the length bound.
+// like any other spelling.
 impl TryFrom<Url> for Uri {
     type Error = UriParseError;
 
     fn try_from(url: Url) -> Result<Uri, UriParseError> {
         well_formed(url.as_str())?;
-        Ok(Uri::bounded(UriForm::Url(url))?)
+        Ok(Uri(UriForm::Url(url)))
     }
 }
 
-// An IRI is always a valid identifier form (clause 4.6.2 NOTE 2); only its
-// length can refuse it.
-impl TryFrom<IriBuf> for Uri {
-    type Error = IdentifierTooLong;
-
-    fn try_from(iri: IriBuf) -> Result<Uri, IdentifierTooLong> {
-        Uri::bounded(UriForm::Iri(iri))
+// An IRI is always a URI (clause 4.6.2 NOTE 2).
+impl From<IriBuf> for Uri {
+    fn from(iri: IriBuf) -> Uri {
+        Uri(UriForm::Iri(iri))
     }
 }
 
@@ -238,17 +199,13 @@ impl From<Uri> for String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        identifier_length::{IDENTIFIER_BYTE_LIMIT, IdentifierTooLong},
-        uri::{Uri, UriParseError, UriView},
-    };
+    use crate::uri::{Uri, UriParseError, UriView};
     use iri_rs::IriBuf;
     use url::Url;
     use urn_rs::Urn;
 
-    /// A URN whose spelling is exactly `length` octets long.
-    fn urn_of_length(length: usize) -> String {
-        let prefix = "urn:ngsi-ld:Building:";
+    /// A string of exactly `length` octets that starts with `prefix`.
+    fn of_length(prefix: &str, length: usize) -> String {
         format!("{prefix}{}", "a".repeat(length - prefix.len()))
     }
 
@@ -279,7 +236,7 @@ mod tests {
     #[test]
     fn uri_from_urn() {
         let urn: Urn = "urn:ngsi-ld:Building:001".parse().unwrap();
-        let uri = Uri::try_from(urn).unwrap();
+        let uri = Uri::from(urn);
         assert!(matches!(uri.view(), UriView::Urn(_)));
         assert!(uri.as_urn().is_some());
     }
@@ -292,16 +249,6 @@ mod tests {
         assert!(uri.as_url().is_some());
     }
 
-    /// Annex A.3: "it is assumed that context-broker implementations shall
-    /// always use lowercase letters in namespaces where they have a choice in
-    /// case [...] Restricting the namespace prefix to lower case urn:ngsi-ld:
-    /// can improve caching and retrieval."
-    ///
-    /// URN equivalence is case-insensitive in the scheme and NID, so two
-    /// spellings of one identifier have to converge on the lowercase prefix
-    /// before anything compares or caches them. The namespace-specific string
-    /// is case-sensitive and must survive untouched, or `Building:1` and
-    /// `building:1` would collapse into one entity.
     #[test]
     fn a_urn_prefix_is_normalised_to_lowercase_while_the_identifier_keeps_its_case() {
         let parsed: Uri = "URN:NGSI-LD:Building:001".parse().expect("a URN in any case");
@@ -314,11 +261,6 @@ mod tests {
         assert_ne!(other_case, parsed, "the namespace specific string stays case-sensitive");
     }
 
-    /// Clause 4.6.2 NOTE 2 makes an identifier carrying non-ASCII characters a
-    /// valid NGSI-LD URI as an IRI (IETF RFC 3987). It parses and, crucially,
-    /// serialises back to the identical spelling: the URL parser would rewrite
-    /// the non-ASCII octets as `%C3%A9`, changing the identifier the client
-    /// gave.
     #[test]
     fn a_non_ascii_urn_round_trips_verbatim_rather_than_percent_encoded() {
         let raw = "urn:ngsi-ld:Ciudad:Par\u{00ed}s";
@@ -332,8 +274,6 @@ mod tests {
         pretty_assertions::assert_eq!(reparsed, parsed);
     }
 
-    /// A non-ASCII http(s) identifier is an IRI just as a non-ASCII URN is, and
-    /// is likewise kept verbatim rather than handed to the URL parser.
     #[test]
     fn a_non_ascii_http_identifier_is_kept_verbatim_as_an_iri() {
         let raw = "https://example.com/Ciudad/Par\u{00ed}s";
@@ -342,80 +282,6 @@ mod tests {
         pretty_assertions::assert_eq!(parsed.as_str(), raw);
     }
 
-    #[test]
-    fn a_urn_of_exactly_the_limit_parses() {
-        let raw = urn_of_length(IDENTIFIER_BYTE_LIMIT);
-        let parsed: Uri = raw.parse().expect("a URN at the limit");
-        pretty_assertions::assert_eq!(parsed.as_str().len(), IDENTIFIER_BYTE_LIMIT);
-    }
-
-    #[test]
-    fn a_urn_one_byte_past_the_limit_is_too_long() {
-        let raw = urn_of_length(IDENTIFIER_BYTE_LIMIT + 1);
-        pretty_assertions::assert_eq!(
-            raw.parse::<Uri>(),
-            Err(UriParseError::TooLong(IdentifierTooLong {
-                length: IDENTIFIER_BYTE_LIMIT + 1
-            }))
-        );
-    }
-
-    /// A two-octet character counts twice: 600 of them are 1200 octets, past
-    /// the limit, although the identifier is well under 1024 characters.
-    #[test]
-    fn the_limit_counts_utf8_octets_not_characters() {
-        let raw = format!("urn:ngsi-ld:Building:{}", "\u{e9}".repeat(600));
-        assert!(raw.chars().count() < IDENTIFIER_BYTE_LIMIT);
-        pretty_assertions::assert_eq!(raw.parse::<Uri>(), Err(UriParseError::TooLong(IdentifierTooLong { length: raw.len() })));
-    }
-
-    /// The URL parser percent-encodes an apostrophe in the query of a special
-    /// scheme, although IETF RFC 3986 admits it there, so a 1023-octet URL with
-    /// one apostrophe is stored as 1025 octets and is refused on that stored
-    /// length.
-    #[test]
-    fn the_limit_applies_to_the_normalised_spelling() {
-        let prefix = "https://example.com/?a'b";
-        let raw = format!("{prefix}{}", "c".repeat(IDENTIFIER_BYTE_LIMIT - 1 - prefix.len()));
-        pretty_assertions::assert_eq!(raw.len(), IDENTIFIER_BYTE_LIMIT - 1);
-        pretty_assertions::assert_eq!(
-            raw.parse::<Uri>(),
-            Err(UriParseError::TooLong(IdentifierTooLong {
-                length: IDENTIFIER_BYTE_LIMIT + 1
-            }))
-        );
-    }
-
-    #[test]
-    fn a_non_uri_is_malformed_rather_than_too_long() {
-        let raw = format!("not a uri {}", "x".repeat(IDENTIFIER_BYTE_LIMIT));
-        pretty_assertions::assert_eq!(raw.parse::<Uri>(), Err(UriParseError::Malformed));
-    }
-
-    #[test]
-    fn deserialising_an_over_long_identifier_fails() {
-        let json = serde_json::Value::String(urn_of_length(IDENTIFIER_BYTE_LIMIT + 1));
-        let error = serde_json::from_value::<Uri>(json).expect_err("an over-long identifier");
-        assert!(error.to_string().contains("1025 bytes"), "{error}");
-    }
-
-    #[test]
-    fn a_foreign_url_past_the_limit_cannot_become_a_uri() {
-        let url: Url = format!("https://example.com/{}", "a".repeat(IDENTIFIER_BYTE_LIMIT)).parse().unwrap();
-        let length = url.as_str().len();
-        pretty_assertions::assert_eq!(Uri::try_from(url), Err(UriParseError::TooLong(IdentifierTooLong { length })));
-
-        let urn: Urn = urn_of_length(IDENTIFIER_BYTE_LIMIT + 1).parse().unwrap();
-        assert!(Uri::try_from(urn).is_err());
-
-        let iri = IriBuf::new(format!("https://example.com/{}", "\u{e9}".repeat(IDENTIFIER_BYTE_LIMIT))).unwrap();
-        assert!(Uri::try_from(iri).is_err());
-    }
-
-    /// Clause 4.6.2 makes an identifier a URI (IETF RFC 3986), or by NOTE 2 an
-    /// IRI (IETF RFC 3987). Neither grammar admits a literal space, tab or line
-    /// break in any component, although the WHATWG URL parser keeps the first
-    /// in an opaque path and silently strips the others.
     #[test]
     fn whitespace_in_a_urn_a_url_or_an_iri_is_malformed() {
         for raw in [
@@ -433,13 +299,10 @@ mod tests {
             "https://example.com/Par\u{ed}s\nnewline",
             "urn:ngsi-ld:Ciudad:Par\u{ed}s has space",
         ] {
-            pretty_assertions::assert_eq!(raw.parse::<Uri>(), Err(UriParseError::Malformed), "{raw:?}");
+            pretty_assertions::assert_eq!(raw.parse::<Uri>(), Err(UriParseError), "{raw:?}");
         }
     }
 
-    /// Characters IETF RFC 3986 reserves for no component, and a percent sign
-    /// not followed by two hexadecimal digits, which the WHATWG parser accepts
-    /// or percent-encodes on the way in.
     #[test]
     fn characters_outside_the_uri_grammar_are_malformed() {
         for raw in [
@@ -453,11 +316,10 @@ mod tests {
             "urn:ngsi-ld:Building:a%zz",
             "https://example.com/a%2",
         ] {
-            pretty_assertions::assert_eq!(raw.parse::<Uri>(), Err(UriParseError::Malformed), "{raw:?}");
+            pretty_assertions::assert_eq!(raw.parse::<Uri>(), Err(UriParseError), "{raw:?}");
         }
     }
 
-    /// A space is an identifier character once percent-encoded, in every form.
     #[test]
     fn a_percent_encoded_space_is_well_formed() {
         for raw in ["urn:ngsi-ld:Building:has%20space", "https://example.com/has%20space?q=a%20b#f%20g"] {
@@ -466,11 +328,51 @@ mod tests {
         }
     }
 
-    /// The WHATWG URL parser keeps the literal space of an opaque path, so a
-    /// [`Url`] a caller built elsewhere is held to the grammar too.
     #[test]
     fn a_foreign_url_with_a_literal_space_cannot_become_a_uri() {
         let url: Url = "urn:ngsi-ld:Building:has space".parse().expect("the WHATWG parser keeps the space");
-        pretty_assertions::assert_eq!(Uri::try_from(url), Err(UriParseError::Malformed));
+        pretty_assertions::assert_eq!(Uri::try_from(url), Err(UriParseError));
+    }
+
+    /// Clause 4.6.2 sets no length on a URI, and neither do IETF RFC 3986 and
+    /// RFC 3987: a URN, a URL and an IRI of 6000 octets are URIs, and each
+    /// survives the round trip byte for byte.
+    #[test]
+    fn a_uri_of_any_length_is_a_uri() {
+        for raw in [
+            of_length("urn:ngsi-ld:Building:", 6000),
+            of_length("https://example.com/entity/", 6000),
+            format!("https://example.com/Ciudad/Par\u{ed}s/{}", "\u{e9}".repeat(3000)),
+        ] {
+            let parsed: Uri = raw.parse().expect("a URI of any length");
+            pretty_assertions::assert_eq!(parsed.as_str(), raw);
+            let json = serde_json::to_string(&parsed).expect("serialises");
+            pretty_assertions::assert_eq!(serde_json::from_str::<Uri>(&json).expect("deserialises"), parsed);
+        }
+    }
+
+    #[test]
+    fn a_urn_of_one_mebibyte_is_a_uri() {
+        let raw = of_length("urn:ngsi-ld:Building:", 1 << 20);
+        let parsed: Uri = raw.parse().expect("a URN of any length");
+        pretty_assertions::assert_eq!(parsed.as_str().len(), 1 << 20);
+    }
+
+    #[test]
+    fn a_long_non_uri_is_still_malformed() {
+        let raw = format!("not a uri {}", "x".repeat(6000));
+        pretty_assertions::assert_eq!(raw.parse::<Uri>(), Err(UriParseError));
+    }
+
+    #[test]
+    fn a_foreign_urn_url_or_iri_of_any_length_becomes_a_uri() {
+        let urn: Urn = of_length("urn:ngsi-ld:Building:", 6000).parse().expect("a URN");
+        pretty_assertions::assert_eq!(Uri::from(urn).as_str().len(), 6000);
+
+        let url: Url = of_length("https://example.com/", 6000).parse().expect("a URL");
+        pretty_assertions::assert_eq!(Uri::try_from(url).map(|uri| uri.as_str().len()), Ok(6000));
+
+        let iri = IriBuf::new(format!("https://example.com/{}", "\u{e9}".repeat(3000))).expect("an IRI");
+        pretty_assertions::assert_eq!(Uri::from(iri).as_str().len(), 6020);
     }
 }

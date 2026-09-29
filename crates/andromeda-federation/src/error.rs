@@ -6,7 +6,7 @@ use crate::{
     federation_operation_unsupported::FederationOperationUnsupported,
 };
 use andromeda_jsonld::error::JsonLdError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_registration::error::RegistrationError;
 use std::{fmt::Display, time::Duration};
@@ -31,13 +31,13 @@ pub enum FederationError {
     #[error("registration {registration} loops back onto this context broker")]
     LoopDetected {
         /// The looping registration.
-        registration: Uri,
+        registration: Identifier,
     },
     /// The single registered source failed to respond in time (504).
     #[error("registration {registration} did not respond within {}ms", timeout.as_millis())]
     GatewayTimeout {
         /// The silent registration.
-        registration: Uri,
+        registration: Identifier,
         /// The timeout that elapsed.
         timeout: Duration,
     },
@@ -45,13 +45,13 @@ pub enum FederationError {
     #[error("registration {registration} holds no such resource")]
     RemoteNotFound {
         /// The registration that answered 404.
-        registration: Uri,
+        registration: Identifier,
     },
     /// The single forwarded request failed for any other reason (502).
     #[error("registration {registration} could not complete the operation: {detail}")]
     BadGateway {
         /// The failing registration.
-        registration: Uri,
+        registration: Identifier,
         /// The status the source answered with, when it answered at all.
         status: Option<u16>,
         /// The most informative detail available: the source's problem detail,

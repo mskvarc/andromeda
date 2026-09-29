@@ -5,7 +5,7 @@
 //! no branch.
 
 use crate::change_event::ChangeEvent;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -13,7 +13,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct BatchSideEffectJob {
     /// Entities whose observations still have to reach Temporal Evolution.
-    pub temporal_entities: Vec<(Arc<Uri>, Arc<Value>)>,
+    pub temporal_entities: Vec<(Arc<Identifier>, Arc<Value>)>,
     /// Changes whose notifications the queuing commit did not record as
     /// durable deliveries, and which whichever broker drains the job therefore
     /// still owes its subscribers.
@@ -28,7 +28,7 @@ pub struct BatchSideEffectJob {
 #[cfg(test)]
 mod tests {
     use crate::batch_side_effect_job::BatchSideEffectJob;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -36,7 +36,7 @@ mod tests {
     fn a_job_keeps_shared_temporal_payloads_without_copying_them() {
         let payload = Arc::new(json!([{"@id": "urn:ngsi-ld:A"}]));
         let job = BatchSideEffectJob {
-            temporal_entities: vec![(Arc::new("urn:ngsi-ld:A".parse::<Uri>().expect("valid entity URI")), Arc::clone(&payload))],
+            temporal_entities: vec![(Arc::new("urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI")), Arc::clone(&payload))],
             change_events: Vec::new(),
         };
         assert!(Arc::ptr_eq(&payload, &job.temporal_entities[0].1));

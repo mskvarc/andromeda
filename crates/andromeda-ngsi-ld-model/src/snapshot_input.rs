@@ -5,7 +5,7 @@ use crate::{
     query::body::Query,
     snapshot::{SnapshotPriority, SnapshotType},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, de::IgnoredAny};
 use url::Url;
@@ -19,7 +19,7 @@ pub struct SnapshotInput {
     pub type_: SnapshotType,
     /// Client-supplied identifier; the broker generates one when absent.
     #[serde(default)]
-    pub id: Option<Uri>,
+    pub id: Option<Identifier>,
     /// Entity queries to materialise.
     #[serde(default)]
     pub snapshot_queries: Option<Vec<Query>>,

@@ -12,7 +12,7 @@ use crate::expanded::{
     null_sentinel::instance_is_null_sentinel,
     partial_update_patch::patch_attribute_instance,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
 use iri_rs::IriBuf;
 use serde_json::Value;
 
@@ -37,7 +37,7 @@ use serde_json::Value;
 /// the lookup fails, and [`ExpandedEntityError::InvalidDatasetId`] when the
 /// fragment or a stored instance carries a `datasetId` that is not an
 /// identifier -- never the default instance in its place (clause 4.5.5).
-pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&Uri>, fragment: &Value) -> Result<(), ExpandedEntityError> {
+pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&Identifier>, fragment: &Value) -> Result<(), ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
 
     if !entity_obj.contains_key(attr_iri.as_str()) {
@@ -68,7 +68,11 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Op
 
 /// Delete the instance an NGSI-LD Null fragment selected (clauses 5.5.8 and
 /// 5.6.5).
-fn delete_selected_instance(entity_obj: &mut serde_json::Map<String, Value>, attr_iri: &IriBuf, effective_ds: Option<&Uri>) -> Result<(), ExpandedEntityError> {
+fn delete_selected_instance(
+    entity_obj: &mut serde_json::Map<String, Value>,
+    attr_iri: &IriBuf,
+    effective_ds: Option<&Identifier>,
+) -> Result<(), ExpandedEntityError> {
     if remove_instances_by_dataset(entity_obj, attr_iri.as_str(), effective_ds)? {
         Ok(())
     } else {
@@ -84,7 +88,7 @@ fn delete_selected_instance(entity_obj: &mut serde_json::Map<String, Value>, att
 fn patch_unwrapped_attribute(
     entity_obj: &mut serde_json::Map<String, Value>,
     attr_iri: &IriBuf,
-    effective_ds: Option<&Uri>,
+    effective_ds: Option<&Identifier>,
     fragment_types: &[AttributeType],
     fragment: &Value,
 ) -> Result<(), ExpandedEntityError> {
@@ -103,7 +107,7 @@ fn patch_unwrapped_attribute(
 
 /// The clause 5.6.4.4 `ResourceNotFound` for the instance that was selected but
 /// is not there: the one carrying `effective_ds`, or the default instance.
-fn missing_instance(attr_iri: &IriBuf, effective_ds: Option<&Uri>) -> ExpandedEntityError {
+fn missing_instance(attr_iri: &IriBuf, effective_ds: Option<&Identifier>) -> ExpandedEntityError {
     match effective_ds {
         Some(dataset_id) => ExpandedEntityError::DatasetNotFound {
             attribute: attr_iri.clone(),
@@ -209,7 +213,7 @@ pub fn delete_attr(entity: &mut Value, attr_iri: &IriBuf, selection: DatasetSele
 /// [`ExpandedEntityError::DefaultInstanceNotFound`] if no instance matches,
 /// and [`ExpandedEntityError::InvalidDatasetId`] when the value or a stored
 /// instance carries a `datasetId` that is not an identifier.
-pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&Uri>, value: &Value) -> Result<(), ExpandedEntityError> {
+pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&Identifier>, value: &Value) -> Result<(), ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
 
     let existing = entity_obj
@@ -265,7 +269,7 @@ mod tests {
         selection::DatasetSelection,
         speed_entity,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier_length::IDENTIFIER_BYTE_LIMIT, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, identifier_length::IDENTIFIER_BYTE_LIMIT};
     use iri_rs::IriBuf;
     use serde_json::json;
     use std::str::FromStr;
@@ -276,8 +280,8 @@ mod tests {
     }
 
     /// A `datasetId`, as the mutation functions take it.
-    fn dataset_uri(value: &str) -> Uri {
-        Uri::from_str(value).expect("a valid dataset URI")
+    fn dataset_uri(value: &str) -> Identifier {
+        Identifier::from_str(value).expect("a valid dataset URI")
     }
 
     #[test]

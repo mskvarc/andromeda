@@ -26,7 +26,7 @@
 //!   4.5.1), rather than a wrong last-segment token it could not.
 
 use crate::{error::FederationError, term_resolver::TermResolver};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 
@@ -36,7 +36,7 @@ use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExp
 #[derive(Debug, Default)]
 pub(super) struct BlockSelection {
     /// The identifiers to write as `id`.
-    pub(super) ids: Vec<Uri>,
+    pub(super) ids: Vec<Identifier>,
     /// The pattern to write as `idPattern`.
     pub(super) id_pattern: Option<String>,
     /// The type selector to write as `type`.
@@ -60,7 +60,7 @@ impl BlockSelection {
     /// against the request context.
     pub(super) async fn of(
         block: &RegistrationInfo,
-        ids: Option<&[Uri]>,
+        ids: Option<&[Identifier]>,
         id_pattern: Option<&Pattern>,
         entity_type: Option<&TypeExprRaw>,
         resolver: &TermResolver<'_>,
@@ -153,7 +153,7 @@ pub(super) async fn block_attrs(
 
 /// Whether the block's entity selectors cover `id`; a block that names no
 /// entity selectors covers every identifier (clause 5.2.10).
-pub(super) fn block_covers_id(block: &RegistrationInfo, id: &Uri) -> bool {
+pub(super) fn block_covers_id(block: &RegistrationInfo, id: &Identifier) -> bool {
     match block.entities.as_deref() {
         None => true,
         Some(selectors) => selectors.iter().any(|selector| selector.covers_id(id)),
@@ -161,7 +161,7 @@ pub(super) fn block_covers_id(block: &RegistrationInfo, id: &Uri) -> bool {
 }
 
 /// The identifiers among `ids` this block covers, or `None` when it covers none.
-fn covered_ids(ids: &[Uri], block: &RegistrationInfo) -> Option<Vec<Uri>> {
+fn covered_ids(ids: &[Identifier], block: &RegistrationInfo) -> Option<Vec<Identifier>> {
     let covered = ids
         .iter()
         .filter(|id| block_covers_id(block, id))
@@ -242,7 +242,7 @@ pub(super) async fn covered_type(
 
 /// The block's explicitly named identifiers, or -- when it names none -- the
 /// single id pattern its entity selectors constrain identifiers by.
-fn block_identifiers(block: &RegistrationInfo) -> (Vec<Uri>, Option<String>) {
+fn block_identifiers(block: &RegistrationInfo) -> (Vec<Identifier>, Option<String>) {
     let Some(selectors) = block.entities.as_deref() else {
         return (Vec::new(), None);
     };

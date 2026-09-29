@@ -1,7 +1,7 @@
 //! Standards-safe construction of federated context-source URLs.
 
 use crate::error::FederationError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use url::{Url, form_urlencoded};
 
 /// The API base every NGSI-LD resource path hangs below (clause 6.2).
@@ -88,7 +88,7 @@ pub(crate) fn build_query_url(endpoint: &Url, query_string: &str) -> Result<Url,
 }
 
 /// Build a forwarding URL for entity retrieval by ID.
-pub(crate) fn build_retrieve_url(endpoint: &Url, entity_id: &Uri, query_string: &str) -> Result<Url, FederationError> {
+pub(crate) fn build_retrieve_url(endpoint: &Url, entity_id: &Identifier, query_string: &str) -> Result<Url, FederationError> {
     forwarding_url(endpoint, &["entities", entity_id.as_str()], query_string)
 }
 
@@ -110,7 +110,7 @@ pub(crate) fn build_temporal_query_url(endpoint: &Url, query_string: &str) -> Re
 }
 
 /// Build a forwarding URL for temporal entity retrieval by ID.
-pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &Uri, query_string: &str) -> Result<Url, FederationError> {
+pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &Identifier, query_string: &str) -> Result<Url, FederationError> {
     forwarding_url(endpoint, &["temporal", "entities", entity_id.as_str()], query_string)
 }
 

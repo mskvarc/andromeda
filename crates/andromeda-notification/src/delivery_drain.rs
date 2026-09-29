@@ -394,7 +394,7 @@ mod tests {
     use andromeda_configuration_scalars::human_duration::HumanDuration;
     use andromeda_context_commit::{lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use async_trait::async_trait;
     use chrono::{DateTime, TimeDelta, Utc};
@@ -663,7 +663,11 @@ mod tests {
     }
 
     fn entry() -> Result<DeliveryEntry, NotificationError> {
-        let parse = |value: &str| value.parse::<Uri>().map_err(|error| NotificationError::representation(error.to_string()));
+        let parse = |value: &str| {
+            value
+                .parse::<Identifier>()
+                .map_err(|error| NotificationError::representation(error.to_string()))
+        };
         let event = NotificationEvent::builder()
             .key(NotificationEventKey::from(1))
             .write_id(WriteId::mint())

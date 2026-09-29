@@ -14,7 +14,7 @@ use andromeda_context_commit::{
     history_record::HistoryRecord,
     subscription_match::SubscriptionMatch,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -36,7 +36,7 @@ use std::sync::Arc;
 /// Reports the [`EntityError`] of a merged payload whose search projection
 /// cannot be extracted.
 pub(super) fn payload_write(
-    id: &Uri,
+    id: &Identifier,
     merged: &Arc<Value>,
     history: Vec<HistoryRecord>,
     subscription_matches: Vec<SubscriptionMatch>,

@@ -4,7 +4,7 @@
 use crate::{error::SubscriptionError, keyset_listing::KeysetListing, lifecycle::SubscriptionService, variant::SubscriptionVariant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use serde_json::Value;
@@ -23,7 +23,7 @@ where
     /// Returns [`SubscriptionError::NotFound`] when `target` holds no
     /// subscription under `id`, and [`SubscriptionError::Persistence`] when
     /// the store cannot be read.
-    pub async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Subscription, SubscriptionError> {
+    pub async fn get(&self, target: &ContextTarget, id: &Identifier) -> Result<Subscription, SubscriptionError> {
         self.repo
             .get(target, id)
             .await?
@@ -39,7 +39,7 @@ where
     /// subscription under `id`, [`SubscriptionError::Persistence`] when the
     /// store cannot be read, and [`SubscriptionError::JsonLd`] when `context`
     /// cannot be resolved or the resource cannot be compacted against it.
-    pub async fn get_for_response(&self, target: &ContextTarget, id: &Uri, context: &ContextSpec) -> Result<Value, SubscriptionError> {
+    pub async fn get_for_response(&self, target: &ContextTarget, id: &Identifier, context: &ContextSpec) -> Result<Value, SubscriptionError> {
         let subscription = self.get(target, id).await?;
         self.variant
             .serialize_for_response(&subscription, &NameCompactor::new(&self.engine, context))

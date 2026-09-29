@@ -3,7 +3,7 @@
 use crate::source_continuation::SourceContinuation;
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
 use serde_json::Value;
 
@@ -46,7 +46,7 @@ pub(crate) struct ForwardedResponse {
     pub(crate) warnings: Vec<NgsiLdWarning>,
     /// The `EntityMap` the source used for the request, from its
     /// `NGSILD-EntityMap` response header (clause 5.5.14), when it returned one.
-    pub(crate) entity_map: Option<Uri>,
+    pub(crate) entity_map: Option<Identifier>,
     /// Where the answer continues, from the source's `Link rel="next"`
     /// (clauses 5.5.9.1 and 6.3.10).
     pub(crate) continuation: SourceContinuation,
@@ -94,7 +94,7 @@ impl ForwardGetOutcome {
 
     /// The clause 6.3.17 warning a failed GET contributes, if any: a 404 is not
     /// abnormal and contributes none.
-    pub(crate) fn warning(&self, registration: &Uri) -> Option<NgsiLdWarning> {
+    pub(crate) fn warning(&self, registration: &Identifier) -> Option<NgsiLdWarning> {
         match self {
             ForwardGetOutcome::Success(_) | ForwardGetOutcome::NotFound(_) => None,
             ForwardGetOutcome::InvalidPayload(detail) => Some(NgsiLdWarning::RevalidationFailed(format!(
@@ -117,7 +117,7 @@ pub struct ForwardedEntities {
     /// The registration the entities came from; `None` for the entry that
     /// carries only the clause 6.3.17 loop warning of a request that already
     /// names this broker in its `Via` chain.
-    pub registration_id: Option<Uri>,
+    pub registration_id: Option<Identifier>,
     /// Registration forwarding mode.
     pub mode: ForwardingMode,
     /// Typed entities returned by the context source.
@@ -126,7 +126,7 @@ pub struct ForwardedEntities {
     pub warnings: Vec<NgsiLdWarning>,
     /// The `EntityMap` the source used for the request, when it returned one
     /// (clause 5.5.14 `linkedMaps`).
-    pub linked_map: Option<Uri>,
+    pub linked_map: Option<Identifier>,
 }
 
 impl ForwardedEntities {
@@ -147,7 +147,7 @@ pub struct ForwardedTemporalEntities {
     /// The registration the entities came from; `None` for the entry that
     /// carries only the clause 6.3.17 loop warning of a request that already
     /// names this broker in its `Via` chain.
-    pub registration_id: Option<Uri>,
+    pub registration_id: Option<Identifier>,
     /// Registration forwarding mode.
     pub mode: ForwardingMode,
     /// Temporal entity payloads.
@@ -156,7 +156,7 @@ pub struct ForwardedTemporalEntities {
     pub warnings: Vec<NgsiLdWarning>,
     /// The `EntityMap` the source used for the request, when it returned one
     /// (clause 5.5.14 `linkedMaps`).
-    pub linked_map: Option<Uri>,
+    pub linked_map: Option<Identifier>,
     /// The `Content-Range` of every page of the answer that the source cut
     /// short (clause 6.3.10): the instances past each range are still to come
     /// from the source, so the merged history is complete only up to them.
@@ -174,7 +174,7 @@ impl ForwardedTemporalEntities {
             entity_ids: self
                 .entities
                 .iter()
-                .filter_map(|value| value.get("id").and_then(Value::as_str).and_then(|raw| raw.parse::<Uri>().ok()))
+                .filter_map(|value| value.get("id").and_then(Value::as_str).and_then(|raw| raw.parse::<Identifier>().ok()))
                 .collect(),
             linked_map: self.linked_map.clone(), // clone: same
         })
@@ -232,7 +232,7 @@ impl<T> ForwardReadOutcome<T> {
 /// Result of one provision forwarding attempt.
 pub struct ForwardedWriteResult {
     /// The registration the operation was forwarded to.
-    pub registration_id: Uri,
+    pub registration_id: Identifier,
     /// Registration forwarding mode.
     pub mode: ForwardingMode,
     /// Typed outbound result.

@@ -16,7 +16,7 @@
 
 use crate::{error::TemporalStoreError, scope_history_value::ScopeHistoryValue, semantic_time_axes::SemanticTimeAxes};
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_ngsi_ld_model::{
     scope_instance_value::scope_instance_value,
     temporal::{TemporalHistoryRow, TemporalValue},
@@ -209,7 +209,7 @@ fn decode_instance_identity(row: &PgRow) -> Result<InstanceIdentity, TemporalSto
         .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.verbatim_instance_id: {error}")))?;
     match (generated, verbatim) {
         (Some(uuid), None) => Ok(InstanceIdentity::Generated(uuid)),
-        (None, Some(raw)) => Ok(InstanceIdentity::Verbatim(raw.parse::<Uri>().map_err(|error| {
+        (None, Some(raw)) => Ok(InstanceIdentity::Verbatim(raw.parse::<Identifier>().map_err(|error| {
             TemporalStoreError::Decode(format!("invalid scope_history.verbatim_instance_id '{raw}': {error}"))
         })?)),
         (Some(_), Some(_)) => Err(TemporalStoreError::Decode(

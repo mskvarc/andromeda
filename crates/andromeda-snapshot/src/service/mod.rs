@@ -22,7 +22,7 @@ use crate::{
     store::SnapshotStore,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     snapshot::{Snapshot, SnapshotStatus},
     snapshot_clone::SnapshotCloneInput,
@@ -187,7 +187,7 @@ impl SnapshotService {
     /// has expired, and the store's own failure when the read does not complete.
     /// Failing to delete an expired record or to touch `last_used_at` is logged
     /// rather than returned.
-    pub async fn get(&self, id: &Uri) -> Result<Snapshot, SnapshotError> {
+    pub async fn get(&self, id: &Identifier) -> Result<Snapshot, SnapshotError> {
         let snapshot = self.repo.get(id).await?.ok_or_else(|| SnapshotError::not_found(id))?;
 
         if snapshot.expires_at < Utc::now() {
@@ -215,7 +215,7 @@ impl SnapshotService {
     /// lifetime, [`SnapshotError::Representation`] when the patched receiver
     /// info cannot be serialised, and the store's own failure when the metadata
     /// write does not complete.
-    pub async fn update(&self, id: &Uri, patch: SnapshotPatch) -> Result<Snapshot, SnapshotError> {
+    pub async fn update(&self, id: &Identifier, patch: SnapshotPatch) -> Result<Snapshot, SnapshotError> {
         self.get(id).await?;
 
         if patch.id.as_ref().is_some_and(|patch_id| patch_id != id) {
@@ -266,7 +266,7 @@ impl SnapshotService {
     ///
     /// Returns [`SnapshotError::NotFound`] when no row was removed, and the
     /// store's own failure when the deletion does not complete.
-    pub async fn delete(&self, id: &Uri) -> Result<(), SnapshotError> {
+    pub async fn delete(&self, id: &Identifier) -> Result<(), SnapshotError> {
         let deleted = self.repo.delete(id).await?;
         if deleted == 0 {
             return Err(SnapshotError::not_found(id));
@@ -286,7 +286,7 @@ impl SnapshotService {
     /// generated identifier or the configured default lifetime cannot be
     /// materialised, and the store's own failure when the clone job cannot be
     /// persisted or the tenant quotas cannot be enforced.
-    pub async fn clone_snapshot(&self, source_id: &Uri, input: SnapshotCloneInput) -> Result<Snapshot, SnapshotError> {
+    pub async fn clone_snapshot(&self, source_id: &Identifier, input: SnapshotCloneInput) -> Result<Snapshot, SnapshotError> {
         let source = self.get(source_id).await?;
         // A quarantined source cannot be copied column for column into a
         // branch built by this binary, so the job is refused before it exists.
@@ -346,7 +346,7 @@ impl SnapshotService {
 }
 
 /// A fresh broker-minted Snapshot identifier.
-fn build_snapshot_id() -> Result<Uri, SnapshotError> {
+fn build_snapshot_id() -> Result<Identifier, SnapshotError> {
     let value = format!("urn:ngsi-ld:Snapshot:{}", uuid::Uuid::new_v4());
     value
         .parse()

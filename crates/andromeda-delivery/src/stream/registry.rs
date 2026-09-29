@@ -1,6 +1,6 @@
 //! The live client connections one streaming protocol is holding open.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use dashmap::DashMap;
 use std::{
     fmt,
@@ -60,7 +60,7 @@ pub enum StreamSendError {
         /// The protocol that had nobody listening.
         kind: StreamKind,
         /// The subscription that was being delivered to.
-        subscription_id: Uri,
+        subscription_id: Identifier,
     },
     /// Every connected client's channel buffer is full.
     #[error("{kind} channel buffer full for all clients on subscription {subscription_id}")]
@@ -68,7 +68,7 @@ pub enum StreamSendError {
         /// The protocol whose clients are all behind.
         kind: StreamKind,
         /// The subscription that was being delivered to.
-        subscription_id: Uri,
+        subscription_id: Identifier,
     },
 }
 
@@ -82,7 +82,7 @@ pub enum StreamSendError {
 #[derive(Debug)]
 pub struct ConnectionRegistry<P: StreamPayload> {
     /// Live connections, keyed by subscription and then by connection.
-    connections: DashMap<Uri, DashMap<ConnectionId, (mpsc::Sender<P>, CancellationToken)>>,
+    connections: DashMap<Identifier, DashMap<ConnectionId, (mpsc::Sender<P>, CancellationToken)>>,
 }
 
 impl<P: StreamPayload> Default for ConnectionRegistry<P> {
@@ -104,7 +104,7 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
     /// channel, and a cancellation token that fires when the subscription is
     /// deleted.
     #[must_use]
-    pub fn register(&self, subscription_id: &Uri, buffer_size: usize) -> (ConnectionId, mpsc::Receiver<P>, CancellationToken) {
+    pub fn register(&self, subscription_id: &Identifier, buffer_size: usize) -> (ConnectionId, mpsc::Receiver<P>, CancellationToken) {
         let connection_id = ConnectionId::next();
         let (tx, rx) = mpsc::channel(buffer_size);
         let token = CancellationToken::new();
@@ -117,7 +117,7 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
 
     /// Remove one client connection, leaving the subscription's other clients
     /// untouched.
-    pub fn unregister(&self, subscription_id: &Uri, connection_id: ConnectionId) {
+    pub fn unregister(&self, subscription_id: &Identifier, connection_id: ConnectionId) {
         if let Some(inner) = self.connections.get(subscription_id) {
             inner.remove(&connection_id);
         }
@@ -138,7 +138,7 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
     /// them closed its channel. The distinction is what separates a slow
     /// consumer from an absent one: the caller retries the first and gives up
     /// on the second.
-    pub fn try_send(&self, subscription_id: &Uri, payload: &P) -> Result<(), StreamSendError> {
+    pub fn try_send(&self, subscription_id: &Identifier, payload: &P) -> Result<(), StreamSendError> {
         let inner = self.connections.get(subscription_id).ok_or_else(|| StreamSendError::NoClient {
             kind: P::KIND,
             subscription_id: subscription_id.clone(), // clone: the error owns the subscription it names
@@ -193,7 +193,7 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
 
     /// Close every connection for a subscription, signalling each stream to
     /// end.
-    pub fn close(&self, subscription_id: &Uri) {
+    pub fn close(&self, subscription_id: &Identifier) {
         if let Some((_, inner)) = self.connections.remove(subscription_id) {
             for (_, (_, token)) in inner {
                 token.cancel();
@@ -214,7 +214,7 @@ macro_rules! registry_conformance_tests {
     ($module:ident, $payload:ty, $sample:expr, $kind:expr) => {
         mod $module {
             use crate::stream::registry::{ConnectionRegistry, StreamPayload, StreamSendError};
-            use andromeda_ngsi_ld_lexicon::uri::Uri;
+            use andromeda_ngsi_ld_lexicon::identifier::Identifier;
             use std::str::FromStr;
 
             fn sample() -> $payload {
@@ -222,8 +222,8 @@ macro_rules! registry_conformance_tests {
             }
 
             /// A well-formed subscription identifier from a short name.
-            fn sub(name: &str) -> Uri {
-                Uri::from_str(&format!("urn:ngsi-ld:Subscription:{name}")).expect("a valid subscription id")
+            fn sub(name: &str) -> Identifier {
+                Identifier::from_str(&format!("urn:ngsi-ld:Subscription:{name}")).expect("a valid subscription id")
             }
 
             #[tokio::test]

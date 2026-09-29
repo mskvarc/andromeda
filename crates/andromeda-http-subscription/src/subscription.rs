@@ -26,7 +26,7 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_query::{cursor::PageCursor, pagination::CountPolicy};
 use andromeda_ngsi_ld_render::{response::ResponsePayload, subscription::SubscriptionRenderer};
 use andromeda_ngsi_ld_request::{empty::EmptyParams, pagination_cursor::decode_cursor, subscription::ListParams};
@@ -69,7 +69,7 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
-    TypedPath(subscription_id): TypedPath<Uri>,
+    TypedPath(subscription_id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
@@ -163,7 +163,7 @@ pub async fn query(
 
 /// The opaque cursor pointers a keyset subscription page offers (clause
 /// 5.5.9.1), or `None` when the page is empty and points at nothing.
-fn cursor_links(incoming: Option<&PageCursor>, boundary: Option<(Uri, Uri)>, returned: usize, limit: u32) -> Option<PageLinks> {
+fn cursor_links(incoming: Option<&PageCursor>, boundary: Option<(Identifier, Identifier)>, returned: usize, limit: u32) -> Option<PageLinks> {
     let (first, last) = boundary?;
     let full = returned == limit as usize;
     let neighbours = PageCursor::neighbours(incoming, first, last, full);
@@ -176,7 +176,7 @@ pub async fn update(
     OriginalUri(uri): OriginalUri,
     RequestOrigin(base_url): RequestOrigin,
     context: ContextUrl,
-    TypedPath(subscription_id): TypedPath<Uri>,
+    TypedPath(subscription_id): TypedPath<Identifier>,
     JsonLdDocument {
         document: payload,
         context: body_context,
@@ -197,7 +197,7 @@ pub async fn update(
 pub async fn delete(
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(subscription_id): TypedPath<Uri>,
+    TypedPath(subscription_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
     service.delete(&target, &subscription_id).await.with_subscription_instance(&uri)?;

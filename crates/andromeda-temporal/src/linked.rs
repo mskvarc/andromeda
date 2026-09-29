@@ -59,7 +59,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::entity_member::extract_types;
 use andromeda_ngsi_ld_query::{projection::compiled::Projection, temporal::compiled::CompiledTemporalQuery};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
@@ -82,7 +82,7 @@ use std::{
 pub struct ResolvedLinkedTemporalEntities {
     /// The linked temporal representations, keyed by identifier in the
     /// traversal's append order.
-    pub entities: IndexMap<Uri, Value>,
+    pub entities: IndexMap<Identifier, Value>,
     /// Every Linked Entity the traversal left unresolved, in the order the
     /// attempts were made.
     pub failures: Vec<LinkedResolutionFailure>,
@@ -111,7 +111,7 @@ struct LinkedTemporalRead<'a> {
 struct ResolvedTemporalLevel {
     /// The level's representations in append order: the locally held ones in
     /// candidate order, then the ones fetched from elsewhere.
-    entities: IndexMap<Uri, Value>,
+    entities: IndexMap<Identifier, Value>,
     /// What the level could not resolve.
     failures: Vec<LinkedResolutionFailure>,
     /// What the locally rendered entities of this level named, reported before
@@ -130,7 +130,7 @@ pub struct TemporalJoinRequest<'a> {
     /// Remaining depth the traversal may descend.
     pub join_level: NonZeroU32,
     /// Identifiers the traversal must not leave.
-    pub contained_by: &'a HashSet<Uri>,
+    pub contained_by: &'a HashSet<Identifier>,
     /// Context each level is compiled and rendered against.
     pub context: &'a ContextSpec,
 }
@@ -202,7 +202,7 @@ impl TemporalService {
         // and from every level after it, so a cycle back into them terminates.
         // The guard keeps insertion order because it doubles as the list of
         // already-held ids a non-local fetch hands to the remote broker.
-        let mut visited: IndexSet<Uri> = contained_by.iter().cloned().collect(); // clone: the guard owns the ids it excludes
+        let mut visited: IndexSet<Identifier> = contained_by.iter().cloned().collect(); // clone: the guard owns the ids it excludes
         visited.extend(rendered.iter().filter_map(identifier_of));
 
         // The seed was read off the roots' normalized form, before any format
@@ -283,7 +283,7 @@ impl TemporalService {
         target: &ContextTarget,
         candidates: &[TemporalLinkedCandidate],
         depth: NonZeroU32,
-        visited: &IndexSet<Uri>,
+        visited: &IndexSet<Identifier>,
         linked_read: LinkedTemporalRead<'_>,
     ) -> Result<ResolvedTemporalLevel, TemporalError> {
         let (entities, named) = self
@@ -318,8 +318,8 @@ impl TemporalService {
         candidates: &[TemporalLinkedCandidate],
         compiled: &CompiledTemporalQuery,
         context: &ContextSpec,
-    ) -> Result<(IndexMap<Uri, Value>, Vec<TemporalLinkedCandidate>), TemporalError> {
-        let ids: Vec<Uri> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
+    ) -> Result<(IndexMap<Identifier, Value>, Vec<TemporalLinkedCandidate>), TemporalError> {
+        let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
         let payloads = self
             .entity_reader
             .get_batch(target, &ids)
@@ -327,7 +327,7 @@ impl TemporalService {
             .map_err(|error| TemporalError::persistence(error.to_string()))?;
         // Every stored payload was admitted when it was written, so a type it
         // cannot be read back with is a broker fault, not a missing link.
-        let types: HashMap<&Uri, Vec<EntityTypeName>> = payloads
+        let types: HashMap<&Identifier, Vec<EntityTypeName>> = payloads
             .iter()
             .map(|(id, payload)| Ok((id, extract_types(payload).map_err(TemporalError::internal)?)))
             .collect::<Result<_, TemporalError>>()?;

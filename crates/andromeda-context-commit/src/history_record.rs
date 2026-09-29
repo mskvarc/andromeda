@@ -1,7 +1,7 @@
 //! Temporal Evolution consequences carried by an atomic write.
 
 use crate::error::CommitError;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::{
     instance_key::{AttributeInstanceKey, attribute_instance_families},
     removed_instance::{RemovedAttributeInstance, removed_attribute_instances},
@@ -59,7 +59,7 @@ pub enum HistoryRecord {
 /// `urn:ngsi-ld:null` member of the family the instance belonged to (clauses
 /// 4.5.7 and 4.5.8), and current state no longer holds the instance to ask.
 #[must_use]
-pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Uri>, attribute_type: AttributeType) -> HistoryRecord {
+pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Identifier>, attribute_type: AttributeType) -> HistoryRecord {
     HistoryRecord::Tombstone(RemovedAttributeInstance {
         key: AttributeInstanceKey {
             attr: attr.clone(),              // clone: the history record owns its attribute name.
@@ -138,8 +138,8 @@ pub fn deletion_history(previous: &Value) -> Result<Vec<HistoryRecord>, CommitEr
             left.key
                 .dataset_id
                 .as_ref()
-                .map(Uri::as_str)
-                .cmp(&right.key.dataset_id.as_ref().map(Uri::as_str))
+                .map(Identifier::as_str)
+                .cmp(&right.key.dataset_id.as_ref().map(Identifier::as_str))
         })
     });
     let mut history: Vec<HistoryRecord> = removed.into_iter().map(HistoryRecord::Tombstone).collect();
@@ -155,7 +155,7 @@ pub fn deletion_history(previous: &Value) -> Result<Vec<HistoryRecord>, CommitEr
 #[cfg(test)]
 mod tests {
     use crate::history_record::{HistoryRecord, deletion_history, mutation_history};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::expanded::{mutation::selection::OverwritePolicy, written_observation::AddressedInstances};
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
@@ -220,7 +220,7 @@ mod tests {
             panic!("the only record is the tombstone: {history:?}");
         };
         pretty_assertions::assert_eq!(removed.key.attr.as_str(), "https://example.com/speed");
-        pretty_assertions::assert_eq!(removed.key.dataset_id.as_ref().map(Uri::as_str), Some(dataset_a));
+        pretty_assertions::assert_eq!(removed.key.dataset_id.as_ref().map(Identifier::as_str), Some(dataset_a));
     }
 
     /// Clause 5.5.8 EXAMPLE 1: a partial update keeps the `unitCode` the

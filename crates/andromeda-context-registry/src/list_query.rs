@@ -1,7 +1,7 @@
 //! Parameters for listing hosted and cached Contexts.
 
 use crate::detail_level::ContextDetailLevel;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 
 /// Keyset-paginated Context list parameters owned by registry policy.
@@ -12,7 +12,7 @@ pub struct ContextListQuery<'a> {
     /// Requested response projection.
     pub detail_level: ContextDetailLevel,
     /// Return rows whose local identifier follows this keyset cursor.
-    pub after: Option<&'a Uri>,
+    pub after: Option<&'a Identifier>,
     /// Maximum number of stored rows to return.
     pub limit: u32,
 }

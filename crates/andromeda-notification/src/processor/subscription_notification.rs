@@ -15,7 +15,7 @@ use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
 use andromeda_delivery::{dispatch::DeliveryResult, request::NotificationDelivery};
 use andromeda_entity::sys_attrs::inject_sys_attrs;
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use andromeda_ngsi_ld_model::notification::{Notification, NotificationType, SysAttrsSnapshot};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
@@ -47,8 +47,8 @@ pub(super) struct NotifiedChange<'a> {
 
 /// The clause 5.3.1 notification document sent to one subscription, or `None`
 /// when it can be neither identified nor serialized.
-fn notification_payload(subscription_id: &Uri, data: Vec<Value>) -> Option<Value> {
-    let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() else {
+fn notification_payload(subscription_id: &Identifier, data: Vec<Value>) -> Option<Value> {
+    let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Identifier>() else {
         error!("Failed to construct notification URN for {}", subscription_id);
         return None;
     };

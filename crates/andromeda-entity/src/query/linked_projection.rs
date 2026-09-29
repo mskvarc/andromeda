@@ -12,7 +12,7 @@ use crate::{
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
 use indexmap::IndexMap;
@@ -86,10 +86,10 @@ impl EntityQueryService {
     pub async fn apply_flat_linked_projections(
         &self,
         roots: &[Entity],
-        linked: &mut IndexMap<Uri, Entity>,
+        linked: &mut IndexMap<Identifier, Entity>,
         projection: &Projection,
         context: &ContextSpec,
-    ) -> Result<HashMap<Uri, Projection>, EntityError> {
+    ) -> Result<HashMap<Identifier, Projection>, EntityError> {
         let prepared = self.engine().prepare_term_context(context);
         let mut expansions = AttributeExpansions::new(self.engine(), &prepared);
         let nested = linked_projections(roots, linked, projection, &mut expansions).await?;
@@ -146,16 +146,16 @@ impl EntityQueryService {
 /// through the context.
 pub(crate) async fn linked_projections(
     roots: &[Entity],
-    linked: &IndexMap<Uri, Entity>,
+    linked: &IndexMap<Identifier, Entity>,
     projection: &Projection,
     expansions: &mut AttributeExpansions<'_>,
-) -> Result<HashMap<Uri, Option<Projection>>, EntityError> {
+) -> Result<HashMap<Identifier, Option<Projection>>, EntityError> {
     if projection.pick.is_empty() && projection.omit.is_empty() {
         return Ok(HashMap::new());
     }
 
-    let mut result: HashMap<Uri, Accumulator> = HashMap::new();
-    let mut visited: HashSet<Uri> = HashSet::new();
+    let mut result: HashMap<Identifier, Accumulator> = HashMap::new();
+    let mut visited: HashSet<Identifier> = HashSet::new();
     let mut queue: VecDeque<Level> = VecDeque::new();
     queue.push_back(Level {
         entities: roots.iter().collect(),
@@ -172,7 +172,7 @@ pub(crate) async fn linked_projections(
         // The nested pick/omit terms this level attached to each id, so
         // the next level knows which entity to descend into and under
         // which projection.
-        let mut next_level: HashMap<Uri, (Vec<ProjectionTerm>, Vec<ProjectionTerm>)> = HashMap::new();
+        let mut next_level: HashMap<Identifier, (Vec<ProjectionTerm>, Vec<ProjectionTerm>)> = HashMap::new();
 
         for entity in &entities {
             for (name, value) in &entity.attrs {
@@ -258,7 +258,7 @@ pub(crate) async fn linked_projections(
 
 /// Merge a nested `pick` sub-projection into `id`'s accumulated entry,
 /// leaving a `Full` entry untouched.
-fn merge_pick(result: &mut HashMap<Uri, Accumulator>, id: &Uri, nested: &[ProjectionTerm]) {
+fn merge_pick(result: &mut HashMap<Identifier, Accumulator>, id: &Identifier, nested: &[ProjectionTerm]) {
     match result.entry(id.clone()).or_insert_with(|| Accumulator::Terms {
         pick: Vec::new(),
         omit: Vec::new(),
@@ -270,7 +270,7 @@ fn merge_pick(result: &mut HashMap<Uri, Accumulator>, id: &Uri, nested: &[Projec
 
 /// Merge a nested `omit` sub-projection into `id`'s accumulated entry,
 /// leaving a `Full` entry untouched.
-fn merge_omit(result: &mut HashMap<Uri, Accumulator>, id: &Uri, nested: &[ProjectionTerm]) {
+fn merge_omit(result: &mut HashMap<Identifier, Accumulator>, id: &Identifier, nested: &[ProjectionTerm]) {
     match result.entry(id.clone()).or_insert_with(|| Accumulator::Terms {
         pick: Vec::new(),
         omit: Vec::new(),
@@ -282,7 +282,7 @@ fn merge_omit(result: &mut HashMap<Uri, Accumulator>, id: &Uri, nested: &[Projec
 
 /// Widen `id`'s accumulated entry to `Full`: it renders unrestricted, which
 /// absorbs whatever nested terms other Relationships contributed.
-fn merge_full(result: &mut HashMap<Uri, Accumulator>, id: &Uri) {
+fn merge_full(result: &mut HashMap<Identifier, Accumulator>, id: &Identifier) {
     result.insert(id.clone(), Accumulator::Full);
 }
 
@@ -308,7 +308,7 @@ mod tests {
         serde_json::from_value(value).expect("entity")
     }
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 
@@ -330,9 +330,9 @@ mod tests {
     /// prepares it.
     async fn nested_projections(
         roots: &[Entity],
-        linked: &IndexMap<Uri, Entity>,
+        linked: &IndexMap<Identifier, Entity>,
         projection: &Projection,
-    ) -> Result<HashMap<Uri, Option<Projection>>, EntityError> {
+    ) -> Result<HashMap<Identifier, Option<Projection>>, EntityError> {
         let service = service();
         let prepared = service.engine().prepare_term_context(&context());
         let mut expansions = AttributeExpansions::new(service.engine(), &prepared);

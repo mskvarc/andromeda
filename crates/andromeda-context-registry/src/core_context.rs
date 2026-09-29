@@ -2,14 +2,14 @@
 
 use crate::error::ContextRegistryError;
 use andromeda_jsonld::core_context::{NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
 use chrono::Utc;
 use iri_rs::{Iri, IriBuf};
 use serde_json::Value;
 
 /// Whether an identifier names one of the embedded NGSI-LD core Context versions.
-pub(crate) fn is_core_context(identifier: &Uri) -> bool {
+pub(crate) fn is_core_context(identifier: &Identifier) -> bool {
     Iri::parse(identifier.as_str()).is_ok_and(is_ngsi_ld_core_context_url)
 }
 
@@ -21,7 +21,7 @@ pub(crate) fn payload() -> Result<Value, ContextRegistryError> {
 }
 
 /// Build the virtual metadata record for an embedded core Context.
-pub(crate) fn metadata(identifier: &Uri) -> Result<ContextMetadata, ContextRegistryError> {
+pub(crate) fn metadata(identifier: &Identifier) -> Result<ContextMetadata, ContextRegistryError> {
     let Some(url) = identifier.as_url() else {
         return Err(ContextRegistryError::Invariant {
             detail: "core Context identifier is not a URL".to_string(),
@@ -54,12 +54,12 @@ mod tests {
         core_context::{is_core_context, metadata, payload},
         error::ContextRegistryError,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 
-    fn identifier(value: &str) -> Result<Uri, ContextRegistryError> {
+    fn identifier(value: &str) -> Result<Identifier, ContextRegistryError> {
         value
-            .parse::<Uri>()
+            .parse::<Identifier>()
             .map_err(|error| ContextRegistryError::Invariant { detail: error.to_string() })
     }
 

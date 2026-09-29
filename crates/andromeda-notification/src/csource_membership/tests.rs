@@ -4,7 +4,7 @@ use crate::{
     error::NotificationError,
     notified_registration_store::{NotifiedRegistrationStore, Release},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ContextSourceRegistration, subscription::SubscriptionStatus};
 use andromeda_subscription::{change::UpsertKind, compiled::CompiledCsrSubscription};
 use futures::future::BoxFuture;
@@ -37,7 +37,7 @@ impl InMemoryLedger {
 }
 
 impl NotifiedRegistrationStore for InMemoryLedger {
-    fn claim<'a>(&'a self, subscription: &'a Uri, registrations: &'a [Uri]) -> BoxFuture<'a, Result<Vec<Uri>, NotificationError>> {
+    fn claim<'a>(&'a self, subscription: &'a Identifier, registrations: &'a [Identifier]) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
         Box::pin(async move {
             let mut pairs = self.pairs.lock().expect("ledger lock");
             Ok(registrations
@@ -48,7 +48,7 @@ impl NotifiedRegistrationStore for InMemoryLedger {
         })
     }
 
-    fn release<'a>(&'a self, subscription: &'a Uri, registration: &'a Uri) -> BoxFuture<'a, Result<Release, NotificationError>> {
+    fn release<'a>(&'a self, subscription: &'a Identifier, registration: &'a Identifier) -> BoxFuture<'a, Result<Release, NotificationError>> {
         Box::pin(async move {
             let removed = self
                 .pairs
@@ -59,7 +59,7 @@ impl NotifiedRegistrationStore for InMemoryLedger {
         })
     }
 
-    fn notified_subscriptions<'a>(&'a self, registration: &'a Uri) -> BoxFuture<'a, Result<Vec<Uri>, NotificationError>> {
+    fn notified_subscriptions<'a>(&'a self, registration: &'a Identifier) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
         Box::pin(async move {
             Ok(self
                 .pairs
@@ -72,7 +72,7 @@ impl NotifiedRegistrationStore for InMemoryLedger {
         })
     }
 
-    fn registrations_notified_to<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<Vec<Uri>, NotificationError>> {
+    fn registrations_notified_to<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
         Box::pin(async move {
             Ok(self
                 .pairs
@@ -86,7 +86,7 @@ impl NotifiedRegistrationStore for InMemoryLedger {
     }
 }
 
-fn uri(raw: &str) -> Uri {
+fn uri(raw: &str) -> Identifier {
     raw.parse().expect("valid URI")
 }
 
@@ -528,7 +528,7 @@ async fn a_registration_reported_after_the_update_read_its_matches_stays_recorde
         .await;
 
     assert_eq!(summary(&on_creation), vec![(CsrTriggerReason::NewlyMatching, VEHICLE.to_owned())]);
-    assert_eq!(withdrawn, Vec::<Uri>::new());
+    assert_eq!(withdrawn, Vec::<Identifier>::new());
     assert_eq!(summary(&on_later_update), vec![(CsrTriggerReason::Updated, VEHICLE.to_owned())]);
 }
 

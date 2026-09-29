@@ -35,7 +35,7 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     entity_type::EntityTypeValue,
@@ -63,7 +63,7 @@ use axum::{
 };
 use serde_json::Value;
 
-const fn selected_dataset_uri(selector: Option<&DatasetSelector>) -> Option<&Uri> {
+const fn selected_dataset_uri(selector: Option<&DatasetSelector>) -> Option<&Identifier> {
     match selector {
         Some(DatasetSelector::Id(uri)) => Some(uri),
         Some(DatasetSelector::Default) | None => None,

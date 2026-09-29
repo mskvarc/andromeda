@@ -17,7 +17,7 @@
 //! answer with the 11:00 instant the annex renders.
 
 use crate::alias::Te;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_query::scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis};
@@ -73,7 +73,7 @@ pub fn scope_is_selected(compiled: &CompiledTemporalQuery) -> bool {
 /// "each Property and Relationship" rather than among them; the events the
 /// window admits are what the representation carries.
 #[must_use]
-pub fn build_scope_history_query(schema: Option<&DynIden>, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> SelectStatement {
+pub fn build_scope_history_query(schema: Option<&DynIden>, entity_id: &Identifier, compiled: &CompiledTemporalQuery) -> SelectStatement {
     let axis = scope_history_axis(compiled.window.timeproperty);
 
     let mut select = Query::select();
@@ -131,7 +131,7 @@ pub fn build_scope_history_query(schema: Option<&DynIden>, entity_id: &Uri, comp
 #[cfg(test)]
 mod tests {
     use crate::scope_history::{build_scope_history_query, scope_is_selected};
-    use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         temporal::{
@@ -146,7 +146,7 @@ mod tests {
     use iri_rs::IriBuf;
     use sea_query::PostgresQueryBuilder;
 
-    fn vehicle_id() -> Uri {
+    fn vehicle_id() -> Identifier {
         "urn:ngsi-ld:Vehicle:B9211".parse().expect("valid entity id")
     }
 

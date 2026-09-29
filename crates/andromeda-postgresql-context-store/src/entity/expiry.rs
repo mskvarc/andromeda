@@ -7,7 +7,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{entity_snapshot::EntitySnapshot, expiry::EntityExpiryBatchSize};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{E, Entities, EntityDocuments};
 use chrono::{DateTime, Utc};
@@ -33,7 +33,7 @@ impl EntityRepository {
         target: &ContextTarget,
         cutoff: DateTime<Utc>,
         batch_size: EntityExpiryBatchSize,
-    ) -> Result<Vec<Uri>, ContextStoreError> {
+    ) -> Result<Vec<Identifier>, ContextStoreError> {
         let (sql, values) = entities_due_for_expiry_statement(target, cutoff, u64::from(batch_size.get())).build_sqlx(PostgresQueryBuilder);
         let rows: Vec<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
@@ -51,7 +51,7 @@ impl EntityRepository {
         target: &ContextTarget,
         cutoff: DateTime<Utc>,
         batch_size: EntityExpiryBatchSize,
-    ) -> Result<Vec<(Uri, EntitySnapshot)>, ContextStoreError> {
+    ) -> Result<Vec<(Identifier, EntitySnapshot)>, ContextStoreError> {
         let (sql, values) = entities_with_expired_attributes_statement(target, cutoff, u64::from(batch_size.get())).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 

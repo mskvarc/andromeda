@@ -13,10 +13,10 @@ use crate::{
     temporal::{
         ContextSpec,
         CsrModeFilter,
+        Identifier,
         ProblemResponse,
         ResultInstanceExt,
         TemporalQueryParameters,
-        Uri,
         Value,
         collect_temporal_warnings,
         local_map_entities::LocalHistoryEntities,
@@ -62,7 +62,7 @@ pub(crate) struct RetrievedHistory {
     /// any format projection narrowed it (clause 4.5.23).
     pub(crate) linked_candidates: Vec<TemporalLinkedCandidate>,
     /// The Entity Map the retrieval ran under, when one applies (clause 5.5.14).
-    pub(crate) entity_map_uri: Option<Uri>,
+    pub(crate) entity_map_uri: Option<Identifier>,
 }
 
 /// Resolve the Entity Map a distributed retrieval runs under.
@@ -125,7 +125,7 @@ pub(crate) struct RetrievalSources<'a> {
 pub(crate) async fn distributed_retrieval(
     sources: RetrievalSources<'_>,
     target: &ContextTarget,
-    id: &Uri,
+    id: &Identifier,
     params: &TemporalQueryParameters,
     context: &ContextSpec,
     local_result: Result<TemporalReadResult, TemporalError>,
@@ -221,9 +221,9 @@ async fn record_retrieve_map(
     entity_maps: &EntityMapService,
     map_use: EntityMapUse,
     contributions: Vec<SourceContribution>,
-    local_id: Option<Uri>,
+    local_id: Option<Identifier>,
     instance: &RequestUri,
-) -> Result<Option<Uri>, ProblemResponse> {
+) -> Result<Option<Identifier>, ProblemResponse> {
     let local = LocalHistoryEntities::Retrieved(local_id.as_ref());
     entity_maps
         // A retrieval applies no filters, so it prunes nothing and the match set

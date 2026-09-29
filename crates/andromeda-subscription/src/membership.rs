@@ -5,7 +5,7 @@
 //! index size.
 
 use crate::selector_routing::SelectorRouting;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 
 /// Every bucket one indexed subscription was placed in.
@@ -31,7 +31,7 @@ impl Membership {
     }
 
     /// The id buckets the subscription occupies, each once.
-    pub fn id_buckets(&self) -> impl Iterator<Item = &Uri> {
+    pub fn id_buckets(&self) -> impl Iterator<Item = &Identifier> {
         self.selectors.by_entity_id.iter().map(|(id, _)| id)
     }
 }

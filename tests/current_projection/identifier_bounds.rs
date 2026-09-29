@@ -2,17 +2,21 @@
 //!
 //! Clause 4.6.2 sets no length on a URI, but every identifier the broker
 //! stores is a B-tree key, so Andromeda bounds each one -- an Entity id, an
-//! Entity type, a `datasetId`, an `instanceId`, a Relationship object, a
-//! Subscription or Registration id and an `idPattern` -- at the same number of
-//! UTF-8 octets. The bound applies to the value as stored, which for a term is
-//! its expansion: a short compacted token an inline `@context` maps to an
-//! over-long IRI is refused rather than silently dropped or retargeted. A value
-//! at the bound is stored and stays addressable by every access path.
+//! Entity type, a `datasetId`, an `instanceId`, a Subscription or Registration
+//! id and an `idPattern` -- at the same number of UTF-8 octets. The bound
+//! applies to the value as stored, which for a term is its expansion: a short
+//! compacted token an inline `@context` maps to an over-long IRI is refused
+//! rather than silently dropped or retargeted. A value at the bound is stored
+//! and stays addressable by every access path.
+//!
+//! A Relationship object is a reference, not an identifier: it is bounded
+//! only by the request-body limit. One no longer than an identifier sits in
+//! the traversed `value_uri` column, a longer one in `value_long_uri`.
 
 use crate::{
     bad_request::assert_bad_request_data,
     bounded_identifier::high_entropy_identifier,
-    projection_rows::{entity_key, rows_for_attribute, temporal_entity_exists},
+    projection_rows::{entity_key, rows_for_attribute, temporal_entity_exists, uri_placement},
 };
 use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
 use andromeda_test_client::test_client::TestClient;
@@ -205,22 +209,44 @@ async fn a_relationship_object_at_the_limit_is_projected_and_traversable() {
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 4.6.2 sets no length on a URI, and a Relationship object is a
+/// reference rather than an identifier: one past the identifier bound is
+/// stored, under the URI value kind, in the overflow column.
 #[tokio::test]
-async fn a_relationship_object_past_the_limit_is_refused() {
+async fn a_relationship_object_past_the_limit_is_projected_into_the_overflow_column() {
     let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("Building:long-link-source");
     let object = high_entropy_identifier(&scope.id("Building:long-link-target:"), PAST_THE_LIMIT, 25);
 
-    let entity = json!({
-        "id": id,
-        "type": "Building",
-        "link": {"type": "Relationship", "object": object},
-        "@context": [TEST_SUITE_CONTEXT]
-    });
-    let refused = client.post_entity(&entity).send().await.expect("create entity request failed");
-    assert_bad_request_data(&refused, "creating an Entity whose Relationship object is past the bound");
-    assert_eq!(entity_key(scope.database_pool(), &id).await, None, "the refused Entity must not be stored");
+    create(
+        client,
+        &json!({
+            "id": id,
+            "type": "Building",
+            "link": {"type": "Relationship", "object": object},
+            "@context": [TEST_SUITE_CONTEXT]
+        }),
+    )
+    .await;
+
+    let rows = rows_for_attribute(scope.database_pool(), &id, "link").await;
+    assert_eq!(rows.len(), 1, "the Relationship must be one grain: {rows:?}");
+    assert_eq!(
+        (rows[0].attribute_kind, rows[0].value_kind),
+        (2, 7),
+        "the Relationship must be projected as a URI"
+    );
+    assert_eq!(
+        rows[0].value_text.as_deref(),
+        Some(object.as_str()),
+        "the object past the bound must be projected whole"
+    );
+    assert_eq!(
+        uri_placement(scope.database_pool(), &id, "link").await,
+        (None, Some(object.clone())),
+        "the object past the bound must sit in the overflow column"
+    );
 
     scope.finish().await.expect("cleanup failed");
 }

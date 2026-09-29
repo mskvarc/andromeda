@@ -19,7 +19,7 @@ use crate::{
     representation_parameter::{WrittenValue, resolve_representation, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     projection::{
@@ -172,7 +172,7 @@ pub struct GetEntityParams {
     /// Entity identifiers the result must be linked from (`containedBy`).
     #[serde(rename = "containedBy")]
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
-    pub contained_by: Option<Vec<Uri>>,
+    pub contained_by: Option<Vec<Identifier>>,
     /// Whether the retrieval returns the location of the `EntityMap` it used,
     /// creating one when none is in use (Table 6.5.3.1-1 `entityMap`).
     #[serde(rename = "entityMap")]

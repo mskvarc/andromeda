@@ -138,13 +138,13 @@ pub(crate) fn unit_code(error: UnitCodeMetadataError) -> CommitError {
 mod tests {
     use crate::commit_refusal::{context_store, name_lookup, persistence, temporal, temporal_store, unit_code};
     use andromeda_context_commit::error::CommitError;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_postgresql_context_store::{entity::types_present::EntityTypesMissing, error::ContextStoreError};
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
     use andromeda_postgresql_temporal_store::{error::TemporalStoreError, unit_code_metadata::UnitCodeMetadataError};
     use andromeda_temporal::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
 
-    fn entity_id() -> Uri {
+    fn entity_id() -> Identifier {
         "urn:ngsi-ld:Building:1".parse().expect("valid entity URI")
     }
 

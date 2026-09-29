@@ -11,7 +11,7 @@
 //! parameters of [`EntityMapService::record_read`].
 
 use crate::{contribution::SourceContribution, error::EntityMapError, pruning::PageCheck, reuse::EntityMapUse, service::EntityMapService};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::future::Future;
 
 /// Lists the entities this broker itself contributes to the map a read runs
@@ -32,7 +32,7 @@ pub trait LocalMapEntities {
     ///
     /// Whatever the binding reports when the entities cannot be listed, which
     /// for an HTTP binding is the problem response the failure classifies to.
-    fn identifiers(&self, listing: MapListing) -> impl Future<Output = Result<Vec<Uri>, Self::Error>> + Send;
+    fn identifiers(&self, listing: MapListing) -> impl Future<Output = Result<Vec<Identifier>, Self::Error>> + Send;
 }
 
 /// Why the entities this broker holds are being listed.
@@ -73,7 +73,7 @@ pub enum PageMatches {
     /// `splitEntities` (clause 5.5.9.3): the broker evaluated the deferred `q`,
     /// geoquery and `scopeQ` over the merged local-plus-forwarded result, so the
     /// surviving identifiers are the whole match set.
-    Merged(Vec<Uri>),
+    Merged(Vec<Identifier>),
 }
 
 /// Whether preparing this read's page applied the request's filters to the
@@ -126,7 +126,7 @@ impl EntityMapService {
         local: &L,
         filtering: PageFiltering,
         matches: PageMatches,
-    ) -> Result<Option<Uri>, RecordingFailure<L::Error>>
+    ) -> Result<Option<Identifier>, RecordingFailure<L::Error>>
     where
         L: LocalMapEntities + Sync,
     {
@@ -196,7 +196,7 @@ mod tests {
         service::EntityMapService,
         store::{EntityMapMutation, EntityMapStore, EntityMapStoreFuture},
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_map::EntityMap,
         entity_map_fingerprint::{MapRequestKind, RequestFingerprint},
@@ -222,18 +222,23 @@ mod tests {
             })
         }
 
-        fn get<'a>(&'a self, identifier: &'a Uri) -> EntityMapStoreFuture<'a, Option<EntityMap>> {
+        fn get<'a>(&'a self, identifier: &'a Identifier) -> EntityMapStoreFuture<'a, Option<EntityMap>> {
             Box::pin(async move {
                 let maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
                 Ok(maps.iter().find(|map| &map.id == identifier && !map.is_expired()).cloned()) // clone: the caller owns the returned map
             })
         }
 
-        fn update<'a>(&'a self, _identifier: &'a Uri, _expires_at: DateTime<Utc>) -> EntityMapStoreFuture<'a, EntityMapMutation> {
+        fn update<'a>(&'a self, _identifier: &'a Identifier, _expires_at: DateTime<Utc>) -> EntityMapStoreFuture<'a, EntityMapMutation> {
             Box::pin(async move { Ok(EntityMapMutation::Missing) })
         }
 
-        fn link<'a>(&'a self, identifier: &'a Uri, registration: &'a Uri, linked_map: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation> {
+        fn link<'a>(
+            &'a self,
+            identifier: &'a Identifier,
+            registration: &'a Identifier,
+            linked_map: &'a Identifier,
+        ) -> EntityMapStoreFuture<'a, EntityMapMutation> {
             Box::pin(async move {
                 let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
                 match maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
@@ -246,7 +251,7 @@ mod tests {
             })
         }
 
-        fn prune<'a>(&'a self, identifier: &'a Uri, entity_ids: &'a [Uri]) -> EntityMapStoreFuture<'a, ()> {
+        fn prune<'a>(&'a self, identifier: &'a Identifier, entity_ids: &'a [Identifier]) -> EntityMapStoreFuture<'a, ()> {
             Box::pin(async move {
                 let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
                 if let Some(map) = maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
@@ -256,7 +261,7 @@ mod tests {
             })
         }
 
-        fn delete<'a>(&'a self, _identifier: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation> {
+        fn delete<'a>(&'a self, _identifier: &'a Identifier) -> EntityMapStoreFuture<'a, EntityMapMutation> {
             Box::pin(async move { Ok(EntityMapMutation::Missing) })
         }
 
@@ -269,13 +274,13 @@ mod tests {
     /// them reports, recording which purpose the recording asked for.
     struct Local {
         /// What the listing answers with.
-        answer: Result<Vec<Uri>, &'static str>,
+        answer: Result<Vec<Identifier>, &'static str>,
         /// The purposes the recording asked for, in order.
         asked: Mutex<Vec<MapListing>>,
     }
 
     impl Local {
-        fn answering(answer: Result<Vec<Uri>, &'static str>) -> Local {
+        fn answering(answer: Result<Vec<Identifier>, &'static str>) -> Local {
             Local {
                 answer,
                 asked: Mutex::new(Vec::new()),
@@ -290,7 +295,7 @@ mod tests {
     impl LocalMapEntities for Local {
         type Error = &'static str;
 
-        fn identifiers(&self, listing: MapListing) -> impl Future<Output = Result<Vec<Uri>, &'static str>> {
+        fn identifiers(&self, listing: MapListing) -> impl Future<Output = Result<Vec<Identifier>, &'static str>> {
             if let Ok(mut asked) = self.asked.lock() {
                 asked.push(listing);
             }
@@ -299,15 +304,17 @@ mod tests {
         }
     }
 
-    fn identifier(value: &str) -> Result<Uri, EntityMapError> {
-        value.parse::<Uri>().map_err(|error| EntityMapError::Invariant { detail: error.to_string() })
+    fn identifier(value: &str) -> Result<Identifier, EntityMapError> {
+        value
+            .parse::<Identifier>()
+            .map_err(|error| EntityMapError::Invariant { detail: error.to_string() })
     }
 
     fn service() -> EntityMapService {
         EntityMapService::new(Arc::new(VecStore::default()))
     }
 
-    fn map_of(id: &str, entity_ids: impl IntoIterator<Item = Uri>) -> Result<EntityMap, EntityMapError> {
+    fn map_of(id: &str, entity_ids: impl IntoIterator<Item = Identifier>) -> Result<EntityMap, EntityMapError> {
         let expires_at = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).single().ok_or_else(|| EntityMapError::Invariant {
             detail: "valid instant".into(),
         })?;

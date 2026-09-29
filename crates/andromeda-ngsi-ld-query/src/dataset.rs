@@ -2,7 +2,7 @@
 //! (clause 4.5.5).
 
 use crate::error::QueryError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -25,7 +25,7 @@ pub enum DatasetSelector {
     /// The default instance, which carries no `datasetId` (clause 4.5.5).
     Default,
     /// A specific dataset identifier.
-    Id(Uri),
+    Id(Identifier),
 }
 
 impl DatasetSelector {
@@ -39,7 +39,7 @@ impl DatasetSelector {
         if raw == DEFAULT_INSTANCE_TOKEN {
             return Ok(DatasetSelector::Default);
         }
-        raw.parse::<Uri>()
+        raw.parse::<Identifier>()
             .map(DatasetSelector::Id)
             .map_err(|source| QueryError::ParamDatasetIdInvalid { raw: raw.to_string(), source })
     }
@@ -97,9 +97,9 @@ pub enum DatasetFilter {
     /// Only the default instance.
     DefaultOnly,
     /// Only the named datasets.
-    NamedOnly(Vec<Uri>),
+    NamedOnly(Vec<Identifier>),
     /// The default instance or any of the named datasets.
-    DefaultOrNamed(Vec<Uri>),
+    DefaultOrNamed(Vec<Identifier>),
 }
 
 impl DatasetFilter {
@@ -131,7 +131,7 @@ impl DatasetFilter {
 mod tests {
     use super::*;
 
-    fn dataset_uri(raw: &str) -> Uri {
+    fn dataset_uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
     }
 

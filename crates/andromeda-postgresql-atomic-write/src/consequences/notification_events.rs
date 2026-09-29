@@ -188,7 +188,7 @@ mod tests {
         subscription_match::SubscriptionMatch,
         write_ordinal::WriteOrdinal,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         expanded::{
@@ -202,7 +202,7 @@ mod tests {
 
     const SPEED: &str = "https://example.org/speed";
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("a valid URI")
     }
 

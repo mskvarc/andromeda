@@ -14,7 +14,7 @@ mod lease_statements;
 
 use crate::intent_store::lease_statements::{acknowledge_statement, claim_statement, pending_statement, retry_statement};
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use andromeda_temporal::{
@@ -67,11 +67,11 @@ impl PostgresTemporalIntentStore {
     async fn claim_matching(
         &self,
         owner: LeaseHolder,
-        entity_id: Option<&Uri>,
+        entity_id: Option<&Identifier>,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
-        let (sql, values) = claim_statement(owner, entity_id.map(Uri::as_str), limit.get(), lease_until).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = claim_statement(owner, entity_id.map(Identifier::as_str), limit.get(), lease_until).build_sqlx(PostgresQueryBuilder);
         let rows = observe_statement(INTENT_CLAIM, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool))
             .await
             .map_err(persistence)?;
@@ -93,7 +93,7 @@ impl PostgresTemporalIntentStore {
 
 #[async_trait]
 impl PendingTemporalIntentReader for PostgresTemporalIntentStore {
-    async fn pending_for_entity(&self, entity_id: &Uri) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
+    async fn pending_for_entity(&self, entity_id: &Identifier) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
         let (sql, values) = pending_statement(Some(entity_id.as_str())).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.pool)
@@ -126,7 +126,7 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
     async fn claim_for_entity(
         &self,
         owner: LeaseHolder,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {

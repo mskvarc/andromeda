@@ -28,14 +28,14 @@ use andromeda_context_commit::{
     write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, SysAttrsSnapshot};
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 
 /// One chunk's successfully deleted identifiers and its per-entity failures.
-pub(super) type DeleteChunkOutcome = (Vec<Uri>, Vec<(Uri, EntityError)>);
+pub(super) type DeleteChunkOutcome = (Vec<Identifier>, Vec<(Identifier, EntityError)>);
 
 impl EntityService {
     /// The durable notification records one deletion owes, mirroring the single
@@ -49,7 +49,7 @@ impl EntityService {
     fn delete_subscription_matches(
         &self,
         target: &ContextTarget,
-        id: &Uri,
+        id: &Identifier,
         payload: &Value,
         sys_attrs: Option<&SysAttrsSnapshot>,
     ) -> Result<Vec<SubscriptionMatch>, EntityError> {
@@ -68,7 +68,7 @@ impl EntityService {
         Ok(self.notifier.subscription_matches(deleted, &change, snapshots))
     }
 
-    pub(super) async fn batch_delete_chunk(&self, placement: SideEffectPlacement<'_>, chunk: &[Uri]) -> Result<DeleteChunkOutcome, EntityError> {
+    pub(super) async fn batch_delete_chunk(&self, placement: SideEffectPlacement<'_>, chunk: &[Identifier]) -> Result<DeleteChunkOutcome, EntityError> {
         let target = placement.target();
         let _id_guards = self.acquire_id_locks(target, chunk).await;
 
@@ -160,7 +160,7 @@ impl EntityService {
 ///
 /// Reports [`EntityError::Internal`] when the stored payload's types or
 /// `datasetId`s cannot be read.
-fn deletion_events(id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Result<Vec<ChangeEvent>, EntityError> {
+fn deletion_events(id: &Identifier, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Result<Vec<ChangeEvent>, EntityError> {
     Ok(vec![
         ChangeEvent::builder()
             .entity_id(id.clone()) // clone: the event owns its identifier

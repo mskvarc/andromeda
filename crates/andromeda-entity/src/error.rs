@@ -6,8 +6,8 @@ use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     entity_type_name::EntityTypeName,
+    identifier::Identifier,
     ngsi_ld_urn::{AttributeListIdParseError, EntityTypeListIdParseError},
-    uri::Uri,
 };
 use andromeda_ngsi_ld_model::expanded::mutation::error::ExpandedEntityError;
 use andromeda_ngsi_ld_query::error::QueryError;
@@ -26,7 +26,7 @@ pub enum EntityError {
     #[error("entity {identifier} not found")]
     NotFound {
         /// Missing entity identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// The requested entity type does not exist.
     #[error("entity type {name} not found")]
@@ -47,7 +47,7 @@ pub enum EntityError {
     #[error("entity {identifier} already exists")]
     AlreadyExists {
         /// Conflicting entity identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// Concurrent writers superseded the mutation on every attempt it was given.
     ///
@@ -57,7 +57,7 @@ pub enum EntityError {
     #[error("entity {identifier} is being modified concurrently: the write lost its precondition on all {attempts} attempts and can be retried unchanged")]
     Contention {
         /// Contended entity identifier.
-        identifier: Uri,
+        identifier: Identifier,
         /// Attempts spent before the broker gave up.
         attempts: u32,
     },
@@ -144,7 +144,7 @@ impl From<CommitError> for EntityError {
 impl EntityError {
     /// Construct a missing-entity failure.
     #[must_use]
-    pub fn not_found(identifier: &Uri) -> EntityError {
+    pub fn not_found(identifier: &Identifier) -> EntityError {
         EntityError::NotFound {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
         }
@@ -168,7 +168,7 @@ impl EntityError {
 
     /// Construct an identifier-conflict failure.
     #[must_use]
-    pub fn already_exists(identifier: &Uri) -> EntityError {
+    pub fn already_exists(identifier: &Identifier) -> EntityError {
         EntityError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
         }
@@ -176,7 +176,7 @@ impl EntityError {
 
     /// Construct a write-contention failure over the attempts it consumed.
     #[must_use]
-    pub fn contention(identifier: &Uri, attempts: u32) -> EntityError {
+    pub fn contention(identifier: &Identifier, attempts: u32) -> EntityError {
         EntityError::Contention {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
             attempts,

@@ -7,7 +7,7 @@ use crate::{
     subscription::entry::SubEntry,
 };
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use rstar::{AABB, Envelope, RTree};
 
 /// Thread-safe R-tree cache of subscription reference geometries.
@@ -51,7 +51,7 @@ impl SpatialSubscriptionIndex {
     /// Already exact: each candidate the tree admits is put through the clause
     /// 4.10 predicate before it is returned, so the caller needs no second
     /// pass.
-    pub fn candidates(&self, key: &SpatialKey, entity_geometry: &Geometry) -> Vec<Uri> {
+    pub fn candidates(&self, key: &SpatialKey, entity_geometry: &Geometry) -> Vec<Identifier> {
         let Some(rect) = entity_geometry.bounding_rect() else {
             return Vec::new();
         };
@@ -76,14 +76,14 @@ impl SpatialSubscriptionIndex {
     }
 
     /// Remove every entry belonging to a subscription, across every partition.
-    pub fn remove(&self, subscription_id: &Uri) {
+    pub fn remove(&self, subscription_id: &Identifier) {
         self.tree.remove(subscription_id);
     }
 }
 
 /// Every subscription in one partition's tree whose geo filter the entity
 /// geometry satisfies.
-fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &Geometry, envelope: &AABB<[f64; 2]>) -> Vec<Uri> {
+fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &Geometry, envelope: &AABB<[f64; 2]>) -> Vec<Identifier> {
     let mut matched = Vec::new();
     for entry in tree.locate_in_envelope_intersecting(*envelope) {
         if matches(&entry.georel, entity_geometry, &entry.ref_geometry) {
@@ -123,12 +123,12 @@ mod tests {
         position::Position,
         positive_distance::PositiveDistance,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
     use std::str::FromStr;
 
-    fn uri(id: &str) -> Uri {
+    fn uri(id: &str) -> Identifier {
         format!("urn:ngsi-ld:Subscription:{id}").parse().expect("a valid subscription URI")
     }
 
@@ -187,7 +187,7 @@ mod tests {
                 },
             ),
         );
-        assert_eq!(index.candidates(&key(), &point(10.0, 10.0)), [] as [Uri; 0]);
+        assert_eq!(index.candidates(&key(), &point(10.0, 10.0)), [] as [Identifier; 0]);
     }
 
     #[test]
@@ -207,7 +207,7 @@ mod tests {
 
         // ~4 km east is 0.036 degrees at the equator; ~6 km east is 0.054.
         pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.036, 0.0)), vec![uri("sub-5km")]);
-        assert_eq!(index.candidates(&key(), &point(0.054, 0.0)), [] as [Uri; 0]);
+        assert_eq!(index.candidates(&key(), &point(0.054, 0.0)), [] as [Identifier; 0]);
     }
 
     #[test]
@@ -215,14 +215,14 @@ mod tests {
         let index = SpatialSubscriptionIndex::new();
         index.insert(key(), entry("sub-1", square(0.0, 0.0, 1.0), GeoRel::Within));
         index.remove(&uri("sub-1"));
-        assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), [] as [Uri; 0]);
+        assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), [] as [Identifier; 0]);
     }
 
     #[test]
     fn a_subscription_on_one_geoproperty_is_not_a_candidate_for_another() {
         let index = SpatialSubscriptionIndex::new();
         index.insert(observation_space_key(), entry("sub-obs", square(0.0, 0.0, 1.0), GeoRel::Within));
-        assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), [] as [Uri; 0]);
+        assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), [] as [Identifier; 0]);
     }
 
     #[test]

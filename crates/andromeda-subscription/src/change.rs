@@ -1,7 +1,7 @@
 //! Cache-invalidation signals for subscription lifecycle changes.
 
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use futures::future::BoxFuture;
 
 /// Signals entity-subscription lifecycle changes.
@@ -12,14 +12,14 @@ pub enum SubscriptionChange {
         /// Branch that owns the subscription.
         target: ContextTarget,
         /// Subscription identifier within the branch.
-        id: Uri,
+        id: Identifier,
     },
     /// The subscription with this identifier was deleted.
     Deleted {
         /// Branch that owned the subscription.
         target: ContextTarget,
         /// Deleted subscription identifier.
-        id: Uri,
+        id: Identifier,
     },
 }
 
@@ -46,7 +46,7 @@ pub enum CsourceSubscriptionChange {
         /// Branch that owns the subscription.
         target: ContextTarget,
         /// Subscription identifier within the branch.
-        id: Uri,
+        id: Identifier,
         /// Whether the subscription was created or updated.
         kind: UpsertKind,
     },
@@ -55,7 +55,7 @@ pub enum CsourceSubscriptionChange {
         /// Branch that owned the subscription.
         target: ContextTarget,
         /// Deleted subscription identifier.
-        id: Uri,
+        id: Identifier,
     },
 }
 

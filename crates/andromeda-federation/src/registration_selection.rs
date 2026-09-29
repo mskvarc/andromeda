@@ -23,7 +23,7 @@
 //! comparison is the fallback for a context the write body does not share.
 
 use crate::{error::FederationError, term_resolver::TermResolver};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, scope::path::ScopePath, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use iri_rs::IriBuf;
@@ -38,7 +38,7 @@ use serde_json::{Map, Value};
 pub(crate) async fn collect_matching_attrs(
     csr: &ContextSourceRegistration,
     entity_types: &[IriBuf],
-    entity_id: Option<&Uri>,
+    entity_id: Option<&Identifier>,
     explicit_attribute: Option<&AttributeName>,
     body: Option<&[u8]>,
     resolver: &TermResolver<'_>,
@@ -84,7 +84,7 @@ pub(crate) async fn filter_fragment_for_registration(
     body: Option<&[u8]>,
     csr: &ContextSourceRegistration,
     entity_types: &[IriBuf],
-    entity_id: Option<&Uri>,
+    entity_id: Option<&Identifier>,
     resolver: &TermResolver<'_>,
 ) -> Result<Option<Vec<u8>>, FederationError> {
     let Some(body) = body else {
@@ -115,7 +115,7 @@ enum AttributeCoverage {
 }
 
 /// What `csr` covers of an entity's attributes.
-fn attribute_coverage(csr: &ContextSourceRegistration, entity_types: &[IriBuf], entity_id: Option<&Uri>) -> AttributeCoverage {
+fn attribute_coverage(csr: &ContextSourceRegistration, entity_types: &[IriBuf], entity_id: Option<&Identifier>) -> AttributeCoverage {
     let information = csr
         .coverage
         .information
@@ -192,7 +192,7 @@ pub(crate) async fn retain_covered_attributes(
     object: &mut Map<String, Value>,
     csr: &ContextSourceRegistration,
     entity_types: &[IriBuf],
-    entity_id: Option<&Uri>,
+    entity_id: Option<&Identifier>,
     resolver: &TermResolver<'_>,
 ) -> Result<bool, FederationError> {
     match attribute_coverage(csr, entity_types, entity_id) {
@@ -218,7 +218,7 @@ pub(crate) async fn covered_attribute_members(
     object: &Map<String, Value>,
     csr: &ContextSourceRegistration,
     entity_types: &[IriBuf],
-    entity_id: Option<&Uri>,
+    entity_id: Option<&Identifier>,
     resolver: &TermResolver<'_>,
 ) -> Result<Vec<String>, FederationError> {
     match attribute_coverage(csr, entity_types, entity_id) {
@@ -252,7 +252,7 @@ pub(crate) fn is_entity_control_member(name: &str) -> bool {
 pub(crate) fn csr_has_matching_information(
     csr: &ContextSourceRegistration,
     entity_types: &[IriBuf],
-    entity_id: Option<&Uri>,
+    entity_id: Option<&Identifier>,
     attribute: Option<&IriBuf>,
 ) -> bool {
     csr.coverage
@@ -274,7 +274,7 @@ pub(crate) fn registration_scope_admits(registration: &ContextSourceRegistration
 }
 
 /// Whether the entity selector axis of one information entry matches.
-pub(crate) fn information_matches_entity(information: &RegistrationInfo, entity_types: &[IriBuf], entity_id: Option<&Uri>) -> bool {
+pub(crate) fn information_matches_entity(information: &RegistrationInfo, entity_types: &[IriBuf], entity_id: Option<&Identifier>) -> bool {
     let Some(selectors) = information.entities.as_deref().filter(|selectors| !selectors.is_empty()) else {
         return true;
     };
@@ -320,7 +320,7 @@ mod tests {
         term_resolver::TermResolver,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use iri_rs::IriBuf;
     use serde_json::{Map, Value, json};
@@ -373,7 +373,7 @@ mod tests {
         IriBuf::new("https://example.org/Vehicle".to_string()).expect("valid IRI")
     }
 
-    fn vehicle_id() -> Uri {
+    fn vehicle_id() -> Identifier {
         "urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")
     }
 

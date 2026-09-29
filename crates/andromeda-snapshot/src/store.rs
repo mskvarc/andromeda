@@ -9,7 +9,7 @@
 use crate::{branch_condition::BranchCondition, error::SnapshotError};
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     query::body::Query,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
@@ -28,7 +28,7 @@ use url::Url;
 #[derive(Debug)]
 pub struct InsertSnapshotParams<'a> {
     /// Snapshot identifier.
-    pub id: &'a Uri,
+    pub id: &'a Identifier,
     /// Typed entity query definitions, serialized by the SQL adapter.
     pub snapshot_queries: Option<&'a [Query]>,
     /// Typed temporal query definitions, serialized by the SQL adapter.
@@ -46,7 +46,7 @@ pub struct InsertSnapshotParams<'a> {
     /// Current lifecycle status.
     pub status: SnapshotStatus,
     /// Source Snapshot identifier for clone preparation; absent for capture.
-    pub clone_source_id: Option<&'a Uri>,
+    pub clone_source_id: Option<&'a Identifier>,
     /// Pre-serialised JSON for the entity-query execution details.
     pub queries_details_json: Option<Value>,
     /// Pre-serialised JSON for the temporal-query execution details.
@@ -67,7 +67,7 @@ pub struct SnapshotPreparationJob {
     /// Snapshot control resource being prepared.
     pub snapshot: Snapshot,
     /// Source Snapshot for clone jobs; absent for query capture jobs.
-    pub clone_source_id: Option<Uri>,
+    pub clone_source_id: Option<Identifier>,
     /// Resolved request context persisted with the preparation job.
     pub query_context: Value,
 }
@@ -82,28 +82,31 @@ pub trait SnapshotStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Retrieve a snapshot record.
-    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<Snapshot>, SnapshotError>>
+    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<Option<Snapshot>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
 
     /// Whether a snapshot with this identifier exists.
-    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
 
     /// Resolve the durable context branch owned by a Snapshot identifier.
-    fn target<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<SnapshotTarget>, SnapshotError>>
+    fn target<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<Option<SnapshotTarget>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
 
     /// Resolve the private context branch populated during query capture.
-    fn staging_target<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<SnapshotTarget>, SnapshotError>>
+    fn staging_target<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<SnapshotTarget>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -122,7 +125,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
     /// Renew a preparation lease if it is still held by `claimed_by`.
     fn renew_preparation_lease<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         claimed_by: LeaseHolder,
         lease_until: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
@@ -139,7 +142,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
     /// attempt staged is discarded first.
     fn restart_preparation<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         claimed_by: LeaseHolder,
         lease_until: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
@@ -153,7 +156,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
     /// the lease has run out.
     fn release_preparation<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         claimed_by: LeaseHolder,
     ) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
     where
@@ -164,7 +167,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
     /// Apply mutable Snapshot metadata and expiry. Returns rows affected.
     fn update_metadata<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         lifetime: Option<&'life2 Iso8601Duration>,
         priority: Option<SnapshotPriority>,
         endpoint: Option<Option<&'life3 Url>>,
@@ -187,7 +190,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
     /// addressable.
     fn update_status<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         claimed_by: LeaseHolder,
         status: SnapshotStatus,
         queries_details: Option<&'life2 [ExecutionResultDetails]>,
@@ -203,7 +206,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
     /// Atomically publish staged current and temporal rows and leave preparation.
     fn promote_capture<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         claimed_by: LeaseHolder,
         status: SnapshotStatus,
         queries_details: Option<&'life2 [ExecutionResultDetails]>,
@@ -217,7 +220,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Delete a snapshot and everything frozen under it. Returns rows affected.
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -227,14 +230,14 @@ pub trait SnapshotStore: Send + Sync + 'static {
     fn match_by_filter<'life0, 'life1, 'async_trait>(
         &'life0 self,
         filter: &'life1 SnapshotPurgeFilter,
-    ) -> BoxFuture<'async_trait, Result<Vec<Uri>, SnapshotError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<Identifier>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
 
     /// Delete one snapshot found by a purge filter. Returns rows affected.
-    fn delete_one<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
+    fn delete_one<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -243,8 +246,8 @@ pub trait SnapshotStore: Send + Sync + 'static {
     /// Atomically copy a source branch into a claimed preparing clone and promote it.
     fn promote_clone<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        source_id: &'life1 Uri,
-        target_id: &'life2 Uri,
+        source_id: &'life1 Identifier,
+        target_id: &'life2 Identifier,
         claimed_by: LeaseHolder,
     ) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
     where
@@ -267,13 +270,13 @@ pub trait SnapshotStore: Send + Sync + 'static {
         &'life0 self,
         count_quota: Option<usize>,
         byte_quota: Option<u64>,
-    ) -> BoxFuture<'async_trait, Result<Vec<Uri>, SnapshotError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<Identifier>, SnapshotError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;
 
     /// Record that a snapshot was read.
-    fn touch_last_used<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
+    fn touch_last_used<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -281,7 +284,10 @@ pub trait SnapshotStore: Send + Sync + 'static {
 
     /// Whether a snapshot's stored branch is current or quarantined; `None`
     /// when no such snapshot exists.
-    fn branch_condition<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<BranchCondition>, SnapshotError>>
+    fn branch_condition<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<BranchCondition>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

@@ -13,7 +13,7 @@ use std::{
 };
 
 use andromeda_http_extraction::context_target::ExistingTargetedTenantState;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use axum::{
     extract::OriginalUri,
     response::{
@@ -42,7 +42,7 @@ use andromeda_http_response::problem_response::ProblemResponse;
 
 /// RAII guard that unregisters an SSE connection when the stream ends.
 struct SseConnectionGuard {
-    subscription_id: Uri,
+    subscription_id: Identifier,
     connection_id: ConnectionId,
     registry: Arc<ConnectionRegistry<SseNotificationEvent>>,
 }
@@ -92,7 +92,7 @@ impl Stream for SseEventStream {
 pub async fn stream(
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(subscription_id): TypedPath<Uri>,
+    TypedPath(subscription_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
     // Validate subscription exists.
     let subscription = state.subscriptions.get(&target, &subscription_id).await.with_subscription_instance(&uri)?;

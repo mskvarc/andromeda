@@ -18,7 +18,7 @@ use crate::{
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::{
@@ -241,7 +241,7 @@ impl EntityRepository {
         }
         types_present(entities)?;
 
-        let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
+        let ids = entities.ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
         let sql = entity_update_sql(target)?;
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&ids)

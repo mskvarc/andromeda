@@ -3,7 +3,7 @@
 use andromeda_entity::error::EntityError;
 use andromeda_federation::error::FederationError;
 use andromeda_jsonld::error::JsonLdError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_subscription::error::SubscriptionError;
 use thiserror::Error;
 
@@ -29,7 +29,7 @@ pub enum SubscriptionForwardingError {
     #[error("no local subscription is mapped to {subscription}")]
     UnknownSubscription {
         /// The identifier the notification carried.
-        subscription: Uri,
+        subscription: Identifier,
     },
     /// The mapping store could not complete an operation.
     #[error("subscription forwarding persistence failed: {detail}")]

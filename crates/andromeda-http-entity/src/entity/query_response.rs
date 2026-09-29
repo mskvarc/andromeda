@@ -2,7 +2,7 @@
 
 use crate::entity::{IntoResponse, NgsiLdCollectionResponse, Response, StatusCode, query_page::QueryPage};
 use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_warning::NgsiLdWarning};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_render::response::RenderedOutput;
 use axum::http::Uri as HttpUri;
 
@@ -16,14 +16,14 @@ pub(crate) struct QueryCollectionMetadata {
     /// The clause 6.3.13 `NGSILD-Results-Count` of the matches, when asked for.
     pub(crate) total_count: Option<i64>,
     /// The Entity Map the query ran under (clause 5.5.14).
-    pub(crate) entity_map_uri: Option<Uri>,
+    pub(crate) entity_map_uri: Option<Identifier>,
     /// How many matching entities the page carried, which decides whether a
     /// following page exists (clause 6.3.10).
     pub(crate) returned: usize,
     /// The first and last identifiers of the page as displayed, from which a
     /// cursor pointer is computed (clause 5.5.9.1); absent when the page is
     /// empty.
-    pub(crate) boundary: Option<(Uri, Uri)>,
+    pub(crate) boundary: Option<(Identifier, Identifier)>,
 }
 
 /// Assemble the response around a rendered collection.

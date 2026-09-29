@@ -9,7 +9,7 @@
 //! routed to the right tenant.
 
 use crate::error::SubscriptionForwardingError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -26,8 +26,8 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
     /// mirroring `local`.
     fn link_companion<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        local: &'life1 Uri,
-        companion: &'life2 Uri,
+        local: &'life1 Identifier,
+        companion: &'life2 Identifier,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -38,8 +38,8 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
     /// The companion of `local`, if one was linked.
     fn companion_of<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        local: &'life1 Uri,
-    ) -> BoxFuture<'async_trait, Result<Option<Uri>, SubscriptionForwardingError>>
+        local: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<Identifier>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -48,8 +48,8 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
     /// The local subscription whose companion is `companion`, if any.
     fn local_of_companion<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        companion: &'life1 Uri,
-    ) -> BoxFuture<'async_trait, Result<Option<Uri>, SubscriptionForwardingError>>
+        companion: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<Identifier>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -58,7 +58,7 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
     /// Record the copy of `local` placed at `copy.registration`.
     fn record_forwarded<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        local: &'life1 Uri,
+        local: &'life1 Identifier,
         copy: &'life2 ForwardedCopy,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
@@ -70,7 +70,7 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
     /// Every copy of `local`.
     fn forwarded_of<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        local: &'life1 Uri,
+        local: &'life1 Identifier,
     ) -> BoxFuture<'async_trait, Result<Vec<ForwardedCopy>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -81,7 +81,7 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
     /// subscription each reduces.
     fn forwarded_for_registration<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        registration: &'life1 Uri,
+        registration: &'life1 Identifier,
     ) -> BoxFuture<'async_trait, Result<Vec<ForwardedSubscriptionCopy>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -91,8 +91,8 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
     /// The local subscription and sending registration behind a copy's identifier.
     fn local_of_forwarded<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        remote_subscription: &'life1 Uri,
-    ) -> BoxFuture<'async_trait, Result<Option<(Uri, Uri)>, SubscriptionForwardingError>>
+        remote_subscription: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<(Identifier, Identifier)>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -101,8 +101,8 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
     /// Forget the copy of `local` at `registration`.
     fn remove_forwarded<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        local: &'life1 Uri,
-        registration: &'life2 Uri,
+        local: &'life1 Identifier,
+        registration: &'life2 Identifier,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -116,7 +116,7 @@ pub trait ForwardedSubscriptionRouter: Send + Sync + 'static {
     /// Record that `minted` belongs to `tenant`.
     fn register<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        minted: &'life1 Uri,
+        minted: &'life1 Identifier,
         tenant: &'life2 TenantRef,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
@@ -128,7 +128,7 @@ pub trait ForwardedSubscriptionRouter: Send + Sync + 'static {
     /// The tenant `minted` belongs to, if this broker minted it.
     fn tenant_of<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        minted: &'life1 Uri,
+        minted: &'life1 Identifier,
     ) -> BoxFuture<'async_trait, Result<Option<TenantRef>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -136,7 +136,7 @@ pub trait ForwardedSubscriptionRouter: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Forget `minted`.
-    fn unregister<'life0, 'life1, 'async_trait>(&'life0 self, minted: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
+    fn unregister<'life0, 'life1, 'async_trait>(&'life0 self, minted: &'life1 Identifier) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

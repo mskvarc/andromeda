@@ -6,7 +6,7 @@
 //! and outcome translation every one of them shares.
 
 use crate::csource_registration::{registration_read, registration_write};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
@@ -63,7 +63,7 @@ pub(super) fn persistence_error(error: impl Display + Any) -> RegistrationError 
 }
 
 /// Preserve PostgreSQL unique violations as registration identifier conflicts.
-pub(super) fn create_error(error: sqlx::Error, identifier: &Uri) -> RegistrationError {
+pub(super) fn create_error(error: sqlx::Error, identifier: &Identifier) -> RegistrationError {
     match &error {
         sqlx::Error::Database(database_error) if database_error.code().as_deref() == Some("23505") => RegistrationError::already_exists(identifier),
         sqlx::Error::Configuration(_)
@@ -117,15 +117,15 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_read::find_expired(self, cutoff).await
     }
 
-    async fn exists(&self, id: &Uri) -> Result<bool, RegistrationError> {
+    async fn exists(&self, id: &Identifier) -> Result<bool, RegistrationError> {
         registration_read::exists(self, id).await
     }
 
-    async fn create(&self, id: &Uri, params: &CreateCsrParams) -> Result<(), RegistrationError> {
+    async fn create(&self, id: &Identifier, params: &CreateCsrParams) -> Result<(), RegistrationError> {
         registration_write::create(self, id, params).await
     }
 
-    async fn get(&self, id: &Uri) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
+    async fn get(&self, id: &Identifier) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
         registration_read::get(self, id).await
     }
 
@@ -137,27 +137,27 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_read::query_compiled(self, compiled).await
     }
 
-    async fn update(&self, id: &Uri, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {
+    async fn update(&self, id: &Identifier, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {
         registration_write::update(self, id, values).await
     }
 
-    async fn find_matching(&self, entity_type: Option<&IriBuf>, entity_id: Option<&Uri>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    async fn find_matching(&self, entity_type: Option<&IriBuf>, entity_id: Option<&Identifier>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
         registration_read::find_matching(self, entity_type, entity_id).await
     }
 
-    async fn find_overlapping(&self, entity_id: Option<&Uri>, attributes: &[IriBuf]) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    async fn find_overlapping(&self, entity_id: Option<&Identifier>, attributes: &[IriBuf]) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
         registration_read::find_overlapping(self, entity_id, attributes).await
     }
 
-    async fn find_all_active(&self, after: Option<&Uri>, limit: u32) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    async fn find_all_active(&self, after: Option<&Identifier>, limit: u32) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
         registration_read::find_all_active(self, after, limit).await
     }
 
-    async fn record_forwarding_outcome(&self, id: &Uri, outcome: ForwardingOutcome, at: DateTime<Utc>) -> Result<(), RegistrationError> {
+    async fn record_forwarding_outcome(&self, id: &Identifier, outcome: ForwardingOutcome, at: DateTime<Utc>) -> Result<(), RegistrationError> {
         registration_write::record_forwarding_outcome(self, id, outcome, at).await
     }
 
-    async fn delete(&self, id: &Uri) -> Result<RegistrationMutation, RegistrationError> {
+    async fn delete(&self, id: &Identifier) -> Result<RegistrationMutation, RegistrationError> {
         registration_write::delete(self, id).await
     }
 }

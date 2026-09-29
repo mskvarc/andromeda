@@ -17,7 +17,7 @@ use crate::{
 };
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_spatial_index::{
     key::SpatialKey,
@@ -109,7 +109,7 @@ impl SubscriptionCache {
     /// [`SubscriptionError::Representation`] for a stored row that no longer
     /// reads back as a subscription. The cached entry is left as it was, so a
     /// caller can tell a subscription that is gone from one it could not see.
-    pub async fn refresh(&self, target: &ContextTarget, id: &Uri, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
+    pub async fn refresh(&self, target: &ContextTarget, id: &Identifier, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
         match repo.get(target, id).await? {
             Some(stored) if stored.subscription.lifecycle.status == SubscriptionStatus::Active => self.insert(target, compile_subscription(&stored)),
             Some(_) | None => self.remove(target, id),
@@ -128,7 +128,7 @@ impl SubscriptionCache {
     }
 
     /// Drop the subscription with this identifier from both indexes.
-    pub fn remove(&self, target: &ContextTarget, id: &Uri) {
+    pub fn remove(&self, target: &ContextTarget, id: &Identifier) {
         if target.snapshot().is_none() {
             self.spatial.remove(id);
         }
@@ -151,7 +151,7 @@ impl SubscriptionCache {
     }
 
     /// Look up a single compiled subscription by ID.
-    pub fn get(&self, target: &ContextTarget, id: &Uri) -> Option<Arc<CompiledSubscription>> {
+    pub fn get(&self, target: &ContextTarget, id: &Identifier) -> Option<Arc<CompiledSubscription>> {
         self.indices.read().get(target).and_then(|index| index.get(id).map(Arc::clone))
     }
 
@@ -236,7 +236,7 @@ mod tests {
     };
     use andromeda_context_commit::subscription_key::SubscriptionKey;
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::subscription::{EntitySelector, Subscription, SubscriptionStatus};
     use andromeda_ngsi_ld_query::{cursor::PageCursor, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -267,7 +267,7 @@ mod tests {
 
     #[async_trait]
     impl SubscriptionStore for AnsweringStore {
-        async fn get(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
+        async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
             match self.answer {
                 StoredAnswer::Unreadable => Err(SubscriptionError::persistence("the subscription store is unreachable")),
                 StoredAnswer::Absent => Ok(None),
@@ -282,11 +282,11 @@ mod tests {
             Err(unused("list_keyset"))
         }
 
-        async fn delete(&self, _target: &ContextTarget, _id: &Uri) -> Result<u64, SubscriptionError> {
+        async fn delete(&self, _target: &ContextTarget, _id: &Identifier) -> Result<u64, SubscriptionError> {
             Err(unused("delete"))
         }
 
-        async fn exists(&self, _target: &ContextTarget, _id: &Uri) -> Result<bool, SubscriptionError> {
+        async fn exists(&self, _target: &ContextTarget, _id: &Identifier) -> Result<bool, SubscriptionError> {
             Err(unused("exists"))
         }
 
@@ -297,21 +297,21 @@ mod tests {
         async fn claim_notification_slot(
             &self,
             _target: &ContextTarget,
-            _id: &Uri,
+            _id: &Identifier,
             _gate: NotificationSlotGate,
         ) -> Result<NotificationSlot, SubscriptionError> {
             Err(unused("claim_notification_slot"))
         }
 
-        async fn mark_success(&self, _target: &ContextTarget, _id: &Uri) -> Result<(), SubscriptionError> {
+        async fn mark_success(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
             Err(unused("mark_success"))
         }
 
-        async fn mark_failure(&self, _target: &ContextTarget, _id: &Uri) -> Result<(), SubscriptionError> {
+        async fn mark_failure(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
             Err(unused("mark_failure"))
         }
 
-        async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+        async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
             Err(unused("expire_due"))
         }
 
@@ -323,14 +323,14 @@ mod tests {
             Err(unused("next_interval_due"))
         }
 
-        async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Uri, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
+        async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
             Err(unused("advance_interval_anchor"))
         }
 
         async fn create_subscription(
             &self,
             _target: &ContextTarget,
-            _id: &Uri,
+            _id: &Identifier,
             _fields: &SubscriptionFields<'_>,
             _status: SubscriptionStatus,
         ) -> Result<(), SubscriptionError> {
@@ -340,7 +340,7 @@ mod tests {
         async fn update_subscription(
             &self,
             _target: &ContextTarget,
-            _id: &Uri,
+            _id: &Identifier,
             _fields: &SubscriptionFields<'_>,
             _status: SubscriptionStatus,
         ) -> Result<u64, SubscriptionError> {

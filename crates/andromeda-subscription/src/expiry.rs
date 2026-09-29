@@ -2,7 +2,7 @@
 
 use crate::{error::SubscriptionError, lifecycle::SubscriptionService, variant::SubscriptionVariant};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use std::sync::Arc;
 #[derive(Debug, Eq, PartialEq)]
 pub struct SubscriptionExpiryOutcome {
     /// Identifiers transitioned to expired status.
-    pub expired: Vec<Uri>,
+    pub expired: Vec<Identifier>,
 }
 
 /// Independently scheduled expiry operation for one subscription variant.

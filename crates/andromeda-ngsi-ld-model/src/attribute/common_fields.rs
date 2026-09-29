@@ -1,7 +1,7 @@
 //! The members every NGSI-LD attribute family carries (ETSI GS CIM 009 clause 5.2).
 
 use crate::attribute::instance::AttributeValue;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use jsonld::Expandable;
@@ -28,7 +28,7 @@ pub struct CommonAttributeFields {
     pub created_at: Option<DateTime<Utc>>,
     /// Dataset identifier separating multi-instance attributes.
     #[jsonld(property = "ngsi:datasetId", coerce = "@id")]
-    pub dataset_id: Option<Uri>,
+    pub dataset_id: Option<Identifier>,
     /// System-generated deletion timestamp.
     #[serde(default)]
     #[jsonld(property = "ngsi:deletedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
@@ -39,7 +39,7 @@ pub struct CommonAttributeFields {
     pub expires_at: Option<DateTime<Utc>>,
     /// URI uniquely identifying an attribute instance.
     #[jsonld(property = "ngsi:instanceId", coerce = "@id")]
-    pub instance_id: Option<Uri>,
+    pub instance_id: Option<Identifier>,
     /// System-generated last modification timestamp.
     #[serde(default)]
     #[jsonld(property = "ngsi:modifiedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]

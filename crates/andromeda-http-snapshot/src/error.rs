@@ -125,14 +125,14 @@ pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSu
 #[cfg(test)]
 mod tests {
     use super::classify_snapshot_error;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_snapshot::error::SnapshotError;
     use std::error::Error;
 
     #[test]
     fn focused_snapshot_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
-        let identifier = "urn:ngsi-ld:Snapshot:1".parse::<Uri>()?;
+        let identifier = "urn:ngsi-ld:Snapshot:1".parse::<Identifier>()?;
         for (error, expected) in [
             (SnapshotError::Validation { detail: "invalid".to_string() }, NgsiLdErrorType::BadRequestData),
             (
@@ -182,7 +182,7 @@ mod tests {
     /// internal fault its detail names the Snapshot the operator must repair.
     #[test]
     fn a_quarantined_snapshot_is_an_internal_error_that_names_the_snapshot() -> Result<(), Box<dyn Error>> {
-        let identifier = "urn:ngsi-ld:Snapshot:quarantined".parse::<Uri>()?;
+        let identifier = "urn:ngsi-ld:Snapshot:quarantined".parse::<Identifier>()?;
         let report = classify_snapshot_error(&SnapshotError::Quarantined { identifier });
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
         assert!(report.detail().contains("urn:ngsi-ld:Snapshot:quarantined"), "{}", report.detail());

@@ -20,7 +20,7 @@ use andromeda_entity_map::{
     service::EntityMapService,
 };
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
-use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_temporal::error::TemporalError;
 use axum::http::Uri;
 use chrono::{DateTime, Utc};
@@ -91,9 +91,9 @@ pub(crate) async fn record_query_map(
     read: &TemporalHistoryRead<'_>,
     map_use: EntityMapUse,
     contributions: Vec<SourceContribution>,
-    linked_ids: Vec<NgsiLdUri>,
+    linked_ids: Vec<Identifier>,
     instance: &Uri,
-) -> Result<Option<NgsiLdUri>, ProblemResponse> {
+) -> Result<Option<Identifier>, ProblemResponse> {
     let local = LocalHistoryEntities::Queried {
         read,
         linked: &linked_ids,

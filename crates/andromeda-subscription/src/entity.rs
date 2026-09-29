@@ -10,7 +10,7 @@ use crate::{
 use andromeda_context_registry::service::ContextRegistryService;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -71,13 +71,13 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
         DatasetIdPolicy::Retain
     }
 
-    fn make_upserted(&self, target: ContextTarget, id: Uri, _kind: UpsertKind) -> SubscriptionChange {
+    fn make_upserted(&self, target: ContextTarget, id: Identifier, _kind: UpsertKind) -> SubscriptionChange {
         // An entity subscription's cache is rebuilt the same way whether the
         // subscription is new or replaced, so the change does not carry it.
         SubscriptionChange::Upserted { target, id }
     }
 
-    fn make_deleted(&self, target: ContextTarget, id: Uri) -> SubscriptionChange {
+    fn make_deleted(&self, target: ContextTarget, id: Identifier) -> SubscriptionChange {
         SubscriptionChange::Deleted { target, id }
     }
 }

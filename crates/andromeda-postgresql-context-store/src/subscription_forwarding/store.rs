@@ -1,7 +1,7 @@
 //! `SubscriptionForwardingStore` implementation over the two mapping tables.
 
 use crate::subscription_forwarding::{persistence_error, repo::SubscriptionForwardingRepository};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::subscription_forwarding::{ForwardedSubscriptions, SubscriptionCompanions};
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
@@ -13,7 +13,7 @@ use sqlx::{Row, postgres::PgRow};
 
 /// Every copy held at `registration`'s context source, served by
 /// `idx_forwarded_subscriptions_registration`.
-fn forwarded_for_registration_statement(registration: &Uri) -> SelectStatement {
+fn forwarded_for_registration_statement(registration: &Identifier) -> SelectStatement {
     Query::select()
         .column(ForwardedSubscriptions::LocalSubscriptionId)
         .column(ForwardedSubscriptions::RemoteSubscriptionId)
@@ -23,17 +23,17 @@ fn forwarded_for_registration_statement(registration: &Uri) -> SelectStatement {
 }
 
 /// Parse an identifier column back into a URI.
-fn uri_column(row: &PgRow, column: &str) -> Result<Uri, SubscriptionForwardingError> {
+fn uri_column(row: &PgRow, column: &str) -> Result<Identifier, SubscriptionForwardingError> {
     let raw: String = row.try_get(column).map_err(persistence_error)?;
-    raw.parse::<Uri>()
+    raw.parse::<Identifier>()
         .map_err(|error| SubscriptionForwardingError::persistence(format!("invalid {column} '{raw}': {error}")))
 }
 
 impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
     fn link_companion<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        local: &'life1 Uri,
-        companion: &'life2 Uri,
+        local: &'life1 Identifier,
+        companion: &'life2 Identifier,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -62,7 +62,10 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         })
     }
 
-    fn companion_of<'life0, 'life1, 'async_trait>(&'life0 self, local: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<Uri>, SubscriptionForwardingError>>
+    fn companion_of<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        local: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<Identifier>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -84,8 +87,8 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
 
     fn local_of_companion<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        companion: &'life1 Uri,
-    ) -> BoxFuture<'async_trait, Result<Option<Uri>, SubscriptionForwardingError>>
+        companion: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<Identifier>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -107,7 +110,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
 
     fn record_forwarded<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        local: &'life1 Uri,
+        local: &'life1 Identifier,
         copy: &'life2 ForwardedCopy,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
@@ -147,7 +150,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
 
     fn forwarded_of<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        local: &'life1 Uri,
+        local: &'life1 Identifier,
     ) -> BoxFuture<'async_trait, Result<Vec<ForwardedCopy>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -178,7 +181,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
 
     fn forwarded_for_registration<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        registration: &'life1 Uri,
+        registration: &'life1 Identifier,
     ) -> BoxFuture<'async_trait, Result<Vec<ForwardedSubscriptionCopy>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -204,8 +207,8 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
 
     fn local_of_forwarded<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        remote_subscription: &'life1 Uri,
-    ) -> BoxFuture<'async_trait, Result<Option<(Uri, Uri)>, SubscriptionForwardingError>>
+        remote_subscription: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<(Identifier, Identifier)>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -229,8 +232,8 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
 
     fn remove_forwarded<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        local: &'life1 Uri,
-        registration: &'life2 Uri,
+        local: &'life1 Identifier,
+        registration: &'life2 Identifier,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -256,13 +259,13 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
 #[cfg(test)]
 mod tests {
     use crate::subscription_forwarding::store::forwarded_for_registration_statement;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     #[test]
     fn the_copies_held_at_a_registration_are_read_by_its_identifier() {
-        let registration: Uri = "urn:ngsi-ld:ContextSourceRegistration:b".parse().expect("a URI");
+        let registration: Identifier = "urn:ngsi-ld:ContextSourceRegistration:b".parse().expect("a URI");
         let sql = forwarded_for_registration_statement(&registration).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,

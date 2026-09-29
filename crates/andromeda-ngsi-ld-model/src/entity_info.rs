@@ -1,6 +1,6 @@
 //! The entities a context source registers (ETSI GS CIM 009 clause 5.2.8).
 
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 use serde::{Deserialize, Serialize};
 use std::slice;
@@ -93,7 +93,7 @@ pub struct EntityInfo {
     pub type_: EntityTypeSelection,
     /// The one entity identifier the source can provide.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<Uri>,
+    pub id: Option<Identifier>,
     /// The pattern the provided entity identifiers match.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id_pattern: Option<Pattern>,
@@ -105,7 +105,7 @@ impl EntityInfo {
     /// Clause 5.2.8: an `id` is decisive when present; otherwise an `idPattern`
     /// decides; an entry constraining neither covers every identifier.
     #[must_use]
-    pub fn covers_id(&self, entity_id: &Uri) -> bool {
+    pub fn covers_id(&self, entity_id: &Identifier) -> bool {
         match (&self.id, &self.id_pattern) {
             (Some(id), _) => id == entity_id,
             (None, Some(pattern)) => pattern.is_match(entity_id.as_str()),

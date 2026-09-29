@@ -21,7 +21,7 @@ use andromeda_federation::{
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{
@@ -54,7 +54,7 @@ impl ForwardedTemporalLinkedSource {
 /// The parameters of the forwarded temporal retrieval: the window the answer
 /// must reproduce, so the roots and their Linked Entities describe one
 /// consistent slice of history, plus the traversal continuation.
-fn linked_temporal_retrieval_parameters(depth: NonZeroU32, visited: &[Uri], window: &TemporalLinkedWindow) -> TemporalQueryParameters {
+fn linked_temporal_retrieval_parameters(depth: NonZeroU32, visited: &[Identifier], window: &TemporalLinkedWindow) -> TemporalQueryParameters {
     let (join, join_level, contained_by) = traversal_continuation(depth, visited);
     TemporalQueryParameters {
         join,
@@ -68,9 +68,9 @@ fn linked_temporal_retrieval_parameters(depth: NonZeroU32, visited: &[Uri], wind
 impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
     async fn fetch_linked_temporal(
         &self,
-        id: &Uri,
+        id: &Identifier,
         remaining_depth: NonZeroU32,
-        visited: &[Uri],
+        visited: &[Identifier],
         window: &TemporalLinkedWindow,
         context: &ContextSpec,
     ) -> Result<RemoteTemporalLinkedEntities, TemporalError> {
@@ -129,14 +129,14 @@ impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
 #[cfg(test)]
 mod tests {
     use crate::temporal_linked_forwarding::linked_temporal_retrieval_parameters;
-    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
     use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use andromeda_ngsi_ld_request::representation_parameter::WrittenValue;
     use andromeda_temporal::remote_linked::TemporalLinkedWindow;
     use std::num::NonZeroU32;
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

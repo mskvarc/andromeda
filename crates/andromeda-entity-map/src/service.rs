@@ -6,7 +6,7 @@ use crate::{
     reuse::{EntityMapFlag, EntityMapUse},
     store::{EntityMapMutation, EntityMapStore},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity_map::EntityMap,
     entity_map_fingerprint::{RequestComparison, RequestFingerprint},
@@ -50,7 +50,7 @@ impl EntityMapService {
     /// valid URI.
     pub fn local_map(
         &self,
-        entity_ids: impl IntoIterator<Item = Uri>,
+        entity_ids: impl IntoIterator<Item = Identifier>,
         lifetime: Option<&Iso8601Duration>,
         fingerprint: RequestFingerprint,
     ) -> Result<EntityMap, EntityMapError> {
@@ -79,7 +79,7 @@ impl EntityMapService {
     ///
     /// [`EntityMapError::NotFound`] when no live map carries that identifier,
     /// and [`EntityMapError::Persistence`] when the store cannot be read.
-    pub async fn retrieve(&self, identifier: &Uri) -> Result<EntityMap, EntityMapError> {
+    pub async fn retrieve(&self, identifier: &Identifier) -> Result<EntityMap, EntityMapError> {
         self.store.get(identifier).await?.ok_or_else(|| EntityMapError::NotFound {
             identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
         })
@@ -92,7 +92,7 @@ impl EntityMapService {
     /// # Errors
     ///
     /// [`EntityMapError::Persistence`] when the store cannot be read.
-    pub async fn referenced(&self, identifier: &Uri) -> Result<ReferencedEntityMap, EntityMapError> {
+    pub async fn referenced(&self, identifier: &Identifier) -> Result<ReferencedEntityMap, EntityMapError> {
         Ok(match self.store.get(identifier).await? {
             Some(map) => ReferencedEntityMap::Live(Box::new(map)),
             None => ReferencedEntityMap::Unavailable,
@@ -111,7 +111,7 @@ impl EntityMapService {
     /// the map with different filter parameters.
     pub async fn resolve_use(
         &self,
-        referenced: Option<&Uri>,
+        referenced: Option<&Identifier>,
         flag: EntityMapFlag,
         fingerprint: &RequestFingerprint,
         lifetime: Option<&Iso8601Duration>,
@@ -143,7 +143,7 @@ impl EntityMapService {
     /// [`EntityMapError::RequestChanged`] when the request under the map
     /// changed a filter parameter of the request that created it, and
     /// [`EntityMapError::Persistence`] when the store cannot be read.
-    pub async fn resolve_reuse(&self, referenced: &Uri, fingerprint: &RequestFingerprint) -> Result<ReferencedEntityMap, EntityMapError> {
+    pub async fn resolve_reuse(&self, referenced: &Identifier, fingerprint: &RequestFingerprint) -> Result<ReferencedEntityMap, EntityMapError> {
         let resolved = self.referenced(referenced).await?;
         if let ReferencedEntityMap::Live(map) = &resolved {
             EntityMapService::require_same_request(map, fingerprint)?;
@@ -169,7 +169,7 @@ impl EntityMapService {
     ///
     /// [`EntityMapError::NotFound`] when no live map carries that identifier,
     /// and [`EntityMapError::Persistence`] when the store cannot move the expiry.
-    pub async fn update(&self, identifier: &Uri, expires_at: DateTime<Utc>) -> Result<(), EntityMapError> {
+    pub async fn update(&self, identifier: &Identifier, expires_at: DateTime<Utc>) -> Result<(), EntityMapError> {
         match self.store.update(identifier, expires_at).await? {
             EntityMapMutation::Applied => Ok(()),
             EntityMapMutation::Missing => Err(EntityMapError::NotFound {
@@ -186,7 +186,11 @@ impl EntityMapService {
     /// # Errors
     ///
     /// [`EntityMapError::Persistence`] when the store cannot record a link.
-    pub async fn record_linked_maps<'a>(&self, identifier: &Uri, links: impl IntoIterator<Item = (&'a Uri, &'a Uri)>) -> Result<(), EntityMapError> {
+    pub async fn record_linked_maps<'a>(
+        &self,
+        identifier: &Identifier,
+        links: impl IntoIterator<Item = (&'a Identifier, &'a Identifier)>,
+    ) -> Result<(), EntityMapError> {
         for (registration, linked_map) in links {
             self.store.link(identifier, registration, linked_map).await?;
         }
@@ -207,7 +211,7 @@ impl EntityMapService {
     ///
     /// [`EntityMapError::Persistence`] when the store cannot remove the
     /// identifiers.
-    pub async fn prune_unmatched(&self, map: &EntityMap, check: &PageCheck) -> Result<Vec<Uri>, EntityMapError> {
+    pub async fn prune_unmatched(&self, map: &EntityMap, check: &PageCheck) -> Result<Vec<Identifier>, EntityMapError> {
         let shed = check.shed_from(map);
         if !shed.is_empty() {
             self.store.prune(&map.id, &shed).await?;
@@ -221,7 +225,7 @@ impl EntityMapService {
     ///
     /// [`EntityMapError::NotFound`] when no live map carries that identifier,
     /// and [`EntityMapError::Persistence`] when the store cannot remove it.
-    pub async fn delete(&self, identifier: &Uri) -> Result<(), EntityMapError> {
+    pub async fn delete(&self, identifier: &Identifier) -> Result<(), EntityMapError> {
         match self.store.delete(identifier).await? {
             EntityMapMutation::Applied => Ok(()),
             EntityMapMutation::Missing => Err(EntityMapError::NotFound {
@@ -237,7 +241,7 @@ fn default_lifetime() -> Iso8601Duration {
 }
 
 /// Mint a new Entity Map identifier in the NGSI-LD URN namespace.
-fn build_entity_map_identifier() -> Result<Uri, EntityMapError> {
+fn build_entity_map_identifier() -> Result<Identifier, EntityMapError> {
     format!("urn:ngsi-ld:EntityMap:{}", Uuid::new_v4())
         .parse()
         .map_err(|error| EntityMapError::Invariant {
@@ -256,7 +260,7 @@ mod tests {
         service::{EntityMapService, ReferencedEntityMap},
         store::{EntityMapMutation, EntityMapStore, EntityMapStoreFuture},
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_map::EntityMap,
         entity_map_fingerprint::{MapRequestKind, RequestFingerprint},
@@ -279,14 +283,14 @@ mod tests {
             })
         }
 
-        fn get<'a>(&'a self, identifier: &'a Uri) -> EntityMapStoreFuture<'a, Option<EntityMap>> {
+        fn get<'a>(&'a self, identifier: &'a Identifier) -> EntityMapStoreFuture<'a, Option<EntityMap>> {
             Box::pin(async move {
                 let maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
                 Ok(maps.iter().find(|map| &map.id == identifier && !map.is_expired()).cloned()) // clone: the caller owns the returned map
             })
         }
 
-        fn update<'a>(&'a self, identifier: &'a Uri, expires_at: DateTime<Utc>) -> EntityMapStoreFuture<'a, EntityMapMutation> {
+        fn update<'a>(&'a self, identifier: &'a Identifier, expires_at: DateTime<Utc>) -> EntityMapStoreFuture<'a, EntityMapMutation> {
             Box::pin(async move {
                 let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
                 match maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
@@ -299,7 +303,12 @@ mod tests {
             })
         }
 
-        fn link<'a>(&'a self, identifier: &'a Uri, registration: &'a Uri, linked_map: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation> {
+        fn link<'a>(
+            &'a self,
+            identifier: &'a Identifier,
+            registration: &'a Identifier,
+            linked_map: &'a Identifier,
+        ) -> EntityMapStoreFuture<'a, EntityMapMutation> {
             Box::pin(async move {
                 let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
                 match maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
@@ -312,7 +321,7 @@ mod tests {
             })
         }
 
-        fn prune<'a>(&'a self, identifier: &'a Uri, entity_ids: &'a [Uri]) -> EntityMapStoreFuture<'a, ()> {
+        fn prune<'a>(&'a self, identifier: &'a Identifier, entity_ids: &'a [Identifier]) -> EntityMapStoreFuture<'a, ()> {
             Box::pin(async move {
                 let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
                 if let Some(map) = maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
@@ -322,7 +331,7 @@ mod tests {
             })
         }
 
-        fn delete<'a>(&'a self, identifier: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation> {
+        fn delete<'a>(&'a self, identifier: &'a Identifier) -> EntityMapStoreFuture<'a, EntityMapMutation> {
             Box::pin(async move {
                 let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
                 let before = maps.len();
@@ -345,8 +354,10 @@ mod tests {
         }
     }
 
-    fn identifier(value: &str) -> Result<Uri, EntityMapError> {
-        value.parse::<Uri>().map_err(|error| EntityMapError::Invariant { detail: error.to_string() })
+    fn identifier(value: &str) -> Result<Identifier, EntityMapError> {
+        value
+            .parse::<Identifier>()
+            .map_err(|error| EntityMapError::Invariant { detail: error.to_string() })
     }
 
     fn service() -> EntityMapService {
@@ -362,7 +373,7 @@ mod tests {
         RequestFingerprint::new(MapRequestKind::QueryEntities, [0; 32])
     }
 
-    async fn stored_map(service: &EntityMapService, entity_ids: Vec<Uri>, fingerprint: RequestFingerprint) -> Result<EntityMap, EntityMapError> {
+    async fn stored_map(service: &EntityMapService, entity_ids: Vec<Identifier>, fingerprint: RequestFingerprint) -> Result<EntityMap, EntityMapError> {
         let map = service.local_map(entity_ids, None, fingerprint)?;
         service.store(&map).await?;
         Ok(map)
@@ -508,7 +519,7 @@ mod tests {
         let service = service();
         let map = stored_map(&service, vec![identifier("urn:a")?], any_fingerprint()).await?;
         let check = PageCheck::new([identifier("urn:a")?], Vec::new());
-        pretty_assertions::assert_eq!(service.prune_unmatched(&map, &check).await?, Vec::<Uri>::new());
+        pretty_assertions::assert_eq!(service.prune_unmatched(&map, &check).await?, Vec::<Identifier>::new());
         pretty_assertions::assert_eq!(service.retrieve(&map.id).await?.entity_ids().count(), 1);
         Ok(())
     }

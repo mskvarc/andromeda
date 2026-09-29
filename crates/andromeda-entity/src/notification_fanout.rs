@@ -8,7 +8,7 @@
 use crate::{NotificationWriteConfig, change_notifier::ChangeNotifier};
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::ChangeOrigin};
 use andromeda_subscription::change_filters::{ChangedStates, narrow_by_change_filters};
 use chrono::Utc;
@@ -26,7 +26,7 @@ pub(crate) struct ChangedEntity<'a> {
     /// The context branch the mutation landed in.
     pub target: &'a ContextTarget,
     /// The identifier of the changed entity.
-    pub id: &'a Uri,
+    pub id: &'a Identifier,
     /// The types a subscription's `entities` selector is matched against.
     pub types: &'a [EntityTypeName],
 }
@@ -76,7 +76,7 @@ impl NotificationWriteConfig {
         } = snapshots;
 
         let event = ChangeEvent::builder()
-            .entity_id(entity_id.clone()) // clone: owned Uri for ChangeEvent
+            .entity_id(entity_id.clone()) // clone: owned Identifier for ChangeEvent
             .entity_types(entity_types.to_vec())
             .change(change.clone()) // clone: the matched event owns the change it is matched as
             .occurred_at(Utc::now())

@@ -25,7 +25,7 @@
 
 use crate::{linked::candidates::TemporalLinkedCandidate, service::TemporalService};
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, matching::matching_term, term::ProjectionTerm},
     term_expander::TermExpander,
@@ -58,7 +58,7 @@ impl TemporalService {
     pub(crate) async fn temporal_attribute_iri_index(
         &self,
         root_candidates: &[TemporalLinkedCandidate],
-        linked: &IndexMap<Uri, Value>,
+        linked: &IndexMap<Identifier, Value>,
         context: &ContextSpec,
     ) -> AttributeIriIndex {
         let prepared = self.engine.prepare_term_context(context);
@@ -96,7 +96,7 @@ pub(crate) fn apply_nested_projections(
     root_candidates: &[TemporalLinkedCandidate],
     projection: &Projection,
     index: &AttributeIriIndex,
-    linked: &mut IndexMap<Uri, Value>,
+    linked: &mut IndexMap<Identifier, Value>,
 ) {
     for (id, nested) in nested_projections(root_candidates, projection, index) {
         if let Some(entity) = linked.get_mut(&id) {
@@ -154,12 +154,12 @@ enum Accumulator {
 /// and this broker's join tests -- go one level deep. Extending the walk to
 /// every level would mean threading that provenance through the traversal, a
 /// larger change than this narrowing needs to be useful today.
-fn nested_projections(root_candidates: &[TemporalLinkedCandidate], projection: &Projection, index: &AttributeIriIndex) -> HashMap<Uri, Projection> {
+fn nested_projections(root_candidates: &[TemporalLinkedCandidate], projection: &Projection, index: &AttributeIriIndex) -> HashMap<Identifier, Projection> {
     if projection.pick.is_empty() && projection.omit.is_empty() {
         return HashMap::new();
     }
 
-    let mut result: HashMap<Uri, Accumulator> = HashMap::new();
+    let mut result: HashMap<Identifier, Accumulator> = HashMap::new();
     for candidate in root_candidates {
         for attribute in &candidate.attributes {
             if !projection.pick.is_empty() {
@@ -195,7 +195,7 @@ fn nested_projections(root_candidates: &[TemporalLinkedCandidate], projection: &
 
 /// Merge a nested `pick` sub-projection into `id`'s accumulated entry,
 /// leaving a `Full` entry untouched.
-fn merge_pick(result: &mut HashMap<Uri, Accumulator>, id: &Uri, nested: &[ProjectionTerm]) {
+fn merge_pick(result: &mut HashMap<Identifier, Accumulator>, id: &Identifier, nested: &[ProjectionTerm]) {
     match result.entry(id.clone()).or_insert_with(|| Accumulator::Terms {
         pick: Vec::new(),
         omit: Vec::new(),
@@ -207,7 +207,7 @@ fn merge_pick(result: &mut HashMap<Uri, Accumulator>, id: &Uri, nested: &[Projec
 
 /// Merge a nested `omit` sub-projection into `id`'s accumulated entry,
 /// leaving a `Full` entry untouched.
-fn merge_omit(result: &mut HashMap<Uri, Accumulator>, id: &Uri, nested: &[ProjectionTerm]) {
+fn merge_omit(result: &mut HashMap<Identifier, Accumulator>, id: &Identifier, nested: &[ProjectionTerm]) {
     match result.entry(id.clone()).or_insert_with(|| Accumulator::Terms {
         pick: Vec::new(),
         omit: Vec::new(),
@@ -220,7 +220,7 @@ fn merge_omit(result: &mut HashMap<Uri, Accumulator>, id: &Uri, nested: &[Projec
 /// Widen `id`'s accumulated entry to `Full`: it renders unrestricted, which
 /// absorbs whatever nested terms other attributes contributed, and cannot be
 /// narrowed back down by anything merged in afterward.
-fn merge_full(result: &mut HashMap<Uri, Accumulator>, id: &Uri) {
+fn merge_full(result: &mut HashMap<Identifier, Accumulator>, id: &Identifier) {
     result.insert(id.clone(), Accumulator::Full); // clone: the accumulator owns its own key independent of the candidate
 }
 
@@ -232,7 +232,7 @@ mod tests {
     use serde_json::json;
     use std::slice;
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

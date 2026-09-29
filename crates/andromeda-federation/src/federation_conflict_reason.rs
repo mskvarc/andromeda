@@ -6,7 +6,7 @@
 //! source's own problem detail, relayed verbatim. The clauses (5.6.1.4, 6.3.17)
 //! stay in doc comments.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use thiserror::Error;
 
 /// Why a single exclusive or redirect source could not accept the write.
@@ -17,7 +17,7 @@ pub enum FederationConflictReason {
     #[error("registration {registration} covers the data but does not advertise the requested operation")]
     NotAdvertised {
         /// The registration that covers the data without advertising the operation.
-        registration: Uri,
+        registration: Identifier,
     },
     /// The single registered source itself refused the write with an HTTP 409.
     ///

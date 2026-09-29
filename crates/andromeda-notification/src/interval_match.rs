@@ -6,7 +6,7 @@
 //! boolean selector cannot be pushed into a `WHERE`. These are the payload
 //! readers and the filter the interval sweep applies.
 
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     expanded::{
         attribute_expiry::remove_expired_instances,
@@ -45,7 +45,7 @@ pub(crate) fn entity_types(entity: &Value) -> Vec<EntityTypeName> {
 }
 
 /// The validated `@id` an expanded entity payload carries.
-pub(crate) fn entity_id_of(entity: &Value) -> Option<Uri> {
+pub(crate) fn entity_id_of(entity: &Value) -> Option<Identifier> {
     entity_node(entity)?.get("@id")?.as_str()?.parse().ok()
 }
 

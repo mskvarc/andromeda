@@ -8,6 +8,7 @@ use crate::{
     addressed_uri::addressed_request_uri,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     request_payload::buffer_payload,
+    undecodable_body::UndecodableBody,
 };
 use andromeda_http_headers::link::header::Link;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
@@ -192,8 +193,8 @@ fn strip_context_from_value(value: &mut Value) {
 }
 
 /// Reject a body that does not decode into the extractor's target.
-fn undecodable_body(error: &serde_json::Error, uri: Uri) -> ExtractorRejection {
-    ExtractorRejection::bad_request_data(format!("Invalid JSON: {error}"), uri)
+fn undecodable_body(error: &UndecodableBody, uri: Uri) -> ExtractorRejection {
+    ExtractorRejection::bad_request_data(error.to_string(), uri)
 }
 
 impl<S, T> FromRequest<S> for JsonLd<T>
@@ -205,7 +206,7 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let AdmittedBody { document, context, uri } = admit_body(req, state).await?;
-        let value = deserialize_exact(&document).map_err(|error| undecodable_body(&error, uri))?;
+        let value = deserialize_exact(&document).map_err(|source| undecodable_body(&UndecodableBody::of::<T>(&document, source), uri))?;
         Ok(JsonLd { value, context })
     }
 }
@@ -218,7 +219,7 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let AdmittedBody { document, context, uri } = admit_body(req, state).await?;
-        let document = deserialize_exact_document(document).map_err(|error| undecodable_body(&error, uri))?;
+        let document = deserialize_exact_document(document).map_err(|source| undecodable_body(&UndecodableBody::Document { source }, uri))?;
         Ok(JsonLdDocument { document, context })
     }
 }
@@ -577,16 +578,16 @@ mod tests {
             let typed = extract::<Value>(json_request(body)).await.map(|extracted| extracted.value.to_string());
             match (untyped, typed) {
                 (Ok(untyped), Ok(typed)) => pretty_assertions::assert_eq!(untyped, typed, "{body}"),
-                (Err(ExtractorRejection::BadRequestData { detail: untyped, .. }), Err(ExtractorRejection::BadRequestData { detail: typed, .. })) => {
-                    pretty_assertions::assert_eq!(untyped, typed, "{body}");
-                }
+                // Both refuse the document; the typed extraction can also name
+                // the member it failed at, which an untyped one has none of.
+                (Err(ExtractorRejection::BadRequestData { .. }), Err(ExtractorRejection::BadRequestData { .. })) => {}
                 _other => panic!("{body}: the untyped and Value-typed extractions disagree"),
             }
         }
     }
 
     #[tokio::test]
-    async fn a_typed_body_that_does_not_decode_is_bad_request_data_with_the_positioned_reader_message() {
+    async fn a_typed_body_that_does_not_decode_is_bad_request_data_naming_the_member_and_the_positioned_reader_message() {
         #[derive(Debug, serde::Deserialize)]
         struct Named {
             name: String,
@@ -594,7 +595,10 @@ mod tests {
 
         match extract::<Named>(json_request(r#"{"name":5}"#)).await {
             Err(ExtractorRejection::BadRequestData { detail, .. }) => {
-                pretty_assertions::assert_eq!(detail, "Invalid JSON: invalid type: integer `5`, expected a string at line 1 column 9");
+                pretty_assertions::assert_eq!(
+                    detail,
+                    "the request body member 'name' does not decode: invalid type: integer `5`, expected a string at line 1 column 9"
+                );
             }
             Ok(extracted) => panic!("accepted the name {}", extracted.value.name),
             Err(other) => panic!("expected BadRequestData, got {other:?}"),

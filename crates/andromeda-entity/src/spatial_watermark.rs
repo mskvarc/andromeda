@@ -133,7 +133,7 @@ mod tests {
         geometry::Geometry,
         position::Position,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use futures::future::BoxFuture;
@@ -219,7 +219,7 @@ mod tests {
         )
     }
 
-    fn near_origin(watermark: &SpatialWatermark) -> Option<HashSet<Uri>> {
+    fn near_origin(watermark: &SpatialWatermark) -> Option<HashSet<Identifier>> {
         let key = SpatialKey::new(
             TenantRef::UnnamedDefault,
             IriBuf::new("https://example.org/Vehicle".to_owned()).expect("a well-formed IRI"),

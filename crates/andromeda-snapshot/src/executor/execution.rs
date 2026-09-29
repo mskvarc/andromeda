@@ -24,7 +24,7 @@ use andromeda_federation::{
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
 use andromeda_temporal::error::TemporalError;
 use serde_json::Value;
@@ -35,7 +35,7 @@ impl SnapshotExecutor {
     pub(crate) async fn run_temporal_query(
         &self,
         target: &ContextTarget,
-        snapshot_id: &Uri,
+        snapshot_id: &Identifier,
         query: Query,
         index: usize,
         context: &ContextSpec,
@@ -95,7 +95,7 @@ impl SnapshotExecutor {
                 .into_iter()
                 .filter_map(|value| {
                     let raw = value.get("id").and_then(Value::as_str)?;
-                    match raw.parse::<Uri>() {
+                    match raw.parse::<Identifier>() {
                         Ok(id) => Some((id, value)),
                         Err(error) => {
                             warn!(snapshot_id = %snapshot_id, query_index = index, entity_id = raw, error = %error, "Temporal snapshot result carries an invalid entity URI");
@@ -123,9 +123,9 @@ impl SnapshotExecutor {
     pub(super) async fn persist_current_results(
         &self,
         target: &ContextTarget,
-        snapshot_id: &Uri,
+        snapshot_id: &Identifier,
         index: usize,
-        pairs: &[(Uri, Value)],
+        pairs: &[(Identifier, Value)],
     ) -> Result<ExecutionResultDetails, SnapshotError> {
         if pairs.is_empty() {
             return Ok(success_detail(0));
@@ -156,9 +156,9 @@ impl SnapshotExecutor {
     async fn persist_temporal_results(
         &self,
         target: &ContextTarget,
-        snapshot_id: &Uri,
+        snapshot_id: &Identifier,
         index: usize,
-        pairs: &[(Uri, Value)],
+        pairs: &[(Identifier, Value)],
     ) -> Result<ExecutionResultDetails, SnapshotError> {
         for (_, data) in pairs {
             if let Err(error) = self.sources.temporal.create_or_update(target, data.clone(), &ContextSpec::core_only()).await {

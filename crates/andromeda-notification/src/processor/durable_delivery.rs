@@ -12,7 +12,7 @@ use crate::{
     processor::NotificationProcessor,
 };
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_change::EntityLifecycle,
     notification::{ChangeOrigin, SysAttrsSnapshot},
@@ -58,7 +58,7 @@ impl NotificationDeliveryTransport for NotificationProcessor {
 /// attempt, so the delivery is retried. No notification was attempted, so no
 /// subscription bookkeeping (clause 5.2.14.2 `timesSent`, `timesFailed`)
 /// records it.
-fn unreadable_subscription(subscription_id: &Uri, error: &SubscriptionError) -> DeliveryDisposition {
+fn unreadable_subscription(subscription_id: &Identifier, error: &SubscriptionError) -> DeliveryDisposition {
     DeliveryDisposition::RetryableFailure {
         detail: format!("subscription {subscription_id} could not be read back before its notification: {error}"),
     }

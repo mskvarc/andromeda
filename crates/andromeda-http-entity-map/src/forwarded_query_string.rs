@@ -4,7 +4,7 @@
 //! a partial entity. A temporal forward keeps the temporal window either way,
 //! as the window is the query itself rather than a filter on it.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::sub_second, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, rfc3339::sub_second};
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
 use axum::http::Uri as HttpUri;
@@ -76,9 +76,14 @@ pub(crate) fn forwarded_temporal_query_string(uri: &HttpUri, filters: ForwardedF
 }
 
 /// Append the entity selectors of a query body as GET parameters.
-fn append_selectors(serializer: &mut form_urlencoded::Serializer<'_, String>, id: Option<&[Uri]>, entity_type: Option<String>, id_pattern: Option<&str>) {
+fn append_selectors(
+    serializer: &mut form_urlencoded::Serializer<'_, String>,
+    id: Option<&[Identifier]>,
+    entity_type: Option<String>,
+    id_pattern: Option<&str>,
+) {
     if let Some(ids) = id {
-        serializer.append_pair("id", &ids.iter().map(Uri::as_str).collect::<Vec<_>>().join(","));
+        serializer.append_pair("id", &ids.iter().map(Identifier::as_str).collect::<Vec<_>>().join(","));
     }
     if let Some(entity_type) = entity_type {
         serializer.append_pair("type", &entity_type);

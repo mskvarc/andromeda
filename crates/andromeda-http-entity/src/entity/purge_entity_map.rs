@@ -120,7 +120,7 @@ pub(crate) async fn resolve_purge_map(
 #[cfg(test)]
 mod tests {
     use crate::entity::purge_entity_map::PurgeEntityMap;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_map::EntityMap;
     use axum::{
         http::StatusCode,
@@ -141,7 +141,7 @@ mod tests {
     /// A live map fixed to one locally held entity, standing in for a resolved
     /// referenced map.
     fn map_used() -> EntityMap {
-        let identifier: Uri = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
+        let identifier: Identifier = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
         let expires_at = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).single().expect("valid instant");
         EntityMap::local(identifier, expires_at, [])
     }

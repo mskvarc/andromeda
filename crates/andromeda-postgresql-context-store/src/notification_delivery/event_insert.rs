@@ -9,7 +9,7 @@ use crate::{
 };
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{
     notification::{NotificationDeliveries, NotificationEvents},
@@ -145,7 +145,7 @@ fn insert_events_statement(
             .change
             .instances
             .iter()
-            .map(|instance| instance.key.dataset_id.as_ref().map(Uri::as_str))
+            .map(|instance| instance.key.dataset_id.as_ref().map(Identifier::as_str))
             .collect();
         statement
             .values([
@@ -263,7 +263,7 @@ mod tests {
     };
     use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         expanded::{
@@ -282,7 +282,7 @@ mod tests {
         ContextTarget::Live
     }
 
-    fn entity() -> Uri {
+    fn entity() -> Identifier {
         "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI")
     }
 
@@ -309,7 +309,13 @@ mod tests {
         )
     }
 
-    fn event<'a>(entity: &'a Uri, change: &'a EntityChange, ordinal: u32, subscriptions: &[i64], snapshot: &'a serde_json::Value) -> NewNotificationEvent<'a> {
+    fn event<'a>(
+        entity: &'a Identifier,
+        change: &'a EntityChange,
+        ordinal: u32,
+        subscriptions: &[i64],
+        snapshot: &'a serde_json::Value,
+    ) -> NewNotificationEvent<'a> {
         NewNotificationEvent {
             ordinal: WriteOrdinal::at(ordinal),
             change,

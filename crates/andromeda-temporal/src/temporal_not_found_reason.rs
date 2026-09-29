@@ -5,7 +5,7 @@
 //! [`TemporalError::NotFound`](crate::error::TemporalError::NotFound) never holds
 //! an ad-hoc string. Each `#[error]` renders lowercase client prose.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use thiserror::Error;
 
 /// Why a temporal resource could not be found.
@@ -15,7 +15,7 @@ pub enum TemporalNotFoundReason {
     #[error("entity {id} not found")]
     Entity {
         /// The requested entity identifier.
-        id: Uri,
+        id: Identifier,
     },
     /// The entity holds no such attribute.
     #[error("attribute {attribute} not found on entity {entity}")]
@@ -23,7 +23,7 @@ pub enum TemporalNotFoundReason {
         /// The requested attribute.
         attribute: AttributeName,
         /// The entity the attribute was sought on.
-        entity: Uri,
+        entity: Identifier,
     },
     /// The attribute holds no instance with the requested `datasetId`.
     #[error("attribute {attribute} with datasetId {dataset_id} not found on entity {entity}")]
@@ -32,11 +32,11 @@ pub enum TemporalNotFoundReason {
         attribute: AttributeName,
         /// The `datasetId` that selected no instance.
         ///
-        /// Boxed to keep this variant, which already carries the entity `Uri`,
-        /// from being two `Uri`s wide and enlarging every `Result` in the crate.
-        dataset_id: Box<Uri>,
+        /// Boxed to keep this variant, which already carries the entity `Identifier`,
+        /// from being two `Identifier`s wide and enlarging every `Result` in the crate.
+        dataset_id: Box<Identifier>,
         /// The entity the attribute was sought on.
-        entity: Uri,
+        entity: Identifier,
     },
     /// The attribute holds no default (no-`datasetId`) instance.
     #[error("attribute {attribute} default instance not found on entity {entity}")]
@@ -44,7 +44,7 @@ pub enum TemporalNotFoundReason {
         /// The requested attribute.
         attribute: AttributeName,
         /// The entity the attribute was sought on.
-        entity: Uri,
+        entity: Identifier,
     },
     /// The attribute holds no instance with the requested `instanceId`.
     #[error("attribute instance {instance} not found")]
@@ -57,14 +57,14 @@ pub enum TemporalNotFoundReason {
     #[error("no temporal data of entity {entity} matches the requested time interval and attributes")]
     NoInstanceSelected {
         /// The entity the restriction was applied to.
-        entity: Uri,
+        entity: Identifier,
     },
     /// A projection left no member of the entity's temporal representation
     /// (clause 5.7.3.5).
     #[error("no temporal representation of entity {entity} is left by the requested projection")]
     ProjectionLeftNothing {
         /// The entity the projection was applied to.
-        entity: Uri,
+        entity: Identifier,
     },
     /// The history store reported a missing resource.
     ///

@@ -1,7 +1,7 @@
 //! Failures reported by the atomic context-commit boundary.
 
 use crate::side_effect_job_id::SideEffectJobId;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::{fmt::Display, sync::Arc};
 use thiserror::Error;
 
@@ -13,7 +13,7 @@ pub enum CommitError {
     #[error("atomic write batch names {entity_id} twice; identifiers must be distinct within one commit")]
     DuplicateEntity {
         /// The repeated entity identifier.
-        entity_id: Arc<Uri>,
+        entity_id: Arc<Identifier>,
     },
     /// The submitted content cannot be stored as written.
     ///

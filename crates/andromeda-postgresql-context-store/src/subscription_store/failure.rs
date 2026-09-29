@@ -1,6 +1,6 @@
 //! How an adapter failure surfaces at the subscription policy boundary.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_subscription::error::SubscriptionError;
 use std::{any::Any, fmt::Display};
@@ -22,7 +22,7 @@ pub fn persistence_error(error: impl Display + Any) -> SubscriptionError {
 }
 
 /// Preserve a uniqueness race as the semantic identifier conflict.
-pub fn create_error(error: sqlx::Error, identifier: &Uri) -> SubscriptionError {
+pub fn create_error(error: sqlx::Error, identifier: &Identifier) -> SubscriptionError {
     if let sqlx::Error::Database(database_error) = &error
         && database_error.code().as_deref() == Some("23505")
     {

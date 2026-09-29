@@ -12,7 +12,7 @@ use andromeda_entity::{
     port::{reader::EntityReader, retry_delay::RetryDelay},
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -64,7 +64,7 @@ pub struct TemporalService {
 #[derive(Debug)]
 pub enum CreateOrUpdateResult {
     /// A new temporal entity was created, carrying the assigned entity ID.
-    Created(Uri),
+    Created(Identifier),
     /// Attributes were appended to an existing temporal entity.
     Updated,
 }
@@ -98,7 +98,7 @@ pub struct TemporalRange {
 #[derive(Debug)]
 pub struct TemporalQueryWarning {
     /// The entity that triggered the warning.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// Human-readable description of the problem.
     pub message: String,
 }

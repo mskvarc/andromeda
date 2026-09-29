@@ -11,7 +11,7 @@ use crate::{
     },
     remote_linked::RemoteTemporalLinkedSource,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 use indexmap::IndexSet;
 use serde_json::Value;
@@ -23,9 +23,9 @@ use std::num::NonZeroU32;
 pub(super) fn merge_candidates(
     first: &[TemporalLinkedCandidate],
     second: Vec<TemporalLinkedCandidate>,
-    visited: &IndexSet<Uri>,
+    visited: &IndexSet<Identifier>,
 ) -> Vec<TemporalLinkedCandidate> {
-    let mut seen: IndexSet<Uri> = IndexSet::new();
+    let mut seen: IndexSet<Identifier> = IndexSet::new();
     let mut merged: Vec<TemporalLinkedCandidate> = Vec::new();
     for candidate in first.iter().cloned().chain(second) {
         // clone: the merged list owns its candidates, and `first` is borrowed
@@ -69,13 +69,13 @@ pub(super) async fn fetch_remote_candidate(
     source: &dyn RemoteTemporalLinkedSource,
     candidate: &TemporalLinkedCandidate,
     depth: NonZeroU32,
-    visited: &IndexSet<Uri>,
+    visited: &IndexSet<Identifier>,
     linked_read: LinkedTemporalRead<'_>,
     level: &mut ResolvedTemporalLevel,
 ) {
     // The candidate itself is already in the guard; the remainder of the system
     // is told about everything except the entity it is being asked for.
-    let held: Vec<Uri> = visited.iter().filter(|id| **id != candidate.id).cloned().collect(); // clone: the port takes the ids as an owned slice
+    let held: Vec<Identifier> = visited.iter().filter(|id| **id != candidate.id).cloned().collect(); // clone: the port takes the ids as an owned slice
     match source
         .fetch_linked_temporal(&candidate.id, depth, &held, linked_read.window, linked_read.context)
         .await

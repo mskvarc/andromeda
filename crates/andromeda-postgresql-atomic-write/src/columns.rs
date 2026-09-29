@@ -2,7 +2,7 @@
 
 use crate::{commit_refusal::persistence, entity_group::IndexedWrite, name_resolution::ResolvedWriteNames};
 use andromeda_context_commit::{error::CommitError, projected_attributes::ProjectedAttributes};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind};
 use andromeda_postgresql_context_store::entity::params::PreparedEntityColumns;
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, ltree::scope_to_ltree};
@@ -49,7 +49,7 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteName
 ///
 /// `dictionary` describes the dictionary in the invariant failure a missing
 /// key raises, so the message names which dictionary broke its promise.
-fn key_array<N, K>(names: &[N], keys: &HashMap<N, K>, dictionary: &str, entity_id: &Uri) -> Result<Vec<K>, CommitError>
+fn key_array<N, K>(names: &[N], keys: &HashMap<N, K>, dictionary: &str, entity_id: &Identifier) -> Result<Vec<K>, CommitError>
 where
     N: Eq + Hash + Display,
     K: Copy,
@@ -99,8 +99,8 @@ mod tests {
         attribute_name::AttributeName,
         attribute_type::AttributeType,
         entity_type_name::EntityTypeName,
+        identifier::Identifier,
         scope::path::ScopePath,
-        uri::Uri,
     };
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use chrono::Utc;
@@ -143,7 +143,7 @@ mod tests {
             location_expires_at: None,
         };
         AtomicWrite::builder()
-            .entity_id(Arc::new(id.parse::<Uri>().expect("valid entity URI")))
+            .entity_id(Arc::new(id.parse::<Identifier>().expect("valid entity URI")))
             .entity(EntityMutation::Update(EntityRecord::from_parts(
                 Arc::new(json!([{"@id": id, SPEED: [{"@value": 1}]}])),
                 projection,
@@ -298,12 +298,12 @@ mod tests {
         let now = Utc::now();
         let writes = [
             AtomicWrite::builder()
-                .entity_id(Arc::new("urn:ngsi-ld:A".parse::<Uri>().expect("valid entity URI")))
+                .entity_id(Arc::new("urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI")))
                 .entity(EntityMutation::Delete)
                 .precondition(Precondition::UnchangedSince(now))
                 .build(),
             AtomicWrite::builder()
-                .entity_id(Arc::new("urn:ngsi-ld:B".parse::<Uri>().expect("valid entity URI")))
+                .entity_id(Arc::new("urn:ngsi-ld:B".parse::<Identifier>().expect("valid entity URI")))
                 .entity(EntityMutation::Delete)
                 .precondition(Precondition::MustExist)
                 .build(),

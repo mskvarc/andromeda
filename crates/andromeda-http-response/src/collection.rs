@@ -5,7 +5,7 @@ use crate::{
     version_negotiation::apply_version_negotiation,
 };
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_results_count::NgsiLdResultsCount, ngsild_warning::NgsiLdWarning};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_render::response::RenderedOutput;
 use axum::{
     Json,
@@ -36,9 +36,9 @@ pub struct NgsiLdCollectionResponse {
     /// Optional pagination range advertised by the response.
     content_range: Option<NgsiLdContentRange>,
     /// Optional entity-map URI advertised by the response.
-    entity_map_uri: Option<Uri>,
+    entity_map_uri: Option<Identifier>,
     /// Optional snapshot URI advertised by the response.
-    snapshot_uri: Option<Uri>,
+    snapshot_uri: Option<Identifier>,
     /// Distributed-operation warnings emitted as response headers.
     warnings: Vec<NgsiLdWarning>,
 }
@@ -81,7 +81,7 @@ impl NgsiLdCollectionResponse {
 
     /// Set the NGSILD-EntityMap header URI.
     #[must_use]
-    pub fn with_entity_map_uri(mut self, uri: Uri) -> Self {
+    pub fn with_entity_map_uri(mut self, uri: Identifier) -> Self {
         self.entity_map_uri = Some(uri);
         self
     }
@@ -95,7 +95,7 @@ impl NgsiLdCollectionResponse {
 
     /// Set the NGSILD-Snapshot header for snapshot-scoped responses (clause 6.3.22).
     #[must_use]
-    pub fn with_snapshot_uri(mut self, uri: Uri) -> Self {
+    pub fn with_snapshot_uri(mut self, uri: Identifier) -> Self {
         self.snapshot_uri = Some(uri);
         self
     }

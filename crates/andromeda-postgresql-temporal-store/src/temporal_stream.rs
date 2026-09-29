@@ -1,6 +1,6 @@
 //! The grain one temporal attribute stream is keyed by.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_temporal::write_purpose::TemporalWritePurpose;
 
 /// The natural key of one temporal attribute stream.
@@ -15,7 +15,7 @@ pub struct TemporalStreamKey {
     /// Expanded IRI of the attribute the stream records.
     pub attribute_name: AttributeName,
     /// Multi-attribute discriminator, absent for the default instance.
-    pub dataset_id: Option<Uri>,
+    pub dataset_id: Option<Identifier>,
 }
 
 /// The catalogue rows one write needs before its history rows can be stored.
@@ -27,7 +27,7 @@ pub struct TemporalStreamKey {
 #[derive(Clone, Debug)]
 pub struct TemporalCatalogUpsert {
     /// The entity whose temporal evolution the write extends.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// Entity types from clause 4.5.1, empty when the write states no entity.
     ///
     /// These are the types of the entity the write produced, which is what

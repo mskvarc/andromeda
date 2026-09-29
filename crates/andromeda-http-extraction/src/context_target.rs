@@ -8,7 +8,7 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
     tenant_state_rejection::TenantStateRejection,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
 use axum::{
@@ -26,13 +26,13 @@ pub enum ContextTargetResolutionError {
     #[error("Snapshot {identifier} was not found")]
     NotFound {
         /// Requested Snapshot URI.
-        identifier: NgsiLdUri,
+        identifier: Identifier,
     },
     /// Capture or clone promotion exceeded the scoped-operation deadline.
     #[error("Snapshot {identifier} is still preparing")]
     PreparationTimeout {
         /// Requested Snapshot URI.
-        identifier: NgsiLdUri,
+        identifier: Identifier,
     },
     /// The Snapshot's stored branch is behind this broker and cannot be read
     /// until its upgrade succeeds. The tenant keeps serving; only this
@@ -40,7 +40,7 @@ pub enum ContextTargetResolutionError {
     #[error("Snapshot {identifier} is quarantined: its stored branch has not been upgraded to this broker's schema")]
     Quarantined {
         /// Requested Snapshot URI.
-        identifier: NgsiLdUri,
+        identifier: Identifier,
     },
     /// A connection pool was saturated before the Snapshot target could be
     /// resolved. Backpressure, not a fault: shed as 503 with `Retry-After`.
@@ -80,7 +80,7 @@ impl ContextTargetResolutionError {
 /// Resolves one validated Snapshot URI to its durable branch target.
 pub trait SnapshotTargetResolver: Send + Sync {
     /// Await terminal promotion when necessary and return the typed target.
-    fn resolve<'a>(&'a self, snapshot_id: &'a NgsiLdUri) -> BoxFuture<'a, Result<ContextTarget, ContextTargetResolutionError>>;
+    fn resolve<'a>(&'a self, snapshot_id: &'a Identifier) -> BoxFuture<'a, Result<ContextTarget, ContextTargetResolutionError>>;
 }
 
 /// Route-focused state that exposes its live branch and Snapshot resolver.
@@ -112,7 +112,7 @@ pub struct ExistingTargetedTenantState<T> {
     /// Live or Snapshot branch selected for this request.
     pub target: ContextTarget,
     /// Validated Snapshot URI to echo on scoped responses.
-    pub snapshot: Option<NgsiLdUri>,
+    pub snapshot: Option<Identifier>,
 }
 
 /// Provisionable tenant state paired with the context branch selected at the HTTP boundary.
@@ -122,7 +122,7 @@ pub struct ProvisionableTargetedTenantState<T> {
     /// Live or Snapshot branch selected for this request.
     pub target: ContextTarget,
     /// Validated Snapshot URI to echo on scoped responses.
-    pub snapshot: Option<NgsiLdUri>,
+    pub snapshot: Option<Identifier>,
 }
 
 /// Resolve tenant state and its live or Snapshot context target as one boundary operation.
@@ -130,7 +130,7 @@ async fn resolve<S, T>(
     parts: &mut Parts,
     state: &S,
     live_creation_policy: TenantCreationPolicy,
-) -> Result<(T, ContextTarget, Option<NgsiLdUri>), TenantStateRejection>
+) -> Result<(T, ContextTarget, Option<Identifier>), TenantStateRejection>
 where
     S: TenantStateResolver<T>,
     T: ContextTargetProvider,

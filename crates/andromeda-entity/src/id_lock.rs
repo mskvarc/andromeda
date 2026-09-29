@@ -7,7 +7,7 @@
 //! overlapping batches would exhaust the pool waiting for itself.
 
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use async_lock::{Mutex, MutexGuardArc};
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ pub(crate) type IdLockMap = DashMap<IdLockKey, Arc<Mutex<()>>>;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct IdLockKey {
     branch_key: i64,
-    entity_id: Uri,
+    entity_id: Identifier,
 }
 
 /// Acquire mutex guards for `ids` against `map`, in deterministic sorted
@@ -31,9 +31,9 @@ pub(crate) struct IdLockKey {
 ///
 /// Callers receive owned guards so the locks remain held for the lifetime
 /// of the returned `Vec`. Drop the vec to release every lock at once.
-pub(crate) async fn acquire_id_locks_in(map: &IdLockMap, target: &ContextTarget, ids: &[Uri]) -> Vec<MutexGuardArc<()>> {
+pub(crate) async fn acquire_id_locks_in(map: &IdLockMap, target: &ContextTarget, ids: &[Identifier]) -> Vec<MutexGuardArc<()>> {
     gc_id_locks(map);
-    let mut sorted: Vec<&Uri> = ids.iter().collect();
+    let mut sorted: Vec<&Identifier> = ids.iter().collect();
     sorted.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
     sorted.dedup_by(|left, right| left.as_str() == right.as_str());
 
@@ -66,7 +66,7 @@ pub(crate) fn gc_id_locks(map: &IdLockMap) {
 mod tests {
     use super::{IdLockMap, acquire_id_locks_in, gc_id_locks};
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use std::sync::Arc;
 
     fn live_target() -> ContextTarget {
@@ -77,9 +77,9 @@ mod tests {
     async fn id_lock_gc_reclaims_unused_entries_after_guards_drop() {
         let map: Arc<IdLockMap> = Arc::new(IdLockMap::new());
         let ids = [
-            "urn:ngsi-ld:Entity:A".parse::<Uri>().expect("valid test URI"),
-            "https://example.com/entities/B".parse::<Uri>().expect("valid test URI"),
-            "urn:ngsi-ld:Entity:C".parse::<Uri>().expect("valid test URI"),
+            "urn:ngsi-ld:Entity:A".parse::<Identifier>().expect("valid test URI"),
+            "https://example.com/entities/B".parse::<Identifier>().expect("valid test URI"),
+            "urn:ngsi-ld:Entity:C".parse::<Identifier>().expect("valid test URI"),
         ];
 
         let guards = acquire_id_locks_in(&map, &live_target(), &ids).await;
@@ -101,11 +101,11 @@ mod tests {
         // Duplicates must collapse to a single entry; sorted ordering eliminates
         // deadlocks between concurrent callers with overlapping id sets.
         let ids = [
-            "https://example.com/entities/b".parse::<Uri>().expect("valid test URI"),
-            "urn:ngsi-ld:Entity:a".parse::<Uri>().expect("valid test URI"),
-            "https://example.com/entities/b".parse::<Uri>().expect("valid test URI"),
-            "urn:ngsi-ld:Entity:c".parse::<Uri>().expect("valid test URI"),
-            "urn:ngsi-ld:Entity:a".parse::<Uri>().expect("valid test URI"),
+            "https://example.com/entities/b".parse::<Identifier>().expect("valid test URI"),
+            "urn:ngsi-ld:Entity:a".parse::<Identifier>().expect("valid test URI"),
+            "https://example.com/entities/b".parse::<Identifier>().expect("valid test URI"),
+            "urn:ngsi-ld:Entity:c".parse::<Identifier>().expect("valid test URI"),
+            "urn:ngsi-ld:Entity:a".parse::<Identifier>().expect("valid test URI"),
         ];
         let guards = acquire_id_locks_in(&map, &live_target(), &ids).await;
         pretty_assertions::assert_eq!(guards.len(), 3);

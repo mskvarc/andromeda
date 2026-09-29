@@ -19,7 +19,7 @@ use crate::temporal::{
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::content_range::build_content_range;
-use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, uri::Uri as NgsiLdUri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat};
 use andromeda_temporal::service::TemporalRange;
 use axum::http::Uri;
 use serde_json::Value;
@@ -49,7 +49,7 @@ pub(crate) struct TemporalCollectionMetadata {
     /// The `Content-Range` of a history the local read cut short.
     pub(crate) range: Option<TemporalRange>,
     /// The Entity Map the query ran under (clause 5.5.14).
-    pub(crate) entity_map_uri: Option<NgsiLdUri>,
+    pub(crate) entity_map_uri: Option<Identifier>,
     /// The clause 6.3.10 element page the `Link` relations point around.
     pub(crate) page: QueriedPage,
     /// How many matching entities that page carried, counted before a flat
@@ -57,7 +57,7 @@ pub(crate) struct TemporalCollectionMetadata {
     pub(crate) returned: usize,
     /// The first and last identifiers of the matching page, from which a cursor
     /// pointer is computed (clause 5.5.9.1); absent when the page is empty.
-    pub(crate) boundary: Option<(NgsiLdUri, NgsiLdUri)>,
+    pub(crate) boundary: Option<(Identifier, Identifier)>,
 }
 
 /// Render the queried collection and assemble the response around it.

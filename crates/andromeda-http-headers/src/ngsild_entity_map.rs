@@ -3,7 +3,7 @@
 //! Carries the entity map URI for paginated distributed queries.
 //! The value is the URI of the entity-map resource.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use http::{HeaderName, HeaderValue};
 use std::iter;
 
@@ -15,12 +15,12 @@ static NGSILD_ENTITYMAP: HeaderName = HeaderName::from_static("ngsild-entitymap"
 /// Carries the URI of an entity map resource created during a distributed
 /// query, used for stable pagination across context sources.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NgsiLdEntityMap(Uri);
+pub struct NgsiLdEntityMap(Identifier);
 
 impl NgsiLdEntityMap {
     /// Create a new `NGSILD-EntityMap` header from a validated identifier.
     #[must_use]
-    pub const fn new(value: Uri) -> NgsiLdEntityMap {
+    pub const fn new(value: Identifier) -> NgsiLdEntityMap {
         NgsiLdEntityMap(value)
     }
 
@@ -32,13 +32,13 @@ impl NgsiLdEntityMap {
 
     /// Borrow the validated entity-map identifier.
     #[must_use]
-    pub const fn as_inner(&self) -> &Uri {
+    pub const fn as_inner(&self) -> &Identifier {
         &self.0
     }
 
     /// Consume the header and return the inner identifier.
     #[must_use]
-    pub fn into_inner(self) -> Uri {
+    pub fn into_inner(self) -> Identifier {
         self.0
     }
 }
@@ -58,7 +58,7 @@ impl headers::Header for NgsiLdEntityMap {
         if trimmed.is_empty() {
             return Err(headers::Error::invalid());
         }
-        let id: Uri = trimmed.parse().map_err(|_| headers::Error::invalid())?;
+        let id: Identifier = trimmed.parse().map_err(|_| headers::Error::invalid())?;
         Ok(NgsiLdEntityMap(id))
     }
 

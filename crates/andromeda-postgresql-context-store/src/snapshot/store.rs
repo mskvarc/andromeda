@@ -26,7 +26,7 @@ use crate::snapshot::{
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
@@ -47,19 +47,19 @@ impl SnapshotStore for SnapshotRepository {
         create_snapshot(self.pool(), params).await
     }
 
-    async fn get(&self, id: &Uri) -> Result<Option<Snapshot>, SnapshotError> {
+    async fn get(&self, id: &Identifier) -> Result<Option<Snapshot>, SnapshotError> {
         read_snapshot(self.pool(), id).await
     }
 
-    async fn exists(&self, id: &Uri) -> Result<bool, SnapshotError> {
+    async fn exists(&self, id: &Identifier) -> Result<bool, SnapshotError> {
         snapshot_exists(self.pool(), id).await
     }
 
-    async fn target(&self, id: &Uri) -> Result<Option<SnapshotTarget>, SnapshotError> {
+    async fn target(&self, id: &Identifier) -> Result<Option<SnapshotTarget>, SnapshotError> {
         resolve_snapshot_target(self.pool(), id).await
     }
 
-    async fn staging_target(&self, id: &Uri) -> Result<Option<SnapshotTarget>, SnapshotError> {
+    async fn staging_target(&self, id: &Identifier) -> Result<Option<SnapshotTarget>, SnapshotError> {
         resolve_snapshot_staging_target(self.pool(), id).await
     }
 
@@ -67,21 +67,21 @@ impl SnapshotStore for SnapshotRepository {
         next_preparing_snapshot(self.pool(), claimed_by, lease_until).await
     }
 
-    async fn renew_preparation_lease(&self, id: &Uri, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
+    async fn renew_preparation_lease(&self, id: &Identifier, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
         renew_preparation_lease(self.pool(), id, claimed_by, lease_until).await
     }
 
-    async fn restart_preparation(&self, id: &Uri, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
+    async fn restart_preparation(&self, id: &Identifier, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
         restart_preparation(self.pool(), id, claimed_by, lease_until).await
     }
 
-    async fn release_preparation(&self, id: &Uri, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
+    async fn release_preparation(&self, id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
         release_preparation(self.pool(), id, claimed_by).await
     }
 
     async fn update_metadata(
         &self,
-        id: &Uri,
+        id: &Identifier,
         lifetime: Option<&Iso8601Duration>,
         priority: Option<SnapshotPriority>,
         endpoint: Option<Option<&url::Url>>,
@@ -102,7 +102,7 @@ impl SnapshotStore for SnapshotRepository {
 
     async fn update_status(
         &self,
-        id: &Uri,
+        id: &Identifier,
         claimed_by: LeaseHolder,
         status: SnapshotStatus,
         queries_details: Option<&[ExecutionResultDetails]>,
@@ -113,7 +113,7 @@ impl SnapshotStore for SnapshotRepository {
 
     async fn promote_capture(
         &self,
-        id: &Uri,
+        id: &Identifier,
         claimed_by: LeaseHolder,
         status: SnapshotStatus,
         queries_details: Option<&[ExecutionResultDetails]>,
@@ -122,19 +122,19 @@ impl SnapshotStore for SnapshotRepository {
         promote_staged_capture(self.pool(), id, claimed_by, status, queries_details, temporal_queries_details).await
     }
 
-    async fn delete(&self, id: &Uri) -> Result<u64, SnapshotError> {
+    async fn delete(&self, id: &Identifier) -> Result<u64, SnapshotError> {
         delete_snapshot(self.pool(), id).await
     }
 
-    async fn match_by_filter(&self, filter: &SnapshotPurgeFilter) -> Result<Vec<Uri>, SnapshotError> {
+    async fn match_by_filter(&self, filter: &SnapshotPurgeFilter) -> Result<Vec<Identifier>, SnapshotError> {
         match_snapshots_by_filter(self.pool(), filter).await
     }
 
-    async fn delete_one(&self, id: &Uri) -> Result<u64, SnapshotError> {
+    async fn delete_one(&self, id: &Identifier) -> Result<u64, SnapshotError> {
         delete_snapshot(self.pool(), id).await
     }
 
-    async fn promote_clone(&self, source_id: &Uri, target_id: &Uri, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
+    async fn promote_clone(&self, source_id: &Identifier, target_id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
         promote_context_clone(self.pool(), source_id, target_id, claimed_by).await
     }
 
@@ -142,15 +142,15 @@ impl SnapshotStore for SnapshotRepository {
         delete_expired_snapshots(self.pool(), cutoff).await
     }
 
-    async fn enforce_quotas(&self, count_quota: Option<usize>, byte_quota: Option<u64>) -> Result<Vec<Uri>, SnapshotError> {
+    async fn enforce_quotas(&self, count_quota: Option<usize>, byte_quota: Option<u64>) -> Result<Vec<Identifier>, SnapshotError> {
         enforce_snapshot_quotas(self.pool(), count_quota, byte_quota).await
     }
 
-    async fn touch_last_used(&self, id: &Uri) -> Result<(), SnapshotError> {
+    async fn touch_last_used(&self, id: &Identifier) -> Result<(), SnapshotError> {
         touch_last_used(self.pool(), id).await
     }
 
-    async fn branch_condition(&self, id: &Uri) -> Result<Option<BranchCondition>, SnapshotError> {
+    async fn branch_condition(&self, id: &Identifier) -> Result<Option<BranchCondition>, SnapshotError> {
         read_branch_condition(self.pool(), id).await
     }
 }

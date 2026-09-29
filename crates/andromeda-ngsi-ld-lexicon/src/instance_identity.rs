@@ -1,9 +1,6 @@
 //! The two shapes a temporal instance identifier is held in.
 
-use crate::{
-    instance_family::InstanceFamily,
-    uri::{NGSI_LD_URN_NID, Uri},
-};
+use crate::{identifier::Identifier, instance_family::InstanceFamily, uri::NGSI_LD_URN_NID};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -28,7 +25,7 @@ pub enum InstanceIdentity {
     /// The broker minted the identifier and keeps only its UUID.
     Generated(Uuid),
     /// The identifier is kept exactly as it was received.
-    Verbatim(Uri),
+    Verbatim(Identifier),
 }
 
 impl InstanceIdentity {
@@ -51,7 +48,7 @@ impl InstanceIdentity {
     /// trailing segment such as the write ordinal earlier releases appended —
     /// is kept verbatim instead of being silently rewritten.
     #[must_use]
-    pub fn from_uri(identifier: Uri, family: InstanceFamily) -> InstanceIdentity {
+    pub fn from_identifier(identifier: Identifier, family: InstanceFamily) -> InstanceIdentity {
         match generated_uuid_of(&identifier, family) {
             Some(uuid) => InstanceIdentity::Generated(uuid),
             None => InstanceIdentity::Verbatim(identifier),
@@ -84,11 +81,11 @@ pub enum RenderedInstanceId<'a> {
     Generated(InstanceFamily, Uuid),
     /// A client-supplied identifier, in the exact spelling it arrived in.
     #[display("{_0}")]
-    Verbatim(&'a Uri),
+    Verbatim(&'a Identifier),
 }
 
 /// The UUID a generated identifier carries, when the template reproduces it exactly.
-fn generated_uuid_of(identifier: &Uri, family: InstanceFamily) -> Option<Uuid> {
+fn generated_uuid_of(identifier: &Identifier, family: InstanceFamily) -> Option<Uuid> {
     let urn = identifier.as_urn()?;
     if urn.nid() != NGSI_LD_URN_NID {
         return None;
@@ -101,20 +98,20 @@ fn generated_uuid_of(identifier: &Uri, family: InstanceFamily) -> Option<Uuid> {
 #[cfg(test)]
 mod tests {
     use crate::{
+        identifier::Identifier,
         instance_family::InstanceFamily,
         instance_identity::{InstanceIdentity, RenderedInstanceId},
-        uri::Uri,
     };
     use uuid::Uuid;
 
     /// Parse a fixture identifier, reporting the text when it does not parse.
-    fn uri(text: &str) -> Result<Uri, String> {
-        text.parse::<Uri>().map_err(|_| format!("{text} is not a URI"))
+    fn uri(text: &str) -> Result<Identifier, String> {
+        text.parse::<Identifier>().map_err(|_| format!("{text} is not an identifier"))
     }
 
     /// Decode a fixture identifier and render it back out.
     fn round_trip(text: &str, family: InstanceFamily) -> Result<String, String> {
-        uri(text).map(|identifier| InstanceIdentity::from_uri(identifier, family).rendered(family).to_string())
+        uri(text).map(|identifier| InstanceIdentity::from_identifier(identifier, family).rendered(family).to_string())
     }
 
     #[test]
@@ -140,7 +137,7 @@ mod tests {
         let minted = InstanceIdentity::generate();
         for family in [InstanceFamily::Attribute, InstanceFamily::Scope] {
             let rendered = minted.rendered(family).to_string();
-            let decoded = uri(&rendered).map(|identifier| InstanceIdentity::from_uri(identifier, family));
+            let decoded = uri(&rendered).map(|identifier| InstanceIdentity::from_identifier(identifier, family));
             pretty_assertions::assert_eq!(decoded, Ok(minted.clone()), "{rendered} must decode as generated");
         }
     }
@@ -150,7 +147,7 @@ mod tests {
         let identifier = uri("urn:ngsi-ld:my-own:instance:42");
         let decoded = identifier
             .clone()
-            .map(|identifier| InstanceIdentity::from_uri(identifier, InstanceFamily::Attribute));
+            .map(|identifier| InstanceIdentity::from_identifier(identifier, InstanceFamily::Attribute));
 
         pretty_assertions::assert_eq!(decoded, identifier.map(InstanceIdentity::Verbatim));
     }
@@ -160,7 +157,7 @@ mod tests {
         let identifier = uri("https://example.org/instances/1");
         let decoded = identifier
             .clone()
-            .map(|identifier| InstanceIdentity::from_uri(identifier, InstanceFamily::Attribute));
+            .map(|identifier| InstanceIdentity::from_identifier(identifier, InstanceFamily::Attribute));
 
         pretty_assertions::assert_eq!(decoded, identifier.map(InstanceIdentity::Verbatim));
     }
@@ -170,7 +167,7 @@ mod tests {
         let identifier = uri("urn:ngsi-ld:scope:instance:01942f6c-7f00-7000-8000-000000000001");
         let decoded = identifier
             .clone()
-            .map(|identifier| InstanceIdentity::from_uri(identifier, InstanceFamily::Attribute));
+            .map(|identifier| InstanceIdentity::from_identifier(identifier, InstanceFamily::Attribute));
 
         pretty_assertions::assert_eq!(decoded, identifier.map(InstanceIdentity::Verbatim));
     }

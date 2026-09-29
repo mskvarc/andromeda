@@ -7,7 +7,7 @@
 //! Both answers are properties of the request, so they are derived once here
 //! rather than at each binding.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use std::{collections::HashSet, num::NonZeroU32};
 
@@ -53,7 +53,7 @@ impl RetrievingJoin {
 /// without it, and `containedBy` names the entities the client already holds,
 /// which the traversal must not retrieve again.
 #[must_use]
-pub fn traversal_bounds(join_level: Option<NonZeroU32>, contained_by: Option<&[Uri]>) -> (NonZeroU32, HashSet<Uri>) {
+pub fn traversal_bounds(join_level: Option<NonZeroU32>, contained_by: Option<&[Identifier]>) -> (NonZeroU32, HashSet<Identifier>) {
     let held = contained_by.map(|ids| ids.iter().cloned().collect()).unwrap_or_default(); // clone: the guard owns the ids it excludes
     (traversal_depth(join_level), held)
 }
@@ -76,7 +76,7 @@ pub const fn traversal_depth(join_level: Option<NonZeroU32>) -> NonZeroU32 {
 #[cfg(test)]
 mod tests {
     use crate::join_traversal::{RetrievingJoin, traversal_bounds};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
@@ -119,7 +119,7 @@ mod tests {
     /// the set of identifiers the traversal must not retrieve.
     #[test]
     fn a_stated_depth_and_contained_by_become_the_traversal_bounds() {
-        let held_ids = ["urn:ngsi-ld:T:1".parse::<Uri>().expect("valid URI")];
+        let held_ids = ["urn:ngsi-ld:T:1".parse::<Identifier>().expect("valid URI")];
 
         let (level, held) = traversal_bounds(NonZeroU32::new(3), Some(&held_ids));
 

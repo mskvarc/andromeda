@@ -4,6 +4,7 @@ use crate::{
     temporal::{
         ForwardProvisionRequest,
         ForwardingOperation,
+        Identifier,
         IntoResponse,
         JsonLdDocument,
         LocalOnlyParams,
@@ -18,7 +19,6 @@ use crate::{
         TenantState,
         TriggeringRequest,
         TypedPath,
-        Uri,
         ValidatedQuery,
         collect_proxied_attrs,
         has_attributes,
@@ -43,7 +43,7 @@ pub async fn add_attrs(
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    TypedPath(id): TypedPath<Uri>,
+    TypedPath(id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     JsonLdDocument {
         document: payload,

@@ -10,7 +10,7 @@
 use crate::history_read::TemporalHistoryRead;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::linked_resolution_warning::with_linked_resolution_warnings;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_render::{response::ResponsePayload, temporal::inline_join::apply_temporal_inline_join};
 use andromeda_ngsi_ld_request::join_traversal::{RetrievingJoin, traversal_bounds};
 use andromeda_temporal::{
@@ -27,7 +27,7 @@ pub(crate) struct AppliedTemporalJoin {
     /// The identifiers of the Linked Entities the traversal resolved, in
     /// traversal order. Spec 5.5.14 asks an `EntityMap` created alongside a
     /// joined query to include them.
-    pub(crate) linked_ids: Vec<Uri>,
+    pub(crate) linked_ids: Vec<Identifier>,
 }
 
 /// Resolve the request's join and fold it into `entities`.
@@ -78,7 +78,7 @@ pub(crate) async fn apply_temporal_join(
             },
         )
         .await?;
-    let linked_ids: Vec<Uri> = resolved.entities.keys().cloned().collect();
+    let linked_ids: Vec<Identifier> = resolved.entities.keys().cloned().collect();
 
     Ok(AppliedTemporalJoin {
         warnings: fold_resolution(join, entities, resolved, warnings),

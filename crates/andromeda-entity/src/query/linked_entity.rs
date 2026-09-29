@@ -25,7 +25,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_model::{attribute::instance::Attribute, entity::Entity};
 use andromeda_ngsi_ld_representation::{
     linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind},
@@ -47,7 +47,7 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkedCandidate {
     /// The linked entity's identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// The entity types every referencing Relationship annotated the object
     /// with, in first-encounter order. Empty when no referencing Relationship
     /// carried an `objectType`.
@@ -65,7 +65,7 @@ pub struct LinkedCandidate {
 pub struct ResolvedLinkedEntities {
     /// The linked entities, keyed by identifier in the traversal's append
     /// order.
-    pub entities: IndexMap<Uri, Entity>,
+    pub entities: IndexMap<Identifier, Entity>,
     /// Every Linked Entity the traversal left unresolved, in the order the
     /// attempts were made.
     pub failures: Vec<LinkedResolutionFailure>,
@@ -75,7 +75,7 @@ pub struct ResolvedLinkedEntities {
 struct ResolvedLevel {
     /// The level's entities in append order: the locally held ones in
     /// candidate order, then the ones fetched from elsewhere.
-    entities: IndexMap<Uri, Entity>,
+    entities: IndexMap<Identifier, Entity>,
     /// What the level could not resolve.
     failures: Vec<LinkedResolutionFailure>,
 }
@@ -114,14 +114,14 @@ impl EntityQueryService {
         join_level: NonZeroU32,
         sys_attrs: SysAttrsInclusion,
         context: &ContextSpec,
-        contained_by: &HashSet<Uri>,
+        contained_by: &HashSet<Identifier>,
     ) -> Result<ResolvedLinkedEntities, EntityError> {
         let mut resolved = ResolvedLinkedEntities::default();
         // The roots and the client-held ids are excluded from the first level
         // and from every level after it, so a cycle back into them terminates.
         // The guard keeps insertion order because it doubles as the list of
         // already-held ids a non-local fetch hands to the remote broker.
-        let mut visited: IndexSet<Uri> = contained_by.iter().cloned().collect(); // clone: the guard owns the ids it excludes
+        let mut visited: IndexSet<Identifier> = contained_by.iter().cloned().collect(); // clone: the guard owns the ids it excludes
         visited.extend(entities.iter().map(|entity| entity.id.clone())); // clone: the guard outlives this borrow of the roots
 
         let mut candidates = collect_candidates(entities.iter(), &visited);
@@ -166,7 +166,7 @@ impl EntityQueryService {
         target: &ContextTarget,
         candidates: &[LinkedCandidate],
         depth: NonZeroU32,
-        visited: &IndexSet<Uri>,
+        visited: &IndexSet<Identifier>,
         sys_attrs: SysAttrsInclusion,
         context: &ContextSpec,
     ) -> Result<ResolvedLevel, EntityError> {
@@ -198,8 +198,8 @@ impl EntityQueryService {
         candidates: &[LinkedCandidate],
         sys_attrs: SysAttrsInclusion,
         context: &ContextSpec,
-    ) -> Result<IndexMap<Uri, Entity>, EntityError> {
-        let ids: Vec<Uri> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
+    ) -> Result<IndexMap<Identifier, Entity>, EntityError> {
+        let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
         let mut payloads = self.reader.get_batch(target, &ids).await?;
         let sys_attr_snapshots = match sys_attrs {
             SysAttrsInclusion::Include => self.reader.get_sys_attrs_batch(target, &ids).await?,
@@ -251,13 +251,13 @@ async fn fetch_remote_candidate(
     source: &dyn RemoteLinkedEntitySource,
     candidate: &LinkedCandidate,
     depth: NonZeroU32,
-    visited: &IndexSet<Uri>,
+    visited: &IndexSet<Identifier>,
     context: &ContextSpec,
     level: &mut ResolvedLevel,
 ) {
     // The candidate itself is already in the guard; the remainder of the system
     // is told about everything except the entity it is being asked for.
-    let held: Vec<Uri> = visited.iter().filter(|id| **id != candidate.id).cloned().collect(); // clone: the port takes the ids as an owned slice
+    let held: Vec<Identifier> = visited.iter().filter(|id| **id != candidate.id).cloned().collect(); // clone: the port takes the ids as an owned slice
     match source.fetch_linked(&candidate.id, depth, &held, context).await {
         Ok(fetched) => {
             for entity in fetched.entities {
@@ -291,8 +291,8 @@ async fn fetch_remote_candidate(
 ///
 /// `objectList` order is preserved, and an id named by several Relationships
 /// appears once, carrying the union of their `objectType` annotations.
-fn collect_candidates<'a>(entities: impl IntoIterator<Item = &'a Entity>, visited: &IndexSet<Uri>) -> Vec<LinkedCandidate> {
-    let mut seen: IndexSet<Uri> = IndexSet::new();
+fn collect_candidates<'a>(entities: impl IntoIterator<Item = &'a Entity>, visited: &IndexSet<Identifier>) -> Vec<LinkedCandidate> {
+    let mut seen: IndexSet<Identifier> = IndexSet::new();
     let mut candidates: Vec<LinkedCandidate> = Vec::new();
     for entity in entities {
         for value in entity.attrs.values() {
@@ -309,7 +309,7 @@ fn collect_candidates<'a>(entities: impl IntoIterator<Item = &'a Entity>, visite
 /// `seen` and `candidates` are index-aligned: `seen`'s position of an id is
 /// the position of its [`LinkedCandidate`], which is how a repeated id folds
 /// its `objectType` annotation into the entry already recorded for it.
-fn collect_from_attribute(attr: &Attribute, visited: &IndexSet<Uri>, seen: &mut IndexSet<Uri>, candidates: &mut Vec<LinkedCandidate>) {
+fn collect_from_attribute(attr: &Attribute, visited: &IndexSet<Identifier>, seen: &mut IndexSet<Identifier>, candidates: &mut Vec<LinkedCandidate>) {
     let (objects, object_types): (Vec<&Uri>, Vec<NgsiLdReference>) = match attr {
         Attribute::Relationship(relationship) => (
             relationship.object.iter().collect(),
@@ -348,10 +348,13 @@ fn collect_from_attribute(attr: &Attribute, visited: &IndexSet<Uri>, seen: &mut 
                     }
                 }
             }
-        } else {
-            seen.insert(object.clone()); // clone: the duplicate guard owns the ids it records
+        } else if let Ok(id) = Identifier::try_from(object.clone()) {
+            // clone: the candidate owns its identifier. An object longer than an
+            // identifier may be names no entity any store holds, so it stays a
+            // plain URI rather than becoming a candidate.
+            seen.insert(id.clone()); // clone: the duplicate guard owns the ids it records
             candidates.push(LinkedCandidate {
-                id: object.clone(),                 // clone: the candidate owns its identifier
+                id,
                 object_types: object_types.clone(), // clone: each candidate owns its own annotation list
             });
         }
@@ -377,7 +380,7 @@ mod tests {
     use serde_json::{Value, json};
     use std::sync::{Arc, Mutex, MutexGuard};
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 
@@ -420,11 +423,11 @@ mod tests {
 
     /// A store holding a fixed set of expanded payloads, keyed by id.
     struct StubStore {
-        entities: HashMap<Uri, Value>,
+        entities: HashMap<Identifier, Value>,
     }
 
     impl StubStore {
-        fn new(entities: impl IntoIterator<Item = (Uri, Value)>) -> StubStore {
+        fn new(entities: impl IntoIterator<Item = (Identifier, Value)>) -> StubStore {
             StubStore {
                 entities: entities.into_iter().collect(),
             }
@@ -437,30 +440,30 @@ mod tests {
 
     #[async_trait]
     impl EntityReader for StubStore {
-        async fn get(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<Value>, EntityError> {
+        async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Value>, EntityError> {
             Err(unsupported("get"))
         }
 
-        async fn get_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
+        async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
             Ok(ids
                 .iter()
                 .filter_map(|id| self.entities.get(id).map(|value| (id.clone(), value.clone()))) // clone: the port hands back owned payloads
                 .collect())
         }
 
-        async fn get_snapshot(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
+        async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
             Err(unsupported("get_snapshot"))
         }
 
-        async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
+        async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
             Err(unsupported("get_snapshot_batch"))
         }
 
-        async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
+        async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
             Err(unsupported("get_sys_attrs"))
         }
 
-        async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
+        async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
             Err(unsupported("get_sys_attrs_batch"))
         }
     }
@@ -475,7 +478,7 @@ mod tests {
             Err(unsupported("query_compiled"))
         }
 
-        async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, EntityError> {
+        async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Identifier>, EntityError> {
             Err(unsupported("query_ids"))
         }
     }
@@ -483,16 +486,16 @@ mod tests {
     /// One recorded call into the remote Linked Entity source.
     #[derive(Debug, PartialEq, Eq)]
     struct RemoteCall {
-        id: Uri,
+        id: Identifier,
         remaining_depth: NonZeroU32,
-        visited: Vec<Uri>,
+        visited: Vec<Identifier>,
     }
 
     /// What the stubbed remainder of the system answers with.
     #[derive(Debug)]
     enum RemoteOutcome {
         /// The entities each requested identifier resolves to.
-        Returns(HashMap<Uri, Vec<Entity>>),
+        Returns(HashMap<Identifier, Vec<Entity>>),
         /// The source was reached but reported the entity as unresolvable.
         Reports(LinkedResolutionFailureKind),
         /// The remainder of the system cannot be consulted at all.
@@ -514,7 +517,7 @@ mod tests {
             })
         }
 
-        fn returning(entities: impl IntoIterator<Item = (Uri, Vec<Entity>)>) -> Arc<RecordingSource> {
+        fn returning(entities: impl IntoIterator<Item = (Identifier, Vec<Entity>)>) -> Arc<RecordingSource> {
             RecordingSource::new(RemoteOutcome::Returns(entities.into_iter().collect()))
         }
 
@@ -535,9 +538,9 @@ mod tests {
     impl RemoteLinkedEntitySource for RecordingSource {
         async fn fetch_linked(
             &self,
-            id: &Uri,
+            id: &Identifier,
             remaining_depth: NonZeroU32,
-            visited: &[Uri],
+            visited: &[Identifier],
             _context: &ContextSpec,
         ) -> Result<RemoteLinkedEntities, EntityError> {
             self.calls().push(RemoteCall {
@@ -598,7 +601,7 @@ mod tests {
     }
 
     fn ids(resolved: &ResolvedLinkedEntities) -> Vec<&str> {
-        resolved.entities.keys().map(Uri::as_str).collect()
+        resolved.entities.keys().map(Identifier::as_str).collect()
     }
 
     /// Clause 4.5.23: the flat representation appends linked entities in the
@@ -645,7 +648,7 @@ mod tests {
             (uri("urn:ngsi-ld:T:C"), stored("urn:ngsi-ld:T:C", &[])),
         ]);
         let roots = vec![root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"])];
-        let contained_by: HashSet<Uri> = [uri("urn:ngsi-ld:T:B")].into_iter().collect();
+        let contained_by: HashSet<Identifier> = [uri("urn:ngsi-ld:T:B")].into_iter().collect();
 
         let resolved = service(store)
             .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &contained_by)

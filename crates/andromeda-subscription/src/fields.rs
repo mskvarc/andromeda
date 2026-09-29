@@ -1,7 +1,7 @@
 //! Typed subscription persistence values and update merging.
 
 use crate::{error::SubscriptionError, store::SubscriptionFields, subscription_validation_reason::SubscriptionValidationReason, variant::DatasetIdPolicy};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     attribute_name_csv,
     notification::NotificationTrigger,
@@ -43,7 +43,7 @@ pub struct SubscriptionWriteValues {
     /// Parsed context-source filter expression.
     pub csf: Option<Expr>,
     /// Validated dataset identifiers.
-    pub dataset_id: Option<Vec<Uri>>,
+    pub dataset_id: Option<Vec<Identifier>>,
     /// Whether the subscription is currently active.
     pub is_active: bool,
     /// Validated notification delivery parameters.

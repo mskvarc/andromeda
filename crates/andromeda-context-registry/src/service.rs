@@ -15,7 +15,7 @@ use crate::{
     store::ContextRegistryStore,
 };
 use andromeda_jsonld::{context_subtree::context_subtree, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriBuf;
@@ -229,7 +229,7 @@ impl ContextRegistryService {
     }
 
     /// Delete one stored Context and invalidate every in-process lookup key.
-    async fn delete(&self, identifier: &Uri) -> Result<(), ContextRegistryError> {
+    async fn delete(&self, identifier: &Identifier) -> Result<(), ContextRegistryError> {
         let source_url = self.store.lookup(identifier).await?.and_then(|stored| stored.source_url);
         if self.store.delete(identifier).await? == ContextMutation::Missing {
             return Err(ContextRegistryError::NotFound {
@@ -247,7 +247,7 @@ impl ContextRegistryService {
     }
 
     /// Re-download one cached Context and invalidate its prior in-process value.
-    async fn reload(&self, identifier: &Uri) -> Result<(), ContextRegistryError> {
+    async fn reload(&self, identifier: &Identifier) -> Result<(), ContextRegistryError> {
         // Clause 5.13.5.4 orders the two refusals: "If the @context identifier
         // does not correspond to any existing entry in the @context storage,
         // then an error of type ResourceNotFound shall be raised" comes before
@@ -304,7 +304,7 @@ fn hosted_context_subtree(payload: Value) -> Result<Value, ContextRegistryError>
 }
 
 /// Parse the compile-time vocabulary constant into the HTTP resource identifier type.
-fn core_context_identifier() -> Result<Uri, ContextRegistryError> {
+fn core_context_identifier() -> Result<Identifier, ContextRegistryError> {
     NGSI_LD_CORE_CONTEXT_URL.as_str().parse().map_err(|error| ContextRegistryError::Invariant {
         detail: format!("core Context URL is invalid: {error}"),
     })

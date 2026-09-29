@@ -48,13 +48,13 @@ impl<T> ContextRegistryResultExt<T> for Result<T, ContextRegistryError> {
 mod tests {
     use super::classify_context_registry_error;
     use andromeda_context_registry::{error::ContextRegistryError, identifier::ContextIdentifier};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
     #[test]
     fn focused_context_registry_categories_and_disclosure_are_stable() -> Result<(), ContextRegistryError> {
         let identifier = "urn:ngsi-ld:Context:1"
-            .parse::<Uri>()
+            .parse::<Identifier>()
             .map_err(|error| ContextRegistryError::Invariant { detail: error.to_string() })?;
         for (error, expected) in [
             (ContextRegistryError::MissingTopLevelContext, NgsiLdErrorType::InvalidRequest),

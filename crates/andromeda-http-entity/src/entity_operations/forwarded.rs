@@ -12,7 +12,7 @@ use andromeda_federation::{
 };
 use andromeda_http_response::{batch_projection::forwarded_write_error, problem_response::ProblemResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity::Entity, entity_type::EntityTypeValue, registration::forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use axum::http::{StatusCode, Uri as HttpUri};
@@ -88,7 +88,7 @@ pub(crate) async fn forward_entities<W: BatchWriteKind>(
 pub(crate) async fn forward_identifiers(
     services: &EntityRouteServices,
     target: &ContextTarget,
-    ids: &[Uri],
+    ids: &[Identifier],
     context: &ContextSpec,
     triggering: TriggeringRequest<'_>,
     instance: &HttpUri,
@@ -119,7 +119,7 @@ pub(crate) async fn forward_identifiers(
 
 /// The attributes proxied registrations claim from `entity_id`, whether or
 /// not their forward succeeded (clause 4.3.6.3).
-fn proxied_attributes(forwarded: &[BatchForwardedResult], entity_id: &Uri) -> Vec<AttributeName> {
+fn proxied_attributes(forwarded: &[BatchForwardedResult], entity_id: &Identifier) -> Vec<AttributeName> {
     forwarded
         .iter()
         .filter(|result| result.entity_id == *entity_id)
@@ -139,7 +139,7 @@ pub(crate) fn local_remainder<W: BatchWriteKind>(admitted: &mut AdmittedBatch<W>
 /// Drop the local not-found of an entity a proxied registration holds: its
 /// absence here is not a failure when the deletion landed at the source
 /// (clause 5.6.6.4).
-pub(crate) fn drop_absent_proxied(errors: &mut Vec<(Uri, EntityError)>, forwarded: &[BatchForwardedResult]) {
+pub(crate) fn drop_absent_proxied(errors: &mut Vec<(Identifier, EntityError)>, forwarded: &[BatchForwardedResult]) {
     errors.retain(|(id, error)| {
         let proxied = forwarded
             .iter()
@@ -167,7 +167,7 @@ pub(crate) fn merge_forwarded(result: &mut BatchOperationResult, forwarded: &[Ba
 
 /// The entities a context source reports as created (clause 5.6.8.5: the
 /// ones answered 201).
-pub(crate) fn created_remotely(forwarded: &[BatchForwardedResult]) -> impl Iterator<Item = &Uri> {
+pub(crate) fn created_remotely(forwarded: &[BatchForwardedResult]) -> impl Iterator<Item = &Identifier> {
     forwarded.iter().filter_map(|entry| match entry.outcome {
         ForwardedWriteOutcome::Completed { status, .. } if status == StatusCode::CREATED.as_u16() => Some(&entry.entity_id),
         ForwardedWriteOutcome::Completed { .. }
@@ -184,11 +184,11 @@ mod tests {
     use crate::entity_operations::forwarded::{created_remotely, drop_absent_proxied, merge_forwarded, proxied_attributes};
     use andromeda_entity::error::EntityError;
     use andromeda_federation::{outcome::ForwardedWriteOutcome, provision_batch::BatchForwardedResult};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
     }
 

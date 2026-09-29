@@ -4,7 +4,7 @@ use crate::jsonld_context::{
     kind_code::kind_of,
     rows::{ContextMetadataRow, ContextSummaryRow},
 };
-use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
+use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 use andromeda_postgresql_codes::{jsonld_context_kind::JsonldContextKindCode, registry::UnknownCompactCode};
 use iri_rs::IriBuf;
@@ -29,7 +29,7 @@ pub enum ContextMapperError {
     },
     /// Stored URL column is not a URI, or is longer than an identifier may be.
     #[error("URL in database is not an identifier: {0}")]
-    UrlIdentifier(#[from] UriParseError),
+    UrlIdentifier(#[from] IdentifierParseError),
     /// `number_of_hits` column was negative.
     #[error("negative number_of_hits in database: {value}")]
     NegativeHits {
@@ -49,7 +49,7 @@ pub enum ContextMapperError {
 
 /// Convert a detailed-projection row into the domain [`ContextMetadata`].
 pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata, ContextMapperError> {
-    let local_id: Uri = row.local_id.parse().map_err(|_| ContextMapperError::LocalId { value: row.local_id.clone() })?;
+    let local_id: Identifier = row.local_id.parse().map_err(|_| ContextMapperError::LocalId { value: row.local_id.clone() })?;
 
     let url = row
         .url
@@ -85,9 +85,9 @@ pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata
 }
 
 /// Convert a summary projection into the public URL when present, otherwise its local identifier.
-pub(crate) fn row_to_identifier(row: ContextSummaryRow) -> Result<Uri, ContextMapperError> {
+pub(crate) fn row_to_identifier(row: ContextSummaryRow) -> Result<Identifier, ContextMapperError> {
     match row.url {
-        Some(raw) => Ok(Uri::try_from(Url::parse(&raw).map_err(|source| ContextMapperError::Url { source })?)?),
+        Some(raw) => Ok(Identifier::try_from(Url::parse(&raw).map_err(|source| ContextMapperError::Url { source })?)?),
         None => row.id.parse().map_err(|_| ContextMapperError::LocalId { value: row.id }),
     }
 }

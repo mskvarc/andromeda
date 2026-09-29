@@ -2,7 +2,7 @@
 //! (clause 4.5.5).
 
 use crate::error::QueryError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// Parse the comma-separated `id` parameter into the URIs it names.
 ///
@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 ///
 /// Returns [`QueryError::ParamIdListEmpty`] when an entry is blank, and
 /// [`QueryError::ParamIdInvalid`] when an entry is not a clause 4.6.2 URI.
-pub fn parse_id_list(raw: &[String]) -> Result<Vec<Uri>, QueryError> {
+pub fn parse_id_list(raw: &[String]) -> Result<Vec<Identifier>, QueryError> {
     raw.iter()
         .map(|entry| {
             let trimmed = entry.trim();
@@ -41,8 +41,9 @@ pub fn parse_id_list(raw: &[String]) -> Result<Vec<Uri>, QueryError> {
 /// # Errors
 ///
 /// Returns [`QueryError::ParamIdInvalid`] when `raw` is not a clause 4.6.2 URI.
-pub fn parse_id(raw: &str) -> Result<Uri, QueryError> {
-    raw.parse::<Uri>().map_err(|source| QueryError::ParamIdInvalid { raw: raw.to_string(), source })
+pub fn parse_id(raw: &str) -> Result<Identifier, QueryError> {
+    raw.parse::<Identifier>()
+        .map_err(|source| QueryError::ParamIdInvalid { raw: raw.to_string(), source })
 }
 
 #[cfg(test)]
@@ -52,14 +53,14 @@ mod tests {
         identifier::{parse_id, parse_id_list},
     };
     use andromeda_ngsi_ld_lexicon::{
+        identifier::{Identifier, IdentifierParseError},
         identifier_length::IDENTIFIER_BYTE_LIMIT,
-        uri::{Uri, UriParseError},
     };
     use pretty_assertions::assert_eq;
 
     #[test]
     fn an_empty_parameter_is_no_filter() {
-        assert_eq!(parse_id_list(&[]).expect("parses"), [] as [Uri; 0]);
+        assert_eq!(parse_id_list(&[]).expect("parses"), [] as [Identifier; 0]);
     }
 
     #[test]
@@ -94,7 +95,7 @@ mod tests {
             matches!(
                 &error,
                 QueryError::ParamIdInvalid {
-                    source: UriParseError::TooLong(_),
+                    source: IdentifierParseError::TooLong(_),
                     ..
                 }
             ),

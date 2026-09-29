@@ -8,7 +8,7 @@
 //! subscription never both act on it.
 
 use crate::error::NotificationError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use futures::future::BoxFuture;
 
 /// Whether a release found the registration among those notified.
@@ -31,7 +31,7 @@ pub trait NotifiedRegistrationStore: Send + Sync + 'static {
     ///
     /// Returns [`NotificationError::Persistence`] when the store cannot be
     /// written.
-    fn claim<'a>(&'a self, subscription: &'a Uri, registrations: &'a [Uri]) -> BoxFuture<'a, Result<Vec<Uri>, NotificationError>>;
+    fn claim<'a>(&'a self, subscription: &'a Identifier, registrations: &'a [Identifier]) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>>;
 
     /// Remove `registration` from the registrations notified to
     /// `subscription`, answering whether it was among them.
@@ -40,7 +40,7 @@ pub trait NotifiedRegistrationStore: Send + Sync + 'static {
     ///
     /// Returns [`NotificationError::Persistence`] when the store cannot be
     /// written.
-    fn release<'a>(&'a self, subscription: &'a Uri, registration: &'a Uri) -> BoxFuture<'a, Result<Release, NotificationError>>;
+    fn release<'a>(&'a self, subscription: &'a Identifier, registration: &'a Identifier) -> BoxFuture<'a, Result<Release, NotificationError>>;
 
     /// The subscriptions `registration` was notified to as matching.
     ///
@@ -52,7 +52,7 @@ pub trait NotifiedRegistrationStore: Send + Sync + 'static {
     ///
     /// Returns [`NotificationError::Persistence`] when the store cannot be
     /// read.
-    fn notified_subscriptions<'a>(&'a self, registration: &'a Uri) -> BoxFuture<'a, Result<Vec<Uri>, NotificationError>>;
+    fn notified_subscriptions<'a>(&'a self, registration: &'a Identifier) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>>;
 
     /// The registrations notified to `subscription` as matching.
     ///
@@ -63,5 +63,5 @@ pub trait NotifiedRegistrationStore: Send + Sync + 'static {
     ///
     /// Returns [`NotificationError::Persistence`] when the store cannot be
     /// read.
-    fn registrations_notified_to<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<Vec<Uri>, NotificationError>>;
+    fn registrations_notified_to<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>>;
 }

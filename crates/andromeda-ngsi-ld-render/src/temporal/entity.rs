@@ -9,9 +9,9 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
+    identifier::Identifier,
     temporal_format::TemporalFormat,
     time_prop::TimeProp,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::{
@@ -51,7 +51,7 @@ pub struct TemporalEntityBuildResult {
 #[derive(Debug)]
 pub struct TemporalEntityRenderer<'a> {
     /// Entity identifier emitted in the representation.
-    entity_id: &'a Uri,
+    entity_id: &'a Identifier,
     /// Entity types emitted in the representation.
     entity_types: &'a [EntityTypeName],
     /// Neutral history observations to assemble.
@@ -67,7 +67,7 @@ impl<'a> TemporalEntityRenderer<'a> {
     /// Create a renderer for the given entity and row set, cut at `cut`.
     #[must_use]
     pub const fn new(
-        entity_id: &'a Uri,
+        entity_id: &'a Identifier,
         entity_types: &'a [EntityTypeName],
         rows: &'a [TemporalHistoryRow],
         compiled: &'a CompiledTemporalQuery,
@@ -293,7 +293,7 @@ mod tests {
             .build()
     }
 
-    fn entity_id() -> Uri {
+    fn entity_id() -> Identifier {
         "urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")
     }
 

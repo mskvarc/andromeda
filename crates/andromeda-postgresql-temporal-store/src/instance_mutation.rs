@@ -18,6 +18,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
+    identifier::Identifier,
     instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
     uri::Uri,
@@ -61,7 +62,7 @@ impl TemporalRepository {
     pub(crate) async fn update_attribute_instance(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
         instance: &InstanceIdentity,
         expanded: &Value,
@@ -93,7 +94,7 @@ impl TemporalRepository {
         &self,
         target: &ContextTarget,
         instance: &InstanceIdentity,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
     ) -> Result<(), TemporalStoreError> {
         let mut tx = self.pool.begin().await?;
@@ -133,7 +134,7 @@ impl TemporalRepository {
     async fn update_instance(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
         instance: &InstanceIdentity,
         state: &UpdateInstanceState,
@@ -173,7 +174,7 @@ impl TemporalRepository {
         &self,
         target: &ContextTarget,
         instance: &InstanceIdentity,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
     ) -> Result<Option<PgRow>, TemporalStoreError> {
         let generated_sql = select_instance_sql(InstanceColumn::Generated, target);

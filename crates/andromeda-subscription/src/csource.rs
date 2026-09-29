@@ -8,7 +8,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -61,11 +61,11 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
         DatasetIdPolicy::Discard
     }
 
-    fn make_upserted(&self, target: ContextTarget, id: Uri, kind: UpsertKind) -> CsourceSubscriptionChange {
+    fn make_upserted(&self, target: ContextTarget, id: Identifier, kind: UpsertKind) -> CsourceSubscriptionChange {
         CsourceSubscriptionChange::Upserted { target, id, kind }
     }
 
-    fn make_deleted(&self, target: ContextTarget, id: Uri) -> CsourceSubscriptionChange {
+    fn make_deleted(&self, target: ContextTarget, id: Identifier) -> CsourceSubscriptionChange {
         CsourceSubscriptionChange::Deleted { target, id }
     }
 }

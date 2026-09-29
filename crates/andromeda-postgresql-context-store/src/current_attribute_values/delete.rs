@@ -2,7 +2,7 @@
 
 use crate::{current_attribute_values::row::ProjectedAttributeKey, error::ContextStoreError};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
@@ -62,7 +62,7 @@ pub async fn delete_instances_in_tx(
     for key in keys {
         entity_keys.push(EntityKey::get(key.entity_key));
         attribute_name_keys.push(AttributeNameKey::get(key.attribute_name_key));
-        dataset_ids.push(key.dataset_id.as_ref().map(Uri::as_str));
+        dataset_ids.push(key.dataset_id.as_ref().map(Identifier::as_str));
     }
     let (entity_keys, attribute_name_keys, dataset_ids) = (entity_keys, attribute_name_keys, dataset_ids);
 

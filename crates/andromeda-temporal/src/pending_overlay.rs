@@ -22,7 +22,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query_residual::ResidualFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, instance_family::InstanceFamily, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, instance_family::InstanceFamily};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::{
     ordering::sort_direction::SortDirection,
@@ -84,7 +84,7 @@ impl MergedIdentifierOrder {
 /// collation cannot change where an identifier lands here. That refinement is
 /// the one thing the overlay does not reproduce, and it is a difference between
 /// two distinct URIs rather than between an ordered and an unordered result.
-fn order_merged_identifiers(identifiers: &mut [Uri], order: MergedIdentifierOrder) {
+fn order_merged_identifiers(identifiers: &mut [Identifier], order: MergedIdentifierOrder) {
     match order {
         MergedIdentifierOrder::Ascending => identifiers.sort_by(|left, right| left.as_str().cmp(right.as_str())),
         MergedIdentifierOrder::Descending => identifiers.sort_by(|left, right| right.as_str().cmp(left.as_str())),
@@ -124,7 +124,7 @@ impl PendingTemporalHistoryOverlay {
     }
 
     /// The intents still pending for `entity_id` in `target`.
-    async fn pending_for_entity(&self, target: &ContextTarget, entity_id: &Uri) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
+    async fn pending_for_entity(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
         pending_on_branch(target, || self.pending.pending_for_entity(entity_id)).await
     }
 
@@ -132,7 +132,7 @@ impl PendingTemporalHistoryOverlay {
     async fn complete_entity_history(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalHistoryObservation>, TemporalError> {
         let mut unwindowed = compiled.clone();
@@ -183,7 +183,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         }
     }
 
-    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError> {
+    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError> {
         if !self.pending_for_entity(target, entity_id).await?.is_empty() {
             return Ok(true);
         }
@@ -202,7 +202,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         self.stored.recorded_attribute_shapes(target, attributes).await
     }
 
-    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
         let mut types_by_entity = self.stored.entity_types(target, entity_ids).await?;
         // An entity whose first write has not been drained yet has no catalogue
         // row to read its types from, so the pending intent that will create it
@@ -237,7 +237,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
             .complete(unpaged.pagination)
             .map_err(|error| TemporalError::internal(error.to_string()))?;
         let mut identifiers = stored_ids;
-        let mut seen: HashSet<Uri> = identifiers.iter().cloned().collect();
+        let mut seen: HashSet<Identifier> = identifiers.iter().cloned().collect();
         let selection = ResidualFilter::over(compiled.entities.clone());
         for sequenced in pending {
             if seen.contains(&sequenced.intent.entity_id) || !intent_matches_query(&sequenced, compiled, &selection)? {
@@ -263,7 +263,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
     async fn query_entity_history(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
         Ok(TemporalHistoryOutcome {
@@ -274,7 +274,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
     async fn query_entity_aggregation(
         &self,
         _target: &ContextTarget,
-        _entity_id: &Uri,
+        _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::PendingUnionUnsupported))
@@ -323,7 +323,7 @@ fn rendered_instance_id(row: &TemporalHistoryRow) -> String {
 }
 
 /// Compare optional validated dataset identifiers without erasing their type.
-fn compare_dataset_ids(left: Option<&Uri>, right: Option<&Uri>) -> Ordering {
+fn compare_dataset_ids(left: Option<&Identifier>, right: Option<&Identifier>) -> Ordering {
     match (left, right) {
         (None, None) => Ordering::Equal,
         (None, Some(_)) => Ordering::Less,
@@ -335,18 +335,18 @@ fn compare_dataset_ids(left: Option<&Uri>, right: Option<&Uri>) -> Ordering {
 #[cfg(test)]
 mod tests {
     use crate::pending_overlay::{MergedIdentifierOrder, order_merged_identifiers};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
         ordering::{collation::IcuCollation, sort_direction::SortDirection},
         temporal::ordering::TemporalEntityOrdering,
     };
 
-    fn ids(raw: &[&str]) -> Vec<Uri> {
+    fn ids(raw: &[&str]) -> Vec<Identifier> {
         raw.iter().map(|id| id.parse().expect("valid URI")).collect()
     }
 
-    fn spelled(identifiers: &[Uri]) -> Vec<&str> {
-        identifiers.iter().map(Uri::as_str).collect()
+    fn spelled(identifiers: &[Identifier]) -> Vec<&str> {
+        identifiers.iter().map(Identifier::as_str).collect()
     }
 
     /// With no clause-4.23 ordering the store returns `id` ascending under the

@@ -10,6 +10,7 @@ use crate::{
         GeometrySelection,
         GetEntityParams,
         HttpUri,
+        Identifier,
         IntoResponse,
         JoinRequest,
         NgsiLdCollectionResponse,
@@ -24,7 +25,6 @@ use crate::{
         RetrievalNarrowing,
         RetrievingJoin,
         TypedPath,
-        Uri,
         ValidatedQuery,
         Value,
         public_error,
@@ -88,7 +88,7 @@ fn retrieval_response(
     payload: RetrievedPayload,
     rendering: ResponseRenderer<'_>,
     warnings: Vec<NgsiLdWarning>,
-    entity_map_uri: Option<Uri>,
+    entity_map_uri: Option<Identifier>,
     uri: &HttpUri,
 ) -> Result<Response, ProblemResponse> {
     match payload {
@@ -140,7 +140,7 @@ pub(crate) async fn get(
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    TypedPath(id): TypedPath<Uri>,
+    TypedPath(id): TypedPath<Identifier>,
     ValidatedQuery(mut params): ValidatedQuery<GetEntityParams>,
     protocol: NgsiLdProtocolHeaders,
 ) -> Result<Response, ProblemResponse> {
@@ -261,7 +261,7 @@ pub(crate) async fn get(
 mod tests {
     use crate::{entity::retrieve::local_entity_for_forwarding, entity_error::classify_entity_error};
     use andromeda_entity::error::EntityError;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
 
     #[test]
@@ -280,7 +280,7 @@ mod tests {
         );
 
         // A genuine not-found yields no local entity, so the registrations answer.
-        let identifier = "urn:ngsi-ld:Entity:absent".parse::<Uri>().expect("valid test URI");
+        let identifier = "urn:ngsi-ld:Entity:absent".parse::<Identifier>().expect("valid test URI");
         let missing = local_entity_for_forwarding(Err(EntityError::NotFound { identifier }));
         assert!(matches!(missing, Ok(None)), "a genuine not-found forwards to the registrations");
     }

@@ -20,7 +20,7 @@
 //! This type is what keeps that distinction: it holds the segment as written,
 //! and the stored key it resolves to when it resolves to one at all.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use derive_more::Display;
 
 /// A `{contextId}` path segment, and the storage key it addresses.
@@ -30,7 +30,7 @@ pub struct ContextIdentifier {
     /// The segment exactly as the request wrote it.
     written: String,
     /// The storage key it addresses, when it is one at all.
-    stored: Option<Uri>,
+    stored: Option<Identifier>,
 }
 
 impl ContextIdentifier {
@@ -39,7 +39,7 @@ impl ContextIdentifier {
     /// `None` is not a malformed request: it is an identifier no stored row can
     /// be keyed by, which the clause answers with `ResourceNotFound`.
     #[must_use]
-    pub const fn stored(&self) -> Option<&Uri> {
+    pub const fn stored(&self) -> Option<&Identifier> {
         self.stored.as_ref()
     }
 }
@@ -56,8 +56,8 @@ impl From<&str> for ContextIdentifier {
 }
 
 // A key the broker already holds addresses itself.
-impl From<Uri> for ContextIdentifier {
-    fn from(stored: Uri) -> ContextIdentifier {
+impl From<Identifier> for ContextIdentifier {
+    fn from(stored: Identifier) -> ContextIdentifier {
         ContextIdentifier {
             written: stored.to_string(),
             stored: Some(stored),
@@ -68,7 +68,7 @@ impl From<Uri> for ContextIdentifier {
 #[cfg(test)]
 mod tests {
     use crate::identifier::ContextIdentifier;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
     /// Clause 5.13.4.3's two spellings: the local identifier a creation handed
     /// back, and the original URL of a cached `@context`.
@@ -97,7 +97,7 @@ mod tests {
     /// A key the broker already holds addresses itself.
     #[test]
     fn a_stored_key_addresses_itself() {
-        let key: Uri = "urn:ngsi-ld:Context:1".parse().expect("a valid URI");
+        let key: Identifier = "urn:ngsi-ld:Context:1".parse().expect("a valid URI");
         let identifier = ContextIdentifier::from(key.clone());
         pretty_assertions::assert_eq!(identifier.stored(), Some(&key));
     }

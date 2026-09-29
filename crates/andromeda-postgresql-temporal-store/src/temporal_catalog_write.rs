@@ -21,7 +21,7 @@ use crate::{
     temporal_stream::{TemporalCatalogUpsert, TemporalStreamKey},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::{stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use chrono::{DateTime, Utc};
 use sqlx::{Postgres, Transaction};
@@ -35,7 +35,7 @@ use std::collections::HashMap;
 /// its grains to the stream every history row is stored against.
 pub(crate) struct TemporalCatalog {
     /// Narrow key each chunk entity resolved to.
-    pub(crate) entity_keys: HashMap<Uri, TemporalEntityKey>,
+    pub(crate) entity_keys: HashMap<Identifier, TemporalEntityKey>,
     /// Stream each requested grain of each entity resolved to.
     pub(crate) streams: HashMap<(TemporalEntityKey, TemporalStreamKey), StreamKey>,
 }

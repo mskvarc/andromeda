@@ -15,7 +15,7 @@
 //! invalid base64, an unknown tag, a missing or malformed identifier -- is a
 //! [`CursorDecodeError`], which the request boundary reports as `BadRequestData`.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use thiserror::Error;
 
@@ -38,11 +38,11 @@ const TAG_END: u8 = b'e';
 pub enum PageCursor {
     /// Forward from the boundary identifier: the store selects `id > boundary`
     /// ascending, so the page follows the one that ended at `boundary`.
-    After(Uri),
+    After(Identifier),
     /// Backward from the boundary identifier: the store selects `id < boundary`
     /// descending and the page is reversed to ascending for display, so it
     /// precedes the one that began at `boundary`.
-    Before(Uri),
+    Before(Identifier),
     /// The final page: the store selects the last identifiers descending and the
     /// page is reversed to ascending for display. This is the from-end anchor
     /// Andromeda offers beyond the clause 5.5.9.1 `prev`/`next` pair.
@@ -88,7 +88,7 @@ impl PageCursor {
     /// that came back short has reached the end and offers no `next`. `last` is
     /// the from-end anchor and is always offered.
     #[must_use]
-    pub fn neighbours(incoming: Option<&PageCursor>, first_id: Uri, last_id: Uri, full: bool) -> NeighbourCursors {
+    pub fn neighbours(incoming: Option<&PageCursor>, first_id: Identifier, last_id: Identifier, full: bool) -> NeighbourCursors {
         let (has_prev, has_next) = match incoming {
             // First page of the walk: nothing precedes it; a following page
             // exists only if this one filled the limit.
@@ -138,7 +138,7 @@ impl TryFrom<&str> for PageCursor {
 }
 
 /// Parse the boundary identifier of a bounded cursor from the token's remainder.
-fn decode_boundary(bytes: &[u8]) -> Result<Uri, CursorDecodeError> {
+fn decode_boundary(bytes: &[u8]) -> Result<Identifier, CursorDecodeError> {
     if bytes.is_empty() {
         return Err(CursorDecodeError::MissingBoundary);
     }
@@ -195,7 +195,7 @@ pub enum CursorDecodeError {
 mod tests {
     use super::*;
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

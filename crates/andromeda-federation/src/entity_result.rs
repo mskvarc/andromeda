@@ -7,7 +7,7 @@ use crate::{
 };
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity, registration::forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use chrono::{DateTime, Utc};
@@ -21,7 +21,7 @@ use tracing::{debug, warn};
 /// is discarded, and so is every attribute instance whose own `expiresAt` has
 /// passed (clause 4.5.5.3), before anything is merged. A payload that is not
 /// an entity contributes a clause 6.3.17 warning instead.
-pub(crate) fn parse_forwarded_entities(csr_id: &Uri, values: Vec<Value>, now: DateTime<Utc>) -> (Vec<Entity>, Vec<NgsiLdWarning>) {
+pub(crate) fn parse_forwarded_entities(csr_id: &Identifier, values: Vec<Value>, now: DateTime<Utc>) -> (Vec<Entity>, Vec<NgsiLdWarning>) {
     let mut entities = Vec::with_capacity(values.len());
     let mut warnings = Vec::new();
     for mut value in values {
@@ -91,7 +91,7 @@ pub fn merge_query_results(mut local_entities: Vec<Entity>, mut remote_results: 
     let local_entities = local_entities;
     let remote_results = remote_results;
 
-    let mut entity_map: IndexMap<Uri, Entity> = IndexMap::with_capacity(local_entities.len());
+    let mut entity_map: IndexMap<Identifier, Entity> = IndexMap::with_capacity(local_entities.len());
 
     for entity in local_entities {
         entity_map.insert(entity.id.clone(), entity); // clone: the index and entity each own the identifier.
@@ -198,12 +198,12 @@ mod tests {
         outcome::ForwardedEntities,
     };
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
     use chrono::{TimeZone, Utc};
     use serde_json::json;
 
-    fn registration_id() -> Uri {
+    fn registration_id() -> Identifier {
         "urn:ngsi-ld:Registration:1".parse().expect("registration URI")
     }
 

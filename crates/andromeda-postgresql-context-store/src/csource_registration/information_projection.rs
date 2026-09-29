@@ -70,7 +70,7 @@
 //! not projected: operation matching reads the registration's own column, and
 //! no preselect filters on them.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity_info::EntityInfo, registration::info::RegistrationInfo};
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
@@ -112,7 +112,7 @@ pub enum IdentifierRouting<'info> {
     /// The selector names no exact identifier; stored as `''`.
     Any,
     /// The exact identifier the selector names.
-    Exact(&'info Uri),
+    Exact(&'info Identifier),
 }
 
 impl IdentifierRouting<'_> {
@@ -366,7 +366,7 @@ mod tests {
         derive_routing,
         projected_attribute_names,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{
         entity_info::{EntityInfo, EntityTypeSelection},
         registration::info::RegistrationInfo,
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn an_exact_identifier_selector_projects_the_identifier_alongside_its_type() {
-        let identifier: Uri = "urn:ngsi-ld:Vehicle:A1".parse().expect("valid URI");
+        let identifier: Identifier = "urn:ngsi-ld:Vehicle:A1".parse().expect("valid URI");
         let information = vec![entry(
             Some(vec![EntityInfo {
                 id: Some(identifier),

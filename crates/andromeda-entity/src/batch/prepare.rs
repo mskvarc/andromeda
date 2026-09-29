@@ -20,7 +20,7 @@ use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{batch_context::BatchContextHandle, processor::JsonLdEngine},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     expanded::{attribute_expiry::min_attribute_expires_at, entity_member::extract_expires_at},
@@ -41,7 +41,7 @@ use std::{
 /// to walk the payload again.
 pub(super) struct PreparedEntity {
     /// Entity identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// Expanded JSON-LD payload (the canonical stored form).
     pub expanded: Value,
     /// The members a query filters on, extracted from the expanded payload.
@@ -57,7 +57,7 @@ pub(super) struct PreparedEntity {
 /// regardless of which pool processed the entry.
 pub(super) struct ClassifiedEntry {
     pub(super) idx: usize,
-    pub(super) id: Uri,
+    pub(super) id: Identifier,
     pub(super) value: Value,
 }
 
@@ -74,14 +74,14 @@ pub(super) struct PreparedBatch {
     /// The prepared entity at each input position.
     pub(super) slots: Vec<Option<PreparedEntity>>,
     /// The per-entity failures, in position order.
-    pub(super) errors: Vec<(Uri, EntityError)>,
+    pub(super) errors: Vec<(Identifier, EntityError)>,
 }
 
 /// `(input_index, prepared_entity_or_error)` tuple emitted by either pool.
 ///
 /// The error pair is boxed so a successful slot is not sized for the much
 /// larger broker error variant.
-pub(super) type PreparedSlot = Result<PreparedEntity, Box<(Uri, EntityError)>>;
+pub(super) type PreparedSlot = Result<PreparedEntity, Box<(Identifier, EntityError)>>;
 type IndexedPrepared = (usize, PreparedSlot);
 
 /// Output of one entry processed by the fastpath chunk worker.
@@ -147,7 +147,7 @@ fn process_fast_entry(entry: ClassifiedEntry, engine: &JsonLdEngine, handle: &Ba
 
 /// Attribute one chunk-level preparation failure to every entity the chunk
 /// owned. Clause 5.2.17 requires a real entity URI for each batch error.
-fn append_preparation_failures(outputs: &mut Vec<FastPoolOutput>, metadata: Vec<(usize, Uri)>, detail: &str) {
+fn append_preparation_failures(outputs: &mut Vec<FastPoolOutput>, metadata: Vec<(usize, Identifier)>, detail: &str) {
     outputs.extend(metadata.into_iter().map(|(idx, id)| FastPoolOutput::Done {
         idx,
         result: Box::new(Err(Box::new((id, EntityError::internal(detail))))),
@@ -166,7 +166,7 @@ impl EntityService {
         )
     }
 
-    fn build_prepared_entity(id: Uri, expanded: Value, admission: NullSentinelAdmission) -> PreparedSlot {
+    fn build_prepared_entity(id: Identifier, expanded: Value, admission: NullSentinelAdmission) -> PreparedSlot {
         // Clauses 5.6.7.4, 5.6.8.4, 5.6.9.4 and 5.6.20.4 each open with
         // "execute the behaviour defined in clause 5.5.4 on JSON-LD
         // validation". The failure attributes itself to this one entity, so
@@ -254,8 +254,8 @@ impl EntityService {
         // batch handle's `@context`. Entries whose inline `@context`
         // diverges from the handle keep their own context and require
         // per-entity expansion; the rest can ride a single bulk expand call.
-        let mut hit_pending: Vec<(usize, Uri, Value)> = Vec::new();
-        let mut miss_pending: Vec<(usize, Uri, Value)> = Vec::new();
+        let mut hit_pending: Vec<(usize, Identifier, Value)> = Vec::new();
+        let mut miss_pending: Vec<(usize, Identifier, Value)> = Vec::new();
         for ClassifiedEntry { idx, id, mut value } in slow {
             normalize_entity_attributes(&mut value);
             if self.engine.entity_context_matches_handle(&value, handle) {
@@ -323,7 +323,7 @@ impl EntityService {
         admission: NullSentinelAdmission,
     ) -> PreparedBatch {
         let handle = self.engine.batch_context_handle(context).await;
-        let mut errors: Vec<(Uri, EntityError)> = Vec::new();
+        let mut errors: Vec<(Identifier, EntityError)> = Vec::new();
 
         let classified = classify_batch(entries, &handle, &self.engine);
         let execution = self.batch_execution(slot_count, classified.fast.len(), classified.slow.len());
@@ -375,7 +375,7 @@ impl EntityService {
 ///
 /// An entity that cannot be rendered is reported against its identifier and
 /// leaves its position without an entry, so the rest of the batch proceeds.
-pub(super) fn render_entries<'entities>(entities: impl IntoIterator<Item = &'entities Entity>) -> (Vec<ClassifiedEntry>, Vec<(Uri, EntityError)>) {
+pub(super) fn render_entries<'entities>(entities: impl IntoIterator<Item = &'entities Entity>) -> (Vec<ClassifiedEntry>, Vec<(Identifier, EntityError)>) {
     let mut entries = Vec::new();
     let mut errors = Vec::new();
     for (idx, entity) in entities.into_iter().enumerate() {

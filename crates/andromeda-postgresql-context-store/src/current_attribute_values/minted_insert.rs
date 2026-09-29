@@ -94,7 +94,7 @@ pub async fn insert_minted_projection_in_tx(
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Internal`] if the staged selection ever stops
-/// matching the fifteen-wide column list, which the fixed shapes make
+/// matching the sixteen-wide column list, which the fixed shapes make
 /// unreachable.
 fn minted_insert_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = staging_columns();
@@ -124,7 +124,7 @@ mod tests {
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 
     fn rendered() -> String {
-        minted_insert_sql(&ContextTarget::Live).expect("the fixed fifteen-wide insert builds")
+        minted_insert_sql(&ContextTarget::Live).expect("the fixed sixteen-wide insert builds")
     }
 
     fn row(entity_key: i64) -> ProjectedAttributeRow {

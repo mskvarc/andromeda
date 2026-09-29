@@ -5,7 +5,7 @@ use crate::{
     registration_loops,
 };
 use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, received_protocol::ReceivedProtocol, via::Via};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     attribute::instance::AttributeValue,
     attribute_strip::AttributeStrip,
@@ -17,7 +17,7 @@ fn attribute_name(raw: &str) -> AttributeName {
     raw.parse().expect("valid attribute name")
 }
 
-fn entity_uri(raw: &str) -> Uri {
+fn entity_uri(raw: &str) -> Identifier {
     raw.parse().expect("valid entity URI")
 }
 

@@ -11,7 +11,7 @@
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::port::reader::EntityReader;
 use andromeda_federation::local_entity_type::LocalEntityTypeResolver;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::node::expanded_object_ref;
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
@@ -32,7 +32,7 @@ impl EntityReaderTypeResolver {
 }
 
 impl LocalEntityTypeResolver for EntityReaderTypeResolver {
-    fn local_entity_types<'resolver>(&'resolver self, target: &'resolver ContextTarget, id: &'resolver Uri) -> BoxFuture<'resolver, Vec<IriBuf>> {
+    fn local_entity_types<'resolver>(&'resolver self, target: &'resolver ContextTarget, id: &'resolver Identifier) -> BoxFuture<'resolver, Vec<IriBuf>> {
         Box::pin(async move {
             match self.reader.get(target, id).await {
                 Ok(Some(entity)) => expanded_types(&entity),

@@ -4,10 +4,7 @@
 //! shared subscription-store module.
 
 use crate::error::ContextStoreError;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    uri::{NGSI_LD_URN_NID, Uri},
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, uri::NGSI_LD_URN_NID};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
@@ -31,11 +28,11 @@ impl SubscriptionRepository {
     ///
     /// Returns [`ContextStoreError::Internal`] when the generated namespace
     /// specific string is refused by the URN builder.
-    pub fn generate_id() -> Result<Uri, ContextStoreError> {
+    pub fn generate_id() -> Result<Identifier, ContextStoreError> {
         let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4()))
             .build()
             .map_err(|e| ContextStoreError::Internal(format!("failed to build subscription URN: {e}")))?;
-        Uri::try_from(urn).map_err(|e| ContextStoreError::Internal(format!("generated subscription URN is out of bounds: {e}")))
+        Identifier::try_from(urn).map_err(|e| ContextStoreError::Internal(format!("generated subscription URN is out of bounds: {e}")))
     }
 
     /// Creates a new repository backed by the given connection pool and the

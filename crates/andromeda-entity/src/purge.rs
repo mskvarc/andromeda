@@ -22,7 +22,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::removed_instance::removed_attribute_instances;
 use andromeda_ngsi_ld_query::projection::purge::{DatasetPurgeScope, PurgeMode};
 use iri_rs::IriBuf;
@@ -50,7 +50,7 @@ impl EntityService {
     /// concurrent writers superseded an entity's purge on every attempt, and
     /// [`EntityError::Persistence`] when the store could not read an entity or
     /// commit its purge.
-    pub async fn purge_attrs(&self, target: &ContextTarget, entity_ids: &[Uri], mode: &PurgeMode, context: &ContextSpec) -> Result<u32, EntityError> {
+    pub async fn purge_attrs(&self, target: &ContextTarget, entity_ids: &[Identifier], mode: &PurgeMode, context: &ContextSpec) -> Result<u32, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iris: Vec<IriBuf> = match mode {
             PurgeMode::DeleteEntities => return Ok(0),
@@ -124,7 +124,7 @@ pub(crate) struct PurgedEntity {
 /// Reports [`EntityError::Internal`] when the stored payload's members cannot
 /// be read back into the write's record or tombstones.
 fn build_scoped_purge_write(
-    entity_id: &Uri,
+    entity_id: &Identifier,
     previous: &Value,
     mode: &PurgeMode,
     attr_iris: &[IriBuf],
@@ -147,7 +147,12 @@ fn build_scoped_purge_write(
 ///
 /// Reports [`EntityError::Internal`] when the stored payload's members cannot
 /// be read back into the write's record or tombstones.
-fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_iris: &[IriBuf]) -> Result<Option<(AtomicWrite, PurgedEntity)>, EntityError> {
+fn build_purge_write(
+    entity_id: &Identifier,
+    previous: &Value,
+    mode: &PurgeMode,
+    attr_iris: &[IriBuf],
+) -> Result<Option<(AtomicWrite, PurgedEntity)>, EntityError> {
     let mut purged = previous.clone(); // clone: the "before" side stays intact for the removal diff
     let obj = match &mut purged {
         Value::Array(arr) => arr.first_mut().and_then(|v| v.as_object_mut()),

@@ -10,7 +10,7 @@
 
 use crate::outcome::ForwardedResponse;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -33,7 +33,7 @@ pub(crate) enum Cacheability {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct CacheKey {
     /// The registration the response came from.
-    registration: Uri,
+    registration: Identifier,
     /// The registration's definition version.
     modified_at: DateTime<Utc>,
     /// The forwarded URL, query included.

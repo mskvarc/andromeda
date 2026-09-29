@@ -61,6 +61,25 @@ mod tests {
         assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/hasPreviousObjectList"));
     }
 
+    /// Clause 4.6.2 sets no length on a URI, and every `objectList` member
+    /// (Table 5.2.37-1) is a URI: a member far longer than any identifier the
+    /// broker stores parses, and expands byte for byte.
+    #[test]
+    fn a_list_relationship_member_of_six_thousand_octets_parses_and_expands_verbatim() {
+        let prefix = "urn:ngsi-ld:GtfsStopTimeUpdate:";
+        let member = format!("{prefix}{}", "u".repeat(6000 - prefix.len()));
+        let json = serde_json::json!({"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Entity:1", member]});
+        let attr: Attribute = serde_json::from_value(json).expect("a long member is a URI");
+        let Attribute::ListRelationship(lr) = &attr else {
+            panic!("expected ListRelationship");
+        };
+        let expanded = lr.expand::<serde_json::Value>();
+        pretty_assertions::assert_eq!(
+            expanded["https://uri.etsi.org/ngsi-ld/hasObjectList"],
+            serde_json::json!([{"@list": [{"@id": "urn:ngsi-ld:Entity:1"}, {"@id": member}]}])
+        );
+    }
+
     #[test]
     fn the_list_relationship_default_matches_the_field_by_field_literal() {
         use crate::attribute::{list_relationship::ListRelationship, object_list::RelationshipObjectList};

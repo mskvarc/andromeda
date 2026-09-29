@@ -30,7 +30,7 @@
 //! nothing about either.
 
 use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::{
     dataset_id::get_instance_dataset_id,
     reserved_member::is_reserved_member,
@@ -231,7 +231,7 @@ fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(
 /// 4.5.5), and so is an `instanceId` that is not one (clause 4.5.7), before
 /// either reaches the store.
 pub(crate) fn validate_instance_identities(attr_name: &AttributeName, instances: &[Value]) -> Result<(), EntityError> {
-    let mut seen: HashSet<Option<Uri>> = HashSet::with_capacity(instances.len());
+    let mut seen: HashSet<Option<Identifier>> = HashSet::with_capacity(instances.len());
     for instance in instances {
         if !instance.is_object() {
             continue;
@@ -269,7 +269,7 @@ fn validate_instance_id(attr_name: &AttributeName, instance: &Value) -> Result<(
     else {
         return Ok(());
     };
-    raw.parse::<Uri>().map(drop).map_err(|source| {
+    raw.parse::<Identifier>().map(drop).map_err(|source| {
         EntityError::Validation(EntityValidationReason::ExpandedInstanceId {
             attribute: attr_name.clone(),
             raw: raw.to_owned(),
@@ -281,7 +281,7 @@ fn validate_instance_id(attr_name: &AttributeName, instance: &Value) -> Result<(
 #[cfg(test)]
 mod tests {
     use crate::attribute_envelope::validate_attribute_envelopes;
-    use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier_length::IDENTIFIER_BYTE_LIMIT};
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use serde_json::{Value, json};
 
@@ -359,6 +359,37 @@ mod tests {
         let payload = json!([{ "@id": "urn:ngsi-ld:Device:1", "https://example.org/member": [property(1), property(9)] }]);
         let error = validate_attribute_envelopes(&payload).expect_err("one instance per datasetId");
         assert!(error.to_string().contains("urn:ngsi-ld:Dataset:a"), "{error}");
+    }
+
+    /// A Property instance carrying `member` as an `@id` node of `length`
+    /// octets.
+    fn instance_naming(member: &str, prefix: &str, length: usize) -> Value {
+        json!({
+            "@type": [AttributeType::Property.iri().as_str()],
+            expanded_properties::VALUE.as_str(): [{"@value": 1}],
+            member: [{"@id": format!("{prefix}{}", "x".repeat(length - prefix.len()))}],
+        })
+    }
+
+    /// Clause 4.5.5 identifies an instance by its `datasetId` and clause 4.5.7
+    /// keeps a client's `instanceId` as given; both are index keys, so each is
+    /// held to the identifier bound, and the refusal names the member and the
+    /// bound.
+    #[test]
+    fn a_dataset_id_or_instance_id_one_octet_past_the_identifier_bound_is_refused_by_name() {
+        for (member, name, prefix) in [
+            (expanded_properties::DATASET_ID.as_str(), "datasetId", "urn:ngsi-ld:Dataset:"),
+            (expanded_properties::INSTANCE_ID.as_str(), "instanceId", "urn:ngsi-ld:Instance:"),
+        ] {
+            validate_attribute_envelopes(&entity_with(&instance_naming(member, prefix, IDENTIFIER_BYTE_LIMIT))).expect("an identity at the bound");
+            let error = validate_attribute_envelopes(&entity_with(&instance_naming(member, prefix, IDENTIFIER_BYTE_LIMIT + 1)))
+                .expect_err("an identity one octet past the bound");
+            let message = error.to_string();
+            assert!(
+                message.contains(name) && message.contains("1025 bytes") && message.contains("1024"),
+                "{message}"
+            );
+        }
     }
 
     #[test]

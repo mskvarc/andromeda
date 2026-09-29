@@ -30,7 +30,7 @@ use andromeda_context_commit::{
     subscription_match::SubscriptionMatch,
 };
 use andromeda_entity::side_effect_queue::{LeasedSideEffect, SideEffectQueue};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
 use pretty_assertions::assert_eq;
@@ -53,7 +53,7 @@ const BLOCKED_DEADLINE: Duration = Duration::from_secs(10);
 /// The one write a replay of the job submits: a notification owed to the
 /// seeded subscription, leaving the entity row alone.
 fn owed_notification(stored_subscription: i64) -> Vec<AtomicWrite> {
-    let entity_id: Uri = ENTITY_ID.parse().expect("a valid entity URI");
+    let entity_id: Identifier = ENTITY_ID.parse().expect("a valid entity URI");
     vec![
         AtomicWrite::builder()
             .entity_id(Arc::new(entity_id.clone())) // clone: the write and the match each own the identifier.

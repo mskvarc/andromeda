@@ -7,7 +7,7 @@
 //! therefore agree on which of them sends a notification without coordinating.
 
 use crate::error::ContextStoreError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_notification::{
     error::NotificationError,
     notified_registration_store::{NotifiedRegistrationStore, Release},
@@ -39,11 +39,11 @@ impl NotifiedRegistrationLedger {
 }
 
 impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
-    fn claim<'a>(&'a self, subscription: &'a Uri, registrations: &'a [Uri]) -> BoxFuture<'a, Result<Vec<Uri>, NotificationError>> {
+    fn claim<'a>(&'a self, subscription: &'a Identifier, registrations: &'a [Identifier]) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
         Box::pin(async move { claim(&self.pool, subscription, registrations).await.map_err(|error| persistence(&error)) })
     }
 
-    fn release<'a>(&'a self, subscription: &'a Uri, registration: &'a Uri) -> BoxFuture<'a, Result<Release, NotificationError>> {
+    fn release<'a>(&'a self, subscription: &'a Identifier, registration: &'a Identifier) -> BoxFuture<'a, Result<Release, NotificationError>> {
         Box::pin(async move {
             let (sql, values) = release_statement(subscription, registration).build_sqlx(PostgresQueryBuilder);
             let removed: Option<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -54,7 +54,7 @@ impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
         })
     }
 
-    fn notified_subscriptions<'a>(&'a self, registration: &'a Uri) -> BoxFuture<'a, Result<Vec<Uri>, NotificationError>> {
+    fn notified_subscriptions<'a>(&'a self, registration: &'a Identifier) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
         Box::pin(async move {
             let (sql, values) = notified_subscriptions_statement(registration).build_sqlx(PostgresQueryBuilder);
             let subscriptions: Vec<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -65,14 +65,14 @@ impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
                 .into_iter()
                 .map(|(subscription,)| {
                     subscription
-                        .parse::<Uri>()
+                        .parse::<Identifier>()
                         .map_err(|error| NotificationError::persistence(format!("notified subscription identifier: {error}")))
                 })
                 .collect()
         })
     }
 
-    fn registrations_notified_to<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<Vec<Uri>, NotificationError>> {
+    fn registrations_notified_to<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
         Box::pin(async move {
             let (sql, values) = notified_registrations_statement(subscription).build_sqlx(PostgresQueryBuilder);
             let registrations: Vec<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -83,7 +83,7 @@ impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
                 .into_iter()
                 .map(|(registration,)| {
                     registration
-                        .parse::<Uri>()
+                        .parse::<Identifier>()
                         .map_err(|error| NotificationError::persistence(format!("notified registration identifier: {error}")))
                 })
                 .collect()
@@ -98,7 +98,7 @@ fn persistence(error: &ContextStoreError) -> NotificationError {
 
 /// Record `registrations` as notified to `subscription`, returning those
 /// recorded by this statement.
-async fn claim<'e>(executor: impl PgExecutor<'e>, subscription: &Uri, registrations: &[Uri]) -> Result<Vec<Uri>, ContextStoreError> {
+async fn claim<'e>(executor: impl PgExecutor<'e>, subscription: &Identifier, registrations: &[Identifier]) -> Result<Vec<Identifier>, ContextStoreError> {
     if registrations.is_empty() {
         return Ok(Vec::new());
     }
@@ -110,7 +110,7 @@ async fn claim<'e>(executor: impl PgExecutor<'e>, subscription: &Uri, registrati
         .into_iter()
         .map(|(registration,)| {
             registration
-                .parse::<Uri>()
+                .parse::<Identifier>()
                 .map_err(|error| ContextStoreError::Internal(format!("notified registration identifier: {error}")))
         })
         .collect()
@@ -132,7 +132,7 @@ fn registration_source() -> (Alias, [UnnestColumn; 1]) {
 /// pair of a subscription that no longer exists. `FOR KEY SHARE OF s` holds off
 /// a deletion in flight until this insert commits, so the foreign key never
 /// refuses the insert; a deletion that commits first leaves nothing to join.
-fn claim_statement(subscription: &Uri, registrations: &[Uri]) -> Result<InsertStatement, ContextStoreError> {
+fn claim_statement(subscription: &Identifier, registrations: &[Identifier]) -> Result<InsertStatement, ContextStoreError> {
     let (source_alias, columns) = registration_source();
     let subscription_alias = Alias::new("s");
     // Sorted, so two claims of overlapping registrations for one subscription
@@ -176,7 +176,7 @@ fn claim_statement(subscription: &Uri, registrations: &[Uri]) -> Result<InsertSt
 }
 
 /// The surrogate key of `subscription`, as a subquery.
-fn subscription_key(subscription: &Uri) -> SelectStatement {
+fn subscription_key(subscription: &Identifier) -> SelectStatement {
     Query::select()
         .column(Subscriptions::SubscriptionKey)
         .from(Subscriptions::Table)
@@ -186,7 +186,7 @@ fn subscription_key(subscription: &Uri) -> SelectStatement {
 
 /// Delete the `(subscription, registration)` pair, returning it when it was
 /// present.
-fn release_statement(subscription: &Uri, registration: &Uri) -> DeleteStatement {
+fn release_statement(subscription: &Identifier, registration: &Identifier) -> DeleteStatement {
     Query::delete()
         .from_table(SubscriptionNotifiedRegistrations::Table)
         .and_where(Expr::col(SubscriptionNotifiedRegistrations::SubscriptionKey).in_subquery(subscription_key(subscription)))
@@ -196,7 +196,7 @@ fn release_statement(subscription: &Uri, registration: &Uri) -> DeleteStatement 
 }
 
 /// The identifiers of the subscriptions `registration` was notified to.
-fn notified_subscriptions_statement(registration: &Uri) -> SelectStatement {
+fn notified_subscriptions_statement(registration: &Identifier) -> SelectStatement {
     let subscription = Alias::new("s");
     let notified = Alias::new("n");
     Query::select()
@@ -213,7 +213,7 @@ fn notified_subscriptions_statement(registration: &Uri) -> SelectStatement {
 }
 
 /// The identifiers of the registrations notified to `subscription`.
-fn notified_registrations_statement(subscription: &Uri) -> SelectStatement {
+fn notified_registrations_statement(subscription: &Identifier) -> SelectStatement {
     let subscription_alias = Alias::new("s");
     let notified = Alias::new("n");
     Query::select()
@@ -238,12 +238,12 @@ mod tests {
         registration_source,
         release_statement,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_postgresql_seaquery::unnest::apply_column_alias;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
     }
 

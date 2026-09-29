@@ -12,7 +12,7 @@ use crate::{
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use async_lock::Mutex;
 use async_trait::async_trait;
@@ -195,7 +195,7 @@ enum Delivery {
 
 #[async_trait]
 impl TemporalMutationBarrier for TemporalIntentDrain {
-    async fn synchronize(&self, target: &ContextTarget, entity_id: &Uri) -> Result<(), TemporalError> {
+    async fn synchronize(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<(), TemporalError> {
         match target {
             ContextTarget::Live => self.synchronize_live(entity_id).await,
             // A Snapshot branch records its history in the write's own
@@ -208,7 +208,7 @@ impl TemporalMutationBarrier for TemporalIntentDrain {
 impl TemporalIntentDrain {
     /// Apply every intent the live branch still queues for `entity_id` before
     /// an immediate mutation of its history runs.
-    async fn synchronize_live(&self, entity_id: &Uri) -> Result<(), TemporalError> {
+    async fn synchronize_live(&self, entity_id: &Identifier) -> Result<(), TemporalError> {
         let _execution = self.execution_gate.lock().await;
         if self.pending.pending_for_entity(entity_id).await?.is_empty() {
             return Ok(());

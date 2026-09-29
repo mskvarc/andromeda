@@ -8,7 +8,7 @@
 //! [`ResidualFilter`]: crate::query_residual::ResidualFilter
 
 use crate::{error::EntityError, query_residual::ResidualFilter};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::{
     entity_member::{extract_id, extract_types},
     node::expanded_object_ref,
@@ -99,7 +99,7 @@ fn selector_matches(selector: &EntitySelector, expanded: &Value) -> Result<bool,
 /// `Pattern` is a Rust `regex`, which agrees with `~` on the IEEE 1003.2
 /// extended regular expressions clause 5.2.8 mandates and diverges only on
 /// engine extensions no conforming client may write.
-fn identifier_matches(ids: &[Uri], id_pattern: Option<&Pattern>, expanded: &Value) -> Result<bool, EntityError> {
+fn identifier_matches(ids: &[Identifier], id_pattern: Option<&Pattern>, expanded: &Value) -> Result<bool, EntityError> {
     if ids.is_empty() && id_pattern.is_none() {
         return Ok(true);
     }

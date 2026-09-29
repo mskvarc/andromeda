@@ -7,7 +7,7 @@ use andromeda_http_headers::{
     ngsild_snapshot::NgsiLdSnapshot,
     ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_render::context::ContextLocation;
 use axum::{http::HeaderMap, response::Response};
 use headers::HeaderMapExt;
@@ -18,9 +18,9 @@ pub struct CommonHeadersOptions<'a> {
     /// `Location` header value for created resources.
     pub location: Option<&'a str>,
     /// NGSILD-EntityMap header URI for entity map scoping (clause 5.7.3.4).
-    pub entity_map_uri: Option<&'a Uri>,
+    pub entity_map_uri: Option<&'a Identifier>,
     /// NGSILD-Snapshot header URN for snapshot-scoped responses (clause 6.3.22).
-    pub snapshot_uri: Option<&'a Uri>,
+    pub snapshot_uri: Option<&'a Identifier>,
     /// NGSILD-Warning header values from distributed forwarding (clause 6.3.17).
     pub warnings: &'a [NgsiLdWarning],
     /// Where the JSON-LD `@context` should appear: in the `Link` header or in the body.
@@ -71,7 +71,7 @@ pub fn with_location(mut response: Response, location: impl AsRef<str>) -> Respo
 ///
 /// [`NgsiLdResponse`]: crate::single::NgsiLdResponse
 #[must_use]
-pub fn with_entity_map(mut response: Response, identifier: &Uri) -> Response {
+pub fn with_entity_map(mut response: Response, identifier: &Identifier) -> Response {
     response.headers_mut().typed_insert(NgsiLdEntityMap::new(identifier.clone())); // clone: the typed header owns the identifier it encodes
     response
 }
@@ -79,7 +79,7 @@ pub fn with_entity_map(mut response: Response, identifier: &Uri) -> Response {
 #[cfg(test)]
 mod tests {
     use crate::headers::{with_entity_map, with_location};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use axum::{
         http::StatusCode,
         response::{IntoResponse, Response},
@@ -99,7 +99,7 @@ mod tests {
     /// on a response that carries no rendered body.
     #[test]
     fn the_entity_map_location_joins_a_finished_response() {
-        let identifier: Uri = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
+        let identifier: Identifier = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
         let response = with_entity_map(no_content(), &identifier);
         pretty_assertions::assert_eq!(response.status(), StatusCode::NO_CONTENT, "attaching a header does not change the status");
         pretty_assertions::assert_eq!(header_text(&response, "ngsild-entitymap"), Some("urn:ngsi-ld:EntityMap:used"));
@@ -109,7 +109,7 @@ mod tests {
     /// both without one displacing the other.
     #[test]
     fn a_location_and_an_entity_map_location_do_not_displace_each_other() {
-        let identifier: Uri = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
+        let identifier: Identifier = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
         let response = with_entity_map(with_location(no_content(), "/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1"), &identifier);
         pretty_assertions::assert_eq!(header_text(&response, "location"), Some("/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1"));
         pretty_assertions::assert_eq!(header_text(&response, "ngsild-entitymap"), Some("urn:ngsi-ld:EntityMap:used"));

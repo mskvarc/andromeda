@@ -33,10 +33,10 @@ use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpa
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     entity_type_name::EntityTypeName,
+    identifier::Identifier,
     instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
     time_rel::TimeRel,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_model::{
     expanded::query_match::{matches_geo_query, matches_scope_query},

@@ -8,7 +8,7 @@
 //! clause applied to the temporal API), which is why the vocabulary for it sits
 //! beside [`crate::join_mode`] rather than inside either traversal.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use strum::Display;
 
 /// What stood between a Linked Entity and its resolution.
@@ -38,7 +38,7 @@ pub enum LinkedResolutionFailureKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkedResolutionFailure {
     /// The Linked Entity that stayed unresolved.
-    pub id: Uri,
+    pub id: Identifier,
     /// What stood in the way.
     pub kind: LinkedResolutionFailureKind,
     /// Human-readable detail, safe to put in front of a client.

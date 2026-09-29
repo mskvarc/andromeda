@@ -17,7 +17,7 @@ use andromeda_context_commit::{
     write_outcome::single,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError};
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
@@ -37,9 +37,9 @@ impl EntityService {
     /// read, [`EntityError::AlreadyExists`] when another entity already holds
     /// the identifier (clause 6.4.3.1), and [`EntityError::Persistence`] when
     /// the store could not commit the insert.
-    pub async fn create(&self, target: &ContextTarget, id: &Uri, admitted: AdmittedEntity<CreateEntity>) -> Result<Uri, EntityError> {
+    pub async fn create(&self, target: &ContextTarget, id: &Identifier, admitted: AdmittedEntity<CreateEntity>) -> Result<Identifier, EntityError> {
         let timer = entity::start(EntityOperation::Create);
-        let result: Result<Uri, EntityError> = async {
+        let result: Result<Identifier, EntityError> = async {
             // Clause 4.8: a created entity's attribute instances carry the write
             // instant as both createdAt and modifiedAt.
             let mut expanded = admitted.into_expanded();

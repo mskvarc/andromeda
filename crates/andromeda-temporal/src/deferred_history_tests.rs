@@ -35,10 +35,10 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
+    identifier::Identifier,
     instance_identity::InstanceIdentity,
     temporal_format::TemporalFormat,
     time_prop::TimeProp,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
 use andromeda_ngsi_ld_number::JsonNumber;
@@ -100,7 +100,7 @@ impl RecordingQueue {
 
 #[async_trait]
 impl PendingTemporalIntentReader for RecordingQueue {
-    async fn pending_for_entity(&self, entity_id: &Uri) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
+    async fn pending_for_entity(&self, entity_id: &Identifier) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
         Ok(self
             .state
             .lock()
@@ -132,7 +132,7 @@ impl TemporalIntentQueue for RecordingQueue {
     async fn claim_for_entity(
         &self,
         _owner: LeaseHolder,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         limit: TemporalIntentBatchSize,
         _lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
@@ -180,7 +180,7 @@ impl TemporalIntentQueue for RecordingQueue {
 
 #[derive(Default)]
 struct RecordingSinkState {
-    observations: HashMap<WriteId, (Uri, Vec<TemporalHistoryObservation>)>,
+    observations: HashMap<WriteId, (Identifier, Vec<TemporalHistoryObservation>)>,
     /// The failure every append reports while set.
     reject: Option<String>,
 }
@@ -260,11 +260,11 @@ impl TemporalHistoryReader for RecordingSink {
         }
     }
 
-    async fn entity_exists(&self, _target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError> {
+    async fn entity_exists(&self, _target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError> {
         Ok(self.state.lock().await.observations.values().any(|(stored_id, _)| stored_id == entity_id))
     }
 
-    async fn entity_types(&self, _target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+    async fn entity_types(&self, _target: &ContextTarget, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
         let state = self.state.lock().await;
         Ok(entity_ids
             .iter()
@@ -298,7 +298,7 @@ impl TemporalHistoryReader for RecordingSink {
     async fn query_entity_history(
         &self,
         _target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
         let observations = self
@@ -316,7 +316,7 @@ impl TemporalHistoryReader for RecordingSink {
     async fn query_entity_aggregation(
         &self,
         _target: &ContextTarget,
-        _entity_id: &Uri,
+        _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::RecordingSinkNoAggregation))
@@ -330,8 +330,8 @@ impl TemporalHistoryReader for RecordingSink {
     }
 }
 
-fn fixture() -> (KeyedTemporalAppendIntent, Uri) {
-    let entity_id = "urn:ngsi-ld:Vehicle:deferred".parse::<Uri>().expect("valid entity ID");
+fn fixture() -> (KeyedTemporalAppendIntent, Identifier) {
+    let entity_id = "urn:ngsi-ld:Vehicle:deferred".parse::<Identifier>().expect("valid entity ID");
     let record = WriteRecord::mint(instant());
     let row = TemporalHistoryRow {
         attribute_name: "https://example.com/speed".parse().expect("valid attribute name"),
@@ -403,7 +403,7 @@ fn drain(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>) -> TemporalIntent
     )
 }
 
-async fn overlay_rows(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>, entity_id: &Uri) -> Vec<TemporalHistoryObservation> {
+async fn overlay_rows(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>, entity_id: &Identifier) -> Vec<TemporalHistoryObservation> {
     PendingTemporalHistoryOverlay::new(sink, queue)
         .query_entity_history(&live_target(), entity_id, &query())
         .await

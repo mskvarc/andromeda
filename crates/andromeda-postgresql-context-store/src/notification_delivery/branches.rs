@@ -18,7 +18,7 @@ use crate::{
     snapshot::{branch_version::branch_is_current, record::status_is_preparing},
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-use andromeda_ngsi_ld_lexicon::uri::UriParseError;
+use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
@@ -48,7 +48,7 @@ pub(crate) async fn drainable_targets(pool: &PgPool) -> Result<Vec<ContextTarget
         let key = SnapshotKey::try_from(raw_key).map_err(|error| ContextStoreError::Internal(format!("snapshot branch key: {error}")))?;
         let id = raw_id
             .parse()
-            .map_err(|error: UriParseError| ContextStoreError::Internal(format!("snapshot branch uri: {error}")))?;
+            .map_err(|error: IdentifierParseError| ContextStoreError::Internal(format!("snapshot branch uri: {error}")))?;
         targets.push(ContextTarget::Snapshot(SnapshotTarget::published(key, id)));
     }
     Ok(targets)

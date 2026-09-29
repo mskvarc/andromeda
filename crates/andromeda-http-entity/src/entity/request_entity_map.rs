@@ -23,7 +23,7 @@ use andromeda_entity_map::{
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
 use andromeda_ngsi_ld_request::{entity::GetEntityParams, query::entity::parameters::EntityQueryParameters};
 use axum::http::Uri as HttpUri;
@@ -36,7 +36,7 @@ use axum::http::Uri as HttpUri;
 #[derive(Clone, Copy)]
 pub(crate) enum LocalEntitySource<'a> {
     /// The single entity a retrieval held locally, if it held one.
-    Retrieved(Option<&'a Uri>),
+    Retrieved(Option<&'a Identifier>),
     /// Every entity a query matched locally, which is the whole result and not
     /// merely the page (clause 5.5.14).
     Queried {
@@ -99,7 +99,7 @@ impl<'a> LocalEntitySource<'a> {
 impl LocalMapEntities for LocalEntitySource<'_> {
     type Error = ProblemResponse;
 
-    async fn identifiers(&self, listing: MapListing) -> Result<Vec<Uri>, ProblemResponse> {
+    async fn identifiers(&self, listing: MapListing) -> Result<Vec<Identifier>, ProblemResponse> {
         match *self {
             LocalEntitySource::Retrieved(entity_id) => Ok(entity_id.cloned().into_iter().collect()), // clone: the map owns its identifiers
             LocalEntitySource::Queried {
@@ -162,7 +162,7 @@ pub(crate) async fn resolve_query_map_use(
     maps: &EntityMapService,
     target: &ContextTarget,
     query: &mut EntityQueryParameters,
-    referenced: Option<&Uri>,
+    referenced: Option<&Identifier>,
     instance: &HttpUri,
 ) -> Result<EntityMapUse, ProblemResponse> {
     if !target.permits_federation() {
@@ -198,7 +198,7 @@ pub(crate) async fn resolve_retrieval_map_use(
     maps: &EntityMapService,
     target: &ContextTarget,
     params: &GetEntityParams,
-    referenced: Option<&Uri>,
+    referenced: Option<&Identifier>,
     instance: &HttpUri,
 ) -> Result<EntityMapUse, ProblemResponse> {
     if !target.permits_federation() || params.local.unwrap_or(false) {
@@ -234,7 +234,7 @@ pub(crate) async fn record_map_use(
     local: LocalEntitySource<'_>,
     matches: PageMatches,
     instance: &HttpUri,
-) -> Result<Option<Uri>, ProblemResponse> {
+) -> Result<Option<Identifier>, ProblemResponse> {
     maps.record_read(map_use, contributions, &local, local.page_filtering(), matches)
         .await
         .map_err(|failure| match failure {

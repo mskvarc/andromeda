@@ -1,7 +1,7 @@
 //! What an in-memory spatial index established about a geo-query's default
 //! `location` instances before the store runs it.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// Which entities' default `location` instance can satisfy a geo-query, when an
 /// index has already answered that part of it.
@@ -26,5 +26,5 @@ pub enum DefaultLocationNarrowing {
     /// the geo-query. The store still re-verifies each of them, so an entity
     /// listed here that no longer matches is dropped, and an empty list means
     /// no default instance matches.
-    Candidates(Vec<Uri>),
+    Candidates(Vec<Identifier>),
 }

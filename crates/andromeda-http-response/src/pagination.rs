@@ -15,7 +15,7 @@ use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType, value::LinkValue},
     media_type::ResponseMediaType,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     cursor::{NeighbourCursors, PageCursor},
     page_window::{PageStart, PageWindow},
@@ -143,7 +143,7 @@ impl PageLinks {
     /// An empty cursor page has no boundary to point from, so it carries no
     /// pointer, just as an empty offset collection carries none.
     #[must_use]
-    pub fn of_window(window: &PageWindow, total: Option<i64>, returned: usize, boundary: Option<(NgsiLdUri, NgsiLdUri)>) -> Option<PageLinks> {
+    pub fn of_window(window: &PageWindow, total: Option<i64>, returned: usize, boundary: Option<(Identifier, Identifier)>) -> Option<PageLinks> {
         match &window.start {
             PageStart::Offset(offset) => Some(PageLinks::Offset {
                 offset: i64::from(*offset),
@@ -340,7 +340,7 @@ fn cursor_targets(uri: &Uri, limit: i64, cursors: &CursorPointers) -> Vec<(Relat
 mod tests {
     use crate::pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links};
     use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType};
-    use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
         cursor::{NeighbourCursors, PageCursor},
         page_window::{PageStart, PageWindow},
@@ -351,7 +351,7 @@ mod tests {
     };
     use iri_rs::IriRefBuf;
 
-    fn ngsi_ld_uri(value: &str) -> NgsiLdUri {
+    fn ngsi_ld_uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

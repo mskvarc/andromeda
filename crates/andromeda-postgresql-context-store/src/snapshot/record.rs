@@ -16,7 +16,7 @@ use crate::snapshot::{
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
@@ -69,7 +69,7 @@ pub(crate) fn snapshot_select() -> SelectStatement {
 }
 
 /// Resolve one Snapshot's surrogate key by URI.
-pub(crate) async fn snapshot_key_of<'e, E>(executor: E, id: &Uri) -> Result<Option<SnapshotKey>, SnapshotError>
+pub(crate) async fn snapshot_key_of<'e, E>(executor: E, id: &Identifier) -> Result<Option<SnapshotKey>, SnapshotError>
 where
     E: sqlx::Executor<'e, Database = Postgres>,
 {
@@ -88,7 +88,7 @@ where
 }
 
 /// Read one snapshot by URI.
-pub(crate) async fn read_snapshot(pool: &PgPool, id: &Uri) -> Result<Option<Snapshot>, SnapshotError> {
+pub(crate) async fn read_snapshot(pool: &PgPool, id: &Identifier) -> Result<Option<Snapshot>, SnapshotError> {
     let mut select = snapshot_select();
     select.and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(id.as_str()));
     let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
@@ -100,17 +100,17 @@ pub(crate) async fn read_snapshot(pool: &PgPool, id: &Uri) -> Result<Option<Snap
 }
 
 /// Whether a snapshot with this URI exists.
-pub(crate) async fn snapshot_exists(pool: &PgPool, id: &Uri) -> Result<bool, SnapshotError> {
+pub(crate) async fn snapshot_exists(pool: &PgPool, id: &Identifier) -> Result<bool, SnapshotError> {
     Ok(snapshot_key_of(pool, id).await?.is_some())
 }
 
 /// Resolve the published branch owned by one Snapshot URI.
-pub(crate) async fn resolve_snapshot_target(pool: &PgPool, id: &Uri) -> Result<Option<SnapshotTarget>, SnapshotError> {
+pub(crate) async fn resolve_snapshot_target(pool: &PgPool, id: &Identifier) -> Result<Option<SnapshotTarget>, SnapshotError> {
     Ok(snapshot_key_of(pool, id).await?.map(|key| SnapshotTarget::published(key, id.clone())))
 }
 
 /// Resolve the private staging branch populated while a capture is preparing.
-pub(crate) async fn resolve_snapshot_staging_target(pool: &PgPool, id: &Uri) -> Result<Option<SnapshotTarget>, SnapshotError> {
+pub(crate) async fn resolve_snapshot_staging_target(pool: &PgPool, id: &Identifier) -> Result<Option<SnapshotTarget>, SnapshotError> {
     Ok(snapshot_key_of(pool, id).await?.map(|key| SnapshotTarget::staging(key, id.clone())))
 }
 
@@ -124,7 +124,7 @@ pub(crate) fn status_is_preparing() -> SimpleExpr {
 /// left unspecified; the modification instant lives on the preparation row.
 pub(crate) async fn update_snapshot_metadata(
     pool: &PgPool,
-    id: &Uri,
+    id: &Identifier,
     lifetime: Option<&Iso8601Duration>,
     priority: Option<SnapshotPriority>,
     endpoint: MetadataChange<&Url>,
@@ -180,7 +180,7 @@ pub(crate) async fn update_snapshot_metadata(
 }
 
 /// Stamp the preparation row's modification instant for one Snapshot URI.
-async fn bump_modified_at(transaction: &mut Transaction<'_, Postgres>, id: &Uri) -> Result<(), SnapshotError> {
+async fn bump_modified_at(transaction: &mut Transaction<'_, Postgres>, id: &Identifier) -> Result<(), SnapshotError> {
     let statement = Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::ModifiedAt, now())
@@ -196,7 +196,7 @@ async fn bump_modified_at(transaction: &mut Transaction<'_, Postgres>, id: &Uri)
 
 /// `SELECT snapshot_key FROM snapshots WHERE id = ?`, for a preparation-row
 /// mutation that reaches its row through the control record's URI.
-fn snapshot_key_subquery(id: &Uri) -> SelectStatement {
+fn snapshot_key_subquery(id: &Identifier) -> SelectStatement {
     Query::select()
         .column(Snapshots::SnapshotKey)
         .from(Snapshots::Table)
@@ -209,7 +209,7 @@ fn snapshot_key_subquery(id: &Uri) -> SelectStatement {
 /// the failed Snapshot stays addressable over an empty dataset.
 pub(crate) async fn update_status(
     pool: &PgPool,
-    id: &Uri,
+    id: &Identifier,
     claimed_by: LeaseHolder,
     status: SnapshotStatus,
     queries_details: Option<&[ExecutionResultDetails]>,
@@ -258,7 +258,7 @@ pub(crate) async fn update_status(
 }
 
 /// The identifiers of every snapshot a purge filter (clause 5.16.7) matches.
-pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPurgeFilter) -> Result<Vec<Uri>, SnapshotError> {
+pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPurgeFilter) -> Result<Vec<Identifier>, SnapshotError> {
     let (sql, values) = build_match_query(filter).build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(pool)
@@ -268,7 +268,7 @@ pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPu
     for row in &rows {
         let raw: String = row.try_get("id").map_err(persistence_error)?;
         let parsed = raw
-            .parse::<Uri>()
+            .parse::<Identifier>()
             .map_err(|e| SnapshotError::internal(format!("Invalid snapshot id '{raw}' in snapshots table: {e}")))?;
         ids.push(parsed);
     }
@@ -276,7 +276,7 @@ pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPu
 }
 
 /// Stamp the last-used instant of one snapshot on its preparation row.
-pub(crate) async fn touch_last_used(pool: &PgPool, id: &Uri) -> Result<(), SnapshotError> {
+pub(crate) async fn touch_last_used(pool: &PgPool, id: &Identifier) -> Result<(), SnapshotError> {
     let statement = Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::LastUsedAt, now())

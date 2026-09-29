@@ -1,7 +1,7 @@
 //! `/version` response projection over active component reports.
 
 use andromeda_component_report::ComponentReport;
-use andromeda_ngsi_ld_lexicon::{constant_string, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier};
 use serde::Serialize;
 
 constant_string!(ComponentReportListType, "ComponentReportList");
@@ -11,7 +11,7 @@ constant_string!(ComponentReportListType, "ComponentReportList");
 #[serde(rename_all = "camelCase")]
 pub struct ComponentReportResponse<'a> {
     /// Unique response identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// Response type discriminator.
     #[serde(rename = "type")]
     pub type_: ComponentReportListType,

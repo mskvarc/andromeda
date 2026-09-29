@@ -9,7 +9,7 @@
 //! else about entities.
 
 use crate::error::RegistrationError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_info::EntityInfo;
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
@@ -33,7 +33,7 @@ pub trait RegisteredEntityProbe: Send + Sync + 'static {
     /// `attributes` (the exclusive-mode rule of clause 5.9.2.4).
     fn holds_any_attribute<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        entity_id: &'life1 Uri,
+        entity_id: &'life1 Identifier,
         attributes: &'life2 [IriBuf],
     ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
     where

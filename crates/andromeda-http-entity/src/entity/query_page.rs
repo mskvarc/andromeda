@@ -15,7 +15,7 @@
 use crate::entity::query_forwarding::ForwardedQueryResults;
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::pagination::{PageLinks, PagePointers, append_pagination_links};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
@@ -151,7 +151,7 @@ impl QueryPage {
         media_type: ResponseMediaType,
         total: Option<i64>,
         returned: usize,
-        boundary: Option<(Uri, Uri)>,
+        boundary: Option<(Identifier, Identifier)>,
     ) {
         match self.pointers {
             PagePointers::NotDereferenceable => {}
@@ -168,7 +168,7 @@ impl QueryPage {
 mod tests {
     use crate::entity::query_page::{PageCut, QueryPage, ResultCount};
     use andromeda_http_response::pagination::PagePointers;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_query::{
         cursor::PageCursor,
@@ -181,7 +181,7 @@ mod tests {
         serde_json::from_value(json!({"id": id, "type": "Vehicle"})).expect("a valid entity")
     }
 
-    fn uri(id: &str) -> Uri {
+    fn uri(id: &str) -> Identifier {
         id.parse().expect("valid URI")
     }
 

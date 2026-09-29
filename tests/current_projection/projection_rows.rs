@@ -26,7 +26,7 @@ const ROWS_FOR_ENTITY: &str = "SELECT an.name AS attribute_name, \
      c.value_kind, \
      COALESCE(c.value_number::text, c.value_string, c.value_long_text, \
               c.value_boolean::text, c.value_date_time::text, c.value_uri, \
-              c.value_object::text, ST_AsText(c.value_geometry)) AS value_text \
+              c.value_long_uri, c.value_object::text, ST_AsText(c.value_geometry)) AS value_text \
      FROM current_attribute_values AS c \
      JOIN entities AS e ON e.entity_key = c.entity_key \
      JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
@@ -89,6 +89,25 @@ pub async fn temporal_entity_exists(pool: &PgPool, entity_id: &str) -> bool {
 pub async fn string_placement(pool: &PgPool, entity_id: &str, local_name: &str) -> (Option<String>, Option<String>) {
     sqlx::query_as(
         "SELECT c.value_string, c.value_long_text FROM current_attribute_values AS c \
+         JOIN entities AS e ON e.entity_key = c.entity_key \
+         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
+         WHERE e.id = $1 AND c.dataset_id IS NULL AND an.name LIKE '%' || $2",
+    )
+    .bind(entity_id)
+    .bind(local_name)
+    .fetch_one(pool)
+    .await
+    .expect("the default instance of the attribute must be projected")
+}
+
+/// Read which of the two URI columns holds the default instance of one
+/// attribute, matched by the local name at the end of its expanded IRI, as
+/// `(value_uri, value_long_uri)`. Exactly one side is present for a
+/// Relationship object: the traversed column up to the identifier bound, the
+/// overflow column past it.
+pub async fn uri_placement(pool: &PgPool, entity_id: &str, local_name: &str) -> (Option<String>, Option<String>) {
+    sqlx::query_as(
+        "SELECT c.value_uri, c.value_long_uri FROM current_attribute_values AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND c.dataset_id IS NULL AND an.name LIKE '%' || $2",

@@ -25,7 +25,7 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, registration::RegistrationRenderer, response::ResponsePayload};
 use andromeda_ngsi_ld_request::{
@@ -64,7 +64,7 @@ pub(crate) async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
-    TypedPath(registration_id): TypedPath<Uri>,
+    TypedPath(registration_id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
     let context: ContextSpec = context.into_inner();
@@ -169,7 +169,7 @@ pub(crate) async fn update(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    TypedPath(registration_id): TypedPath<Uri>,
+    TypedPath(registration_id): TypedPath<Identifier>,
     JsonLdDocument {
         document: payload,
         context: body_context,
@@ -186,7 +186,7 @@ pub(crate) async fn update(
 pub(crate) async fn delete(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(registration_id): TypedPath<Uri>,
+    TypedPath(registration_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
     state.registrations.delete(&registration_id).await.with_registration_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())

@@ -3,6 +3,7 @@
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
+    identifier::Identifier,
     instance_identity::InstanceIdentity,
     ngsi_ld_time::NgsiLdTime,
     scope::path::ScopePath,
@@ -122,7 +123,7 @@ pub struct TemporalHistoryRow {
     /// NGSI-LD attribute family.
     pub attribute_type: AttributeType,
     /// Multi-attribute discriminator, absent for the default instance.
-    pub dataset_id: Option<Uri>,
+    pub dataset_id: Option<Identifier>,
     /// Decoded observation value.
     pub value: TemporalValue,
     /// Client-declared observation instant, absent when the client declared none.
@@ -258,7 +259,7 @@ pub struct TemporalAggregationRow {
     /// NGSI-LD attribute family.
     pub attribute_type: AttributeType,
     /// Multi-attribute discriminator, absent for the default instance.
-    pub dataset_id: Option<Uri>,
+    pub dataset_id: Option<Identifier>,
     /// Start of the aggregation bucket.
     pub bucket_start: Option<DateTime<Utc>>,
     /// End of the aggregation bucket.

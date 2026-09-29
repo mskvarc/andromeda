@@ -2,7 +2,7 @@
 
 use andromeda_entity::error::EntityError;
 use andromeda_federation::error::FederationError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_temporal::error::TemporalError;
 use thiserror::Error;
@@ -20,19 +20,19 @@ pub enum SnapshotError {
     #[error("snapshot not found: {identifier}")]
     NotFound {
         /// Missing snapshot identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// The requested identifier is already occupied.
     #[error("snapshot already exists: {identifier}")]
     AlreadyExists {
         /// Conflicting snapshot identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// The Snapshot remained in preparation beyond the scoped-operation deadline.
     #[error("snapshot preparation did not complete before the scoped-operation deadline: {identifier}")]
     PreparationTimeout {
         /// Snapshot that remained in preparation.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// The Snapshot's stored branch is behind this binary's branch relations
     /// because its upgrade has not run or has failed, so it cannot be read,
@@ -40,7 +40,7 @@ pub enum SnapshotError {
     #[error("snapshot {identifier} is quarantined: its stored branch has not been upgraded to this broker's schema")]
     Quarantined {
         /// The quarantined snapshot.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// Entity query policy failed during preparation.
     ///
@@ -134,7 +134,7 @@ impl SnapshotError {
 
     /// Construct a missing snapshot failure from a validated identifier.
     #[must_use]
-    pub fn not_found(identifier: &Uri) -> SnapshotError {
+    pub fn not_found(identifier: &Identifier) -> SnapshotError {
         SnapshotError::NotFound {
             identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.
         }
@@ -142,7 +142,7 @@ impl SnapshotError {
 
     /// Construct an identifier conflict.
     #[must_use]
-    pub fn already_exists(identifier: &Uri) -> SnapshotError {
+    pub fn already_exists(identifier: &Identifier) -> SnapshotError {
         SnapshotError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.
         }
@@ -150,7 +150,7 @@ impl SnapshotError {
 
     /// Construct a bounded preparation wait failure.
     #[must_use]
-    pub fn preparation_timeout(identifier: &Uri) -> SnapshotError {
+    pub fn preparation_timeout(identifier: &Identifier) -> SnapshotError {
         SnapshotError::PreparationTimeout {
             identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.
         }
@@ -158,7 +158,7 @@ impl SnapshotError {
 
     /// Construct a quarantined-branch refusal.
     #[must_use]
-    pub fn quarantined(identifier: &Uri) -> SnapshotError {
+    pub fn quarantined(identifier: &Identifier) -> SnapshotError {
         SnapshotError::Quarantined {
             identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.
         }

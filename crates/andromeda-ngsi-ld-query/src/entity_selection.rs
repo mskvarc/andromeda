@@ -8,7 +8,7 @@ use crate::{
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExpr,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
 
@@ -25,7 +25,7 @@ use typed_builder::TypedBuilder;
 pub struct EntitySelector {
     /// Resource identifiers this selector admits. Empty means no identifier
     /// constraint (clause 5.7.2 `id`).
-    pub ids: Vec<Uri>,
+    pub ids: Vec<Identifier>,
     /// Regular expression the entity id must match (clause 5.7.2 `idPattern`).
     pub id_pattern: Option<Pattern>,
     /// Boolean expression over entity type IRIs (clause 4.17 `type`).
@@ -77,7 +77,7 @@ impl ConsideredEntities {
     /// which is what a query scoped to a reused `EntityMap` is narrowed to when
     /// nothing survives the intersection (clause 5.5.14).
     #[must_use]
-    pub const fn of_request(ids: Option<&[Uri]>) -> ConsideredEntities {
+    pub const fn of_request(ids: Option<&[Identifier]>) -> ConsideredEntities {
         match ids {
             Some([]) => ConsideredEntities::NoEntity,
             Some([_, ..]) | None => ConsideredEntities::Selected,
@@ -178,7 +178,7 @@ mod tests {
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
         pattern::Pattern,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
     /// Clause 5.5.14: a request that named no identifier fixes nothing, so the
     /// selectors and filters alone decide what it considers.
@@ -198,7 +198,7 @@ mod tests {
     /// A request that named identifiers considers them, whatever their number.
     #[test]
     fn a_request_naming_identifiers_considers_whatever_it_selects() {
-        let ids: [Uri; 1] = ["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")];
+        let ids: [Identifier; 1] = ["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")];
         pretty_assertions::assert_eq!(ConsideredEntities::of_request(Some(&ids)), ConsideredEntities::Selected);
     }
 
@@ -226,7 +226,7 @@ mod tests {
             .considered(ConsideredEntities::NoEntity)
             .build();
         selection.without_identifier_narrowing();
-        pretty_assertions::assert_eq!(selection.selectors[0].ids, Vec::<Uri>::new());
+        pretty_assertions::assert_eq!(selection.selectors[0].ids, Vec::<Identifier>::new());
         assert!(selection.selectors[0].id_pattern.is_some(), "only the identifiers are dropped");
         pretty_assertions::assert_eq!(selection.considered, ConsideredEntities::Selected);
     }

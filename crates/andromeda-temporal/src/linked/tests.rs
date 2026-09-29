@@ -43,10 +43,10 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
+    identifier::Identifier,
     instance_identity::InstanceIdentity,
     temporal_format::TemporalFormat,
     time_rel::TimeRel,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_model::{
     notification::SysAttrsSnapshot,
@@ -71,7 +71,7 @@ use std::{
     time::Duration,
 };
 
-fn uri(value: &str) -> Uri {
+fn uri(value: &str) -> Identifier {
     value.parse().expect("valid URI")
 }
 
@@ -248,7 +248,7 @@ fn a_visited_identifier_is_never_collected_again() {
             {"type": "Relationship", "object": "urn:ngsi-ld:T:C"}
         ]
     });
-    let visited: IndexSet<Uri> = [uri("urn:ngsi-ld:T:A")].into_iter().collect();
+    let visited: IndexSet<Identifier> = [uri("urn:ngsi-ld:T:A")].into_iter().collect();
 
     let candidates = collect_candidates(iter::once(&entity), &visited);
 
@@ -299,11 +299,11 @@ fn a_normalized_object_list_and_a_multi_target_object_both_name_linked_entities(
 /// traversal reads: how far it walks and what it refuses to walk twice.
 struct StubBroker {
     /// Each entity's outgoing links, in declaration order.
-    links: HashMap<Uri, Vec<Uri>>,
+    links: HashMap<Identifier, Vec<Identifier>>,
 }
 
 impl StubBroker {
-    fn new(links: impl IntoIterator<Item = (Uri, Vec<Uri>)>) -> StubBroker {
+    fn new(links: impl IntoIterator<Item = (Identifier, Vec<Identifier>)>) -> StubBroker {
         StubBroker {
             links: links.into_iter().collect(),
         }
@@ -315,7 +315,7 @@ impl StubBroker {
     /// with no outgoing link still has history in the window: an entity with an
     /// empty history is legitimately dropped from a join, and the traversal
     /// tests are about which entities are *reached*, not about that rule.
-    fn rows(&self, entity_id: &Uri) -> Vec<TemporalHistoryRow> {
+    fn rows(&self, entity_id: &Identifier) -> Vec<TemporalHistoryRow> {
         let instant = "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant");
         let Some(targets) = self.links.get(entity_id) else {
             return Vec::new();
@@ -338,7 +338,7 @@ impl StubBroker {
                 attribute_name: "https://example.com/linksTo".parse::<AttributeName>().expect("valid attribute IRI"),
                 attribute_type: AttributeType::Relationship,
                 dataset_id: None,
-                value: TemporalValue::Uri(target.clone()), // clone: the row owns the object it names
+                value: TemporalValue::Uri(target.as_uri().clone()), // clone: the row owns the object it names
                 observed_at: Some(instant),
                 recorded_at: instant,
                 created_at: Some(instant),
@@ -364,11 +364,11 @@ impl TemporalHistoryReader for StubBroker {
         }
     }
 
-    async fn entity_exists(&self, _target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError> {
+    async fn entity_exists(&self, _target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError> {
         Ok(self.links.contains_key(entity_id))
     }
 
-    async fn entity_types(&self, _target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+    async fn entity_types(&self, _target: &ContextTarget, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
         Ok(entity_ids
             .iter()
             .filter(|entity_id| self.links.contains_key(*entity_id))
@@ -387,7 +387,7 @@ impl TemporalHistoryReader for StubBroker {
     async fn query_entity_history(
         &self,
         _target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
         Ok(TemporalHistoryOutcome {
@@ -402,7 +402,7 @@ impl TemporalHistoryReader for StubBroker {
     async fn query_entity_aggregation(
         &self,
         _target: &ContextTarget,
-        _entity_id: &Uri,
+        _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(unsupported("query_entity_aggregation"))
@@ -418,11 +418,11 @@ impl TemporalHistoryReader for StubBroker {
 
 #[async_trait]
 impl EntityReader for StubBroker {
-    async fn get(&self, _target: &ContextTarget, id: &Uri) -> Result<Option<Value>, EntityError> {
+    async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<Value>, EntityError> {
         Ok(self.links.contains_key(id).then(|| json!({"@id": id, "@type": ["https://example.com/Thing"]})))
     }
 
-    async fn get_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
+    async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
         let mut found = HashMap::new();
         for id in ids {
             if self.links.contains_key(id) {
@@ -432,54 +432,54 @@ impl EntityReader for StubBroker {
         Ok(found)
     }
 
-    async fn get_snapshot(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
+    async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
         Err(EntityError::internal("get_snapshot is not exercised by the traversal harness"))
     }
 
-    async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
+    async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
         Err(EntityError::internal("get_snapshot_batch is not exercised by the traversal harness"))
     }
 
-    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
         Err(EntityError::internal("get_sys_attrs is not exercised by the traversal harness"))
     }
 
-    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
         Err(EntityError::internal("get_sys_attrs_batch is not exercised by the traversal harness"))
     }
 }
 
 #[async_trait]
 impl TemporalMutationBarrier for StubBroker {
-    async fn synchronize(&self, _target: &ContextTarget, _entity_id: &Uri) -> Result<(), TemporalError> {
+    async fn synchronize(&self, _target: &ContextTarget, _entity_id: &Identifier) -> Result<(), TemporalError> {
         Err(unsupported("synchronize"))
     }
 }
 
 #[async_trait]
 impl TemporalMutator for StubBroker {
-    async fn entity_exists(&self, _target: &ContextTarget, _entity_id: &Uri) -> Result<bool, TemporalError> {
+    async fn entity_exists(&self, _target: &ContextTarget, _entity_id: &Identifier) -> Result<bool, TemporalError> {
         Err(unsupported("entity_exists"))
     }
 
-    async fn attribute_exists(&self, _target: &ContextTarget, _entity_id: &Uri, _attribute_name: &AttributeName) -> Result<bool, TemporalError> {
+    async fn attribute_exists(&self, _target: &ContextTarget, _entity_id: &Identifier, _attribute_name: &AttributeName) -> Result<bool, TemporalError> {
         Err(unsupported("attribute_exists"))
     }
 
-    async fn attribute_names_for_entity(&self, _target: &ContextTarget, _entity_id: &Uri) -> Result<Vec<AttributeName>, TemporalError> {
+    async fn attribute_names_for_entity(&self, _target: &ContextTarget, _entity_id: &Identifier) -> Result<Vec<AttributeName>, TemporalError> {
         Err(unsupported("attribute_names_for_entity"))
     }
 
-    async fn delete_all_for_entity(&self, _target: &ContextTarget, _entity_id: &Uri) -> Result<u64, TemporalError> {
+    async fn delete_all_for_entity(&self, _target: &ContextTarget, _entity_id: &Identifier) -> Result<u64, TemporalError> {
         Err(unsupported("delete_all_for_entity"))
     }
 
     async fn delete_attribute(
         &self,
         _target: &ContextTarget,
-        _entity_id: &Uri,
+        _entity_id: &Identifier,
         _attribute_name: &AttributeName,
-        _dataset_id: Option<&Uri>,
+        _dataset_id: Option<&Identifier>,
         _scope: TemporalDeleteScope,
     ) -> Result<u64, TemporalError> {
         Err(unsupported("delete_attribute"))
@@ -489,7 +489,7 @@ impl TemporalMutator for StubBroker {
         &self,
         _target: &ContextTarget,
         _instance: &InstanceIdentity,
-        _entity_id: &Uri,
+        _entity_id: &Identifier,
         _attribute_name: &AttributeName,
     ) -> Result<bool, TemporalError> {
         Err(unsupported("instance_exists"))
@@ -499,7 +499,7 @@ impl TemporalMutator for StubBroker {
         &self,
         _target: &ContextTarget,
         _instance: &InstanceIdentity,
-        _entity_id: &Uri,
+        _entity_id: &Identifier,
         _attribute_name: &AttributeName,
         _payload: &Value,
     ) -> Result<(), TemporalError> {
@@ -510,17 +510,27 @@ impl TemporalMutator for StubBroker {
         &self,
         _target: &ContextTarget,
         _instance: &InstanceIdentity,
-        _entity_id: &Uri,
+        _entity_id: &Identifier,
         _attribute_name: &AttributeName,
     ) -> Result<(), TemporalError> {
         Err(unsupported("delete_instance"))
     }
 
-    async fn count_history_instances(&self, _target: &ContextTarget, _entity_ids: &[Uri], _scope: &TemporalHistoryDeleteScope) -> Result<u64, TemporalError> {
+    async fn count_history_instances(
+        &self,
+        _target: &ContextTarget,
+        _entity_ids: &[Identifier],
+        _scope: &TemporalHistoryDeleteScope,
+    ) -> Result<u64, TemporalError> {
         Err(unsupported("count_history_instances"))
     }
 
-    async fn delete_history_instances(&self, _target: &ContextTarget, _entity_ids: &[Uri], _scope: &TemporalHistoryDeleteScope) -> Result<u64, TemporalError> {
+    async fn delete_history_instances(
+        &self,
+        _target: &ContextTarget,
+        _entity_ids: &[Identifier],
+        _scope: &TemporalHistoryDeleteScope,
+    ) -> Result<u64, TemporalError> {
         Err(unsupported("delete_history_instances"))
     }
 }
@@ -600,7 +610,7 @@ fn root(id: &str, targets: &[&str]) -> Value {
     json!({"id": id, "type": "Thing", "linksTo": instances})
 }
 
-async fn resolve(broker: StubBroker, roots: &[Value], join_level: NonZeroU32, contained_by: &HashSet<Uri>) -> Vec<String> {
+async fn resolve(broker: StubBroker, roots: &[Value], join_level: NonZeroU32, contained_by: &HashSet<Identifier>) -> Vec<String> {
     let resolved = service(broker)
         .resolve_linked_temporal(
             &live_target(),
@@ -656,7 +666,7 @@ async fn a_cycle_back_to_the_root_terminates() {
 async fn contained_by_excludes_the_identifiers_it_lists() {
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new()), (uri("urn:ngsi-ld:T:C"), Vec::new())]);
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"])];
-    let contained_by: HashSet<Uri> = [uri("urn:ngsi-ld:T:B")].into_iter().collect();
+    let contained_by: HashSet<Identifier> = [uri("urn:ngsi-ld:T:B")].into_iter().collect();
 
     let resolved = resolve(broker, &roots, level(1), &contained_by).await;
 
@@ -691,18 +701,18 @@ async fn an_unresolvable_identifier_is_absent_rather_than_fatal() {
 #[derive(Debug, PartialEq)]
 struct RemoteCall {
     /// The identifier the traversal asked for.
-    id: Uri,
+    id: Identifier,
     /// The levels still to resolve, this one included.
     remaining_depth: NonZeroU32,
     /// The already-walked identifiers handed over as `containedBy`.
-    visited: Vec<Uri>,
+    visited: Vec<Identifier>,
 }
 
 /// What the stubbed remainder of the system answers with.
 #[derive(Debug)]
 enum RemoteOutcome {
     /// The temporal representations each requested identifier resolves to.
-    Returns(HashMap<Uri, Vec<Value>>),
+    Returns(HashMap<Identifier, Vec<Value>>),
     /// The remainder of the system cannot be consulted at all.
     Fails,
 }
@@ -717,7 +727,7 @@ struct RecordingSource {
 }
 
 impl RecordingSource {
-    fn returning(entities: impl IntoIterator<Item = (Uri, Vec<Value>)>) -> Arc<RecordingSource> {
+    fn returning(entities: impl IntoIterator<Item = (Identifier, Vec<Value>)>) -> Arc<RecordingSource> {
         Arc::new(RecordingSource {
             calls: Mutex::new(Vec::new()),
             outcome: RemoteOutcome::Returns(entities.into_iter().collect()),
@@ -740,9 +750,9 @@ impl RecordingSource {
 impl RemoteTemporalLinkedSource for RecordingSource {
     async fn fetch_linked_temporal(
         &self,
-        id: &Uri,
+        id: &Identifier,
         remaining_depth: NonZeroU32,
-        visited: &[Uri],
+        visited: &[Identifier],
         _window: &TemporalLinkedWindow,
         _context: &ContextSpec,
     ) -> Result<RemoteTemporalLinkedEntities, TemporalError> {
@@ -820,7 +830,7 @@ async fn an_absent_annotated_candidate_is_fetched_with_the_remaining_depth_and_t
         .await
         .expect("resolves");
 
-    pretty_assertions::assert_eq!(resolved.entities.keys().map(Uri::as_str).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
+    pretty_assertions::assert_eq!(resolved.entities.keys().map(Identifier::as_str).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
     pretty_assertions::assert_eq!(
         *source.calls(),
         vec![RemoteCall {
@@ -922,7 +932,7 @@ async fn a_remote_brokers_extra_entities_are_neither_re_fetched_nor_expanded() {
         .expect("resolves");
 
     pretty_assertions::assert_eq!(
-        resolved.entities.keys().map(Uri::as_str).collect::<Vec<_>>(),
+        resolved.entities.keys().map(Identifier::as_str).collect::<Vec<_>>(),
         vec!["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"]
     );
     pretty_assertions::assert_eq!(source.calls().iter().map(|call| call.id.as_str()).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
@@ -963,7 +973,7 @@ async fn a_seed_resolves_links_the_projected_roots_no_longer_carry() {
         .await
         .expect("resolves");
 
-    pretty_assertions::assert_eq!(resolved.entities.keys().map(Uri::as_str).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
+    pretty_assertions::assert_eq!(resolved.entities.keys().map(Identifier::as_str).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
 }
 
 /// Clause 4.21 nested narrowing must not depend on the roots' *final*
@@ -1075,7 +1085,7 @@ async fn a_linked_entity_lacking_the_requested_attrs_still_appears_with_its_own(
         .await
         .expect("resolves");
 
-    pretty_assertions::assert_eq!(resolved.entities.keys().map(Uri::as_str).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
+    pretty_assertions::assert_eq!(resolved.entities.keys().map(Identifier::as_str).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
     let linked = resolved.entities.get(&uri("urn:ngsi-ld:T:B")).expect("the linked entity");
     assert!(
         linked.get("reading").is_some() || linked.get("https://example.com/reading").is_some(),

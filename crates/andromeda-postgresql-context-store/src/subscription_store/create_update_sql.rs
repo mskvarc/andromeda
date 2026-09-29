@@ -21,7 +21,7 @@ use crate::subscription_store::{
     trigger_code::stored_trigger,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
@@ -52,7 +52,7 @@ fn stored_conformance(fields: &SubscriptionFields<'_>) -> Option<String> {
 /// Bind an entity-subscription create command in statement order.
 pub fn bind_entity_create<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
-    id: &'q Uri,
+    id: &'q Identifier,
     fields: &'q SubscriptionFields<'q>,
     interned: &'q InternedAttributeLists,
     status: SubscriptionStatus,
@@ -71,7 +71,7 @@ pub fn bind_entity_create<'q>(
         .bind(fields.csf.map(ToString::to_string))
         .bind(interned.expand_values.as_deref())
         .bind(interned.json_keys.as_deref())
-        .bind(fields.dataset_id.map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()))
+        .bind(fields.dataset_id.map(|ids| ids.iter().map(Identifier::as_str).collect::<Vec<_>>()))
         .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
@@ -87,7 +87,7 @@ pub fn bind_entity_create<'q>(
 /// Bind an entity-subscription update command in statement order.
 pub fn bind_entity_update<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
-    id: &'q Uri,
+    id: &'q Identifier,
     fields: &'q SubscriptionFields<'q>,
     interned: &'q InternedAttributeLists,
     status: SubscriptionStatus,
@@ -106,7 +106,7 @@ pub fn bind_entity_update<'q>(
         .bind(fields.csf.map(ToString::to_string))
         .bind(interned.expand_values.as_deref())
         .bind(interned.json_keys.as_deref())
-        .bind(fields.dataset_id.map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()))
+        .bind(fields.dataset_id.map(|ids| ids.iter().map(Identifier::as_str).collect::<Vec<_>>()))
         .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
@@ -121,7 +121,7 @@ pub fn bind_entity_update<'q>(
 /// Bind a context-source-subscription create command in statement order.
 pub fn bind_csource_create<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
-    id: &'q Uri,
+    id: &'q Identifier,
     fields: &'q SubscriptionFields<'q>,
     interned: &'q InternedAttributeLists,
     status: SubscriptionStatus,
@@ -153,7 +153,7 @@ pub fn bind_csource_create<'q>(
 /// Bind a context-source-subscription update command in statement order.
 pub fn bind_csource_update<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
-    id: &'q Uri,
+    id: &'q Identifier,
     fields: &'q SubscriptionFields<'q>,
     interned: &'q InternedAttributeLists,
     status: SubscriptionStatus,

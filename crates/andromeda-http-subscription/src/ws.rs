@@ -7,7 +7,7 @@
 use std::{sync::Arc, time::Duration};
 
 use andromeda_http_extraction::context_target::ExistingTargetedTenantState;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use axum::{
     extract::{
         OriginalUri,
@@ -36,7 +36,7 @@ use andromeda_http_response::problem_response::ProblemResponse;
 
 /// RAII guard that unregisters a WebSocket connection when the stream ends.
 struct WsConnectionGuard {
-    subscription_id: Uri,
+    subscription_id: Identifier,
     connection_id: ConnectionId,
     registry: Arc<ConnectionRegistry<WsNotificationMessage>>,
 }
@@ -55,7 +55,7 @@ impl Drop for WsConnectionGuard {
 pub async fn stream(
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(subscription_id): TypedPath<Uri>,
+    TypedPath(subscription_id): TypedPath<Identifier>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ProblemResponse> {
     // Validate subscription exists.

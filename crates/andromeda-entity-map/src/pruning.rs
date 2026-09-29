@@ -1,7 +1,7 @@
 //! Which entities a prepared result page sheds from the Entity Map it ran
 //! under (clauses 4.3.6.7, 5.5.9.3 and 5.5.14).
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::{EntityMap, EntityMapSource};
 use std::collections::HashSet;
 
@@ -20,16 +20,16 @@ use std::collections::HashSet;
 /// never checked, so nothing is known about it and it stays in the map.
 pub struct PageCheck {
     /// The identifiers that still matched while the page was prepared.
-    matching: HashSet<Uri>,
+    matching: HashSet<Identifier>,
     /// The registrations whose context sources answered this preparation.
-    consulted: HashSet<Uri>,
+    consulted: HashSet<Identifier>,
 }
 
 impl PageCheck {
     /// Record what one page preparation checked: the identifiers that still
     /// matched the request's filters, and the registrations whose context
     /// sources answered it.
-    pub fn new(matching: impl IntoIterator<Item = Uri>, consulted: impl IntoIterator<Item = Uri>) -> PageCheck {
+    pub fn new(matching: impl IntoIterator<Item = Identifier>, consulted: impl IntoIterator<Item = Identifier>) -> PageCheck {
         PageCheck {
             matching: matching.into_iter().collect(),
             consulted: consulted.into_iter().collect(),
@@ -39,7 +39,7 @@ impl PageCheck {
     /// The identifiers `map` sheds: every entity it lists that this preparation
     /// checked and found no longer matching, in map order.
     #[must_use]
-    pub fn shed_from(&self, map: &EntityMap) -> Vec<Uri> {
+    pub fn shed_from(&self, map: &EntityMap) -> Vec<Identifier> {
         map.entity_map
             .iter()
             .filter(|(entity_id, sources)| !self.matching.contains(*entity_id) && sources.iter().all(|source| self.was_consulted(source)))
@@ -63,15 +63,17 @@ impl PageCheck {
 #[cfg(test)]
 mod tests {
     use crate::{error::EntityMapError, pruning::PageCheck};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_map::EntityMap;
     use chrono::{TimeZone, Utc};
 
-    fn identifier(value: &str) -> Result<Uri, EntityMapError> {
-        value.parse::<Uri>().map_err(|error| EntityMapError::Invariant { detail: error.to_string() })
+    fn identifier(value: &str) -> Result<Identifier, EntityMapError> {
+        value
+            .parse::<Identifier>()
+            .map_err(|error| EntityMapError::Invariant { detail: error.to_string() })
     }
 
-    fn map_of(entity_ids: impl IntoIterator<Item = Uri>) -> Result<EntityMap, EntityMapError> {
+    fn map_of(entity_ids: impl IntoIterator<Item = Identifier>) -> Result<EntityMap, EntityMapError> {
         let expires_at = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).single().ok_or_else(|| EntityMapError::Invariant {
             detail: "valid instant".into(),
         })?;
@@ -114,7 +116,7 @@ mod tests {
         let mut map = map_of([identifier("urn:split")?])?;
         map.add_remote_entities(&registration, [identifier("urn:split")?]);
         let check = PageCheck::new(Vec::new(), Vec::new());
-        pretty_assertions::assert_eq!(check.shed_from(&map), Vec::<Uri>::new());
+        pretty_assertions::assert_eq!(check.shed_from(&map), Vec::<Identifier>::new());
         Ok(())
     }
 
@@ -126,7 +128,7 @@ mod tests {
         let mut map = map_of([identifier("urn:a")?])?;
         map.add_remote_entities(&registration, [identifier("urn:remote")?]);
         let check = PageCheck::new([identifier("urn:a")?, identifier("urn:remote")?], [registration]);
-        pretty_assertions::assert_eq!(check.shed_from(&map), Vec::<Uri>::new());
+        pretty_assertions::assert_eq!(check.shed_from(&map), Vec::<Identifier>::new());
         Ok(())
     }
 }

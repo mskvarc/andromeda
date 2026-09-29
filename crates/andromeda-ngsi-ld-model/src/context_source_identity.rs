@@ -1,6 +1,6 @@
 //! The identity a Context Source answers `/info/sourceIdentity` with (clauses 5.2.40 and 6.33.3.1).
 
-use andromeda_ngsi_ld_lexicon::{constant_string, context_source_pseudonym::ContextSourcePseudonym, rfc3339, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{constant_string, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, rfc3339};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::Serialize;
@@ -19,7 +19,7 @@ constant_string!(ContextSourceIdentityType, "ContextSourceIdentity");
 #[serde(rename_all = "camelCase")]
 pub struct ContextSourceIdentity {
     /// The identifier of this context source.
-    pub id: Uri,
+    pub id: Identifier,
     /// Always `"ContextSourceIdentity"`.
     #[serde(rename = "type")]
     pub type_: ContextSourceIdentityType,

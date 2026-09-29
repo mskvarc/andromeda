@@ -21,7 +21,7 @@ use crate::{
     representation_parameter::WrittenValue,
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::expression::Expr,
@@ -46,7 +46,7 @@ use std::num::NonZeroU32;
 pub struct EntityQueryParameters {
     /// Entity identifiers to select, comma-separated (clause 6.3.x `id`).
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
-    pub id: Option<Vec<Uri>>,
+    pub id: Option<Vec<Identifier>>,
     /// Entity types to select, as a type-selection expression (clause 4.17 `type`).
     #[serde(rename = "type")]
     pub entity_type: Option<TypeExprRaw>,
@@ -130,7 +130,7 @@ pub struct EntityQueryParameters {
     /// Entity identifiers the result must be linked from (`containedBy`).
     #[serde(rename = "containedBy")]
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
-    pub contained_by: Option<Vec<Uri>>,
+    pub contained_by: Option<Vec<Identifier>>,
     /// Whether the query creates an entity map for stable pagination (`entityMap`).
     #[serde(rename = "entityMap")]
     pub entity_map: Option<bool>,
@@ -206,7 +206,7 @@ mod tests {
     fn deserialization_parses_comma_separated_ids() {
         let p = params_from_query("id=urn:a,urn:b,urn:c");
         let ids = p.id.expect("ids present");
-        pretty_assertions::assert_eq!(ids.iter().map(Uri::as_str).collect::<Vec<_>>(), vec!["urn:a", "urn:b", "urn:c"]);
+        pretty_assertions::assert_eq!(ids.iter().map(Identifier::as_str).collect::<Vec<_>>(), vec!["urn:a", "urn:b", "urn:c"]);
     }
 
     #[test]

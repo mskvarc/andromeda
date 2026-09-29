@@ -1,6 +1,6 @@
 //! Per-registration cooldown after a failed forwarded request (clause 5.2.34).
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use dashmap::DashMap;
 use std::time::{Duration, Instant};
@@ -11,17 +11,17 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Default)]
 pub(crate) struct CooldownRegistry {
     /// The instant of the last failure, per registration.
-    last_failure: DashMap<Uri, Instant>,
+    last_failure: DashMap<Identifier, Instant>,
 }
 
 impl CooldownRegistry {
     /// Record that a forwarded request to `registration` failed now.
-    pub(crate) fn record_failure(&self, registration: &Uri) {
+    pub(crate) fn record_failure(&self, registration: &Identifier) {
         self.last_failure.insert(registration.clone(), Instant::now()); // clone: the registry owns its keys
     }
 
     /// Forget a registration's failure once it answers again.
-    pub(crate) fn record_success(&self, registration: &Uri) {
+    pub(crate) fn record_success(&self, registration: &Identifier) {
         self.last_failure.remove(registration);
     }
 

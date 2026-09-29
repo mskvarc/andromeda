@@ -9,7 +9,7 @@ use crate::{
     request::ForwardDiscoveryRequest,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use futures::{StreamExt, stream};
 use tracing::warn;
 
@@ -48,7 +48,7 @@ impl FederationService {
             }
         };
         let mut csrs = Vec::new();
-        let mut cursor: Option<Uri> = None;
+        let mut cursor: Option<Identifier> = None;
         loop {
             let page = match self.csr_repo.find_all_active(cursor.as_ref(), ACTIVE_REGISTRATION_PAGE).await {
                 Ok(page) => page,

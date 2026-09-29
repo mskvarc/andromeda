@@ -10,7 +10,7 @@ use crate::{
     mutation::ContextMutation,
     stored_context::StoredContext,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde_json::Value;
 use std::{future::Future, pin::Pin};
 use url::Url;
@@ -28,19 +28,19 @@ pub trait ContextRegistryStore: Send + Sync + 'static {
     fn list<'a>(&'a self, query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ListedContexts>;
 
     /// Fetch one stored Context using the requested projection.
-    fn get<'a>(&'a self, identifier: &'a Uri, detail_level: ContextDetailLevel) -> ContextRegistryFuture<'a, Option<FetchedContext>>;
+    fn get<'a>(&'a self, identifier: &'a Identifier, detail_level: ContextDetailLevel) -> ContextRegistryFuture<'a, Option<FetchedContext>>;
 
     /// Record a direct hosted-context access.
-    fn record_access<'a>(&'a self, identifier: &'a Uri) -> ContextRegistryFuture<'a, ContextMutation>;
+    fn record_access<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, ContextMutation>;
 
     /// Load lifecycle information required for delete or reload.
-    fn lookup<'a>(&'a self, identifier: &'a Uri) -> ContextRegistryFuture<'a, Option<StoredContext>>;
+    fn lookup<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, Option<StoredContext>>;
 
     /// Delete a stored Context.
-    fn delete<'a>(&'a self, identifier: &'a Uri) -> ContextRegistryFuture<'a, ContextMutation>;
+    fn delete<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, ContextMutation>;
 
     /// Replace a stored Context document by local identifier.
-    fn replace_payload<'a>(&'a self, identifier: &'a Uri, payload: Value) -> ContextRegistryFuture<'a, ContextMutation>;
+    fn replace_payload<'a>(&'a self, identifier: &'a Identifier, payload: Value) -> ContextRegistryFuture<'a, ContextMutation>;
 }
 
 #[cfg(test)]

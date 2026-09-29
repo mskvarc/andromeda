@@ -1,7 +1,7 @@
 //! Failures raised by the entity- and attribute-level mutation operations.
 
 use crate::expanded::dataset_id::InstanceDatasetIdError;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
 use iri_rs::IriBuf;
 use thiserror::Error;
 
@@ -12,10 +12,10 @@ use thiserror::Error;
 /// each one onto the `ProblemDetails` type NGSI-LD clause 5.5.2 requires instead
 /// of reporting one undifferentiated failure.
 ///
-/// The attribute IRI is an [`IriBuf`] and the `datasetId` a [`Uri`], the domain
+/// The attribute IRI is an [`IriBuf`] and the `datasetId` a [`Identifier`], the domain
 /// types they carry across the API boundary.
 ///
-/// A [`Uri`] is 88 bytes against the 56 an [`IriBuf`] occupies, and this enum is
+/// A [`Identifier`] is 88 bytes against the 56 an [`IriBuf`] occupies, and this enum is
 /// the `Err` of every mutation entry point: carrying the `datasetId` inline made
 /// the widest variant 144 bytes, so every success path paid the failure's width.
 /// [`DatasetNotFound`](Self::DatasetNotFound) therefore boxes it.
@@ -63,7 +63,7 @@ pub enum ExpandedEntityError {
         attribute: IriBuf,
         /// The `datasetId` that selected no instance, boxed to keep this
         /// variant from widening the whole enum.
-        dataset_id: Box<Uri>,
+        dataset_id: Box<Identifier>,
     },
     /// The attribute exists but has no default (no-`datasetId`) instance.
     #[error("attribute {attribute} default instance not found")]

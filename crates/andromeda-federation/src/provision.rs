@@ -14,7 +14,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_telemetry::federation_ops::{self, FederationOperation};
 use futures::{StreamExt, stream};
@@ -42,7 +42,7 @@ pub(crate) struct PlannedWrite<'a> {
     /// The `NGSILD-EntityMap` this forwarded write carries: the map the source
     /// is linked to under the Entity Map in use (clause 5.5.14), or `None` when
     /// the write runs under no map.
-    pub(crate) linked_map: Option<Uri>,
+    pub(crate) linked_map: Option<Identifier>,
 }
 
 /// One forwarded write request, as [`FederationService::forward_write`] sends it.
@@ -63,7 +63,7 @@ pub(crate) struct ForwardWrite<'a> {
     /// The request that triggered the forwarding.
     pub(crate) triggering: TriggeringRequest<'a>,
     /// The `NGSILD-EntityMap` the forwarded request carries (clause 5.5.14).
-    pub(crate) linked_map: Option<&'a Uri>,
+    pub(crate) linked_map: Option<&'a Identifier>,
 }
 
 impl FederationService {
@@ -393,7 +393,7 @@ mod tests {
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use serde_json::json;
     use std::sync::Arc;
@@ -431,7 +431,7 @@ mod tests {
 
     /// Forward a create of the fixture entity whose payload is `body`.
     async fn forward_create(service: &FederationService, body: &CountedBody) -> Vec<ForwardedWriteOutcome> {
-        let entity_id: Uri = ENTITY_ID.parse().expect("valid identifier");
+        let entity_id: Identifier = ENTITY_ID.parse().expect("valid identifier");
         let context = ContextSpec::none();
         service
             .forward_provision(

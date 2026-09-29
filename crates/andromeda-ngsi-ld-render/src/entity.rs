@@ -16,7 +16,7 @@ use crate::{
     structural_projection::StructuralProjection,
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{rfc3339::sub_second, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use indexmap::IndexMap;
@@ -37,7 +37,7 @@ pub struct EntityRenderer<'a> {
     /// The `lang` filter to negotiate language properties against, if any.
     language_filter: Option<&'a LanguageFilter>,
     /// The entities `join=inline` resolves relationships against, if any.
-    inline_linked_entities: Option<&'a IndexMap<Uri, Entity>>,
+    inline_linked_entities: Option<&'a IndexMap<Identifier, Entity>>,
     /// The clause 4.5.1 rendering to produce.
     mode: ResponseFormat,
     /// The clause 4.21 `pick`/`omit` structural-member rule to apply to
@@ -74,7 +74,7 @@ impl<'a> EntityRenderer<'a> {
 
     /// Set linked entities for `join=inline` expansion (NGSI-LD clause 4.5.23).
     #[must_use]
-    pub const fn with_inline_linked_entities(mut self, linked: &'a IndexMap<Uri, Entity>) -> Self {
+    pub const fn with_inline_linked_entities(mut self, linked: &'a IndexMap<Identifier, Entity>) -> Self {
         self.inline_linked_entities = Some(linked);
         self
     }

@@ -23,7 +23,7 @@ use crate::{
 };
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     mutation::{
         entity::{append_entity_attrs, update_entity_attrs},
@@ -89,7 +89,7 @@ impl EntityService {
             return Ok(BatchResult { success: Vec::new(), errors });
         }
 
-        let prepared_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
+        let prepared_ids: Vec<Identifier> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
         // Hold the per-id locks across the read-modify-write window so two
         // concurrent updates for the same id can't lose each other's writes.
         let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;

@@ -11,7 +11,7 @@
 //! and does not need to be part of the key.
 
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
@@ -160,10 +160,10 @@ fn push_projection_term_list(buffer: &mut String, value: Option<&[RawProjectionT
 }
 
 /// Append a typed entity identifier list in its canonical URI rendering.
-fn push_uri_list(buffer: &mut String, value: Option<&[Uri]>) {
+fn push_uri_list(buffer: &mut String, value: Option<&[Identifier]>) {
     match value {
         Some(values) => {
-            let rendered = values.iter().map(Uri::as_str).collect::<Vec<_>>().join(",");
+            let rendered = values.iter().map(Identifier::as_str).collect::<Vec<_>>().join(",");
             push_field(buffer, Some(&rendered));
         }
         None => push_field(buffer, None),

@@ -17,7 +17,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -36,27 +36,27 @@ fn unused(method: &str) -> EntityError {
 
 #[async_trait]
 impl EntityReader for UnusedStore {
-    async fn get(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<Value>, EntityError> {
+    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Value>, EntityError> {
         Err(unused("get"))
     }
 
-    async fn get_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
+    async fn get_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
         Err(unused("get_batch"))
     }
 
-    async fn get_snapshot(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
+    async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
         Err(unused("get_snapshot"))
     }
 
-    async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
+    async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
         Err(unused("get_snapshot_batch"))
     }
 
-    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
         Err(unused("get_sys_attrs"))
     }
 
-    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
         Err(unused("get_sys_attrs_batch"))
     }
 }
@@ -71,7 +71,7 @@ impl EntityQueryStore for UnusedStore {
         Err(unused("query_compiled"))
     }
 
-    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, EntityError> {
+    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Identifier>, EntityError> {
         Err(unused("query_ids"))
     }
 }

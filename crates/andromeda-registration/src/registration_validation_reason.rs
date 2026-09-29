@@ -10,7 +10,7 @@
 //! numbers stay in doc comments.
 
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
-use andromeda_ngsi_ld_lexicon::uri::UriParseError;
+use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use iri_rs::InvalidIri;
@@ -25,7 +25,7 @@ pub enum RegistrationValidationReason {
     IdNotUri {
         /// Why the `id` is not an identifier.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// The `type` member was not `ContextSourceRegistration` (clause 5.2.9).
     #[error("type must be 'ContextSourceRegistration'")]

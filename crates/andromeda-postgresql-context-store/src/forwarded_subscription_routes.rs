@@ -5,7 +5,7 @@
 //! tenant removes its routes; the name is resolved against the registry when a
 //! route is written and read back through it when a route is followed.
 
-use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
 use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_postgresql_schema::{subscription_forwarding::ForwardedSubscriptionRoutes, tenancy::Tenants};
 use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, mapping::ForwardedSubscriptionRouter};
@@ -54,7 +54,7 @@ fn is_tenant(tenant: &TenantRef) -> SimpleExpr {
 /// Route `minted` to `tenant`, resolving the tenant's surrogate by subquery; a
 /// tenant the registry does not hold resolves to `NULL`, which the column
 /// refuses.
-fn register_statement(minted: &Uri, tenant: &TenantRef) -> Result<InsertStatement, SeaQueryError> {
+fn register_statement(minted: &Identifier, tenant: &TenantRef) -> Result<InsertStatement, SeaQueryError> {
     let tenant_key = Query::select()
         .column((Tenants::Table, Tenants::TenantKey))
         .from(Tenants::Table)
@@ -77,7 +77,7 @@ fn register_statement(minted: &Uri, tenant: &TenantRef) -> Result<InsertStatemen
 }
 
 /// The tenant `minted` is routed to, read back through the registry.
-fn tenant_of_statement(minted: &Uri) -> SelectStatement {
+fn tenant_of_statement(minted: &Identifier) -> SelectStatement {
     Query::select()
         .column((Tenants::Table, Tenants::Name))
         .from(ForwardedSubscriptionRoutes::Table)
@@ -108,7 +108,7 @@ impl PostgresForwardedSubscriptionRouter {
 impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
     fn register<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        minted: &'life1 Uri,
+        minted: &'life1 Identifier,
         tenant: &'life2 TenantRef,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
@@ -129,7 +129,7 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
 
     fn tenant_of<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        minted: &'life1 Uri,
+        minted: &'life1 Identifier,
     ) -> BoxFuture<'async_trait, Result<Option<TenantRef>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -155,7 +155,7 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
         })
     }
 
-    fn unregister<'life0, 'life1, 'async_trait>(&'life0 self, minted: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
+    fn unregister<'life0, 'life1, 'async_trait>(&'life0 self, minted: &'life1 Identifier) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -178,12 +178,12 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
 #[cfg(test)]
 mod tests {
     use crate::forwarded_subscription_routes::{register_statement, tenant_of_statement};
-    use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
-    fn minted() -> Uri {
+    fn minted() -> Identifier {
         "urn:ngsi-ld:Subscription:forwarded:1".parse().expect("a URI")
     }
 

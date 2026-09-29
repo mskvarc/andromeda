@@ -13,7 +13,7 @@ use andromeda_entity::{
     query::{EntityQueryService, join_projection::PreparedJoinProjection, linked_entity::ResolvedLinkedEntities},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::{nested_projection::LinkedProjection, structural_projection::StructuralProjection};
@@ -38,7 +38,7 @@ pub(crate) struct JoinRequest<'a> {
     pub(crate) join_level: Option<NonZeroU32>,
     /// The entities the client already holds, which the traversal never
     /// retrieves again.
-    pub(crate) contained_by: Option<&'a [Uri]>,
+    pub(crate) contained_by: Option<&'a [Identifier]>,
     /// Whether the linked entities carry the clause 4.8 system timestamps.
     pub(crate) sys_attrs: SysAttrsInclusion,
     /// The request's compiled clause 4.21 projection, whose terms may carry
@@ -53,7 +53,7 @@ pub(crate) struct ResolvedJoin<'a> {
     pub(crate) join: RetrievingJoin,
     /// The linked entities in breadth-first traversal order, already narrowed
     /// when the join mode narrows them ahead of rendering.
-    pub(crate) linked: IndexMap<Uri, Entity>,
+    pub(crate) linked: IndexMap<Identifier, Entity>,
     /// The Linked Entities the traversal could not resolve. Each becomes a
     /// clause 6.3.17 warning on the response the handler renders.
     pub(crate) failures: Vec<LinkedResolutionFailure>,

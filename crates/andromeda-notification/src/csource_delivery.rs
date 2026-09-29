@@ -17,7 +17,7 @@ use andromeda_delivery::{
     request::NotificationDelivery,
 };
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use andromeda_ngsi_ld_model::{
     notification::{CsourceNotification, CsourceNotificationType, CsrTriggerReason},
     registration::ContextSourceRegistration,
@@ -140,7 +140,7 @@ impl CsourceNotificationDelivery {
             }
         }
 
-        let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() else {
+        let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Identifier>() else {
             error!("Failed to construct notification URN for {}", sub_id);
             return CsourceDeliveryOutcome::NotSent;
         };

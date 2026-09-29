@@ -6,7 +6,7 @@ use crate::{
     partitioned_rtree::{PartitionedRTree, WriteTracking},
 };
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use dashmap::DashSet;
 use rstar::{AABB, RTree};
@@ -76,7 +76,7 @@ impl SpatialEntityIndex {
     /// rather than reporting that nothing matched. A seeded scope with no
     /// partition for the key answers with the empty set, because its rebuild
     /// found no entity of that type conveying the `GeoProperty`.
-    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &Geometry) -> Option<HashSet<Uri>> {
+    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &Geometry) -> Option<HashSet<Identifier>> {
         let scope = SeedScope {
             tenant: key.tenant.clone(),           // clone: the seed lookup owns its tenant
             geoproperty: key.geoproperty.clone(), // clone: the seed lookup owns its geoproperty
@@ -94,7 +94,7 @@ impl SpatialEntityIndex {
     /// entry in the ones it stays in under that partition's lock, so a reader
     /// never finds it missing from a partition it belongs to throughout. A
     /// geometry with no bounding rectangle cannot be indexed and is dropped.
-    pub fn replace_entity(&self, entity_id: Uri, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) {
+    pub fn replace_entity(&self, entity_id: Identifier, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) {
         let entries = entries_of(&entity_id, placements);
         self.tree.replace(entity_id, entries);
     }
@@ -107,13 +107,13 @@ impl SpatialEntityIndex {
     /// pending sees it wherever the change may leave it. A later
     /// [`SpatialEntityIndex::replace_entity`] or [`SpatialEntityIndex::remove`]
     /// settles it.
-    pub fn anticipate_entity(&self, entity_id: Uri, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) {
+    pub fn anticipate_entity(&self, entity_id: Identifier, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) {
         let entries = entries_of(&entity_id, placements);
         self.tree.augment(entity_id, entries);
     }
 
     /// Remove every entry belonging to an entity, across every partition.
-    pub fn remove(&self, entity_id: &Uri) {
+    pub fn remove(&self, entity_id: &Identifier) {
         self.tree.remove(entity_id);
     }
 
@@ -135,7 +135,7 @@ impl SpatialEntityIndex {
 }
 
 /// The tree entries of one entity's placements, grouped by partition.
-fn entries_of(entity_id: &Uri, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) -> Vec<(SpatialKey, Vec<SpatialEntry>)> {
+fn entries_of(entity_id: &Identifier, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) -> Vec<(SpatialKey, Vec<SpatialEntry>)> {
     placements
         .into_iter()
         // clone: each entry owns the identifier the back-index is keyed by
@@ -194,7 +194,7 @@ const fn refinement_for(georel: &GeoRel) -> Refinement {
 }
 
 /// Run the clause 4.10 predicate over whichever candidates the relation admits.
-fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry) -> HashSet<Uri> {
+fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry) -> HashSet<Identifier> {
     let candidates: Vec<&SpatialEntry> = match candidates_for(georel) {
         Candidates::WholePartition => tree.iter().collect(),
         Candidates::EnvelopeIntersecting => tree.locate_in_envelope_intersecting(geometry_envelope(reference)).collect(),
@@ -234,7 +234,7 @@ mod tests {
         position::Position,
         positive_distance::PositiveDistance,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
     use pretty_assertions::assert_eq;
@@ -251,7 +251,7 @@ mod tests {
         SpatialKey::new(TenantRef::UnnamedDefault, IriBuf::from(iri!("https://example.org/Vehicle")), location())
     }
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("a well-formed URI")
     }
 

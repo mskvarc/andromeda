@@ -151,6 +151,9 @@ pub enum CurrentAttributeValues {
     /// String value too long for `value_string`'s B-tree, when `value_kind`
     /// selects String
     ValueLongText,
+    /// URI value too long for `value_uri`'s B-tree, when `value_kind` selects
+    /// URI
+    ValueLongUri,
 }
 
 /// Alias `e` for the entities table.
@@ -240,6 +243,7 @@ mod tests {
         assert_eq!(CurrentAttributeValues::ExpiresAt.to_string(), "expires_at");
         assert_eq!(CurrentAttributeValues::ValueUri.to_string(), "value_uri");
         assert_eq!(CurrentAttributeValues::ValueLongText.to_string(), "value_long_text");
+        assert_eq!(CurrentAttributeValues::ValueLongUri.to_string(), "value_long_uri");
     }
 
     #[test]

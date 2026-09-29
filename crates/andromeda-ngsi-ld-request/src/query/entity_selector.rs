@@ -1,6 +1,6 @@
 //! The per-selector form of a query's entity selection (clause 5.2.11).
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 
 /// One entity selector carried by a POST query body's `entities[]` array.
@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExp
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EntitySelectorParams {
     /// The selector's entity identifiers (`id`).
-    pub id: Option<Vec<Uri>>,
+    pub id: Option<Vec<Identifier>>,
     /// A regular expression the selector's identifiers must match (`idPattern`).
     pub id_pattern: Option<Pattern>,
     /// The selector's parsed type-selection expression (clause 4.17 `type`).

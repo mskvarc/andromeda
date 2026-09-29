@@ -2,7 +2,7 @@
 //! instances of a multi-attribute it touches.
 
 use crate::expanded::dataset_id::{InstanceDatasetIdError, get_instance_dataset_id};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde_json::Value;
 
 /// Whether an append replaces an attribute instance that already exists
@@ -25,7 +25,7 @@ pub enum DatasetSelection<'a> {
     /// Every instance, regardless of `datasetId`.
     All,
     /// The single instance carrying this `datasetId`.
-    Single(&'a Uri),
+    Single(&'a Identifier),
     /// The default instance, the one with no `datasetId`.
     Default,
 }
@@ -45,7 +45,7 @@ pub enum DatasetSelection<'a> {
 ///
 /// Returns [`InstanceDatasetIdError`] when the Fragment carries a `datasetId`
 /// that is not an identifier.
-pub fn addressed_dataset(url_dataset_id: Option<&Uri>, fragment: &Value) -> Result<Option<Uri>, InstanceDatasetIdError> {
+pub fn addressed_dataset(url_dataset_id: Option<&Identifier>, fragment: &Value) -> Result<Option<Identifier>, InstanceDatasetIdError> {
     let fragment_dataset_id = get_instance_dataset_id(fragment)?;
     Ok(url_dataset_id.cloned().or(fragment_dataset_id)) // clone: the addressed identity outlives the borrowed URL parameter.
 }
@@ -53,10 +53,10 @@ pub fn addressed_dataset(url_dataset_id: Option<&Uri>, fragment: &Value) -> Resu
 #[cfg(test)]
 mod tests {
     use crate::expanded::mutation::selection::addressed_dataset;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use serde_json::json;
 
-    fn dataset(raw: &str) -> Uri {
+    fn dataset(raw: &str) -> Identifier {
         raw.parse().expect("a valid dataset URI")
     }
 

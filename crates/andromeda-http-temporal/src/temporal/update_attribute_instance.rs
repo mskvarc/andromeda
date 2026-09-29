@@ -5,6 +5,7 @@ use crate::{
         AttributeName,
         ForwardProvisionRequest,
         ForwardingOperation,
+        Identifier,
         InstanceFamily,
         InstanceIdentity,
         IntoResponse,
@@ -21,7 +22,6 @@ use crate::{
         TenantState,
         TriggeringRequest,
         TypedPath,
-        Uri,
         ValidatedQuery,
         collect_proxied_attrs,
         local_temporal_outcome,
@@ -43,7 +43,7 @@ pub async fn update_attr_instance(
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    TypedPath((id, attr_id, instance_id)): TypedPath<(Uri, AttributeName, Uri)>,
+    TypedPath((id, attr_id, instance_id)): TypedPath<(Identifier, AttributeName, Identifier)>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     JsonLdDocument {
         document: payload,
@@ -56,7 +56,7 @@ pub async fn update_attr_instance(
     // Clause 4.5.7 carries an `instanceId` as a URI; which of the two stored
     // shapes it names is decided here, at the edge, so the store addresses one
     // identity column rather than searching both.
-    let instance = InstanceIdentity::from_uri(instance_id, InstanceFamily::Attribute);
+    let instance = InstanceIdentity::from_identifier(instance_id, InstanceFamily::Attribute);
     // Clauses 4.5.3.2 and 4.5.3.3 prohibit the two seals on a Relationship in
     // every representation, so a modified instance is held to them as well, and
     // clause 5.5.7 refuses a user `@context` written anywhere but the top level.

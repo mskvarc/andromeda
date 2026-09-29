@@ -8,7 +8,7 @@
 //! forces every context it names to load.
 
 use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError, scoped_context_admission::reject_scoped_user_contexts};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde_json::{Value, json};
 use std::str::FromStr;
 
@@ -66,7 +66,7 @@ fn as_context_value(value: &Value) -> Result<Value, JsonLdError> {
             let trimmed = text.trim();
             if trimmed.starts_with('{') || trimmed.starts_with('[') {
                 serde_json::from_str::<Value>(trimmed).map_err(|error| JsonLdError::invalid_document(format!("Invalid jsonldContext JSON: {error}")))
-            } else if Uri::from_str(trimmed).is_ok() {
+            } else if Identifier::from_str(trimmed).is_ok() {
                 Ok(Value::String(trimmed.to_string()))
             } else {
                 Err(not_a_context())

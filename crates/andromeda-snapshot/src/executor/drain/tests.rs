@@ -8,7 +8,7 @@ use crate::{
     store_double::{ClaimHold, CloneCopy, StoreDouble},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{Snapshot, SnapshotPriority, SnapshotStatus};
 use chrono::{Duration as ChronoDuration, Utc};
 use futures::{executor::block_on, future::BoxFuture};
@@ -17,15 +17,15 @@ use std::{sync::Mutex, time::Duration};
 
 const LEASE: Duration = Duration::from_secs(30);
 
-fn source_id() -> Uri {
+fn source_id() -> Identifier {
     "urn:ngsi-ld:Snapshot:clone-source".parse().expect("valid snapshot identifier")
 }
 
-fn clone_id() -> Uri {
+fn clone_id() -> Identifier {
     "urn:ngsi-ld:Snapshot:clone-target".parse().expect("valid snapshot identifier")
 }
 
-fn snapshot(id: Uri, status: SnapshotStatus) -> Snapshot {
+fn snapshot(id: Identifier, status: SnapshotStatus) -> Snapshot {
     let now = Utc::now();
     Snapshot::builder()
         .id(id)
@@ -50,7 +50,7 @@ fn source_and_clone(status: SnapshotStatus) -> StoreDouble {
 fn prepare<'a>(
     store: &'a StoreDouble,
     worker: LeaseHolder,
-    claimed: &'a Mutex<Vec<Uri>>,
+    claimed: &'a Mutex<Vec<Identifier>>,
     before_capture: &'a (dyn Fn() + Sync),
 ) -> impl Fn(SnapshotPreparationJob) -> BoxFuture<'a, Option<PreparationEnd>> {
     move |job| {
@@ -88,7 +88,7 @@ fn drain_worker(store: &StoreDouble, worker: LeaseHolder) -> DrainWorker<'_> {
 }
 
 /// The recorded terminal statuses, by Snapshot.
-fn recorded(store: &StoreDouble) -> Vec<(Uri, SnapshotStatus)> {
+fn recorded(store: &StoreDouble) -> Vec<(Identifier, SnapshotStatus)> {
     store.take_recorded().into_iter().map(|record| (record.id, record.status)).collect()
 }
 

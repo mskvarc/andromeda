@@ -13,7 +13,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use chrono::{DateTime, Utc};
@@ -50,7 +50,7 @@ impl TemporalService {
             // One batch read of the temporal catalogue, which owns the entity types
             // (clauses 4.5.1 and 4.5.6) and answers for entities whose current
             // state a clause 5.6.6 deletion has already removed.
-            let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
+            let entity_types_map: HashMap<Identifier, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
 
             let dataset_step = DatasetStep::of(&compiled);
             let names = NameCompactor::new(&self.engine, context);
@@ -153,7 +153,7 @@ impl TemporalService {
 ///
 /// Returns the [`TemporalError::TooManyResults`] the entity raised.
 fn settle_entity(
-    entity_id: Uri,
+    entity_id: Identifier,
     outcome: Result<RenderedTemporalEntity, TemporalError>,
     warnings: &mut Vec<TemporalQueryWarning>,
 ) -> Result<Option<RenderedTemporalEntity>, TemporalError> {

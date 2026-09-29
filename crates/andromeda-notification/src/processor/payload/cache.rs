@@ -12,7 +12,7 @@ use andromeda_jsonld::{
     },
     error::JsonLdError,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use dashmap::DashMap;
@@ -30,7 +30,7 @@ use tracing::{debug, warn};
 /// Cached linked entities in both indexed and serialized form.
 #[derive(Debug)]
 pub(super) struct ResolvedLinkedEntities {
-    pub(super) by_id: Arc<IndexMap<Uri, Entity>>,
+    pub(super) by_id: Arc<IndexMap<Identifier, Entity>>,
     pub(super) as_values: Arc<Vec<Value>>,
 }
 
@@ -108,7 +108,7 @@ pub(super) async fn resolve_linked_cached(
 /// and `IndexMap::values` walks a map in that same insertion order, so the
 /// values collected here carry that order forward unchanged. An entity that
 /// fails to serialize is dropped rather than failing the whole notification.
-fn linked_entities_as_values(linked_map: &IndexMap<Uri, Entity>) -> Vec<Value> {
+fn linked_entities_as_values(linked_map: &IndexMap<Identifier, Entity>) -> Vec<Value> {
     linked_map
         .values()
         .filter_map(|entity| match serde_json::to_value(entity) {
@@ -220,13 +220,13 @@ fn hash_json_value(value: &Value, hasher: &mut impl Hasher) {
 #[cfg(test)]
 mod tests {
     use crate::processor::payload::cache::{hash_json_value, linked_entities_as_values};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity::Entity;
     use indexmap::IndexMap;
     use serde_json::json;
     use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

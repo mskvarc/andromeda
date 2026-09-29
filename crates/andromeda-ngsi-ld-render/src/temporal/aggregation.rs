@@ -9,7 +9,13 @@
 //! `[value, start, end]` triple, and two triples of one instance can never
 //! carry the same period bounds.
 
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::sub_second, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    aggr_method::AggrMethod,
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    rfc3339::sub_second,
+};
 use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, GroupKeyValue, TemporalAggregationRow};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use indexmap::IndexMap;
@@ -18,7 +24,7 @@ use serde_json::{Value, json};
 /// The key one attribute instance is grouped under: its name plus the
 /// `datasetId` that clause 4.5.5 uses to tell the instances of one attribute
 /// apart.
-type GroupKey = (AttributeName, Option<Uri>);
+type GroupKey = (AttributeName, Option<Identifier>);
 
 /// Builds aggregated temporal data from decoded aggregation rows.
 ///

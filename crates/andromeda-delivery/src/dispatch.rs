@@ -10,7 +10,7 @@ use crate::{
     stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
     transport::NotificationTransport,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::{error::Error, str::FromStr, sync::Arc};
@@ -151,7 +151,7 @@ impl TransportDispatcher {
             .payload
             .get("id")
             .and_then(Value::as_str)
-            .and_then(|id| Uri::from_str(id).ok())
+            .and_then(|id| Identifier::from_str(id).ok())
             // clone: the event owns its id, and the payload's own is used when it names a valid one
             .unwrap_or_else(|| request.subscription_id.clone());
         report_stream(
@@ -196,7 +196,7 @@ impl TransportDispatcher {
 }
 
 /// Log and translate the outcome of a push to a streaming client.
-fn report_stream<E: Error>(subscription_id: &Uri, outcome: Result<(), E>) -> DeliveryResult {
+fn report_stream<E: Error>(subscription_id: &Identifier, outcome: Result<(), E>) -> DeliveryResult {
     match outcome {
         Ok(()) => {
             debug!(subscription_id = %subscription_id, "streaming notification delivered");

@@ -212,7 +212,7 @@ fn registration_geometry_column(geo: &GeoQuery) -> &'static str {
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, time_prop::TimeProp, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         csr::compiled::CompiledCsrTemporalFilter,
         dataset::DatasetSelector,
@@ -242,7 +242,7 @@ mod tests {
         }
     }
 
-    fn ids(raw: &[&str]) -> Vec<Uri> {
+    fn ids(raw: &[&str]) -> Vec<Identifier> {
         raw.iter().map(|id| id.parse().expect("valid URI")).collect()
     }
 

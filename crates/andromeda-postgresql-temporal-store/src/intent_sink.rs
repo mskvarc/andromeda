@@ -15,7 +15,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use andromeda_temporal::{
@@ -261,7 +261,7 @@ fn resolve_stream(
     catalog: &TemporalCatalog,
     entity_key: TemporalEntityKey,
     attribute_name: &AttributeName,
-    dataset_id: Option<&Uri>,
+    dataset_id: Option<&Identifier>,
 ) -> Result<StreamKey, TemporalStoreError> {
     let key = TemporalStreamKey {
         attribute_name: attribute_name.clone(), // clone: the lookup key follows the catalogue's owned natural key.
@@ -334,7 +334,12 @@ fn persistence(error: impl Display) -> TemporalError {
 mod tests {
     use crate::{error::TemporalStoreError, intent_sink::recording_entity_key, temporal_catalog_write::TemporalCatalog};
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        attribute_type::AttributeType,
+        identifier::Identifier,
+        instance_identity::InstanceIdentity,
+    };
     use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
@@ -350,7 +355,7 @@ mod tests {
         TemporalAppendIntent {
             record: WriteRecord::restored(WriteId::mint(), recorded_at),
             base_ordinal: WriteOrdinal::at(0),
-            entity_id: "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity URI"),
+            entity_id: "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity URI"),
             entity_types: Vec::new(),
             entries,
             selection_value: None,
@@ -419,7 +424,7 @@ mod tests {
     /// A resolved key is handed back whatever the intent is for.
     #[test]
     fn a_resolved_key_is_returned_for_a_deletion_and_for_an_observation() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity URI");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity URI");
         let entity_key = TemporalEntityKey::try_from(7_i64).expect("a positive narrow key");
         let catalog = TemporalCatalog {
             entity_keys: HashMap::from([(entity_id, entity_key)]),

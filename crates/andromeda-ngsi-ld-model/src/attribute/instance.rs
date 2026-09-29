@@ -13,7 +13,7 @@ use crate::attribute::{
     relationship::Relationship,
     vocab_property::VocabProperty,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
 use chrono::{DateTime, Utc};
 use jsonld::Expandable;
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
@@ -134,7 +134,7 @@ impl Attribute {
 
     /// Borrows the instance's `datasetId`, if set.
     #[must_use]
-    pub const fn dataset_id(&self) -> Option<&Uri> {
+    pub const fn dataset_id(&self) -> Option<&Identifier> {
         self.common().dataset_id.as_ref()
     }
 }

@@ -20,7 +20,7 @@ use crate::{
 };
 use andromeda_context_commit::error::CommitError;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::attribute_expiry::instance_expires_at;
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, entity_key::EntityKey};
 use andromeda_postgresql_context_store::current_attribute_values::{
@@ -62,7 +62,7 @@ pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
     intents: &[&TemporalAppendIntent],
-    keys: &HashMap<Uri, ProjectedEntityKey>,
+    keys: &HashMap<Identifier, ProjectedEntityKey>,
     dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<(), CommitError> {
     let projected: Vec<(&TemporalAppendIntent, ProjectedEntityKey)> = intents
@@ -136,7 +136,7 @@ fn collect(
 fn grain(
     entity_key: EntityKey,
     attribute_name: &AttributeName,
-    dataset_id: Option<&Uri>,
+    dataset_id: Option<&Identifier>,
     dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<ProjectedAttributeKey, CommitError> {
     let attribute_name_key = dictionary.get(attribute_name).copied().ok_or_else(|| CommitError::Invariant {
@@ -159,9 +159,9 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         attribute_type::AttributeType,
+        identifier::Identifier,
         instance_identity::InstanceIdentity,
         scope::path::ScopePath,
-        uri::Uri,
     };
     use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
     use andromeda_ngsi_ld_number::JsonNumber;
@@ -192,7 +192,7 @@ mod tests {
         TemporalAppendIntent {
             record: WriteRecord::mint(Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant")),
             base_ordinal: WriteOrdinal::at(0),
-            entity_id: "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("a valid entity URI"),
+            entity_id: "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("a valid entity URI"),
             entity_types: Vec::new(),
             entries,
             selection_value: None,
@@ -287,7 +287,7 @@ mod tests {
         }]);
         collect(&mut work, &intent, entity_key(), &dictionary()).expect("a resolvable tombstone");
         pretty_assertions::assert_eq!(work.removals.len(), 1);
-        pretty_assertions::assert_eq!(work.removals[0].dataset_id.as_ref().map(Uri::as_str), Some("urn:ngsi-ld:Dataset:a"));
+        pretty_assertions::assert_eq!(work.removals[0].dataset_id.as_ref().map(Identifier::as_str), Some("urn:ngsi-ld:Dataset:a"));
     }
 
     #[test]

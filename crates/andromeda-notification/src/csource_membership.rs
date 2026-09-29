@@ -23,7 +23,7 @@ use crate::{
     error::NotificationError,
     notified_registration_store::{NotifiedRegistrationStore, Release},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ContextSourceRegistration};
 use andromeda_subscription::{
     change::UpsertKind,
@@ -40,7 +40,7 @@ pub(crate) struct UpsertPlan<'registration> {
     /// The registrations the notification carries.
     pub(crate) carried: Vec<&'registration ContextSourceRegistration>,
     /// The registrations the upsert newly recorded as notified.
-    pub(crate) recorded: Vec<Uri>,
+    pub(crate) recorded: Vec<Identifier>,
 }
 
 /// One notification a registration change owes one subscription.
@@ -95,11 +95,11 @@ impl CsourceMembership {
                 recorded: Vec::new(),
             });
         }
-        let identifiers: Vec<Uri> = matching.iter().map(|registration| registration.id.clone()).collect(); // clone: the store takes the identifiers as one slice
+        let identifiers: Vec<Identifier> = matching.iter().map(|registration| registration.id.clone()).collect(); // clone: the store takes the identifiers as one slice
         let recorded = self.ledger.claim(&subscription.id, &identifiers).await?;
         let carried = match kind {
             UpsertKind::Created => {
-                let newly: HashSet<&Uri> = recorded.iter().collect();
+                let newly: HashSet<&Identifier> = recorded.iter().collect();
                 matching.iter().filter(|registration| newly.contains(&registration.id)).collect()
             }
             UpsertKind::Updated => matching.iter().collect(),
@@ -114,8 +114,12 @@ impl CsourceMembership {
     ///
     /// Returns [`NotificationError::Persistence`] when the record cannot be
     /// read.
-    pub(crate) async fn recorded_beyond(&self, subscription: &Uri, matching: &[ContextSourceRegistration]) -> Result<Vec<Uri>, NotificationError> {
-        let current: HashSet<&Uri> = matching.iter().map(|registration| &registration.id).collect();
+    pub(crate) async fn recorded_beyond(
+        &self,
+        subscription: &Identifier,
+        matching: &[ContextSourceRegistration],
+    ) -> Result<Vec<Identifier>, NotificationError> {
+        let current: HashSet<&Identifier> = matching.iter().map(|registration| &registration.id).collect();
         Ok(self
             .ledger
             .registrations_notified_to(subscription)
@@ -132,7 +136,11 @@ impl CsourceMembership {
     /// One the subscription still selects was reported after its match set
     /// was read and stays recorded; withdrawing every record outside the match
     /// set wholesale would forget that report.
-    pub(crate) async fn withdraw_unselected(&self, subscription: &CompiledCsrSubscription, current: Vec<(Uri, Option<ContextSourceRegistration>)>) -> Vec<Uri> {
+    pub(crate) async fn withdraw_unselected(
+        &self,
+        subscription: &CompiledCsrSubscription,
+        current: Vec<(Identifier, Option<ContextSourceRegistration>)>,
+    ) -> Vec<Identifier> {
         let mut withdrawn = Vec::new();
         for (identifier, state) in current {
             match state {
@@ -149,7 +157,7 @@ impl CsourceMembership {
 
     /// Record again the registrations an update withdrew, when its
     /// notification was not sent and the subscriber still believes they match.
-    pub(crate) async fn restore(&self, subscription: &Uri, registrations: &[Uri]) {
+    pub(crate) async fn restore(&self, subscription: &Identifier, registrations: &[Identifier]) {
         if let Err(failure) = self.ledger.claim(subscription, registrations).await {
             error!("Failed to restore the CSRs withdrawn from subscription {}: {}", subscription, failure);
         }
@@ -167,7 +175,7 @@ impl CsourceMembership {
     pub(crate) async fn confirm(
         &self,
         subscription: &CompiledCsrSubscription,
-        current: Vec<(Uri, Option<ContextSourceRegistration>)>,
+        current: Vec<(Identifier, Option<ContextSourceRegistration>)>,
     ) -> Vec<ContextSourceRegistration> {
         let mut confirmed = Vec::with_capacity(current.len());
         for (identifier, state) in current {
@@ -181,14 +189,14 @@ impl CsourceMembership {
 
     /// Withdraw the registrations a notification that was not sent had newly
     /// recorded, so a later change reports them as `newlyMatching`.
-    pub(crate) async fn withdraw_unsent(&self, subscription: &Uri, registrations: &[Uri]) {
+    pub(crate) async fn withdraw_unsent(&self, subscription: &Identifier, registrations: &[Identifier]) {
         for registration in registrations {
             self.withdraw(subscription, registration).await;
         }
     }
 
     /// Withdraw `registration` from those notified to `subscription`.
-    async fn withdraw(&self, subscription: &Uri, registration: &Uri) {
+    async fn withdraw(&self, subscription: &Identifier, registration: &Identifier) {
         if let Err(failure) = self.ledger.release(subscription, registration).await {
             error!("Failed to withdraw CSR {} for subscription {}: {}", registration, subscription, failure);
         }
@@ -207,7 +215,7 @@ impl CsourceMembership {
         &self,
         subscriptions: &[Arc<CompiledCsrSubscription>],
         change: RegistrationChange,
-        registration_id: &Uri,
+        registration_id: &Identifier,
         before: Option<&'registration ContextSourceRegistration>,
         after: Option<&'registration ContextSourceRegistration>,
     ) -> Vec<PlannedNotification<'registration>> {
@@ -283,7 +291,7 @@ impl CsourceMembership {
     /// The subscriptions a change may have to withdraw the registration from.
     ///
     /// A creation withdraws nothing, so it reads nothing.
-    async fn subscriptions_notified_of(&self, change: RegistrationChange, registration: &Uri) -> Result<HashSet<Uri>, NotificationError> {
+    async fn subscriptions_notified_of(&self, change: RegistrationChange, registration: &Identifier) -> Result<HashSet<Identifier>, NotificationError> {
         match change {
             RegistrationChange::Created => Ok(HashSet::new()),
             RegistrationChange::Updated | RegistrationChange::Deleted => Ok(self.ledger.notified_subscriptions(registration).await?.into_iter().collect()),
@@ -291,7 +299,13 @@ impl CsourceMembership {
     }
 
     /// Apply `step` for `subscription` and report how the store answered it.
-    async fn take_step(&self, step: MembershipStep, subscription: &Uri, registration: &Uri, notified: &HashSet<Uri>) -> Result<StepOutcome, NotificationError> {
+    async fn take_step(
+        &self,
+        step: MembershipStep,
+        subscription: &Identifier,
+        registration: &Identifier,
+        notified: &HashSet<Identifier>,
+    ) -> Result<StepOutcome, NotificationError> {
         match step {
             MembershipStep::Claim => {
                 let recorded = self.ledger.claim(subscription, slice::from_ref(registration)).await?;

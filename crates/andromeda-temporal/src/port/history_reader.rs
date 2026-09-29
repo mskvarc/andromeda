@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
-    uri::Uri,
+    identifier::Identifier,
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
@@ -145,7 +145,7 @@ pub trait TemporalHistoryReader: Send + Sync {
 
     /// Return whether the logical history view contains an entity.
     #[must_use = "temporal entity existence reads must be awaited"]
-    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError>;
+    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError>;
 
     /// Read the entity types each named Temporal Evolution records.
     ///
@@ -156,7 +156,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// of exactly the entities whose history outlived them. An entity the view
     /// does not contain is absent from the result.
     #[must_use = "temporal entity type reads must be awaited"]
-    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError>;
+    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError>;
 
     /// Resolve temporal entity candidates and report every unapplied predicate and window operation.
     #[must_use = "temporal entity selection must be awaited"]
@@ -167,7 +167,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     async fn query_entity_history(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError>;
 
@@ -176,7 +176,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     async fn query_entity_aggregation(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError>;
 

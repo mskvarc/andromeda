@@ -18,7 +18,7 @@
 use crate::SUITE;
 use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
@@ -91,7 +91,7 @@ async fn delivery_insert_waits_out_a_concurrent_subscription_deletion_and_owes_i
         .fetch_one(&mut *write)
         .await
         .expect("writer backend pid");
-    let entity_id: Uri = scope.id("DeliveryRaceProbe:1").parse().expect("a valid entity identifier");
+    let entity_id: Identifier = scope.id("DeliveryRaceProbe:1").parse().expect("a valid entity identifier");
     let record = WriteRecord::mint(Utc::now());
     let change = EntityChange::new(EntityLifecycle::Created, Vec::new());
     let events = [NewNotificationEvent {

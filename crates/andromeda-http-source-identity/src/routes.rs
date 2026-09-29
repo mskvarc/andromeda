@@ -28,7 +28,7 @@ impl SourceIdentityRoutes {
 mod tests {
     use crate::{routes::SourceIdentityRoutes, state::SourceIdentityState};
     use andromeda_extensions::enabled::EnabledExtensions;
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
     use andromeda_tenancy::context_source_alias::ContextSourceAliases;
     use axum::{
         body::{Body, to_bytes},
@@ -42,7 +42,7 @@ mod tests {
     /// The identity document the fragment answers `tenant` with.
     async fn identity_for(tenant: Option<&str>) -> Result<(StatusCode, Value), Box<dyn Error>> {
         let state = SourceIdentityState::new(
-            "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Uri>()?,
+            "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Identifier>()?,
             ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
             Utc::now(),
             None,

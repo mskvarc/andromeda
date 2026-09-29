@@ -2,7 +2,7 @@
 
 use crate::{subscription_diagnostic::SubscriptionDiagnostic, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_jsonld::error::JsonLdError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
 use std::fmt::Display;
 use thiserror::Error;
@@ -17,13 +17,13 @@ pub enum SubscriptionError {
     #[error("subscription not found: {identifier}")]
     NotFound {
         /// Missing subscription identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// A subscription already uses the requested identifier.
     #[error("subscription already exists: {identifier}")]
     AlreadyExists {
         /// Conflicting subscription identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// JSON-LD processing failed.
     #[error(transparent)]
@@ -55,7 +55,7 @@ pub enum SubscriptionError {
 impl SubscriptionError {
     /// Construct a missing-subscription error.
     #[must_use]
-    pub fn not_found(identifier: &Uri) -> SubscriptionError {
+    pub fn not_found(identifier: &Identifier) -> SubscriptionError {
         SubscriptionError::NotFound {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
         }
@@ -63,7 +63,7 @@ impl SubscriptionError {
 
     /// Construct an identifier-conflict error.
     #[must_use]
-    pub fn already_exists(identifier: &Uri) -> SubscriptionError {
+    pub fn already_exists(identifier: &Identifier) -> SubscriptionError {
         SubscriptionError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
         }

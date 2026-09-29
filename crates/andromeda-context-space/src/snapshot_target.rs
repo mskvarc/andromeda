@@ -1,7 +1,7 @@
 //! Snapshot-owned context targets.
 
 use crate::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// A validated Snapshot identifier paired with the branch it addresses.
 ///
@@ -12,13 +12,13 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 pub struct SnapshotTarget {
     key: SnapshotKey,
     branch: SnapshotBranch,
-    snapshot_id: Uri,
+    snapshot_id: Identifier,
 }
 
 impl SnapshotTarget {
     /// Target the Snapshot's published branch, the one scoping resolves.
     #[must_use]
-    pub const fn published(key: SnapshotKey, snapshot_id: Uri) -> SnapshotTarget {
+    pub const fn published(key: SnapshotKey, snapshot_id: Identifier) -> SnapshotTarget {
         SnapshotTarget {
             key,
             branch: SnapshotBranch::Published,
@@ -28,7 +28,7 @@ impl SnapshotTarget {
 
     /// Target the Snapshot's private staging branch, which capture and clone write.
     #[must_use]
-    pub const fn staging(key: SnapshotKey, snapshot_id: Uri) -> SnapshotTarget {
+    pub const fn staging(key: SnapshotKey, snapshot_id: Identifier) -> SnapshotTarget {
         SnapshotTarget {
             key,
             branch: SnapshotBranch::Staging,
@@ -50,7 +50,7 @@ impl SnapshotTarget {
 
     /// Return the exact validated Snapshot URI.
     #[must_use]
-    pub const fn snapshot_id(&self) -> &Uri {
+    pub const fn snapshot_id(&self) -> &Identifier {
         &self.snapshot_id
     }
 }

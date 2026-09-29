@@ -7,7 +7,7 @@ use crate::{
     information_compaction::compact_information,
 };
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde_json::Value;
 
 impl RegistrationService {
@@ -20,7 +20,7 @@ impl RegistrationService {
     /// serialised, [`RegistrationError::JsonLd`] when `context` cannot be
     /// loaded or the response cannot be compacted under it, and
     /// [`RegistrationError::Persistence`] when the store rejects the read.
-    pub async fn get(&self, id: &Uri, context: &ContextSpec) -> Result<Value, RegistrationError> {
+    pub async fn get(&self, id: &Identifier, context: &ContextSpec) -> Result<Value, RegistrationError> {
         let mut registration = self.repo.get(id).await?.ok_or_else(|| RegistrationError::not_found(id))?;
         let additional_properties = registration.additional_properties.take();
         let mut value = serde_json::to_value(registration).map_err(|error| RegistrationError::internal(format!("Failed to serialize CSR: {error}")))?;

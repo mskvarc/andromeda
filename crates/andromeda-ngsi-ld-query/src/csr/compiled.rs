@@ -10,7 +10,7 @@ use crate::{
     scope::query::ScopeQuery,
     temporal::window::TimeInterval,
 };
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, time_prop::TimeProp, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, time_prop::TimeProp};
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
 
@@ -27,7 +27,7 @@ use typed_builder::TypedBuilder;
 pub struct CompiledCsrQuery {
     /// Entity identifiers matched against `information[].entities[]` (clause
     /// 5.12). Empty means no identifier constraint.
-    pub ids: Vec<Uri>,
+    pub ids: Vec<Identifier>,
     /// Optional expanded entity type IRI to match against registered entity types.
     pub entity_type: Option<IriBuf>,
     /// Optional entity identifier pattern matched against registered entity

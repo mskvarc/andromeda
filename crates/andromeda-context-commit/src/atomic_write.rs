@@ -13,7 +13,7 @@ use crate::{
     precondition::Precondition,
     subscription_match::SubscriptionMatch,
 };
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::entity_member::extract_types;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
@@ -22,7 +22,7 @@ use typed_builder::TypedBuilder;
 #[derive(Debug, TypedBuilder)]
 pub struct AtomicWrite {
     /// Entity this write concerns.
-    pub entity_id: Arc<Uri>,
+    pub entity_id: Arc<Identifier>,
     /// Mutation of the current entity row.
     pub entity: EntityMutation,
     /// Temporal Evolution records produced by the mutation.
@@ -98,14 +98,14 @@ mod tests {
         history_record::{HistoryRecord, tombstone},
         precondition::Precondition,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
     use serde_json::{Value, json};
     use std::sync::Arc;
 
     const VEHICLE: &str = "https://uri.etsi.org/ngsi-ld/default-context/Vehicle";
 
-    fn entity_id() -> Arc<Uri> {
-        Arc::new("urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity URI"))
+    fn entity_id() -> Arc<Identifier> {
+        Arc::new("urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity URI"))
     }
 
     /// The merged Entity a write stores back, carrying its clause 4.5.1 types.

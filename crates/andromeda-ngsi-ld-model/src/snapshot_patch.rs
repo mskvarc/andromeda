@@ -4,7 +4,7 @@ use crate::{
     key_value_pair::KeyValuePair,
     snapshot::{SnapshotPriority, SnapshotType},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Deserializer, de::IgnoredAny};
 use url::Url;
@@ -54,7 +54,7 @@ pub struct SnapshotPatch {
     pub type_: Option<SnapshotType>,
     /// Optional unchanged identifier assertion.
     #[serde(default, deserialize_with = "deserialize_present_non_null")]
-    pub id: Option<Uri>,
+    pub id: Option<Identifier>,
     /// New positive lifetime. JSON null is invalid.
     #[serde(default, deserialize_with = "deserialize_present_non_null")]
     pub snapshot_lifetime: Option<Iso8601Duration>,

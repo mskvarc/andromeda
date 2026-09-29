@@ -28,7 +28,7 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{
@@ -50,7 +50,7 @@ pub async fn get(
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     prefer: PreferHeader,
-    TypedPath(entity_map_id): TypedPath<Uri>,
+    TypedPath(entity_map_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
     let context: ContextSpec = context.into_inner();
 
@@ -68,7 +68,7 @@ pub async fn get(
 pub async fn update(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(entity_map_id): TypedPath<Uri>,
+    TypedPath(entity_map_id): TypedPath<Identifier>,
     JsonPayload(body): JsonPayload<UpdateEntityMapBody>,
 ) -> Result<Response, ProblemResponse> {
     let expires_at = body.expires_at.ok_or_else(|| bad_request_data("expiresAt is required", &uri))?;
@@ -86,7 +86,7 @@ pub async fn update(
 pub async fn delete(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(entity_map_id): TypedPath<Uri>,
+    TypedPath(entity_map_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
     state.entity_maps.delete(&entity_map_id).await.with_entity_map_instance(&uri)?;
 
@@ -99,7 +99,7 @@ async fn local_entity_ids(
     query: &EntityQueryParameters,
     context: &ContextSpec,
     uri: &HttpUri,
-) -> Result<Vec<Uri>, ProblemResponse> {
+) -> Result<Vec<Identifier>, ProblemResponse> {
     let compiled = state.entity_query.compile_query_uncapped(query, context).await.with_entity_map_instance(uri)?;
     state.entity_query.query_ids(&state.live_target, &compiled).await.with_entity_map_instance(uri)
 }

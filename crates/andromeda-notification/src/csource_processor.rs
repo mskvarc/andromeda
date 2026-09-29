@@ -17,7 +17,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     notification::{CsrChangeEvent, CsrTriggerReason},
     registration::ContextSourceRegistration,
@@ -43,7 +43,7 @@ const CSR_NOTIFICATION_CONCURRENCY: usize = 20;
 
 /// The registration a change event's snapshot carries, read back into its
 /// typed form so it is matched exactly as a stored registration is.
-fn snapshot_registration(snapshot: &Value, csr_id: &Uri) -> Option<ContextSourceRegistration> {
+fn snapshot_registration(snapshot: &Value, csr_id: &Identifier) -> Option<ContextSourceRegistration> {
     match serde_json::from_value(snapshot.clone()) {
         // clone: deserialisation consumes the document and the event still owns its snapshot
         Ok(registration) => Some(registration),
@@ -211,7 +211,7 @@ impl CsourceNotificationProcessor {
     /// Withdraw the records of an updated subscription that lie outside its
     /// current match set and that it no longer selects, returning those
     /// withdrawn.
-    async fn withdraw_unselected_records(&self, compiled_sub: &CompiledCsrSubscription, matching: &[ContextSourceRegistration]) -> Vec<Uri> {
+    async fn withdraw_unselected_records(&self, compiled_sub: &CompiledCsrSubscription, matching: &[ContextSourceRegistration]) -> Vec<Identifier> {
         let beyond = match self.membership.recorded_beyond(&compiled_sub.id, matching).await {
             Ok(beyond) => beyond,
             Err(error) => {
@@ -234,7 +234,7 @@ impl CsourceNotificationProcessor {
     /// Each of `registrations` paired with its state as the store holds it
     /// now, or with its state as read when the store cannot be read, so a read
     /// failure never drops a registration the subscriber is owed.
-    async fn current_states(&self, registrations: &[&ContextSourceRegistration]) -> Vec<(Uri, Option<ContextSourceRegistration>)> {
+    async fn current_states(&self, registrations: &[&ContextSourceRegistration]) -> Vec<(Identifier, Option<ContextSourceRegistration>)> {
         let mut current = Vec::with_capacity(registrations.len());
         for registration in registrations {
             let state = match self.csr_repo.get(&registration.id).await {

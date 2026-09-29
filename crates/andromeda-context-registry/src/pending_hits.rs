@@ -30,7 +30,7 @@ pub(crate) fn fold_pending_hits(counter: &HitCounter, metadata: &mut ContextMeta
 mod tests {
     use crate::pending_hits::fold_pending_hits;
     use andromeda_jsonld::hit_counter::HitCounter;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
     use chrono::Utc;
     use iri_rs::IriBuf;
@@ -42,7 +42,7 @@ mod tests {
         ContextMetadata::builder()
             .url(Url::parse(serving.as_str()).ok())
             .serving_iri(Some(serving.clone())) // clone: the counter key is owned by the metadata record under test.
-            .local_id(serving.as_str().parse::<Uri>().expect("a serving URL is a valid URI"))
+            .local_id(serving.as_str().parse::<Identifier>().expect("a serving URL is a valid URI"))
             .kind(ContextKind::Cached)
             .created_at(now)
             .last_usage(now)
@@ -99,7 +99,7 @@ mod tests {
         let now = Utc::now();
         let mut metadata = ContextMetadata::builder()
             .serving_iri(None)
-            .local_id("urn:ngsi-ld:Context:hosted".parse::<Uri>().expect("a URN is a valid URI"))
+            .local_id("urn:ngsi-ld:Context:hosted".parse::<Identifier>().expect("a URN is a valid URI"))
             .kind(ContextKind::Hosted)
             .created_at(now)
             .last_usage(now)

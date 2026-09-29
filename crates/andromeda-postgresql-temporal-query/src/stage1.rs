@@ -367,7 +367,7 @@ fn build_temporal_stage1_conditions(schema: Option<&DynIden>, compiled: &Compile
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
-    use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         cursor::PageCursor,
         dataset::DatasetSelector,
@@ -394,7 +394,7 @@ mod tests {
         DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
     }
 
-    fn ids(raw: &[&str]) -> Vec<Uri> {
+    fn ids(raw: &[&str]) -> Vec<Identifier> {
         raw.iter().map(|id| id.parse().expect("valid URI")).collect()
     }
 
@@ -926,7 +926,7 @@ mod tests {
         assert!(!sql.contains("ORDER BY"), "{sql}");
     }
 
-    fn boundary(id: &str) -> Uri {
+    fn boundary(id: &str) -> Identifier {
         id.parse().expect("valid URI")
     }
 

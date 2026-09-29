@@ -21,7 +21,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity::EntityPatch,
     expanded::{
@@ -75,7 +75,7 @@ impl EntityService {
     pub async fn merge(
         &self,
         target: &ContextTarget,
-        id: &Uri,
+        id: &Identifier,
         patch: &EntityPatch,
         admitted: AdmittedEntity<MergeEntity>,
         context: &ContextSpec,
@@ -159,7 +159,7 @@ impl EntityService {
     async fn adapt_merge_fragment(
         &self,
         target: &ContextTarget,
-        id: &Uri,
+        id: &Identifier,
         fragment: &mut Value,
         prepared_context: &PreparedTermContext,
         options: MergeOptions<'_>,

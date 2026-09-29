@@ -28,7 +28,7 @@ use andromeda_context_commit::{
     write_record::WriteRecord,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_context_store::entity::{
     copy::create_batch_via_copy_in_tx,
     inserted_entity::InsertedEntity,
@@ -59,7 +59,7 @@ struct EntityMutations {
     ///
     /// A delete contributes nothing: the projection's single foreign key
     /// cascades from `entities`, so a deleted entity's rows go with it.
-    keys: HashMap<Uri, ProjectedEntityKey>,
+    keys: HashMap<Identifier, ProjectedEntityKey>,
 }
 
 /// Atomic context committer backed by one tenant's PostgreSQL database.
@@ -112,7 +112,7 @@ impl PostgresAtomicCommitter {
             untouched,
         } = group(writes);
         let mut outcomes: Vec<Option<WriteOutcome>> = writes.iter().map(|_| None).collect();
-        let mut keys: HashMap<Uri, ProjectedEntityKey> = HashMap::new();
+        let mut keys: HashMap<Identifier, ProjectedEntityKey> = HashMap::new();
         for &index in &untouched {
             outcomes[index] = Some(WriteOutcome::NoEntityChange);
         }
@@ -142,7 +142,7 @@ impl PostgresAtomicCommitter {
         inserts: &[IndexedWrite<'_>],
         names: &ResolvedWriteNames,
         outcomes: &mut [Option<WriteOutcome>],
-        keys: &mut HashMap<Uri, ProjectedEntityKey>,
+        keys: &mut HashMap<Identifier, ProjectedEntityKey>,
     ) -> Result<(), CommitError> {
         if inserts.is_empty() {
             return Ok(());
@@ -168,7 +168,7 @@ impl PostgresAtomicCommitter {
         updates: &[IndexedWrite<'_>],
         names: &ResolvedWriteNames,
         outcomes: &mut [Option<WriteOutcome>],
-        keys: &mut HashMap<Uri, ProjectedEntityKey>,
+        keys: &mut HashMap<Identifier, ProjectedEntityKey>,
     ) -> Result<(), CommitError> {
         if updates.is_empty() {
             return Ok(());
@@ -196,12 +196,12 @@ impl PostgresAtomicCommitter {
         if deletes.is_empty() {
             return Ok(());
         }
-        let ids: Vec<Uri> = deletes
+        let ids: Vec<Identifier> = deletes
             .iter()
             .map(|(_, write)| write.entity_id.as_ref().clone()) // clone: the SQL bind list owns identifiers borrowed from writes.
             .collect();
         let expected = expectations(deletes);
-        let mut snapshots: HashMap<Uri, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, target, &ids, &expected)
+        let mut snapshots: HashMap<Identifier, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, target, &ids, &expected)
             .await
             .map_err(context_store)?
             .into_iter()
@@ -226,9 +226,9 @@ async fn resolve_untouched_keys(
     target: &ContextTarget,
     writes: &[AtomicWrite],
     untouched: &[usize],
-    keys: &mut HashMap<Uri, ProjectedEntityKey>,
+    keys: &mut HashMap<Identifier, ProjectedEntityKey>,
 ) -> Result<(), CommitError> {
-    let ids: Vec<Uri> = untouched
+    let ids: Vec<Identifier> = untouched
         .iter()
         .map(|&index| &writes[index])
         .filter(|write| !write.history.is_empty())
@@ -243,19 +243,19 @@ async fn resolve_untouched_keys(
 }
 
 /// Whether a fused statement returned an entity identifier.
-fn returned_flag(returned: &HashMap<Uri, ProjectedEntityKey>, id: &Uri) -> RowReturned {
+fn returned_flag(returned: &HashMap<Identifier, ProjectedEntityKey>, id: &Identifier) -> RowReturned {
     if returned.contains_key(id) { RowReturned::Yes } else { RowReturned::No }
 }
 
 /// Remember the surrogate key of every entity a fused update or a lookup
 /// returned, all of which existed before the commit.
-fn record_keys(keys: &mut HashMap<Uri, ProjectedEntityKey>, written: Vec<WrittenEntity>) {
+fn record_keys(keys: &mut HashMap<Identifier, ProjectedEntityKey>, written: Vec<WrittenEntity>) {
     keys.extend(written.into_iter().map(|entity| (entity.id, ProjectedEntityKey::Existing(entity.key))));
 }
 
 /// Remember the surrogate key of every entity the fused insert created, which
 /// the commit's own insert minted.
-fn record_minted(keys: &mut HashMap<Uri, ProjectedEntityKey>, inserted: Vec<InsertedEntity>) {
+fn record_minted(keys: &mut HashMap<Identifier, ProjectedEntityKey>, inserted: Vec<InsertedEntity>) {
     keys.extend(inserted.into_iter().map(|entity| (entity.id, ProjectedEntityKey::Minted(entity.key))));
 }
 
@@ -375,7 +375,7 @@ mod tests {
         entity_group::RowReturned,
         projected_entity_key::ProjectedEntityKey,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_postgresql_codes::entity_key::EntityKey;
     use andromeda_postgresql_context_store::entity::written_entity::WrittenEntity;
     use std::collections::HashMap;
@@ -383,7 +383,7 @@ mod tests {
     fn entity(id: &str, key: i64) -> WrittenEntity {
         WrittenEntity {
             key: EntityKey::try_from(key).expect("a positive surrogate key"),
-            id: id.parse::<Uri>().expect("valid entity URI"),
+            id: id.parse::<Identifier>().expect("valid entity URI"),
         }
     }
 
@@ -391,8 +391,8 @@ mod tests {
     fn returned_flag_reports_identifier_membership() {
         let mut keys = HashMap::new();
         record_keys(&mut keys, vec![entity("urn:ngsi-ld:A", 1)]);
-        let present = "urn:ngsi-ld:A".parse::<Uri>().expect("valid entity URI");
-        let absent = "urn:ngsi-ld:B".parse::<Uri>().expect("valid entity URI");
+        let present = "urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI");
+        let absent = "urn:ngsi-ld:B".parse::<Identifier>().expect("valid entity URI");
         assert!(matches!(returned_flag(&keys, &present), RowReturned::Yes));
         assert!(matches!(returned_flag(&keys, &absent), RowReturned::No));
     }
@@ -409,7 +409,8 @@ mod tests {
         named.sort();
         pretty_assertions::assert_eq!(named, vec!["urn:ngsi-ld:A".to_owned(), "urn:ngsi-ld:C".to_owned()]);
         pretty_assertions::assert_eq!(
-            keys.get(&"urn:ngsi-ld:C".parse::<Uri>().expect("valid entity URI")).map(|key| key.key().get()),
+            keys.get(&"urn:ngsi-ld:C".parse::<Identifier>().expect("valid entity URI"))
+                .map(|key| key.key().get()),
             Some(3)
         );
     }
@@ -421,7 +422,7 @@ mod tests {
         let mut keys = HashMap::new();
         record_keys(&mut keys, vec![entity("urn:ngsi-ld:A", 1)]);
         assert!(matches!(
-            keys.get(&"urn:ngsi-ld:A".parse::<Uri>().expect("valid entity URI")),
+            keys.get(&"urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI")),
             Some(ProjectedEntityKey::Existing(_))
         ));
     }

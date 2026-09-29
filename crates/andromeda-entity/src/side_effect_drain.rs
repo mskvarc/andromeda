@@ -63,7 +63,7 @@ use andromeda_context_commit::{
     subscription_match::SubscriptionMatch,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -363,7 +363,7 @@ impl EntitySideEffectDrain {
 /// one -- gets a write of its own. Neither changes the entity row. Observation
 /// writes keep their stored order and the matches keep theirs, which is what
 /// numbers the replay's rows the same way on every attempt.
-fn replay_writes(temporal_entities: Vec<(Arc<Uri>, Arc<Value>)>, owed: Vec<SubscriptionMatch>) -> Vec<AtomicWrite> {
+fn replay_writes(temporal_entities: Vec<(Arc<Identifier>, Arc<Value>)>, owed: Vec<SubscriptionMatch>) -> Vec<AtomicWrite> {
     let mut writes: Vec<AtomicWrite> = temporal_entities
         .into_iter()
         .map(|(identifier, expanded)| {
@@ -374,7 +374,7 @@ fn replay_writes(temporal_entities: Vec<(Arc<Uri>, Arc<Value>)>, owed: Vec<Subsc
                 .build()
         })
         .collect();
-    let mut positions: HashMap<Arc<Uri>, usize> = writes
+    let mut positions: HashMap<Arc<Identifier>, usize> = writes
         .iter()
         .enumerate()
         .map(|(position, write)| (Arc::clone(&write.entity_id), position)) // clone: Arc ref-count bump
@@ -428,7 +428,7 @@ mod tests {
         write_record::WriteRecord,
     };
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         expanded::{
@@ -987,7 +987,7 @@ mod tests {
         )
     }
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("a valid URI")
     }
 

@@ -1,6 +1,6 @@
 //! Entity change events committed for downstream consumers.
 
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_change::EntityChange,
     notification::{ChangeOrigin, SysAttrsSnapshot},
@@ -15,7 +15,7 @@ use typed_builder::TypedBuilder;
 #[derive(Clone, Debug, TypedBuilder)]
 pub struct ChangeEvent {
     /// Mutated entity identifier.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// Types declared by the mutated entity.
     #[builder(default = Default::default())]
     pub entity_types: Vec<EntityTypeName>,

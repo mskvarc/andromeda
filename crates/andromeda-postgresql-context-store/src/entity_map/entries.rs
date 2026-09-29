@@ -8,7 +8,7 @@ use crate::entity_map::{
     persistence_error,
 };
 use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_postgresql_schema::entity_map::{EntityMapEntries, EntityMapLinks, EntityMaps as EntityMapsTable};
 use andromeda_postgresql_seaquery::{
@@ -122,8 +122,8 @@ pub(crate) async fn insert_children(connection: &mut PgConnection, map: &EntityM
             .map_err(persistence_error)?;
     }
     if !map.linked_maps.is_empty() {
-        let registrations: Vec<&str> = map.linked_maps.keys().map(Uri::as_str).collect();
-        let linked: Vec<&str> = map.linked_maps.values().map(Uri::as_str).collect();
+        let registrations: Vec<&str> = map.linked_maps.keys().map(Identifier::as_str).collect();
+        let linked: Vec<&str> = map.linked_maps.values().map(Identifier::as_str).collect();
         let sql = links_insert_sql()?;
         sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(map.id.as_str())
@@ -139,7 +139,7 @@ pub(crate) async fn insert_children(connection: &mut PgConnection, map: &EntityM
 /// The upsert of one link under a live map: the row is selected off the live
 /// control record, so an absent or expired map writes nothing, and a link
 /// already recorded for the registration is replaced.
-fn link_upsert(id: &Uri, registration: &Uri, linked_map: &Uri) -> Result<InsertStatement, EntityMapError> {
+fn link_upsert(id: &Identifier, registration: &Identifier, linked_map: &Identifier) -> Result<InsertStatement, EntityMapError> {
     let mut staged = Query::select();
     staged
         .column((EntityMapsTable::Table, EntityMapsTable::EntityMapKey))
@@ -167,7 +167,12 @@ fn link_upsert(id: &Uri, registration: &Uri, linked_map: &Uri) -> Result<InsertS
 
 /// Record the map a registration's context source used under a live map,
 /// replacing the link recorded for that registration (clause 5.5.14).
-pub(crate) async fn upsert_link(pool: &PgPool, id: &Uri, registration: &Uri, linked_map: &Uri) -> Result<EntityMapMutation, EntityMapError> {
+pub(crate) async fn upsert_link(
+    pool: &PgPool,
+    id: &Identifier,
+    registration: &Identifier,
+    linked_map: &Identifier,
+) -> Result<EntityMapMutation, EntityMapError> {
     let (sql, values) = link_upsert(id, registration, linked_map)?.build_sqlx(PostgresQueryBuilder);
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
@@ -185,7 +190,7 @@ pub(crate) async fn upsert_link(pool: &PgPool, id: &Uri, registration: &Uri, lin
 ///
 /// The map key is resolved off the live control record, so an expired map
 /// resolves to NULL and nothing is removed.
-fn entries_delete(id: &Uri, entity_ids: &[&str]) -> DeleteStatement {
+fn entries_delete(id: &Identifier, entity_ids: &[&str]) -> DeleteStatement {
     let mut delete = Query::delete();
     delete
         .from_table(EntityMapEntries::Table)
@@ -197,8 +202,8 @@ fn entries_delete(id: &Uri, entity_ids: &[&str]) -> DeleteStatement {
 /// Remove `entity_ids` from a live map (clauses 4.3.6.7 and 5.5.14): the
 /// identifiers a prepared result page checked and found no longer matching
 /// stop being considered by the pages that follow.
-pub(crate) async fn prune_entries(pool: &PgPool, id: &Uri, entity_ids: &[Uri]) -> Result<(), EntityMapError> {
-    let entity_ids: Vec<&str> = entity_ids.iter().map(Uri::as_str).collect();
+pub(crate) async fn prune_entries(pool: &PgPool, id: &Identifier, entity_ids: &[Identifier]) -> Result<(), EntityMapError> {
+    let entity_ids: Vec<&str> = entity_ids.iter().map(Identifier::as_str).collect();
     let (sql, values) = entries_delete(id, &entity_ids).build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
@@ -208,7 +213,7 @@ pub(crate) async fn prune_entries(pool: &PgPool, id: &Uri, entity_ids: &[Uri]) -
 }
 
 /// A map's `(entity_id, source)` pairs in the order they were produced.
-pub(crate) async fn read_entries(pool: &PgPool, id: &Uri) -> Result<Vec<(String, String)>, EntityMapError> {
+pub(crate) async fn read_entries(pool: &PgPool, id: &Identifier) -> Result<Vec<(String, String)>, EntityMapError> {
     let (sql, values) = Query::select()
         .column(EntityMapEntries::EntityId)
         .column(EntityMapEntries::Source)
@@ -231,7 +236,7 @@ pub(crate) async fn read_entries(pool: &PgPool, id: &Uri) -> Result<Vec<(String,
 }
 
 /// A map's `(registration_id, linked_map_id)` pairs.
-pub(crate) async fn read_links(pool: &PgPool, id: &Uri) -> Result<Vec<(String, String)>, EntityMapError> {
+pub(crate) async fn read_links(pool: &PgPool, id: &Identifier) -> Result<Vec<(String, String)>, EntityMapError> {
     let (sql, values) = Query::select()
         .column(EntityMapLinks::RegistrationId)
         .column(EntityMapLinks::LinkedMapId)

@@ -34,7 +34,7 @@ use andromeda_http_response::{
     render::start_rendering_normalized,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{expanded::mutation::selection::OverwritePolicy, query::body::Query};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_render::response::ResponsePayload;
@@ -89,7 +89,7 @@ fn multi_status_response(
 /// The 201 Created answer listing the created identifiers (clauses 5.6.7.5
 /// and 5.6.8.5), rendered under the negotiated media type.
 fn created_response(
-    created: &[Uri],
+    created: &[Identifier],
     accept: AcceptFormatNoGeo,
     context: &ContextSpec,
     uri: &HttpUri,

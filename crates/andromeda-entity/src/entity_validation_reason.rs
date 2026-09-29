@@ -11,8 +11,8 @@ use andromeda_ngsi_ld_geometry::geojson::GeometryError;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
+    identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
-    uri::{Uri, UriParseError},
 };
 use andromeda_ngsi_ld_model::expanded::{
     dataset_id::InstanceDatasetIdError,
@@ -77,7 +77,7 @@ pub enum EntityValidationReason {
         raw: String,
         /// Why it is not an identifier.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// An attribute name begins with the reserved `@` character.
     #[error("invalid attribute name '{name}': names beginning with '@' are reserved")]
@@ -176,7 +176,7 @@ pub enum EntityValidationReason {
         /// The offending attribute.
         attribute: AttributeName,
         /// The repeated dataset identifier.
-        dataset_id: Uri,
+        dataset_id: Identifier,
     },
     /// An attribute carried more than one default (no-`datasetId`) instance
     /// (clause 4.5.5).
@@ -217,7 +217,7 @@ pub enum EntityValidationReason {
     #[error("the replacement names the entity '{named}', not the entity its URL names")]
     ReplacementNamesAnotherEntity {
         /// The entity the payload names.
-        named: Uri,
+        named: Identifier,
     },
     /// A distance ordering was requested with nothing to measure from (clause 5.7.2.4).
     #[error("distance-based ordering requires either a geo-query or an orderFrom parameter")]

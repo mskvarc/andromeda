@@ -10,7 +10,7 @@ use crate::{
     validation::{RegistrationShape, validate_shape},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, scoped_context_admission::reject_scoped_user_contexts};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
 use serde_json::Value;
 
@@ -30,7 +30,7 @@ impl RegistrationService {
     /// when no identifier could be generated for an anonymous registration,
     /// and [`RegistrationError::Persistence`] when the store rejects the
     /// write.
-    pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<Uri, RegistrationError> {
+    pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<Identifier, RegistrationError> {
         let id = match payload.get("id").and_then(Value::as_str) {
             Some(raw) => {
                 let id = client_registration_id(raw)?;

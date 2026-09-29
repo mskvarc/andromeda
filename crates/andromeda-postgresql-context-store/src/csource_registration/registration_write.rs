@@ -21,9 +21,9 @@ use crate::csource_registration::{
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
+    identifier::Identifier,
     non_empty_text::NonEmptyText,
     tenant::TenantName,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
@@ -88,7 +88,7 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
 
 /// Persist a new registration, its delivery state and its routing projection
 /// in one transaction.
-pub(super) async fn create(store: &PostgresRegistrationStore, id: &Uri, params: &CreateCsrParams) -> Result<(), RegistrationError> {
+pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, params: &CreateCsrParams) -> Result<(), RegistrationError> {
     let information = serde_json::to_value(&params.information)?;
     let pattern_forms = stored_pattern_forms(&params.information);
     let observation_interval = params.observation_interval.map(serde_json::to_value).transpose()?;
@@ -143,7 +143,7 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Uri, params: 
 }
 
 /// Replace a registration with a resolved value set and rebuild its routing projection in one transaction.
-pub(super) async fn update(store: &PostgresRegistrationStore, id: &Uri, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {
+pub(super) async fn update(store: &PostgresRegistrationStore, id: &Identifier, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {
     let information = serde_json::to_value(&values.information)?;
     let pattern_forms = stored_pattern_forms(&values.information);
     let observation_interval = values.observation_interval.map(serde_json::to_value).transpose()?;
@@ -202,7 +202,7 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Uri, values: 
 /// Record one distributed operation on the health members of Table 5.2.9-2.
 pub(super) async fn record_forwarding_outcome(
     store: &PostgresRegistrationStore,
-    id: &Uri,
+    id: &Identifier,
     outcome: ForwardingOutcome,
     at: DateTime<Utc>,
 ) -> Result<(), RegistrationError> {
@@ -217,7 +217,7 @@ pub(super) async fn record_forwarding_outcome(
 }
 
 /// Delete a registration and its routing projection rows in one transaction.
-pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Uri) -> Result<RegistrationMutation, RegistrationError> {
+pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -> Result<RegistrationMutation, RegistrationError> {
     let mut transaction = store.pool.begin().await.map_err(persistence_error)?;
     // Removed before the payload so the deletion holds whatever referential
     // action the foreign key carries; a registration that lingers in the

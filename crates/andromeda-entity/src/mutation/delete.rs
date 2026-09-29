@@ -17,7 +17,7 @@ use andromeda_context_commit::{
     write_outcome::single,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::ChangeOrigin;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
@@ -31,7 +31,7 @@ impl EntityService {
     /// Reports [`EntityError::NotFound`] when no entity carries `id`, and
     /// [`EntityError::Persistence`] when the store could not read the entity or
     /// commit the deletion.
-    pub async fn delete(&self, target: &ContextTarget, id: &Uri) -> Result<(), EntityError> {
+    pub async fn delete(&self, target: &ContextTarget, id: &Identifier) -> Result<(), EntityError> {
         let timer = entity::start(EntityOperation::Delete);
         let result: Result<(), EntityError> = async {
             let entity_uri = id.clone(); // clone: delete events and persistence work own the identifier

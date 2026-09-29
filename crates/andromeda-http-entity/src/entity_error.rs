@@ -49,13 +49,13 @@ mod tests {
         residual_predicate::ResidualPredicate,
     };
     use andromeda_http_response::batch_projection::batch_entity_error;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::http::StatusCode;
     use std::time::Duration;
 
-    fn entity_id() -> Result<Uri, EntityError> {
-        "urn:ngsi-ld:Entity:1".parse::<Uri>().map_err(EntityError::internal)
+    fn entity_id() -> Result<Identifier, EntityError> {
+        "urn:ngsi-ld:Entity:1".parse::<Identifier>().map_err(EntityError::internal)
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::subscription_store::{
     stored_kind::{StoredKind, of_kind},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
@@ -77,7 +77,7 @@ pub fn state_insert_sql(target: &ContextTarget) -> Result<String, SubscriptionEr
 
 /// The scalar subquery resolving the state row's key from the subscription's
 /// external `id`, family and, when asked, active status.
-fn owner_key(target: &ContextTarget, id: &Uri, kind: StoredKind, status: OwnerStatus) -> SimpleExpr {
+fn owner_key(target: &ContextTarget, id: &Identifier, kind: StoredKind, status: OwnerStatus) -> SimpleExpr {
     let mut owner = Query::select();
     owner
         .column((Subscriptions::Table, Subscriptions::SubscriptionKey))
@@ -98,7 +98,7 @@ fn owner_key(target: &ContextTarget, id: &Uri, kind: StoredKind, status: OwnerSt
 /// [`NotificationSlotGate`] carries. Zero rows affected means the slot was
 /// refused, which is how clause 5.2.12 `throttling` and Table 5.2.15-1
 /// `cooldown` both stop a notification from being sent at all.
-pub fn claim_statement(target: &ContextTarget, id: &Uri, kind: StoredKind, gate: NotificationSlotGate) -> UpdateStatement {
+pub fn claim_statement(target: &ContextTarget, id: &Identifier, kind: StoredKind, gate: NotificationSlotGate) -> UpdateStatement {
     let mut statement = Query::update();
     statement
         .table(table_of(target, SubscriptionDeliveryState::Table))
@@ -123,7 +123,7 @@ pub fn claim_statement(target: &ContextTarget, id: &Uri, kind: StoredKind, gate:
 /// the "number of times an unsuccessful response (or timeout) has been received
 /// when delivering the notification"; a success moves no counter, because
 /// `times_sent` already counted the attempt when the slot was claimed.
-pub fn mark_statement(outcome: DeliveryOutcome, target: &ContextTarget, id: &Uri, kind: StoredKind) -> UpdateStatement {
+pub fn mark_statement(outcome: DeliveryOutcome, target: &ContextTarget, id: &Identifier, kind: StoredKind) -> UpdateStatement {
     let mut statement = Query::update();
     statement
         .table(table_of(target, SubscriptionDeliveryState::Table))
@@ -232,7 +232,7 @@ pub fn interval_anchor_select(target: &ContextTarget) -> SelectStatement {
 /// counting a notification: the interval ticked but had nothing to send, so its
 /// `last_notification` moves so the sweep stops re-reading it every pass and it
 /// becomes next due one interval after the cutoff.
-pub fn advance_interval_anchor_statement(target: &ContextTarget, id: &Uri, kind: StoredKind, cutoff: DateTime<Utc>) -> UpdateStatement {
+pub fn advance_interval_anchor_statement(target: &ContextTarget, id: &Identifier, kind: StoredKind, cutoff: DateTime<Utc>) -> UpdateStatement {
     let mut statement = Query::update();
     statement
         .table(table_of(target, SubscriptionDeliveryState::Table))
@@ -257,14 +257,14 @@ mod tests {
         stored_kind::StoredKind,
     };
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::{positive_milliseconds::PositiveMilliseconds, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds};
     use andromeda_postgresql_schema::subscriptions::Subscriptions;
     use andromeda_subscription::notification_slot::NotificationSlotGate;
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
-    fn subscription() -> Uri {
+    fn subscription() -> Identifier {
         "urn:ngsi-ld:Subscription:one".parse().expect("valid")
     }
 

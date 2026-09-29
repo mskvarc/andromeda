@@ -15,7 +15,7 @@ use crate::{
 use andromeda_http_extraction::{context::ContextUrl, jsonld::JsonLdDocument};
 use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{CsourceNotification, Notification};
 use axum::{
     extract::{OriginalUri, State},
@@ -68,7 +68,7 @@ impl TryFrom<Value> for Received {
 
 impl Received {
     /// The subscription identifier the notification names.
-    const fn subscription_id(&self) -> &Uri {
+    const fn subscription_id(&self) -> &Identifier {
         match self {
             Received::Notification(notification) => &notification.subscription_id,
             Received::ContextSourceNotification(notification) => &notification.subscription_id,

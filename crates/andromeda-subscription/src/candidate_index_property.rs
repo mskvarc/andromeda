@@ -7,7 +7,7 @@
 
 use crate::{candidate_index::CandidateIndex, compiled::CompiledSubscription, error::SubscriptionError, matching::matches_subscription};
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     expanded::{
@@ -114,7 +114,7 @@ fn internal(error: &impl ToString) -> SubscriptionError {
     SubscriptionError::internal(error.to_string())
 }
 
-fn entity_uri(index: usize) -> Result<Uri, SubscriptionError> {
+fn entity_uri(index: usize) -> Result<Identifier, SubscriptionError> {
     format!("urn:ngsi-ld:E:{index}").parse().map_err(|error| internal(&error))
 }
 

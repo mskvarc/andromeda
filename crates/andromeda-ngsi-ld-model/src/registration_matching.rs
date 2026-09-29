@@ -8,7 +8,7 @@
 //! matching elements. This module is that reading.
 
 use crate::{entity_info::EntityInfo, registration::info::RegistrationInfo, subscription::EntitySelector};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 
 /// One entity specification of clause 5.12: a type selector, entity
@@ -21,7 +21,7 @@ pub struct EntitySpecification<'spec> {
     /// The clause 4.17 selector the registered types must satisfy.
     pub type_selector: Option<&'spec TypeExprRaw>,
     /// The entity identifiers asked for; empty when none were.
-    pub ids: &'spec [Uri],
+    pub ids: &'spec [Identifier],
     /// The identifier pattern asked for, if any.
     pub id_pattern: Option<&'spec Pattern>,
 }
@@ -132,7 +132,7 @@ mod tests {
         serde_json::from_value(value).expect("information parses")
     }
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

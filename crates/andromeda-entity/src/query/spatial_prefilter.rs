@@ -3,7 +3,7 @@
 
 use crate::query::EntityQueryService;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::EntitySelector,
@@ -82,10 +82,10 @@ impl EntityQueryService {
 
         // The store applies the selector's own identifiers anyway; dropping the
         // candidates they exclude only keeps the bound array small.
-        let candidates: Vec<Uri> = if accelerable.selector.ids.is_empty() {
+        let candidates: Vec<Identifier> = if accelerable.selector.ids.is_empty() {
             candidates.into_iter().collect()
         } else {
-            let requested: HashSet<&Uri> = accelerable.selector.ids.iter().collect();
+            let requested: HashSet<&Identifier> = accelerable.selector.ids.iter().collect();
             candidates.into_iter().filter(|id| requested.contains(id)).collect()
         };
         tracing::debug!(
@@ -100,8 +100,8 @@ impl EntityQueryService {
 
     /// The union of every type partition's candidates, or `None` when any one
     /// partition declines to answer.
-    fn candidates(&self, index: &SpatialEntityIndex, accelerable: &Accelerable<'_>) -> Option<HashSet<Uri>> {
-        let mut union: HashSet<Uri> = HashSet::new();
+    fn candidates(&self, index: &SpatialEntityIndex, accelerable: &Accelerable<'_>) -> Option<HashSet<Identifier>> {
+        let mut union: HashSet<Identifier> = HashSet::new();
         for type_iri in &accelerable.type_iris {
             let key = SpatialKey::new(
                 self.tenant.clone(),                 // clone: the spatial key owns its tenant

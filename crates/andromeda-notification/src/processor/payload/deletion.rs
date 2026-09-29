@@ -1,6 +1,6 @@
 //! Deleted attribute and instance materialization.
 
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::sub_second, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::expanded::{instance_key::AttributeInstanceKey, null_sentinel::expanded_null_value};
 use andromeda_ngsi_ld_vocabulary::{
     NULL_URI,
@@ -139,7 +139,7 @@ pub(super) fn inject_deleted_instances(
     entity_obj: &mut serde_json::Map<String, Value>,
     attr_iri: &str,
     prev_obj: &serde_json::Map<String, Value>,
-    changed_dataset_id: Option<&Uri>,
+    changed_dataset_id: Option<&Identifier>,
     deleted_at: Option<DateTime<Utc>>,
 ) {
     let Some(prev_attr) = prev_obj.get(attr_iri) else { return };
@@ -148,7 +148,7 @@ pub(super) fn inject_deleted_instances(
         return;
     };
 
-    let current_dataset_ids: HashSet<Option<Uri>> = cur_arr.iter().map(dataset_id_of).collect();
+    let current_dataset_ids: HashSet<Option<Identifier>> = cur_arr.iter().map(dataset_id_of).collect();
 
     let mut deleted_instances: Vec<Value> = Vec::new();
     for prev_inst in prev_arr {
@@ -171,7 +171,7 @@ pub(super) fn inject_deleted_instances(
     }
 }
 
-fn dataset_id_of(instance: &Value) -> Option<Uri> {
+fn dataset_id_of(instance: &Value) -> Option<Identifier> {
     instance
         .as_object()
         .and_then(|object| object.get(expanded_properties::DATASET_ID.as_str()))
@@ -180,7 +180,7 @@ fn dataset_id_of(instance: &Value) -> Option<Uri> {
         .and_then(Value::as_object)
         .and_then(|object| object.get("@id"))
         .and_then(Value::as_str)
-        .and_then(|raw| raw.parse::<Uri>().ok())
+        .and_then(|raw| raw.parse::<Identifier>().ok())
 }
 
 pub(super) fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<Utc>) {
@@ -198,7 +198,7 @@ pub(super) fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<U
 #[cfg(test)]
 mod tests {
     use super::{inject_deleted_attributes, nullify_attribute_instance};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
     use andromeda_ngsi_ld_model::expanded::instance_key::AttributeInstanceKey;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use pretty_assertions::assert_eq;
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn a_dataset_specific_event_materializes_only_that_deleted_instance() {
         let attribute = "https://example.com/speed".parse::<AttributeName>().expect("valid attribute name");
-        let dataset = "urn:dataset:named".parse::<Uri>().expect("valid dataset URI");
+        let dataset = "urn:dataset:named".parse::<Identifier>().expect("valid dataset URI");
         let previous = json!({
             "@id": "urn:ngsi-ld:Vehicle:1",
             attribute.as_str(): [
@@ -240,7 +240,7 @@ mod tests {
     fn every_instance_one_change_deleted_is_materialized() {
         let speed = "https://example.com/speed".parse::<AttributeName>().expect("valid attribute name");
         let name = "https://example.com/name".parse::<AttributeName>().expect("valid attribute name");
-        let dataset = "urn:dataset:named".parse::<Uri>().expect("valid dataset URI");
+        let dataset = "urn:dataset:named".parse::<Identifier>().expect("valid dataset URI");
         let previous = json!({
             "@id": "urn:ngsi-ld:Vehicle:1",
             speed.as_str(): [

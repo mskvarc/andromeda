@@ -19,7 +19,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 #[cfg(test)]
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{mutation::expiry::remove_expired_attribute_instances, removed_instance::removed_attribute_instances};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -193,7 +193,7 @@ impl EntityService {
 }
 
 #[cfg(test)]
-fn landed_ids(identifiers: Vec<Uri>, outcomes: &[WriteOutcome]) -> Vec<Uri> {
+fn landed_ids(identifiers: Vec<Identifier>, outcomes: &[WriteOutcome]) -> Vec<Identifier> {
     identifiers
         .into_iter()
         .zip(outcomes)
@@ -239,7 +239,7 @@ fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Result<Optio
 }
 
 #[cfg(test)]
-fn purge_write(identifier: &Uri, snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<AtomicWrite> {
+fn purge_write(identifier: &Identifier, snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<AtomicWrite> {
     let purged = purged_state(snapshot, cutoff).expect("readable datasetIds")?;
     Some(
         AtomicWrite::builder()
@@ -258,11 +258,11 @@ mod tests {
         expiry::{EntityExpiryBatchSize, EntityExpiryBatchSizeError, landed_ids, purge_write},
     };
     use andromeda_context_commit::{history_record::HistoryRecord, write_outcome::WriteOutcome};
-    use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
+    use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
 
-    fn identifiers(raw: &[&str]) -> Result<Vec<Uri>, UriParseError> {
+    fn identifiers(raw: &[&str]) -> Result<Vec<Identifier>, IdentifierParseError> {
         raw.iter().map(|identifier| identifier.parse()).collect()
     }
 
@@ -286,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn only_successful_purges_are_reported() -> Result<(), UriParseError> {
+    fn only_successful_purges_are_reported() -> Result<(), IdentifierParseError> {
         let outcomes = vec![WriteOutcome::Updated, WriteOutcome::Superseded, WriteOutcome::Updated];
         pretty_assertions::assert_eq!(
             landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:B", "urn:ngsi-ld:C"])?, &outcomes),
@@ -296,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn vanished_and_superseded_entities_are_not_reported() -> Result<(), UriParseError> {
+    fn vanished_and_superseded_entities_are_not_reported() -> Result<(), IdentifierParseError> {
         let outcomes = vec![WriteOutcome::NotFound, WriteOutcome::Superseded];
         let landed = landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:B"])?, &outcomes);
         assert!(landed.is_empty(), "no identifier lands when every outcome failed: {landed:?}");
@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_sweeps_report_one_semantic_attribute_deletion() -> Result<(), UriParseError> {
+    fn concurrent_sweeps_report_one_semantic_attribute_deletion() -> Result<(), IdentifierParseError> {
         let outcomes = vec![WriteOutcome::Updated, WriteOutcome::Superseded];
         let landed = landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:A"])?, &outcomes);
         pretty_assertions::assert_eq!(landed, identifiers(&["urn:ngsi-ld:A"])?);
@@ -312,9 +312,9 @@ mod tests {
     }
 
     #[test]
-    fn a_past_due_instance_produces_an_optimistic_write_and_tombstone() -> Result<(), UriParseError> {
+    fn a_past_due_instance_produces_an_optimistic_write_and_tombstone() -> Result<(), IdentifierParseError> {
         let payload = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/speed": [expiring_instance("1969-01-01T00:00:00Z")]}]);
-        let identifier = "urn:ngsi-ld:A".parse::<Uri>()?;
+        let identifier = "urn:ngsi-ld:A".parse::<Identifier>()?;
         let write = purge_write(&identifier, snapshot(payload), cutoff());
         assert!(write.is_some());
         let Some(write) = write else {
@@ -327,9 +327,9 @@ mod tests {
     }
 
     #[test]
-    fn a_future_instance_produces_no_write() -> Result<(), UriParseError> {
+    fn a_future_instance_produces_no_write() -> Result<(), IdentifierParseError> {
         let payload = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/speed": [expiring_instance("1971-01-01T00:00:00Z")]}]);
-        let identifier = "urn:ngsi-ld:A".parse::<Uri>()?;
+        let identifier = "urn:ngsi-ld:A".parse::<Identifier>()?;
         assert!(purge_write(&identifier, snapshot(payload), cutoff()).is_none());
         Ok(())
     }

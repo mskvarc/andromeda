@@ -2,7 +2,7 @@
 
 use crate::{error::EntityError, query_outcome::QueryOutcome, storage_profile::StorageProfile};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -27,7 +27,7 @@ pub trait EntityQueryStore: Send + Sync + 'static {
         &'life0 self,
         target: &'life1 ContextTarget,
         compiled: &'life2 CompiledEntityQuery,
-    ) -> BoxFuture<'async_trait, Result<QueryOutcome<Uri>, EntityError>>
+    ) -> BoxFuture<'async_trait, Result<QueryOutcome<Identifier>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

@@ -25,7 +25,7 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_query::{cursor::PageCursor, pagination::CountPolicy};
 use andromeda_ngsi_ld_render::{response::ResponsePayload, subscription::SubscriptionRenderer};
 use andromeda_ngsi_ld_request::{csource_subscription::ListParams, empty::EmptyParams, pagination_cursor::decode_cursor};
@@ -73,7 +73,7 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
-    TypedPath(subscription_id): TypedPath<Uri>,
+    TypedPath(subscription_id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
@@ -175,7 +175,7 @@ pub async fn query(
 /// carries no pointers. Otherwise the neighbouring cursors are computed from the
 /// first and last identifiers and whether the page filled the limit, then
 /// encoded into the opaque tokens the `Link` header carries.
-fn keyset_page_links(incoming: Option<&PageCursor>, boundary: Option<(Uri, Uri)>, returned: usize, limit: u32) -> Option<PageLinks> {
+fn keyset_page_links(incoming: Option<&PageCursor>, boundary: Option<(Identifier, Identifier)>, returned: usize, limit: u32) -> Option<PageLinks> {
     let (first, last) = boundary?;
     let full = returned >= limit as usize;
     let neighbours = PageCursor::neighbours(incoming, first, last, full);
@@ -187,7 +187,7 @@ pub async fn update(
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    TypedPath(subscription_id): TypedPath<Uri>,
+    TypedPath(subscription_id): TypedPath<Identifier>,
     JsonLdDocument {
         document: payload,
         context: body_context,
@@ -208,7 +208,7 @@ pub async fn update(
 pub async fn delete(
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(subscription_id): TypedPath<Uri>,
+    TypedPath(subscription_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
     service.delete(&state.live_target, &subscription_id).await.with_subscription_instance(&uri)?;

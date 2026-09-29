@@ -7,7 +7,7 @@
 
 use crate::snapshot::{branch_schema::drop_branch_schema, persistence_error};
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::Snapshots;
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
@@ -31,7 +31,7 @@ const BRANCH_REAP_BACKOFF: Duration = Duration::from_millis(50);
 /// Delete one snapshot by identifier: drop its branch schemas, then delete the
 /// control record, which cascades the preparation and outbox rows. Retries a
 /// transaction a deadlock with branch delivery rolls back.
-pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Uri) -> Result<u64, SnapshotError> {
+pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Identifier) -> Result<u64, SnapshotError> {
     let mut attempt = 0;
     loop {
         attempt += 1;
@@ -44,7 +44,7 @@ pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Uri) -> Result<u64, Snap
 
 /// Delete one Snapshot's control record and branch schema in a single
 /// transaction, returning the number of control rows removed.
-async fn delete_snapshot_once(pool: &PgPool, id: &Uri) -> Result<u64, SnapshotError> {
+async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(persistence_error)?;
     let statement = Query::select()
         .column(Snapshots::SnapshotKey)

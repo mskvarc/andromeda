@@ -12,7 +12,7 @@
 
 use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection};
 use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
@@ -29,7 +29,7 @@ pub enum PreparedJoinProjection {
     /// applied are carried so the renderer can settle `id`, `type` and `scope`,
     /// which are members of the rendered representation rather than of the
     /// typed entity.
-    Flat(HashMap<Uri, Projection>),
+    Flat(HashMap<Identifier, Projection>),
     /// `join=inline` left the linked entities whole; the renderer narrows each
     /// nested copy under the Relationship that named it, matching terms against
     /// attribute keys with this index.
@@ -59,7 +59,7 @@ impl EntityQueryService {
     pub async fn prepare_join_projection(
         &self,
         roots: &[Entity],
-        linked: &mut IndexMap<Uri, Entity>,
+        linked: &mut IndexMap<Identifier, Entity>,
         projection: &Projection,
         context: &ContextSpec,
         join: RetrievingJoin,

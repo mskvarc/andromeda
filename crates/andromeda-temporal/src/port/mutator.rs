@@ -2,7 +2,7 @@
 
 use crate::error::TemporalError;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_ngsi_ld_query::temporal::history_delete::TemporalHistoryDeleteScope;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -21,28 +21,28 @@ pub enum TemporalDeleteScope {
 pub trait TemporalMutator: Send + Sync {
     /// Return whether temporal history exists for an entity.
     #[must_use = "temporal entity existence checks must be awaited"]
-    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError>;
+    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError>;
 
     /// Return whether temporal history exists for an entity attribute.
     #[must_use = "temporal attribute existence checks must be awaited"]
-    async fn attribute_exists(&self, target: &ContextTarget, entity_id: &Uri, attribute_name: &AttributeName) -> Result<bool, TemporalError>;
+    async fn attribute_exists(&self, target: &ContextTarget, entity_id: &Identifier, attribute_name: &AttributeName) -> Result<bool, TemporalError>;
 
     /// Return expanded attribute names known for an entity.
     #[must_use = "temporal attribute-name reads must be awaited"]
-    async fn attribute_names_for_entity(&self, target: &ContextTarget, entity_id: &Uri) -> Result<Vec<AttributeName>, TemporalError>;
+    async fn attribute_names_for_entity(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<Vec<AttributeName>, TemporalError>;
 
     /// Delete every temporal observation for an entity and return the affected catalogue rows.
     #[must_use = "temporal entity deletions must be awaited"]
-    async fn delete_all_for_entity(&self, target: &ContextTarget, entity_id: &Uri) -> Result<u64, TemporalError>;
+    async fn delete_all_for_entity(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<u64, TemporalError>;
 
     /// Delete one temporal attribute scope and return the affected catalogue rows.
     #[must_use = "temporal attribute deletions must be awaited"]
     async fn delete_attribute(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
-        dataset_id: Option<&Uri>,
+        dataset_id: Option<&Identifier>,
         scope: TemporalDeleteScope,
     ) -> Result<u64, TemporalError>;
 
@@ -52,7 +52,7 @@ pub trait TemporalMutator: Send + Sync {
         &self,
         target: &ContextTarget,
         instance: &InstanceIdentity,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
     ) -> Result<bool, TemporalError>;
 
@@ -62,7 +62,7 @@ pub trait TemporalMutator: Send + Sync {
         &self,
         target: &ContextTarget,
         instance: &InstanceIdentity,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
         expanded_instance: &Value,
     ) -> Result<(), TemporalError>;
@@ -73,7 +73,7 @@ pub trait TemporalMutator: Send + Sync {
         &self,
         target: &ContextTarget,
         instance: &InstanceIdentity,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
     ) -> Result<(), TemporalError>;
 
@@ -84,7 +84,12 @@ pub trait TemporalMutator: Send + Sync {
     /// under `COUNT`, so an oversized delete is refused before any row is
     /// removed.
     #[must_use = "temporal history counts must be awaited"]
-    async fn count_history_instances(&self, target: &ContextTarget, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> Result<u64, TemporalError>;
+    async fn count_history_instances(
+        &self,
+        target: &ContextTarget,
+        entity_ids: &[Identifier],
+        scope: &TemporalHistoryDeleteScope,
+    ) -> Result<u64, TemporalError>;
 
     /// Delete the history instances a windowed delete-by-query selects from the
     /// given entities and return how many were removed (the
@@ -94,5 +99,10 @@ pub trait TemporalMutator: Send + Sync {
     /// their now-empty streams cleaned up only for an unbounded `deleteAll`, and
     /// the idempotency records the removed writes held are released.
     #[must_use = "temporal history deletions must be awaited"]
-    async fn delete_history_instances(&self, target: &ContextTarget, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> Result<u64, TemporalError>;
+    async fn delete_history_instances(
+        &self,
+        target: &ContextTarget,
+        entity_ids: &[Identifier],
+        scope: &TemporalHistoryDeleteScope,
+    ) -> Result<u64, TemporalError>;
 }

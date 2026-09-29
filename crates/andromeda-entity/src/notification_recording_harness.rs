@@ -33,7 +33,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{expanded::attribute_change::AttributeChangeKind, notification::SysAttrsSnapshot};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -117,23 +117,23 @@ impl SnapshotReader {
 
 #[async_trait]
 impl EntityReader for SnapshotReader {
-    async fn get(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<Value>, EntityError> {
+    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Value>, EntityError> {
         Ok(Some(self.payload.clone())) // clone: the caller owns its copy while the reader keeps serving the snapshot.
     }
 
-    async fn get_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
+    async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
         // clone: each requested id gets its own owned copy of the fixture.
         Ok(ids.iter().map(|id| (id.clone(), self.payload.clone())).collect())
     }
 
-    async fn get_snapshot(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
+    async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
         Ok(Some(EntitySnapshot {
             payload: self.payload.clone(), // clone: each read yields an owned snapshot the writer mutates.
             modified_at: self.modified_at,
         }))
     }
 
-    async fn get_snapshot_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
+    async fn get_snapshot_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
         Ok(ids
             .iter()
             .map(|id| {
@@ -148,11 +148,11 @@ impl EntityReader for SnapshotReader {
             .collect())
     }
 
-    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
         Ok(Some(self.sys_attrs()))
     }
 
-    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
         Ok(ids.iter().map(|id| (id.clone(), self.sys_attrs())).collect())
     }
 }
@@ -181,7 +181,12 @@ struct UnusedAttributeHistory;
 
 #[async_trait]
 impl AttributeDatasetHistory for UnusedAttributeHistory {
-    async fn dataset_identifiers(&self, _target: &ContextTarget, _entity: &Uri, _attribute: &AttributeName) -> Result<Vec<Option<Uri>>, EntityError> {
+    async fn dataset_identifiers(
+        &self,
+        _target: &ContextTarget,
+        _entity: &Identifier,
+        _attribute: &AttributeName,
+    ) -> Result<Vec<Option<Identifier>>, EntityError> {
         Ok(Vec::new())
     }
 }
@@ -257,8 +262,8 @@ pub(crate) fn live_target() -> ContextTarget {
     ContextTarget::Live
 }
 
-/// The fixture entity identifier as a [`Uri`].
-pub(crate) fn entity_uri() -> Uri {
+/// The fixture entity identifier as a [`Identifier`].
+pub(crate) fn entity_uri() -> Identifier {
     ENTITY_ID.parse().expect("the fixture entity identifier is a valid URI")
 }
 

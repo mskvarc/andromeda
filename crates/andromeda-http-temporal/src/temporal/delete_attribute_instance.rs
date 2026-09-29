@@ -7,6 +7,7 @@ use crate::temporal::{
     ForwardProvisionRequest,
     ForwardingOperation,
     HeaderMap,
+    Identifier,
     IncomingVia,
     InstanceFamily,
     InstanceIdentity,
@@ -23,7 +24,6 @@ use crate::temporal::{
     TenantState,
     TriggeringRequest,
     TypedPath,
-    Uri,
     ValidatedQuery,
     collect_proxied_attrs,
     local_temporal_outcome,
@@ -39,7 +39,7 @@ pub async fn delete_attr_instance(
     }: TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    TypedPath((id, attr_id, instance_id)): TypedPath<(Uri, AttributeName, Uri)>,
+    TypedPath((id, attr_id, instance_id)): TypedPath<(Identifier, AttributeName, Identifier)>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
@@ -50,7 +50,7 @@ pub async fn delete_attr_instance(
     // Clause 4.5.7 carries an `instanceId` as a URI; which of the two stored
     // shapes it names is decided here, at the edge, so the store addresses one
     // identity column rather than searching both.
-    let instance = InstanceIdentity::from_uri(instance_id, InstanceFamily::Attribute);
+    let instance = InstanceIdentity::from_identifier(instance_id, InstanceFamily::Attribute);
 
     if params.local.unwrap_or(false) {
         service

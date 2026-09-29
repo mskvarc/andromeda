@@ -6,7 +6,7 @@ use crate::snapshot::{
     record::victim_order,
 };
 use andromeda_context_space::snapshot_key::SnapshotKey;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::advisory_lock::advisory_xact_lock;
 use andromeda_snapshot::error::SnapshotError;
@@ -15,7 +15,7 @@ use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
 /// Remove deterministic victims until both configured limits are satisfied.
-pub(crate) async fn enforce_snapshot_quotas(pool: &PgPool, count_quota: Option<usize>, byte_quota: Option<u64>) -> Result<Vec<Uri>, SnapshotError> {
+pub(crate) async fn enforce_snapshot_quotas(pool: &PgPool, count_quota: Option<usize>, byte_quota: Option<u64>) -> Result<Vec<Identifier>, SnapshotError> {
     if count_quota.is_none() && byte_quota.is_none() {
         return Ok(Vec::new());
     }

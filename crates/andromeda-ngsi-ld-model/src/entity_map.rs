@@ -1,7 +1,7 @@
 //! The `EntityMap` resource that pins a distributed query's result set (ETSI GS CIM 009 clauses 4.5.25 and 5.2.39).
 
 use crate::entity_map_fingerprint::RequestFingerprint;
-use andromeda_ngsi_ld_lexicon::{constant_string, rfc3339, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier, rfc3339};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ pub enum EntityMapSource {
     /// The entity is held by this broker; the wire token is `@none`.
     Local,
     /// The entity is held by the context source of this registration.
-    Registration(Uri),
+    Registration(Identifier),
 }
 
 /// Why a string is not an [`EntityMapSource`].
@@ -36,7 +36,9 @@ impl TryFrom<String> for EntityMapSource {
         if raw == LOCAL_SOURCE_TOKEN {
             return Ok(EntityMapSource::Local);
         }
-        raw.parse::<Uri>().map(EntityMapSource::Registration).map_err(|_| EntityMapSourceError(raw))
+        raw.parse::<Identifier>()
+            .map(EntityMapSource::Registration)
+            .map_err(|_| EntityMapSourceError(raw))
     }
 }
 
@@ -68,7 +70,7 @@ impl From<EntityMapSource> for String {
 #[serde(rename_all = "camelCase")]
 pub struct EntityMap {
     /// Generated identifier of this map.
-    pub id: Uri,
+    pub id: Identifier,
     /// Always `EntityMap`.
     #[serde(rename = "type")]
     #[builder(default = Default::default())]
@@ -81,12 +83,12 @@ pub struct EntityMap {
     /// whose context source returned it.
     #[serde(default)]
     #[builder(default = Default::default())]
-    pub entity_map: IndexMap<Uri, Vec<EntityMapSource>>,
+    pub entity_map: IndexMap<Identifier, Vec<EntityMapSource>>,
     /// The `EntityMap` each contributing context source created for the same
     /// query, keyed by the registration that named the source.
     #[serde(default)]
     #[builder(default = Default::default())]
-    pub linked_maps: IndexMap<Uri, Uri>,
+    pub linked_maps: IndexMap<Identifier, Identifier>,
     /// The request that created the map, kept so a follow-up under it can be
     /// held to the same parameters (clause 5.5.14). Broker-internal: never
     /// part of the clause 5.2.39 representation.
@@ -97,24 +99,24 @@ pub struct EntityMap {
 
 impl EntityMap {
     /// A map over entities this broker holds itself.
-    pub fn local(id: Uri, expires_at: DateTime<Utc>, entity_ids: impl IntoIterator<Item = Uri>) -> EntityMap {
+    pub fn local(id: Identifier, expires_at: DateTime<Utc>, entity_ids: impl IntoIterator<Item = Identifier>) -> EntityMap {
         let entity_map = entity_ids.into_iter().map(|entity_id| (entity_id, vec![EntityMapSource::Local])).collect();
         EntityMap::builder().id(id).expires_at(expires_at).entity_map(entity_map).build()
     }
 
     /// The identifiers of every entity in the map, in map order.
-    pub fn entity_ids(&self) -> impl Iterator<Item = &Uri> {
+    pub fn entity_ids(&self) -> impl Iterator<Item = &Identifier> {
         self.entity_map.keys()
     }
 
     /// Whether `entity_id` is one of the map's entities.
     #[must_use]
-    pub fn contains(&self, entity_id: &Uri) -> bool {
+    pub fn contains(&self, entity_id: &Identifier) -> bool {
         self.entity_map.contains_key(entity_id)
     }
 
     /// Every registration named as a source, without repetition, in map order.
-    pub fn registrations(&self) -> impl Iterator<Item = &Uri> {
+    pub fn registrations(&self) -> impl Iterator<Item = &Identifier> {
         let mut seen = Vec::new();
         self.entity_map
             .values()
@@ -135,12 +137,12 @@ impl EntityMap {
 
     /// The `EntityMap` a registration's context source created for this query.
     #[must_use]
-    pub fn linked_map_for(&self, registration: &Uri) -> Option<&Uri> {
+    pub fn linked_map_for(&self, registration: &Identifier) -> Option<&Identifier> {
         self.linked_maps.get(registration)
     }
 
     /// Record that `registration` holds `entity_id`.
-    fn add_source(&mut self, entity_id: Uri, source: EntityMapSource) {
+    fn add_source(&mut self, entity_id: Identifier, source: EntityMapSource) {
         let sources = self.entity_map.entry(entity_id).or_default();
         if !sources.contains(&source) {
             sources.push(source);
@@ -148,7 +150,7 @@ impl EntityMap {
     }
 
     /// Record that this broker holds `entity_ids` (clause 5.2.39 `@none`).
-    pub fn add_local_entities(&mut self, entity_ids: impl IntoIterator<Item = Uri>) {
+    pub fn add_local_entities(&mut self, entity_ids: impl IntoIterator<Item = Identifier>) {
         for entity_id in entity_ids {
             self.add_source(entity_id, EntityMapSource::Local);
         }
@@ -156,7 +158,7 @@ impl EntityMap {
 
     /// Fold in the entities a registration's context source returned for the
     /// same query, without a map of its own (clause 5.7.2.4 `entityMap=true`).
-    pub fn add_remote_entities(&mut self, registration: &Uri, entity_ids: impl IntoIterator<Item = Uri>) {
+    pub fn add_remote_entities(&mut self, registration: &Identifier, entity_ids: impl IntoIterator<Item = Identifier>) {
         for entity_id in entity_ids {
             self.add_source(entity_id, EntityMapSource::Registration(registration.clone())); // clone: every entry owns its source
         }
@@ -164,14 +166,14 @@ impl EntityMap {
 
     /// Record the `EntityMap` a registration's context source used for this
     /// query (Table 5.2.39-2 `linkedMaps`), replacing an earlier link.
-    pub fn link(&mut self, registration: Uri, linked_map: Uri) {
+    pub fn link(&mut self, registration: Identifier, linked_map: Identifier) {
         self.linked_maps.insert(registration, linked_map);
     }
 
     /// Fold in what one registration's context source contributed to a read
     /// (clauses 5.7.1.4 to 5.7.4.4): the entities it returned are attributed
     /// to it, and the map it answered with, if any, joins `linkedMaps`.
-    pub fn add_contribution(&mut self, registration: &Uri, entity_ids: impl IntoIterator<Item = Uri>, linked_map: Option<Uri>) {
+    pub fn add_contribution(&mut self, registration: &Identifier, entity_ids: impl IntoIterator<Item = Identifier>, linked_map: Option<Identifier>) {
         self.add_remote_entities(registration, entity_ids);
         if let Some(linked_map) = linked_map {
             self.link(registration.clone(), linked_map); // clone: the link owns the registration identifier
@@ -181,7 +183,7 @@ impl EntityMap {
     /// Fold in the `EntityMap` a registration's context source created for the
     /// same query (clause 5.14.4.4): its identifier joins `linkedMaps`, and every
     /// entity it lists is attributed to the registration.
-    pub fn add_remote(&mut self, registration: &Uri, remote: &EntityMap) {
+    pub fn add_remote(&mut self, registration: &Identifier, remote: &EntityMap) {
         self.link(registration.clone(), remote.id.clone()); // clone: the link owns both identifiers
         self.add_remote_entities(registration, remote.entity_ids().cloned()); // clone: the entries own their identifiers
     }
@@ -199,11 +201,11 @@ mod tests {
         entity_map::{EntityMap, EntityMapSource},
         entity_map_fingerprint::{MapRequestKind, RequestFingerprint},
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
     }
 

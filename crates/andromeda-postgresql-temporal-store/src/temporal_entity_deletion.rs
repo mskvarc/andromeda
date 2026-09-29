@@ -15,7 +15,7 @@
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_named};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
@@ -113,7 +113,7 @@ impl TemporalRepository {
     /// the identifier, [`TemporalStoreError::Database`] when a statement fails,
     /// and [`TemporalStoreError::Decode`] when the stored temporal-entity key is
     /// outside the range the database assigns.
-    pub async fn delete_temporal_evolution(&self, target: &ContextTarget, entity_id: &Uri) -> Result<TemporalEvolutionDeletion, TemporalStoreError> {
+    pub async fn delete_temporal_evolution(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<TemporalEvolutionDeletion, TemporalStoreError> {
         let mut tx = self.pool.begin().await?;
         let schema = schema_iden(target);
         let entity_key = locate_temporal_entity(&mut tx, schema.as_ref(), entity_id).await?;
@@ -170,7 +170,7 @@ fn count(row: &PgRow, column: &str) -> Result<i64, TemporalStoreError> {
 async fn locate_temporal_entity(
     tx: &mut Transaction<'_, Postgres>,
     schema: Option<&DynIden>,
-    entity_id: &Uri,
+    entity_id: &Identifier,
 ) -> Result<TemporalEntityKey, TemporalStoreError> {
     let (sql, values) = lock_temporal_entity_statement(schema, entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
     let located = sqlx::query_with(AssertSqlSafe(sql), values).fetch_optional(&mut **tx).await?;

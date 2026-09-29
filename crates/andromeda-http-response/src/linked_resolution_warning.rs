@@ -36,12 +36,12 @@ fn linked_resolution_warning(failure: &LinkedResolutionFailure) -> NgsiLdWarning
 mod tests {
     use crate::linked_resolution_warning::with_linked_resolution_warnings;
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 
     fn failure(kind: LinkedResolutionFailureKind) -> LinkedResolutionFailure {
         LinkedResolutionFailure {
-            id: "urn:ngsi-ld:Building:1".parse::<Uri>().expect("valid URI"),
+            id: "urn:ngsi-ld:Building:1".parse::<Identifier>().expect("valid URI"),
             kind,
             detail: "the context source did not respond".to_owned(),
         }

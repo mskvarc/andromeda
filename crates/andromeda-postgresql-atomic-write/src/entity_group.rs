@@ -85,7 +85,7 @@ pub(crate) fn delete_outcome(precondition: Precondition, deleted: Option<Deleted
 mod tests {
     use crate::entity_group::{RowReturned, delete_outcome, group, insert_outcome, update_outcome};
     use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, precondition::Precondition};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use chrono::Utc;
     use serde_json::json;
     use std::sync::Arc;
@@ -96,7 +96,7 @@ mod tests {
 
     fn write(id: &str, entity: EntityMutation) -> AtomicWrite {
         AtomicWrite::builder()
-            .entity_id(Arc::new(id.parse::<Uri>().expect("valid entity URI")))
+            .entity_id(Arc::new(id.parse::<Identifier>().expect("valid entity URI")))
             .entity(entity)
             .build()
     }

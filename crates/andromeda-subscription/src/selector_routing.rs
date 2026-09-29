@@ -7,7 +7,7 @@
 
 use crate::compiled::CompiledSubscription;
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 
 /// Which index buckets a selector was placed in, and therefore which hits an
 /// event must produce for the selector to route its subscription.
@@ -43,7 +43,7 @@ pub struct SelectorRouting {
     /// Type-bucket placements.
     pub by_type: Vec<(EntityTypeName, SelectorRef)>,
     /// Id-bucket placements.
-    pub by_entity_id: Vec<(Uri, SelectorRef)>,
+    pub by_entity_id: Vec<(Identifier, SelectorRef)>,
 }
 
 impl SelectorRouting {

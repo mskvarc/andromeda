@@ -1,14 +1,14 @@
 //! Compiled context-source-subscription cache.
 
 use crate::compiled::CompiledCsrSubscription;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use dashmap::DashMap;
 use std::sync::Arc;
 
 /// Thread-safe compiled context-source-subscription cache.
 #[derive(Debug, Default)]
 pub struct CsourceSubscriptionCache {
-    inner: DashMap<Uri, Arc<CompiledCsrSubscription>>,
+    inner: DashMap<Identifier, Arc<CompiledCsrSubscription>>,
 }
 
 impl CsourceSubscriptionCache {
@@ -24,12 +24,12 @@ impl CsourceSubscriptionCache {
     }
 
     /// Insert or replace one compiled subscription.
-    pub fn insert(&self, id: Uri, subscription: Arc<CompiledCsrSubscription>) {
+    pub fn insert(&self, id: Identifier, subscription: Arc<CompiledCsrSubscription>) {
         self.inner.insert(id, subscription);
     }
 
     /// Remove one compiled subscription.
-    pub fn remove(&self, id: &Uri) {
+    pub fn remove(&self, id: &Identifier) {
         self.inner.remove(id);
     }
 
@@ -55,13 +55,13 @@ impl CsourceSubscriptionCache {
 #[cfg(test)]
 mod tests {
     use crate::{compiled::CompiledCsrSubscription, csource_cache::CsourceSubscriptionCache};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
     use url::Url;
 
-    fn subscription(id: &Uri) -> Arc<CompiledCsrSubscription> {
+    fn subscription(id: &Identifier) -> Arc<CompiledCsrSubscription> {
         Arc::new(CompiledCsrSubscription {
             id: id.clone(), // clone: the compiled subscription owns its identifier
             status: SubscriptionStatus::Active,
@@ -94,10 +94,10 @@ mod tests {
     #[test]
     fn a_cached_subscription_is_listed_until_removed() {
         let cache = CsourceSubscriptionCache::new();
-        let id: Uri = "urn:ngsi-ld:Subscription:csource".parse().expect("valid URI");
+        let id: Identifier = "urn:ngsi-ld:Subscription:csource".parse().expect("valid URI");
         cache.insert(id.clone(), subscription(&id)); // clone: the cache owns its key
 
-        let listed: Vec<Uri> = cache.subscriptions().iter().map(|subscription| subscription.id.clone()).collect(); // clone: the assertion owns the listed identifiers
+        let listed: Vec<Identifier> = cache.subscriptions().iter().map(|subscription| subscription.id.clone()).collect(); // clone: the assertion owns the listed identifiers
         assert_eq!(listed, vec![id.clone()]); // clone: the expected list owns its member
 
         cache.remove(&id);

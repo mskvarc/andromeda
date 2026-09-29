@@ -14,7 +14,7 @@
 //! falls back to the entity identifier exactly as before.
 
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
 
@@ -24,5 +24,5 @@ pub trait LocalEntityTypeResolver: Send + Sync {
     /// carries -- clause 5.12 matches a registration against any of an entity's
     /// types, so all are returned. Empty when the entity is not held locally: its
     /// types cannot then constrain coverage, so matching falls back to the id.
-    fn local_entity_types<'resolver>(&'resolver self, target: &'resolver ContextTarget, id: &'resolver Uri) -> BoxFuture<'resolver, Vec<IriBuf>>;
+    fn local_entity_types<'resolver>(&'resolver self, target: &'resolver ContextTarget, id: &'resolver Identifier) -> BoxFuture<'resolver, Vec<IriBuf>>;
 }

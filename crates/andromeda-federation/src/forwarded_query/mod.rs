@@ -27,7 +27,7 @@ use crate::{
     term_resolver::TermResolver,
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::sub_second, temporal_format::TemporalFormat, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, rfc3339::sub_second, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, geo::input::GeoQueryInput};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -292,7 +292,10 @@ impl ForwardedQuery {
     /// narrows to or supplies, then the type, then the id pattern.
     fn push_selection(&mut self, selection: BlockSelection) {
         if !selection.ids.is_empty() {
-            self.push(ForwardedParameter::Id, selection.ids.iter().map(Uri::as_str).collect::<Vec<_>>().join(","));
+            self.push(
+                ForwardedParameter::Id,
+                selection.ids.iter().map(Identifier::as_str).collect::<Vec<_>>().join(","),
+            );
         }
         if let Some(entity_type) = selection.entity_type {
             self.push(ForwardedParameter::Type, entity_type.to_string());
@@ -383,11 +386,14 @@ impl ForwardedQuery {
     }
 
     /// The clause 4.5.23 traversal continuation of a Linked Entity retrieval.
-    fn push_traversal(&mut self, join: Option<String>, join_level: Option<NonZeroU32>, contained_by: Option<&[Uri]>) {
+    fn push_traversal(&mut self, join: Option<String>, join_level: Option<NonZeroU32>, contained_by: Option<&[Identifier]>) {
         self.push_optional(ForwardedParameter::Join, join);
         self.push_optional(ForwardedParameter::JoinLevel, join_level.map(|level| level.to_string()));
         if let Some(held) = contained_by.filter(|held| !held.is_empty()) {
-            self.push(ForwardedParameter::ContainedBy, held.iter().map(Uri::as_str).collect::<Vec<_>>().join(","));
+            self.push(
+                ForwardedParameter::ContainedBy,
+                held.iter().map(Identifier::as_str).collect::<Vec<_>>().join(","),
+            );
         }
     }
 }
@@ -402,7 +408,7 @@ mod tests {
         term_resolver::TermResolver,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use andromeda_ngsi_ld_request::{
         entity::GetEntityParams,
@@ -431,7 +437,7 @@ mod tests {
         serde_urlencoded::from_str(raw).expect("valid temporal query")
     }
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
     }
 

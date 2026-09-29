@@ -13,7 +13,7 @@ use crate::{
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::clock::now;
@@ -124,7 +124,7 @@ pub(crate) async fn next_preparing_snapshot(
     let clone_source_id = row
         .try_get::<Option<String>, _>("clone_source_id")
         .map_err(persistence_error)?
-        .map(|source| source.parse::<Uri>())
+        .map(|source| source.parse::<Identifier>())
         .transpose()
         .map_err(|error| SnapshotError::internal(format!("Invalid clone source URI in snapshots table: {error}")))?;
     let query_context = row.try_get::<serde_json::Value, _>("query_context").map_err(persistence_error)?;
@@ -146,7 +146,7 @@ pub(crate) async fn next_preparing_snapshot(
 
 /// `SELECT snapshot_key FROM snapshots WHERE id = ?`, for a preparation-row
 /// statement that reaches its row through the control record's URI.
-fn key_of(id: &Uri) -> SelectStatement {
+fn key_of(id: &Identifier) -> SelectStatement {
     Query::select()
         .column(Snapshots::SnapshotKey)
         .from(Snapshots::Table)
@@ -155,7 +155,12 @@ fn key_of(id: &Uri) -> SelectStatement {
 }
 
 /// Extend a claim held by this replica, returning false if ownership was lost.
-pub(crate) async fn renew_preparation_lease(pool: &PgPool, id: &Uri, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
+pub(crate) async fn renew_preparation_lease(
+    pool: &PgPool,
+    id: &Identifier,
+    claimed_by: LeaseHolder,
+    lease_until: DateTime<Utc>,
+) -> Result<bool, SnapshotError> {
     let statement = Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::LeaseUntil, lease_until)
@@ -173,7 +178,7 @@ pub(crate) async fn renew_preparation_lease(pool: &PgPool, id: &Uri, claimed_by:
 
 /// Select, and row-lock, the preparing preparation row of one Snapshot claimed
 /// by `claimed_by`.
-fn claimed_preparation_statement(id: &Uri, claimed_by: LeaseHolder) -> SelectStatement {
+fn claimed_preparation_statement(id: &Identifier, claimed_by: LeaseHolder) -> SelectStatement {
     Query::select()
         .column((Snapshots::Table, Snapshots::SnapshotKey))
         .from(Snapshots::Table)
@@ -194,7 +199,7 @@ fn claimed_preparation_statement(id: &Uri, claimed_by: LeaseHolder) -> SelectSta
 /// left `preparing`.
 pub(crate) async fn lock_claimed_preparation(
     transaction: &mut Transaction<'_, Postgres>,
-    id: &Uri,
+    id: &Identifier,
     claimed_by: LeaseHolder,
 ) -> Result<Option<SnapshotKey>, SnapshotError> {
     let (sql, values) = claimed_preparation_statement(id, claimed_by).build_sqlx(PostgresQueryBuilder);
@@ -219,7 +224,7 @@ fn lease_statement(snapshot_key: SnapshotKey, lease_until: DateTime<Utc>) -> Upd
 /// empty its staging branch in one transaction, so the next attempt captures
 /// into a branch no earlier attempt wrote. Returns false when the claim was
 /// lost or the Snapshot left `preparing`.
-pub(crate) async fn restart_preparation(pool: &PgPool, id: &Uri, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
+pub(crate) async fn restart_preparation(pool: &PgPool, id: &Identifier, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(persistence_error)?;
     let Some(snapshot_key) = lock_claimed_preparation(&mut transaction, id, claimed_by).await? else {
         transaction.rollback().await.map_err(persistence_error)?;
@@ -238,7 +243,7 @@ pub(crate) async fn restart_preparation(pool: &PgPool, id: &Uri, claimed_by: Lea
 }
 
 /// Clear the claim this replica holds on a still-preparing Snapshot.
-fn release_statement(id: &Uri, claimed_by: LeaseHolder) -> UpdateStatement {
+fn release_statement(id: &Identifier, claimed_by: LeaseHolder) -> UpdateStatement {
     Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
@@ -252,7 +257,7 @@ fn release_statement(id: &Uri, claimed_by: LeaseHolder) -> UpdateStatement {
 
 /// Give up the claim this replica holds, so any worker's next pass claims the
 /// Snapshot without waiting out the lease; a claim already lost is left alone.
-pub(crate) async fn release_preparation(pool: &PgPool, id: &Uri, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
+pub(crate) async fn release_preparation(pool: &PgPool, id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
     let (sql, values) = release_statement(id, claimed_by).build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)

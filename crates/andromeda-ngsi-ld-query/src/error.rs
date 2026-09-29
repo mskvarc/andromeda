@@ -27,11 +27,11 @@ use crate::{
 };
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError};
 use andromeda_ngsi_ld_lexicon::{
+    identifier::IdentifierParseError,
     ngsi_ld_date::NgsiLdDateError,
     ngsi_ld_date_time::NgsiLdDateTimeError,
     ngsi_ld_time::NgsiLdTimeError,
     reference::NgsiLdReferenceError,
-    uri::UriParseError,
 };
 use andromeda_ngsi_ld_number::JsonNumberError;
 use regex_syntax::hir;
@@ -336,7 +336,7 @@ pub enum QueryError {
         raw: String,
         /// Why it is not an identifier.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// An empty value appeared in a comma-separated id list.
     #[error("invalid id: empty value in comma-separated list")]
@@ -355,7 +355,7 @@ pub enum QueryError {
         raw: String,
         /// Why it is not an identifier.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// `timerel=between` was provided without an `endTimeAt`.
     #[error("endTimeAt is required when timerel is 'between'")]

@@ -12,7 +12,7 @@ use andromeda_entity::{
     port::{query::EntityQueryStore, reader::EntityReader},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_info::EntityInfo, expanded::node::expanded_object_ref};
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
@@ -82,7 +82,7 @@ fn probe_error(error: &EntityError) -> RegistrationError {
 impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
     fn holds_any_attribute<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        entity_id: &'life1 Uri,
+        entity_id: &'life1 Identifier,
         attributes: &'life2 [IriBuf],
     ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
     where

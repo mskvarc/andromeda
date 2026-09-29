@@ -2,7 +2,7 @@
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_extraction::context_target::{ContextTargetResolutionError, SnapshotTargetResolver};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_snapshot::{error::SnapshotError, service::SnapshotService};
 use futures::future::BoxFuture;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ impl BrokerSnapshotTargetResolver {
 }
 
 impl SnapshotTargetResolver for BrokerSnapshotTargetResolver {
-    fn resolve<'a>(&'a self, snapshot_id: &'a Uri) -> BoxFuture<'a, Result<ContextTarget, ContextTargetResolutionError>> {
+    fn resolve<'a>(&'a self, snapshot_id: &'a Identifier) -> BoxFuture<'a, Result<ContextTarget, ContextTargetResolutionError>> {
         Box::pin(async move {
             self.snapshots.resolve_context_target(snapshot_id).await.map_err(|error| match error {
                 SnapshotError::NotFound { identifier } => ContextTargetResolutionError::NotFound { identifier },

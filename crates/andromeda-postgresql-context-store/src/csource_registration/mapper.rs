@@ -7,10 +7,10 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
+    identifier::Identifier,
     non_empty_text::NonEmptyText,
     scope::path::ScopePath,
     tenant::TenantName,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
@@ -48,7 +48,7 @@ use sqlx::{Row, postgres::PgRow};
 /// fails to read for a reason other than being absent or undecodable.
 pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStoreError> {
     let id_raw: String = row.get("id");
-    let id: Uri = id_raw
+    let id: Identifier = id_raw
         .parse()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR id '{id_raw}': {e}")))?;
     let registration_name = row

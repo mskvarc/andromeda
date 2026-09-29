@@ -12,10 +12,11 @@ use crate::{
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     context::ContextUrl,
     request_payload::buffer_payload,
+    undecodable_body::UndecodableBody,
 };
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
+use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
@@ -229,7 +230,7 @@ fn merge_item_contexts(items: &[Value], context: ContextSpec) -> ContextSpec {
 /// reports on, so an item whose `id` is a URI too long to be an identifier has
 /// nothing to report against either: it fails the request as the
 /// `BadRequestData` clause 5.5.4 makes of content the broker cannot store.
-fn batch_entity_id(item: &Value, uri: &HttpUri) -> Result<Uri, ProblemResponse> {
+fn batch_entity_id(item: &Value, uri: &HttpUri) -> Result<Identifier, ProblemResponse> {
     // Clause 5.6.7 to 5.6.10: a null array item is malformed batch content,
     // reported as BadRequestData for the whole request rather than the
     // InvalidRequest a missing id raises.
@@ -241,10 +242,12 @@ fn batch_entity_id(item: &Value, uri: &HttpUri) -> Result<Uri, ProblemResponse> 
         .and_then(|o| o.get("id"))
         .and_then(|v| v.as_str())
         .ok_or_else(|| public_error(NgsiLdErrorType::InvalidRequest, "every batch entity must contain a valid URI id", uri))?
-        .parse::<Uri>()
+        .parse::<Identifier>()
         .map_err(|error| match error {
-            UriParseError::Malformed => public_error(NgsiLdErrorType::InvalidRequest, "every batch entity must contain a valid URI id", uri),
-            UriParseError::TooLong(too_long) => public_error(NgsiLdErrorType::BadRequestData, format!("a batch entity id is not storable: {too_long}"), uri),
+            IdentifierParseError::Malformed(_) => public_error(NgsiLdErrorType::InvalidRequest, "every batch entity must contain a valid URI id", uri),
+            IdentifierParseError::TooLong(too_long) => {
+                public_error(NgsiLdErrorType::BadRequestData, format!("a batch entity 'id' is not storable: {too_long}"), uri)
+            }
         })
 }
 
@@ -259,7 +262,7 @@ fn batch_entity_id(item: &Value, uri: &HttpUri) -> Result<Uri, ProblemResponse> 
 /// number the model cannot represent, carries an `@context` its representation
 /// forbids or lacks one it requires (clause 6.3.5), or is not an entity.
 /// Clause 5.6.7 reports these per entity, leaving the rest of the batch intact.
-fn decode_batch_item(mut item: Value, entity_id: Uri, content_kind: ContentKind) -> Result<Entity, Box<BatchEntityError>> {
+fn decode_batch_item(mut item: Value, entity_id: Identifier, content_kind: ContentKind) -> Result<Entity, Box<BatchEntityError>> {
     if let Err(error) = canonicalize_numbers(&mut item) {
         return Err(Box::new(BatchEntityError::new(entity_id, NgsiLdErrorType::BadRequestData, &error.to_string())));
     }
@@ -288,11 +291,11 @@ fn decode_batch_item(mut item: Value, entity_id: Uri, content_kind: ContentKind)
         obj.remove("@context");
     }
 
-    deserialize_exact::<Entity>(&item).map_err(|error| {
+    deserialize_exact::<Entity>(&item).map_err(|source| {
         Box::new(BatchEntityError::new(
             entity_id,
             NgsiLdErrorType::BadRequestData,
-            &format!("Invalid entity: {error}"),
+            &UndecodableBody::of::<Entity>(&item, source).to_string(),
         ))
     })
 }
@@ -419,6 +422,11 @@ mod tests {
         let batch = json_batch(&body).await;
         let error = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect_err("an over-long id fails the request");
         pretty_assertions::assert_eq!(error.problem().error_type(), NgsiLdErrorType::BadRequestData);
+        let detail = error.problem().detail();
+        assert!(
+            detail.contains("'id'") && detail.contains("1025 bytes") && detail.contains("1024"),
+            "the refusal names the member and the bound: {detail}"
+        );
     }
 
     #[tokio::test]

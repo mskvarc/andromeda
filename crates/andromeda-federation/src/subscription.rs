@@ -16,7 +16,7 @@ use crate::{
     transport::ForwardedRequest,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use serde_json::Value;
 use tracing::debug;
@@ -33,7 +33,7 @@ pub enum SubscriptionForward<'a> {
     /// `PATCH /subscriptions/{id}` with the reduced copy (clause 5.8.2.4).
     Update {
         /// The subscription the source assigned when the copy was created.
-        remote_id: &'a Uri,
+        remote_id: &'a Identifier,
         /// The reduced subscription fragment, without an inline `@context`.
         body: &'a [u8],
         /// The context the fragment's terms are expressed in.
@@ -42,7 +42,7 @@ pub enum SubscriptionForward<'a> {
     /// `DELETE /subscriptions/{id}` (clause 5.8.5.4).
     Delete {
         /// The subscription the source assigned when the copy was created.
-        remote_id: &'a Uri,
+        remote_id: &'a Identifier,
     },
 }
 
@@ -78,7 +78,7 @@ impl ForwardedSubscription {
     /// The subscription identifier the source assigned on a create, read from
     /// its `Location` is not available here, so from the 201 response body's
     /// `id` when the source echoes the document, else the one the request named.
-    pub fn assigned_id(&self, requested: &Uri) -> Uri {
+    pub fn assigned_id(&self, requested: &Identifier) -> Identifier {
         match &self.outcome {
             Some(ForwardedWriteOutcome::Completed {
                 body: Some(Value::Object(object)),

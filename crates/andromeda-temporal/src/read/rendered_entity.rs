@@ -21,7 +21,7 @@ use andromeda_jsonld::{
     compaction::NameCompactor,
     engine::{expanded_input::ExpandedInput, options::CompactOptions},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_ngsi_ld_render::{
@@ -95,7 +95,7 @@ pub(crate) struct RenderedTemporalEntity {
 #[derive(Debug)]
 pub(crate) struct EntityHistoryPage {
     /// The entity the history belongs to.
-    pub(crate) entity_id: Uri,
+    pub(crate) entity_id: Identifier,
     /// The rows the page kept of every stream.
     pub(crate) rows: Vec<TemporalHistoryRow>,
 }
@@ -133,7 +133,7 @@ impl TemporalService {
     pub(crate) async fn render_one_temporal_entity(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
         names: &NameCompactor<'_>,
@@ -154,7 +154,7 @@ impl TemporalService {
     pub(crate) async fn read_history_page(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<EntityHistoryPage, TemporalError> {
         let rows = self.reader.query_entity_history(target, entity_id, compiled).await?.into_rows();
@@ -262,7 +262,7 @@ impl TemporalService {
     async fn render_aggregated_entity(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
         names: &NameCompactor<'_>,

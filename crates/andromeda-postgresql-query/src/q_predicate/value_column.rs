@@ -8,7 +8,12 @@
 //! [`InstanceScan`](crate::q_predicate::instance_scan::InstanceScan) it runs
 //! under resolves the column in the relation it scans.
 
-use andromeda_postgresql_schema::{current::CurrentAttributeValues, projected_string_column::ProjectedStringColumn, temporal::AttributeHistory};
+use andromeda_postgresql_schema::{
+    current::CurrentAttributeValues,
+    projected_string_column::ProjectedStringColumn,
+    projected_uri_column::ProjectedUriColumn,
+    temporal::AttributeHistory,
+};
 
 /// One typed value column of a stored attribute instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,8 +29,11 @@ pub enum ValueColumn {
     LongText,
     /// A `DateTime`.
     DateTime,
-    /// A Relationship's single object.
+    /// A Relationship's single object, short enough for a B-tree entry.
     Uri,
+    /// A Relationship's single object past [`ProjectedUriColumn::Indexed`]'s
+    /// bound.
+    LongUri,
     /// Every value that is not a single scalar.
     Object,
 }
@@ -41,6 +49,16 @@ impl ValueColumn {
         }
     }
 
+    /// The column one Relationship object is held in, placed by its length
+    /// exactly as the write path placed it.
+    #[must_use]
+    pub const fn of_uri(uri: &str) -> ValueColumn {
+        match ProjectedUriColumn::of(uri) {
+            ProjectedUriColumn::Indexed => ValueColumn::Uri,
+            ProjectedUriColumn::Overflow => ValueColumn::LongUri,
+        }
+    }
+
     /// The `current_attribute_values` column holding this kind.
     #[must_use]
     pub const fn in_projection(self) -> CurrentAttributeValues {
@@ -51,15 +69,16 @@ impl ValueColumn {
             ValueColumn::LongText => CurrentAttributeValues::ValueLongText,
             ValueColumn::DateTime => CurrentAttributeValues::ValueDateTime,
             ValueColumn::Uri => CurrentAttributeValues::ValueUri,
+            ValueColumn::LongUri => CurrentAttributeValues::ValueLongUri,
             ValueColumn::Object => CurrentAttributeValues::ValueObject,
         }
     }
 
     /// The `attribute_history` column holding this kind.
     ///
-    /// History keeps a String of any length in `value_string`: no B-tree keys
-    /// on it, so it has no overflow column, and a long String is read from the
-    /// one column there is.
+    /// History keeps a String of any length in `value_string` and a URI of any
+    /// length in `value_uri`: no B-tree keys on either, so neither has an
+    /// overflow column, and a long value is read from the one column there is.
     #[must_use]
     pub const fn in_history(self) -> AttributeHistory {
         match self {
@@ -67,7 +86,7 @@ impl ValueColumn {
             ValueColumn::Boolean => AttributeHistory::ValueBoolean,
             ValueColumn::String | ValueColumn::LongText => AttributeHistory::ValueString,
             ValueColumn::DateTime => AttributeHistory::ValueDateTime,
-            ValueColumn::Uri => AttributeHistory::ValueUri,
+            ValueColumn::Uri | ValueColumn::LongUri => AttributeHistory::ValueUri,
             ValueColumn::Object => AttributeHistory::ValueObject,
         }
     }
@@ -76,7 +95,7 @@ impl ValueColumn {
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::value_column::ValueColumn;
-    use andromeda_postgresql_schema::projected_string_column::INDEXED_STRING_BYTE_LIMIT;
+    use andromeda_postgresql_schema::{projected_string_column::INDEXED_STRING_BYTE_LIMIT, projected_uri_column::INDEXED_URI_BYTE_LIMIT};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -84,6 +103,14 @@ mod tests {
     fn a_string_is_placed_by_its_length_as_the_write_path_places_it() {
         assert_eq!(ValueColumn::of_string("red"), ValueColumn::String);
         assert_eq!(ValueColumn::of_string(&"a".repeat(INDEXED_STRING_BYTE_LIMIT + 1)), ValueColumn::LongText);
+    }
+
+    #[test]
+    fn a_uri_is_placed_by_its_length_as_the_write_path_places_it() {
+        let prefix = "urn:ngsi-ld:Building:";
+        let at_limit = format!("{prefix}{}", "a".repeat(INDEXED_URI_BYTE_LIMIT - prefix.len()));
+        assert_eq!(ValueColumn::of_uri(&at_limit), ValueColumn::Uri);
+        assert_eq!(ValueColumn::of_uri(&format!("{at_limit}a")), ValueColumn::LongUri);
     }
 
     #[test]
@@ -106,5 +133,13 @@ mod tests {
     fn a_long_string_is_read_from_the_one_history_string_column() {
         assert_eq!(Iden::to_string(&ValueColumn::LongText.in_projection()), "value_long_text");
         assert_eq!(Iden::to_string(&ValueColumn::LongText.in_history()), "value_string");
+    }
+
+    /// History has no overflow column, so a long Relationship object is read
+    /// from `value_uri` there.
+    #[test]
+    fn a_long_uri_is_read_from_the_one_history_uri_column() {
+        assert_eq!(Iden::to_string(&ValueColumn::LongUri.in_projection()), "value_long_uri");
+        assert_eq!(Iden::to_string(&ValueColumn::LongUri.in_history()), "value_uri");
     }
 }

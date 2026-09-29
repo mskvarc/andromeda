@@ -10,8 +10,8 @@ use crate::expanded::node::expanded_object_ref;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     entity_type_name::EntityTypeName,
+    identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
-    uri::{Uri, UriParseError},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use chrono::{DateTime, Utc};
@@ -36,7 +36,7 @@ pub enum ExpandedMemberError {
         raw: String,
         /// Why it is not an identifier.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// A `@type` entry is not a string.
     #[error("an expanded entity '@type' entry is not a string")]
@@ -68,7 +68,7 @@ pub enum ExpandedMemberError {
 /// Returns [`ExpandedMemberError::MissingId`] when the payload carries no
 /// string `@id`, and [`ExpandedMemberError::Id`] when it is not a valid
 /// identifier, including one past the identifier bound.
-pub fn extract_id(expanded: &Value) -> Result<Uri, ExpandedMemberError> {
+pub fn extract_id(expanded: &Value) -> Result<Identifier, ExpandedMemberError> {
     let raw = expanded_object_ref(expanded)
         .and_then(|obj| obj.get("@id"))
         .and_then(Value::as_str)
@@ -144,14 +144,14 @@ pub fn extract_expires_at(expanded: &Value) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use crate::expanded::entity_member::{ExpandedMemberError, extract_attribute_names, extract_expires_at, extract_id, extract_types};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, identifier_length::IDENTIFIER_BYTE_LIMIT};
     use chrono::Datelike;
     use serde_json::json;
 
     #[test]
     fn the_identifier_is_read_off_the_expanded_node() {
         let entity = json!([{"@id": "urn:ngsi-ld:Building:001"}]);
-        pretty_assertions::assert_eq!(extract_id(&entity).as_ref().map(Uri::as_str), Ok("urn:ngsi-ld:Building:001"));
+        pretty_assertions::assert_eq!(extract_id(&entity).as_ref().map(Identifier::as_str), Ok("urn:ngsi-ld:Building:001"));
     }
 
     #[test]

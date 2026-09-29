@@ -7,7 +7,7 @@
 //! streams are therefore written without conflict arbitration, while the streams
 //! of an evolution that already existed may already be there.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use std::collections::{HashMap, HashSet};
 
@@ -24,14 +24,14 @@ pub(crate) enum EvolutionOrigin {
 #[derive(Debug, Default)]
 pub(crate) struct ResolvedEvolutions {
     /// Narrow key each chunk entity resolved to.
-    keys: HashMap<Uri, TemporalEntityKey>,
+    keys: HashMap<Identifier, TemporalEntityKey>,
     /// The evolutions this chunk's upsert inserted rather than found.
     created: HashSet<TemporalEntityKey>,
 }
 
 impl ResolvedEvolutions {
     /// Record that `id` resolved to `key`, found or created as `origin` says.
-    pub(crate) fn record(&mut self, id: Uri, key: TemporalEntityKey, origin: EvolutionOrigin) {
+    pub(crate) fn record(&mut self, id: Identifier, key: TemporalEntityKey, origin: EvolutionOrigin) {
         match origin {
             EvolutionOrigin::Created => {
                 self.created.insert(key);
@@ -42,7 +42,7 @@ impl ResolvedEvolutions {
     }
 
     /// The narrow key each chunk entity resolved to.
-    pub(crate) const fn keys(&self) -> &HashMap<Uri, TemporalEntityKey> {
+    pub(crate) const fn keys(&self) -> &HashMap<Identifier, TemporalEntityKey> {
         &self.keys
     }
 
@@ -56,7 +56,7 @@ impl ResolvedEvolutions {
     }
 
     /// The narrow key each chunk entity resolved to, owned.
-    pub(crate) fn into_keys(self) -> HashMap<Uri, TemporalEntityKey> {
+    pub(crate) fn into_keys(self) -> HashMap<Identifier, TemporalEntityKey> {
         self.keys
     }
 }
@@ -64,7 +64,7 @@ impl ResolvedEvolutions {
 #[cfg(test)]
 mod tests {
     use crate::resolved_evolutions::{EvolutionOrigin, ResolvedEvolutions};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 
     fn key(raw: i64) -> TemporalEntityKey {
@@ -74,8 +74,16 @@ mod tests {
     #[test]
     fn an_evolution_keeps_the_origin_it_was_recorded_with() {
         let mut resolved = ResolvedEvolutions::default();
-        resolved.record("urn:ngsi-ld:Vehicle:new".parse::<Uri>().expect("valid URI"), key(1), EvolutionOrigin::Created);
-        resolved.record("urn:ngsi-ld:Vehicle:old".parse::<Uri>().expect("valid URI"), key(2), EvolutionOrigin::Existing);
+        resolved.record(
+            "urn:ngsi-ld:Vehicle:new".parse::<Identifier>().expect("valid URI"),
+            key(1),
+            EvolutionOrigin::Created,
+        );
+        resolved.record(
+            "urn:ngsi-ld:Vehicle:old".parse::<Identifier>().expect("valid URI"),
+            key(2),
+            EvolutionOrigin::Existing,
+        );
         pretty_assertions::assert_eq!(resolved.origin(key(1)), EvolutionOrigin::Created);
         pretty_assertions::assert_eq!(resolved.origin(key(2)), EvolutionOrigin::Existing);
         pretty_assertions::assert_eq!(resolved.keys().len(), 2);

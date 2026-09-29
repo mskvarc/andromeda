@@ -10,7 +10,7 @@ use crate::{
     stored_subscription::StoredSubscription,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, Subscription, SubscriptionStatus},
@@ -46,7 +46,7 @@ pub struct SubscriptionFields<'a> {
     /// Context source filter expression.
     pub csf: Option<&'a Expr>,
     /// Dataset identifiers to restrict matching.
-    pub dataset_id: Option<&'a [Uri]>,
+    pub dataset_id: Option<&'a [Identifier]>,
     /// Whether the subscription is currently active.
     pub is_active: bool,
     /// Validated notification endpoint and format configuration.
@@ -97,7 +97,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     fn get<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        id: &'life2 Uri,
+        id: &'life2 Identifier,
     ) -> BoxFuture<'async_trait, Result<Option<StoredSubscription>, SubscriptionError>>
     where
         'life0: 'async_trait,
@@ -141,7 +141,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     fn delete<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        id: &'life2 Uri,
+        id: &'life2 Identifier,
     ) -> BoxFuture<'async_trait, Result<u64, SubscriptionError>>
     where
         'life0: 'async_trait,
@@ -152,7 +152,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     fn exists<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        id: &'life2 Uri,
+        id: &'life2 Identifier,
     ) -> BoxFuture<'async_trait, Result<bool, SubscriptionError>>
     where
         'life0: 'async_trait,
@@ -177,7 +177,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     fn claim_notification_slot<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        id: &'life2 Uri,
+        id: &'life2 Identifier,
         gate: NotificationSlotGate,
     ) -> BoxFuture<'async_trait, Result<NotificationSlot, SubscriptionError>>
     where
@@ -189,7 +189,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     fn mark_success<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        id: &'life2 Uri,
+        id: &'life2 Identifier,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
@@ -200,7 +200,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     fn mark_failure<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        id: &'life2 Uri,
+        id: &'life2 Identifier,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
@@ -212,7 +212,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         &'life0 self,
         target: &'life1 ContextTarget,
         cutoff: DateTime<Utc>,
-    ) -> BoxFuture<'async_trait, Result<Vec<Uri>, SubscriptionError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<Identifier>, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -251,7 +251,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     fn advance_interval_anchor<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        id: &'life2 Uri,
+        id: &'life2 Identifier,
         cutoff: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
@@ -263,7 +263,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     fn create_subscription<'life0, 'life1, 'life2, 'life3, 'life4, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        id: &'life2 Uri,
+        id: &'life2 Identifier,
         fields: &'life3 SubscriptionFields<'life4>,
         status: SubscriptionStatus,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
@@ -278,7 +278,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     fn update_subscription<'life0, 'life1, 'life2, 'life3, 'life4, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        id: &'life2 Uri,
+        id: &'life2 Identifier,
         fields: &'life3 SubscriptionFields<'life4>,
         status: SubscriptionStatus,
     ) -> BoxFuture<'async_trait, Result<u64, SubscriptionError>>

@@ -55,7 +55,7 @@ use crate::{
     write_kind::{BatchCreate, BatchMerge, BatchUpdate, BatchUpsert},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::mutation::selection::OverwritePolicy;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use futures::{StreamExt, stream};
@@ -82,9 +82,9 @@ pub enum UpsertPolicy {
 /// answered as if it had arrived in its own request.
 pub struct BatchResult {
     /// Entity IDs that were successfully processed.
-    pub success: Vec<Uri>,
+    pub success: Vec<Identifier>,
     /// Per-entity errors: `(entity_id, domain_error)` pairs.
-    pub errors: Vec<(Uri, EntityError)>,
+    pub errors: Vec<(Identifier, EntityError)>,
 }
 
 impl BatchResult {
@@ -185,7 +185,7 @@ impl EntityService {
     /// commit a chunk. An identifier that names no entity, or that the batch
     /// repeats, is carried in [`BatchResult::errors`] instead, because clause
     /// 5.6.10 reports batch results per entity.
-    pub async fn batch_delete(&self, placement: SideEffectPlacement<'_>, entity_ids: &[Uri]) -> Result<BatchResult, EntityError> {
+    pub async fn batch_delete(&self, placement: SideEffectPlacement<'_>, entity_ids: &[Identifier]) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchDelete);
         let result: Result<BatchResult, EntityError> = async {
             // Clause 5.5.11.4: the first occurrence deletes, every later one is
@@ -342,9 +342,9 @@ impl EntityService {
         placement: SideEffectPlacement<'_>,
         admitted: AdmittedBatch<BatchUpsert>,
         context: &ContextSpec,
-    ) -> Result<(BatchResult, Vec<Uri>), EntityError> {
+    ) -> Result<(BatchResult, Vec<Identifier>), EntityError> {
         let timer = entity::start(EntityOperation::BatchUpsert);
-        let result: Result<(BatchResult, Vec<Uri>), EntityError> = async {
+        let result: Result<(BatchResult, Vec<Identifier>), EntityError> = async {
             let (BatchUpsert(policy), entities) = admitted.into_parts();
             let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();

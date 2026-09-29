@@ -1,7 +1,7 @@
 //! Purging Snapshots by query (clause 5.16.7).
 
 use crate::{error::SnapshotError, service::SnapshotService};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot_filter::SnapshotPurgeFilter;
 
 impl SnapshotService {
@@ -67,7 +67,7 @@ pub enum PurgeOutcome {
     /// Some succeeded and some failed (maps to 207 Multi-Status).
     Partial {
         /// Identifiers of successfully deleted snapshots.
-        successes: Vec<Uri>,
+        successes: Vec<Identifier>,
         /// Per-snapshot error entries for the multi-status body.
         failures: Vec<SnapshotPurgeFailure>,
     },
@@ -77,7 +77,7 @@ pub enum PurgeOutcome {
 #[derive(Debug)]
 pub struct SnapshotPurgeFailure {
     /// Snapshot whose deletion failed.
-    pub identifier: Uri,
+    pub identifier: Identifier,
     /// Focused reason for the failure.
     pub error: SnapshotError,
 }

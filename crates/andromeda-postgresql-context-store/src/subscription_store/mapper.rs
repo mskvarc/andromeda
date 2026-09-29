@@ -9,7 +9,7 @@ use crate::{
     subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow, status_code::status_of, trigger_code::trigger_of},
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{
@@ -42,7 +42,7 @@ use url::Url;
 ///
 /// Returns [`ContextStoreError::Internal`] when the stored text is not a valid
 /// URI, which means the column holds a value the broker never wrote.
-pub fn stored_subscription_uri(raw: &str) -> Result<Uri, ContextStoreError> {
+pub fn stored_subscription_uri(raw: &str) -> Result<Identifier, ContextStoreError> {
     raw.parse()
         .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription id '{raw}': {error}")))
 }

@@ -14,6 +14,7 @@ use crate::{
     temporal::{
         AcceptFormatNoGeo,
         ContextSpec,
+        Identifier,
         IntoResponse,
         NgsiLdProtocolHeaders,
         NgsiLdRequestEnvelope,
@@ -28,7 +29,6 @@ use crate::{
         TemporalSimplifyRenderer,
         TenantState,
         TypedPath,
-        Uri,
         ValidatedQuery,
         Value,
         retrieve_forwarding::{RetrievalSources, RetrievedHistory, distributed_retrieval, resolve_retrieve_map},
@@ -60,7 +60,7 @@ pub async fn get(
         headers,
     }: NgsiLdRequestEnvelope,
     protocol: NgsiLdProtocolHeaders,
-    TypedPath(id): TypedPath<Uri>,
+    TypedPath(id): TypedPath<Identifier>,
     ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
     // The grouped extension is refused upstream when it is disabled

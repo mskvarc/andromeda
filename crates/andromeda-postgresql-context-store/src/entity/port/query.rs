@@ -1,7 +1,7 @@
 use crate::entity::{port::classify, repo::EntityRepository};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{error::EntityError, port::query::EntityQueryStore, query_outcome::QueryOutcome, storage_profile::StorageProfile};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -16,7 +16,7 @@ impl EntityQueryStore for EntityRepository {
         EntityRepository::query_compiled(self, target, compiled).await.map_err(|error| classify(&error))
     }
 
-    async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, EntityError> {
+    async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Identifier>, EntityError> {
         EntityRepository::query_ids(self, target, compiled).await.map_err(|error| classify(&error))
     }
 }

@@ -13,7 +13,7 @@ use andromeda_federation::{
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{declined_representation::single_source_declined, problem_response::ProblemResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use axum::http::Uri as HttpUri;
@@ -40,7 +40,7 @@ pub(crate) struct RetrieveForwarding<'a> {
     /// The request URI problem responses name.
     pub(crate) uri: &'a HttpUri,
     /// The entity being retrieved.
-    pub(crate) entity_id: &'a Uri,
+    pub(crate) entity_id: &'a Identifier,
     /// The retrieval parameters as the client wrote them.
     pub(crate) params: &'a GetEntityParams,
     /// The request's JSON-LD context.

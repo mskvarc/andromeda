@@ -1,6 +1,6 @@
 //! One Snapshot the store double holds, and where its preparation stands.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{Snapshot, SnapshotStatus};
 
 /// Where one stored Snapshot's preparation stands.
@@ -19,14 +19,14 @@ pub(crate) struct Entry {
     /// The Snapshot.
     pub(crate) snapshot: Snapshot,
     /// The source it clones, for a clone job.
-    pub(crate) clone_source: Option<Uri>,
+    pub(crate) clone_source: Option<Identifier>,
     /// Where its preparation stands.
     pub(crate) stage: Stage,
 }
 
 impl Entry {
     /// A stored Snapshot whose preparation stands where its status says.
-    pub(crate) fn new(snapshot: Snapshot, clone_source: Option<Uri>) -> Entry {
+    pub(crate) fn new(snapshot: Snapshot, clone_source: Option<Identifier>) -> Entry {
         let stage = match snapshot.status {
             SnapshotStatus::Preparing => Stage::Waiting,
             status @ (SnapshotStatus::Success | SnapshotStatus::Partial | SnapshotStatus::Empty | SnapshotStatus::Failure) => Stage::Ended(status),

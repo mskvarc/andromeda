@@ -11,7 +11,7 @@ use andromeda_context_commit::{
     write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -22,7 +22,7 @@ use std::{collections::HashMap, sync::Mutex};
 #[derive(Default)]
 pub(super) struct InMemoryStore {
     /// The stored entities, by identifier.
-    entities: Mutex<HashMap<Uri, (Value, DateTime<Utc>)>>,
+    entities: Mutex<HashMap<Identifier, (Value, DateTime<Utc>)>>,
 }
 
 impl InMemoryStore {
@@ -59,7 +59,7 @@ impl InMemoryStore {
         }
     }
 
-    fn stored(&self, id: &Uri) -> Option<(Value, DateTime<Utc>)> {
+    fn stored(&self, id: &Identifier) -> Option<(Value, DateTime<Utc>)> {
         self.entities.lock().expect("the store lock is not poisoned").get(id).cloned() // clone: the caller owns its copy of the row
     }
 }
@@ -77,20 +77,20 @@ impl ContextCommitter for InMemoryStore {
 
 #[async_trait]
 impl EntityReader for InMemoryStore {
-    async fn get(&self, _target: &ContextTarget, id: &Uri) -> Result<Option<Value>, EntityError> {
+    async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<Value>, EntityError> {
         Ok(self.stored(id).map(|(payload, _)| payload))
     }
 
-    async fn get_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
+    async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
         // clone: the answer owns the identifiers it is keyed by
         Ok(ids.iter().filter_map(|id| self.stored(id).map(|(payload, _)| (id.clone(), payload))).collect())
     }
 
-    async fn get_snapshot(&self, _target: &ContextTarget, id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
+    async fn get_snapshot(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
         Ok(self.stored(id).map(|(payload, modified_at)| EntitySnapshot { payload, modified_at }))
     }
 
-    async fn get_snapshot_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
+    async fn get_snapshot_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
         Ok(ids
             .iter()
             // clone: the answer owns the identifiers it is keyed by
@@ -101,11 +101,11 @@ impl EntityReader for InMemoryStore {
             .collect())
     }
 
-    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
         Ok(None)
     }
 
-    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
         Ok(HashMap::new())
     }
 }

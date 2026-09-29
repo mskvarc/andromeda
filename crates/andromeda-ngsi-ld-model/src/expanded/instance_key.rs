@@ -5,7 +5,7 @@ use crate::expanded::{
     node::expanded_object_ref,
     reserved_member::is_reserved_member,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -40,7 +40,7 @@ pub struct AttributeInstanceKey {
     /// Expanded attribute IRI.
     pub attr: AttributeName,
     /// `datasetId`, or `None` for the default instance.
-    pub dataset_id: Option<Uri>,
+    pub dataset_id: Option<Identifier>,
 }
 
 /// Index every attribute instance of an expanded entity payload by its identity,
@@ -130,7 +130,11 @@ pub fn member_instance_families<'a>(expanded: &'a Value, name: &AttributeName) -
 ///
 /// Returns [`InstanceDatasetIdError`] when an instance consulted before the
 /// match carries a `datasetId` that is not an identifier.
-pub fn attribute_instance_family(expanded: &Value, attr: &AttributeName, dataset_id: Option<&Uri>) -> Result<Option<AttributeType>, InstanceDatasetIdError> {
+pub fn attribute_instance_family(
+    expanded: &Value,
+    attr: &AttributeName,
+    dataset_id: Option<&Identifier>,
+) -> Result<Option<AttributeType>, InstanceDatasetIdError> {
     let Some(instances) = expanded_object_ref(expanded).and_then(|obj| obj.get(attr.as_str())).and_then(Value::as_array) else {
         return Ok(None);
     };

@@ -18,7 +18,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use tracing::debug;
@@ -29,10 +29,10 @@ pub struct ForwardPurgeRequest<'a> {
     /// The query's type selector, used for registration preselection.
     pub entity_type_compact: Option<&'a TypeExprRaw>,
     /// The query's identifiers, used for registration preselection.
-    pub entity_ids: Option<&'a [Uri]>,
+    pub entity_ids: Option<&'a [Identifier]>,
     /// The identifiers the query selected locally; a registration's failure is
     /// reported against the ones it covers.
-    pub local_ids: &'a [Uri],
+    pub local_ids: &'a [Identifier],
     /// The client's query string; its `local` parameter is not forwarded
     /// (clause 6.3.18 binds it to this broker's own forwarding decision).
     pub query_string: &'a str,
@@ -55,7 +55,7 @@ pub struct ForwardedPurgeResult {
     /// (Table 5.2.17-1 needs an `entityId` per error): the locally selected
     /// identifiers the registration covers, else the identifiers its
     /// information names, else the registration itself.
-    pub reported_ids: Vec<Uri>,
+    pub reported_ids: Vec<Identifier>,
 }
 
 /// The client's query without the `local` parameter.
@@ -73,17 +73,17 @@ fn forwarded_query_string(query_string: &str) -> String {
 /// DELETE must carry that same narrowed set rather than the client's verbatim
 /// list; the other filters (`type`, `q`, `attrs`, `drop`/`keep`) travel
 /// unchanged so each source purges exactly what the map fixed.
-fn narrowed_query_string(query_string: &str, narrowed_ids: Option<&[Uri]>) -> String {
+fn narrowed_query_string(query_string: &str, narrowed_ids: Option<&[Identifier]>) -> String {
     let mut serializer = form_urlencoded::Serializer::new(String::new());
     serializer.extend_pairs(form_urlencoded::parse(query_string.as_bytes()).filter(|(name, _)| name != "local" && name != "id"));
     if let Some(ids) = narrowed_ids.filter(|ids| !ids.is_empty()) {
-        serializer.append_pair("id", &ids.iter().map(Uri::as_str).collect::<Vec<_>>().join(","));
+        serializer.append_pair("id", &ids.iter().map(Identifier::as_str).collect::<Vec<_>>().join(","));
     }
     serializer.finish()
 }
 
 /// The identifiers a registration's purge failure is reported against.
-fn reported_ids(csr: &ContextSourceRegistration, local_ids: &[Uri]) -> Vec<Uri> {
+fn reported_ids(csr: &ContextSourceRegistration, local_ids: &[Identifier]) -> Vec<Identifier> {
     let covered = local_ids
         .iter()
         .filter(|id| {
@@ -197,11 +197,11 @@ impl FederationService {
 #[cfg(test)]
 mod tests {
     use crate::provision_purge::{forwarded_query_string, narrowed_query_string, reported_ids};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use serde_json::{Value, json};
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
     }
 

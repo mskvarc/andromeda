@@ -1,6 +1,6 @@
 //! Context collections returned by registry persistence.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 
 /// A Context list projected according to the requested detail level.
@@ -9,7 +9,7 @@ pub enum ListedContexts {
     /// Full lifecycle metadata records.
     Detailed(Vec<ContextMetadata>),
     /// Context identifiers or public URLs.
-    Summary(Vec<Uri>),
+    Summary(Vec<Identifier>),
 }
 
 #[cfg(test)]

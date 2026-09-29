@@ -1,7 +1,7 @@
 //! The identity the fused entity insert hands back for each entity it created,
 //! and the proof that its surrogate key is new.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 
 /// A surrogate key this transaction's own fused entity insert minted.
@@ -41,5 +41,5 @@ pub struct InsertedEntity {
     /// The surrogate key the insert minted.
     pub key: MintedEntityKey,
     /// The identifier the API addresses this entity by.
-    pub id: Uri,
+    pub id: Identifier,
 }

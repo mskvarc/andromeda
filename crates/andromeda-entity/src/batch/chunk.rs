@@ -32,7 +32,7 @@ use andromeda_context_commit::{
     write_retry::WRITE_ATTEMPTS,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity_change::EntityChange,
     expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError, written_observation::AddressedInstances},
@@ -45,7 +45,7 @@ use std::sync::Arc;
 /// implies once it lands.
 pub(super) struct ChunkWrite {
     /// Entity identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// What happens to the entity row.
     pub entity: EntityMutation,
     /// What the write records in the Temporal Evolution: the observation of
@@ -81,18 +81,18 @@ pub(super) struct UpdatedPayloads<'a> {
 #[derive(Debug, Default)]
 pub(super) struct ChunkOutcome {
     /// Identifiers whose write landed.
-    pub success: Vec<Uri>,
+    pub success: Vec<Identifier>,
     /// Identifiers whose write created the entity (clause 5.6.8 reports these
     /// separately so the response can carry 201).
-    pub created: Vec<Uri>,
+    pub created: Vec<Identifier>,
     /// Per-entity failures a re-read cannot fix.
-    pub errors: Vec<(Uri, EntityError)>,
+    pub errors: Vec<(Identifier, EntityError)>,
     /// Refusals a caller that read the entity first can fix by reading again:
     /// the entity moved on, or an identifier it read as absent now exists.
     /// A caller that read nothing has no reason to retry and folds these into
     /// [`Self::errors`] with [`Self::settled`]. Typed because the retry path
-    /// reads the store again by identifier, which the port keys on [`Uri`].
-    pub retryable: Vec<(Uri, EntityError)>,
+    /// reads the store again by identifier, which the port keys on [`Identifier`].
+    pub retryable: Vec<(Identifier, EntityError)>,
 }
 
 impl ChunkOutcome {
@@ -119,7 +119,7 @@ impl EntityService {
         prepared: PreparedEntity,
         precondition: Precondition,
         now: DateTime<Utc>,
-    ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
+    ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
         let PreparedEntity {
             id,
             mut expanded,
@@ -163,11 +163,11 @@ impl EntityService {
     pub(super) fn chunk_insert_payload(
         &self,
         target: &ContextTarget,
-        id: Uri,
+        id: Identifier,
         payload: Arc<Value>,
         precondition: Precondition,
         now: DateTime<Utc>,
-    ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
+    ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
         // Clause 4.8: stamp the created entity's attribute instances before the
         // record derives its columns from the payload.
         let mut payload_value = Arc::try_unwrap(payload).unwrap_or_else(|shared| (*shared).clone()); // clone: only when another reference still holds the payload
@@ -208,12 +208,12 @@ impl EntityService {
     pub(super) fn chunk_update(
         &self,
         target: &ContextTarget,
-        id: Uri,
+        id: Identifier,
         payloads: UpdatedPayloads<'_>,
         change: EntityChange,
         precondition: Precondition,
         now: DateTime<Utc>,
-    ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
+    ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
         let UpdatedPayloads { previous, merged, addressed } = payloads;
         // Clause 4.8: an updated instance takes `now` for modifiedAt and keeps
         // its createdAt; an untouched one keeps both. Stamped before the columns
@@ -255,7 +255,7 @@ impl EntityService {
 /// `Skipped` is silent on purpose: an unconditional insert that met an existing
 /// row neither succeeded nor failed, and the upsert path that issues one has
 /// always left such entities out of both lists.
-fn error_of(id: &Uri, outcome: &WriteOutcome) -> Option<EntityError> {
+fn error_of(id: &Identifier, outcome: &WriteOutcome) -> Option<EntityError> {
     match outcome {
         WriteOutcome::AlreadyExists => Some(EntityError::already_exists(id)),
         WriteOutcome::NotFound => Some(EntityError::not_found(id)),
@@ -282,7 +282,7 @@ impl EntityService {
         }
 
         let mut writes = Vec::with_capacity(entries.len());
-        let mut settled: Vec<(Uri, bool, Vec<ChangeEvent>)> = Vec::with_capacity(entries.len());
+        let mut settled: Vec<(Identifier, bool, Vec<ChangeEvent>)> = Vec::with_capacity(entries.len());
 
         for entry in entries {
             let ChunkWrite {

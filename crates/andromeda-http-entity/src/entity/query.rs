@@ -46,7 +46,7 @@ use andromeda_federation::{
     request::{EntityMapInUse, TriggeringRequest},
 };
 use andromeda_http_extraction::context_target;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
@@ -310,7 +310,7 @@ async fn merge_and_filter(
 
 /// The first and last identifiers of the page as displayed, from which a
 /// clause 5.5.9.1 cursor pointer is computed; absent when the page is empty.
-fn cursor_boundary(entities: &[Entity]) -> Option<(Uri, Uri)> {
+fn cursor_boundary(entities: &[Entity]) -> Option<(Identifier, Identifier)> {
     // clone: the pagination links own the identifiers, while the entities are
     // consumed by the rendering that follows.
     entities
@@ -326,7 +326,7 @@ fn cursor_boundary(entities: &[Entity]) -> Option<(Uri, Uri)> {
 /// Entities the join reached join them, since clause 5.5.14 fixes them as part
 /// of the same unitary request rather than as candidates a filter could shed.
 /// A non-split query prunes per source.
-fn split_page_matches(split_survivors: Option<Vec<Uri>>, resolved: Option<&ResolvedJoin<'_>>) -> PageMatches {
+fn split_page_matches(split_survivors: Option<Vec<Identifier>>, resolved: Option<&ResolvedJoin<'_>>) -> PageMatches {
     match split_survivors {
         Some(mut survivors) => {
             if let Some(resolved) = resolved {

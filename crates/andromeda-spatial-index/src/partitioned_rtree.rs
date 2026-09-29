@@ -361,12 +361,12 @@ mod tests {
         partitioned_rtree::{PartitionedRTree, WriteTracking},
     };
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
     use std::collections::HashMap;
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("a well-formed URI")
     }
 

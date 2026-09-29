@@ -45,6 +45,7 @@ mod inline_join_multi_target_relationship;
 mod invalid_parameter_values;
 mod list_attribute_families;
 mod list_relationship_representation;
+mod long_uri_references;
 mod minimal_query_parameters;
 mod non_ascii_identifiers;
 mod notification_creation_context;

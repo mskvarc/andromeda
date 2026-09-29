@@ -24,7 +24,7 @@ use crate::query::{
     },
     temporal::deserialization::{deserialize_option_timeproperty, deserialize_option_timerel},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::expression::Expr,
@@ -45,7 +45,7 @@ pub struct TemporalDeleteParameters {
     // --- Entity selection ---
     /// Entity identifiers to select, comma-separated (`id`).
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
-    pub id: Option<Vec<Uri>>,
+    pub id: Option<Vec<Identifier>>,
     /// Entity types to select, as a type-selection expression (clause 4.17 `type`).
     #[serde(rename = "type")]
     pub entity_type: Option<TypeExprRaw>,

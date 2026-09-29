@@ -14,7 +14,7 @@ use crate::{
     store::{SnapshotPreparationJob, SnapshotStore},
 };
 use andromeda_context_commit::{lease_holder::LeaseHolder, write_retry::backoff_after_lost_attempts};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
 use futures::future::BoxFuture;
 use std::{iter::repeat_with, time::Duration};
@@ -80,7 +80,7 @@ pub(crate) struct PreparationClaim<'a> {
     /// The store the claim is held in.
     pub(crate) store: &'a dyn SnapshotStore,
     /// The Snapshot being prepared.
-    pub(crate) id: &'a Uri,
+    pub(crate) id: &'a Identifier,
     /// The worker holding the claim.
     pub(crate) worker: LeaseHolder,
     /// How long a restarted claim is leased for.

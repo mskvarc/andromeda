@@ -6,7 +6,7 @@
 use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::ngsild_snapshot::NgsiLdSnapshot;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 use std::future::{Future, ready};
@@ -16,12 +16,12 @@ use std::future::{Future, ready};
 /// When present, the request is scoped to the frozen data of the specified
 /// snapshot. The value must be a valid URN.
 #[derive(Clone, Debug, Default)]
-pub struct SnapshotHeader(pub Option<Uri>);
+pub struct SnapshotHeader(pub Option<Identifier>);
 
 impl SnapshotHeader {
     /// Consume the extractor and return the optional snapshot URN.
     #[must_use]
-    pub fn into_inner(self) -> Option<Uri> {
+    pub fn into_inner(self) -> Option<Identifier> {
         self.0
     }
 }

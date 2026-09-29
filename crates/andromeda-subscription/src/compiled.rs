@@ -8,7 +8,12 @@
 //! selection remains in delivery bindings and is not compiled here.
 
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, positive_milliseconds::PositiveMilliseconds, spec_version::SpecVersion, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    identifier::Identifier,
+    positive_milliseconds::PositiveMilliseconds,
+    spec_version::SpecVersion,
+};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     notification::NotificationTrigger,
@@ -31,7 +36,7 @@ use url::Url;
 #[derive(Debug)]
 pub struct CompiledCsrSubscription {
     /// Subscription identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// Current lifecycle status.
     pub status: SubscriptionStatus,
     /// Notification endpoint URL.
@@ -82,7 +87,7 @@ pub struct CompiledCsrSubscription {
 #[derive(Debug)]
 pub struct CompiledSubscription {
     /// Subscription identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// The identity the store assigned this subscription, carried beside the
     /// identifier so a match enqueues its delivery against the narrow key while
     /// the notification it produces still names the subscription by its URI.
@@ -150,7 +155,7 @@ pub struct CompiledSubscription {
     /// The subscription's parsed `scopeQ`, if set.
     pub compiled_scope_q: Option<ScopeQuery>,
     /// Dataset identifiers admitted by the subscription.
-    pub dataset_id: Option<Vec<Uri>>,
+    pub dataset_id: Option<Vec<Identifier>>,
     /// Linked-entity join mode requested for notification data.
     pub notification_join: Option<JoinMode>,
     /// Maximum linked-entity join depth (the clause 4.5.23 joinLevel query parameter), which

@@ -14,7 +14,7 @@ use crate::{
     registration_validation_reason::RegistrationValidationReason,
     store::RegistrationStore,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity_info::EntityInfo,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation},
@@ -82,7 +82,7 @@ fn declared_attributes(entry: &RegistrationInfo) -> Vec<IriBuf> {
 
 /// Whether a block covers `entity_id`: a block without entity selectors
 /// constrains the entity axis not at all.
-fn entry_covers_id(entry: &RegistrationInfo, entity_id: &Uri) -> bool {
+fn entry_covers_id(entry: &RegistrationInfo, entity_id: &Identifier) -> bool {
     entry
         .entities
         .as_deref()
@@ -101,7 +101,7 @@ fn entry_overlaps_attributes(entry: &RegistrationInfo, attributes: &[IriBuf]) ->
 }
 
 /// Whether an existing registration overlaps the footprint `(entity_id, attributes)`.
-fn registration_overlaps(existing: &ContextSourceRegistration, entity_id: &Uri, attributes: &[IriBuf]) -> bool {
+fn registration_overlaps(existing: &ContextSourceRegistration, entity_id: &Identifier, attributes: &[IriBuf]) -> bool {
     existing
         .coverage
         .information
@@ -112,8 +112,8 @@ fn registration_overlaps(existing: &ContextSourceRegistration, entity_id: &Uri, 
 /// Reject the footprint when another proxied registration already claims it.
 async fn reject_overlapping_registrations(
     repo: &dyn RegistrationStore,
-    self_id: Option<&Uri>,
-    entity_id: &Uri,
+    self_id: Option<&Identifier>,
+    entity_id: &Identifier,
     attributes: &[IriBuf],
     colliding_modes: &[ForwardingMode],
 ) -> Result<(), RegistrationError> {
@@ -136,7 +136,7 @@ async fn reject_overlapping_registrations(
 async fn check_exclusive(
     repo: &dyn RegistrationStore,
     probe: &dyn RegisteredEntityProbe,
-    self_id: Option<&Uri>,
+    self_id: Option<&Identifier>,
     information: &[RegistrationInfo],
 ) -> Result<(), RegistrationError> {
     for entry in information {
@@ -161,7 +161,7 @@ async fn check_exclusive(
 async fn check_redirect(
     repo: &dyn RegistrationStore,
     probe: &dyn RegisteredEntityProbe,
-    self_id: Option<&Uri>,
+    self_id: Option<&Identifier>,
     information: &[RegistrationInfo],
 ) -> Result<(), RegistrationError> {
     for entry in information {
@@ -196,7 +196,7 @@ pub(super) async fn check_conflicts(
     probe: &dyn RegisteredEntityProbe,
     mode: ForwardingMode,
     information: &[RegistrationInfo],
-    self_id: Option<&Uri>,
+    self_id: Option<&Identifier>,
 ) -> Result<(), RegistrationError> {
     match mode {
         ForwardingMode::Exclusive => check_exclusive(repo, probe, self_id, information).await,
@@ -214,7 +214,7 @@ mod tests {
         fixed_store::{FixedStore, registration},
         mode_rules::{check_conflicts, default_operations, validate_structure},
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::{forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation};
     use serde_json::json;
     use std::slice;
@@ -363,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_registration_being_updated_never_conflicts_with_itself() {
-        let self_id: Uri = "urn:ngsi-ld:csr:self".parse().expect("valid URI");
+        let self_id: Identifier = "urn:ngsi-ld:csr:self".parse().expect("valid URI");
         let store = FixedStore::new(vec![registration(self_id.as_str(), "exclusive", &json!([exclusive_info(V1, &[SPEED])]))]);
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
         assert!(

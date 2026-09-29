@@ -10,7 +10,7 @@
 //! numbers stay in doc comments.
 
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
-use andromeda_ngsi_ld_lexicon::{spec_version::SpecVersionParseError, uri::UriParseError};
+use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, spec_version::SpecVersionParseError};
 use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
 use thiserror::Error;
 
@@ -186,9 +186,10 @@ pub enum SubscriptionValidationReason {
     /// The subscription `id` was not a `URI`.
     #[error("subscription id must be a valid URI: {source}")]
     SubscriptionId {
-        /// The `URI` grammar violation.
+        /// Why it is not an identifier, a length past the identifier bound
+        /// included.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// The notification projection combined mutually exclusive selectors
     /// (clause 4.21).

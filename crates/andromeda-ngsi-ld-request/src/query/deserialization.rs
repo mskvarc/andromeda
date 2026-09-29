@@ -1,6 +1,6 @@
 //! Deserializers for structured query-string values.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::{expression::Expr, parser},
@@ -98,7 +98,7 @@ pub enum GeoQueryDecodeError {
 ///
 /// Returns a deserialization error when a member is empty or is neither a URN
 /// nor a URL.
-pub fn deserialize_optional_uri_csv<'de, D>(deserializer: D) -> Result<Option<Vec<Uri>>, D::Error>
+pub fn deserialize_optional_uri_csv<'de, D>(deserializer: D) -> Result<Option<Vec<Identifier>>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -111,7 +111,7 @@ where
                 if member.is_empty() {
                     return Err(DeserializeError::custom("entity identifier list contains an empty member"));
                 }
-                member.parse::<Uri>().map_err(DeserializeError::custom)
+                member.parse::<Identifier>().map_err(DeserializeError::custom)
             })
             .collect()
     })

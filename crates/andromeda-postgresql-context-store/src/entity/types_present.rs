@@ -9,7 +9,7 @@
 //! typed error, so a caller never has to tell the two apart.
 
 use crate::{entity::params::PreparedEntityColumns, error::ContextStoreError};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use thiserror::Error;
 
 /// The name of the database check constraint that carries this invariant.
@@ -21,7 +21,7 @@ pub enum EntityTypesMissing {
     /// The write path refused the row before the statement ran, so the entity
     /// it belongs to is known (ETSI GS CIM 009 clause 4.5.1).
     #[error("entity {0} carries no type, but at least one is required")]
-    Rejected(Uri),
+    Rejected(Identifier),
     /// The database check constraint refused the row. The statement is set-based
     /// and the constraint names no row, so no identifier is available (ETSI GS CIM 009 clause 4.5.1).
     #[error("an entity write carried no type, but at least one is required")]
@@ -40,7 +40,7 @@ pub enum EntityTypesMissing {
 /// column is empty.
 pub fn types_present(columns: &PreparedEntityColumns) -> Result<(), EntityTypesMissing> {
     match columns.ids.iter().zip(&columns.entity_type_name_keys).find(|(_, types)| types.is_empty()) {
-        Some((id, _)) => Err(EntityTypesMissing::Rejected(Uri::clone(id))), // clone: the error outlives the borrowed column set.
+        Some((id, _)) => Err(EntityTypesMissing::Rejected(Identifier::clone(id))), // clone: the error outlives the borrowed column set.
         None => Ok(()),
     }
 }

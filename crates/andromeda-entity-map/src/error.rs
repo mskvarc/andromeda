@@ -1,6 +1,6 @@
 //! Failures reported by Entity Map policy and storage implementations.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use thiserror::Error;
 
 /// A semantic Entity Map failure or an implementation-neutral storage failure.
@@ -10,14 +10,14 @@ pub enum EntityMapError {
     #[error("entity map {identifier} not found")]
     NotFound {
         /// The requested Entity Map identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// A follow-up request under a live map changed a filter parameter of
     /// the request that created it, which clause 5.5.14 forbids.
     #[error("the request under entity map {identifier} does not use the parameters of the request that created it")]
     RequestChanged {
         /// The Entity Map the request referenced.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// A storage implementation could not complete an operation.
     #[error("entity map storage failed: {detail}")]
@@ -43,12 +43,12 @@ pub enum EntityMapError {
 #[cfg(test)]
 mod tests {
     use crate::error::EntityMapError;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
     #[test]
     fn missing_map_error_names_its_identifier() -> Result<(), EntityMapError> {
         let identifier = "urn:ngsi-ld:EntityMap:missing"
-            .parse::<Uri>()
+            .parse::<Identifier>()
             .map_err(|error| EntityMapError::Invariant { detail: error.to_string() })?;
         let error = EntityMapError::NotFound { identifier };
         pretty_assertions::assert_eq!(error.to_string(), "entity map urn:ngsi-ld:EntityMap:missing not found");

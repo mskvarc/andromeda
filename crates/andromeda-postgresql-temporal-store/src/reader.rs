@@ -17,7 +17,7 @@ use crate::{
     temporal_query_execution::TemporalStatement,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{cursor::PageCursor, pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_branch::schema_iden;
@@ -101,7 +101,7 @@ impl TemporalRepository {
     async fn read_scope_history(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalHistoryObservation>, TemporalError> {
         if !scope_is_selected(compiled) {
@@ -129,11 +129,11 @@ impl TemporalHistoryReader for TemporalRepository {
         }
     }
 
-    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError> {
+    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError> {
         self.temporal_entity_exists(target, entity_id).await.map_err(TemporalError::from)
     }
 
-    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
         self.temporal_entity_types(target, entity_ids).await.map_err(TemporalError::from)
     }
 
@@ -191,7 +191,7 @@ impl TemporalHistoryReader for TemporalRepository {
             .into_iter()
             .map(|row| {
                 let raw: String = row.try_get("entity_id")?;
-                raw.parse::<Uri>()
+                raw.parse::<Identifier>()
                     .map_err(|error| TemporalStoreError::Decode(format!("Invalid temporal entity_id '{raw}': {error}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -230,7 +230,7 @@ impl TemporalHistoryReader for TemporalRepository {
     async fn query_entity_history(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
         let stage2 = build_temporal_history_query(schema_iden(target).as_ref(), entity_id, compiled);
@@ -256,7 +256,7 @@ impl TemporalHistoryReader for TemporalRepository {
     async fn query_entity_aggregation(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         let stage2 = build_temporal_history_query(schema_iden(target).as_ref(), entity_id, compiled);

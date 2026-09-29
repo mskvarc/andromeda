@@ -6,7 +6,7 @@ use crate::{
     entity_type::EntityTypeValue,
     notification::SysAttrsSnapshot,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, scope::grammar::ScopeBuf, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, scope::grammar::ScopeBuf};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -110,7 +110,7 @@ impl Expandable for ScopeValue {
 pub struct Entity {
     /// Entity identifier (clause 5.2.4).
     #[jsonld(id)]
-    pub id: Uri,
+    pub id: Identifier,
     /// One or more entity types.
     #[serde(rename = "type")]
     #[jsonld(type_value)]
@@ -299,7 +299,7 @@ impl Entity {
 #[serde(rename_all = "camelCase")]
 pub struct EntityPatch {
     /// Entity identifier, when the payload repeats it.
-    pub id: Option<Uri>,
+    pub id: Option<Identifier>,
     /// Entity types, when the payload repeats them.
     #[serde(rename = "type")]
     pub type_: Option<EntityTypeValue>,
@@ -344,10 +344,50 @@ mod tests {
         entity::{Entity, EntityPatch},
         notification::SysAttrsSnapshot,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
     use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
     use chrono::{Datelike, TimeZone, Utc};
     use serde_json::{Value, json};
+
+    /// A value of exactly `length` octets that starts with `prefix`.
+    fn of_length(prefix: &str, length: usize) -> String {
+        format!("{prefix}{}", "x".repeat(length - prefix.len()))
+    }
+
+    /// The message a refused payload deserialises with.
+    fn refusal(payload: Value) -> String {
+        serde_json::from_value::<Entity>(payload)
+            .map(|entity| entity.id.to_string())
+            .expect_err("the payload must be refused")
+            .to_string()
+    }
+
+    /// Clause 4.6.2 sets no length on a URI, so a `ListRelationship` member far
+    /// longer than any identifier is part of a valid Entity.
+    #[test]
+    fn an_entity_whose_list_relationship_holds_a_six_thousand_octet_member_deserializes() {
+        let member = of_length("urn:ngsi-ld:GtfsStopTimeUpdate:", 6000);
+        let payload = json!({
+            "id": "urn:ngsi-ld:GtfsRtTripUpdate:1",
+            "type": "GtfsRtTripUpdate",
+            "stopTimeUpdates": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:GtfsStopTimeUpdate:1", member]}
+        });
+        let entity: Entity = serde_json::from_value(payload).expect("an entity with a long reference");
+        assert!(entity.attrs.contains_key("stopTimeUpdates"));
+    }
+
+    /// An Entity id is a key in the `entities` index, so it is held to the
+    /// identifier bound: 1024 octets are accepted and 1025 refused, naming the
+    /// length.
+    #[test]
+    fn an_entity_id_one_octet_past_the_identifier_bound_is_refused() {
+        let at_bound = of_length("urn:ngsi-ld:Building:", IDENTIFIER_BYTE_LIMIT);
+        let entity: Entity = serde_json::from_value(json!({"id": at_bound, "type": "Building"})).expect("an id at the bound");
+        pretty_assertions::assert_eq!(entity.id.as_str().len(), IDENTIFIER_BYTE_LIMIT);
+
+        let message = refusal(json!({"id": of_length("urn:ngsi-ld:Building:", IDENTIFIER_BYTE_LIMIT + 1), "type": "Building"}));
+        assert!(message.contains("1025 bytes"), "{message}");
+    }
 
     #[test]
     fn entity_deserializes_with_scope_string() {

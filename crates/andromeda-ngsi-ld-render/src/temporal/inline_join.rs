@@ -13,7 +13,7 @@
 //! side arrives as the same kind of value the roots do.
 
 use crate::relationship_targets::{ObjectSpelling, rendered_relationship_targets};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
@@ -37,14 +37,14 @@ const STRUCTURAL_MEMBERS: [&str; 6] = ["id", "type", "@context", "createdAt", "m
 /// entity that references itself, or forms a cycle with another, is nested once
 /// and not descended into again. Without that guard a cyclic link recurses
 /// without end and overflows the stack from a request.
-pub fn apply_temporal_inline_join(entity: &mut Value, linked: &IndexMap<Uri, Value>) {
+pub fn apply_temporal_inline_join(entity: &mut Value, linked: &IndexMap<Identifier, Value>) {
     let mut ancestors = HashSet::new();
     join_guarded(entity, linked, &mut ancestors);
 }
 
 /// Expand one temporal entity, tracking the ids already open on the current
 /// path so a reference cycle terminates.
-fn join_guarded(entity: &mut Value, linked: &IndexMap<Uri, Value>, ancestors: &mut HashSet<Uri>) {
+fn join_guarded(entity: &mut Value, linked: &IndexMap<Identifier, Value>, ancestors: &mut HashSet<Uri>) {
     let self_id = identifier_of(entity);
     let seeded = self_id.as_ref().is_some_and(|id| ancestors.insert(id.clone())); // clone: the guard owns the ids on the current path
 
@@ -67,7 +67,7 @@ fn join_guarded(entity: &mut Value, linked: &IndexMap<Uri, Value>, ancestors: &m
 }
 
 /// Nest whatever one rendered attribute instance points at.
-fn join_instance(fields: &mut Map<String, Value>, linked: &IndexMap<Uri, Value>, ancestors: &mut HashSet<Uri>) {
+fn join_instance(fields: &mut Map<String, Value>, linked: &IndexMap<Identifier, Value>, ancestors: &mut HashSet<Uri>) {
     // Clause 4.5.3.2 gives `object` "a URI or array of URIs", and the `entity`
     // member clause 4.5.23.2 adds mirrors that spelling: one nested evolution
     // for a bare URI, an ordered array for an array of them. The identifiers
@@ -104,7 +104,7 @@ fn join_instance(fields: &mut Map<String, Value>, linked: &IndexMap<Uri, Value>,
 /// Clause 4.5.23.1 retrieves only Relationships targeting a locally stored
 /// Entity, so an identifier that resolved to nothing contributes nothing rather
 /// than a hole in the list.
-fn nested_entities(objects: &[Uri], linked: &IndexMap<Uri, Value>, ancestors: &mut HashSet<Uri>) -> Vec<Value> {
+fn nested_entities(objects: &[Uri], linked: &IndexMap<Identifier, Value>, ancestors: &mut HashSet<Uri>) -> Vec<Value> {
     let mut nested = Vec::with_capacity(objects.len());
     for object in objects {
         if let Some(entity) = nested_entity(object, linked, ancestors) {
@@ -116,7 +116,7 @@ fn nested_entities(objects: &[Uri], linked: &IndexMap<Uri, Value>, ancestors: &m
 
 /// The temporal evolution one identifier resolves to, expanded in turn unless
 /// it is already open on the current path.
-fn nested_entity(object: &Uri, linked: &IndexMap<Uri, Value>, ancestors: &mut HashSet<Uri>) -> Option<Value> {
+fn nested_entity(object: &Uri, linked: &IndexMap<Identifier, Value>, ancestors: &mut HashSet<Uri>) -> Option<Value> {
     let mut nested = linked.get(object).cloned()?; // clone: each nesting site owns its own copy of the linked representation
     if !ancestors.contains(object) {
         join_guarded(&mut nested, linked, ancestors);
@@ -145,11 +145,11 @@ fn instances_of_mut(member: &mut Value) -> impl Iterator<Item = &mut Value> {
 #[cfg(test)]
 mod tests {
     use crate::temporal::inline_join::apply_temporal_inline_join;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use indexmap::IndexMap;
     use serde_json::{Value, json};
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 
@@ -163,7 +163,7 @@ mod tests {
         })
     }
 
-    fn resolved(entries: &[&str]) -> IndexMap<Uri, Value> {
+    fn resolved(entries: &[&str]) -> IndexMap<Identifier, Value> {
         entries.iter().map(|id| (uri(id), linked(id))).collect()
     }
 

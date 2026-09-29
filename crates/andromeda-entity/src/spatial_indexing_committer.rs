@@ -35,7 +35,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -73,7 +73,7 @@ impl SpatialIndexingCommitter {
             return self.commit_inner(target, writes, replay).await;
         }
         let changes: Vec<IndexChange> = writes.iter().map(|write| IndexChange::of(write, &self.placement)).collect();
-        let entities: Vec<Uri> = changes.iter().filter_map(IndexChange::entity).cloned().collect(); // clone: the lock map owns the identifiers it locks
+        let entities: Vec<Identifier> = changes.iter().filter_map(IndexChange::entity).cloned().collect(); // clone: the lock map owns the identifiers it locks
         let _guards = acquire_id_locks_in(&self.locks, target, &entities).await;
         for change in &changes {
             change.anticipate(&self.index);
@@ -111,14 +111,14 @@ enum IndexChange {
     /// The write states the entity's whole current state.
     Restate {
         /// The entity written.
-        entity_id: Uri,
+        entity_id: Identifier,
         /// The partitions the entity's location occupies once the write lands.
         placements: Vec<(SpatialKey, Geometry)>,
     },
     /// The write deletes the entity.
     Remove {
         /// The entity deleted.
-        entity_id: Uri,
+        entity_id: Identifier,
     },
     /// The write leaves the entity's current state alone.
     Unchanged,
@@ -139,7 +139,7 @@ impl IndexChange {
     }
 
     /// The entity this change concerns, if it concerns one.
-    const fn entity(&self) -> Option<&Uri> {
+    const fn entity(&self) -> Option<&Identifier> {
         match self {
             IndexChange::Restate { entity_id, .. } | IndexChange::Remove { entity_id } => Some(entity_id),
             IndexChange::Unchanged => None,
@@ -203,7 +203,7 @@ mod tests {
         geometry::Geometry,
         position::Position,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use chrono::Utc;
@@ -241,7 +241,7 @@ mod tests {
         }
     }
 
-    fn vehicle() -> Uri {
+    fn vehicle() -> Identifier {
         "urn:ngsi-ld:Vehicle:A".parse().expect("a well-formed URI")
     }
 
@@ -278,7 +278,7 @@ mod tests {
     }
 
     /// The vehicles the index holds within one degree of `(x, 0)`.
-    fn around(index: &SpatialEntityIndex, x: f64) -> Option<HashSet<Uri>> {
+    fn around(index: &SpatialEntityIndex, x: f64) -> Option<HashSet<Identifier>> {
         let key = SpatialKey::new(
             TenantRef::UnnamedDefault,
             IriBuf::new("https://example.org/Vehicle".to_owned()).expect("a well-formed IRI"),

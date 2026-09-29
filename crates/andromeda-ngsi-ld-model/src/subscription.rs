@@ -5,10 +5,10 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     constant_string,
     dereferenceable_uri::DereferenceableUri,
+    identifier::Identifier,
     positive_milliseconds::PositiveMilliseconds,
     rfc3339,
     spec_version::SpecVersion,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
@@ -57,7 +57,7 @@ pub enum NotificationStatus {
 pub struct EntitySelector {
     /// Exact entity id to match.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<Uri>,
+    pub id: Option<Identifier>,
     /// Regular expression the entity id must match (clause 5.2.33).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id_pattern: Option<Pattern>,
@@ -233,7 +233,7 @@ pub struct SubscriptionFilters {
     pub csf: Option<Expr>,
     /// Dataset ids to subscribe to.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dataset_id: Option<Vec<Uri>>,
+    pub dataset_id: Option<Vec<Identifier>>,
     /// Temporal query expression (clause 5.2.21).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temporal_q: Option<Value>,
@@ -335,7 +335,7 @@ pub struct SubscriptionLifecycle {
 #[serde(rename_all = "camelCase")]
 pub struct Subscription {
     /// Subscription identifier (clause 5.2.12: a URI, not necessarily an NGSI-LD URN).
-    pub id: Uri,
+    pub id: Identifier,
     /// JSON-LD type (always `Subscription`).
     #[serde(rename = "type", default)]
     #[builder(default = Default::default())]
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn a_subscription_builder_defaults_every_group_that_carries_no_required_member() {
         let built = Subscription::builder()
-            .id("urn:ngsi-ld:Subscription:2".parse::<Uri>().expect("valid id"))
+            .id("urn:ngsi-ld:Subscription:2".parse::<Identifier>().expect("valid id"))
             .notification(serde_json::from_value(serde_json::json!({"endpoint": {"uri": "https://receiver.example.com/notify"}})).expect("endpoint"))
             .lifecycle(
                 SubscriptionLifecycle::builder()

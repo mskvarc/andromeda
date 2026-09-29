@@ -10,7 +10,7 @@ use crate::{
     migration_set::branch::{BranchSchemaVersion, current_branch_version},
     snapshot::persistence_error,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError};
 use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
@@ -29,7 +29,7 @@ pub(crate) fn current_version() -> Result<BranchSchemaVersion, SnapshotError> {
 }
 
 /// The branch schema version one Snapshot URI carries.
-fn branch_version_statement(id: &Uri) -> SelectStatement {
+fn branch_version_statement(id: &Identifier) -> SelectStatement {
     Query::select()
         .column((SnapshotPreparation::Table, SnapshotPreparation::BranchSchemaVersion))
         .from(Snapshots::Table)
@@ -44,7 +44,7 @@ fn branch_version_statement(id: &Uri) -> SelectStatement {
 
 /// Whether one Snapshot's branch schemas are current or quarantined; `None`
 /// when no such Snapshot exists.
-pub(crate) async fn read_branch_condition(pool: &PgPool, id: &Uri) -> Result<Option<BranchCondition>, SnapshotError> {
+pub(crate) async fn read_branch_condition(pool: &PgPool, id: &Identifier) -> Result<Option<BranchCondition>, SnapshotError> {
     let current = current_version()?;
     let (sql, values) = branch_version_statement(id).build_sqlx(PostgresQueryBuilder);
     let stored = sqlx::query_scalar_with::<_, i32, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -69,7 +69,7 @@ mod tests {
         migration_set::branch::BranchSchemaVersion,
         snapshot::branch_version::{branch_is_current, branch_version_statement, condition_of},
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_snapshot::branch_condition::BranchCondition;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn the_version_read_joins_the_control_record_by_uri() {
-        let id: Uri = "urn:ngsi-ld:Snapshot:one".parse().expect("a URI");
+        let id: Identifier = "urn:ngsi-ld:Snapshot:one".parse().expect("a URI");
         let sql = branch_version_statement(&id).to_string(PostgresQueryBuilder);
         assert!(sql.contains("JOIN \"snapshot_preparation\""), "{sql}");
         assert!(sql.contains("\"snapshots\".\"id\" = 'urn:ngsi-ld:Snapshot:one'"), "{sql}");

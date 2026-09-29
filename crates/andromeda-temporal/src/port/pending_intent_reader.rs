@@ -4,7 +4,7 @@
 //! the live branch's and no read names a branch.
 
 use crate::{append_intent::KeyedTemporalAppendIntent, error::TemporalError};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use async_trait::async_trait;
 
 /// Reads committed intents until their durable delivery acknowledgement lands.
@@ -12,7 +12,7 @@ use async_trait::async_trait;
 pub trait PendingTemporalIntentReader: Send + Sync {
     /// Return every pending intent for one entity in anchor sequence order.
     #[must_use = "pending temporal intents must be awaited"]
-    async fn pending_for_entity(&self, entity_id: &Uri) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError>;
+    async fn pending_for_entity(&self, entity_id: &Identifier) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError>;
 
     /// Return every pending intent in anchor sequence order.
     #[must_use = "pending temporal intents must be awaited"]

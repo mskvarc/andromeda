@@ -17,7 +17,7 @@
 
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::pagination::{PageLinks, PagePointers, append_pagination_links};
-use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
     page_window::{PageStart, PageWindow},
@@ -94,7 +94,7 @@ impl QueriedPage {
         media_type: ResponseMediaType,
         total: Option<usize>,
         returned: usize,
-        boundary: Option<(NgsiLdUri, NgsiLdUri)>,
+        boundary: Option<(Identifier, Identifier)>,
     ) {
         match self.pointers {
             PagePointers::NotDereferenceable => {}
@@ -113,7 +113,7 @@ mod tests {
     use crate::temporal::query::page::QueriedPage;
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_http_response::pagination::PagePointers;
-    use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::cursor::PageCursor;
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
     use axum::{
@@ -273,7 +273,7 @@ mod tests {
         }
     }
 
-    fn element_id(id: &str) -> NgsiLdUri {
+    fn element_id(id: &str) -> Identifier {
         id.parse().expect("valid URI")
     }
 

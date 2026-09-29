@@ -6,7 +6,7 @@ use crate::{
     store_double::{ClaimHold, StoreDouble},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultStatus, Snapshot, SnapshotPriority, SnapshotStatus};
 use chrono::{Duration as ChronoDuration, Utc};
 use futures::future::BoxFuture;
@@ -20,7 +20,7 @@ use tokio::time::Instant;
 /// The lease a transient failure must never be left to wait out.
 const LEASE: Duration = Duration::from_secs(30);
 
-fn snapshot_id() -> Uri {
+fn snapshot_id() -> Identifier {
     "urn:ngsi-ld:Snapshot:attempts".parse().expect("valid snapshot identifier")
 }
 
@@ -41,7 +41,7 @@ async fn store(claim: ClaimHold) -> StoreDouble {
     store
 }
 
-fn claim<'a>(store: &'a StoreDouble, id: &'a Uri) -> PreparationClaim<'a> {
+fn claim<'a>(store: &'a StoreDouble, id: &'a Identifier) -> PreparationClaim<'a> {
     PreparationClaim {
         store,
         id,

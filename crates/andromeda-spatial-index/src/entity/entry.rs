@@ -2,7 +2,7 @@
 
 use crate::partitioned_rtree::Indexed;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use rstar::{AABB, RTreeObject};
 
 /// A single entity's geometry, indexed under one
@@ -18,7 +18,7 @@ pub struct SpatialEntry {
     /// Any clause 4.5.1 entity identifier, not only a URN: an entity the tree
     /// could not hold would be missing from a partition the query path reads
     /// as complete.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// The entity geometry.
     pub geometry: Geometry,
     /// Axis-aligned bounding box of the geometry.
@@ -33,7 +33,7 @@ impl SpatialEntry {
     /// prefiltered; refusing to index it is what keeps the tree's answer and
     /// the exact predicate's answer the same.
     #[must_use]
-    pub fn new(entity_id: Uri, geometry: Geometry) -> Option<SpatialEntry> {
+    pub fn new(entity_id: Identifier, geometry: Geometry) -> Option<SpatialEntry> {
         let rect = geometry.bounding_rect()?;
         let envelope = AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]);
         Some(SpatialEntry { entity_id, geometry, envelope })
@@ -41,9 +41,9 @@ impl SpatialEntry {
 }
 
 impl Indexed for SpatialEntry {
-    type Id = Uri;
+    type Id = Identifier;
 
-    fn id(&self) -> &Uri {
+    fn id(&self) -> &Identifier {
         &self.entity_id
     }
 }

@@ -6,7 +6,7 @@ use crate::{
     state::ComponentReportState,
 };
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use axum::{
     Json,
     extract::{OriginalUri, State},
@@ -25,7 +25,7 @@ pub async fn get(State(state): State<ComponentReportState>, OriginalUri(uri): Or
     let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("ComponentReportList:{}", Uuid::new_v4()))
         .build()
         .map_err(ComponentReportError::from)
-        .and_then(|urn| Uri::try_from(urn).map_err(ComponentReportError::from))
+        .and_then(|urn| Identifier::try_from(urn).map_err(ComponentReportError::from))
         .map_err(|error| classify(&error).with_instance(uri))?;
     Ok(Json(ComponentReportResponse {
         id,

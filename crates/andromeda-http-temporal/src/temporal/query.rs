@@ -49,7 +49,7 @@ use andromeda_federation::{
 use andromeda_http_extraction::{context_target, prefer::PreferHeader};
 use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_http_response::pagination::PagePointers;
-use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_request::{error::ParameterError, join_traversal::RetrievingJoin, pagination_cursor::decode_cursor};
 use andromeda_temporal::{
     error::TemporalError,
@@ -407,8 +407,8 @@ const fn response_status(range: Option<&TemporalRange>, map_created: bool) -> St
 ///
 /// Absent when the page is empty or when an entity carries no readable `id`, in
 /// which case the cursor pointers are not offered and the offset path stands.
-fn element_boundary(entities: &[Value]) -> Option<(NgsiLdUri, NgsiLdUri)> {
-    let id_of = |entity: &Value| entity.get("id").and_then(Value::as_str).and_then(|id| id.parse::<NgsiLdUri>().ok());
+fn element_boundary(entities: &[Value]) -> Option<(Identifier, Identifier)> {
+    let id_of = |entity: &Value| entity.get("id").and_then(Value::as_str).and_then(|id| id.parse::<Identifier>().ok());
     let first = entities.first().and_then(&id_of)?;
     let last = entities.last().and_then(&id_of)?;
     Some((first, last))
@@ -450,7 +450,7 @@ async fn join_linked_entities(
     seed: &[TemporalLinkedCandidate],
     warnings: Vec<NgsiLdWarning>,
     instance: &Uri,
-) -> Result<(Vec<NgsiLdWarning>, Vec<NgsiLdUri>), ProblemResponse> {
+) -> Result<(Vec<NgsiLdWarning>, Vec<Identifier>), ProblemResponse> {
     let Some(join) = RetrievingJoin::from_mode(read.params.join) else {
         return Ok((warnings, Vec::new()));
     };

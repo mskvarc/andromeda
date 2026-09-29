@@ -10,7 +10,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{entity_snapshot::EntitySnapshot, query_outcome::QueryOutcome};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_postgresql_branch::table_of;
@@ -38,7 +38,7 @@ impl EntityRepository {
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when the payload query fails.
-    pub async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Option<Value>, ContextStoreError> {
+    pub async fn get(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<Value>, ContextStoreError> {
         let (sql, values) = payload_by_id_query(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
         let result: Option<Value> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_optional(&self.pool)
@@ -52,11 +52,11 @@ impl EntityRepository {
     ///
     /// Returns [`ContextStoreError`] when the payload query fails, or when a
     /// returned identifier is no longer a valid URI.
-    pub async fn get_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, ContextStoreError> {
+    pub async fn get_batch(&self, target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
+        let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
         let (sql, values) = payloads_by_ids_query(target, &id_strs).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
@@ -74,7 +74,7 @@ impl EntityRepository {
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when the snapshot query fails.
-    pub async fn get_snapshot(&self, target: &ContextTarget, id: &Uri) -> Result<Option<EntitySnapshot>, ContextStoreError> {
+    pub async fn get_snapshot(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<EntitySnapshot>, ContextStoreError> {
         let (sql, values) = snapshot_by_id_query(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
 
@@ -90,11 +90,11 @@ impl EntityRepository {
     ///
     /// Returns [`ContextStoreError`] when the snapshot query fails, or when a
     /// returned identifier is no longer a valid URI.
-    pub async fn get_snapshot_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, ContextStoreError> {
+    pub async fn get_snapshot_batch(&self, target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
+        let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
         let (sql, values) = snapshots_by_ids_query(target, &id_strs).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
@@ -117,7 +117,7 @@ impl EntityRepository {
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when the system-attribute query fails.
-    pub async fn get_sys_attrs(&self, target: &ContextTarget, id: &Uri) -> Result<Option<SysAttrsSnapshot>, ContextStoreError> {
+    pub async fn get_sys_attrs(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<SysAttrsSnapshot>, ContextStoreError> {
         let (sql, values) = sys_attrs_by_id_query(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
 
@@ -134,11 +134,11 @@ impl EntityRepository {
     ///
     /// Returns [`ContextStoreError`] when the system-attribute query fails, or
     /// when a returned identifier is no longer a valid URI.
-    pub async fn get_sys_attrs_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, ContextStoreError> {
+    pub async fn get_sys_attrs_batch(&self, target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
+        let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
         let (sql, values) = sys_attrs_by_ids_query(target, &id_strs).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
@@ -219,7 +219,7 @@ impl EntityRepository {
     /// resolved through the dictionaries, when the statement cannot be rendered
     /// from the compiled query, when the select fails, or when a returned
     /// identifier is no longer a valid URI.
-    pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, ContextStoreError> {
+    pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Identifier>, ContextStoreError> {
         let planned = pushdown::plan(compiled, EntityRepository::PROFILE);
         self.ensure_collations(&planned.query.ordering).await?;
         let names = self.resolve_names(&planned.query).await?;
@@ -227,7 +227,7 @@ impl EntityRepository {
 
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
-        let ids: Vec<Uri> = rows.iter().map(|row| stored_uri(row.get("id"))).collect::<Result<_, _>>()?;
+        let ids: Vec<Identifier> = rows.iter().map(|row| stored_uri(row.get("id"))).collect::<Result<_, _>>()?;
         Ok(planned.outcome(ids, None))
     }
 

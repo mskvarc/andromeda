@@ -80,12 +80,12 @@ mod tests {
         error::CommitError,
         write_outcome::WriteOutcome,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use std::sync::Arc;
 
     fn write(id: &str) -> AtomicWrite {
         AtomicWrite::builder()
-            .entity_id(Arc::new(id.parse::<Uri>().expect("valid entity URI")))
+            .entity_id(Arc::new(id.parse::<Identifier>().expect("valid entity URI")))
             .entity(EntityMutation::None)
             .build()
     }

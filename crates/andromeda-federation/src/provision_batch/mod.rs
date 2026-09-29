@@ -41,7 +41,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     expanded::mutation::selection::OverwritePolicy,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
@@ -97,7 +97,7 @@ impl BatchProvisionOperation {
 /// One entity of the client's array.
 pub struct BatchEntity<'a> {
     /// The entity identifier.
-    pub id: &'a Uri,
+    pub id: &'a Identifier,
     /// The compact entity type used for registration matching; a deletion
     /// names none.
     pub entity_type: Option<&'a EntityTypeName>,
@@ -124,9 +124,9 @@ pub struct ForwardBatchRequest<'a> {
 /// What one registration did with one entity of a forwarded batch.
 pub struct BatchForwardedResult {
     /// The registration the entity was forwarded to.
-    pub registration_id: Uri,
+    pub registration_id: Identifier,
     /// The entity.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// The registration's forwarding mode.
     pub mode: ForwardingMode,
     /// What the registration answered for the entity.

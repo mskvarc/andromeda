@@ -8,7 +8,7 @@
 //! column. A column that is SQL NULL is the absent key (`@none`).
 
 use crate::{aggregation_row_decode::projected_column, error::TemporalStoreError};
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::sub_second, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::temporal::GroupKeyValue;
 use andromeda_ngsi_ld_query::temporal::grouping::{AggregationGrouping, bucket_term::BucketKind, entity_member::EntityMember, group_key::GroupKey};
 use andromeda_postgresql_temporal_query::{aggregation_group::ObservedUnits, aggregation_grouping::group_key_column};
@@ -26,8 +26,8 @@ use sqlx::postgres::PgRow;
 pub(crate) fn decode_group_keys(
     row: &PgRow,
     grouping: &AggregationGrouping,
-    entity_id: &Uri,
-    dataset_id: Option<&Uri>,
+    entity_id: &Identifier,
+    dataset_id: Option<&Identifier>,
     attribute_type: AttributeType,
     units: ObservedUnits,
 ) -> Result<Vec<GroupKeyValue>, TemporalStoreError> {

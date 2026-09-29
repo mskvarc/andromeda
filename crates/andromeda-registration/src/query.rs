@@ -8,7 +8,12 @@ use crate::{
     registration_validation_reason::RegistrationValidationReason,
 };
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    context_source_pseudonym::ContextSourcePseudonym,
+    entity_type_name::EntityTypeName,
+    identifier::Identifier,
+};
 use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
     registration_matching::{EntitySpecification, RegistrationMatchSpecification},
@@ -42,7 +47,7 @@ pub struct DiscoveredRegistrations {
     /// from the untrimmed page so the walk continues past every registration the
     /// store scanned, not only the ones the clause-5.10.2.5 trim kept. Absent on
     /// an empty page.
-    pub boundary: Option<(Uri, Uri)>,
+    pub boundary: Option<(Identifier, Identifier)>,
     /// Whether the raw store page filled the limit -- the clause 6.3.10
     /// page-fullness signal a cursor walk uses in place of a total.
     pub page_full: bool,

@@ -21,7 +21,7 @@ use andromeda_context_commit::{
     write_retry::{WRITE_ATTEMPTS, backoff_after_lost_attempts},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde_json::Value;
 use std::slice::from_ref;
 
@@ -47,7 +47,7 @@ impl EntityService {
     ///
     /// Propagates whatever `build` or the coordinator returns, and reports
     /// [`EntityError::Contention`] once the attempt budget is spent.
-    pub(crate) async fn commit_read_modify_write<B>(&self, target: &ContextTarget, id: &Uri, mut build: B) -> Result<Option<WriteOutcome>, EntityError>
+    pub(crate) async fn commit_read_modify_write<B>(&self, target: &ContextTarget, id: &Identifier, mut build: B) -> Result<Option<WriteOutcome>, EntityError>
     where
         B: FnMut(&Value) -> Result<Option<AtomicWrite>, EntityError>,
     {
@@ -98,7 +98,7 @@ impl EntityService {
     ///
     /// Reports [`EntityError::NotFound`] when the entity is absent,
     /// and otherwise propagates whatever `build` or the coordinator returns.
-    pub(crate) async fn commit_computed_write<B, T>(&self, target: &ContextTarget, id: &Uri, mut build: B) -> Result<T, EntityError>
+    pub(crate) async fn commit_computed_write<B, T>(&self, target: &ContextTarget, id: &Identifier, mut build: B) -> Result<T, EntityError>
     where
         B: FnMut(&Value) -> Result<(AtomicWrite, T), EntityError>,
     {

@@ -9,7 +9,7 @@ use crate::{
     component::{ComponentDetail, ComponentName},
     status::HealthStatus,
 };
-use andromeda_ngsi_ld_lexicon::{constant_string, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -20,7 +20,7 @@ constant_string!(HealthCheckType, "HealthCheck");
 #[serde(rename_all = "camelCase")]
 pub struct HealthCheckResponse {
     /// Unique identifier of this health check response.
-    pub id: Uri,
+    pub id: Identifier,
     /// Response type discriminator (`HealthCheck`).
     #[serde(rename = "type")]
     pub type_: HealthCheckType,
@@ -45,7 +45,7 @@ mod tests {
         report::{HealthCheckDetails, HealthCheckResponse, HealthCheckType},
         status::HealthStatus,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
     use urn_rs::UrnBuilder;
@@ -81,7 +81,7 @@ mod tests {
         );
 
         HealthCheckResponse {
-            id: Uri::try_from(id_urn).expect("a minted identifier is within the bound"),
+            id: Identifier::try_from(id_urn).expect("a minted identifier is within the bound"),
             type_: HealthCheckType,
             health_check: HealthCheckDetails {
                 status: HealthStatus::Up,

@@ -11,7 +11,7 @@
 
 use crate::receiver::ReceiverEndpoint;
 use andromeda_federation::config::SplitEntities;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, info::RegistrationInfo},
     subscription::{EntitySelector, Subscription},
@@ -98,7 +98,7 @@ impl ReducedSubscription {
         subscription: &Subscription,
         registration: &ContextSourceRegistration,
         receiver: &ReceiverEndpoint,
-        minted: &Uri,
+        minted: &Identifier,
         carriage: FilterCarriage,
     ) -> ReducedSubscription {
         let mut document = Map::new();
@@ -191,7 +191,7 @@ mod tests {
         reduced_copy::{FilterCarriage, ReducedSubscription},
     };
     use andromeda_federation::config::SplitEntities;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription};
     use serde_json::json;
     use url::Url;
@@ -237,7 +237,7 @@ mod tests {
         ReceiverEndpoint::from_advertised(&Url::parse("http://broker-a:1056").expect("valid URL")).expect("receiver")
     }
 
-    fn minted() -> Uri {
+    fn minted() -> Identifier {
         "urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI")
     }
 

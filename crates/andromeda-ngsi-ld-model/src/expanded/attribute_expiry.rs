@@ -11,7 +11,7 @@ use crate::expanded::{
     dataset_id::position_of_dataset,
     node::{expanded_object_mut, expanded_object_ref},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -111,7 +111,7 @@ fn instances_of<'a>(expanded: &'a Value, attribute: &str) -> &'a [Value] {
 /// Whether the payload's instance of `attribute` under `dataset` is expired at
 /// `at`; `false` when the payload carries no such instance.
 #[must_use]
-pub fn instance_expired(expanded: &Value, attribute: &str, dataset: Option<&Uri>, at: DateTime<Utc>) -> bool {
+pub fn instance_expired(expanded: &Value, attribute: &str, dataset: Option<&Identifier>, at: DateTime<Utc>) -> bool {
     let instances = instances_of(expanded, attribute);
     match position_of_dataset(instances, dataset) {
         Ok(Some(position)) => instances.get(position).is_some_and(|instance| instance_expired_at(instance, at)),

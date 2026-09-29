@@ -1,6 +1,6 @@
 //! Reading the `datasetId` that separates the instances of a multi-attribute.
 
-use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
+use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 use thiserror::Error;
@@ -17,7 +17,7 @@ pub struct InstanceDatasetIdError {
     pub raw: String,
     /// Why it is not an identifier.
     #[source]
-    pub source: UriParseError,
+    pub source: IdentifierParseError,
 }
 
 /// The `@id` spelling of an expanded instance's `datasetId`, when it has one.
@@ -48,7 +48,7 @@ fn dataset_id_spelling(instance: &Value) -> Option<&str> {
 ///
 /// Returns [`InstanceDatasetIdError`] when the `datasetId` is present but is not
 /// a valid identifier, including one past the identifier bound.
-pub fn get_instance_dataset_id(instance: &Value) -> Result<Option<Uri>, InstanceDatasetIdError> {
+pub fn get_instance_dataset_id(instance: &Value) -> Result<Option<Identifier>, InstanceDatasetIdError> {
     let Some(raw) = dataset_id_spelling(instance) else {
         return Ok(None);
     };
@@ -62,7 +62,7 @@ pub fn get_instance_dataset_id(instance: &Value) -> Result<Option<Uri>, Instance
 ///
 /// Returns [`InstanceDatasetIdError`] for the first instance, before any match,
 /// whose `datasetId` is not a valid identifier.
-pub fn position_of_dataset(instances: &[Value], dataset: Option<&Uri>) -> Result<Option<usize>, InstanceDatasetIdError> {
+pub fn position_of_dataset(instances: &[Value], dataset: Option<&Identifier>) -> Result<Option<usize>, InstanceDatasetIdError> {
     instances
         .iter()
         .enumerate()
@@ -79,7 +79,7 @@ pub fn position_of_dataset(instances: &[Value], dataset: Option<&Uri>) -> Result
 ///
 /// Returns [`InstanceDatasetIdError`] for the first instance whose `datasetId`
 /// is not a valid identifier.
-pub fn instance_dataset_ids(instances: &[Value]) -> Result<Vec<Option<Uri>>, InstanceDatasetIdError> {
+pub fn instance_dataset_ids(instances: &[Value]) -> Result<Vec<Option<Identifier>>, InstanceDatasetIdError> {
     instances.iter().map(get_instance_dataset_id).collect()
 }
 
@@ -96,8 +96,8 @@ pub fn instance_has_dataset_id(instance: &Value) -> bool {
 mod tests {
     use crate::expanded::dataset_id::{get_instance_dataset_id, instance_dataset_ids, instance_has_dataset_id, position_of_dataset};
     use andromeda_ngsi_ld_lexicon::{
+        identifier::{Identifier, IdentifierParseError},
         identifier_length::IDENTIFIER_BYTE_LIMIT,
-        uri::{Uri, UriParseError},
     };
     use serde_json::{Value, json};
 
@@ -112,7 +112,10 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:A"}]
         });
         pretty_assertions::assert_eq!(
-            get_instance_dataset_id(&instance).expect("a readable datasetId").as_ref().map(Uri::as_str),
+            get_instance_dataset_id(&instance)
+                .expect("a readable datasetId")
+                .as_ref()
+                .map(Identifier::as_str),
             Some("urn:ngsi-ld:Dataset:A")
         );
     }
@@ -130,7 +133,7 @@ mod tests {
         let raw = format!("urn:ngsi-ld:Dataset:{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
         let error = get_instance_dataset_id(&tagged(&raw)).expect_err("an over-long datasetId");
         pretty_assertions::assert_eq!(error.raw, raw);
-        assert!(matches!(error.source, UriParseError::TooLong(_)), "{error:?}");
+        assert!(matches!(error.source, IdentifierParseError::TooLong(_)), "{error:?}");
         assert!(instance_has_dataset_id(&tagged(&raw)), "the instance still names a dataset");
     }
 

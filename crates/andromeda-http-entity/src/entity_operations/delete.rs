@@ -6,6 +6,7 @@ use crate::entity_operations::{
     Bytes,
     EntityResultExt,
     EntityTenantState,
+    Identifier,
     IntoResponse,
     NgsiLdErrorType,
     NgsiLdRequestEnvelope,
@@ -14,7 +15,6 @@ use crate::entity_operations::{
     Response,
     StatusCode,
     TriggeringRequest,
-    Uri,
     apply_preference_applied,
     async_preference,
     batch_operation_result,
@@ -51,7 +51,7 @@ pub(crate) async fn batch_delete(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
 
-    let entity_ids: Vec<Uri> = serde_json::from_slice(&body).map_err(|error| {
+    let entity_ids: Vec<Identifier> = serde_json::from_slice(&body).map_err(|error| {
         public_error(
             NgsiLdErrorType::InvalidRequest,
             format!("request body must be a JSON array of entity IDs: {error}"),

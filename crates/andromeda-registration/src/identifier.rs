@@ -2,7 +2,7 @@
 //! assigns when it names none.
 
 use crate::{error::RegistrationError, registration_validation_reason::RegistrationValidationReason};
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
@@ -12,21 +12,21 @@ use uuid::Uuid;
 ///
 /// Returns [`RegistrationValidationReason::IdNotUri`] carrying why `raw` is not
 /// an identifier, including one past the identifier bound.
-pub(crate) fn client_registration_id(raw: &str) -> Result<Uri, RegistrationError> {
+pub(crate) fn client_registration_id(raw: &str) -> Result<Identifier, RegistrationError> {
     raw.parse()
         .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::IdNotUri { source }))
 }
 
 /// Mint a broker-assigned registration identifier (clause 5.9.2.4).
-pub(crate) fn generate_registration_id() -> Result<Uri, RegistrationError> {
+pub(crate) fn generate_registration_id() -> Result<Identifier, RegistrationError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("ContextSourceRegistration:{}", Uuid::new_v4())).build()?;
-    Uri::try_from(urn).map_err(RegistrationError::internal)
+    Identifier::try_from(urn).map_err(RegistrationError::internal)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{error::RegistrationError, identifier::client_registration_id, registration_validation_reason::RegistrationValidationReason};
-    use andromeda_ngsi_ld_lexicon::{identifier_length::IDENTIFIER_BYTE_LIMIT, uri::UriParseError};
+    use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, identifier_length::IDENTIFIER_BYTE_LIMIT};
 
     #[test]
     fn a_registration_id_past_the_limit_is_refused_with_its_reason() {
@@ -37,7 +37,7 @@ mod tests {
             matches!(
                 error,
                 RegistrationError::Validation(RegistrationValidationReason::IdNotUri {
-                    source: UriParseError::TooLong(_)
+                    source: IdentifierParseError::TooLong(_)
                 })
             ),
             "{error:?}"

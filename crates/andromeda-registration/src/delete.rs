@@ -1,7 +1,7 @@
 //! Context-source registration deletion policy.
 
 use crate::{RegistrationService, error::RegistrationError};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
 
 impl RegistrationService {
@@ -15,7 +15,7 @@ impl RegistrationService {
     /// store rejects the read or the deletion. A removal hook that cannot
     /// capture or finish its teardown is logged rather than returned: the
     /// registration is deleted either way.
-    pub async fn delete(&self, id: &Uri) -> Result<(), RegistrationError> {
+    pub async fn delete(&self, id: &Identifier) -> Result<(), RegistrationError> {
         let existing = self.repo.get(id).await?;
         let snapshot = existing
             .as_ref()
@@ -57,7 +57,7 @@ mod tests {
         store::RegistrationStore,
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use futures::future::BoxFuture;
     use pretty_assertions::assert_eq;
@@ -148,7 +148,7 @@ mod tests {
         )
         .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>); // clone: the test reads the hook's log
 
-        let id: Uri = REGISTRATION_ID.parse().expect("valid URI");
+        let id: Identifier = REGISTRATION_ID.parse().expect("valid URI");
         service.delete(&id).await.expect("the registration is deleted");
 
         assert_eq!(store.deleted(), vec![id]);
@@ -184,7 +184,7 @@ mod tests {
         )
         .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>); // clone: the test reads the hook's log
 
-        let id: Uri = "urn:ngsi-ld:ContextSourceRegistration:unknown".parse().expect("valid URI");
+        let id: Identifier = "urn:ngsi-ld:ContextSourceRegistration:unknown".parse().expect("valid URI");
         let outcome = service.delete(&id).await;
 
         assert!(matches!(outcome, Err(RegistrationError::NotFound { .. })), "{outcome:?}");

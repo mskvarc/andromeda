@@ -116,9 +116,9 @@ use andromeda_http_headers::{
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
+    identifier::Identifier,
     positive_milliseconds::PositiveMilliseconds,
     spec_version::SpecVersion,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_registration::store::{RegistrationStore, forwarding_outcome::ForwardingOutcome};
@@ -158,7 +158,7 @@ pub(crate) struct SentResponse {
     pub(crate) returned_version: Option<SpecVersion>,
     /// The `EntityMap` the source used (clause 5.5.14 `NGSILD-EntityMap`), when
     /// it returned one.
-    pub(crate) entity_map: Option<Uri>,
+    pub(crate) entity_map: Option<Identifier>,
     /// The target of the source's `Link rel="next"` (clause 6.3.10), as the
     /// source wrote it: the reference to the page following this one, still to
     /// be resolved against the URL it answered.
@@ -343,7 +343,7 @@ impl FederationService {
     /// Record one attempt on the registration's health members (clause
     /// 5.2.34) before the response is handed back, so a client reading the
     /// registration right after the forwarded call observes the attempt.
-    async fn record_health(&self, registration: &Uri, outcome: ForwardingOutcome) {
+    async fn record_health(&self, registration: &Identifier, outcome: ForwardingOutcome) {
         match outcome {
             ForwardingOutcome::Succeeded => self.cooldowns.record_success(registration),
             ForwardingOutcome::Failed => self.cooldowns.record_failure(registration),

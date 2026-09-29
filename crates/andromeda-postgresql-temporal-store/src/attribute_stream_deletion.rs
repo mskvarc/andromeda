@@ -6,7 +6,7 @@
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, temporal_catalog_read::stream_catalog_join, write_record_release::release_named};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
@@ -47,9 +47,9 @@ impl TemporalRepository {
     pub(crate) async fn delete_attribute_streams(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         attribute_name: &AttributeName,
-        dataset_id: Option<&Uri>,
+        dataset_id: Option<&Identifier>,
         scope: AttributeStreamScope,
     ) -> Result<u64, TemporalStoreError> {
         let dataset_selector = match (scope, dataset_id) {

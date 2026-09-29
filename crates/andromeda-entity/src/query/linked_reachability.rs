@@ -15,7 +15,7 @@
 //! fetched can become unreachable once those projections are applied. This is
 //! the pass that removes those.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_model::{attribute::instance::Attribute, entity::Entity};
 use indexmap::IndexMap;
 use std::collections::HashSet;
@@ -27,9 +27,9 @@ use std::collections::HashSet;
 /// removed is dropped along with everything reachable only through it. The
 /// surviving entities keep their traversal order, which clause 4.5.23.3 leaves
 /// open and Andromeda fixes.
-pub fn retain_reachable(roots: &[Entity], linked: &mut IndexMap<Uri, Entity>) {
-    let mut reachable: HashSet<Uri> = HashSet::new();
-    let mut frontier: Vec<Uri> = roots.iter().flat_map(named_targets).collect();
+pub fn retain_reachable(roots: &[Entity], linked: &mut IndexMap<Identifier, Entity>) {
+    let mut reachable: HashSet<Identifier> = HashSet::new();
+    let mut frontier: Vec<Identifier> = roots.iter().flat_map(named_targets).collect();
 
     while let Some(id) = frontier.pop() {
         if !linked.contains_key(&id) || !reachable.insert(id.clone()) {
@@ -45,7 +45,7 @@ pub fn retain_reachable(roots: &[Entity], linked: &mut IndexMap<Uri, Entity>) {
 }
 
 /// Every identifier an entity's Relationships and `ListRelationships` name.
-fn named_targets(entity: &Entity) -> Vec<Uri> {
+fn named_targets(entity: &Entity) -> Vec<Identifier> {
     entity
         .attrs
         .values()
@@ -57,10 +57,16 @@ fn named_targets(entity: &Entity) -> Vec<Uri> {
 
 /// The identifiers a Relationship or `ListRelationship` instance points at, or
 /// `None` for every other attribute family.
-pub(crate) fn relationship_targets(attr: &Attribute) -> Option<Vec<Uri>> {
+///
+/// An object longer than an identifier may be names no entity any store holds,
+/// so it is not among them: clause 4.6.2 admits it as a URI, but nothing can be
+/// linked through it.
+pub(crate) fn relationship_targets(attr: &Attribute) -> Option<Vec<Identifier>> {
+    // clone: owned ids returned to the caller
+    let identifiers = |objects: &mut dyn Iterator<Item = &Uri>| objects.filter_map(|object| Identifier::try_from(object.clone()).ok()).collect();
     match attr {
-        Attribute::Relationship(relationship) => Some(relationship.object.iter().cloned().collect()), // clone: owned ids returned to the caller
-        Attribute::ListRelationship(list) => Some(list.object_list.iter().cloned().collect()),        // clone: owned ids returned to the caller
+        Attribute::Relationship(relationship) => Some(identifiers(&mut relationship.object.iter())),
+        Attribute::ListRelationship(list) => Some(identifiers(&mut list.object_list.iter())),
         Attribute::Property(_)
         | Attribute::GeoProperty(_)
         | Attribute::JsonProperty(_)
@@ -73,7 +79,7 @@ pub(crate) fn relationship_targets(attr: &Attribute) -> Option<Vec<Uri>> {
 #[cfg(test)]
 mod tests {
     use crate::query::linked_reachability::retain_reachable;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity::Entity;
     use indexmap::IndexMap;
     use serde_json::{Value, json};
@@ -82,11 +88,11 @@ mod tests {
         serde_json::from_value(payload).expect("entity")
     }
 
-    fn id(raw: &str) -> Uri {
+    fn id(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
     }
 
-    fn linked_of(entities: [(&str, Value); 2]) -> IndexMap<Uri, Entity> {
+    fn linked_of(entities: [(&str, Value); 2]) -> IndexMap<Identifier, Entity> {
         entities.into_iter().map(|(raw, payload)| (id(raw), entity(payload))).collect()
     }
 

@@ -30,7 +30,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance, relation::matches};
-    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{
         expanded::{
             entity_member::{extract_id, extract_types},
@@ -110,7 +110,7 @@ mod tests {
 
         /// The identifiers this store's own predicates admit, and what it could
         /// not apply.
-        fn run(&self, compiled: &CompiledEntityQuery) -> QueryOutcome<Uri> {
+        fn run(&self, compiled: &CompiledEntityQuery) -> QueryOutcome<Identifier> {
             let unapplied = self.profile.unapplied(&compiled.selection);
             let mut pushed = compiled.selection.clone(); // clone: the store runs a narrowed copy of the caller's query
             unapplied.strip_from(&mut pushed);
@@ -122,7 +122,7 @@ mod tests {
                 .map(|entity| extract_id(entity).expect("the fixtures carry readable identifiers"));
 
             if unapplied.is_empty() {
-                let all: Vec<Uri> = admitted.collect();
+                let all: Vec<Identifier> = admitted.collect();
                 let total = match compiled.pagination.count {
                     CountPolicy::Emit => Some(i64::try_from(all.len()).unwrap_or(i64::MAX)),
                     CountPolicy::Omit => None,
@@ -154,12 +154,12 @@ mod tests {
 
     #[async_trait]
     impl EntityReader for ProfiledEntityStore {
-        async fn get(&self, _target: &ContextTarget, id: &Uri) -> Result<Option<Value>, EntityError> {
+        async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<Value>, EntityError> {
             // clone: the double hands out owned payloads, as a real store does
             Ok(self.entities.iter().find(|entity| extract_id(entity).as_ref() == Ok(id)).cloned())
         }
 
-        async fn get_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
+        async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
             Ok(self
                 .entities
                 .iter()
@@ -169,19 +169,19 @@ mod tests {
                 .collect())
         }
 
-        async fn get_snapshot(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
+        async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
             Err(unused("get_snapshot"))
         }
 
-        async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
+        async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
             Err(unused("get_snapshot_batch"))
         }
 
-        async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
+        async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
             Err(unused("get_sys_attrs"))
         }
 
-        async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
+        async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
             Err(unused("get_sys_attrs_batch"))
         }
     }
@@ -196,7 +196,7 @@ mod tests {
             Err(unused("query_compiled"))
         }
 
-        async fn query_ids(&self, _target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, EntityError> {
+        async fn query_ids(&self, _target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Identifier>, EntityError> {
             Ok(self.run(compiled))
         }
     }

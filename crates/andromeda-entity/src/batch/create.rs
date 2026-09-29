@@ -9,7 +9,7 @@ use crate::{
 };
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::Utc;
 use std::collections::HashSet;
 
@@ -19,7 +19,7 @@ impl EntityService {
     /// A batch that names one entity twice is asking to create it twice, and
     /// the second is a conflict exactly as it would be in a separate request
     /// (NGSI-LD 6.4.3.1).
-    pub(super) fn dedupe_create_entities(entities: Vec<AdmittedBatchEntity>) -> (Vec<AdmittedBatchEntity>, Vec<(Uri, EntityError)>) {
+    pub(super) fn dedupe_create_entities(entities: Vec<AdmittedBatchEntity>) -> (Vec<AdmittedBatchEntity>, Vec<(Identifier, EntityError)>) {
         let first_instances = {
             let mut seen = HashSet::with_capacity(entities.len());
             entities.iter().map(|entity| seen.insert(entity.id())).collect::<Vec<_>>()
@@ -53,11 +53,11 @@ impl EntityService {
             return Ok(BatchResult { success: Vec::new(), errors });
         }
 
-        let lock_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: guards outlive the borrowed preparation view
+        let lock_ids: Vec<Identifier> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: guards outlive the borrowed preparation view
         let _id_guards = self.acquire_id_locks(target, &lock_ids).await;
 
         let now = Utc::now();
-        let mut seen: HashSet<Uri> = HashSet::with_capacity(prepared.len());
+        let mut seen: HashSet<Identifier> = HashSet::with_capacity(prepared.len());
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
             if seen.insert(entity.id.clone()) {

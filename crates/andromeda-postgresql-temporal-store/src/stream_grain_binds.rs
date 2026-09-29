@@ -12,7 +12,7 @@ use crate::{
     resolved_evolutions::{EvolutionOrigin, ResolvedEvolutions},
     temporal_stream::{TemporalCatalogUpsert, TemporalStreamKey},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_postgresql_codes::{stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use std::collections::{HashMap, HashSet};
@@ -125,7 +125,7 @@ impl<'a> StreamGrainBinds<'a> {
                 let attribute_name_key = *name_to_id.get(&grain.attribute_name).ok_or_else(|| {
                     TemporalStoreError::UnresolvedName(format!("Attribute name '{}' not found in dictionary after resolve", grain.attribute_name))
                 })?;
-                let stored = (entity_key.get(), attribute_name_key.get(), grain.dataset_id.as_ref().map(Uri::as_str));
+                let stored = (entity_key.get(), attribute_name_key.get(), grain.dataset_id.as_ref().map(Identifier::as_str));
                 if binds.positions.contains_key(&stored) {
                     continue;
                 }
@@ -205,7 +205,7 @@ mod tests {
         stream_grain_binds::{GrainResolution, StreamGrainBinds},
         temporal_stream::{TemporalCatalogUpsert, TemporalStreamKey},
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use andromeda_temporal::write_purpose::TemporalWritePurpose;
@@ -217,13 +217,13 @@ mod tests {
     fn grain(attribute_name: &str, dataset_id: Option<&str>) -> TemporalStreamKey {
         TemporalStreamKey {
             attribute_name: attribute_name.parse::<AttributeName>().expect("valid attribute name"),
-            dataset_id: dataset_id.map(|raw| raw.parse::<Uri>().expect("valid dataset URI")),
+            dataset_id: dataset_id.map(|raw| raw.parse::<Identifier>().expect("valid dataset URI")),
         }
     }
 
     fn upsert(entity_id: &str, streams: Vec<TemporalStreamKey>) -> TemporalCatalogUpsert {
         TemporalCatalogUpsert {
-            entity_id: entity_id.parse::<Uri>().expect("valid entity URI"),
+            entity_id: entity_id.parse::<Identifier>().expect("valid entity URI"),
             types: Vec::new(),
             purpose: TemporalWritePurpose::Observation,
             streams,
@@ -244,7 +244,7 @@ mod tests {
     fn evolutions(ids: &[(&str, i64, EvolutionOrigin)]) -> ResolvedEvolutions {
         let mut resolved = ResolvedEvolutions::default();
         for (id, raw, origin) in ids {
-            resolved.record(id.parse::<Uri>().expect("valid entity URI"), key(*raw), *origin);
+            resolved.record(id.parse::<Identifier>().expect("valid entity URI"), key(*raw), *origin);
         }
         resolved
     }

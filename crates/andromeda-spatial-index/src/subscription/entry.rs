@@ -2,7 +2,7 @@
 
 use crate::partitioned_rtree::Indexed;
 use andromeda_ngsi_ld_geometry::{distance::grow_lonlat_bounds_metres, geo_rel::GeoRel, geometry::Geometry};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use rstar::{AABB, RTreeObject};
 
 /// A single subscription's geo filter.
@@ -20,7 +20,7 @@ use rstar::{AABB, RTreeObject};
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubEntry {
     /// Subscription identifier.
-    pub subscription_id: Uri,
+    pub subscription_id: Identifier,
     /// The reference geometry the subscription filters against.
     pub ref_geometry: Geometry,
     /// The relation the subscription asked for.
@@ -37,7 +37,7 @@ impl SubEntry {
     /// this crate indexes geo filters, and knowing what else a subscription
     /// carries would make an R-tree a subscription cache.
     #[must_use]
-    pub fn new(subscription_id: Uri, ref_geometry: Geometry, georel: GeoRel) -> Option<SubEntry> {
+    pub fn new(subscription_id: Identifier, ref_geometry: Geometry, georel: GeoRel) -> Option<SubEntry> {
         let rect = ref_geometry.bounding_rect()?;
         let mut min = [rect.min().x, rect.min().y];
         let mut max = [rect.max().x, rect.max().y];
@@ -62,9 +62,9 @@ impl SubEntry {
 }
 
 impl Indexed for SubEntry {
-    type Id = Uri;
+    type Id = Identifier;
 
-    fn id(&self) -> &Uri {
+    fn id(&self) -> &Identifier {
         &self.subscription_id
     }
 }

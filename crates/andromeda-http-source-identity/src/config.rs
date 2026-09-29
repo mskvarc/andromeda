@@ -1,6 +1,6 @@
 //! Context Source identity configuration.
 
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use iri_rs::iri;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,7 +12,7 @@ use url::Url;
 pub struct InfoConfig {
     /// URI identifying this Context Source, per Table 5.2.40-1.
     #[toml_comment(inline)]
-    pub source_id: Uri,
+    pub source_id: Identifier,
     /// Pseudonym appended to forwarded requests' `Via` headers.
     #[toml_comment(inline)]
     pub source_alias: ContextSourcePseudonym,
@@ -34,7 +34,7 @@ impl Default for InfoConfig {
             // Compile-time validated, so the built-in default needs no runtime parse or panic.
             // Held verbatim as an IRI; a loaded configuration deserializes the same string back
             // to the URN form, and no consumer observes the form of this default.
-            source_id: Uri::from_static(iri!("urn:ngsi-ld:ContextSourceIdentity:andromeda")),
+            source_id: Identifier::from_static(iri!("urn:ngsi-ld:ContextSourceIdentity:andromeda")),
             source_alias: ContextSourcePseudonym::from_static("andromeda"),
             source_extras: None,
             advertised_url: None,

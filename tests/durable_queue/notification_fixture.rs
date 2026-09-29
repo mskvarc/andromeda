@@ -2,7 +2,7 @@
 
 use crate::queue_database::{record_events, subscription, subscription_key};
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_notification::{delivery_claim::DeliveryClaim, delivery_entry::DeliveryEntry};
 use andromeda_postgresql_context_store::notification_delivery::rows::NewNotificationEvent;
@@ -22,7 +22,7 @@ pub struct QueuedNotification {
 /// Seed `subscriptions` Subscriptions and commit one event due to all of them.
 pub async fn queue_notification(pool: &PgPool, subscriptions: usize) -> QueuedNotification {
     let entity = entity_id();
-    let identifiers: Vec<Uri> = (0..subscriptions).map(|_| subscription_id()).collect();
+    let identifiers: Vec<Identifier> = (0..subscriptions).map(|_| subscription_id()).collect();
     let mut subscription_keys = Vec::with_capacity(subscriptions);
     for identifier in &identifiers {
         subscription_keys.push(subscription(pool, identifier.as_str()).await);
@@ -55,21 +55,21 @@ pub async fn delivery_ids(pool: &PgPool, record: &WriteRecord) -> Vec<i64> {
 }
 
 /// A unique Entity identifier for one verification's fixture.
-pub fn entity_id() -> Uri {
+pub fn entity_id() -> Identifier {
     format!("urn:ngsi-ld:Vehicle:durable-queue:{}", Uuid::new_v4())
         .parse()
         .expect("a valid entity URI")
 }
 
 /// A unique Subscription identifier for one verification's fixture.
-pub fn subscription_id() -> Uri {
+pub fn subscription_id() -> Identifier {
     format!("urn:ngsi-ld:Subscription:durable-queue:{}", Uuid::new_v4())
         .parse()
         .expect("a valid subscription URI")
 }
 
 /// The expanded Entity state an event carries.
-pub fn entity_snapshot(entity: &Uri) -> Value {
+pub fn entity_snapshot(entity: &Identifier) -> Value {
     json!({
         "@id": entity.as_str(),
         "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"],

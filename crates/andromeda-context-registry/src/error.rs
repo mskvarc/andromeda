@@ -1,7 +1,7 @@
 //! Failures reported by Context Registry policy and implementations.
 
 use crate::identifier::ContextIdentifier;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use iri_rs::IriBuf;
 use thiserror::Error;
 
@@ -29,19 +29,19 @@ pub enum ContextRegistryError {
     #[error("a cached context is not served on demand: {identifier}")]
     CachedContextNotServed {
         /// The cached Context identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// Reload was requested for a Context that was not populated by the cache.
     #[error("only cached contexts can be reloaded: {identifier}")]
     ReloadRequiresCached {
         /// The non-cached Context identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// A cached Context row has no remote source URL.
     #[error("cached context has no source URL: {identifier}")]
     MissingSourceUrl {
         /// The malformed cached Context identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// A remote Context could not be downloaded for reload.
     #[error("context is not available from {source_url}: {detail}")]

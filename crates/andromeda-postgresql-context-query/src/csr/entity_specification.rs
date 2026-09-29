@@ -12,7 +12,7 @@
 //! `(?i)` and `(?m)` as the broker's in-memory engine does (clause 4.9).
 
 use crate::csr::unnesting::{ent, entities_of_item, lacks_key, registered_pattern_form};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_seaquery::{
     jsonb::jsonb_exists,
@@ -31,7 +31,7 @@ pub struct EntitySpecification<'query> {
     /// The expanded entity type the selector names, if any.
     pub entity_type: Option<&'query IriBuf>,
     /// The entity identifiers asked for; empty when none were.
-    pub ids: &'query [Uri],
+    pub ids: &'query [Identifier],
     /// The identifier pattern asked for, if any.
     pub id_pattern: Option<&'query Pattern>,
 }
@@ -68,7 +68,7 @@ impl EntitySpecification<'_> {
         // all matches every identifier.
         let mut axis = Condition::any().add(Condition::all().add(lacks_key(ent(), "id")).add(lacks_key(ent(), "idPattern")));
         if !self.ids.is_empty() {
-            let ids: Vec<&str> = self.ids.iter().map(Uri::as_str).collect();
+            let ids: Vec<&str> = self.ids.iter().map(Identifier::as_str).collect();
             // Second bullet: one of the identifiers equals the entry's `id`.
             axis = axis.add(SeaExpr::expr(registered_id()).eq(any(text_array(&ids))));
             // Third bullet: one of the identifiers matches the entry's
@@ -139,7 +139,7 @@ mod tests {
         IriBuf::new(value.to_string()).expect("valid IRI")
     }
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

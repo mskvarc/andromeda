@@ -147,7 +147,7 @@ use crate::{
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_subscription::cache::SubscriptionCache;
 use async_lock::MutexGuardArc;
 use dashmap::DashMap;
@@ -204,7 +204,7 @@ impl EntityService {
     }
 
     /// Acquire owned locks for every distinct identifier in sorted order.
-    pub(crate) async fn acquire_id_locks(&self, target: &ContextTarget, ids: &[Uri]) -> Vec<MutexGuardArc<()>> {
+    pub(crate) async fn acquire_id_locks(&self, target: &ContextTarget, ids: &[Identifier]) -> Vec<MutexGuardArc<()>> {
         acquire_id_locks_in(&self.id_locks, target, ids).await
     }
 

@@ -13,7 +13,7 @@ use crate::{
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
     mutation::{attribute::partial_update_attr, error::ExpandedEntityError},
@@ -51,8 +51,8 @@ impl EntityService {
     pub async fn partial_update_attr(
         &self,
         target: &ContextTarget,
-        id: &Uri,
-        dataset_id: Option<&Uri>,
+        id: &Identifier,
+        dataset_id: Option<&Identifier>,
         admitted: AdmittedAttribute<'_, PartialUpdateAttribute>,
         context: &ContextSpec,
     ) -> Result<(), EntityError> {

@@ -9,6 +9,7 @@ use crate::entity::{
     EntityTenantState,
     ForwardPurgeRequest,
     ForwardedPurgeResult,
+    Identifier,
     IntoResponse,
     NgsiLdProtocolHeaders,
     NgsiLdRequestEnvelope,
@@ -16,7 +17,6 @@ use crate::entity::{
     PurgeMode,
     Response,
     StatusCode,
-    Uri,
     batch_operation_result,
     classify_entity_error,
     classify_forwarding_error,
@@ -133,7 +133,7 @@ pub(crate) async fn delete_by_query(
     };
 
     let compiled = state.entity_query.compile_query_uncapped(&query, &context).await.with_entity_instance(&uri)?;
-    let entity_ids: Vec<Uri> = state.entity_query.query_ids(&target, &compiled).await.with_entity_instance(&uri)?;
+    let entity_ids: Vec<Identifier> = state.entity_query.query_ids(&target, &compiled).await.with_entity_instance(&uri)?;
 
     // Clause 5.6.21.4: the local phase deletes the matched entities, or only
     // the listed (or all but the listed) members of each.

@@ -1,6 +1,6 @@
 //! The result of a keyset-paginated subscription listing (clause 5.5.9.1).
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde_json::Value;
 
 /// A page of subscriptions read by keyset, ready for a collection response.
@@ -19,5 +19,5 @@ pub struct KeysetListing {
     pub total: i64,
     /// The first and last identifiers of the page as displayed; `None` when the
     /// page is empty and so has no boundary to walk from.
-    pub boundary: Option<(Uri, Uri)>,
+    pub boundary: Option<(Identifier, Identifier)>,
 }

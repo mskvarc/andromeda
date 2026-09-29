@@ -67,13 +67,17 @@ CREATE TABLE current_attribute_values (
     value_string TEXT COMPRESSION lz4 COLLATE "C",
     value_geometry geometry COMPRESSION lz4,
     value_object JSONB COMPRESSION lz4,
-    -- A Relationship object, an identifier, so it never needs an overflow
-    -- column.
+    -- A Relationship object no longer than an identifier may be, so every
+    -- object naming a local Entity sits here, where a traversal joins it.
     value_uri TEXT COMPRESSION lz4 COLLATE "C",
     -- A String too long for the B-tree on `value_string`. The two length
     -- checks give every String exactly one column, so an equality reads only
     -- the column its operand would occupy.
     value_long_text TEXT COMPRESSION lz4 COLLATE "C",
+    -- A Relationship object too long for the B-tree on `value_uri`: clause
+    -- 4.6.2 sets no length on a URI. The same two-check placement as the
+    -- String overflow.
+    value_long_uri TEXT COMPRESSION lz4 COLLATE "C",
     CONSTRAINT fk_current_attribute_values_entity
         FOREIGN KEY (entity_key)
         REFERENCES entities(entity_key) ON DELETE CASCADE,
@@ -86,7 +90,8 @@ CREATE TABLE current_attribute_values (
         CHECK (attribute_kind BETWEEN 1 AND 8),
     CONSTRAINT chk_current_attribute_values_value_presence CHECK (
         num_nonnulls(value_number, value_string, value_boolean, value_geometry,
-                     value_object, value_date_time, value_uri, value_long_text) = 1),
+                     value_object, value_date_time, value_uri, value_long_text,
+                     value_long_uri) = 1),
     CONSTRAINT chk_current_attribute_values_value_kind_column CHECK (
         (value_kind = 1 AND value_number IS NOT NULL)
         OR (value_kind = 2 AND num_nonnulls(value_string, value_long_text) = 1)
@@ -94,7 +99,7 @@ CREATE TABLE current_attribute_values (
         OR (value_kind = 4 AND value_geometry IS NOT NULL)
         OR (value_kind = 5 AND value_object IS NOT NULL)
         OR (value_kind = 6 AND value_date_time IS NOT NULL)
-        OR (value_kind = 7 AND value_uri IS NOT NULL)),
+        OR (value_kind = 7 AND num_nonnulls(value_uri, value_long_uri) = 1)),
     CONSTRAINT chk_current_attribute_values_value_geometry_valid
         CHECK (value_geometry IS NULL OR ST_IsValid(value_geometry)),
     CONSTRAINT chk_current_attribute_values_value_geometry_srid
@@ -107,6 +112,8 @@ CREATE TABLE current_attribute_values (
         CHECK (octet_length(value_long_text) > 2048),
     CONSTRAINT chk_current_attribute_values_value_uri_length
         CHECK (octet_length(value_uri) <= 1024),
+    CONSTRAINT chk_current_attribute_values_value_long_uri_length
+        CHECK (octet_length(value_long_uri) > 1024),
     CONSTRAINT chk_current_attribute_values_dataset_id_length
         CHECK (octet_length(dataset_id) <= 1024)
 ) WITH (
@@ -161,6 +168,14 @@ CREATE INDEX idx_cav_value_long_text_trgm
     ON current_attribute_values USING GIN (attribute_name_key int4_ops, value_long_text gin_trgm_ops)
     WITH (fastupdate = off)
     WHERE value_long_text IS NOT NULL;
+
+-- A long Relationship object is too long to key a B-tree on, so a `q`
+-- equality over it drives from the attribute key alone and filters the value
+-- on the heap. Like the long-text indexes it covers rare values and is not a
+-- maintenance target.
+CREATE INDEX idx_cav_value_long_uri
+    ON current_attribute_values (attribute_name_key)
+    WHERE value_long_uri IS NOT NULL;
 
 -- The containment arm of every `q` equality (clause 4.9).
 CREATE INDEX idx_cav_value_object

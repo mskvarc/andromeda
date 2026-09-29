@@ -9,7 +9,7 @@
 
 use crate::{entity::serialize_value, error::RenderError};
 use andromeda_http_headers::language::{LanguageFilter, LanguageRange};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, rfc3339};
 use andromeda_ngsi_ld_model::attribute::{
     instance::{Attribute, AttributeValue},
     language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
@@ -187,7 +187,7 @@ struct NegotiatedProperty<'a> {
     observed_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The dataset this instance belongs to, when it names one.
-    dataset_id: &'a Option<Uri>,
+    dataset_id: &'a Option<Identifier>,
     #[serde(flatten)]
     /// The attribute's own sub-attributes, flattened in beside it.
     sub_attributes: &'a IndexMap<AttributeName, AttributeValue>,

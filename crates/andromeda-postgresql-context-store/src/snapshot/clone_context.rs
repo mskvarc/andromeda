@@ -17,7 +17,7 @@ use crate::snapshot::{
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
 use andromeda_postgresql_branch::snapshot_schema_name;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
@@ -32,7 +32,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 /// status, all in one transaction.
 pub(crate) async fn promote_staged_capture(
     pool: &PgPool,
-    id: &Uri,
+    id: &Identifier,
     claimed_by: LeaseHolder,
     status: SnapshotStatus,
     queries_details: Option<&[ExecutionResultDetails]>,
@@ -52,7 +52,7 @@ pub(crate) async fn promote_staged_capture(
 
 /// Copy a source Snapshot's published branch into the claimed target's staging
 /// branch, then publish it, in one transaction.
-pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Uri, target_id: &Uri, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
+pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Identifier, target_id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
     let mut transaction = pool.begin().await.map_err(persistence_error)?;
     let source_key = source_snapshot_key(&mut transaction, source_id).await?;
     let target_key = lock_preparing_key(&mut transaction, target_id, claimed_by).await?;
@@ -69,7 +69,7 @@ pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Uri, target
 
 /// Resolve, and row-lock, the preparing preparation row of one Snapshot claimed
 /// by this replica, refusing a claim that is no longer held.
-async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Uri, claimed_by: LeaseHolder) -> Result<SnapshotKey, SnapshotError> {
+async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Identifier, claimed_by: LeaseHolder) -> Result<SnapshotKey, SnapshotError> {
     lock_claimed_preparation(transaction, id, claimed_by)
         .await?
         .ok_or_else(|| SnapshotError::internal(format!("Snapshot {id} is no longer preparing under this claim")))
@@ -78,7 +78,7 @@ async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Ur
 /// Resolve a clone source's surrogate key by URI, refusing a quarantined source:
 /// its branch schema is behind this binary's branch relations, so a
 /// column-for-column copy into the target could not be trusted.
-async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source_id: &Uri) -> Result<SnapshotKey, SnapshotError> {
+async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source_id: &Identifier) -> Result<SnapshotKey, SnapshotError> {
     let current = current_version()?;
     let select = Query::select()
         .column((Snapshots::Table, Snapshots::SnapshotKey))

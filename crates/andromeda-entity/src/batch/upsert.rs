@@ -39,7 +39,7 @@ use crate::{
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     mutation::{
         deletion_sentinel::{DroppedSentinels, drop_deletion_sentinels},
@@ -53,11 +53,11 @@ use serde_json::Value;
 use std::{collections::HashMap, mem::take, sync::Arc};
 
 /// One chunk's per-entity upsert results.
-type UpsertOutcome = (BatchResult, Vec<Uri>);
+type UpsertOutcome = (BatchResult, Vec<Identifier>);
 
 /// One chunk's per-entity upsert results, the failures it collected while
 /// preparing them, and the identifiers it created.
-pub(super) type UpsertChunkOutcome = (BatchResult, Vec<(Uri, EntityError)>, Vec<Uri>);
+pub(super) type UpsertChunkOutcome = (BatchResult, Vec<(Identifier, EntityError)>, Vec<Identifier>);
 
 impl EntityService {
     pub(super) async fn batch_upsert_replace_chunk(
@@ -65,7 +65,7 @@ impl EntityService {
         placement: SideEffectPlacement<'_>,
         chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
-        errors: &mut Vec<(Uri, EntityError)>,
+        errors: &mut Vec<(Identifier, EntityError)>,
     ) -> Result<UpsertOutcome, EntityError> {
         let target = placement.target();
         // Clause 5.6.8.4 gives replace mode two branches and neither admits the
@@ -89,12 +89,12 @@ impl EntityService {
             ));
         }
 
-        let chunk_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
+        let chunk_ids: Vec<Identifier> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
         let _id_guards = self.acquire_id_locks(target, &chunk_ids).await;
         let now = Utc::now();
 
         let snapshots = self.reader.get_snapshot_batch(target, &chunk_ids).await?;
-        let mut payloads: HashMap<Uri, Arc<Value>> = HashMap::with_capacity(prepared.len());
+        let mut payloads: HashMap<Identifier, Arc<Value>> = HashMap::with_capacity(prepared.len());
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
             let write = match snapshots.get(&entity.id) {
@@ -126,7 +126,7 @@ impl EntityService {
             created.extend(take(&mut outcome.created));
             errors.extend(take(&mut outcome.errors));
 
-            let retry: Vec<(Uri, EntityError)> = take(&mut outcome.retryable);
+            let retry: Vec<(Identifier, EntityError)> = take(&mut outcome.retryable);
             if retry.is_empty() {
                 break;
             }
@@ -137,7 +137,7 @@ impl EntityService {
 
             self.wait_before_retry(attempt).await;
 
-            let retry_ids: Vec<Uri> = retry.into_iter().map(|(id, _error)| id).collect();
+            let retry_ids: Vec<Identifier> = retry.into_iter().map(|(id, _error)| id).collect();
             let snapshots = self.reader.get_snapshot_batch(target, &retry_ids).await?;
             let mut retry_writes = Vec::with_capacity(retry_ids.len());
             for id in retry_ids {
@@ -166,7 +166,7 @@ impl EntityService {
         placement: SideEffectPlacement<'_>,
         chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
-        errors: &mut Vec<(Uri, EntityError)>,
+        errors: &mut Vec<(Identifier, EntityError)>,
     ) -> Result<UpsertOutcome, EntityError> {
         let target = placement.target();
         // Clause 5.6.8.4: "If there were an existing Entity with the same Entity
@@ -197,7 +197,7 @@ impl EntityService {
             ));
         }
 
-        let prepared_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
+        let prepared_ids: Vec<Identifier> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
         // Hold the per-id locks across the read-modify-write window: concurrent
         // upsert-update calls for the same id must not race the snapshot read,
         // the merge, and the write.
@@ -283,7 +283,7 @@ impl EntityService {
     ///
     /// Answers the entity's identifier with the failure, boxed because a
     /// failure is the rare outcome, for the batch's per-entity report, when the payload's members cannot be read.
-    fn chunk_insert_created(&self, target: &ContextTarget, prepared: PreparedEntity, now: DateTime<Utc>) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
+    fn chunk_insert_created(&self, target: &ContextTarget, prepared: PreparedEntity, now: DateTime<Utc>) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
         let mut prepared = prepared;
         match drop_deletion_sentinels(&mut prepared.expanded) {
             DroppedSentinels::Unchanged => self.chunk_insert(target, prepared, Precondition::None, now),
@@ -304,12 +304,12 @@ impl EntityService {
     fn replacement_write(
         &self,
         target: &ContextTarget,
-        id: Uri,
+        id: Identifier,
         payload: &Arc<Value>,
         previous: &Value,
         modified_at: DateTime<Utc>,
         now: DateTime<Utc>,
-    ) -> Result<ChunkWrite, Box<(Uri, EntityError)>> {
+    ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
         let change = match modification(previous, payload) {
             Ok(change) => change,
             Err(error) => return Err(Box::new((id, error))),

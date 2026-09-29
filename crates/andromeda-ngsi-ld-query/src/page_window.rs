@@ -65,10 +65,10 @@ mod tests {
         cursor::PageCursor,
         page_window::{PageStart, PageWindow},
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use pretty_assertions::assert_eq;
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

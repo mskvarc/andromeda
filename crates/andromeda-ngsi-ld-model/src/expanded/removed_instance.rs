@@ -48,7 +48,7 @@ pub fn removed_attribute_instances(previous: &Value, replacement: &Value) -> Res
 #[cfg(test)]
 mod tests {
     use crate::expanded::removed_instance::{RemovedAttributeInstance, removed_attribute_instances};
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
     use serde_json::{Value, json};
 
     fn property(value: i64) -> Value {
@@ -109,7 +109,7 @@ mod tests {
         }]);
         let removed = removed_attribute_instances(&previous, &replacement).expect("readable datasetIds");
         pretty_assertions::assert_eq!(removed.len(), 1);
-        pretty_assertions::assert_eq!(removed[0].key.dataset_id.as_ref().map(Uri::as_str), Some("urn:ngsi-ld:Dataset:b"));
+        pretty_assertions::assert_eq!(removed[0].key.dataset_id.as_ref().map(Identifier::as_str), Some("urn:ngsi-ld:Dataset:b"));
     }
 
     #[test]
@@ -122,7 +122,7 @@ mod tests {
         let replacement = json!([{"@id": "urn:ngsi-ld:Vehicle:1"}]);
         let removed = removed_attribute_instances(&previous, &replacement).expect("readable datasetIds");
         pretty_assertions::assert_eq!(removed.len(), 1);
-        pretty_assertions::assert_eq!(removed[0].key.dataset_id.as_ref().map(Uri::as_str), Some("http://example.org/d1"));
+        pretty_assertions::assert_eq!(removed[0].key.dataset_id.as_ref().map(Identifier::as_str), Some("http://example.org/d1"));
     }
 
     /// A Relationship that leaves the entity is recorded as a Relationship, so

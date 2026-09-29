@@ -33,7 +33,7 @@ use andromeda_jsonld::{
         options::{CompactOptions, ContextStripping},
     },
 };
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     notification::{Notification, NotificationType},
@@ -56,17 +56,17 @@ use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
 /// Mint a notification identifier.
-fn notification_id() -> Result<Uri, SubscriptionForwardingError> {
+fn notification_id() -> Result<Identifier, SubscriptionForwardingError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Notification:{}", Uuid::new_v4()))
         .build()
         .map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
-    Uri::try_from(urn).map_err(|error| SubscriptionForwardingError::internal(error.to_string()))
+    Identifier::try_from(urn).map_err(|error| SubscriptionForwardingError::internal(error.to_string()))
 }
 
 impl SubscriptionForwardingService {
     /// Complete one entity of the notification from this broker and from every
     /// other holder (clause 5.8.6 split entities).
-    async fn reassemble_entity(&self, received: Entity, sender: &Uri, context: &ContextSpec) -> Result<Entity, SubscriptionForwardingError> {
+    async fn reassemble_entity(&self, received: Entity, sender: &Identifier, context: &ContextSpec) -> Result<Entity, SubscriptionForwardingError> {
         let narrowing = RetrievalNarrowing {
             entity_type: None,
             attrs: &[],

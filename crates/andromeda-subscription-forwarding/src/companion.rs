@@ -20,7 +20,7 @@ use crate::{
 };
 use andromeda_federation::subscription::SubscriptionForward;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ContextSourceRegistration, subscription::Subscription};
 use andromeda_subscription::{
     compilation::compile_csource_subscription,
@@ -36,7 +36,7 @@ use tracing::{debug, warn};
 /// The companion document mirroring `subscription` (clause 5.11.2): the same
 /// entity selectors, watched attributes and notified attributes, matched
 /// against registrations rather than entities, notifying this broker.
-fn companion_document(subscription: &Subscription, minted: &Uri, receiver: &url::Url) -> Value {
+fn companion_document(subscription: &Subscription, minted: &Identifier, receiver: &url::Url) -> Value {
     let mut document = Map::new();
     document.insert("id".to_string(), json!(minted));
     document.insert("type".to_string(), json!("Subscription"));
@@ -89,7 +89,7 @@ impl SubscriptionForwardingService {
         subscription: &Subscription,
         context: &ContextSpec,
         encountered_sources: &[ContextSourcePseudonym],
-    ) -> Result<Uri, SubscriptionForwardingError> {
+    ) -> Result<Identifier, SubscriptionForwardingError> {
         let minted = mint_subscription_id()?;
         let document = companion_document(subscription, &minted, self.receiver.url());
         // The companion is a local resource; its own creation passes through no
@@ -106,7 +106,7 @@ impl SubscriptionForwardingService {
     }
 
     /// The companion as the matcher its notifications are decided by.
-    async fn compiled_companion(&self, companion: &Uri) -> Result<CompiledCsrSubscription, SubscriptionForwardingError> {
+    async fn compiled_companion(&self, companion: &Identifier) -> Result<CompiledCsrSubscription, SubscriptionForwardingError> {
         Ok(compile_csource_subscription(
             &self.csource_subscriptions.get(&self.live_target, companion).await?,
         ))
@@ -122,13 +122,13 @@ impl SubscriptionForwardingService {
     async fn place_initial_copies(
         &self,
         subscription: &Subscription,
-        companion: &Uri,
+        companion: &Identifier,
         context: &ContextSpec,
         encountered_sources: &[ContextSourcePseudonym],
     ) -> Result<(), SubscriptionForwardingError> {
         let compiled = self.compiled_companion(companion).await?;
         let store = self.federation.registration_store();
-        let mut after: Option<Uri> = None;
+        let mut after: Option<Identifier> = None;
         loop {
             let page = store
                 .find_all_active(after.as_ref(), REGISTRATION_PAGE)
@@ -173,7 +173,7 @@ impl SubscriptionForwardingService {
 
     /// What tearing `local` down involves, read from the mappings while they
     /// still exist.
-    async fn teardown_of(&self, local: &Uri) -> Result<SubscriptionTeardown, SubscriptionForwardingError> {
+    async fn teardown_of(&self, local: &Identifier) -> Result<SubscriptionTeardown, SubscriptionForwardingError> {
         Ok(SubscriptionTeardown {
             companion: self.mappings.companion_of(local).await?,
             forwarded: self.mappings.forwarded_of(local).await?,
@@ -190,7 +190,7 @@ impl SubscriptionForwardingService {
     /// Each step is attempted whatever the previous one did and a failure is
     /// reported per step, so one unreachable source never leaves the other
     /// copies, the mappings or the companion behind.
-    async fn tear_down(&self, local: &Uri, teardown: &SubscriptionTeardown, mappings: CopyMappings) {
+    async fn tear_down(&self, local: &Identifier, teardown: &SubscriptionTeardown, mappings: CopyMappings) {
         for copy in &teardown.forwarded {
             self.tear_down_forwarded_copy(local, copy, mappings).await;
         }
@@ -201,7 +201,7 @@ impl SubscriptionForwardingService {
 
     /// Delete the copy of `local` at `copy.registration`'s source, forget its
     /// mapping unless the deletion of `local` already did, and drop its route.
-    async fn tear_down_forwarded_copy(&self, local: &Uri, copy: &ForwardedCopy, mappings: CopyMappings) {
+    async fn tear_down_forwarded_copy(&self, local: &Identifier, copy: &ForwardedCopy, mappings: CopyMappings) {
         match self.federation_registration(&copy.registration).await {
             Ok(Some(registration)) => {
                 let forwarded = self
@@ -237,7 +237,7 @@ impl SubscriptionForwardingService {
 
     /// Delete the companion of `local`, which removes its mapping with it, and
     /// drop its route.
-    async fn tear_down_companion(&self, local: &Uri, companion: &Uri) {
+    async fn tear_down_companion(&self, local: &Identifier, companion: &Identifier) {
         if let Err(error) = self.csource_subscriptions.delete(&self.live_target, companion).await {
             warn!(subscription = %local, %companion, %error, "companion subscription could not be deleted");
         }
@@ -321,7 +321,10 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
         Box::pin(async move { self.follow_update(subscription, context).await.map_err(into_subscription_error) })
     }
 
-    fn teardown_of<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<SubscriptionTeardown, SubscriptionError>>
+    fn teardown_of<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<SubscriptionTeardown, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -332,7 +335,7 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
 
     fn deleted<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         teardown: &'life2 SubscriptionTeardown,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where

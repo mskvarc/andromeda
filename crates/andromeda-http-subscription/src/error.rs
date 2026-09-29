@@ -80,14 +80,14 @@ pub(crate) fn internal_problem(error: &impl Display, summary: InternalFailureSum
 #[cfg(test)]
 mod tests {
     use super::SubscriptionHttpClassify;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_subscription::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
     use std::error::Error;
 
     #[test]
     fn focused_subscription_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
-        let identifier = "urn:ngsi-ld:Subscription:1".parse::<Uri>()?;
+        let identifier = "urn:ngsi-ld:Subscription:1".parse::<Identifier>()?;
         for (error, expected) in [
             (
                 SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired),

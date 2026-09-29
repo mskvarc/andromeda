@@ -9,7 +9,7 @@ use andromeda_health::{
     status::HealthStatus,
 };
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use axum::{
     Json,
     extract::{OriginalUri, State},
@@ -45,7 +45,7 @@ pub async fn check(State(state): State<HealthRouteState>, OriginalUri(uri): Orig
     let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("HealthCheck:{}", Uuid::new_v4()))
         .build()
         .map_err(HealthHttpError::from)
-        .and_then(|urn| Uri::try_from(urn).map_err(HealthHttpError::from))
+        .and_then(|urn| Identifier::try_from(urn).map_err(HealthHttpError::from))
         .map_err(|error| classify(&error).with_instance(uri))?;
     let health_check = state.health().check_all().await;
     let status = match health_check.status {

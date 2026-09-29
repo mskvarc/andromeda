@@ -1,6 +1,6 @@
 //! One entity as it stood immediately before deletion.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -8,7 +8,7 @@ use serde_json::Value;
 #[derive(Debug)]
 pub struct DeletedEntity {
     /// Entity identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// Expanded JSON-LD payload at deletion time.
     pub payload: Value,
     /// Original creation timestamp.

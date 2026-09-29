@@ -2,7 +2,7 @@
 //! 5.6.7.5 and following).
 
 use crate::outcome::ForwardedWriteOutcome;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -10,7 +10,7 @@ use std::collections::HashMap;
 /// (clauses 5.6.7.5 and following): a clause 5.2.16 body is read entity by
 /// entity, an array of identifiers names the successes, and a bodiless
 /// success or any failure applies to every entity of the array.
-pub(super) fn batch_outcomes(ids: &[Uri], outcome: &ForwardedWriteOutcome) -> Vec<(Uri, ForwardedWriteOutcome)> {
+pub(super) fn batch_outcomes(ids: &[Identifier], outcome: &ForwardedWriteOutcome) -> Vec<(Identifier, ForwardedWriteOutcome)> {
     let ForwardedWriteOutcome::Completed { status, body: Some(body) } = outcome else {
         return ids
             .iter()
@@ -23,7 +23,7 @@ pub(super) fn batch_outcomes(ids: &[Uri], outcome: &ForwardedWriteOutcome) -> Ve
         .into_iter()
         .flatten()
         .filter_map(|error| {
-            let id = error.get("entityId")?.as_str()?.parse::<Uri>().ok()?;
+            let id = error.get("entityId")?.as_str()?.parse::<Identifier>().ok()?;
             let problem = error.get("error")?;
             let status = problem
                 .get("status")

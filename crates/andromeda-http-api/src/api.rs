@@ -133,7 +133,7 @@ mod tests {
         state::{TemporalRouteServices, TemporalStateResolver},
     };
     use andromeda_http_tenancy::routes::{TenancyRoutes, TenantManagement};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, tenant::TenantName};
     use andromeda_telemetry::recorder::TelemetryRecorder;
     use andromeda_tenancy::{
         administration::TenantAdministration,
@@ -189,7 +189,7 @@ mod tests {
     struct RejectReceiver;
 
     impl NotificationReceiverResolver for RejectReceiver {
-        fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>> {
+        fn resolve<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>> {
             Box::pin(async move {
                 Err(ReceiverResolutionError::Unknown {
                     subscription: subscription.clone(), // clone: the error owns the identifier
@@ -253,7 +253,7 @@ mod tests {
             .entity_map(EntityMapRoutes::new(Arc::new(RejectEntityMap)))
             .snapshot(SnapshotRoutes::new(Arc::new(RejectSnapshot)))
             .source_identity(SourceIdentityRoutes::new(SourceIdentityState::new(
-                "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Uri>()?,
+                "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Identifier>()?,
                 ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
                 Utc::now(),
                 None,

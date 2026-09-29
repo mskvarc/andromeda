@@ -1,7 +1,7 @@
 //! One projected attribute instance, and the grain it is written at.
 
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
@@ -24,7 +24,7 @@ pub struct ProjectedAttributeKey {
     /// Dictionary key of the instance's expanded attribute IRI.
     pub attribute_name_key: AttributeNameKey,
     /// The instance's `datasetId`, absent on the default instance.
-    pub dataset_id: Option<Uri>,
+    pub dataset_id: Option<Identifier>,
 }
 
 /// The value one projected attribute instance currently holds.

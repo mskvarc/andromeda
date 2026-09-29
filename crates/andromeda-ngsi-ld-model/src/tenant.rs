@@ -12,9 +12,9 @@
 
 use andromeda_ngsi_ld_lexicon::{
     constant_string,
+    identifier::{Identifier, IdentifierParseError},
     rfc3339,
     tenant::TenantName,
-    uri::{Uri, UriParseError},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -74,7 +74,7 @@ pub struct TenantUsage {
 #[serde(rename_all = "camelCase")]
 pub struct Tenant {
     /// The tenant's identifier, `urn:ngsi-ld:Tenant:{tenantName}`.
-    pub id: Uri,
+    pub id: Identifier,
     /// The fixed `Tenant` type discriminator.
     #[serde(rename = "type")]
     #[builder(default = Default::default())]
@@ -106,10 +106,10 @@ pub struct Tenant {
 ///
 /// # Errors
 ///
-/// Returns [`UriParseError`] when the name cannot be assembled into an NGSI-LD
+/// Returns [`IdentifierParseError`] when the name cannot be assembled into an NGSI-LD
 /// URN, which a validated [`TenantName`] never triggers in practice.
-pub fn tenant_id(name: &TenantName) -> Result<Uri, UriParseError> {
-    format!("urn:ngsi-ld:Tenant:{}", name.as_str()).parse::<Uri>()
+pub fn tenant_id(name: &TenantName) -> Result<Identifier, IdentifierParseError> {
+    format!("urn:ngsi-ld:Tenant:{}", name.as_str()).parse::<Identifier>()
 }
 
 /// The tenant name a tenant identifier carries, if it is a well-formed tenant id.
@@ -117,7 +117,7 @@ pub fn tenant_id(name: &TenantName) -> Result<Uri, UriParseError> {
 /// The inverse of [`tenant_id`], used to turn a pagination cursor's boundary
 /// identifier back into the name the registry orders by.
 #[must_use]
-pub fn tenant_name_from_id(id: &Uri) -> Option<TenantName> {
+pub fn tenant_name_from_id(id: &Identifier) -> Option<TenantName> {
     let rendered = id.to_string();
     let name = rendered.strip_prefix("urn:ngsi-ld:Tenant:")?;
     TenantName::try_from(name.to_string()).ok()
@@ -126,7 +126,7 @@ pub fn tenant_name_from_id(id: &Uri) -> Option<TenantName> {
 #[cfg(test)]
 mod tests {
     use crate::tenant::{Tenant, TenantState, TenantUsage, tenant_id, tenant_name_from_id};
-    use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
     use chrono::{TimeZone, Utc};
 
     fn name(raw: &str) -> TenantName {
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn a_non_tenant_identifier_yields_no_name() {
-        let id = "urn:ngsi-ld:Entity:1".parse::<Uri>().expect("uri");
+        let id = "urn:ngsi-ld:Entity:1".parse::<Identifier>().expect("uri");
         assert!(tenant_name_from_id(&id).is_none());
     }
 }

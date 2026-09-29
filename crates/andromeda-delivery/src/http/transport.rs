@@ -322,7 +322,7 @@ mod tests {
         request::NotificationDelivery,
         transport::NotificationTransport,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use serde_json::json;
     use std::{
         io::{Error, ErrorKind},
@@ -389,7 +389,7 @@ mod tests {
     }
 
     async fn deliver(transport: &HttpTransport, endpoint: &Url) -> DeliveryOutcome {
-        let subscription = Uri::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
+        let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
         let request = NotificationDelivery {
             payload: &json!({"id": "urn:ngsi-ld:Notification:1"}),
             endpoint_uri: endpoint,

@@ -1,7 +1,7 @@
 //! One subscription a committing context write owes a notification.
 
 use crate::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::EntityChange;
 use serde_json::Value;
 use typed_builder::TypedBuilder;
@@ -17,7 +17,7 @@ pub struct SubscriptionMatch {
     /// matched subscription of a write in one statement without a lookup.
     pub subscription_key: SubscriptionKey,
     /// Entity that triggered the notification.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// What the write did to the Entity, which the notification reports.
     pub change: EntityChange,
     /// Expanded entity snapshot after the mutation.

@@ -4,14 +4,14 @@ use crate::{
     service::{SnapshotService, SnapshotServiceConfig},
     store_double::{ClaimHold, StoreDouble},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{Snapshot, SnapshotPriority, SnapshotStatus};
 use chrono::{Duration as ChronoDuration, Utc};
 use std::{sync::Arc, time::Duration};
 
 const SNAPSHOT_ID: &str = "urn:ngsi-ld:Snapshot:scoped";
 
-fn snapshot_id() -> Uri {
+fn snapshot_id() -> Identifier {
     SNAPSHOT_ID.parse().expect("valid snapshot identifier")
 }
 

@@ -100,7 +100,7 @@ impl TryFrom<Query> for TemporalQueryParameters {
 #[cfg(test)]
 mod tests {
     use crate::{error::ParameterError, query::temporal::TemporalQueryParameters};
-    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, time_prop::TimeProp, time_rel::TimeRel};
     use andromeda_ngsi_ld_model::query::body::Query;
     use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
@@ -130,7 +130,7 @@ mod tests {
         pretty_assertions::assert_eq!(params.join, Some(JoinMode::Inline));
         pretty_assertions::assert_eq!(params.join_level.map(NonZeroU32::get), Some(2));
         pretty_assertions::assert_eq!(
-            params.contained_by.as_deref().map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()),
+            params.contained_by.as_deref().map(|ids| ids.iter().map(Identifier::as_str).collect::<Vec<_>>()),
             Some(vec!["urn:ngsi-ld:T:1"])
         );
     }

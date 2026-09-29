@@ -140,7 +140,7 @@ mod tests {
         write_ordinal::WriteOrdinal,
         write_record::WriteRecord,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
     use andromeda_temporal::{append_intent::TemporalAppendEntry, core_write_history::CoreWriteHistory};
     use chrono::{TimeZone, Utc};
     use serde_json::{Value, json};
@@ -158,7 +158,7 @@ mod tests {
     }
 
     fn observation_write(entity_id: &str) -> AtomicWrite {
-        let uri = entity_id.parse::<Uri>().expect("valid entity URI");
+        let uri = entity_id.parse::<Identifier>().expect("valid entity URI");
         AtomicWrite::builder()
             .entity_id(Arc::new(uri))
             .entity(EntityMutation::None)
@@ -167,7 +167,7 @@ mod tests {
     }
 
     fn evolution_write(entity_id: &str, projection: CurrentStateProjection) -> AtomicWrite {
-        let uri = entity_id.parse::<Uri>().expect("valid entity URI");
+        let uri = entity_id.parse::<Identifier>().expect("valid entity URI");
         AtomicWrite::builder()
             .entity_id(Arc::new(uri))
             .entity(EntityMutation::None)
@@ -178,7 +178,7 @@ mod tests {
 
     /// A Core write that removed the `speed` Attribute and cleared the Scope.
     fn removal_write(entity_id: &str) -> AtomicWrite {
-        let uri = entity_id.parse::<Uri>().expect("valid entity URI");
+        let uri = entity_id.parse::<Identifier>().expect("valid entity URI");
         let speed = "https://example.com/speed".parse::<AttributeName>().expect("valid attribute name");
         AtomicWrite::builder()
             .entity_id(Arc::new(uri))

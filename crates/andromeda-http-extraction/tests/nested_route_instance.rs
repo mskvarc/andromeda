@@ -31,7 +31,7 @@ use andromeda_http_extraction::{
     typed_path::TypedPath,
 };
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
-use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
 use axum::{
@@ -81,7 +81,7 @@ struct SnapshotlessTenant {
 }
 
 impl SnapshotTargetResolver for SnapshotlessTenant {
-    fn resolve<'a>(&'a self, snapshot_id: &'a NgsiLdUri) -> BoxFuture<'a, Result<ContextTarget, ContextTargetResolutionError>> {
+    fn resolve<'a>(&'a self, snapshot_id: &'a Identifier) -> BoxFuture<'a, Result<ContextTarget, ContextTargetResolutionError>> {
         Box::pin(async move {
             Err(ContextTargetResolutionError::NotFound {
                 identifier: snapshot_id.clone(),
@@ -123,7 +123,7 @@ async fn entity_body(_body: JsonLdDocument) -> StatusCode {
     StatusCode::OK
 }
 
-async fn entity_path(_id: TypedPath<NgsiLdUri>) -> StatusCode {
+async fn entity_path(_id: TypedPath<Identifier>) -> StatusCode {
     StatusCode::OK
 }
 

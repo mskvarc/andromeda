@@ -10,7 +10,7 @@
 //! intentionally not filterable.
 
 use crate::snapshot::{SnapshotPriority, SnapshotPriorityParseError};
-use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
+use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_query::filter::token;
 use compact_str::CompactString;
 use std::str::FromStr;
@@ -62,7 +62,7 @@ pub enum SnapshotOp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnapshotValue {
     /// A snapshot identifier, for the `id` field.
-    Id(Uri),
+    Id(Identifier),
     /// A resource type, for the `type` field.
     Type(CompactString),
     /// A priority, for the `snapshotPriority` field.
@@ -138,8 +138,8 @@ pub enum SnapshotQParseError {
 // `#[from]` would need its own variant and would drop the field the parse was
 // attempted for; both conversions instead fold into `InvalidValue`, which
 // names that field so the client is told which term it got wrong.
-impl From<UriParseError> for SnapshotQParseError {
-    fn from(err: UriParseError) -> SnapshotQParseError {
+impl From<IdentifierParseError> for SnapshotQParseError {
+    fn from(err: IdentifierParseError) -> SnapshotQParseError {
         SnapshotQParseError::InvalidValue {
             field: SnapshotField::Id,
             detail: CompactString::from(err.to_string()),
@@ -147,7 +147,7 @@ impl From<UriParseError> for SnapshotQParseError {
     }
 }
 
-// See the note on the `Uri` conversion above.
+// See the note on the `Identifier` conversion above.
 impl From<SnapshotPriorityParseError> for SnapshotQParseError {
     fn from(err: SnapshotPriorityParseError) -> SnapshotQParseError {
         SnapshotQParseError::InvalidValue {
@@ -272,7 +272,7 @@ fn parse_value(field: SnapshotField, op: SnapshotOp, raw: &str) -> Result<Snapsh
     match field {
         SnapshotField::Id => {
             require_eq_or_neq(field, op)?;
-            let id: Uri = unquoted.parse()?;
+            let id: Identifier = unquoted.parse()?;
             Ok(SnapshotValue::Id(id))
         }
         SnapshotField::Type => {

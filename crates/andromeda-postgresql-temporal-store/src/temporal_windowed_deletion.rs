@@ -20,7 +20,7 @@
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_named};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
     temporal::{
@@ -76,7 +76,7 @@ impl TemporalRepository {
     pub async fn count_windowed_history(
         &self,
         target: &ContextTarget,
-        entity_ids: &[Uri],
+        entity_ids: &[Identifier],
         scope: &TemporalHistoryDeleteScope,
     ) -> Result<u64, TemporalStoreError> {
         if entity_ids.is_empty() {
@@ -102,7 +102,7 @@ impl TemporalRepository {
     pub async fn delete_windowed_history(
         &self,
         target: &ContextTarget,
-        entity_ids: &[Uri],
+        entity_ids: &[Identifier],
         scope: &TemporalHistoryDeleteScope,
     ) -> Result<u64, TemporalStoreError> {
         if entity_ids.is_empty() {
@@ -144,22 +144,22 @@ impl TemporalRepository {
 }
 
 /// Lock the addressed temporal entities before any history is removed.
-fn lock_entities_statement(schema: Option<&DynIden>, entity_ids: &[Uri]) -> SelectStatement {
+fn lock_entities_statement(schema: Option<&DynIden>, entity_ids: &[Identifier]) -> SelectStatement {
     Query::select()
         .column(TemporalEntities::TemporalEntityKey)
         .from(qualified(schema, TemporalEntities::Table))
-        .and_where(Expr::col(TemporalEntities::Id).is_in(entity_ids.iter().map(Uri::as_str)))
+        .and_where(Expr::col(TemporalEntities::Id).is_in(entity_ids.iter().map(Identifier::as_str)))
         .lock(LockType::Update)
         .to_owned()
 }
 
 /// The streams the request scopes: those of the addressed entities that carry a
 /// targeted attribute and a selected `datasetId`.
-fn matching_streams_subquery(schema: Option<&DynIden>, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> SelectStatement {
+fn matching_streams_subquery(schema: Option<&DynIden>, entity_ids: &[Identifier], scope: &TemporalHistoryDeleteScope) -> SelectStatement {
     let owning_entities = Query::select()
         .column((Te, TemporalEntities::TemporalEntityKey))
         .from(qualified(schema, TemporalEntities::Table).alias(Te))
-        .and_where(Expr::col((Te, TemporalEntities::Id)).is_in(entity_ids.iter().map(Uri::as_str)))
+        .and_where(Expr::col((Te, TemporalEntities::Id)).is_in(entity_ids.iter().map(Identifier::as_str)))
         .to_owned();
 
     let mut streams = Query::select();
@@ -220,7 +220,7 @@ fn window_condition(window: &TemporalWindow) -> Condition {
 }
 
 /// Count the history instances the scope and window select.
-fn windowed_count_statement(schema: Option<&DynIden>, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> SelectStatement {
+fn windowed_count_statement(schema: Option<&DynIden>, entity_ids: &[Identifier], scope: &TemporalHistoryDeleteScope) -> SelectStatement {
     Query::select()
         .expr_as(count_all(), Matched)
         .from(qualified(schema, AttributeHistory::Table))
@@ -231,7 +231,7 @@ fn windowed_count_statement(schema: Option<&DynIden>, entity_ids: &[Uri], scope:
 
 /// Delete the history instances the scope and window select, reporting each
 /// removed row's write identity.
-fn windowed_delete_statement(schema: Option<&DynIden>, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> DeleteStatement {
+fn windowed_delete_statement(schema: Option<&DynIden>, entity_ids: &[Identifier], scope: &TemporalHistoryDeleteScope) -> DeleteStatement {
     Query::delete()
         .from_table(qualified(schema, AttributeHistory::Table))
         .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(matching_streams_subquery(schema, entity_ids, scope)))
@@ -245,7 +245,7 @@ fn windowed_delete_statement(schema: Option<&DynIden>, entity_ids: &[Uri], scope
 /// Guarded against any stream that still has a history row so a stream with a
 /// surviving instant is never removed, which keeps the cleanup safe even if a
 /// concurrent writer slipped a row in before the entity lock was taken.
-fn empty_stream_cleanup_statement(schema: Option<&DynIden>, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> DeleteStatement {
+fn empty_stream_cleanup_statement(schema: Option<&DynIden>, entity_ids: &[Identifier], scope: &TemporalHistoryDeleteScope) -> DeleteStatement {
     let streams_with_history = Query::select()
         .column(AttributeHistory::StreamKey)
         .from(qualified(schema, AttributeHistory::Table))
@@ -260,7 +260,7 @@ fn empty_stream_cleanup_statement(schema: Option<&DynIden>, entity_ids: &[Uri], 
 #[cfg(test)]
 mod tests {
     use crate::temporal_windowed_deletion::{empty_stream_cleanup_statement, windowed_count_statement, windowed_delete_statement};
-    use andromeda_ngsi_ld_lexicon::{time_prop::TimeProp, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         dataset::DatasetFilter,
         temporal::{
@@ -276,7 +276,7 @@ mod tests {
         DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
     }
 
-    fn ids() -> Vec<Uri> {
+    fn ids() -> Vec<Identifier> {
         vec!["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")]
     }
 

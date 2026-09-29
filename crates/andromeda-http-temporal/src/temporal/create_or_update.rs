@@ -7,6 +7,7 @@ use crate::{
         ForwardProvisionRequest,
         ForwardingOperation,
         HeaderMap,
+        Identifier,
         IncomingVia,
         IntoResponse,
         JsonLdDocument,
@@ -22,7 +23,6 @@ use crate::{
         TemporalError,
         TenantStateOrCreate,
         TriggeringRequest,
-        Uri,
         ValidatedQuery,
         Value,
         classify_temporal_error,
@@ -81,7 +81,7 @@ pub async fn create_or_update(
         .get("id")
         .and_then(Value::as_str)
         .ok_or_else(|| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, "entity id must be a valid URI").with_instance(uri.clone()))?
-        .parse::<Uri>()
+        .parse::<Identifier>()
         .map_err(|error| {
             ClassifiedReport::public(NgsiLdErrorType::BadRequestData, format!("entity id must be a valid URI: {error}")).with_instance(uri.clone())
         })?;

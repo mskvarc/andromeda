@@ -28,7 +28,7 @@
 //! An array without repeats yields exactly one round holding every entry, so the
 //! ordinary batch keeps the chunking and write concurrency it has always had.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::collections::HashMap;
 
 /// A batch entity array arranged into the rounds clause 5.5.11.0 processes it in.
@@ -48,9 +48,9 @@ impl<T> SameIdRounds<T> {
     /// The first instance of every identifier goes to round 0, the second to
     /// round 1, and so on, which keeps array order both within a round and
     /// between the rounds of one identifier (clause 5.5.11.0).
-    pub(super) fn from_entries(entries: Vec<T>, id_of: impl Fn(&T) -> &Uri) -> SameIdRounds<T> {
+    pub(super) fn from_entries(entries: Vec<T>, id_of: impl Fn(&T) -> &Identifier) -> SameIdRounds<T> {
         let round_indexes = {
-            let mut occurrences: HashMap<&Uri, usize> = HashMap::with_capacity(entries.len());
+            let mut occurrences: HashMap<&Identifier, usize> = HashMap::with_capacity(entries.len());
             entries
                 .iter()
                 .map(|entry| {
@@ -84,10 +84,10 @@ impl<T> SameIdRounds<T> {
 #[cfg(test)]
 mod tests {
     use crate::batch::same_id_rounds::SameIdRounds;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
     /// Submitted instances, each tagged with its array position.
-    fn instances(ids: &[&str]) -> Vec<(usize, Uri)> {
+    fn instances(ids: &[&str]) -> Vec<(usize, Identifier)> {
         ids.iter()
             .enumerate()
             .map(|(position, id)| (position, id.parse().expect("the fixture is a valid identifier")))

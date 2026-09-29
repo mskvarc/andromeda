@@ -11,11 +11,11 @@ use crate::{
     error::ContextStoreError,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
-use andromeda_postgresql_schema::projected_string_column::ProjectedStringColumn;
+use andromeda_postgresql_schema::{projected_string_column::ProjectedStringColumn, projected_uri_column::ProjectedUriColumn};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
@@ -27,8 +27,8 @@ use sqlx::{Postgres, postgres::PgArguments, query::Query};
 /// Exactly one field is populated, decided by the value's own shape rather than
 /// by the caller, which is what keeps the `value_kind` code and the column
 /// holding the value from ever disagreeing. A String is placed by
-/// [`ProjectedStringColumn::of`], the one placement the `q` compiler also
-/// routes an equality through.
+/// [`ProjectedStringColumn::of`] and a URI by [`ProjectedUriColumn::of`], the
+/// placements the `q` compiler also routes an equality through.
 struct TypedValueColumns<'a> {
     /// The arbitrary-precision value bound directly as `NUMERIC`.
     number: Option<&'a BigDecimal>,
@@ -44,8 +44,10 @@ struct TypedValueColumns<'a> {
     object: Option<&'a Value>,
     /// The timestamp value.
     datetime: Option<DateTime<Utc>>,
-    /// The URI value.
+    /// The URI value, when it fits `value_uri`'s B-tree.
     uri: Option<&'a str>,
+    /// The URI value, when it is too long for `value_uri`.
+    long_uri: Option<&'a str>,
 }
 
 /// Spread one projected value across the typed columns.
@@ -59,6 +61,7 @@ fn typed_value_columns(value: &ProjectedAttributeValue) -> TypedValueColumns<'_>
         object: None,
         datetime: None,
         uri: None,
+        long_uri: None,
     };
     match value {
         ProjectedAttributeValue::Number(number) => columns.number = Some(number.decimal()),
@@ -70,7 +73,10 @@ fn typed_value_columns(value: &ProjectedAttributeValue) -> TypedValueColumns<'_>
         ProjectedAttributeValue::Geometry(geometry) => columns.geometry = Some(geometry),
         ProjectedAttributeValue::Object(object) => columns.object = Some(object),
         ProjectedAttributeValue::DateTime(instant) => columns.datetime = Some(*instant),
-        ProjectedAttributeValue::Uri(uri) => columns.uri = Some(uri.as_str()),
+        ProjectedAttributeValue::Uri(uri) => match ProjectedUriColumn::of(uri.as_str()) {
+            ProjectedUriColumn::Indexed => columns.uri = Some(uri.as_str()),
+            ProjectedUriColumn::Overflow => columns.long_uri = Some(uri.as_str()),
+        },
     }
     columns
 }
@@ -107,6 +113,8 @@ pub struct ProjectionBinds<'a> {
     pub value_uris: Vec<Option<&'a str>>,
     /// String values too long for `value_string`, under the String value kind.
     pub value_long_texts: Vec<Option<&'a str>>,
+    /// URI values too long for `value_uri`, under the URI value kind.
+    pub value_long_uris: Vec<Option<&'a str>>,
 }
 
 impl<'a> ProjectionBinds<'a> {
@@ -133,6 +141,7 @@ impl<'a> ProjectionBinds<'a> {
             value_objects: Vec::with_capacity(rows.len()),
             value_uris: Vec::with_capacity(rows.len()),
             value_long_texts: Vec::with_capacity(rows.len()),
+            value_long_uris: Vec::with_capacity(rows.len()),
         };
         for row in rows {
             let value = typed_value_columns(&row.value);
@@ -144,7 +153,7 @@ impl<'a> ProjectionBinds<'a> {
             binds.expires_ats.push(row.expires_at);
             binds.unit_code_ids.push(row.unit_code_id.map(UnitCodeId::get));
             binds.value_booleans.push(value.boolean);
-            binds.dataset_ids.push(row.key.dataset_id.as_ref().map(Uri::as_str));
+            binds.dataset_ids.push(row.key.dataset_id.as_ref().map(Identifier::as_str));
             // SQLx owns array elements for the duration of the query. Clone the
             // decimal itself, preserving its exact value without formatting it.
             binds.value_numbers.push(value.number.cloned());
@@ -153,11 +162,12 @@ impl<'a> ProjectionBinds<'a> {
             binds.value_objects.push(value.object);
             binds.value_uris.push(value.uri);
             binds.value_long_texts.push(value.long_text);
+            binds.value_long_uris.push(value.long_uri);
         }
         Ok(binds)
     }
 
-    /// Bind the fifteen column arrays to `query`, in the marker order the
+    /// Bind the sixteen column arrays to `query`, in the marker order the
     /// projection statements' shared staging emits
     /// ([`staging_columns`](crate::current_attribute_values::column_sets::staging_columns)).
     ///
@@ -181,6 +191,7 @@ impl<'a> ProjectionBinds<'a> {
             .bind(&self.value_objects)
             .bind(&self.value_uris)
             .bind(&self.value_long_texts)
+            .bind(&self.value_long_uris)
     }
 }
 
@@ -192,7 +203,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
-    use andromeda_postgresql_schema::projected_string_column::INDEXED_STRING_BYTE_LIMIT;
+    use andromeda_postgresql_schema::{projected_string_column::INDEXED_STRING_BYTE_LIMIT, projected_uri_column::INDEXED_URI_BYTE_LIMIT};
     use chrono::{TimeZone, Utc};
 
     /// One projection row carrying `value`, with no unit and no `datasetId`.
@@ -229,6 +240,7 @@ mod tests {
             ProjectedAttributeValue::Object(serde_json::json!({"a": 1})),
             ProjectedAttributeValue::DateTime(instant),
             ProjectedAttributeValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")),
+            ProjectedAttributeValue::Uri(format!("urn:ngsi-ld:Entity:{}", "t".repeat(6000)).parse().expect("a valid URI")),
         ];
         for value in &values {
             let columns = typed_value_columns(value);
@@ -239,7 +251,8 @@ mod tests {
                 + usize::from(columns.geometry.is_some())
                 + usize::from(columns.object.is_some())
                 + usize::from(columns.datetime.is_some())
-                + usize::from(columns.uri.is_some());
+                + usize::from(columns.uri.is_some())
+                + usize::from(columns.long_uri.is_some());
             pretty_assertions::assert_eq!(populated, 1, "{value:?} populates {populated} columns");
         }
     }
@@ -272,6 +285,36 @@ mod tests {
         pretty_assertions::assert_eq!(binds.value_kinds, vec![ValueKind::code(ValueKind::String)]);
         pretty_assertions::assert_eq!(binds.value_strings, vec![None]);
         pretty_assertions::assert_eq!(binds.value_long_texts, vec![Some(text.as_str())]);
+    }
+
+    /// A Relationship object of `length` octets, projected as a URI.
+    fn relationship_object(length: usize) -> ProjectedAttributeValue {
+        let prefix = "urn:ngsi-ld:Building:";
+        ProjectedAttributeValue::Uri(format!("{prefix}{}", "b".repeat(length - prefix.len())).parse().expect("a valid URI"))
+    }
+
+    #[test]
+    fn a_uri_within_the_limit_binds_the_indexed_column() {
+        let rows = [row(relationship_object(INDEXED_URI_BYTE_LIMIT))];
+        let binds = ProjectionBinds::from_rows(&rows).expect("no geometry to encode");
+        pretty_assertions::assert_eq!(binds.value_kinds, vec![ValueKind::code(ValueKind::Uri)]);
+        pretty_assertions::assert_eq!(
+            binds.value_uris.iter().map(|uri| uri.map(str::len)).collect::<Vec<_>>(),
+            vec![Some(INDEXED_URI_BYTE_LIMIT)]
+        );
+        pretty_assertions::assert_eq!(binds.value_long_uris, vec![None]);
+    }
+
+    #[test]
+    fn a_uri_past_the_limit_binds_the_overflow_column_under_the_uri_kind() {
+        let rows = [row(relationship_object(INDEXED_URI_BYTE_LIMIT + 1)), row(relationship_object(6000))];
+        let binds = ProjectionBinds::from_rows(&rows).expect("no geometry to encode");
+        pretty_assertions::assert_eq!(binds.value_kinds, vec![ValueKind::code(ValueKind::Uri); 2]);
+        pretty_assertions::assert_eq!(binds.value_uris, vec![None, None]);
+        pretty_assertions::assert_eq!(
+            binds.value_long_uris.iter().map(|uri| uri.map(str::len)).collect::<Vec<_>>(),
+            vec![Some(INDEXED_URI_BYTE_LIMIT + 1), Some(6000)]
+        );
     }
 
     #[test]

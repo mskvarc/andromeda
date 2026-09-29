@@ -14,7 +14,7 @@ use crate::{
     selector_routing::{SelectorRef, SelectorRouting, SelectorShape},
 };
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_telemetry::subscription::CandidateFunnel;
 use std::{
@@ -32,9 +32,9 @@ use strum::EnumCount;
 #[derive(Debug, Default)]
 pub struct CandidateIndex {
     entries: HashMap<SubscriptionKey, Arc<CompiledSubscription>>,
-    keys_by_id: HashMap<Uri, SubscriptionKey>,
+    keys_by_id: HashMap<Identifier, SubscriptionKey>,
     by_type: HashMap<EntityTypeName, HashSet<SelectorRef>>,
-    by_entity_id: HashMap<Uri, HashSet<SelectorRef>>,
+    by_entity_id: HashMap<Identifier, HashSet<SelectorRef>>,
     wildcard: HashSet<SubscriptionKey>,
     by_trigger: [HashSet<SubscriptionKey>; NotificationTrigger::COUNT],
     by_watched_attribute: HashMap<AttributeName, HashSet<SubscriptionKey>>,
@@ -69,7 +69,7 @@ impl CandidateIndex {
 
     /// The indexed subscription with this identifier.
     #[must_use]
-    pub fn get(&self, id: &Uri) -> Option<&Arc<CompiledSubscription>> {
+    pub fn get(&self, id: &Identifier) -> Option<&Arc<CompiledSubscription>> {
         self.keys_by_id.get(id).and_then(|key| self.entries.get(key))
     }
 
@@ -120,7 +120,7 @@ impl CandidateIndex {
 
     /// Unindex the subscription with this identifier, walking only the
     /// buckets its membership record names.
-    pub fn remove(&mut self, id: &Uri) -> Option<Arc<CompiledSubscription>> {
+    pub fn remove(&mut self, id: &Identifier) -> Option<Arc<CompiledSubscription>> {
         let key = self.keys_by_id.remove(id)?;
         let compiled = self.entries.remove(&key);
         if let Some(membership) = self.membership.remove(&key) {

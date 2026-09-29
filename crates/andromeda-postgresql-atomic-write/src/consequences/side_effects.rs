@@ -112,7 +112,7 @@ mod tests {
         change_event::ChangeEvent,
         entity_mutation::EntityMutation,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         expanded::{
@@ -125,7 +125,7 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("a valid URI")
     }
 
@@ -180,7 +180,10 @@ mod tests {
         pretty_assertions::assert_eq!(job.change_events[0].lifecycle, EntityLifecycle::Created);
         pretty_assertions::assert_eq!(job.change_events[1].lifecycle, EntityLifecycle::Modified);
         pretty_assertions::assert_eq!(job.change_events[0].instances[0].kind, AttributeChangeKind::Created);
-        pretty_assertions::assert_eq!(job.change_events[0].instances[0].dataset_id.as_ref().map(Uri::as_str), Some("urn:dataset:a"));
+        pretty_assertions::assert_eq!(
+            job.change_events[0].instances[0].dataset_id.as_ref().map(Identifier::as_str),
+            Some("urn:dataset:a")
+        );
         pretty_assertions::assert_eq!(job.change_events[1].current_payload, Some(json!([{"@id": "urn:ngsi-ld:Building:2"}])));
     }
 

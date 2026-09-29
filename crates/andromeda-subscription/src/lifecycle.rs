@@ -26,10 +26,7 @@ use andromeda_jsonld::{
     context_validation::{validate_context_spec, validate_jsonld_context_value},
     engine::processor::JsonLdEngine,
 };
-use andromeda_ngsi_ld_lexicon::{
-    context_source_pseudonym::ContextSourcePseudonym,
-    uri::{NGSI_LD_URN_NID, Uri},
-};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, uri::NGSI_LD_URN_NID};
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_telemetry::subscription_ops::{self, SubscriptionOperation};
 use chrono::{DateTime, Utc};
@@ -40,9 +37,9 @@ use url::Url;
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
-fn generate_id() -> Result<Uri, SubscriptionError> {
+fn generate_id() -> Result<Identifier, SubscriptionError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4())).build()?;
-    Uri::try_from(urn).map_err(SubscriptionError::internal)
+    Identifier::try_from(urn).map_err(SubscriptionError::internal)
 }
 
 /// Generic subscription service providing CRUD operations shared by entity and CSR subscriptions.
@@ -99,7 +96,7 @@ where
     /// Run one hook step after the local change committed. The local
     /// subscription is valid whatever the distributed side does, so a failing
     /// hook is logged rather than turned into a failed request.
-    async fn run_hook<'a>(&'a self, id: &Uri, step: impl FnOnce(&'a dyn SubscriptionForwardingHook) -> BoxFuture<'a, Result<(), SubscriptionError>>) {
+    async fn run_hook<'a>(&'a self, id: &Identifier, step: impl FnOnce(&'a dyn SubscriptionForwardingHook) -> BoxFuture<'a, Result<(), SubscriptionError>>) {
         let Some(hook) = self.forwarding_hook.as_deref() else {
             return;
         };
@@ -134,8 +131,8 @@ where
         context: &ContextSpec,
         base_url: Option<&Url>,
         encountered_sources: &[ContextSourcePseudonym],
-    ) -> Result<Uri, SubscriptionError> {
-        let result: Result<Uri, SubscriptionError> = async {
+    ) -> Result<Identifier, SubscriptionError> {
+        let result: Result<Identifier, SubscriptionError> = async {
             validation::validate_create_payload(&payload)?;
 
             validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
@@ -143,7 +140,7 @@ where
             let id = match payload.get("id").and_then(|v| v.as_str()) {
                 Some(provided_id) => {
                     let provided_id = provided_id
-                        .parse::<Uri>()
+                        .parse::<Identifier>()
                         .map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::SubscriptionId { source }))?;
                     if self.repo.exists(target, &provided_id).await? {
                         return Err(SubscriptionError::already_exists(&provided_id));
@@ -203,7 +200,7 @@ where
     pub async fn update(
         &self,
         target: &ContextTarget,
-        id: &Uri,
+        id: &Identifier,
         mut payload: Value,
         context: &ContextSpec,
         base_url: Option<&Url>,
@@ -262,7 +259,7 @@ where
     /// subscription under `id`, and [`SubscriptionError::Persistence`] when
     /// the store rejects the delete. A failing forwarding hook is logged
     /// rather than returned: the local subscription is deleted either way.
-    pub async fn delete(&self, target: &ContextTarget, id: &Uri) -> Result<(), SubscriptionError> {
+    pub async fn delete(&self, target: &ContextTarget, id: &Identifier) -> Result<(), SubscriptionError> {
         let result: Result<(), SubscriptionError> = async {
             // Captured before the row goes: the store deletes the forwarding
             // mappings together with the subscription.
@@ -291,7 +288,7 @@ where
     }
 
     /// Transition subscriptions due at `cutoff` and publish one variant-owned deletion change for each.
-    pub(crate) async fn expire_due(&self, target: &ContextTarget, cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+    pub(crate) async fn expire_due(&self, target: &ContextTarget, cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
         let identifiers = self.repo.expire_due(target, cutoff).await?;
         for identifier in &identifiers {
             self.emit_change(self.variant.make_deleted(target.clone(), identifier.clone())).await; // clone: the policy outcome and change sink each own the branch and identifier.

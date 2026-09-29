@@ -8,7 +8,7 @@
 
 use crate::local_entity_type::LocalEntityTypeResolver;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
 use andromeda_registration::{
@@ -54,7 +54,7 @@ impl RegistrationStore for FixedRegistrationStore {
         Box::pin(async { Ok(Vec::new()) })
     }
 
-    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, RegistrationError>>
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<bool, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -64,7 +64,7 @@ impl RegistrationStore for FixedRegistrationStore {
 
     fn create<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Uri,
+        _id: &'life1 Identifier,
         _params: &'life2 CreateCsrParams,
     ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
     where
@@ -77,7 +77,7 @@ impl RegistrationStore for FixedRegistrationStore {
 
     fn get<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Uri,
+        _id: &'life1 Identifier,
     ) -> BoxFuture<'async_trait, Result<Option<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
@@ -116,7 +116,7 @@ impl RegistrationStore for FixedRegistrationStore {
 
     fn update<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Uri,
+        _id: &'life1 Identifier,
         _values: &'life2 ResolvedCsrUpdate,
     ) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
     where
@@ -130,7 +130,7 @@ impl RegistrationStore for FixedRegistrationStore {
     fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         _entity_type: Option<&'life1 IriBuf>,
-        _entity_id: Option<&'life2 Uri>,
+        _entity_id: Option<&'life2 Identifier>,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
@@ -143,7 +143,7 @@ impl RegistrationStore for FixedRegistrationStore {
 
     fn find_overlapping<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _entity_id: Option<&'life1 Uri>,
+        _entity_id: Option<&'life1 Identifier>,
         _attributes: &'life2 [IriBuf],
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
@@ -156,7 +156,7 @@ impl RegistrationStore for FixedRegistrationStore {
 
     fn find_all_active<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        _after: Option<&'life1 Uri>,
+        _after: Option<&'life1 Identifier>,
         _limit: u32,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
@@ -166,7 +166,7 @@ impl RegistrationStore for FixedRegistrationStore {
         Box::pin(async { Ok(Vec::new()) })
     }
 
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -176,7 +176,7 @@ impl RegistrationStore for FixedRegistrationStore {
 
     fn record_forwarding_outcome<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Uri,
+        _id: &'life1 Identifier,
         _outcome: ForwardingOutcome,
         _at: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
@@ -193,7 +193,7 @@ impl RegistrationStore for FixedRegistrationStore {
 pub(crate) struct NoLocalEntities;
 
 impl LocalEntityTypeResolver for NoLocalEntities {
-    fn local_entity_types<'resolver>(&'resolver self, _target: &'resolver ContextTarget, _id: &'resolver Uri) -> BoxFuture<'resolver, Vec<IriBuf>> {
+    fn local_entity_types<'resolver>(&'resolver self, _target: &'resolver ContextTarget, _id: &'resolver Identifier) -> BoxFuture<'resolver, Vec<IriBuf>> {
         Box::pin(async { Vec::new() })
     }
 }

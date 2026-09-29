@@ -146,13 +146,13 @@ pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSu
 mod tests {
     use super::EntityMapHttpClassify;
     use andromeda_entity_map::error::EntityMapError;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use std::error::Error;
 
     #[test]
     fn every_entity_map_variant_has_focused_disclosure() -> Result<(), Box<dyn Error>> {
-        let map_identifier = "urn:ngsi-ld:EntityMap:1".parse::<Uri>()?;
+        let map_identifier = "urn:ngsi-ld:EntityMap:1".parse::<Identifier>()?;
         for (error, expected) in [
             (
                 EntityMapError::NotFound {

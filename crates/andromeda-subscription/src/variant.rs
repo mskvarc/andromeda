@@ -11,7 +11,7 @@
 use crate::{change::UpsertKind, error::SubscriptionError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -79,8 +79,8 @@ pub trait SubscriptionVariant: Send + Sync {
 
     /// Build an "upserted" change event for a subscription that was created or
     /// updated, as `kind` says.
-    fn make_upserted(&self, target: ContextTarget, id: Uri, kind: UpsertKind) -> Self::Change;
+    fn make_upserted(&self, target: ContextTarget, id: Identifier, kind: UpsertKind) -> Self::Change;
 
     /// Build a "deleted" change event.
-    fn make_deleted(&self, target: ContextTarget, id: Uri) -> Self::Change;
+    fn make_deleted(&self, target: ContextTarget, id: Identifier) -> Self::Change;
 }

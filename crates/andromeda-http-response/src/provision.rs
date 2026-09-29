@@ -14,7 +14,7 @@ use crate::{
     problem_response::ProblemResponse,
 };
 use andromeda_federation::{error::FederationError, outcome::ForwardedWriteResult, single_source_failure::single_source_failure};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::{
     batch_operation::{BatchEntityError, BatchOperationResult},
     error_type::NgsiLdErrorType,
@@ -56,7 +56,7 @@ impl LocalOutcome {
 /// The complete operation failed: the single proxied source's clause 6.3.17
 /// error, or the local part's classified error.
 pub fn provision_response(
-    entity_id: &Uri,
+    entity_id: &Identifier,
     forwarded: &[ForwardedWriteResult],
     local: &LocalOutcome,
     success: Response,
@@ -114,7 +114,7 @@ pub fn multi_status(body: BatchOperationResult) -> Response {
 /// entity in `success` when any part of it landed, and one clause 5.2.17
 /// error per failed part, each forwarded failure naming its `registrationId`.
 #[must_use]
-pub fn multi_status_result(entity_id: &Uri, local: &LocalOutcome, forwarded: &[ForwardedWriteResult]) -> BatchOperationResult {
+pub fn multi_status_result(entity_id: &Identifier, local: &LocalOutcome, forwarded: &[ForwardedWriteResult]) -> BatchOperationResult {
     let mut errors = Vec::new();
     let local_ok = match local {
         LocalOutcome::NothingRemained => false,
@@ -179,7 +179,7 @@ mod tests {
         federation_operation_unsupported::FederationOperationUnsupported,
         outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::{
@@ -189,7 +189,7 @@ mod tests {
     use serde_json::{Value, json};
     use std::time::Duration;
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
     }
 

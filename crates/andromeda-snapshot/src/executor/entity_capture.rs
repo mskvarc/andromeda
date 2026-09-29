@@ -30,7 +30,7 @@ use andromeda_federation::{
     request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, QueryDelivery, TriggeringRequest},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity::Entity, query::body::Query, snapshot::ExecutionResultDetails};
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use std::collections::HashSet;
@@ -84,9 +84,9 @@ impl PendingSources {
 /// Snapshot.
 struct CaptureLedger<'a> {
     /// Every entity this query captured.
-    captured: HashSet<Uri>,
+    captured: HashSet<Identifier>,
     /// Every entity any query of the Snapshot has materialized so far.
-    materialized: &'a mut HashSet<Uri>,
+    materialized: &'a mut HashSet<Identifier>,
 }
 
 impl SnapshotExecutor {
@@ -99,11 +99,11 @@ impl SnapshotExecutor {
     pub(crate) async fn run_entity_query(
         &self,
         target: &ContextTarget,
-        snapshot_id: &Uri,
+        snapshot_id: &Identifier,
         query: Query,
         index: usize,
         context: &ContextSpec,
-        materialized_entities: &mut HashSet<Uri>,
+        materialized_entities: &mut HashSet<Identifier>,
     ) -> Result<ExecutionResultDetails, SnapshotError> {
         let mut params = match entity_parameters(query) {
             Ok(params) => params,
@@ -222,7 +222,7 @@ impl SnapshotExecutor {
     async fn capture_page(
         &self,
         target: &ContextTarget,
-        snapshot_id: &Uri,
+        snapshot_id: &Identifier,
         index: usize,
         context: &ContextSpec,
         entities: Vec<Entity>,

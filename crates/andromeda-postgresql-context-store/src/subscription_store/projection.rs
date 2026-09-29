@@ -8,7 +8,7 @@ use crate::subscription_store::{
     stored_kind::{StoredKind, of_kind},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_query::dictionary::names_in_key_order::attribute_names_of;
@@ -78,7 +78,7 @@ pub(super) fn projected_select(kind: StoredKind, target: &ContextTarget) -> Sele
 
 /// The `WHERE id = $id AND kind` pin of one subscription. The branch is chosen
 /// by the schema its relations are qualified with, not by a predicate.
-pub(super) fn one_of(id: &Uri, kind: StoredKind) -> sea_query::Cond {
+pub(super) fn one_of(id: &Identifier, kind: StoredKind) -> sea_query::Cond {
     sea_query::Cond::all()
         .add(Expr::col((Subscriptions::Table, Subscriptions::Id)).eq(id.as_str()))
         .add(of_kind(kind))
@@ -134,7 +134,7 @@ mod tests {
         stored_kind::StoredKind,
     };
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::cursor::PageCursor;
     use sea_query::PostgresQueryBuilder;
 
@@ -146,7 +146,7 @@ mod tests {
         select.to_string(PostgresQueryBuilder)
     }
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

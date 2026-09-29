@@ -18,7 +18,7 @@ use crate::{
     simplify::simplify_value,
     structural_projection::StructuralProjection,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
@@ -36,7 +36,7 @@ pub struct SnapshotRenderer<'a> {
     /// The clause 4.5.1 rendering to produce.
     mode: ResponseFormat,
     /// The entities `join=inline` resolves relationships against, if any.
-    inline_linked_entities: Option<&'a IndexMap<Uri, Entity>>,
+    inline_linked_entities: Option<&'a IndexMap<Identifier, Entity>>,
     /// The clause 4.21 `pick`/`omit` structural-member rule to apply to
     /// the payload's `id`, `type` and `scope` keys, if any.
     structural_projection: Option<&'a Projection>,
@@ -71,7 +71,7 @@ impl<'a> SnapshotRenderer<'a> {
 
     /// Provide linked entities for `join=inline` expansion.
     #[must_use]
-    pub const fn with_inline_linked_entities(mut self, linked: &'a IndexMap<Uri, Entity>) -> Self {
+    pub const fn with_inline_linked_entities(mut self, linked: &'a IndexMap<Identifier, Entity>) -> Self {
         self.inline_linked_entities = Some(linked);
         self
     }

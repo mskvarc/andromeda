@@ -13,7 +13,7 @@ use crate::{
     relationship_targets::{ObjectSpelling, rendered_relationship_targets},
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use indexmap::IndexMap;
@@ -24,7 +24,7 @@ use std::{collections::HashSet, str::FromStr};
 /// deepest nested entity.
 struct InlineJoinContext<'a> {
     /// The entities the traversal resolved, keyed by identifier.
-    linked: &'a IndexMap<Uri, Entity>,
+    linked: &'a IndexMap<Identifier, Entity>,
     /// The `lang` filter every nested rendering negotiates against, if any.
     language_filter: Option<&'a LanguageFilter>,
 }
@@ -48,7 +48,7 @@ struct InlineJoinContext<'a> {
 /// linked entity recurses without end and overflows the stack from a request.
 pub(crate) fn apply_inline_join(
     entity: &mut Value,
-    linked: &IndexMap<Uri, Entity>,
+    linked: &IndexMap<Identifier, Entity>,
     language_filter: Option<&LanguageFilter>,
     projection: Option<LinkedProjection<'_>>,
 ) -> Result<(), RenderError> {
@@ -230,7 +230,7 @@ fn render_linked(
 #[cfg(test)]
 mod tests {
     use crate::{inline_join::apply_inline_join, nested_projection::LinkedProjection};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, term::ProjectionTerm};
     use indexmap::IndexMap;
@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn inline_join_skips_unresolved() {
-        let linked_map: IndexMap<Uri, Entity> = IndexMap::new();
+        let linked_map: IndexMap<Identifier, Entity> = IndexMap::new();
         let mut entity = json!({
             "id": "urn:building", "type": "Building",
             "hasRoom": {"type": "Relationship", "object": "urn:ngsi-ld:Missing:1"}

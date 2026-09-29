@@ -2,7 +2,7 @@
 
 use crate::snapshot::{mapper::row_to_snapshot, persistence_error, record::snapshot_select};
 use andromeda_context_commit::lease_holder::LeaseHolder;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, snapshot::SnapshotStatus};
 use andromeda_postgresql_schema::snapshot::{SnapshotNotificationOutbox, Snapshots};
 use andromeda_postgresql_seaquery::{clock::now, queue::claimable_at};
@@ -21,7 +21,7 @@ pub struct SnapshotStatusDelivery {
     /// Durable outbox identity.
     pub id: Uuid,
     /// Snapshot identifier used for correlation and transport logging.
-    pub snapshot_id: Uri,
+    pub snapshot_id: Identifier,
     /// HTTP callback endpoint captured when the lifecycle event committed.
     pub endpoint: Url,
     /// Receiver-supplied HTTP headers captured with the event.
@@ -211,7 +211,7 @@ impl SnapshotStatusOutbox {
 }
 
 /// Queue the current terminal representation inside its lifecycle transaction.
-pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<'_, Postgres>, snapshot_id: &Uri) -> Result<(), SnapshotError> {
+pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<'_, Postgres>, snapshot_id: &Identifier) -> Result<(), SnapshotError> {
     let mut statement = snapshot_select();
     statement
         .column((Snapshots::Table, Snapshots::SnapshotKey))

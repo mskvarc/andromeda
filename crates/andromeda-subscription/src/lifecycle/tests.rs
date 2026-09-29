@@ -10,7 +10,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     subscription::{Subscription, SubscriptionStatus},
@@ -62,7 +62,7 @@ fn unused(method: &str) -> SubscriptionError {
 
 #[async_trait]
 impl SubscriptionStore for DeletingStore {
-    async fn get(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
+    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
         Err(unused("get"))
     }
 
@@ -74,12 +74,12 @@ impl SubscriptionStore for DeletingStore {
         Err(unused("list_keyset"))
     }
 
-    async fn delete(&self, _target: &ContextTarget, _id: &Uri) -> Result<u64, SubscriptionError> {
+    async fn delete(&self, _target: &ContextTarget, _id: &Identifier) -> Result<u64, SubscriptionError> {
         record(&self.log, DeletionStep::RowDeleted);
         Ok(self.rows_deleted)
     }
 
-    async fn exists(&self, _target: &ContextTarget, _id: &Uri) -> Result<bool, SubscriptionError> {
+    async fn exists(&self, _target: &ContextTarget, _id: &Identifier) -> Result<bool, SubscriptionError> {
         Err(unused("exists"))
     }
 
@@ -87,19 +87,24 @@ impl SubscriptionStore for DeletingStore {
         Err(unused("list_active"))
     }
 
-    async fn claim_notification_slot(&self, _target: &ContextTarget, _id: &Uri, _gate: NotificationSlotGate) -> Result<NotificationSlot, SubscriptionError> {
+    async fn claim_notification_slot(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        _gate: NotificationSlotGate,
+    ) -> Result<NotificationSlot, SubscriptionError> {
         Err(unused("claim_notification_slot"))
     }
 
-    async fn mark_success(&self, _target: &ContextTarget, _id: &Uri) -> Result<(), SubscriptionError> {
+    async fn mark_success(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
         Err(unused("mark_success"))
     }
 
-    async fn mark_failure(&self, _target: &ContextTarget, _id: &Uri) -> Result<(), SubscriptionError> {
+    async fn mark_failure(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
         Err(unused("mark_failure"))
     }
 
-    async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+    async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
         Err(unused("expire_due"))
     }
 
@@ -111,14 +116,14 @@ impl SubscriptionStore for DeletingStore {
         Err(unused("next_interval_due"))
     }
 
-    async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Uri, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
+    async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
         Err(unused("advance_interval_anchor"))
     }
 
     async fn create_subscription(
         &self,
         _target: &ContextTarget,
-        _id: &Uri,
+        _id: &Identifier,
         _fields: &SubscriptionFields<'_>,
         _status: SubscriptionStatus,
     ) -> Result<(), SubscriptionError> {
@@ -128,7 +133,7 @@ impl SubscriptionStore for DeletingStore {
     async fn update_subscription(
         &self,
         _target: &ContextTarget,
-        _id: &Uri,
+        _id: &Identifier,
         _fields: &SubscriptionFields<'_>,
         _status: SubscriptionStatus,
     ) -> Result<u64, SubscriptionError> {
@@ -157,13 +162,13 @@ impl SubscriptionForwardingHook for RecordingHook {
         Ok(())
     }
 
-    async fn teardown_of(&self, _id: &Uri) -> Result<SubscriptionTeardown, SubscriptionError> {
+    async fn teardown_of(&self, _id: &Identifier) -> Result<SubscriptionTeardown, SubscriptionError> {
         record(&self.log, DeletionStep::TeardownCaptured);
         // clone: every call hands the caller its own copy of the fixed plan.
         Ok(self.teardown.clone())
     }
 
-    async fn deleted(&self, _id: &Uri, teardown: &SubscriptionTeardown) -> Result<(), SubscriptionError> {
+    async fn deleted(&self, _id: &Identifier, teardown: &SubscriptionTeardown) -> Result<(), SubscriptionError> {
         // clone: the log keeps what the hook was handed for the assertion.
         record(&self.log, DeletionStep::TornDown(teardown.clone()));
         Ok(())
@@ -178,7 +183,7 @@ impl SubscriptionEndpointValidator for AcceptingEndpointValidator {
     }
 }
 
-fn uri(raw: &str) -> Uri {
+fn uri(raw: &str) -> Identifier {
     raw.parse().expect("valid test URI")
 }
 

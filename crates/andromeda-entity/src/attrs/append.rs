@@ -11,7 +11,7 @@ use crate::{
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
     mutation::{entity::append_entity_attrs, error::ExpandedEntityError, selection::OverwritePolicy},
@@ -48,7 +48,7 @@ impl EntityService {
     pub async fn append_attrs(
         &self,
         target: &ContextTarget,
-        id: &Uri,
+        id: &Identifier,
         admitted: AdmittedEntity<AppendAttributes>,
         overwrite: OverwritePolicy,
     ) -> Result<(Vec<AttributeName>, Vec<AttributeName>), EntityError> {

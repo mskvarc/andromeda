@@ -1,6 +1,6 @@
 //! The identity a write statement hands back for each entity row it affected.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 
 /// One entity row a write statement actually affected.
@@ -16,5 +16,5 @@ pub struct WrittenEntity {
     /// The surrogate key owned child relations join and cascade from.
     pub key: EntityKey,
     /// The identifier the API addresses this entity by.
-    pub id: Uri,
+    pub id: Identifier,
 }

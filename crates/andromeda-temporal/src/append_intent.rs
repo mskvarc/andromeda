@@ -6,8 +6,8 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
+    identifier::Identifier,
     instance_identity::InstanceIdentity,
-    uri::Uri,
 };
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use chrono::{DateTime, Utc};
@@ -78,7 +78,7 @@ pub enum TemporalAppendEntry {
         /// Expanded attribute IRI.
         attribute_name: AttributeName,
         /// Multi-attribute discriminator, absent for the default instance.
-        dataset_id: Option<Uri>,
+        dataset_id: Option<Identifier>,
         /// Attribute family the ended instance belonged to.
         ///
         /// Clauses 4.5.7 and 4.5.8 render a deleted instance with the
@@ -119,7 +119,7 @@ pub struct TemporalAppendIntent {
     /// First ordinal this intent's entries occupy in the commit's numbering.
     pub base_ordinal: WriteOrdinal,
     /// Entity whose temporal evolution receives the entries.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// Entity types the receiving Temporal Evolution is recorded under.
     ///
     /// Clause 4.5.6 makes the Temporal Evolution of an Entity "the Entity
@@ -160,7 +160,7 @@ impl TemporalAppendIntent {
     /// value cannot be carried -- and [`TemporalError::Internal`] when an
     /// interpreted geometry cannot be serialised back to JSON.
     pub fn from_history(
-        entity_id: &Uri,
+        entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         history: &[HistoryRecord],
         record: WriteRecord,
@@ -242,9 +242,9 @@ mod tests {
         attribute_name::AttributeName,
         attribute_type::AttributeType,
         entity_type_name::EntityTypeName,
+        identifier::Identifier,
         instance_identity::InstanceIdentity,
         scope::path::ScopePath,
-        uri::Uri,
     };
     use andromeda_ngsi_ld_model::temporal::TemporalValue;
     use andromeda_ngsi_ld_number::JsonNumber;
@@ -259,7 +259,7 @@ mod tests {
         vec![VEHICLE.parse::<EntityTypeName>().expect("valid entity type")]
     }
 
-    fn speed_payload(entity_id: &Uri) -> Arc<serde_json::Value> {
+    fn speed_payload(entity_id: &Identifier) -> Arc<serde_json::Value> {
         Arc::new(json!([{
             "@id": entity_id,
             "https://example.com/speed": [{
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn generated_observation_identity_is_stable_inside_the_intent() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity ID");
         let payload = speed_payload(&entity_id);
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let record = WriteRecord::restored(WriteId::mint(), recorded_at);
@@ -300,7 +300,7 @@ mod tests {
     /// `type` at all: reading the types off it would say the Entity has none.
     #[test]
     fn an_intent_carries_the_entity_types_the_write_stated_not_the_fragments() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity ID");
         let payload = speed_payload(&entity_id);
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let record = WriteRecord::restored(WriteId::mint(), recorded_at);
@@ -324,7 +324,7 @@ mod tests {
     /// below it has any other way to tell.
     #[test]
     fn an_intent_of_only_tombstones_is_a_deletion() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity ID");
         let speed = "https://example.com/speed".parse::<AttributeName>().expect("valid attribute name");
         let colour = "https://example.com/colour".parse::<AttributeName>().expect("valid attribute name");
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
@@ -349,7 +349,7 @@ mod tests {
     /// and an observation stating none cannot bring an evolution into being.
     #[test]
     fn an_intent_carrying_an_observation_is_an_observation_even_beside_a_tombstone() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity ID");
         let colour = "https://example.com/colour".parse::<AttributeName>().expect("valid attribute name");
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let history = [
@@ -375,7 +375,7 @@ mod tests {
     /// an entry-less intent unambiguously an observation.
     #[test]
     fn an_intent_with_no_entries_at_all_is_an_observation() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity ID");
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let attributeless = Arc::new(json!([{"@id": entity_id, "@type": [VEHICLE]}]));
         let intent = TemporalAppendIntent::from_history(
@@ -396,7 +396,7 @@ mod tests {
     /// attribute observation does, deleted scope included.
     #[test]
     fn an_intent_carrying_only_a_scope_entry_is_an_observation() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity ID");
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let intent = TemporalAppendIntent {
             record: WriteRecord::restored(WriteId::mint(), recorded_at),
@@ -419,7 +419,7 @@ mod tests {
     /// handed rather than from zero.
     #[test]
     fn history_entries_number_from_the_intents_base_rather_than_zero() {
-        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity ID");
         let payload = speed_payload(&entity_id);
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let record = WriteRecord::restored(WriteId::mint(), recorded_at);

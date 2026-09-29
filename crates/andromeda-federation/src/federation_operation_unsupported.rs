@@ -5,7 +5,7 @@
 //! about names its registration; a refusal the remote source declared carries
 //! that source's own problem detail, relayed verbatim.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use thiserror::Error;
 
 /// Why a single exclusive or redirect source cannot serve the operation.
@@ -16,7 +16,7 @@ pub enum FederationOperationUnsupported {
     #[error("registration {registration} reported the entity exists and advertises no operation to update it")]
     UpsertFollowUpNotAdvertised {
         /// The registration that holds the entity without an update operation.
-        registration: Uri,
+        registration: Identifier,
     },
     /// The single registered source itself refused the operation with an HTTP 422.
     ///

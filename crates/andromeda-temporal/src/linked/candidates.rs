@@ -6,7 +6,7 @@
 //! JSON — it never touches history, a store or a context — which is why it sits
 //! apart from the traversal in [`crate::linked`] that consumes it.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_render::relationship_targets::rendered_relationship_targets;
 use indexmap::IndexSet;
 use serde_json::Value;
@@ -36,7 +36,7 @@ pub enum RemoteEligibility {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemporalLinkedCandidate {
     /// The linked entity's identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// Whether clause 4.5.23.1 admits a non-local resolution of it.
     pub eligibility: RemoteEligibility,
     /// Every attribute whose Relationship named this identifier, in
@@ -63,7 +63,7 @@ pub struct TemporalLinkedCandidate {
 
 /// The identifier a rendered temporal entity carries, when it carries a valid
 /// one.
-pub(crate) fn identifier_of(entity: &Value) -> Option<Uri> {
+pub(crate) fn identifier_of(entity: &Value) -> Option<Identifier> {
     entity.get("id").and_then(Value::as_str).and_then(|raw| raw.parse().ok())
 }
 
@@ -75,8 +75,8 @@ pub(crate) fn identifier_of(entity: &Value) -> Option<Uri> {
 /// have pointed somewhere different at each of them. `objectList` order is
 /// preserved, and an id named several times appears once, remotely eligible if
 /// any of its referencing instances carried an `objectType`.
-pub fn collect_candidates<'a>(entities: impl IntoIterator<Item = &'a Value>, visited: &IndexSet<Uri>) -> Vec<TemporalLinkedCandidate> {
-    let mut seen: IndexSet<Uri> = IndexSet::new();
+pub fn collect_candidates<'a>(entities: impl IntoIterator<Item = &'a Value>, visited: &IndexSet<Identifier>) -> Vec<TemporalLinkedCandidate> {
+    let mut seen: IndexSet<Identifier> = IndexSet::new();
     let mut candidates: Vec<TemporalLinkedCandidate> = Vec::new();
     for entity in entities {
         let Some(members) = entity.as_object() else {
@@ -119,8 +119,8 @@ fn instances_of(member: &Value) -> impl Iterator<Item = &Value> {
 fn collect_from_instance(
     instance: &Value,
     attribute: Option<&AttributeName>,
-    visited: &IndexSet<Uri>,
-    seen: &mut IndexSet<Uri>,
+    visited: &IndexSet<Identifier>,
+    seen: &mut IndexSet<Identifier>,
     candidates: &mut Vec<TemporalLinkedCandidate>,
 ) {
     let Some(fields) = instance.as_object() else {
@@ -134,7 +134,12 @@ fn collect_from_instance(
 
     let objects = fields.get("object").into_iter().chain(fields.get("objectList"));
     for object in objects {
-        for id in rendered_relationship_targets(object) {
+        // An object longer than an identifier may be names no entity any
+        // store holds, so it stays a plain URI rather than becoming a candidate.
+        for id in rendered_relationship_targets(object)
+            .into_iter()
+            .filter_map(|target| Identifier::try_from(target).ok())
+        {
             if visited.contains(&id) {
                 continue;
             }

@@ -6,7 +6,7 @@ use crate::{
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
@@ -29,11 +29,15 @@ impl EntityRepository {
     ///
     /// Returns [`ContextStoreError`] when the lookup fails, or when a returned
     /// surrogate key or identifier is not a valid written entity.
-    pub async fn keys_by_ids_in_tx(tx: &mut Transaction<'_, Postgres>, target: &ContextTarget, ids: &[Uri]) -> Result<Vec<WrittenEntity>, ContextStoreError> {
+    pub async fn keys_by_ids_in_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
+        ids: &[Identifier],
+    ) -> Result<Vec<WrittenEntity>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
+        let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
         let (sql, values) = keys_by_ids_query(target, &id_strs).build_sqlx(PostgresQueryBuilder);
         let rows: Vec<(i64, String)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut **tx).await?;
         rows.iter().map(|(key, id)| stored_written_entity(*key, id)).collect()

@@ -2,7 +2,7 @@
 
 use crate::notification_context_placement::{NotificationContextPlacement, notification_context_placement};
 use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
-use andromeda_ngsi_ld_lexicon::{positive_milliseconds::PositiveMilliseconds, tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds, tenant::TenantName};
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriRefBuf;
@@ -49,7 +49,7 @@ pub struct DeliveryRequest {
     /// its own bound.
     pub timeout: Option<PositiveMilliseconds>,
     /// Subscription identifier, for logging and stream routing.
-    pub subscription_id: Uri,
+    pub subscription_id: Identifier,
 }
 
 impl DeliveryRequest {
@@ -98,9 +98,9 @@ pub struct NotificationDelivery<'a> {
     /// The tenant the subscription belongs to.
     pub tenant: Option<&'a TenantName>,
     /// The Snapshot branch the subscription belongs to, when scoped.
-    pub snapshot: Option<&'a Uri>,
+    pub snapshot: Option<&'a Identifier>,
     /// The subscription's identifier.
-    pub subscription_id: &'a Uri,
+    pub subscription_id: &'a Identifier,
 }
 
 impl NotificationDelivery<'_> {
@@ -182,7 +182,7 @@ pub fn notification_media_type(accept: Option<&MediaTypeBuf>) -> ResponseMediaTy
 mod tests {
     use crate::request::{DeliveryRequest, NotificationDelivery, notification_media_type};
     use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
-    use andromeda_ngsi_ld_lexicon::{positive_milliseconds::PositiveMilliseconds, tenant::TenantName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds, tenant::TenantName};
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use mediatype::MediaTypeBuf;
@@ -198,8 +198,8 @@ mod tests {
         Url::parse("https://receiver.example.com/notify").expect("a well-formed endpoint URI")
     }
 
-    fn subscription() -> Uri {
-        Uri::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id")
+    fn subscription() -> Identifier {
+        Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id")
     }
 
     fn assemble(accept: Option<&MediaTypeBuf>, jsonld_context: Option<&str>) -> DeliveryRequest {
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn the_snapshot_reaches_the_request_as_the_header_that_carries_it() {
-        let snapshot = Uri::from_str("urn:ngsi-ld:Snapshot:branch").expect("a valid Snapshot id");
+        let snapshot = Identifier::from_str("urn:ngsi-ld:Snapshot:branch").expect("a valid Snapshot id");
         let endpoint = endpoint();
         let subscription = subscription();
         let request = NotificationDelivery {

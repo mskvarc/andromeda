@@ -16,7 +16,7 @@ pub mod operation;
 pub mod status;
 
 use crate::registration::{access::ContextSourceAccess, coverage::RegistrationCoverage, health::RegistrationHealth, lifecycle::RegistrationLifecycle};
-use andromeda_ngsi_ld_lexicon::{constant_string, non_empty_text::NonEmptyText, tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier, non_empty_text::NonEmptyText, tenant::TenantName};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use typed_builder::TypedBuilder;
@@ -37,7 +37,7 @@ constant_string!(ContextSourceRegistrationType, "ContextSourceRegistration");
 #[serde(rename_all = "camelCase")]
 pub struct ContextSourceRegistration {
     /// Registration identifier (clause 5.2.9: a URI, not necessarily an NGSI-LD URN).
-    pub id: Uri,
+    pub id: Identifier,
     /// JSON-LD type (always `ContextSourceRegistration`; clause 5.2.9 cardinality 1,
     /// so a document without it is not a registration).
     #[serde(rename = "type")]

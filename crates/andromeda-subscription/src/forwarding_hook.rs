@@ -13,7 +13,7 @@
 
 use crate::error::SubscriptionError;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use futures::future::BoxFuture;
 
@@ -22,9 +22,9 @@ use futures::future::BoxFuture;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForwardedCopy {
     /// The registration whose source holds the copy.
-    pub registration: Uri,
+    pub registration: Identifier,
     /// The identifier the copy carries at the source.
-    pub remote_subscription: Uri,
+    pub remote_subscription: Identifier,
 }
 
 /// What deleting a subscription must tear down beyond its own row
@@ -32,7 +32,7 @@ pub struct ForwardedCopy {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SubscriptionTeardown {
     /// The companion context source registration subscription, if one was linked.
-    pub companion: Option<Uri>,
+    pub companion: Option<Identifier>,
     /// Every copy forwarded to a context source.
     pub forwarded: Vec<ForwardedCopy>,
 }
@@ -72,7 +72,10 @@ pub trait SubscriptionForwardingHook: Send + Sync + 'static {
 
     /// What deleting the subscription `id` must tear down, read before its row
     /// and the mappings that cascade with it are deleted.
-    fn teardown_of<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<SubscriptionTeardown, SubscriptionError>>
+    fn teardown_of<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<SubscriptionTeardown, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -82,7 +85,7 @@ pub trait SubscriptionForwardingHook: Send + Sync + 'static {
     /// standing elsewhere.
     fn deleted<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        id: &'life1 Uri,
+        id: &'life1 Identifier,
         teardown: &'life2 SubscriptionTeardown,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where

@@ -8,7 +8,7 @@
 
 use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_encoding::{array_literal::IntegerArrayLiteral, ewkb_binding::geometry_bytes};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
@@ -27,7 +27,7 @@ use serde_json::Value;
 #[derive(Debug)]
 pub struct PreparedEntityColumns {
     /// Entity identifiers.
-    pub ids: Vec<Uri>,
+    pub ids: Vec<Identifier>,
     /// Type dictionary-key arrays.
     pub entity_type_name_keys: Vec<IntegerArrayLiteral>,
     /// Attribute-name dictionary-key arrays.

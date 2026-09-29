@@ -7,7 +7,7 @@
 //! temporal retrieval adds is its own concern; this is the part that is the
 //! traversal itself.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use std::num::NonZeroU32;
 
@@ -23,7 +23,7 @@ use std::num::NonZeroU32;
 /// `visited` becomes `containedBy`: the clause 4.5.23 `containedBy` parameter
 /// names the entities the requester already holds, which the remote broker
 /// must not send back. An empty list is omitted rather than sent empty.
-pub(crate) fn traversal_continuation(depth: NonZeroU32, visited: &[Uri]) -> (Option<JoinMode>, Option<NonZeroU32>, Option<Vec<Uri>>) {
+pub(crate) fn traversal_continuation(depth: NonZeroU32, visited: &[Identifier]) -> (Option<JoinMode>, Option<NonZeroU32>, Option<Vec<Identifier>>) {
     let join_level = NonZeroU32::new(depth.get() - 1);
     let join = join_level.map(|_| JoinMode::Flat);
     let contained_by = (!visited.is_empty()).then(|| visited.to_vec()); // clone: the forwarded parameters own the identifiers they carry
@@ -33,11 +33,11 @@ pub(crate) fn traversal_continuation(depth: NonZeroU32, visited: &[Uri]) -> (Opt
 #[cfg(test)]
 mod tests {
     use crate::linked_traversal_parameters::traversal_continuation;
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
-    fn uri(value: &str) -> Uri {
+    fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
     }
 

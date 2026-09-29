@@ -1,7 +1,7 @@
 //! Persisted (wire) form of a batch side-effect job stored in the
 //! `pending_side_effects.payload` JSONB column.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind, notification::ChangeOrigin};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use chrono::{DateTime, Utc};
@@ -46,7 +46,7 @@ impl PersistedBatchSideEffectJob {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PersistedTemporalEntity {
     /// Entity identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// The expanded JSON-LD payload.
     pub expanded: Value,
 }
@@ -55,7 +55,7 @@ pub struct PersistedTemporalEntity {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PersistedChangeEvent {
     /// Entity identifier.
-    pub entity_id: Uri,
+    pub entity_id: Identifier,
     /// Entity type IRIs.
     pub entity_types: Vec<EntityTypeName>,
     /// What the write did to the Entity as a whole.
@@ -89,7 +89,7 @@ pub struct PersistedAttributeChange {
     pub attribute: AttributeName,
     /// The instance's `datasetId`, absent for the default instance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dataset_id: Option<Uri>,
+    pub dataset_id: Option<Identifier>,
     /// The instance's transition.
     pub kind: AttributeChangeKind,
 }

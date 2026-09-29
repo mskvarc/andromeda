@@ -1,6 +1,6 @@
 //! The `@context` resources the broker caches, hosts, and serves (ETSI GS CIM 009 clause 5.13).
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,7 @@ pub struct ContextMetadata {
     #[serde(skip)]
     pub serving_iri: Option<IriBuf>,
     /// Identifier under which the broker serves this context.
-    pub local_id: Uri,
+    pub local_id: Identifier,
     /// How the broker came to hold this context.
     pub kind: ContextKind,
     /// When the broker first stored it.
@@ -62,7 +62,7 @@ pub struct ContextMetadata {
 #[derive(Debug)]
 pub enum ContextListResult {
     /// List of context URLs or IDs.
-    Identifiers(Vec<Uri>),
+    Identifiers(Vec<Identifier>),
     /// List of context metadata records with full details.
     Detailed(Vec<ContextMetadata>),
 }

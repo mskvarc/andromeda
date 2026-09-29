@@ -87,6 +87,7 @@ pub(crate) fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
         .expr(staged(CurrentAttributeValues::ValueObject))
         .expr(staged(CurrentAttributeValues::ValueUri))
         .expr(staged(CurrentAttributeValues::ValueLongText))
+        .expr(staged(CurrentAttributeValues::ValueLongUri))
         .expr(Expr::col((Staging, Ordinality)))
         .from_function(call, Staging)
         .order_by((Staging, CurrentAttributeValues::EntityKey), Order::Asc)

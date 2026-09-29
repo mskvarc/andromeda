@@ -33,11 +33,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::typed_path::TypedPath;
-    use andromeda_ngsi_ld_lexicon::{
-        attribute_name::AttributeName,
-        identifier_length::IDENTIFIER_BYTE_LIMIT,
-        uri::{Uri, UriView},
-    };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, identifier_length::IDENTIFIER_BYTE_LIMIT, uri::UriView};
     use axum::{
         Router,
         body::{Body, to_bytes},
@@ -48,7 +44,7 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
-    async fn uri_value(TypedPath(id): TypedPath<Uri>) -> String {
+    async fn uri_value(TypedPath(id): TypedPath<Identifier>) -> String {
         match id.view() {
             UriView::Urn(value) => format!("urn:{value}"),
             UriView::Url(value) => format!("url:{value}"),
@@ -60,7 +56,7 @@ mod tests {
         attribute.to_string()
     }
 
-    async fn instance_value(TypedPath(instance): TypedPath<Uri>) -> String {
+    async fn instance_value(TypedPath(instance): TypedPath<Identifier>) -> String {
         instance.to_string()
     }
 

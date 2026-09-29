@@ -11,6 +11,7 @@
 
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
+    identifier::IdentifierParseError,
     ngsi_ld_date_time::NgsiLdDateTimeError,
     reference::NgsiLdReferenceError,
     time_value::TimeValueError,
@@ -31,12 +32,12 @@ pub enum TemporalValidationReason {
     /// The temporal entity payload omitted its `type`.
     #[error("entity is missing a type")]
     EntityMissingType,
-    /// The temporal entity's `id` was not a `URI`.
+    /// The temporal entity's `id` was not an identifier.
     #[error("invalid entity id: {source}")]
     EntityId {
-        /// The `URI` grammar violation.
+        /// Why it is not an identifier, a length past the identifier bound included.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// An attribute name did not satisfy the attribute-name grammar.
     #[error("attribute name is invalid: {source}")]
@@ -54,14 +55,14 @@ pub enum TemporalValidationReason {
         #[source]
         source: NgsiLdReferenceError,
     },
-    /// An attribute's `datasetId` was not a `URI`.
+    /// An attribute's `datasetId` was not an identifier.
     #[error("invalid datasetId '{raw}': {source}")]
     DatasetId {
         /// The rejected raw value.
         raw: String,
-        /// The `URI` grammar violation.
+        /// Why it is not an identifier, a length past the identifier bound included.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// An `observedAt` value was not a clause 4.6.3 `DateTime`.
     #[error("invalid observedAt '{raw}': {source}")]
@@ -72,14 +73,14 @@ pub enum TemporalValidationReason {
         #[source]
         source: NgsiLdDateTimeError,
     },
-    /// An `instanceId` value was not a `URI`.
+    /// An `instanceId` value was not an identifier.
     #[error("invalid instanceId '{raw}': {source}")]
     InstanceId {
         /// The rejected raw value.
         raw: String,
-        /// The `URI` grammar violation.
+        /// Why it is not an identifier, a length past the identifier bound included.
         #[source]
-        source: UriParseError,
+        source: IdentifierParseError,
     },
     /// A time-value property was not a clause 4.6.3 time value.
     #[error("invalid time value property '{raw}': {source}")]

@@ -11,7 +11,7 @@ use crate::{
 };
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::mutation_history};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
     entity_member::{ExpandedMemberError, extract_id},
@@ -41,7 +41,7 @@ impl EntityService {
     /// [`EntityError::Contention`] when concurrent writers superseded the
     /// computed write on every attempt, and [`EntityError::Persistence`] when
     /// the store could not apply it.
-    pub async fn replace_entity(&self, target: &ContextTarget, id: &Uri, admitted: AdmittedEntity<ReplaceEntity>) -> Result<(), EntityError> {
+    pub async fn replace_entity(&self, target: &ContextTarget, id: &Identifier, admitted: AdmittedEntity<ReplaceEntity>) -> Result<(), EntityError> {
         let timer = entity::start(EntityOperation::Replace);
         let result: Result<(), EntityError> = async {
             let entity_uri = id.clone(); // clone: mutation events and computed-write closures own the identifier
@@ -103,7 +103,7 @@ impl EntityService {
 /// carries it, because every read that returns an entity from a query takes
 /// its `id` from the payload. A payload naming another entity contradicts the
 /// URL and is refused rather than silently rewritten.
-fn identified_as(mut expanded: Value, target: &Uri) -> Result<Value, EntityError> {
+fn identified_as(mut expanded: Value, target: &Identifier) -> Result<Value, EntityError> {
     match extract_id(&expanded) {
         Ok(named) if named != *target => {
             return Err(EntityError::Validation(EntityValidationReason::ReplacementNamesAnotherEntity { named }));
@@ -129,10 +129,10 @@ fn identified_as(mut expanded: Value, target: &Uri) -> Result<Value, EntityError
 #[cfg(test)]
 mod tests {
     use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, mutation::replace::identified_as};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use serde_json::json;
 
-    fn target() -> Uri {
+    fn target() -> Identifier {
         "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI")
     }
 

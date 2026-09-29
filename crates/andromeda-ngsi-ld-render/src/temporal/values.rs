@@ -7,8 +7,8 @@ use crate::object_list::bare_uri_object_list;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::{AttributeType, TemporalValueEncoding},
+    identifier::Identifier,
     time_prop::TimeProp,
-    uri::Uri,
 };
 use indexmap::IndexMap;
 use serde_json::{Value, json};
@@ -116,12 +116,12 @@ impl TemporalValuesRenderer {
                 continue;
             }
 
-            let mut groups: IndexMap<Option<Uri>, Vec<&Value>> = IndexMap::new();
+            let mut groups: IndexMap<Option<Identifier>, Vec<&Value>> = IndexMap::new();
             for inst in instances {
                 let dataset_id = inst
                     .get("datasetId")
                     .and_then(Value::as_str)
-                    .map(|raw| raw.parse::<Uri>().map_err(|_error| TemporalValuesError::InvalidDatasetId))
+                    .map(|raw| raw.parse::<Identifier>().map_err(|_error| TemporalValuesError::InvalidDatasetId))
                     .transpose()?;
                 groups.entry(dataset_id).or_default().push(inst);
             }

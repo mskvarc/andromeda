@@ -21,7 +21,7 @@ use crate::{
 };
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     expanded::{
@@ -118,7 +118,7 @@ impl ChangeNotifier {
     pub fn plan(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         change: EntityChange,
         entity_snapshot: Option<&Arc<Value>>,

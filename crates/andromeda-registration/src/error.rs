@@ -6,7 +6,7 @@ use crate::{
     registration_validation_reason::RegistrationValidationReason,
 };
 use andromeda_jsonld::error::JsonLdError;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
 use std::fmt::Display;
 use thiserror::Error;
@@ -21,13 +21,13 @@ pub enum RegistrationError {
     #[error("context-source registration not found: {identifier}")]
     NotFound {
         /// Missing registration identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// A registration already uses the requested identifier.
     #[error("context-source registration already exists: {identifier}")]
     AlreadyExists {
         /// Conflicting registration identifier.
-        identifier: Uri,
+        identifier: Identifier,
     },
     /// A proxied registration overlaps an existing registration or a local
     /// entity (clauses 5.9.2.4 and 5.9.3.4, `Conflict`).
@@ -63,7 +63,7 @@ pub enum RegistrationError {
 impl RegistrationError {
     /// Construct a missing-registration error.
     #[must_use]
-    pub fn not_found(identifier: &Uri) -> RegistrationError {
+    pub fn not_found(identifier: &Identifier) -> RegistrationError {
         RegistrationError::NotFound {
             identifier: identifier.clone(), // clone: the error must own the borrowed request identifier.
         }
@@ -71,7 +71,7 @@ impl RegistrationError {
 
     /// Construct an identifier-conflict error.
     #[must_use]
-    pub fn already_exists(identifier: &Uri) -> RegistrationError {
+    pub fn already_exists(identifier: &Identifier) -> RegistrationError {
         RegistrationError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error must outlive the borrowed request identifier.
         }

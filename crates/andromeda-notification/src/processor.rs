@@ -21,7 +21,7 @@ use andromeda_delivery::{
 };
 use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, notification::SysAttrsSnapshot};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
@@ -168,7 +168,7 @@ impl NotificationProcessor {
         self.apply_entity_change_for(change.target, change.event, None).await
     }
 
-    async fn apply_entity_change_for(&self, target: ContextTarget, event: ChangeEvent, subscription_id: Option<&Uri>) -> NotificationEvaluationOutcome {
+    async fn apply_entity_change_for(&self, target: ContextTarget, event: ChangeEvent, subscription_id: Option<&Identifier>) -> NotificationEvaluationOutcome {
         debug!(
             entity = %event.entity_id,
             lifecycle = ?event.change.lifecycle,
@@ -224,14 +224,14 @@ impl NotificationProcessor {
     ///
     /// Returns the store's failure when the subscription cannot be read back;
     /// the cache is then left as it was.
-    async fn refresh_cached_subscription(&self, target: &ContextTarget, subscription_id: &Uri) -> Result<(), SubscriptionError> {
+    async fn refresh_cached_subscription(&self, target: &ContextTarget, subscription_id: &Identifier) -> Result<(), SubscriptionError> {
         self.cache.refresh(target, subscription_id, self.sub_repo.as_ref()).await
     }
 
     /// The compiled subscriptions the change reaches before entity filters are
     /// evaluated, narrowed to `subscription_id` alone when one durably queued
     /// delivery is being redelivered.
-    fn candidate_subscriptions(&self, target: &ContextTarget, event: &ChangeEvent, subscription_id: Option<&Uri>) -> Vec<Arc<CompiledSubscription>> {
+    fn candidate_subscriptions(&self, target: &ContextTarget, event: &ChangeEvent, subscription_id: Option<&Identifier>) -> Vec<Arc<CompiledSubscription>> {
         let outcome = self.cache.find_matching(target, event);
         debug!(
             entity = %event.entity_id,

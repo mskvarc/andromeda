@@ -19,7 +19,7 @@ use crate::expanded::{
     null_sentinel::instance_is_null_sentinel,
     reserved_member::is_reserved_member,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use iri_rs::IriBuf;
 use serde_json::{Map, Value};
@@ -42,7 +42,7 @@ pub enum AddressedInstances<'a> {
         /// Expanded name of the attribute the URL names.
         attribute: &'a IriBuf,
         /// The `datasetId` URL parameter, when the request carried one.
-        dataset_id: Option<&'a Uri>,
+        dataset_id: Option<&'a Identifier>,
         /// The expanded Attribute Fragment the request carried.
         fragment: &'a Value,
     },
@@ -172,7 +172,7 @@ fn written_scope<'a>(current_node: &'a Map<String, Value>, previous_node: Option
 
 /// The instance of `member` with `dataset` as its `datasetId` (the default
 /// instance for `None`, clause 4.5.5) in one expanded Entity node.
-fn instance_of<'a>(node: &'a Map<String, Value>, member: &str, dataset: Option<&Uri>) -> Result<Option<&'a Value>, InstanceDatasetIdError> {
+fn instance_of<'a>(node: &'a Map<String, Value>, member: &str, dataset: Option<&Identifier>) -> Result<Option<&'a Value>, InstanceDatasetIdError> {
     let Some(value) = node.get(member) else {
         return Ok(None);
     };
@@ -205,7 +205,7 @@ mod tests {
         mutation::selection::OverwritePolicy,
         written_observation::{AddressedInstances, written_observation},
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
 
@@ -246,7 +246,7 @@ mod tests {
         json!([{"@id": raw}])
     }
 
-    fn uri(raw: &str) -> Uri {
+    fn uri(raw: &str) -> Identifier {
         raw.parse().expect("a valid URI")
     }
 

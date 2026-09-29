@@ -23,7 +23,7 @@ use andromeda_http_headers::{
     warning::Warning,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{dereferenceable_uri::DereferenceableUri, spec_version::SpecVersion, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{dereferenceable_uri::DereferenceableUri, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, registration::ContextSourceRegistration, registration_management::LocalScope};
 use headers::{Header, HeaderMapExt};
 use http::{HeaderMap, HeaderName, HeaderValue};
@@ -49,7 +49,7 @@ pub(crate) struct ForwardedRequest<'a> {
     pub(crate) triggering: TriggeringRequest<'a>,
     /// The `EntityMap` the registration's context source created for this
     /// query, sent back to it in `NGSILD-EntityMap` (clause 5.5.14).
-    pub(crate) linked_map: Option<&'a Uri>,
+    pub(crate) linked_map: Option<&'a Identifier>,
 }
 
 /// Read a registration's `contextSourceInfo`; stored registrations passed the
@@ -88,7 +88,7 @@ impl FederationService {
         inbound: &ContextSpec,
         triggering: TriggeringRequest<'_>,
         cacheability: Cacheability,
-        linked_map: Option<&Uri>,
+        linked_map: Option<&Identifier>,
     ) -> ForwardGetOutcome {
         if self.registration_loops(registration, triggering.via) {
             return ForwardGetOutcome::LoopDetected;
@@ -159,7 +159,7 @@ impl FederationService {
         body: Vec<u8>,
         inbound: &ContextSpec,
         triggering: TriggeringRequest<'_>,
-        linked_map: Option<&Uri>,
+        linked_map: Option<&Identifier>,
     ) -> ForwardGetOutcome {
         if self.registration_loops(registration, triggering.via) {
             return ForwardGetOutcome::LoopDetected;

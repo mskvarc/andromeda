@@ -5,7 +5,7 @@ use crate::{
     version_negotiation::apply_version_negotiation,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_render::response::RenderedOutput;
 use axum::{
     Json,
@@ -21,7 +21,7 @@ pub struct NgsiLdBatchResponse {
     /// Pre-rendered NGSI-LD response body and media type.
     rendered: RenderedOutput,
     /// Optional snapshot URI advertised by the response.
-    snapshot_uri: Option<Uri>,
+    snapshot_uri: Option<Identifier>,
     /// Distributed-operation warnings emitted as response headers.
     warnings: Vec<NgsiLdWarning>,
 }

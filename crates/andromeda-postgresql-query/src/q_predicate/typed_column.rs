@@ -10,8 +10,10 @@
 //! * strings in `value_string` for Properties and single-term
 //!   `VocabProperties` -- or, past the B-tree bound, in `value_long_text`, which
 //!   [`ValueColumn::of_string`] decides from the byte length alone -- and,
-//!   under the equality operators only, in `value_uri` for Relationship objects,
-//!   which is what [`relationship_object_is_comparable`] decides,
+//!   under the equality operators only, in `value_uri` for Relationship objects
+//!   -- or, past the B-tree bound, in `value_long_uri`, which
+//!   [`ValueColumn::of_uri`] decides from the byte length alone -- which is what
+//!   [`relationship_object_is_comparable`] decides,
 //! * plain dates and times in `value_string`, because only full
 //!   `DateTime`-typed values are projected to `value_date_time`. Both are stored
 //!   in the one canonical, fixed-width form their clause 4.6.3 types define, so
@@ -64,7 +66,10 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, scan: &InstanceScan<'_
             let string_test = string_condition(value.as_str(), op, scan);
             match relationship_object_is_comparable(op) {
                 RelationshipObjects::Comparable => {
-                    let uri_test = compare(scan.value(ValueColumn::Uri), op, SeaExpr::val(value.as_str()));
+                    // Equality is byte identity, so a stored object equal to the
+                    // operand sits in the one column the operand would be placed
+                    // in, and only that column is read.
+                    let uri_test = compare(scan.value(ValueColumn::of_uri(value.as_str())), op, SeaExpr::val(value.as_str()));
                     string_test.or(uri_test)
                 }
                 RelationshipObjects::NonMatching => string_test,
@@ -105,9 +110,9 @@ fn string_condition(value: &str, op: CmpOp, scan: &InstanceScan<'_>) -> SimpleEx
 
 /// Whether a Relationship's object is a comparison target under one operator.
 ///
-/// `current_attribute_values.value_uri` holds Relationship objects and nothing
-/// else, so probing it is exactly the decision of whether the predicate may
-/// match a Relationship.
+/// `current_attribute_values.value_uri` and `value_long_uri` hold Relationship
+/// objects and nothing else, so probing them is exactly the decision of whether
+/// the predicate may match a Relationship.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RelationshipObjects {
     /// The operator admits a Relationship's object as a comparison target.
@@ -148,7 +153,11 @@ mod tests {
         },
         temporal::window::TimeInterval,
     };
-    use andromeda_postgresql_schema::{projected_string_column::INDEXED_STRING_BYTE_LIMIT, temporal::AttributeHistory};
+    use andromeda_postgresql_schema::{
+        projected_string_column::INDEXED_STRING_BYTE_LIMIT,
+        projected_uri_column::INDEXED_URI_BYTE_LIMIT,
+        temporal::AttributeHistory,
+    };
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     /// The comparison over the current-state projection.
@@ -184,6 +193,44 @@ mod tests {
         for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
             assert!(!render(current(&scalar, op)).contains("value_uri"), "{op:?}");
         }
+    }
+
+    /// A Relationship object past the B-tree bound is projected into
+    /// `value_long_uri`, so an equality on an operand that long reads that
+    /// column and never `value_uri`, where no such object can be.
+    #[test]
+    fn a_uri_equality_past_the_limit_reads_only_the_overflow_uri_column() {
+        let long = Scalar::Str(format!("urn:ngsi-ld:Person:{}", "a".repeat(6000)));
+        for op in [CmpOp::Equal, CmpOp::Unequal] {
+            let sql = render(current(&long, op));
+            assert!(sql.contains(r#""cav"."value_long_uri" "#), "{op:?}: {sql}");
+            assert!(!sql.contains("value_uri"), "{op:?}: {sql}");
+        }
+    }
+
+    #[test]
+    fn a_uri_equality_at_the_limit_reads_only_the_indexed_uri_column() {
+        let prefix = "urn:ngsi-ld:Person:";
+        let at_limit = format!("{prefix}{}", "a".repeat(INDEXED_URI_BYTE_LIMIT - prefix.len()));
+        let sql = render(current(&Scalar::Str(at_limit), CmpOp::Equal));
+        assert!(sql.contains(r#""cav"."value_uri" = "#), "{sql}");
+        assert!(!sql.contains("value_long_uri"), "{sql}");
+    }
+
+    /// History keeps a URI of any length in `value_uri`, so a long URI
+    /// equality over history reads that column.
+    #[test]
+    fn a_long_uri_equality_over_history_reads_the_one_history_uri_column() {
+        let window = HistoryWindow::builder()
+            .schema(None)
+            .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
+            .axis(AttributeHistory::ObservedAt)
+            .interval(TimeInterval::Unbounded)
+            .build();
+        let long = format!("urn:ngsi-ld:Person:{}", "a".repeat(6000));
+        let sql = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, &InstanceScan::History(&window)));
+        assert!(sql.contains(r#""qh"."value_uri" = "#), "{sql}");
+        assert!(!sql.contains("value_long_uri"), "{sql}");
     }
 
     #[test]

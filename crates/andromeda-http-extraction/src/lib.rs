@@ -34,6 +34,7 @@ pub mod temporal_query;
 pub mod tenant;
 pub mod tenant_state;
 pub mod typed_path;
+pub mod undecodable_body;
 pub mod via;
 
 #[cfg(test)]

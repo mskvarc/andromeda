@@ -9,7 +9,7 @@
 
 use crate::{error::EntityError, purge::PurgedEntity};
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::HistoryRecord};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     mutation::{attribute::delete_attr, error::ExpandedEntityError, selection::DatasetSelection},
     node::expanded_object_mut,
@@ -33,7 +33,7 @@ use std::sync::Arc;
 /// instances of each are removed, and the tombstones are computed from the
 /// before/after diff exactly as the whole-attribute purge does.
 pub(crate) fn build_dataset_purge_write(
-    entity_id: &Uri,
+    entity_id: &Identifier,
     previous: &Value,
     mode: &PurgeMode,
     attr_iris: &[IriBuf],

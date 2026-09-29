@@ -7,7 +7,7 @@
 //! in common: the members the narrowing reads before it knows which operation
 //! it is looking at.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
@@ -24,7 +24,7 @@ pub enum ClientQuery<'a> {
     /// blocks cover it (clause 4.3.6.3).
     EntityRetrieve {
         /// The identifier of the entity being retrieved.
-        id: &'a Uri,
+        id: &'a Identifier,
         /// The retrieval parameters as the client wrote them.
         params: &'a GetEntityParams,
     },
@@ -45,7 +45,7 @@ impl ClientQuery<'_> {
 
     /// The entity identifiers the client selected, if the operation has any.
     #[must_use]
-    pub fn entity_ids(&self) -> Option<&[Uri]> {
+    pub fn entity_ids(&self) -> Option<&[Identifier]> {
         match self {
             ClientQuery::EntityQuery(params) => params.id.as_deref(),
             ClientQuery::Temporal(params) => params.id.as_deref(),

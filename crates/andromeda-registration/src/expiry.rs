@@ -6,7 +6,7 @@ use crate::{
     removal_hook::{RegistrationRemovalHook, RegistrationTeardown},
     store::RegistrationStore,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use std::sync::Arc;
 #[derive(Debug, Eq, PartialEq)]
 pub struct RegistrationExpiryOutcome {
     /// Identifiers deleted by clause 5.9.2.4 expiry semantics.
-    pub expired: Vec<Uri>,
+    pub expired: Vec<Identifier>,
 }
 
 /// Independently scheduled semantic deletion of expired registrations

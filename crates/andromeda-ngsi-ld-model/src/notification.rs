@@ -1,6 +1,6 @@
 //! Change events and the notification payloads they produce (ETSI GS CIM 009 clause 5.3).
 
-use andromeda_ngsi_ld_lexicon::{constant_string, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -100,13 +100,13 @@ pub struct SysAttrsSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct Notification {
     /// Generated notification identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// Always `Notification`.
     #[serde(rename = "type")]
     #[builder(default = Default::default())]
     pub type_: NotificationType,
     /// Subscription this notification answers.
-    pub subscription_id: Uri,
+    pub subscription_id: Identifier,
     /// When the notification was generated.
     pub notified_at: DateTime<Utc>,
     /// The entity representations that triggered it.
@@ -131,7 +131,7 @@ pub enum CsrTriggerReason {
 #[derive(Clone, Debug)]
 pub struct CsrChangeEvent {
     /// Identifier of the mutated registration.
-    pub csr_id: Uri,
+    pub csr_id: Identifier,
     /// What kind of mutation this was.
     pub trigger_reason: CsrTriggerReason,
     /// For delete events, a snapshot of the CSR before deletion.
@@ -148,13 +148,13 @@ pub struct CsrChangeEvent {
 #[serde(rename_all = "camelCase")]
 pub struct CsourceNotification {
     /// Generated notification identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// Always `ContextSourceNotification`.
     #[serde(rename = "type")]
     #[builder(default = Default::default())]
     pub type_: CsourceNotificationType,
     /// Subscription this notification answers.
-    pub subscription_id: Uri,
+    pub subscription_id: Identifier,
     /// When the notification was generated.
     pub notified_at: DateTime<Utc>,
     /// The registration representations that triggered it.
@@ -168,7 +168,7 @@ pub struct CsourceNotification {
 #[cfg(test)]
 mod tests {
     use crate::notification::{CsourceNotification, CsrTriggerReason, Notification, NotificationTrigger, effective_notification_triggers};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
 
@@ -178,14 +178,14 @@ mod tests {
     }
 
     /// A subscription identifier the notification fixtures answer for.
-    fn subscription_id() -> Uri {
+    fn subscription_id() -> Identifier {
         "urn:ngsi-ld:Subscription:1".parse().expect("valid subscription id")
     }
 
     #[test]
     fn a_notification_carries_its_fixed_type_token() {
         let notification = Notification::builder()
-            .id("urn:ngsi-ld:Notification:1".parse::<Uri>().expect("valid notification id"))
+            .id("urn:ngsi-ld:Notification:1".parse::<Identifier>().expect("valid notification id"))
             .subscription_id(subscription_id())
             .notified_at(instant())
             .build();
@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn a_csource_notification_carries_its_own_type_token() {
         let notification = CsourceNotification::builder()
-            .id("urn:ngsi-ld:CsourceNotification:1".parse::<Uri>().expect("valid notification id"))
+            .id("urn:ngsi-ld:CsourceNotification:1".parse::<Identifier>().expect("valid notification id"))
             .subscription_id(subscription_id())
             .notified_at(instant())
             .trigger_reason(Some(CsrTriggerReason::NewlyMatching))
@@ -253,7 +253,7 @@ mod tests {
         let entity = serde_json::from_str(r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":0.100000000000000005}}"#)
             .expect("exact entity JSON");
         let notification = Notification::builder()
-            .id("urn:ngsi-ld:Notification:1".parse::<Uri>().expect("valid notification id"))
+            .id("urn:ngsi-ld:Notification:1".parse::<Identifier>().expect("valid notification id"))
             .subscription_id(subscription_id())
             .notified_at(instant())
             .data(vec![entity])

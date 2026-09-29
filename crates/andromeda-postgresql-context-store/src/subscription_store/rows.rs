@@ -8,7 +8,7 @@
 //! [`DatasetIdPresence`]: crate::subscription_store::params::DatasetIdPresence
 
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, SubscriptionStatus},
@@ -25,7 +25,7 @@ use url::Url;
 #[derive(Debug)]
 pub struct SubscriptionRow {
     /// Subscription identifier.
-    pub id: Uri,
+    pub id: Identifier,
     /// Store-assigned surrogate key the notification queue references.
     pub key: SubscriptionKey,
     /// Optional human-readable name.
@@ -53,7 +53,7 @@ pub struct SubscriptionRow {
     /// Expanded attribute names whose `q` object keys were expanded (clause 5.2.12 `jsonKeys`).
     pub json_keys: Option<Vec<AttributeName>>,
     /// Dataset IDs (entity subscriptions only; `None` when absent).
-    pub dataset_id: Option<Vec<Uri>>,
+    pub dataset_id: Option<Vec<Identifier>>,
     /// Notification endpoint configuration JSON.
     pub notification: NotificationParams,
     /// Expiry timestamp.

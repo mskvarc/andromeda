@@ -14,7 +14,7 @@ use crate::{
     residual_filter,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
 use serde_json::Value;
 
@@ -93,7 +93,12 @@ impl EntityQueryService {
     /// one costs a payload read for every identifier the store returned. That is
     /// the honest price of an entity-map query against a store that could not
     /// push the predicate down.
-    pub(super) async fn finish_ids(&self, target: &ContextTarget, outcome: QueryOutcome<Uri>, pagination: Pagination) -> Result<Vec<Uri>, EntityError> {
+    pub(super) async fn finish_ids(
+        &self,
+        target: &ContextTarget,
+        outcome: QueryOutcome<Identifier>,
+        pagination: Pagination,
+    ) -> Result<Vec<Identifier>, EntityError> {
         let QueryOutcome {
             rows,
             unapplied,

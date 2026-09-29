@@ -14,7 +14,7 @@ use crate::{
     alias::{Ah, An, S, Te},
     axis::axis_column,
 };
-use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
     temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, window::TimeInterval},
@@ -40,7 +40,7 @@ use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Func, Join
 /// its whole placeholder sequence and no two functions have to agree on where
 /// it starts.
 #[must_use]
-pub fn build_temporal_history_query(schema: Option<&DynIden>, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> SelectStatement {
+pub fn build_temporal_history_query(schema: Option<&DynIden>, entity_id: &Identifier, compiled: &CompiledTemporalQuery) -> SelectStatement {
     let condition = stage2_conditions(schema, entity_id, compiled);
     match compiled.representation.format {
         // The grouped extension format runs the same aggregation pipeline; the
@@ -53,7 +53,7 @@ pub fn build_temporal_history_query(schema: Option<&DynIden>, entity_id: &Uri, c
 /// The row-level filter shared by the ranked, unranked and aggregated shapes, so
 /// none can reach a row the others cannot: one entity's rows among the
 /// [`represented_instances`].
-fn stage2_conditions(schema: Option<&DynIden>, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Condition {
+fn stage2_conditions(schema: Option<&DynIden>, entity_id: &Identifier, compiled: &CompiledTemporalQuery) -> Condition {
     Condition::all()
         .add(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.to_string()))
         .add(represented_instances(schema, compiled))
@@ -341,7 +341,7 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
 
     /// The one entity these tests build a history statement for.
-    fn vehicle_id() -> Uri {
+    fn vehicle_id() -> Identifier {
         "urn:ngsi-ld:Vehicle:1".parse().expect("valid entity id")
     }
 

@@ -16,7 +16,7 @@ use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{expanded_input::ExpandedInput, options::CompactOptions},
 };
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{
     pagination::{CountPolicy, Pagination},
@@ -49,7 +49,7 @@ impl TemporalService {
     pub async fn get(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         params: &TemporalQueryParameters,
         context: &ContextSpec,
     ) -> Result<TemporalReadResult, TemporalError> {
@@ -143,7 +143,7 @@ impl TemporalService {
     async fn window_presence(
         &self,
         target: &ContextTarget,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
         presence: HistoryPresence,
     ) -> Result<HistoryPresence, TemporalError> {
@@ -161,7 +161,7 @@ impl TemporalService {
     /// Aggregation keys (avg, min, etc.) aren't valid JSON-LD IRIs and would be dropped by `compact()`.
     async fn build_aggregated_compacted(
         &self,
-        entity_id: &Uri,
+        entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         rows: &[TemporalAggregationRow],
         compiled: &CompiledTemporalQuery,
@@ -253,7 +253,7 @@ impl TemporalService {
         params: &TemporalQueryParameters,
         context: &ContextSpec,
         identifiers: RequestedIdentifiers,
-    ) -> Result<Vec<Uri>, TemporalError> {
+    ) -> Result<Vec<Identifier>, TemporalError> {
         let timer = temporal::start(TemporalOperation::QueryIds);
         let result = async {
             params.validate(true)?;

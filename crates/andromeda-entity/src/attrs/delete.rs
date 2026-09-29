@@ -10,7 +10,7 @@ use crate::{
 use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::{
     instance_key::attribute_instance_family,
     mutation::{attribute::delete_attr, error::ExpandedEntityError, selection::DatasetSelection},
@@ -37,7 +37,7 @@ impl EntityService {
     pub async fn delete_attr(
         &self,
         target: &ContextTarget,
-        id: &Uri,
+        id: &Identifier,
         attr_name: &AttributeName,
         selection: DatasetSelection<'_>,
         context: &ContextSpec,
@@ -52,7 +52,7 @@ impl EntityService {
         // Resolve target dataset ids for tombstones before mutating the entity
         // payload. The catalogue outlives the attributes it describes, so this
         // does not have to be re-read per attempt.
-        let tombstone_targets: Vec<Option<Uri>> = match selection {
+        let tombstone_targets: Vec<Option<Identifier>> = match selection {
             DatasetSelection::All => match self.attribute_history.dataset_identifiers(target, &entity_uri, &expanded_attr_name).await {
                 Ok(dataset_identifiers) => dataset_identifiers,
                 Err(e) => {

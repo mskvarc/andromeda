@@ -4,7 +4,7 @@ use crate::{
     attribute_name_csv,
     query::{aggregation_parameters::AggregationParameters, entity_selector::QueryEntitySelector, temporal_query::TemporalQuery},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::expression::Expr,
@@ -73,7 +73,7 @@ pub struct Query {
     pub csf: Option<Expr>,
     /// Entity identifiers already encountered during graph traversal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub contained_by: Option<Vec<Uri>>,
+    pub contained_by: Option<Vec<Identifier>>,
     /// Dataset instances selected for each matching attribute.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dataset_id: Option<Vec<DatasetSelector>>,

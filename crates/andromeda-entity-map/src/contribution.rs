@@ -1,7 +1,7 @@
 //! What one context source contributed to the Entity Map of a read
 //! (Table 5.2.39-2).
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// What one registration's context source contributed to a read, for the
 /// `EntityMap` of the request (Table 5.2.39-2): the entities it returned and
@@ -15,9 +15,9 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceContribution {
     /// The registration whose source answered.
-    pub registration: Uri,
+    pub registration: Identifier,
     /// The entities it returned.
-    pub entity_ids: Vec<Uri>,
+    pub entity_ids: Vec<Identifier>,
     /// The `EntityMap` it used, when it returned one.
-    pub linked_map: Option<Uri>,
+    pub linked_map: Option<Identifier>,
 }
