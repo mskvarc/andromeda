@@ -5,7 +5,10 @@
 //! `registration_statements`; this module owns the adapter and the error
 //! and outcome translation every one of them shares.
 
-use crate::csource_registration::{registration_read, registration_write};
+use crate::{
+    csource_registration::{registration_read, registration_write},
+    error::violates_unique_constraint,
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
@@ -21,6 +24,10 @@ use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sqlx::postgres::PgPool;
 use std::{any::Any, fmt::Display, sync::Arc};
+
+/// The primary key migration 0012 declares on `context_source_registrations.id`,
+/// the registration identifier itself.
+const PK_CONTEXT_SOURCE_REGISTRATIONS: &str = "pk_context_source_registrations";
 
 /// PostgreSQL-backed registration persistence adapter.
 ///
@@ -62,31 +69,18 @@ pub(super) fn persistence_error(error: impl Display + Any) -> RegistrationError 
     }
 }
 
-/// Preserve PostgreSQL unique violations as registration identifier conflicts.
+/// Preserve a uniqueness race on the identifier as the registration identifier
+/// conflict.
+///
+/// Only the identifier's own constraint is the client's conflict. It is the
+/// only unique constraint the registration relation declares today; matching
+/// it by name keeps a constraint added later from being reported as a 409
+/// naming an identifier nobody used.
 pub(super) fn create_error(error: sqlx::Error, identifier: &Identifier) -> RegistrationError {
-    match &error {
-        sqlx::Error::Database(database_error) if database_error.code().as_deref() == Some("23505") => RegistrationError::already_exists(identifier),
-        sqlx::Error::Configuration(_)
-        | sqlx::Error::Database(_)
-        | sqlx::Error::Io(_)
-        | sqlx::Error::Tls(_)
-        | sqlx::Error::Protocol(_)
-        | sqlx::Error::RowNotFound
-        | sqlx::Error::TypeNotFound { .. }
-        | sqlx::Error::ColumnIndexOutOfBounds { .. }
-        | sqlx::Error::ColumnNotFound(_)
-        | sqlx::Error::ColumnDecode { .. }
-        | sqlx::Error::Encode(_)
-        | sqlx::Error::Decode(_)
-        | sqlx::Error::AnyDriverError(_)
-        | sqlx::Error::PoolTimedOut
-        | sqlx::Error::PoolClosed
-        | sqlx::Error::WorkerCrashed
-        | sqlx::Error::Migrate(_)
-        | sqlx::Error::InvalidSavePointStatement
-        | sqlx::Error::BeginFailed
-        | sqlx::Error::InvalidArgument(_)
-        | _ => persistence_error(error),
+    if violates_unique_constraint(&error, PK_CONTEXT_SOURCE_REGISTRATIONS) {
+        RegistrationError::already_exists(identifier)
+    } else {
+        persistence_error(error)
     }
 }
 
@@ -102,10 +96,6 @@ pub(super) const fn mutation_outcome(rows_affected: u64) -> RegistrationMutation
 pub(super) fn registration_count(total: i64) -> Result<u64, RegistrationError> {
     u64::try_from(total).map_err(persistence_error)
 }
-
-/// Add the full registration row projection to `select`, decoding each stored
-/// geometry back to `GeoJSON` and each enum to text under the column name the
-/// mapper reads it by.
 
 #[async_trait]
 impl RegistrationStore for PostgresRegistrationStore {
@@ -164,9 +154,33 @@ impl RegistrationStore for PostgresRegistrationStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::csource_registration::registration_store::mutation_outcome;
-    use andromeda_registration::store::mutation::RegistrationMutation;
+    use crate::{
+        csource_registration::registration_store::{PK_CONTEXT_SOURCE_REGISTRATIONS, create_error, mutation_outcome},
+        migration_set::tenant::tenant_migrator,
+    };
+    use andromeda_registration::{error::RegistrationError, store::mutation::RegistrationMutation};
     use pretty_assertions::assert_eq;
+
+    /// Migration 0012 names every constraint, so the duplicate-identifier
+    /// refusal matches the declared name rather than one PostgreSQL generated.
+    #[test]
+    fn the_duplicate_id_refusal_names_the_constraint_migration_0012_declares() {
+        let declaration = format!("CONSTRAINT {PK_CONTEXT_SOURCE_REGISTRATIONS} PRIMARY KEY (id)");
+        assert!(
+            tenant_migrator().iter().any(|migration| migration.sql.as_str().contains(&declaration)),
+            "{declaration}"
+        );
+    }
+
+    #[test]
+    fn a_create_failure_that_is_no_unique_violation_stays_a_persistence_fault() {
+        let identifier = "urn:ngsi-ld:ContextSourceRegistration:1".parse().expect("a valid identifier");
+        assert!(matches!(create_error(sqlx::Error::RowNotFound, &identifier), RegistrationError::Persistence(_)));
+        assert!(matches!(
+            create_error(sqlx::Error::PoolTimedOut, &identifier),
+            RegistrationError::StoreSaturated
+        ));
+    }
 
     /// Zero affected rows preserve the policy-level missing outcome.
     #[test]
@@ -184,7 +198,6 @@ mod tests {
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
         use crate::csource_registration::registration_store::persistence_error;
-        use andromeda_registration::error::RegistrationError;
         assert!(matches!(persistence_error(sqlx::Error::PoolTimedOut), RegistrationError::StoreSaturated));
         assert!(matches!(persistence_error(sqlx::Error::RowNotFound), RegistrationError::Persistence(_)));
     }
