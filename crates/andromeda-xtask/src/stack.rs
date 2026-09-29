@@ -41,6 +41,12 @@ pub(crate) const BROKER_DIRECT_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_DIRECT_URL
 pub(crate) const POOLER_URL_ENV: &str = "ANDROMEDA_TEST_POOLER_URL";
 /// Environment variable naming the `PgBouncer` admin-console endpoint (db `pgbouncer`).
 pub(crate) const PGBOUNCER_ADMIN_URL_ENV: &str = "ANDROMEDA_TEST_PGBOUNCER_ADMIN_URL";
+/// Environment variable naming the API base of the broker that leaves Core
+/// writes out of history and defers the Temporal API's.
+pub(crate) const DEFERRED_BROKER_URL_ENV: &str = "ANDROMEDA_TEST_DEFERRED_BROKER_URL";
+/// Environment variable naming the API base of the broker that records Core
+/// writes in history, the default.
+pub(crate) const RECORDING_BROKER_URL_ENV: &str = "ANDROMEDA_TEST_RECORDING_BROKER_URL";
 
 /// The `--test-threads` value a suite whose tests are isolated by per-test id
 /// prefix runs at. Four keeps the pressure a 4-vCPU CI runner (which also hosts
@@ -97,6 +103,9 @@ pub(crate) enum StackName {
     Pgbouncer,
     /// Brokers terminating TLS natively, and one behind an nginx terminator.
     Tls,
+    /// Three brokers on one PostgreSQL, two of which leave Core writes out of
+    /// history (one native, one deferred) and one that records them.
+    CoreWriteHistory,
 }
 
 /// One row of the registry: everything needed to bring a stack up and run its suites.
@@ -132,6 +141,7 @@ impl Stack {
             StackName::Extensions => 5,
             StackName::Pgbouncer => 6,
             StackName::Tls => 7,
+            StackName::CoreWriteHistory => 8,
         }
     }
 }
@@ -205,7 +215,7 @@ const BASE_SUITES: &[Suite] = &[
 ];
 
 /// The complete stack registry, indexed by [`Stack::index`].
-pub(crate) static STACKS: [Stack; 8] = [
+pub(crate) static STACKS: [Stack; 9] = [
     Stack {
         name: StackName::Base,
         compose_file: "docker/compose/test/base/docker-compose.yaml",
@@ -317,6 +327,19 @@ pub(crate) static STACKS: [Stack; 8] = [
         suites: &[Suite::serial("tls")],
         material: StackMaterial::TlsAuthority,
     },
+    Stack {
+        name: StackName::CoreWriteHistory,
+        compose_file: "docker/compose/test/core-write-history/docker-compose.yaml",
+        profile: None,
+        env: &[
+            (BROKER_URL_ENV, "http://127.0.0.1:1101/ngsi-ld/v1/"),
+            (DEFERRED_BROKER_URL_ENV, "http://127.0.0.1:1102/ngsi-ld/v1/"),
+            (RECORDING_BROKER_URL_ENV, "http://127.0.0.1:1103/ngsi-ld/v1/"),
+            (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5501/postgres"),
+        ],
+        suites: &[Suite::parallel("core_write_history")],
+        material: StackMaterial::None,
+    },
 ];
 
 #[cfg(test)]
@@ -356,6 +379,12 @@ mod tests {
         assert_eq!(tls.material, StackMaterial::TlsAuthority);
         assert_eq!(Stack::get(StackName::Http3).material, StackMaterial::Http3Leaf);
         assert_eq!(Stack::get(StackName::Base).material, StackMaterial::None);
+    }
+
+    #[test]
+    fn the_core_write_history_suite_belongs_to_its_own_stack() {
+        let (stack, _) = stack_for_suite("core_write_history").expect("core_write_history is registered");
+        assert_eq!(stack.name, StackName::CoreWriteHistory);
     }
 
     #[test]

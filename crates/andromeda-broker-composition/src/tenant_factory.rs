@@ -261,6 +261,7 @@ async fn build_tenant_state(
     let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
         &storage.pool,
         temporal.history_mode,
+        config.temporal.core_write_history,
         entity_insert_mode,
         Arc::clone(&storage.attribute_names),   // clone: the commit interns names through the tenant's one dictionary.
         Arc::clone(&storage.entity_type_names), // clone: the same dictionary, for entity types.

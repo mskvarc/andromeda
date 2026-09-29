@@ -36,6 +36,7 @@ use andromeda_postgresql_context_store::entity::{
     written_entity::WrittenEntity,
 };
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
+use andromeda_temporal::core_write_history::CoreWriteHistory;
 use chrono::Utc;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::{collections::HashMap, sync::Arc};
@@ -67,6 +68,8 @@ pub struct PostgresAtomicCommitter {
     pool: PgPool,
     /// Native or deferred temporal history behavior.
     history_mode: TemporalHistoryCommitMode,
+    /// Whether Core writes add to the Temporal Evolution they change.
+    core_write_history: CoreWriteHistory,
     /// Fused insert statement strategy.
     entity_insert_mode: EntityInsertMode,
     /// Dictionary the projection's attribute keys are minted through.
@@ -82,6 +85,7 @@ impl PostgresAtomicCommitter {
     pub fn new(
         pool: &PgPool,
         history_mode: TemporalHistoryCommitMode,
+        core_write_history: CoreWriteHistory,
         entity_insert_mode: EntityInsertMode,
         attribute_names: Arc<dyn NameLookup<AttributeName>>,
         entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
@@ -90,6 +94,7 @@ impl PostgresAtomicCommitter {
         PostgresAtomicCommitter {
             pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
             history_mode,
+            core_write_history,
             entity_insert_mode,
             attribute_names,
             entity_type_names,
@@ -314,17 +319,18 @@ impl PostgresAtomicCommitter {
         // One interpretation of the mutation's temporal consequences serves
         // both the history phase and the projection phase, so the two can
         // never disagree about what the write said.
-        let (interpreted, next) = interpret(&landed, &record, base)?;
+        let (interpreted, next) = interpret(&landed, &record, base, self.core_write_history)?;
         let intents = &interpreted.intents;
         let placement = self.history_mode.placement(target);
         match placement {
             HistoryPlacement::Inline(recorder) => history::apply(recorder, &mut tx, target, &record, intents).await?,
             HistoryPlacement::Queued(_) => deferred_history::apply(&mut tx, intents).await?,
         }
-        // Minted from the interpreted intents so the projection references
+        // Minted from the projected intents so the projection references
         // only keys this transaction holds.
-        let attribute_keys = resolve_attribute_names(&mut tx, intents, self.attribute_names.as_ref()).await?;
-        projection::apply(&mut tx, target, &interpreted.projected(), &keys, &attribute_keys).await?;
+        let projected = interpreted.projected();
+        let attribute_keys = resolve_attribute_names(&mut tx, &projected, self.attribute_names.as_ref()).await?;
+        projection::apply(&mut tx, target, &projected, &keys, &attribute_keys).await?;
         let (next, notifications) = notification_events::apply(&mut tx, target, &landed, &record, next, self.attribute_names.as_ref()).await?;
         let side_effects = side_effects::apply(&mut tx, target, &landed, &record, next).await?;
 

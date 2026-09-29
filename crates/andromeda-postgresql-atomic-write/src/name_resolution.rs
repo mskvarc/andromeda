@@ -75,11 +75,12 @@ pub(crate) async fn resolve_write_names(
     Ok(ResolvedWriteNames { types, attributes })
 }
 
-/// Mint the dictionary key of every attribute the interpreted intents name.
+/// Mint the dictionary key of every attribute the projected intents name.
 ///
-/// Resolved after the mutation is interpreted, from the intents themselves,
-/// so only attributes a landed write actually observed or tombstoned mint a
-/// key; the projection's foreign key demands one for every row it writes.
+/// Resolved after the mutation is interpreted, from the intents the
+/// current-state projection follows, so only attributes a landed write actually
+/// observed or tombstoned mint a key; the projection's foreign key demands one
+/// for every row it writes, whether or not history records the write.
 ///
 /// # Errors
 ///
@@ -88,10 +89,10 @@ pub(crate) async fn resolve_write_names(
 /// its bound.
 pub(crate) async fn resolve_attribute_names(
     tx: &mut Transaction<'_, Postgres>,
-    intents: &[TemporalAppendIntent],
+    projected: &[&TemporalAppendIntent],
     attribute_names: &dyn NameLookup<AttributeName>,
 ) -> Result<HashMap<AttributeName, AttributeNameKey>, CommitError> {
-    let mut names: Vec<AttributeName> = intents
+    let mut names: Vec<AttributeName> = projected
         .iter()
         .flat_map(|intent| intent.entries.iter())
         .filter_map(|entry| match entry {

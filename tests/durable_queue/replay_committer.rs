@@ -14,6 +14,7 @@ use andromeda_postgresql_temporal_store::{
     recorder::TemporalRecorder,
     repo::TemporalRepository,
 };
+use andromeda_temporal::core_write_history::CoreWriteHistory;
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -34,6 +35,7 @@ pub fn committer(pool: &PgPool) -> PostgresAtomicCommitter {
         TemporalHistoryCommitMode::Native {
             recorder: Arc::new(TemporalRecorder::new(repository)),
         },
+        CoreWriteHistory::Recorded,
         EntityInsertMode::Unnest,
         attribute_names,
         entity_type_names,

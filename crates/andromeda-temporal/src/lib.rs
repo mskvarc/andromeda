@@ -12,6 +12,8 @@ mod attribute_instance_mutation;
 pub mod attribute_instance_value;
 mod compilation;
 pub mod config;
+/// Whether Core API writes add to the Temporal Evolution of an Entity.
+pub mod core_write_history;
 pub mod delete_by_query;
 pub mod error;
 mod evolution_write;

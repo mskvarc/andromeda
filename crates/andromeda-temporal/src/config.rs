@@ -1,6 +1,6 @@
 //! Temporal policy configuration.
 
-use crate::{instance_limits::TemporalInstanceLimits, storage_policy::TemporalStoragePolicy};
+use crate::{core_write_history::CoreWriteHistory, instance_limits::TemporalInstanceLimits, storage_policy::TemporalStoragePolicy};
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -109,6 +109,16 @@ pub struct TemporalConfig {
     /// Native or deferred append topology selected for this broker profile.
     #[toml_comment(inline)]
     pub append_mode: TemporalAppendMode,
+    /// Whether Core API writes add to the Temporal Evolution of the Entities
+    /// they change: `"recorded"` (the default) or `"not-recorded"`.
+    ///
+    /// With `"not-recorded"` only the Temporal API writes history, for a
+    /// producer that publishes its history there and restates its newest
+    /// reading through the Core API, which would otherwise record that reading
+    /// twice. Core writes still change current state, and Core queries still
+    /// see them.
+    #[toml_comment(inline)]
+    pub core_write_history: CoreWriteHistory,
     /// Instances per attribute a temporal read without `lastN` returns before
     /// it is paged forwards (clause 6.3.10: "If no limits are specified, a
     /// default limit is enforced, depending on implementation specific
@@ -208,6 +218,7 @@ impl Default for TemporalConfig {
     fn default() -> TemporalConfig {
         TemporalConfig {
             append_mode: TemporalAppendMode::Native,
+            core_write_history: CoreWriteHistory::Recorded,
             default_last_n: 100,
             max_last_n: 1000,
             expiration_check_interval: HumanDuration::from_secs(30),
@@ -350,6 +361,7 @@ impl TemporalConfig {
 mod config_tests {
     use crate::{
         config::{DEFAULT_COLUMNSTORE_AFTER, MAX_LAST_N_CEILING, TemporalAppendMode, TemporalConfig, TemporalConfigError},
+        core_write_history::CoreWriteHistory,
         instance_limits::TemporalInstanceLimits,
         storage_policy::TemporalStoragePolicy,
     };
@@ -360,6 +372,7 @@ mod config_tests {
     fn valid() -> TemporalConfig {
         TemporalConfig {
             append_mode: TemporalAppendMode::Native,
+            core_write_history: CoreWriteHistory::Recorded,
             default_last_n: 19,
             max_last_n: 19,
             expiration_check_interval: HumanDuration::from_secs(30),
@@ -387,6 +400,17 @@ mod config_tests {
     fn the_default_append_mode_is_native() {
         assert_eq!(TemporalConfig::default().append_mode, TemporalAppendMode::Native);
         assert_eq!(TemporalAppendMode::default(), TemporalAppendMode::Native);
+    }
+
+    /// Core writes are recorded in history unless an operator turns that off,
+    /// and the setting reads from its kebab-case configuration value.
+    #[test]
+    fn core_writes_are_recorded_by_default_and_the_setting_reads_from_configuration() {
+        assert_eq!(TemporalConfig::default().core_write_history, CoreWriteHistory::Recorded);
+        let mut document = serde_json::to_value(TemporalConfig::default()).expect("the default configuration serialises");
+        document["core_write_history"] = serde_json::json!("not-recorded");
+        let configured: TemporalConfig = serde_json::from_value(document).expect("the configuration deserialises");
+        assert_eq!(configured.core_write_history, CoreWriteHistory::NotRecorded);
     }
 
     /// A read without `lastN` pages at 100 instances per attribute and a client

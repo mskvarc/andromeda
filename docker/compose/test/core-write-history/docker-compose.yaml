@@ -1,0 +1,91 @@
+name: andromeda-core-write-history
+
+# Three brokers over one database, so a test can write through one and read
+# the Temporal Evolution back through any: whether a write is recorded is
+# decided by the broker that commits it.
+x-broker-base: &broker-base
+  build:
+    context: ../../../..
+    dockerfile: docker/images/andromeda/Dockerfile
+  image: andromeda-core-write-history:latest
+  restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  depends_on:
+    core-write-history-postgres:
+      condition: service_healthy
+  environment: &broker-env
+    ANDROMEDA__SERVER__HOST: "0.0.0.0"
+    ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@core-write-history-postgres:5432/postgres"
+    ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
+    ANDROMEDA__TEMPORAL__DEFAULT_LAST_N: "1000"
+    ANDROMEDA__TEMPORAL__MAX_LAST_N: "1000"
+    ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL: "1s"
+    # Broker share: 3 x (16 + 4 x 4) = 96 of max_connections.
+    ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
+    ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "4"
+    ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL: "60s"
+    ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "4"
+    ANDROMEDA__TENANCY__JANITOR_INTERVAL: "1s"
+    ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT: "enabled"
+  healthcheck:
+    # localhost resolves to ::1 first.
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
+    interval: 3s
+    timeout: 3s
+    retries: 40
+    start_period: 5s
+
+services:
+  core-write-history-postgres:
+    build:
+      context: ../../../images/postgresql
+    image: andromeda-core-write-history-postgres:latest
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5501:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+
+  # Core writes change current state only; history is the Temporal API's.
+  core-write-history-not-recorded:
+    <<: *broker-base
+    environment:
+      <<: *broker-env
+      ANDROMEDA__SERVER__PORT: "1101"
+      ANDROMEDA__TEMPORAL__CORE_WRITE_HISTORY: "not-recorded"
+      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:core-write-history-not-recorded"
+      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "core-write-history-not-recorded"
+    ports:
+      - "1101:1101"
+
+  # The same, with the Temporal API's history queued and drained after commit.
+  core-write-history-deferred:
+    <<: *broker-base
+    environment:
+      <<: *broker-env
+      ANDROMEDA__SERVER__PORT: "1102"
+      ANDROMEDA__TEMPORAL__CORE_WRITE_HISTORY: "not-recorded"
+      ANDROMEDA__TEMPORAL__APPEND_MODE: "deferred"
+      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:core-write-history-deferred"
+      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "core-write-history-deferred"
+    ports:
+      - "1102:1102"
+
+  # The default, which records Core writes: the control every contrast is drawn against.
+  core-write-history-recorded:
+    <<: *broker-base
+    environment:
+      <<: *broker-env
+      ANDROMEDA__SERVER__PORT: "1103"
+      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:core-write-history-recorded"
+      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "core-write-history-recorded"
+    ports:
+      - "1103:1103"
