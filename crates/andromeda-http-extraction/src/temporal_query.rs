@@ -5,7 +5,7 @@
 //! selection criterion must narrow the query (clause 5.14.5.4), which is the
 //! validation a temporal query itself undergoes.
 
-use crate::{classification::classify_parameter_error, query::classify_query_parse_error};
+use crate::{addressed_uri::addressed_uri, classification::classify_parameter_error, query::classify_query_parse_error};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
@@ -17,7 +17,7 @@ pub struct TemporalQuery(pub TemporalQueryParameters);
 
 /// Deserialize the temporal query string and validate it as a temporal query.
 fn resolve_temporal_query(parts: &Parts) -> Result<TemporalQuery, ExtractorRejection> {
-    let uri = parts.uri.clone();
+    let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
     let params = serde_urlencoded::from_str::<TemporalQueryParameters>(query_str).map_err(|error| {
         let error_text = error.to_string();

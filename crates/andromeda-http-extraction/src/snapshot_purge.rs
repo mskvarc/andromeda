@@ -5,6 +5,7 @@
 //! query parameter. Missing or malformed values produce `400 BadRequestData`
 //! (clause 6.3.2).
 
+use crate::addressed_uri::addressed_uri;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_model::snapshot_filter::{SnapshotPurgeFilter, parse_snapshot_q};
 use axum::{extract::FromRequestParts, http::request::Parts};
@@ -25,7 +26,7 @@ struct RawPurgeQuery {
 /// Read the mandatory `q` expression off the request, rejecting a missing or
 /// malformed value as `BadRequestData` (clauses 5.16.7 and 6.3.2).
 fn resolve_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, ExtractorRejection> {
-    let uri = parts.uri.clone();
+    let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
     let raw: RawPurgeQuery = serde_urlencoded::from_str(query_str)
         .map_err(|error| ExtractorRejection::bad_request_data(format!("invalid query parameters: {error}"), uri.clone()))?;

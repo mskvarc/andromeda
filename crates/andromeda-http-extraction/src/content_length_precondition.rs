@@ -12,12 +12,16 @@
 //! `@context` -- checks it here rather than each on its own, so no body-taking
 //! route can be reached without the precondition having been applied.
 
+use crate::addressed_uri::addressed_uri;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{
-    extract::{FromRequestParts, OriginalUri},
+    extract::FromRequestParts,
     http::{HeaderMap, StatusCode, Uri, header::CONTENT_LENGTH, request::Parts},
 };
-use std::num::NonZeroU64;
+use std::{
+    future::{Future, ready},
+    num::NonZeroU64,
+};
 use thiserror::Error;
 
 /// The payload length a request declared, once the clause 6.3.4 precondition
@@ -103,15 +107,8 @@ where
 {
     type Rejection = ExtractorRejection;
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<DeclaredBodyLength, Self::Rejection> {
-        // OriginalUri is infallible, so unwrap via match. It names the request
-        // as the client addressed it, which is the `instance` of any problem
-        // the precondition reports.
-        let OriginalUri(uri) = match OriginalUri::from_request_parts(parts, state).await {
-            Ok(original) => original,
-            Err(never) => match never {},
-        };
-        declared_body_length(&parts.headers).map_err(|error| error.into_rejection(uri))
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<DeclaredBodyLength, Self::Rejection>> {
+        ready(declared_body_length(&parts.headers).map_err(|error| error.into_rejection(addressed_uri(parts))))
     }
 }
 

@@ -3,6 +3,7 @@
 //! Extracts the optional `NGSILD-Snapshot` header from the request, producing
 //! a [`SnapshotHeader`] that carries the snapshot URN (or `None` when absent).
 
+use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::ngsild_snapshot::NgsiLdSnapshot;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -33,7 +34,7 @@ fn resolve_snapshot_header(parts: &Parts) -> Result<SnapshotHeader, ExtractorRej
         Ok(None) => Ok(SnapshotHeader(None)),
         Err(_) => Err(ExtractorRejection::bad_request_data(
             "NGSILD-Snapshot header must be a valid snapshot URN",
-            parts.uri.clone(),
+            addressed_uri(parts),
         )),
     }
 }

@@ -8,7 +8,7 @@
 //! window check). The `TooManyResults` bound is not an extraction concern — it
 //! turns on a pre-count the service runs — so it is not decided here.
 
-use crate::{classification::classify_parameter_error, query::classify_query_parse_error};
+use crate::{addressed_uri::addressed_uri, classification::classify_parameter_error, query::classify_query_parse_error};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_request::query::temporal::delete_parameters::TemporalDeleteParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
@@ -20,7 +20,7 @@ pub struct TemporalDeleteQuery(pub TemporalDeleteParameters);
 
 /// Deserialize the delete query string and validate it as a delete-by-query.
 fn resolve_temporal_delete_query(parts: &Parts) -> Result<TemporalDeleteQuery, ExtractorRejection> {
-    let uri = parts.uri.clone();
+    let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
     let params = serde_urlencoded::from_str::<TemporalDeleteParameters>(query_str).map_err(|error| {
         let error_text = error.to_string();

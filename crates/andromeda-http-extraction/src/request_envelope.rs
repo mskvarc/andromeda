@@ -8,11 +8,11 @@
 //! by one puts four parameters on every handler; extracting them together puts
 //! one.
 
-use crate::{context::ContextUrl, via::IncomingVia};
+use crate::{addressed_uri::addressed_uri, context::ContextUrl, via::IncomingVia};
 use andromeda_http_headers::via::Via;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{
-    extract::{FromRequestParts, OriginalUri},
+    extract::FromRequestParts,
     http::{HeaderMap, Uri, request::Parts},
 };
 
@@ -46,11 +46,7 @@ where
     type Rejection = ExtractorRejection;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<NgsiLdRequestEnvelope, Self::Rejection> {
-        // OriginalUri is infallible, so unwrap via match.
-        let OriginalUri(uri) = match OriginalUri::from_request_parts(parts, state).await {
-            Ok(original) => original,
-            Err(never) => match never {},
-        };
+        let uri = addressed_uri(parts);
         let context = ContextUrl::from_request_parts(parts, state).await?;
         // IncomingVia is infallible, so unwrap via match.
         let incoming_via = match IncomingVia::from_request_parts(parts, state).await {

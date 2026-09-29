@@ -4,7 +4,14 @@
 //! headers into a single extractor to reduce handler parameter counts (ETSI GS
 //! CIM 009 clauses 6.3.5, 6.3.6, 6.3.18, 6.3.21, 6.3.22).
 
-use crate::{language::LanguageNegotiation, prefer::PreferHeader, profile::PayloadProfile, snapshot::SnapshotHeader, via::IncomingVia};
+use crate::{
+    addressed_uri::addressed_uri,
+    language::LanguageNegotiation,
+    prefer::PreferHeader,
+    profile::PayloadProfile,
+    snapshot::SnapshotHeader,
+    via::IncomingVia,
+};
 use andromeda_http_headers::{
     language::LanguageFilter,
     ngsild_dataset_id::NgsiLdDatasetId,
@@ -79,7 +86,7 @@ where
     type Rejection = ExtractorRejection;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<NgsiLdProtocolHeaders, Self::Rejection> {
-        let uri = parts.uri.clone();
+        let uri = addressed_uri(parts);
         let LanguageNegotiation(language_filter) = LanguageNegotiation::from_request_parts(parts, state).await?;
         // PreferHeader is infallible (Rejection = Infallible), so unwrap via match.
         let prefer = match PreferHeader::from_request_parts(parts, state).await {

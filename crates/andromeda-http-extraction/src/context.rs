@@ -1,5 +1,6 @@
 //! JSON-LD context URL extraction from Link headers.
 
+use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::link::header::Link;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -39,9 +40,9 @@ fn context_from_link_headers(parts: &Parts) -> Result<ContextSpec, ExtractorReje
     for value in parts.headers.get_all(LINK) {
         let link_str = value
             .to_str()
-            .map_err(|error| ExtractorRejection::bad_request_data(format!("Link header is not visible ASCII: {error}"), parts.uri.clone()))?;
-        let parsed =
-            Link::from_str(link_str).map_err(|error| ExtractorRejection::bad_request_data(format!("Link header is malformed: {error}"), parts.uri.clone()))?;
+            .map_err(|error| ExtractorRejection::bad_request_data(format!("Link header is not visible ASCII: {error}"), addressed_uri(parts)))?;
+        let parsed = Link::from_str(link_str)
+            .map_err(|error| ExtractorRejection::bad_request_data(format!("Link header is malformed: {error}"), addressed_uri(parts)))?;
         links.extend(parsed.context_urls().cloned());
     }
 

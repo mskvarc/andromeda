@@ -1,6 +1,6 @@
 //! Generic extraction of tenant-scoped focused state.
 
-use crate::tenant::TenantHeader;
+use crate::{addressed_uri::addressed_uri, tenant::TenantHeader};
 use andromeda_http_response::{problem_response::ProblemResponse, tenant_state_rejection::TenantStateRejection};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
 use axum::{
@@ -34,7 +34,7 @@ where
     let tenant = TenantHeader::from_request_parts(parts, state).await.map_err(TenantStateRejection::Extraction)?;
     let tenant_ref = TenantRef::from_header(tenant.into_inner());
     state
-        .resolve_tenant(&tenant_ref, creation_policy, &parts.uri)
+        .resolve_tenant(&tenant_ref, creation_policy, &addressed_uri(parts))
         .await
         .map_err(TenantStateRejection::Resolution)
 }

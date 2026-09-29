@@ -8,6 +8,7 @@
 //! 6.3.4 admits, so nothing below it has to re-derive that or answer for it.
 
 use crate::{
+    addressed_uri::addressed_request_uri,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     context::ContextUrl,
 };
@@ -19,7 +20,7 @@ use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exa
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use axum::{
     body::Bytes,
-    extract::{FromRequest, FromRequestParts, OriginalUri, Request},
+    extract::{FromRequest, Request},
     http::{HeaderMap, StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
 };
@@ -103,13 +104,8 @@ where
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &S) -> Result<BatchBody, Self::Rejection> {
+        let uri = addressed_request_uri(&req);
         let (mut parts, body) = req.into_parts();
-        // OriginalUri is infallible, so unwrap via match. It names the request
-        // as the client addressed it, before nesting rewrote the path.
-        let OriginalUri(uri) = match OriginalUri::from_request_parts(&mut parts, state).await {
-            Ok(original) => original,
-            Err(never) => match never {},
-        };
         // Clause 6.3.4 checks both preconditions on a POST, and answers an
         // absent Content-Length with a bare 411 before the Content-Type is
         // looked at: a request that declares no payload length has declared no

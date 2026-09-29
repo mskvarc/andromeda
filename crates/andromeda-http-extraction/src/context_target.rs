@@ -1,6 +1,6 @@
 //! Combined tenant and context-space targeting for scoped NGSI-LD operations.
 
-use crate::{snapshot::SnapshotHeader, tenant::TenantHeader, tenant_state::TenantStateResolver};
+use crate::{addressed_uri::addressed_uri, snapshot::SnapshotHeader, tenant::TenantHeader, tenant_state::TenantStateResolver};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
@@ -146,8 +146,9 @@ where
     } else {
         live_creation_policy
     };
+    let instance = addressed_uri(parts);
     let services = state
-        .resolve_tenant(&tenant_ref, creation_policy, &parts.uri)
+        .resolve_tenant(&tenant_ref, creation_policy, &instance)
         .await
         .map_err(TenantStateRejection::Resolution)?;
     let target = match snapshot.as_ref() {
@@ -155,7 +156,7 @@ where
             .snapshot_target_resolver()
             .resolve(snapshot_id)
             .await
-            .map_err(|error| TenantStateRejection::Resolution(error.into_problem(parts.uri.clone())))?,
+            .map_err(|error| TenantStateRejection::Resolution(error.into_problem(instance)))?,
         None => services.live_target().clone(),
     };
     Ok((services, target, snapshot))

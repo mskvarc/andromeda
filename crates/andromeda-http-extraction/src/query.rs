@@ -4,6 +4,7 @@
 //! mapping parse failures to the correct `InvalidRequest` or `BadRequestData`
 //! type (clause 6.3.20).
 
+use crate::addressed_uri::addressed_uri;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{
     extract::FromRequestParts,
@@ -24,7 +25,7 @@ fn deserialize_query<T>(parts: &Parts) -> Result<ValidatedQuery<T>, ExtractorRej
 where
     T: DeserializeOwned,
 {
-    let uri = parts.uri.clone();
+    let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
 
     serde_urlencoded::from_str::<T>(query_str).map(ValidatedQuery).map_err(|error| {

@@ -3,6 +3,7 @@
 //! Extracts the optional `NGSILD-Tenant` header from the request, producing
 //! a [`TenantHeader`] that carries the tenant name (or `None` for the default tenant).
 
+use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
@@ -34,7 +35,7 @@ fn resolve_tenant_header(parts: &Parts) -> Result<TenantHeader, ExtractorRejecti
         Ok(None) => Ok(TenantHeader(None)),
         Err(_) => Err(ExtractorRejection::bad_request_data(
             "NGSILD-Tenant header must not be empty",
-            parts.uri.clone(),
+            addressed_uri(parts),
         )),
     }
 }

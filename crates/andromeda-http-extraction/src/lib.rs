@@ -6,6 +6,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod accept;
+pub mod addressed_uri;
 pub mod classification;
 pub mod content_length_precondition;
 pub mod context;

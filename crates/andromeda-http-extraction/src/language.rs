@@ -4,6 +4,7 @@
 //! Query parameters are parsed by the endpoint-specific request model so each
 //! wire value is decoded exactly once.
 
+use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::{language::LanguageFilter, ngsild_language::NgsiLdLanguage};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{extract::FromRequestParts, http::request::Parts};
@@ -23,7 +24,7 @@ fn resolve_language_negotiation(parts: &Parts) -> Result<LanguageNegotiation, Ex
         let header = parts
             .headers
             .typed_get::<NgsiLdLanguage>()
-            .ok_or_else(|| ExtractorRejection::bad_request_data("Invalid NGSILD-Language header value", parts.uri.clone()))?;
+            .ok_or_else(|| ExtractorRejection::bad_request_data("Invalid NGSILD-Language header value", addressed_uri(parts)))?;
         return Ok(LanguageNegotiation(Some(header.into_filter())));
     }
 

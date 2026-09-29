@@ -1,6 +1,6 @@
 //! Reconstruction of the broker origin from an incoming request.
 
-use crate::classification::classify_request_origin_error;
+use crate::{addressed_uri::addressed_uri, classification::classify_request_origin_error};
 use andromeda_http_headers::{
     api_root_scheme::ApiRootScheme,
     forwarded_header_trust::ForwardedHeaderTrust,
@@ -107,7 +107,7 @@ where
     type Rejection = ExtractorRejection;
 
     fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
-        ready(resolve_origin(parts).map_err(|error| ExtractorRejection::Classified(classify_request_origin_error(&error).with_instance(parts.uri.clone()))))
+        ready(resolve_origin(parts).map_err(|error| ExtractorRejection::Classified(classify_request_origin_error(&error).with_instance(addressed_uri(parts)))))
     }
 }
 

@@ -4,7 +4,10 @@
 //! preventing false positives (e.g. `application/json-patch+json` no longer
 //! matches `application/json`).
 
-use crate::content_length_precondition::{ContentLengthPreconditionError, declared_body_length};
+use crate::{
+    addressed_uri::addressed_request_uri,
+    content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
+};
 use andromeda_http_headers::link::header::Link;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -223,7 +226,7 @@ where
 /// Apply the clause 6.3.4 and 6.3.5 request preconditions, parse the body,
 /// canonicalize its numbers, and split its `@context` off.
 async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedBody, ExtractorRejection> {
-    let uri = req.uri().clone();
+    let uri = addressed_request_uri(&req);
     // Clause 6.3.4: the payload length is checked before the payload is
     // looked at, so an absent Content-Length is the bare 411 the clause
     // requires rather than a decoding failure.

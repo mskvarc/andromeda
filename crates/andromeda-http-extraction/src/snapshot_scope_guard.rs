@@ -1,10 +1,11 @@
 //! Refusing Snapshot scope on route families outside the scoped APIs.
 
+use crate::addressed_uri::addressed_request_uri;
 use andromeda_http_headers::ngsild_snapshot::NgsiLdSnapshot;
 use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
-    extract::{OriginalUri, Request},
+    extract::Request,
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -13,15 +14,11 @@ use headers::Header;
 /// Reject `NGSILD-Snapshot` on a route family outside Core, Temporal, and entity-subscription APIs.
 pub async fn reject_snapshot_scope(request: Request, next: Next) -> Response {
     if request.headers().contains_key(NgsiLdSnapshot::name()) {
-        let instance = request
-            .extensions()
-            .get::<OriginalUri>()
-            .map_or_else(|| request.uri().clone(), |original| original.0.clone());
         return ClassifiedReport::public(
             NgsiLdErrorType::OperationNotSupported,
             "ngsild-snapshot is supported only by the core, temporal, and entity-subscription operations",
         )
-        .with_instance(instance)
+        .with_instance(addressed_request_uri(&request))
         .into_response();
     }
     next.run(request).await
