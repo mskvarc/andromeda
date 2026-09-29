@@ -7,7 +7,7 @@
 //! from its search rows, and the discovery answers against the entities the
 //! branch holds.
 
-use crate::support::{broker_url, clean_database, client, clone_snapshot_raw, create_entities_batch, wait_for_snapshot_terminal};
+use crate::support::{broker_url, clean_database, client, clone_snapshot_raw, create_entities_batch, published_branch_schema, wait_for_snapshot_terminal};
 use andromeda_test_harness::discovery_census::census_drift;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -67,16 +67,6 @@ async fn car_answers(snapshot: Option<&str>) -> (Value, Value, Value) {
     (info["entityCount"].clone(), speed["attributeCount"].clone(), json!(names))
 }
 
-/// The schema of a published Snapshot's branch.
-async fn branch_schema(pool: &PgPool, snapshot: &str) -> String {
-    let key: i64 = sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")
-        .bind(snapshot)
-        .fetch_one(pool)
-        .await
-        .expect("the Snapshot's key");
-    format!("snap_{key}")
-}
-
 async fn assert_census_exact(pool: &PgPool, schema: &str, step: &str) {
     let drift = census_drift(pool, schema).await.expect("the census comparison");
     assert!(drift.is_empty(), "{step}: the census of {schema} drifted: {drift:?}");
@@ -105,7 +95,7 @@ async fn snapshot_census_counts_captures_branch_writes_and_clones() {
         wait_for_snapshot_terminal(&client(), source, Duration::from_secs(20)).await["snapshotStatus"],
         "success"
     );
-    let source_schema = branch_schema(pool, source).await;
+    let source_schema = published_branch_schema(pool, source).await;
     assert_census_exact(pool, &source_schema, "the capture").await;
     pretty_assertions::assert_eq!(car_answers(Some(source)).await, car_answers(None).await, "the capture holds what live held");
     pretty_assertions::assert_eq!(car_answers(Some(source)).await.0, json!(4));
@@ -134,7 +124,7 @@ async fn snapshot_census_counts_captures_branch_writes_and_clones() {
         wait_for_snapshot_terminal(&client(), target, Duration::from_secs(20)).await["snapshotStatus"],
         "success"
     );
-    let target_schema = branch_schema(pool, target).await;
+    let target_schema = published_branch_schema(pool, target).await;
     assert_census_exact(pool, &target_schema, "the clone").await;
     pretty_assertions::assert_eq!(
         car_answers(Some(target)).await,

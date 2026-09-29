@@ -1,8 +1,9 @@
 //! Public-API fixtures shared by the focused Snapshot acceptance modules.
 
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
-use reqwest::{Client, StatusCode, header::HeaderMap};
+use reqwest::{Client, Method, Response, StatusCode, header::HeaderMap};
 use serde_json::Value;
+use sqlx::PgPool;
 use std::time::Duration;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 
@@ -115,6 +116,26 @@ pub(crate) async fn delete_snapshot_raw(client: &Client, id: &str) -> (StatusCod
     let headers = response.headers().clone();
     let body = response.json().await.unwrap_or_default();
     (status, headers, body)
+}
+
+/// One request scoped to a Snapshot through `NGSILD-Snapshot`, carrying `body`
+/// as JSON-LD when there is one.
+pub(crate) async fn scoped(method: Method, path: &str, snapshot: &str, body: Option<&Value>) -> Response {
+    let mut request = client().request(method, broker_url(path)).header("NGSILD-Snapshot", snapshot);
+    if let Some(body) = body {
+        request = request.header("Content-Type", "application/ld+json").json(body);
+    }
+    request.send().await.expect("Snapshot-scoped request")
+}
+
+/// The schema holding a published Snapshot's branch, `snap_<snapshot_key>`.
+pub(crate) async fn published_branch_schema(pool: &PgPool, snapshot_id: &str) -> String {
+    let key: i64 = sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")
+        .bind(snapshot_id)
+        .fetch_one(pool)
+        .await
+        .expect("the Snapshot's key");
+    format!("snap_{key}")
 }
 
 pub(crate) async fn wait_for_snapshot_terminal(client: &Client, id: &str, deadline: Duration) -> Value {

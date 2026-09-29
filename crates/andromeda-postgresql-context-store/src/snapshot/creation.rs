@@ -1,7 +1,10 @@
 //! Creating a Snapshot: its control record, its preparation row and its staging
 //! branch schema, in one transaction.
 
-use crate::snapshot::{branch_schema::create_branch_schema, branch_version::current_version, persistence_error, status_code::stored_status};
+use crate::{
+    error::violates_unique_constraint,
+    snapshot::{branch_schema::create_branch_schema, branch_version::current_version, persistence_error, status_code::stored_status},
+};
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
@@ -107,20 +110,9 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
 /// The unique constraint migration 0014 names on `snapshots.id`.
 const UQ_SNAPSHOTS_ID: &str = "uq_snapshots_id";
 
-/// The SQLSTATE a unique violation carries.
-const UNIQUE_VIOLATION: &str = "23505";
-
-/// Whether a database failure is the unique violation of a Snapshot identifier
-/// already in use.
-fn is_duplicate_snapshot_id(code: Option<&str>, constraint: Option<&str>) -> bool {
-    code == Some(UNIQUE_VIOLATION) && constraint == Some(UQ_SNAPSHOTS_ID)
-}
-
 /// Preserve the protocol-visible duplicate-id classification from PostgreSQL.
 fn snapshot_create_error(error: sqlx::Error, id: &Identifier) -> SnapshotError {
-    if let sqlx::Error::Database(database_error) = &error
-        && is_duplicate_snapshot_id(database_error.code().as_deref(), database_error.constraint())
-    {
+    if violates_unique_constraint(&error, UQ_SNAPSHOTS_ID) {
         return SnapshotError::already_exists(id);
     }
     persistence_error(error)
@@ -128,16 +120,20 @@ fn snapshot_create_error(error: sqlx::Error, id: &Identifier) -> SnapshotError {
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::creation::{control_insert_sql, is_duplicate_snapshot_id, preparation_insert_sql};
+    use crate::{
+        migration_set::tenant::tenant_migrator,
+        snapshot::creation::{UQ_SNAPSHOTS_ID, control_insert_sql, preparation_insert_sql},
+    };
 
     /// Migration 0014 names every constraint, so the duplicate-identity
     /// refusal matches the declared name rather than one PostgreSQL generated.
     #[test]
-    fn the_duplicate_id_branch_matches_uq_snapshots_id() {
-        assert!(is_duplicate_snapshot_id(Some("23505"), Some("uq_snapshots_id")));
-        assert!(!is_duplicate_snapshot_id(Some("23505"), Some("snapshots_id_key")));
-        assert!(!is_duplicate_snapshot_id(Some("23505"), Some("pk_snapshots")));
-        assert!(!is_duplicate_snapshot_id(Some("23514"), Some("uq_snapshots_id")));
+    fn the_duplicate_id_refusal_names_the_constraint_migration_0014_declares() {
+        let declaration = format!("CONSTRAINT {UQ_SNAPSHOTS_ID} UNIQUE (id)");
+        assert!(
+            tenant_migrator().iter().any(|migration| migration.sql.as_str().contains(&declaration)),
+            "{declaration}"
+        );
     }
 
     #[test]

@@ -34,10 +34,10 @@ use sqlx::{Executor, PgConnection};
 /// The runtime setting a branch migration is steered into its schema by.
 const SEARCH_PATH: &str = "search_path";
 
-/// The branch relations every Snapshot schema holds, in an order that lets a
-/// clone `INSERT ... SELECT` respect intra-branch foreign keys (parents before
-/// children). The branch migrations create them; this list only orders the
-/// copies and the truncation.
+/// The branch relations every Snapshot schema holds, in an order that respects
+/// intra-branch foreign keys (parents before children), which the relations a
+/// clone copies keep. The branch migrations create them; this list only orders
+/// the truncation and the copies.
 pub(crate) const BRANCH_TABLES: [&str; 17] = [
     "entities",
     "temporal_entities",

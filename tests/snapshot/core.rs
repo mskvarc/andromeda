@@ -1,7 +1,7 @@
 //! Snapshot-scoped Core API acceptance cases.
 
-use crate::support::{broker_url, clean_database, client, create_entity, create_snapshot_raw, wait_for_snapshot_terminal};
-use reqwest::{Method, Response, StatusCode};
+use crate::support::{broker_url, clean_database, client, create_entity, create_snapshot_raw, scoped, wait_for_snapshot_terminal};
+use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use serial_test::serial;
 use std::time::Duration;
@@ -31,14 +31,6 @@ async fn empty_branch(id: &str) {
         wait_for_snapshot_terminal(&client(), id, Duration::from_secs(5)).await["snapshotStatus"],
         "failure"
     );
-}
-
-async fn scoped(method: Method, path: &str, snapshot: &str, body: Option<&Value>) -> Response {
-    let mut request = client().request(method, broker_url(path)).header("NGSILD-Snapshot", snapshot);
-    if let Some(body) = body {
-        request = request.header("Content-Type", "application/ld+json").json(body);
-    }
-    request.send().await.expect("Snapshot-scoped Core request")
 }
 
 async fn scoped_get(path: &str, snapshot: &str) -> (StatusCode, Value) {

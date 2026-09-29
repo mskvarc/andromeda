@@ -13,6 +13,29 @@ use andromeda_postgresql_pool::{is_pool_saturated, is_transaction_rolled_back};
 use andromeda_postgresql_query::error::RenderError;
 use sqlx::migrate::MigrateError;
 
+/// The SQLSTATE of a unique violation.
+const UNIQUE_VIOLATION: &str = "23505";
+
+/// Whether `error` is a unique violation of the named constraint.
+///
+/// A relation can carry more than one unique constraint -- its surrogate key
+/// beside the identifier a client chose -- and only a violation of the
+/// identifier's own constraint is the conflict the client caused. A caller
+/// that reports a create as already existing therefore checks the constraint,
+/// not the SQLSTATE alone.
+#[must_use]
+pub(crate) fn violates_unique_constraint(error: &sqlx::Error, constraint: &str) -> bool {
+    error
+        .as_database_error()
+        .is_some_and(|database| is_unique_violation_of(database.code().as_deref(), database.constraint(), constraint))
+}
+
+/// Whether a reported SQLSTATE and constraint name are a unique violation of
+/// `constraint`.
+fn is_unique_violation_of(code: Option<&str>, violated: Option<&str>, constraint: &str) -> bool {
+    code == Some(UNIQUE_VIOLATION) && violated == Some(constraint)
+}
+
 /// Errors from the PostgreSQL context store.
 ///
 /// Variants that carry the PG error code directly (`UniqueViolation`,
@@ -90,7 +113,7 @@ impl From<sqlx::Error> for ContextStoreError {
         }
         if let sqlx::Error::Database(ref db_error) = error {
             match db_error.code().as_deref() {
-                Some("23505") => return ContextStoreError::UniqueViolation(error),
+                Some(UNIQUE_VIOLATION) => return ContextStoreError::UniqueViolation(error),
                 Some("2201B") => return ContextStoreError::InvalidRegex(error),
                 Some(_) | None => {}
             }
@@ -179,8 +202,28 @@ impl ContextStoreError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::ContextStoreError, schema_contract::error::SchemaContractError};
+    use crate::{
+        error::{ContextStoreError, is_unique_violation_of, violates_unique_constraint},
+        schema_contract::error::SchemaContractError,
+    };
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
+
+    /// Only a unique violation reported against the named constraint matches:
+    /// the surrogate key's violation, another constraint's and another
+    /// SQLSTATE's do not.
+    #[test]
+    fn a_unique_violation_matches_only_the_constraint_it_names() {
+        assert!(is_unique_violation_of(Some("23505"), Some("uq_subscriptions_id"), "uq_subscriptions_id"));
+        assert!(!is_unique_violation_of(Some("23505"), Some("pk_subscriptions"), "uq_subscriptions_id"));
+        assert!(!is_unique_violation_of(Some("23505"), None, "uq_subscriptions_id"));
+        assert!(!is_unique_violation_of(Some("23514"), Some("uq_subscriptions_id"), "uq_subscriptions_id"));
+        assert!(!is_unique_violation_of(None, Some("uq_subscriptions_id"), "uq_subscriptions_id"));
+    }
+
+    #[test]
+    fn a_failure_that_is_no_database_error_violates_no_constraint() {
+        assert!(!violates_unique_constraint(&sqlx::Error::RowNotFound, "uq_subscriptions_id"));
+    }
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {

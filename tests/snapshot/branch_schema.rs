@@ -17,6 +17,7 @@ use crate::support::{
     create_entity,
     create_snapshot_raw,
     delete_snapshot_raw,
+    published_branch_schema,
     query_snapshot_entities,
     wait_for_snapshot_terminal,
 };
@@ -60,12 +61,7 @@ async fn snapshot_database() -> PgPool {
 async fn prepared_snapshot(pool: &PgPool, id: &str) -> String {
     pretty_assertions::assert_eq!(create_snapshot_raw(&client(), &minimal(id)).await.0, StatusCode::CREATED);
     wait_for_snapshot_terminal(&client(), id, Duration::from_secs(5)).await;
-    let key: i64 = sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .expect("snapshot key");
-    format!("snap_{key}")
+    published_branch_schema(pool, id).await
 }
 
 /// One relation's shape in `schema`, with every mention of the schema itself

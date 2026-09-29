@@ -2,7 +2,7 @@
 
 use crate::{
     notification_adapter::NotificationAdapter,
-    support::{broker_url, clean_database, client, create_entity, create_snapshot_raw, delete_snapshot_raw, get_snapshot, wait_for_snapshot_terminal},
+    support::{broker_url, clean_database, client, create_entity, create_snapshot_raw, delete_snapshot_raw, get_snapshot, scoped, wait_for_snapshot_terminal},
 };
 use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
@@ -33,14 +33,6 @@ async fn empty_branch(id: &str) {
         StatusCode::CREATED
     );
     wait_for_snapshot_terminal(&client(), id, Duration::from_secs(5)).await;
-}
-
-async fn scoped(method: Method, path: &str, snapshot: &str, body: Option<&Value>) -> Response {
-    let mut request = client().request(method, broker_url(path)).header("NGSILD-Snapshot", snapshot);
-    if let Some(body) = body {
-        request = request.header("Content-Type", "application/ld+json").json(body);
-    }
-    request.send().await.expect("Snapshot-scoped subscription request")
 }
 
 async fn create_scoped_subscription(snapshot: &str, body: &Value) -> Response {
