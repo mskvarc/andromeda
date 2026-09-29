@@ -1,10 +1,13 @@
 //! Serialize a parsed `q` expression back into NGSI-LD query string format.
 
-use crate::filter::{
-    expression::Expr,
-    path::{AttrPath, QueryPath},
-    predicate::Predicate,
-    scalar::{CompareValue, Scalar},
+use crate::{
+    filter::{
+        expression::Expr,
+        path::{AttrPath, QueryPath},
+        predicate::Predicate,
+        scalar::{CompareValue, Scalar},
+    },
+    pattern::Pattern,
 };
 use std::fmt::Write;
 
@@ -86,11 +89,11 @@ fn write_predicate(buf: &mut String, pred: &Predicate) {
         }
         Predicate::MatchPattern { pattern, .. } => {
             buf.push_str("~=");
-            write_quoted(buf, pattern.as_str());
+            write_pattern(buf, pattern);
         }
         Predicate::NotMatchPattern { pattern, .. } => {
             buf.push_str("!~=");
-            write_quoted(buf, pattern.as_str());
+            write_pattern(buf, pattern);
         }
     }
     for _ in 0..open_hops {
@@ -223,6 +226,22 @@ fn write_scalar(buf: &mut String, scalar: &Scalar) {
         Scalar::Str(_) | Scalar::Time(_) => write_quoted(buf, &scalar.literal_text()),
         Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) => buf.push_str(&scalar.literal_text()),
     }
+}
+
+/// Write a `RegExp` operand between double quotes, as written.
+///
+/// Clause 4.9 makes `RegExp` its own terminal rather than a `quotedStr`, and
+/// [`crate::filter::operand::parse_pattern_string`] reads the body verbatim, so
+/// escaping it here would change the pattern: `^\w+$` came back as `^\\w+$`, a
+/// literal backslash followed by `w`s, and a stored Subscription selected
+/// nothing after its first reload. The verbatim body is always safe to quote
+/// again: the lexer ends a quoted token only at a `"` no backslash escapes, so
+/// every `"` the body holds is still escaped, and a body ending in an odd run of
+/// backslashes is no regular expression either engine compiles.
+fn write_pattern(buf: &mut String, pattern: &Pattern) {
+    buf.push('"');
+    buf.push_str(pattern.as_str());
+    buf.push('"');
 }
 
 /// Write a double-quoted, escaped string literal.
@@ -370,6 +389,28 @@ mod tests {
             "rel{\"ex:A\",\"ex:B\":category==\"x\"}",
         ];
         for shape in shapes {
+            let parsed = parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
+            let rendered = serialize(&parsed);
+            pretty_assertions::assert_eq!(rendered, shape, "serialisation of {shape}");
+            let reparsed = parse(&rendered).unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
+            pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {shape}");
+        }
+    }
+
+    /// A pattern operand is written back as the client wrote it, backslashes
+    /// and escaped quotes included, because the parser reads it verbatim: a
+    /// stored Subscription's `q` is serialised and re-parsed, and doubling the
+    /// backslashes turned `\w` into a literal backslash followed by `w`.
+    #[test]
+    fn a_pattern_operand_round_trips_with_its_backslashes_as_written() {
+        for shape in [
+            r#"name~="^\w+$""#,
+            r#"name~="^example\.com$""#,
+            r#"name!~="\d{4}-\d{2}""#,
+            r#"name~="a\"b""#,
+            r#"name~="back\\slash""#,
+            r#"name~="[\s\-]""#,
+        ] {
             let parsed = parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let rendered = serialize(&parsed);
             pretty_assertions::assert_eq!(rendered, shape, "serialisation of {shape}");

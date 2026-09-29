@@ -3,7 +3,8 @@
 //!
 //! One Entity per spelling of the Slovenian `čebela` (bee): four case forms a
 //! case-insensitive pattern must reach, the same word without its caron, which
-//! case folding must not reach, and an unrelated control name.
+//! case folding must not reach, and a two-word place name, which a word class
+//! must not reach across its space.
 
 use andromeda_test_client::response::TestResponse;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
@@ -19,6 +20,10 @@ pub(crate) const SPELLINGS: [&str; 6] = ["čebela", "Čebela", "ČEBELA", "ČEbe
 
 /// The four case forms of `čebela`, which `(?i)^čebela$` selects.
 pub(crate) const CASE_FORMS: [&str; 4] = ["čebela", "Čebela", "ČEBELA", "ČEbela"];
+
+/// The spellings that are one word, which `^\w+$` selects: every one but the
+/// place name, whose space `\w` does not hold.
+pub(crate) const ONE_WORD: [&str; 5] = ["čebela", "Čebela", "ČEBELA", "ČEbela", "cebela"];
 
 /// When every stored `name` was observed.
 pub(crate) const OBSERVED_AT: &str = "2024-05-01T08:00:00Z";

@@ -250,27 +250,6 @@ async fn regression_query_pattern_a_bracket_expression_the_two_engines_read_diff
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The Perl shorthand classes compile in both engines and classify
-/// differently: the `regex` crate applies Unicode properties, so `\w` matches
-/// `é`, `\d` matches `٣` and `\s` matches U+00A0; PostgreSQL, over the
-/// `COLLATE "C"` operand every stored pattern is applied to, matches none of
-/// them. The case-insensitive option, which diverged the same way, is now
-/// admitted and folded identically by both (`tests/pattern_case_folding`).
-#[tokio::test]
-async fn regression_query_pattern_a_unicode_aware_shorthand_the_two_engines_read_differently_is_refused() {
-    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let client = scope.client();
-    let id = create_named(&scope, client, "dialect-shorthand", "Mercedes").await;
-
-    for pattern in [r"Merc\dde", r"Merc\w", r"Merc\s", r"Merc\D"] {
-        let (status, body) = query(client, &pattern_filter(&[&id], pattern)).await;
-        assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR, "{pattern} must not be a broker fault: {body}");
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{pattern} classifies two ways: {body}");
-    }
-
-    scope.finish().await.expect("cleanup failed");
-}
-
 /// A subscription's `q` is the request that reaches the in-memory evaluator, so
 /// a construct the two engines read differently has to be refused there too.
 /// Accepting it at this entry point is what made one filter mean two things:
@@ -283,7 +262,7 @@ async fn regression_query_pattern_the_subscription_entry_point_refuses_the_same_
         .await
         .expect("notification server must start");
 
-    for (index, pattern) in ["^[[=a=]]$", r"Merc\w", "(?m:Merc)", r"\bMer", r"\p{L}"].iter().enumerate() {
+    for (index, pattern) in ["^[[=a=]]$", "[[:^alpha:]]", "(?m:Merc)", r"\bMer", r"\p{L}"].iter().enumerate() {
         let filter = subscription_filter(pattern);
         let local_id = format!("Subscription:pattern-refused-{index}");
         let (status, body) = create_pattern_subscription(&scope, &receiver, &local_id, &filter).await;
@@ -383,7 +362,10 @@ async fn regression_query_pattern_every_posix_extended_regular_expression_is_exe
 }
 
 /// The extensions the two engines share stay available, so narrowing the
-/// dialect did not turn away patterns both engines run identically.
+/// dialect did not turn away patterns both engines run identically. The
+/// shorthand classes are among them: the store runs their Unicode ranges rather
+/// than PostgreSQL's own shorthand, which classifies only ASCII under
+/// `COLLATE "C"` (`tests/unicode_pattern`).
 #[tokio::test]
 async fn regression_query_pattern_a_shorthand_both_engines_share_is_still_executed() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -398,6 +380,10 @@ async fn regression_query_pattern_a_shorthand_both_engines_share_is_still_execut
         "[[:alnum:]]+",
         "[Merc[:digit:]]+",
         "Merc[[:digit:]]de",
+        r"Merc\dde",
+        r"^\w+$",
+        r"^\S+$",
+        r"Merc[\d]\D",
     ] {
         let (status, body) = query(client, &pattern_filter(&[&id], pattern)).await;
         assert_eq!(status, StatusCode::OK, "{pattern} is common to both engines: {body}");

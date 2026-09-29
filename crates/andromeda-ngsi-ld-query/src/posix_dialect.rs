@@ -14,8 +14,9 @@
 //! crate compiled, so whatever is admitted here means the same in memory and in
 //! the store. What this module decides is what a pattern may mean at all. It
 //! admits IEEE 1003.2 as the `regex` crate reads it, plus the extensions the
-//! two engines share and the case-insensitive option, and refuses two kinds of
-//! construct:
+//! two engines share, the case-insensitive option and the shorthand classes
+//! `\d`, `\w` and `\s` with their negations, which both engines read as the
+//! `regex` crate's Unicode classes. It refuses two kinds of construct:
 //!
 //! * An extension the broker does not support. `\p{L}`, `\x61` or a named group
 //!   has no meaning in IEEE 1003.2, and a client relying on one is relying on
@@ -85,15 +86,19 @@ pub fn check_posix_dialect(ast: &Ast) -> Result<(), QueryError> {
         Ast::Concat(concatenation) => concatenation.asts.iter().try_for_each(check_posix_dialect),
         Ast::ClassBracketed(bracketed) => check_class_set(&bracketed.kind),
         Ast::ClassUnicode(_) => Err(unsupported(UNICODE_PROPERTY_CLASS)),
-        Ast::ClassPerl(_) => Err(unsupported(PERL_SHORTHAND_CLASS)),
         Ast::Assertion(assertion) => check_assertion(assertion),
         Ast::Literal(literal) => check_literal(literal),
         Ast::Flags(flags) => check_set_flags(flags),
         // The empty expression and `.` are POSIX.2 itself. `.` matches a
         // newline in both engines because [`crate::pattern::Pattern`] compiles
         // with `dot_matches_new_line`, which is PostgreSQL's default and the
-        // POSIX.2 reading.
-        Ast::Empty(_) | Ast::Dot(_) => Ok(()),
+        // POSIX.2 reading. PostgreSQL's own `\d`, `\w` and `\s` classify by
+        // the operand's collation, which is ASCII alone under `COLLATE "C"`,
+        // but the store never sees the shorthand: the restatement writes out
+        // the Unicode class the `regex` crate compiled it to (`Nd`, the UTS #18
+        // word characters, `White_Space`), see
+        // [`crate::portable_pattern::PortablePattern`].
+        Ast::Empty(_) | Ast::Dot(_) | Ast::ClassPerl(_) => Ok(()),
     }
 }
 
@@ -142,7 +147,7 @@ fn check_group(group: &Group) -> Result<(), QueryError> {
 /// [`crate::portable_pattern::PortablePattern`] writes out the fold sets it
 /// governs. Scoping `m`, `s` or `x` would render as faithfully, but the
 /// admitted set is kept to the option the both-engine integration suite
-/// (`tests/pattern_case_folding`) verifies.
+/// (`tests/unicode_pattern`) verifies.
 fn check_group_flags(flags: &Flags) -> Result<(), QueryError> {
     flags.items.iter().try_for_each(|item| match &item.kind {
         FlagsItemKind::Negation | FlagsItemKind::Flag(Flag::CaseInsensitive) => Ok(()),
@@ -249,11 +254,12 @@ fn check_class_set(set: &ClassSet) -> Result<(), QueryError> {
 /// Walk one member of a bracket expression.
 ///
 /// A bracketed Unicode property class is rejected for the reason a bare one is:
-/// PostgreSQL answers `[\p{L}]` with "invalid escape \ sequence".
+/// PostgreSQL answers `[\p{L}]` with "invalid escape \ sequence". A bracketed
+/// shorthand class is admitted for the reason a bare one is, see
+/// [`check_posix_dialect`].
 fn check_class_set_item(item: &ClassSetItem) -> Result<(), QueryError> {
     match item {
         ClassSetItem::Unicode(_) => Err(unsupported(UNICODE_PROPERTY_CLASS)),
-        ClassSetItem::Perl(_) => Err(unsupported(PERL_SHORTHAND_CLASS)),
         ClassSetItem::Bracketed(_) => Err(unsupported(NESTED_BRACKET_EXPRESSION)),
         ClassSetItem::Ascii(class) => check_ascii_class(class),
         ClassSetItem::Literal(literal) => check_literal(literal),
@@ -261,7 +267,7 @@ fn check_class_set_item(item: &ClassSetItem) -> Result<(), QueryError> {
         ClassSetItem::Union(union) => check_class_set_union(union),
         // An empty bracket expression carries nothing either engine can read
         // differently.
-        ClassSetItem::Empty(_) => Ok(()),
+        ClassSetItem::Empty(_) | ClassSetItem::Perl(_) => Ok(()),
     }
 }
 
@@ -350,9 +356,6 @@ const NEGATED_EMBEDDED_OPTION: &str = "a negated embedded option other than (?-i
 
 /// How the rejection names a repetition count above `RE_DUP_MAX`.
 const REPETITION_COUNT: &str = "a repetition count above 255";
-
-/// How the rejection names a Perl shorthand class.
-const PERL_SHORTHAND_CLASS: &str = "a Perl shorthand class (\\d, \\w, \\s and their negations)";
 
 /// How the rejection names a bracket expression nested inside another.
 const NESTED_BRACKET_EXPRESSION: &str = "a bracket expression nested inside another ([[=a=]], [[.a.]], [[abc]])";
@@ -504,15 +507,41 @@ mod tests {
         each_is_refused(&["\\x61", "Merc\\x33de", "[\\x61]", "\\x{61}", "a[\\x41-\\x5A]"]);
     }
 
-    /// The Perl shorthand classes are outside IEEE 1003.2 and classify
-    /// differently from engine to engine: the `regex` crate applies Unicode
-    /// properties, so `\w` matches `é` and `ß`, `\d` matches `٣` (U+0663) and
-    /// `\s` matches U+00A0, while PostgreSQL over the `COLLATE "C"` operand
-    /// every pattern is applied to classifies only ASCII and matches none of
-    /// them.
+    /// The shorthand classes are admitted bare, bracketed and negated, and
+    /// classify by Unicode: `\w` holds the letters of every European language,
+    /// `\d` every decimal digit and `\s` every `White_Space` character. The
+    /// store runs the same classes, written out as ranges; PostgreSQL's own
+    /// shorthand over a `COLLATE "C"` operand would have matched none of the
+    /// non-ASCII subjects here.
     #[test]
-    fn a_unicode_aware_shorthand_the_two_engines_read_differently_is_refused() {
-        each_is_refused(&["\\d+", "\\w", "\\s", "\\D", "\\W", "\\S", "[\\d]", "[\\w]", "[\\s]"]);
+    fn a_shorthand_class_is_admitted_and_classifies_by_unicode() {
+        for (raw, matching, rejecting) in [
+            (
+                "^\\w+$",
+                &["čebela", "Škofja", "straße", "Ærø", "łódź", "Ελλάδα", "Ǆ", "e\u{301}", "a_1"][..],
+                &["a-b", "a b", "a.b", ""][..],
+            ),
+            ("^\\d+$", &["0123456789", "\u{663}", "\u{967}", "\u{FF11}"], &["a", "\u{B2}", "\u{2167}", "½"]),
+            (
+                "^\\s$",
+                &[" ", "\t", "\n", "\u{B}", "\u{C}", "\r", "\u{85}", "\u{A0}", "\u{2028}", "\u{3000}"],
+                &["a", "\u{200B}", "\u{FEFF}", "_"],
+            ),
+            ("^\\W$", &["-", " ", "\u{B2}"], &["č", "_", "\u{663}"]),
+            ("^\\D$", &["a", "\u{B2}"], &["7", "\u{663}"]),
+            ("^\\S$", &["a", "\u{200B}"], &[" ", "\u{A0}"]),
+            ("^[\\w:\\-]+$", &["urn:ngsi-ld:čebela-1", "Žalec-12"][..], &["a b"][..]),
+            ("^[\\d.]+$", &["1.5", "\u{663}.\u{664}"], &["1,5"]),
+            ("^[^\\s]+$", &["čebela"], &["č ebela"]),
+        ] {
+            let pattern = Pattern::parse(raw).unwrap_or_else(|error| panic!("{raw} is admitted: {error:?}"));
+            for subject in matching {
+                assert!(pattern.is_match(subject), "{raw} must match {subject:?}");
+            }
+            for subject in rejecting {
+                assert!(!pattern.is_match(subject), "{raw} must not match {subject:?}");
+            }
+        }
     }
 
     /// Clause 4.9 mandates IEEE 1003.2, so every POSIX.2 extended regular

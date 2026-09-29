@@ -198,7 +198,6 @@ const BASE_SUITES: &[Suite] = &[
     Suite::parallel("notification"),
     Suite::parallel("notification_join"),
     Suite::parallel("pagination"),
-    Suite::parallel("pattern_case_folding"),
     Suite::parallel("prefer"),
     Suite::parallel("profile"),
     Suite::parallel("query_access_paths"),
@@ -212,6 +211,7 @@ const BASE_SUITES: &[Suite] = &[
     Suite::parallel("temporal_semantics"),
     Suite::serial("tenant_management"),
     Suite::serial("tenant_schema"),
+    Suite::parallel("unicode_pattern"),
     Suite::parallel("unit_catalog"),
 ];
 

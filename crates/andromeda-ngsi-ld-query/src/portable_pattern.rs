@@ -23,6 +23,11 @@
 //!   `regex` crate's does not.
 //! * `(?x)` has already dropped the whitespace and the comments it allows, and
 //!   `.` has already been read with `dot_matches_new_line`.
+//! * `\d`, `\w` and `\s` and their negations are the `regex` crate's Unicode
+//!   classes -- `Nd`, the UTS #18 word characters and `White_Space` -- and are
+//!   written as the ranges of those classes, some seven hundred of them for
+//!   `\w`. PostgreSQL's own shorthand classifies by the operand's collation,
+//!   which under `COLLATE "C"` is ASCII alone.
 //!
 //! Every character is written as itself. A numeric escape is never emitted,
 //! because the two engines size them differently, and no class shorthand is
@@ -51,7 +56,8 @@ pub struct PortablePattern(String);
 /// every restatement an older revision produced. It is bumped by hand whenever
 /// the restatement of some admitted pattern would change: a change to this
 /// module or to [`crate::posix_dialect`] that alters an output, or an upgrade of
-/// `regex-syntax`, whose tables the case-fold sets are taken from. A unit test
+/// `regex-syntax`, whose Unicode tables the case-fold sets and the shorthand
+/// classes are taken from. A unit test
 /// pins the current revision to the `regex-syntax` version `Cargo.lock` holds,
 /// so an upgrade cannot land without a decision about the revision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
@@ -448,6 +454,37 @@ mod tests {
     #[test]
     fn a_class_holding_every_character_is_written_as_a_dot() {
         assert_eq!(portable("a.b"), "a.b");
+        assert_eq!(portable(r"[\w\W]"), ".");
+        assert_eq!(portable(r"[\s\S]"), ".");
+    }
+
+    /// `\s` is `White_Space`, written out whole; its negation holds U+0000 and
+    /// is written as the negation of `\s`.
+    #[test]
+    fn a_white_space_shorthand_is_written_as_every_white_space_character() {
+        let white_space = "\t-\r \u{85}\u{A0}\u{1680}\u{2000}-\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}";
+        assert_eq!(portable(r"\s"), format!("[{white_space}]"));
+        assert_eq!(portable(r"\S"), format!("[^{white_space}]"));
+        assert_eq!(portable(r"[^\s]"), format!("[^{white_space}]"));
+    }
+
+    /// `\d` is every decimal digit and `\w` every word character Unicode
+    /// defines, not the ASCII ones PostgreSQL's own shorthand is under
+    /// `COLLATE "C"`: the restatement opens with the ASCII members and goes on
+    /// to the Arabic-Indic digits and the Latin-1 letters.
+    #[test]
+    fn a_digit_or_word_shorthand_is_written_as_its_unicode_ranges() {
+        assert!(portable(r"\d").starts_with("[0-9\u{660}-\u{669}\u{6F0}-\u{6F9}"), "{}", portable(r"\d"));
+        assert!(portable(r"\D").starts_with("[^0-9\u{660}-\u{669}"), "{}", portable(r"\D"));
+        assert!(portable(r"\w").starts_with("[0-9A-Z_a-zªµºÀ-ÖØ-ö"), "{}", portable(r"\w"));
+        assert!(portable(r"\W").starts_with("[^0-9A-Z_a-zªµºÀ-ÖØ-ö"), "{}", portable(r"\W"));
+    }
+
+    /// Every word character's simple case folds are word characters too, so
+    /// `(?i)` leaves `\w` as it is.
+    #[test]
+    fn a_case_insensitive_word_shorthand_is_the_word_shorthand() {
+        assert_eq!(portable(r"(?i)\w"), portable(r"\w"));
     }
 
     /// The workspace lock file, which fixes the `regex-syntax` the fold sets
@@ -463,14 +500,15 @@ mod tests {
     }
 
     /// Revision 1 was rendered from `regex-syntax` 0.8.11 (Unicode 16.0 case
-    /// folding). Moving the lock to another version fails here until the
-    /// revision is bumped with it, so stored restatements are rendered again.
+    /// folding and properties). Moving the lock to another version fails here
+    /// until the revision is bumped with it, so stored restatements are rendered
+    /// again.
     #[test]
     fn the_rendering_revision_is_pinned_to_the_locked_regex_syntax() {
         assert_eq!(
             (PortablePattern::RENDERING_REVISION, locked_version(CARGO_LOCK, "regex-syntax")),
             (RenderingRevision(1), Some("0.8.11")),
-            "a regex-syntax upgrade can change the case-fold sets: bump RENDERING_REVISION and this pin together"
+            "a regex-syntax upgrade can change the case-fold sets and the shorthand classes: bump RENDERING_REVISION and this pin together"
         );
     }
 

@@ -85,8 +85,8 @@ fn stored_member(pattern: &str) -> Value {
 /// The registration stores, keyed by the pattern as written, the restatement
 /// the store evaluates; the representation clients read keeps the text.
 #[tokio::test]
-async fn case_folding_registration_stores_each_pattern_beside_its_restatement() {
-    let scope = TestEnvironment::from_suite("pattern_case_folding").await.expect("isolated test environment");
+async fn unicode_pattern_registration_stores_each_pattern_beside_its_restatement() {
+    let scope = TestEnvironment::from_suite("unicode_pattern").await.expect("isolated test environment");
     let entity_type = scope.entity_type("StoredHive");
     let pattern = folded_segment_pattern(&scope, "hive");
     let registration = register(
@@ -116,8 +116,8 @@ async fn case_folding_registration_stores_each_pattern_beside_its_restatement() 
 /// Clause 5.12, third condition: an identifier discovery names matches the
 /// registered pattern, which folds the enclosed segment only.
 #[tokio::test]
-async fn case_folding_registration_discovery_by_identifier_evaluates_the_registered_pattern() {
-    let scope = TestEnvironment::from_suite("pattern_case_folding").await.expect("isolated test environment");
+async fn unicode_pattern_registration_discovery_by_identifier_evaluates_the_registered_pattern() {
+    let scope = TestEnvironment::from_suite("unicode_pattern").await.expect("isolated test environment");
     let entity_type = scope.entity_type("DiscoveredHive");
     let pattern = folded_segment_pattern(&scope, "hive");
     let registration = register(
@@ -136,12 +136,44 @@ async fn case_folding_registration_discovery_by_identifier_evaluates_the_registe
     scope.finish().await.expect("cleanup failed");
 }
 
+/// A registered pattern built from shorthand classes is stored as their
+/// Unicode ranges and evaluated as such: `\w+` covers one segment of word
+/// characters, `\d+` one of digits, and neither covers a hyphen.
+#[tokio::test]
+async fn unicode_pattern_registration_a_shorthand_class_pattern_is_stored_as_its_ranges_and_evaluated() {
+    let scope = TestEnvironment::from_suite("unicode_pattern").await.expect("isolated test environment");
+    let entity_type = scope.entity_type("ClassedHive");
+    let pattern = format!(r"^{}:\w+:\d+$", regex::escape(scope.id_prefix()));
+    let registration = register(
+        &scope,
+        "Registration:classed",
+        json!({"type": entity_type, "idPattern": pattern}),
+        UNREACHED_ENDPOINT,
+    )
+    .await;
+
+    let forms = stored_forms(&scope, &registration).await;
+    assert_eq!(forms, Some(stored_member(&pattern)));
+    let restatement = forms.as_ref().and_then(|forms| forms[pattern.as_str()].as_str()).unwrap_or_default();
+    assert!(
+        !restatement.contains(r"\w") && !restatement.contains(r"\d"),
+        "no shorthand is left for PostgreSQL to read: {restatement}"
+    );
+
+    for (local, covered) in [("Hive_1:12", true), ("Hive:x", false), ("Hi-ve:1", false)] {
+        let found = discovered(&scope, &entity_type, &identifier_criteria(&scope.id(local))).await;
+        assert_eq!(found.contains(&registration), covered, "{local}: {found:?}");
+    }
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// Clause 5.12, fourth condition: the pattern discovery names matches a
 /// registered identifier; the queried pattern is evaluated as its restatement
 /// too.
 #[tokio::test]
-async fn case_folding_registration_discovery_by_pattern_matches_a_registered_identifier() {
-    let scope = TestEnvironment::from_suite("pattern_case_folding").await.expect("isolated test environment");
+async fn unicode_pattern_registration_discovery_by_pattern_matches_a_registered_identifier() {
+    let scope = TestEnvironment::from_suite("unicode_pattern").await.expect("isolated test environment");
     let entity_type = scope.entity_type("PatternHive");
     let registration = register(
         &scope,
@@ -162,8 +194,8 @@ async fn case_folding_registration_discovery_by_pattern_matches_a_registered_ide
 /// Replacing the `information` replaces the stored restatements with it: the
 /// old pattern no longer covers anything and the new one does.
 #[tokio::test]
-async fn case_folding_registration_an_update_rewrites_the_stored_restatements() {
-    let scope = TestEnvironment::from_suite("pattern_case_folding").await.expect("isolated test environment");
+async fn unicode_pattern_registration_an_update_rewrites_the_stored_restatements() {
+    let scope = TestEnvironment::from_suite("unicode_pattern").await.expect("isolated test environment");
     let entity_type = scope.entity_type("UpdatedHive");
     let hive = folded_segment_pattern(&scope, "hive");
     let wasp = folded_segment_pattern(&scope, "wasp");
@@ -196,8 +228,8 @@ async fn case_folding_registration_an_update_rewrites_the_stored_restatements() 
 /// the tenant is opened again, and the refresh a broker runs on opening renders
 /// it again from the registration's `information`.
 #[tokio::test]
-async fn case_folding_registration_a_restatement_an_older_rendering_stored_is_rendered_again() {
-    let scope = TestEnvironment::from_suite("pattern_case_folding").await.expect("isolated test environment");
+async fn unicode_pattern_registration_a_restatement_an_older_rendering_stored_is_rendered_again() {
+    let scope = TestEnvironment::from_suite("unicode_pattern").await.expect("isolated test environment");
     let entity_type = scope.entity_type("RefreshedHive");
     let pattern = folded_segment_pattern(&scope, "hive");
     let registration = register(
@@ -238,8 +270,8 @@ async fn case_folding_registration_a_restatement_an_older_rendering_stored_is_re
 /// Clause 5.10.2: a retrieval is forwarded to the registration whose pattern
 /// covers the identifier, and to no registration whose pattern does not.
 #[tokio::test]
-async fn case_folding_registration_forwarding_reaches_the_source_whose_pattern_covers_the_identifier() {
-    let scope = TestEnvironment::from_suite("pattern_case_folding").await.expect("isolated test environment");
+async fn unicode_pattern_registration_forwarding_reaches_the_source_whose_pattern_covers_the_identifier() {
+    let scope = TestEnvironment::from_suite("unicode_pattern").await.expect("isolated test environment");
     let source = ContextSourceServer::start(MockServerConfig::from_environment().expect("valid callback configuration"))
         .await
         .expect("context source must start");
