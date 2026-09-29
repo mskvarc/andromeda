@@ -6,6 +6,7 @@ use andromeda_http_extraction::{
     content_length_precondition::DeclaredBodyLength,
     origin::RequestOrigin,
     query::ValidatedQuery,
+    request_payload::RequestPayload,
     tenant_state::ExistingTenantState,
 };
 use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location, problem_response::ProblemResponse};
@@ -13,7 +14,6 @@ use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_request::jsonld_context::{DeleteParams, ListParams, ServeParams};
 use axum::{
     Json,
-    body::Bytes,
     extract::{OriginalUri, Path},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -33,7 +33,7 @@ pub(crate) async fn create(
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
     RequestOrigin(base_url): RequestOrigin,
-    body: Bytes,
+    RequestPayload(body): RequestPayload,
 ) -> Result<Response, ProblemResponse> {
     let payload: Value = serde_json::from_slice(&body).map_err(|error| {
         ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, format!("request body is not valid JSON: {error}")).with_instance(uri.clone())

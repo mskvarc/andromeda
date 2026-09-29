@@ -5,11 +5,11 @@ use crate::{
     handler::{nonexistent_tenant, parse_tenant_name},
     state::TenancyRouteState,
 };
+use andromeda_http_extraction::json_payload::JsonPayload;
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_tenancy::status::TenantStatus;
 use axum::{
-    Json,
     extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -44,7 +44,7 @@ pub async fn patch(
     State(state): State<TenancyRouteState>,
     OriginalUri(uri): OriginalUri,
     Path(tenant_name): Path<String>,
-    Json(body): Json<TenantPatch>,
+    JsonPayload(body): JsonPayload<TenantPatch>,
 ) -> Result<Response, ProblemResponse> {
     let name = parse_tenant_name(tenant_name, &uri)?;
     let Some(is_active) = body.is_active else {

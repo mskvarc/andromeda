@@ -134,10 +134,6 @@ where
     }
 }
 
-pub(crate) fn invalid_request(detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, detail).with_instance(instance.clone())
-}
-
 pub(crate) fn bad_request_data(detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
     ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail).with_instance(instance.clone())
 }

@@ -10,7 +10,6 @@ mod server_timing;
 
 use crate::{
     config::{HttpStackConfig, server_timing::ServerTimingConfig},
-    request_body_limit::RequestBodyLimit,
     stack::{
         compression_layer::build_compression_layer,
         cors_layer::build_cors_layer,
@@ -21,6 +20,7 @@ use crate::{
         server_timing::apply_server_timing,
     },
 };
+use andromeda_http_extraction::request_body_limit::RequestBodyLimit;
 use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
 use andromeda_http_tenancy::propagation::echo_tenant_header;
 use axum::{
@@ -120,6 +120,9 @@ impl HttpStack {
         // rather than inheriting a permissive default.
         let mut router = router
             .layer(Extension(self.forwarded_headers))
+            // The limit travels with the request as well as bounding it, so a
+            // payload reader refusing a body names the size it would accept.
+            .layer(Extension(self.request_body_limit))
             .layer(DefaultBodyLimit::max(self.request_body_limit.bytes()));
         if let Some(helmet) = &self.helmet {
             router = router.layer(helmet.clone());

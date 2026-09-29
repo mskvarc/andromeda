@@ -4,13 +4,13 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod config;
-pub mod request_body_limit;
 pub mod stack;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-configuration-scalars",
+        "andromeda-http-extraction",
         "andromeda-http-headers",
         "andromeda-http-tenancy",
     ],

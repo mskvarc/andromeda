@@ -11,6 +11,7 @@ use crate::{
     addressed_uri::addressed_request_uri,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     context::ContextUrl,
+    request_payload::buffer_payload,
 };
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -110,7 +111,7 @@ where
         // absent Content-Length with a bare 411 before the Content-Type is
         // looked at: a request that declares no payload length has declared no
         // payload for the media type to describe.
-        declared_body_length(&parts.headers).map_err(|error| error.into_rejection(uri.clone()).into_response())?; // clone: the media-type refusal below names the same request
+        let declared = declared_body_length(&parts.headers).map_err(|error| error.into_rejection(uri.clone()).into_response())?; // clone: the media-type refusal below names the same request
         // Clause 6.3.4: "Unsupported Media Type, i.e. 'Content-Type' header is
         // not 'application/json' nor 'application/ld+json', shall result in
         // just a 415 HTTP status code (without any payload body)". This is the
@@ -130,11 +131,14 @@ where
             )
             .into_response());
         }
-        // Move headers out before reassembling the request for body extraction.
-        // Bytes::from_request does not inspect headers, so empty headers are safe.
+        // Move headers out before reassembling the request for body extraction:
+        // the payload reader looks only at the declared length it is handed and
+        // the size limit the request's extensions carry, never at a header.
         let headers = take(&mut parts.headers);
         let req = Request::from_parts(parts, body);
-        let body = Bytes::from_request(req, state).await.map_err(IntoResponse::into_response)?;
+        let body = buffer_payload(req, state, declared, uri.clone()) // clone: an empty payload below names the same request
+            .await
+            .map_err(IntoResponse::into_response)?;
         // A declared length the payload did not carry leaves clause 5.5.4 with
         // no JSON document to read, which is the same refusal a declared length
         // of zero draws.

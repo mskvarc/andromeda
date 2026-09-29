@@ -2,7 +2,7 @@
 
 use crate::{
     creation::{CreationRendering, MapCreation, create_map},
-    error::{EntityMapResultExt, bad_request_data, internal_problem, invalid_request},
+    error::{EntityMapResultExt, bad_request_data, internal_problem},
     forwarded_query_string::{ForwardedFilters, body_query_string, forwarded_query_string, forwarded_temporal_query_string, temporal_body_query_string},
     state::{EntityMapRouteServices, EntityMapTenantState},
     validation::{validate_entity_map_query, validate_temporal_entity_map_query},
@@ -13,7 +13,7 @@ use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     context::ContextUrl,
     entity_query::EntityQuery,
-    json_body::classify_json_body,
+    json_payload::JsonPayload,
     jsonld::JsonLd,
     prefer::PreferHeader,
     request_envelope::NgsiLdRequestEnvelope,
@@ -37,8 +37,7 @@ use andromeda_ngsi_ld_request::{
 };
 use andromeda_temporal::requested_identifiers::RequestedIdentifiers;
 use axum::{
-    Json,
-    extract::{OriginalUri, rejection::JsonRejection},
+    extract::OriginalUri,
     http::{StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
 };
@@ -70,10 +69,8 @@ pub async fn update(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(entity_map_id): TypedPath<Uri>,
-    body: Result<Json<UpdateEntityMapBody>, JsonRejection>,
+    JsonPayload(body): JsonPayload<UpdateEntityMapBody>,
 ) -> Result<Response, ProblemResponse> {
-    let Json(body) =
-        body.map_err(|rejection| classify_json_body(&rejection).map(|detail| invalid_request(detail, &uri), |detail| bad_request_data(detail, &uri)))?;
     let expires_at = body.expires_at.ok_or_else(|| bad_request_data("expiresAt is required", &uri))?;
 
     if expires_at <= chrono::Utc::now() {

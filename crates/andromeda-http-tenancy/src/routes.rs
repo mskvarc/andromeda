@@ -141,16 +141,14 @@ mod tests {
             (Method::GET, "/tenants/acme", StatusCode::OK),
             (Method::PATCH, "/tenants/acme", StatusCode::NO_CONTENT),
         ] {
-            let body = if method == Method::PATCH {
-                Body::from("{\"isActive\":false}")
-            } else {
-                Body::empty()
-            };
+            // Clause 6.3.4: a PATCH declares its payload length.
+            let payload = if method == Method::PATCH { "{\"isActive\":false}" } else { "" };
             let request = Request::builder()
                 .method(method.clone())
                 .uri(path)
                 .header("content-type", "application/json")
-                .body(body)?;
+                .header("content-length", payload.len())
+                .body(Body::from(payload))?;
             let response = router.clone().oneshot(request).await?;
             pretty_assertions::assert_eq!(response.status(), expected, "{method} {path}");
         }

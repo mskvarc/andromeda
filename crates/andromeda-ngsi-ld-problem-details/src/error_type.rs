@@ -49,6 +49,9 @@ pub enum NgsiLdErrorType {
     /// The requested tenant does not exist (404).
     #[strum(to_string = "Nonexistent tenant")]
     NonexistentTenant,
+    /// The request payload body is larger than the broker accepts (413).
+    #[strum(to_string = "Request entity too large")]
+    RequestEntityTooLarge,
 }
 
 impl NgsiLdErrorType {
@@ -68,6 +71,7 @@ impl NgsiLdErrorType {
             NgsiLdErrorType::LdContextNotAvailable => iri!("https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable"),
             NgsiLdErrorType::NoMultiTenantSupport => iri!("https://uri.etsi.org/ngsi-ld/errors/NoMultiTenantSupport"),
             NgsiLdErrorType::NonexistentTenant => iri!("https://uri.etsi.org/ngsi-ld/errors/NonexistentTenant"),
+            NgsiLdErrorType::RequestEntityTooLarge => iri!("https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge"),
         }
     }
 
@@ -82,7 +86,7 @@ impl NgsiLdErrorType {
     ///
     /// Searches the variants rather than matching a second list of IRIs: a
     /// hand-written inverse can drift from [`type_iri`](Self::type_iri), and a
-    /// twelve-element scan costs nothing on a path that runs once per
+    /// thirteen-element scan costs nothing on a path that runs once per
     /// deserialised batch error.
     #[must_use]
     pub fn from_type_iri(iri: &IriRefBuf) -> Option<NgsiLdErrorType> {
@@ -107,6 +111,7 @@ impl NgsiLdErrorType {
             NgsiLdErrorType::TooComplexQuery | NgsiLdErrorType::TooManyResults => StatusCode::FORBIDDEN,
             NgsiLdErrorType::LdContextNotAvailable => StatusCode::GATEWAY_TIMEOUT,
             NgsiLdErrorType::NoMultiTenantSupport => StatusCode::NOT_IMPLEMENTED,
+            NgsiLdErrorType::RequestEntityTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         }
     }
 }
@@ -192,6 +197,12 @@ mod tests {
             ),
             (NgsiLdErrorType::TooComplexQuery, "TooComplexQuery", "Too complex query", StatusCode::FORBIDDEN),
             (NgsiLdErrorType::TooManyResults, "TooManyResults", "Too many results", StatusCode::FORBIDDEN),
+            (
+                NgsiLdErrorType::RequestEntityTooLarge,
+                "RequestEntityTooLarge",
+                "Request entity too large",
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
         ] {
             pretty_assertions::assert_eq!(category.type_iri().as_str(), format!("https://uri.etsi.org/ngsi-ld/errors/{suffix}"));
             pretty_assertions::assert_eq!(category.title(), title);

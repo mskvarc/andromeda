@@ -7,13 +7,13 @@
 use crate::{
     addressed_uri::addressed_request_uri,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
+    request_payload::buffer_payload,
 };
 use andromeda_http_headers::link::header::Link;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact, deserialize_exact_document};
 use axum::{
-    body::Bytes,
     extract::{FromRequest, Request},
     http::{StatusCode, Uri, header::LINK},
 };
@@ -230,7 +230,7 @@ async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedB
     // Clause 6.3.4: the payload length is checked before the payload is
     // looked at, so an absent Content-Length is the bare 411 the clause
     // requires rather than a decoding failure.
-    declared_body_length(req.headers()).map_err(|error| error.into_rejection(uri.clone()))?;
+    let declared = declared_body_length(req.headers()).map_err(|error| error.into_rejection(uri.clone()))?;
     let content_type_raw = req
         .headers()
         .typed_get::<headers::ContentType>()
@@ -265,9 +265,7 @@ async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedB
         }
     }
 
-    let bytes = Bytes::from_request(req, state)
-        .await
-        .map_err(|e| ExtractorRejection::invalid_request(format!("Invalid request body: {e}"), uri.clone()))?;
+    let bytes = buffer_payload(req, state, declared, uri.clone()).await?;
 
     // A declared length the payload did not carry leaves clause 5.5.4 with
     // no JSON document to read, which is the refusal the `Content-Length`

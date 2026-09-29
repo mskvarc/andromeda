@@ -863,6 +863,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration-scalars",
+ "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-tenancy",
  "axum",
