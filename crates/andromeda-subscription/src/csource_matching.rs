@@ -54,7 +54,7 @@ pub fn csource_subscription_selects_registration(sub: &CompiledCsrSubscription, 
     };
     registration.coverage.information.iter().any(|info| specification.matches_information(info))
         && temporal_partition_admits(sub.temporal_q.as_ref(), registration)
-        && geo_query_admits(sub.geo_q.as_ref(), registration)
+        && sub.geo_q.admits(|geo_q| geo_query_admits(geo_q, registration))
         && scope_query_admits(sub, registration)
         && context_source_filter_admits(sub, registration)
 }
@@ -92,10 +92,7 @@ fn temporal_partition_admits(temporal_q: Option<&CompiledCsrTemporalFilter>, reg
 /// Clause 5.11.2.4: the geoquery is matched against the registration's
 /// geometry, and a registration declaring none may still cover the area, so it
 /// matches.
-fn geo_query_admits(geo_q: Option<&GeoQuery>, registration: &ContextSourceRegistration) -> bool {
-    let Some(geo_q) = geo_q else {
-        return true;
-    };
+fn geo_query_admits(geo_q: &GeoQuery, registration: &ContextSourceRegistration) -> bool {
     let Some(declared) = registration_geometry(geo_q, registration) else {
         return true;
     };
@@ -144,9 +141,9 @@ fn context_source_filter_admits(sub: &CompiledCsrSubscription, registration: &Co
 #[cfg(test)]
 mod tests {
     use crate::{
-        compilation::compile_geo_q,
         compiled::CompiledCsrSubscription,
         csource_matching::{csource_subscription_follows_registration_changes, csource_subscription_selects_registration, matching_information},
+        geo_filter::SubscriptionGeoFilter,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{
@@ -180,7 +177,7 @@ mod tests {
             selectors: Vec::new(),
             matching_attrs: Vec::new(),
             temporal_q: None,
-            geo_q: None,
+            geo_q: SubscriptionGeoFilter::Unrestricted,
             scope_q: None,
             throttling_secs: None,
             time_interval_secs: None,
@@ -310,8 +307,8 @@ mod tests {
     #[test]
     fn the_geoquery_is_matched_against_the_registration_location() {
         let mut sub = subscription();
-        sub.geo_q = compile_geo_q(
-            &json!({"georel": "near;maxDistance==3000", "geometry": "Point", "coordinates": [13.404, 52.520]}),
+        sub.geo_q = SubscriptionGeoFilter::from_stored(
+            Some(&json!({"georel": "near;maxDistance==3000", "geometry": "Point", "coordinates": [13.404, 52.520]})),
             "urn:ngsi-ld:Subscription:csource",
         );
         let berlin = registration(&json!({"location": {"type": "Point", "coordinates": [13.404, 52.520]}}));
@@ -319,6 +316,20 @@ mod tests {
         assert!(notified_of_change(&sub, &berlin));
         assert!(!notified_of_change(&sub, &paris));
         assert!(notified_of_change(&sub, &registration(&json!({}))), "no location declared: possibly contains");
+    }
+
+    /// Clause 5.11.2.4 with clause 5.8.6: a stored `geoQ` that no longer
+    /// compiles is still a defined geoquery, so it selects no registration,
+    /// not even one that declares no location.
+    #[test]
+    fn a_stored_geo_q_that_no_longer_compiles_selects_no_registration() {
+        let mut sub = subscription();
+        sub.geo_q = SubscriptionGeoFilter::from_stored(Some(&json!({"georel": "near;maxDistance==3000"})), "urn:ngsi-ld:Subscription:csource");
+        assert!(!notified_of_change(&sub, &registration(&json!({}))));
+        assert!(!notified_of_change(
+            &sub,
+            &registration(&json!({"location": {"type": "Point", "coordinates": [13.404, 52.520]}}))
+        ));
     }
 
     #[test]

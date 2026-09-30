@@ -11,6 +11,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::expanded::geo_property_admission::validate_expanded_geo_properties;
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
@@ -24,8 +25,9 @@ impl TemporalService {
     ///
     /// Returns [`TemporalError::Validation`] when the payload is not a JSON
     /// object, carries no `@id` or no `@type` (clause 4.5.1), names an
-    /// unparsable identifier, or puts a `unitCode` on an attribute family
-    /// clause 4.5.2 defines without one; [`TemporalError::JsonLd`] when the
+    /// unparsable identifier, puts a `unitCode` on an attribute family clause
+    /// 4.5.2 defines without one, or carries a `GeoProperty` whose geometry is
+    /// unusable (clause 4.7); [`TemporalError::JsonLd`] when the
     /// payload cannot be expanded against `context`; and
     /// [`TemporalError::Commit`] or [`TemporalError::Persistence`] when the
     /// atomic write cannot be landed.
@@ -41,6 +43,7 @@ impl TemporalService {
         normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload, context).await?;
         validate_entity_unit_code_admission(&expanded)?;
+        validate_expanded_geo_properties(&expanded).map_err(TemporalValidationReason::from)?;
         let entity_id = {
             let entity_obj = expanded
                 .as_array()
@@ -82,7 +85,8 @@ impl TemporalService {
     ///
     /// Returns [`TemporalError::NotFound`] when the entity has no Temporal
     /// Evolution, [`TemporalError::Validation`] when the payload puts a
-    /// `unitCode` on an attribute family clause 4.5.2 defines without one,
+    /// `unitCode` on an attribute family clause 4.5.2 defines without one or
+    /// carries a `GeoProperty` whose geometry is unusable (clause 4.7),
     /// [`TemporalError::JsonLd`] when the payload cannot be expanded against
     /// `context`, and [`TemporalError::Commit`] or
     /// [`TemporalError::Persistence`] when the append cannot be landed.
@@ -102,6 +106,7 @@ impl TemporalService {
         normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload, context).await?;
         validate_entity_unit_code_admission(&expanded)?;
+        validate_expanded_geo_properties(&expanded).map_err(TemporalValidationReason::from)?;
         self.commit_evolution(target, entity_id, Arc::new(expanded)).await?;
         Ok(())
     }

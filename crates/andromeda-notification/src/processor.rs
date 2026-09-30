@@ -324,7 +324,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{filter::parser, projection::compiled::Projection, scope::query::ScopeQuery};
     use andromeda_subscription::{
-        compilation::compile_geo_q,
+        geo_filter::SubscriptionGeoFilter,
         matching::{matches_entity_filters, matches_subscription},
     };
     use chrono::{DateTime, Utc};
@@ -383,7 +383,7 @@ mod tests {
             expires_at: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
-            compiled_geo_q: None,
+            compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,
             notification_join: None,
@@ -662,8 +662,8 @@ mod tests {
     #[test]
     fn matches_entity_filters_geo_near() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_geo_q = compile_geo_q(
-            &serde_json::json!({"georel": "near;maxDistance==100000", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}),
+        sub.compiled_geo_q = SubscriptionGeoFilter::from_stored(
+            Some(&serde_json::json!({"georel": "near;maxDistance==100000", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"})),
             "test",
         );
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
@@ -672,8 +672,8 @@ mod tests {
     #[test]
     fn matches_entity_filters_geo_near_too_far() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_geo_q = compile_geo_q(
-            &serde_json::json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}),
+        sub.compiled_geo_q = SubscriptionGeoFilter::from_stored(
+            Some(&serde_json::json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"})),
             "test",
         );
         assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope()));

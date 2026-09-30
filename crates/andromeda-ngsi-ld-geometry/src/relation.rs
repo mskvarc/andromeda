@@ -95,16 +95,18 @@ mod tests {
     use std::str::FromStr;
 
     fn point(longitude: f64, latitude: f64) -> Geometry {
-        Geometry::new(GeometryForm::Point(Position::new(longitude, latitude, None)))
+        Geometry::new(GeometryForm::Point(
+            Position::try_new(longitude, latitude, None).expect("a test position lies on the CRS84 axes"),
+        ))
     }
 
     fn square(centre_longitude: f64, centre_latitude: f64, half: f64) -> Geometry {
         Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![vec![
-            Position::new(centre_longitude - half, centre_latitude - half, None),
-            Position::new(centre_longitude + half, centre_latitude - half, None),
-            Position::new(centre_longitude + half, centre_latitude + half, None),
-            Position::new(centre_longitude - half, centre_latitude + half, None),
-            Position::new(centre_longitude - half, centre_latitude - half, None),
+            Position::try_new(centre_longitude - half, centre_latitude - half, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(centre_longitude + half, centre_latitude - half, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(centre_longitude + half, centre_latitude + half, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(centre_longitude - half, centre_latitude + half, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(centre_longitude - half, centre_latitude - half, None).expect("a test position lies on the CRS84 axes"),
         ]])))
     }
 
@@ -130,7 +132,7 @@ mod tests {
 
     /// Lift one position to the given altitude.
     fn lift_position(position: &Position, altitude: f64) -> Position {
-        Position::new(position.longitude(), position.latitude(), Some(altitude))
+        Position::try_new(position.longitude(), position.latitude(), Some(altitude)).expect("a test position lies on the CRS84 axes")
     }
 
     /// Lift a run of positions to the given altitude.

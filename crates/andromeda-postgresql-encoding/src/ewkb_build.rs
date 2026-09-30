@@ -18,7 +18,7 @@
 
 use andromeda_ngsi_ld_geometry::{
     form::{GeometryForm, PolygonRings},
-    position::Position,
+    position::{Position, PositionError},
 };
 use geozero::{
     CoordDimensions,
@@ -32,8 +32,14 @@ use thiserror::Error;
 /// Every variant describes a callback stream that no well-formed EWKB buffer
 /// produces, so each one means the buffer was malformed or held a geometry
 /// outside the `GeoJSON` model.
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, Copy, PartialEq)]
 pub enum GeometryBuildError {
+    /// A coordinate that is no RFC 7946 position: off the CRS84 axes of
+    /// section 4, or with a non-finite altitude. Every geometry the broker
+    /// writes was built from checked positions, so such a row predates that
+    /// check or was not written by the broker.
+    #[error("the buffer holds a coordinate that is no GeoJSON position: {0}")]
+    Position(#[from] PositionError),
     /// A coordinate arrived while no geometry that holds positions was open.
     #[error("a coordinate arrived outside any geometry that can hold one")]
     UnexpectedCoordinate,
@@ -226,11 +232,13 @@ impl GeomProcessor for GeometryBuilder {
     }
 
     fn coordinate(&mut self, x: f64, y: f64, z: Option<f64>, _m: Option<f64>, _t: Option<f64>, _tm: Option<u64>, _idx: usize) -> GeozeroResult<()> {
-        Ok(self.record(Position::new(x, y, z))?)
+        let position = Position::try_new(x, y, z).map_err(GeometryBuildError::from)?;
+        Ok(self.record(position)?)
     }
 
     fn xy(&mut self, x: f64, y: f64, _idx: usize) -> GeozeroResult<()> {
-        Ok(self.record(Position::new(x, y, None))?)
+        let position = Position::try_new(x, y, None).map_err(GeometryBuildError::from)?;
+        Ok(self.record(position)?)
     }
 
     fn point_begin(&mut self, _idx: usize) -> GeozeroResult<()> {
@@ -458,7 +466,37 @@ mod tests {
         let mut builder = GeometryBuilder::new();
         feed_point(&mut builder, Some(34.5)).expect("a Point may be fed");
         let form = builder.finish().expect("the Point is complete");
-        pretty_assertions::assert_eq!(form, GeometryForm::Point(Position::new(1.0, 2.0, Some(34.5))));
+        pretty_assertions::assert_eq!(
+            form,
+            GeometryForm::Point(Position::try_new(1.0, 2.0, Some(34.5)).expect("a test position lies on the CRS84 axes"))
+        );
+    }
+
+    #[test]
+    fn a_stored_coordinate_past_a_pole_is_refused_rather_than_decoded() {
+        // No write builds such a position any more, so a row holding one is
+        // reported, never turned into a geometry the broker then matches on.
+        let mut builder = GeometryBuilder::new();
+        builder.point_begin(0).expect("a Point may begin");
+        let error = builder
+            .coordinate(0.0, 91.0, None, None, None, None, 0)
+            .expect_err("latitude 91 is no position");
+        pretty_assertions::assert_eq!(
+            error.to_string(),
+            GeozeroError::from(GeometryBuildError::Position(PositionError::LatitudeOutOfRange { latitude: 91.0 })).to_string()
+        );
+    }
+
+    #[test]
+    fn a_stored_coordinate_on_the_ends_of_both_axes_decodes() {
+        let mut builder = GeometryBuilder::new();
+        builder.point_begin(0).expect("a Point may begin");
+        builder.xy(180.0, -90.0, 0).expect("the axis ends are positions");
+        builder.point_end(0).expect("the Point is complete");
+        pretty_assertions::assert_eq!(
+            builder.finish().expect("a Point was built"),
+            GeometryForm::Point(Position::try_new(180.0, -90.0, None).expect("the axis ends are positions"))
+        );
     }
 
     #[test]
@@ -466,7 +504,10 @@ mod tests {
         let mut builder = GeometryBuilder::new();
         feed_point(&mut builder, None).expect("a Point may be fed");
         let form = builder.finish().expect("the Point is complete");
-        pretty_assertions::assert_eq!(form, GeometryForm::Point(Position::new(1.0, 2.0, None)));
+        pretty_assertions::assert_eq!(
+            form,
+            GeometryForm::Point(Position::try_new(1.0, 2.0, None).expect("a test position lies on the CRS84 axes"))
+        );
     }
 
     #[test]

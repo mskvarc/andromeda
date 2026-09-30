@@ -6,7 +6,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ContextSourceRegistration, subscription::SubscriptionStatus};
-use andromeda_subscription::{change::UpsertKind, compiled::CompiledCsrSubscription};
+use andromeda_subscription::{change::UpsertKind, compiled::CompiledCsrSubscription, geo_filter::SubscriptionGeoFilter};
 use futures::future::BoxFuture;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -103,7 +103,7 @@ fn subscription_with(status: SubscriptionStatus, time_interval_secs: Option<f64>
         selectors: vec![serde_json::from_value(json!({"type": VEHICLE})).expect("selector parses")],
         matching_attrs: Vec::new(),
         temporal_q: None,
-        geo_q: None,
+        geo_q: SubscriptionGeoFilter::Unrestricted,
         scope_q: None,
         throttling_secs: None,
         time_interval_secs,

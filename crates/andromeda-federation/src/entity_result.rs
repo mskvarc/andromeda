@@ -8,7 +8,12 @@ use crate::{
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity, registration::forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_model::{
+    attribute::unusable_geometry::first_unusable_geometry,
+    attribute_strip::AttributeStrip,
+    entity::Entity,
+    registration::forwarding_mode::ForwardingMode,
+};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -20,7 +25,8 @@ use tracing::{debug, warn};
 /// Clauses 5.7.1.4 and 5.7.2.4: an entity whose `expiresAt` lies in the past
 /// is discarded, and so is every attribute instance whose own `expiresAt` has
 /// passed (clause 4.5.5.3), before anything is merged. A payload that is not
-/// an entity contributes a clause 6.3.17 warning instead.
+/// an entity, and an entity carrying a geometry clause 4.7 gives no reading of,
+/// contribute a clause 6.3.17 warning instead.
 pub(crate) fn parse_forwarded_entities(csr_id: &Identifier, values: Vec<Value>, now: DateTime<Utc>) -> (Vec<Entity>, Vec<NgsiLdWarning>) {
     let mut entities = Vec::with_capacity(values.len());
     let mut warnings = Vec::new();
@@ -30,6 +36,21 @@ pub(crate) fn parse_forwarded_entities(csr_id: &Identifier, values: Vec<Value>, 
         }
         match deserialize_exact::<Entity>(&value) {
             Ok(mut entity) => {
+                // Clauses 4.7 and 6.3.17: a geometry the broker refuses from
+                // a client is not relayed from a source either. The entity is
+                // dropped with a warning naming the refused position, and the
+                // rest of the answer is merged as usual.
+                if let Some(unusable) = first_unusable_geometry(&entity) {
+                    warn!(
+                        "Context source {} returned entity {} with an unusable geometry: {}",
+                        csr_id, entity.id, unusable
+                    );
+                    warnings.push(NgsiLdWarning::RevalidationFailed(format!(
+                        "Context source {csr_id} returned entity {} whose {unusable}",
+                        entity.id
+                    )));
+                    continue;
+                }
                 if entity.expires_at.is_some_and(|expires_at| expires_at <= now) {
                     debug!("Context source {} returned the expired entity {}, which is discarded", csr_id, entity.id);
                     continue;
@@ -285,6 +306,33 @@ mod tests {
         assert_eq!(warnings, [] as [NgsiLdWarning; 0]);
         let encoded = serde_json::to_string(&entities).expect("forwarded response JSON");
         assert!(encoded.contains("0.100000000000000005"), "{encoded}");
+    }
+
+    /// Clauses 4.7 and 6.3.17: an entity whose geometry is off the WGS 84 axes
+    /// is dropped with a revalidation warning naming the position, and the
+    /// source's other entities are kept.
+    #[test]
+    fn a_forwarded_entity_with_a_geometry_off_the_axes_is_dropped_with_a_warning() {
+        let valid = json!({
+            "id": "urn:ngsi-ld:Vehicle:valid",
+            "type": "Vehicle",
+            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [14.5, 46.05]}}
+        });
+        let invalid = json!({
+            "id": "urn:ngsi-ld:Vehicle:invalid",
+            "type": "Vehicle",
+            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [14.5, 146.05]}}
+        });
+        let (entities, warnings) = parse_forwarded_entities(&registration_id(), vec![valid, invalid], Utc::now());
+        pretty_assertions::assert_eq!(
+            entities.iter().map(|entity| entity.id.as_str()).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:valid"]
+        );
+        let [NgsiLdWarning::RevalidationFailed(detail)] = warnings.as_slice() else {
+            panic!("one revalidation warning is expected: {warnings:?}");
+        };
+        assert!(detail.contains("urn:ngsi-ld:Vehicle:invalid"), "{detail}");
+        assert!(detail.contains("latitude 146.05 is outside [-90, 90]"), "{detail}");
     }
 
     /// Clause 5.7.2.4: an entity whose `expiresAt` lies in the past is

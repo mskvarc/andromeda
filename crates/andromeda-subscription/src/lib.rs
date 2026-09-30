@@ -39,6 +39,8 @@ pub mod expiry;
 mod fields;
 /// The distributed side of the subscription lifecycle, as a port.
 pub mod forwarding_hook;
+/// A subscription's `geoQ`, read once for admission and matching.
+pub mod geo_filter;
 
 /// The grid a periodic (`timeInterval`) subscription notifies on.
 pub mod interval_schedule;

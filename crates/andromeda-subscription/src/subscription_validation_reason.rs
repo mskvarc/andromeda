@@ -9,8 +9,7 @@
 //! `timeInterval`, `expiresAt`, `geoQ`, ...) keep their fixed casing, and clause
 //! numbers stay in doc comments.
 
-use crate::{endpoint_refusal::EndpointRefusal, subscription_member::SubscriptionMember};
-use andromeda_ngsi_ld_geometry::geojson::GeometryError;
+use crate::{endpoint_refusal::EndpointRefusal, geo_filter::GeoQError, subscription_member::SubscriptionMember};
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, spec_version::SpecVersionParseError};
 use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
 use thiserror::Error;
@@ -154,30 +153,10 @@ pub enum SubscriptionValidationReason {
     /// cannot represent the previous value.
     #[error("notification.showChanges cannot be true when notification.format is keyValues")]
     ShowChangesWithKeyValues,
-    /// The `geoQ.geometry` member was not a string.
-    #[error("geoQ geometry must be a GeoJSON geometry type string")]
-    GeoQGeometryNotString,
-    /// The `geoQ.geometry` string named no `GeoJSON` geometry type.
-    #[error("geoQ geometry: {source}")]
-    GeoQGeometryType {
-        /// The unknown geometry-type token.
-        #[source]
-        source: strum::ParseError,
-    },
-    /// The `geoQ.coordinates` member was a string that was not JSON.
-    #[error("geoQ coordinates: {source}")]
-    GeoQCoordinates {
-        /// The JSON parse failure.
-        #[source]
-        source: serde_json::Error,
-    },
-    /// The `geoQ` geometry and coordinates did not form a `GeoJSON` geometry.
-    #[error("geoQ reference geometry: {source}")]
-    GeoQReferenceGeometry {
-        /// The geometry decoding failure.
-        #[source]
-        source: GeometryError,
-    },
+    /// The `geoQ` is not a `GeoQuery` the broker can evaluate (clause 5.2.13,
+    /// Table 5.2.13-1, clause 4.10).
+    #[error(transparent)]
+    GeoQ(GeoQError),
     /// The subscription `id` was not a `URI`.
     #[error("subscription id must be a valid URI: {source}")]
     SubscriptionId {

@@ -14,5 +14,6 @@ pub mod object_list;
 pub mod one_or_many;
 pub mod property;
 pub mod relationship;
+pub mod unusable_geometry;
 pub mod value;
 pub mod vocab_property;

@@ -2,8 +2,7 @@
 //! clauses around it place on a create body or an update fragment, checked
 //! before any of it is expanded or stored.
 
-use crate::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
-use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType};
+use crate::{error::SubscriptionError, geo_filter::compile_geo_q, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_ngsi_ld_query::{
     filter::{expression::Expr, parser, predicate::Predicate},
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
@@ -158,8 +157,10 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         }
     }
 
-    if let Some(geo_q) = payload.get("geoQ") {
-        validate_geo_q_geometry(geo_q)?;
+    // An update fragment's `null` asks for the `geoQ` to be removed (clause
+    // 5.5.8), which leaves nothing to validate.
+    if let Some(geo_q) = payload.get("geoQ").filter(|geo_q| !geo_q.is_null()) {
+        compile_geo_q(geo_q).map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::GeoQ(source)))?;
     }
 
     if let Some(watched) = payload.get("watchedAttributes")
@@ -245,38 +246,6 @@ fn validate_show_changes_format(notification: &Value) -> Result<(), Subscription
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::ShowChangesWithKeyValues));
     }
     Ok(())
-}
-
-/// Reject a `geoQ` whose `geometry` and `coordinates` do not form a usable
-/// RFC 7946 geometry (clause 4.10, Table 5.2.13-1).
-///
-/// Checked here rather than left to compilation because a stored `geoQ` that
-/// will not decode is dropped silently when the subscription is compiled: the
-/// client would hold a live subscription that never notifies and never says
-/// why. A position with an ordinate count RFC 7946 section 3.1.1 gives no
-/// meaning to is a `BadRequestData` at the boundary instead.
-///
-/// A `geoQ` carrying neither member is left alone; the two are optional on the
-/// wire and their absence is a different failure from a geometry that will not
-/// decode.
-fn validate_geo_q_geometry(geo_q: &Value) -> Result<(), SubscriptionError> {
-    let (Some(geometry_type), Some(coordinates)) = (geo_q.get("geometry"), geo_q.get("coordinates")) else {
-        return Ok(());
-    };
-    let geometry_type = geometry_type
-        .as_str()
-        .ok_or_else(|| SubscriptionError::Validation(SubscriptionValidationReason::GeoQGeometryNotString))?
-        .parse::<GeometryType>()
-        .map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::GeoQGeometryType { source }))?;
-    let coordinates = match coordinates {
-        Value::String(raw) => {
-            serde_json::from_str::<Value>(raw).map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::GeoQCoordinates { source }))?
-        }
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => other.clone(), // clone: the GeoJSON decoder consumes the value it decodes
-    };
-    Geometry::from_type_and_coordinates(geometry_type, coordinates)
-        .map(|_geometry| ())
-        .map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::GeoQReferenceGeometry { source }))
 }
 
 /// Validate the notification fragment in an update payload.
@@ -393,8 +362,20 @@ mod tests {
         }));
         assert!(elevated.is_ok(), "a three-ordinate reference geometry is valid: {elevated:?}");
 
+        // Table 5.2.13-1 gives `geometry` and `coordinates` cardinality 1, and
+        // clause 5.8.1.4 refuses a create whose cardinalities are not met.
         let georel_only = validate_common_fields(&serde_json::json!({"geoQ": {"georel": "near;maxDistance==2000"}}));
-        assert!(georel_only.is_ok(), "an incomplete geoQ is a different failure: {georel_only:?}");
+        let error = georel_only.expect_err("a geoQ naming only its georel is no GeoQuery");
+        assert!(error.to_string().contains("'geometry'"), "got {error}");
+
+        let past_pole = validate_common_fields(&serde_json::json!({
+            "geoQ": {"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [-1, 100]}
+        }));
+        let error = past_pole.expect_err("latitude 100 is no WGS 84 position");
+        assert!(error.to_string().contains("latitude 100 is outside [-90, 90]"), "got {error}");
+
+        let removed = validate_common_fields(&serde_json::json!({"geoQ": null}));
+        assert!(removed.is_ok(), "an update removing the geoQ has nothing to validate: {removed:?}");
     }
 
     /// Clause 5.2.12: "At least one of (a) entities or (b) watchedAttributes

@@ -256,16 +256,18 @@ mod tests {
     }
 
     fn point(x: f64, y: f64) -> Geometry {
-        Geometry::new(GeometryForm::Point(Position::new(x, y, None)))
+        Geometry::new(GeometryForm::Point(
+            Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"),
+        ))
     }
 
     fn square(cx: f64, cy: f64, half: f64) -> Geometry {
         Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![vec![
-            Position::new(cx - half, cy - half, None),
-            Position::new(cx + half, cy - half, None),
-            Position::new(cx + half, cy + half, None),
-            Position::new(cx - half, cy + half, None),
-            Position::new(cx - half, cy - half, None),
+            Position::try_new(cx - half, cy - half, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(cx + half, cy - half, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(cx + half, cy + half, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(cx - half, cy + half, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(cx - half, cy - half, None).expect("a test position lies on the CRS84 axes"),
         ]])))
     }
 
@@ -472,7 +474,7 @@ mod tests {
             index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0)),
             Some(HashSet::from([id.clone()]))
         );
-        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 100.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 80.0)), Some(HashSet::from([id])));
     }
 
     #[test]

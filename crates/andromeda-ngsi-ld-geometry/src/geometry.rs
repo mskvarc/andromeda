@@ -53,9 +53,9 @@ impl Geometry {
     /// # Errors
     ///
     /// Returns [`GeometryError::Position`] if any position of the geometry
-    /// carries fewer than two or more than three ordinates, and
-    /// [`GeometryError::GeometryCollectionUnsupported`] for a `GeometryCollection`,
-    /// which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes.
+    /// carries fewer than two or more than three ordinates or lies off the
+    /// CRS84 axes, and [`GeometryError::GeometryCollectionUnsupported`] for a
+    /// `GeometryCollection`, which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes.
     pub fn from_geojson(geometry: &GeoJsonGeometry) -> Result<Geometry, GeometryError> {
         Ok(Geometry::new(GeometryForm::from_geojson(&geometry.value)?))
     }
@@ -67,7 +67,8 @@ impl Geometry {
     ///
     /// Returns [`GeometryError::GeojsonValue`] if `value` is not a `GeoJSON`
     /// geometry object, [`GeometryError::Position`] if one of its positions has
-    /// an ordinate count RFC 7946 gives no meaning to, or
+    /// an ordinate count RFC 7946 gives no meaning to or lies off the CRS84
+    /// axes, or
     /// [`GeometryError::GeometryCollectionUnsupported`] if it is a
     /// `GeometryCollection`.
     pub fn from_geojson_value(value: &Value) -> Result<Geometry, GeometryError> {
@@ -88,7 +89,7 @@ impl Geometry {
     ///
     /// # Errors
     ///
-    /// Returns [`GeometryError::CoordinateOutOfRange`] when an ordinate cannot
+    /// Returns [`GeometryError::NonFiniteCoordinate`] when an ordinate cannot
     /// be represented as a finite `f64`, or the same typed errors as
     /// [`Geometry::from_geojson_value`] when the coordinates do not form the
     /// requested RFC 7946 geometry.
@@ -144,8 +145,8 @@ fn coordinates_as_f64(value: Value) -> Result<Value, GeometryError> {
             let coordinate = number
                 .as_f64()
                 .filter(|coordinate| coordinate.is_finite())
-                .ok_or(GeometryError::CoordinateOutOfRange)?;
-            let number = serde_json::Number::from_f64(coordinate).ok_or(GeometryError::CoordinateOutOfRange)?;
+                .ok_or(GeometryError::NonFiniteCoordinate)?;
+            let number = serde_json::Number::from_f64(coordinate).ok_or(GeometryError::NonFiniteCoordinate)?;
             Ok(Value::Number(number))
         }
         Value::Array(values) => values.into_iter().map(coordinates_as_f64).collect::<Result<Vec<_>, _>>().map(Value::Array),
@@ -195,7 +196,17 @@ impl<V: JsonValue> ToJsonValue<V> for Geometry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::position::PositionError;
+    use crate::{coordinate_path::CoordinatePath, position::PositionError};
+
+    /// Where a refused position sits and what is wrong with it.
+    fn refused_position(error: &GeometryError) -> (CoordinatePath, PositionError) {
+        match error {
+            GeometryError::Position { at, source } => (at.clone(), *source), // clone: the assertion owns the path it compares
+            other @ (GeometryError::GeojsonValue(_) | GeometryError::NonFiniteCoordinate | GeometryError::GeometryCollectionUnsupported) => {
+                panic!("expected a refused position, got {other:?}")
+            }
+        }
+    }
 
     fn point_json() -> Value {
         serde_json::json!({ "type": "Point", "coordinates": [13.38, 52.52] })
@@ -262,10 +273,83 @@ mod tests {
     }
 
     #[test]
+    fn a_polygon_vertex_past_a_pole_is_a_position_error() {
+        let polygon = serde_json::json!({
+            "type": "Polygon",
+            "coordinates": [[[1.0, 2.0], [5.0, 2.0], [5.0, 91.0], [1.0, 2.0]]]
+        });
+        let error = Geometry::from_geojson_value(&polygon).expect_err("a vertex past the pole is no position");
+        pretty_assertions::assert_eq!(
+            refused_position(&error),
+            (CoordinatePath::new(vec![0, 2]), PositionError::LatitudeOutOfRange { latitude: 91.0 })
+        );
+        // The rendering is the BadRequestData detail a client reads: what is
+        // wrong, by which rule, and which vertex to fix.
+        pretty_assertions::assert_eq!(
+            error.to_string(),
+            "GeoJSON position latitude 91 is outside [-90, 90]; RFC 7946 section 4 places positions in WGS 84 longitude and latitude, in decimal degrees (at coordinates[0][2])"
+        );
+    }
+
+    #[test]
+    fn a_hole_vertex_of_a_later_polygon_past_the_antimeridian_is_a_position_error() {
+        let multi_polygon = serde_json::json!({
+            "type": "MultiPolygon",
+            "coordinates": [
+                [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                [
+                    [[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 10.0]],
+                    [[12.0, 12.0], [-181.0, 12.0], [14.0, 14.0], [12.0, 12.0]]
+                ]
+            ]
+        });
+        let error = Geometry::from_geojson_value(&multi_polygon).expect_err("a hole vertex past the antimeridian is no position");
+        pretty_assertions::assert_eq!(
+            refused_position(&error),
+            (CoordinatePath::new(vec![1, 1, 1]), PositionError::LongitudeOutOfRange { longitude: -181.0 })
+        );
+    }
+
+    #[test]
+    fn every_geometry_type_names_the_one_position_off_the_crs84_axes() {
+        for (geometry, at, source) in [
+            (
+                serde_json::json!({ "type": "LineString", "coordinates": [[0.0, 0.0], [0.0, 90.5]] }),
+                vec![1],
+                PositionError::LatitudeOutOfRange { latitude: 90.5 },
+            ),
+            (
+                serde_json::json!({ "type": "MultiPoint", "coordinates": [[0.0, 0.0], [190.0, 0.0]] }),
+                vec![1],
+                PositionError::LongitudeOutOfRange { longitude: 190.0 },
+            ),
+            (
+                serde_json::json!({ "type": "MultiLineString", "coordinates": [[[0.0, 0.0], [1.0, 1.0]], [[0.0, 0.0], [0.0, -95.0]]] }),
+                vec![1, 1],
+                PositionError::LatitudeOutOfRange { latitude: -95.0 },
+            ),
+        ] {
+            let error = Geometry::from_geojson_value(&geometry).expect_err("one position off the axes refuses the geometry");
+            pretty_assertions::assert_eq!(refused_position(&error), (CoordinatePath::new(at), source), "{geometry}");
+        }
+    }
+
+    #[test]
+    fn a_reference_geometry_past_a_pole_is_refused_like_a_payload_geometry() {
+        // The coordinates of the informative ETSI GS CIM 009 v1.9.1 Annex C.4
+        // example, which name a latitude of 100.
+        let error = Geometry::from_type_and_coordinates(GeometryType::Point, serde_json::json!([-1, 100])).expect_err("latitude 100 is no position");
+        pretty_assertions::assert_eq!(
+            refused_position(&error),
+            (CoordinatePath::default(), PositionError::LatitudeOutOfRange { latitude: 100.0 })
+        );
+    }
+
+    #[test]
     fn a_coordinate_outside_the_finite_f64_domain_is_rejected_at_the_geometry_boundary() {
         let coordinates: Value = serde_json::from_str("[1e400,52.5]").expect("JSON number parses");
         let error = Geometry::from_type_and_coordinates(GeometryType::Point, coordinates).expect_err("coordinate must be rejected");
-        assert!(matches!(error, GeometryError::CoordinateOutOfRange), "got {error:?}");
+        assert!(matches!(error, GeometryError::NonFiniteCoordinate), "got {error:?}");
     }
 
     #[test]
@@ -299,7 +383,13 @@ mod tests {
     fn a_point_with_four_ordinates_is_a_position_error() {
         let error = Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0] })).expect_err("must reject");
         assert!(
-            matches!(error, GeometryError::Position(PositionError::TooManyOrdinates { ordinates: 4 })),
+            matches!(
+                error,
+                GeometryError::Position {
+                    source: PositionError::TooManyOrdinates { ordinates: 4 },
+                    ..
+                }
+            ),
             "got {error:?}"
         );
     }

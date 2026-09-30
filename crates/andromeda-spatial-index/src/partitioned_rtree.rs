@@ -371,7 +371,9 @@ mod tests {
     }
 
     fn entry(id: &str, x: f64, y: f64) -> SpatialEntry {
-        let geometry = Geometry::new(GeometryForm::Point(Position::new(x, y, None)));
+        let geometry = Geometry::new(GeometryForm::Point(
+            Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"),
+        ));
         SpatialEntry::new(uri(id), geometry).expect("a point has a bounding rectangle")
     }
 

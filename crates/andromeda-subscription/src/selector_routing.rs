@@ -91,6 +91,7 @@ mod tests {
     use crate::{
         compiled::CompiledSubscription,
         error::SubscriptionError,
+        geo_filter::SubscriptionGeoFilter,
         selector_routing::{SelectorRouting, SelectorShape},
     };
     use andromeda_context_commit::subscription_key::SubscriptionKey;
@@ -138,7 +139,7 @@ mod tests {
             expires_at: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
-            compiled_geo_q: None,
+            compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,
             notification_join: None,

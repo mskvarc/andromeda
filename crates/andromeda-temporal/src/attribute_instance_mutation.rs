@@ -16,6 +16,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity};
+use andromeda_ngsi_ld_model::expanded::geo_property_admission::validate_instance_geo_property;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use serde_json::Value;
 
@@ -30,7 +31,8 @@ impl TemporalService {
     /// the attribute name does not expand to a valid one, the Fragment does
     /// not carry exactly one instance of the target attribute, or the
     /// replacement puts a `unitCode` on an attribute family clause 4.5.2
-    /// defines without one; [`TemporalError::JsonLd`] when the Fragment cannot be expanded
+    /// defines without one or carries a geometry clause 4.7 gives no reading
+    /// of; [`TemporalError::JsonLd`] when the Fragment cannot be expanded
     /// against `context`; and [`TemporalError::Persistence`] when the
     /// delivery barrier cannot drain the entity's pending history or the
     /// update cannot be applied.
@@ -85,6 +87,7 @@ impl TemporalService {
         let expanded = self.engine.expand(fragment, context).await?;
         let instance_value = fragment_instance(expanded, &attr_iri)?;
         validate_instance_unit_code_admission(attr_iri.as_str(), &instance_value)?;
+        validate_instance_geo_property(attr_iri.as_str(), &instance_value).map_err(TemporalValidationReason::from)?;
 
         self.mutator.update_instance(target, instance, entity_id, &attr_iri, &instance_value).await
     }

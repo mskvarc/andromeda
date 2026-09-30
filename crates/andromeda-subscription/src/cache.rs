@@ -180,7 +180,7 @@ impl SubscriptionCache {
         if target.snapshot().is_some() {
             return;
         }
-        let Some(geo_q) = compiled.compiled_geo_q.as_ref() else {
+        let Some(geo_q) = compiled.compiled_geo_q.restriction() else {
             return;
         };
         // clone: the key owns its name, which the compiled subscription keeps
@@ -230,6 +230,7 @@ mod tests {
         cache::SubscriptionCache,
         compiled::CompiledSubscription,
         error::SubscriptionError,
+        geo_filter::SubscriptionGeoFilter,
         notification_slot::{NotificationSlot, NotificationSlotGate},
         store::{SubscriptionFields, SubscriptionStore},
         stored_subscription::StoredSubscription,
@@ -384,7 +385,7 @@ mod tests {
             expires_at: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
-            compiled_geo_q: None,
+            compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,
             notification_join: None,

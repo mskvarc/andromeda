@@ -7,6 +7,7 @@
 //! reference the query AST and the renderer's system-attribute policy. Transport
 //! selection remains in delivery bindings and is not compiled here.
 
+use crate::geo_filter::SubscriptionGeoFilter;
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -23,7 +24,6 @@ use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
     dataset::DatasetSelector,
     filter::expression::Expr,
-    geo::query::GeoQuery,
     projection::compiled::Projection,
     scope::query::ScopeQuery,
 };
@@ -68,7 +68,7 @@ pub struct CompiledCsrSubscription {
     /// are considered.
     pub temporal_q: Option<CompiledCsrTemporalFilter>,
     /// The `geoQ` matched against the registration's geometry (clause 5.11.2.4).
-    pub geo_q: Option<GeoQuery>,
+    pub geo_q: SubscriptionGeoFilter,
     /// The `scopeQ` matched against the registration's `scope` (clause 5.11.2.4).
     pub scope_q: Option<ScopeQuery>,
     /// Minimum seconds between notifications.
@@ -146,13 +146,10 @@ pub struct CompiledSubscription {
     pub created_at: DateTime<Utc>,
     /// Parsed entity filter expression.
     pub compiled_q: Option<Expr>,
-    /// The subscription's `geoQ`, compiled to the same [`GeoQuery`] a
-    /// request-borne geo filter produces (clause 4.10).
-    ///
-    /// `None` when the subscription carries no `geoQ`, or when the one it
-    /// carries could not be parsed — in which case it never matches an entity
-    /// through the geo path at all.
-    pub compiled_geo_q: Option<GeoQuery>,
+    /// The restriction the subscription's `geoQ` places on matching (clause
+    /// 4.10): none without a `geoQ`, the compiled geoquery otherwise, and no
+    /// entity at all for a stored `geoQ` that no longer compiles.
+    pub compiled_geo_q: SubscriptionGeoFilter,
     /// The subscription's parsed `scopeQ`, if set.
     pub compiled_scope_q: Option<ScopeQuery>,
     /// The `datasetId` selectors of the Attribute instances each notification

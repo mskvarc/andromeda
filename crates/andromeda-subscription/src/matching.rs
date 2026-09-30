@@ -137,10 +137,8 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
         return false;
     }
 
-    if let Some(ref geo_q) = sub.compiled_geo_q
-        && !matches_geo_query(geo_q, entity_data)
-    {
-        debug!("Subscription {} skipped: geoQ filter did not match entity", sub.id);
+    if !sub.compiled_geo_q.admits(|geo_q| matches_geo_query(geo_q, entity_data)) {
+        debug!("Subscription {} skipped: geoQ filter did not admit entity", sub.id);
         return false;
     }
 
@@ -164,7 +162,10 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{compilation::compile_geo_q, error::SubscriptionError};
+    use crate::{
+        error::SubscriptionError,
+        geo_filter::{SubscriptionGeoFilter, compile_geo_q},
+    };
     use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
@@ -225,7 +226,7 @@ mod tests {
             expires_at: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
-            compiled_geo_q: None,
+            compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,
             notification_join: None,
@@ -323,15 +324,12 @@ mod tests {
         // request's `georel`/`geometry`/`coordinates` must compile to the same
         // value. They used to be two types, one of them stringly-typed, and
         // only one of them had an in-memory evaluator.
-        let from_subscription = compile_geo_q(
-            &serde_json::json!({
-                "georel": "near;maxDistance==1000",
-                "geometry": "Point",
-                "coordinates": [13.4, 52.5],
-                "geoproperty": LOCATION
-            }),
-            "urn:ngsi-ld:Subscription:test",
-        )
+        let from_subscription = compile_geo_q(&serde_json::json!({
+            "georel": "near;maxDistance==1000",
+            "geometry": "Point",
+            "coordinates": [13.4, 52.5],
+            "geoproperty": LOCATION
+        }))
         .expect("the subscription geoQ fixture did not compile");
 
         let request_geo = GeoQueryInput::from_wire(
@@ -349,20 +347,37 @@ mod tests {
 
     #[test]
     fn a_subscription_geo_filter_accepts_only_entities_inside_the_relation() {
-        let geo_query = compile_geo_q(
-            &serde_json::json!({
-                "georel": "near;maxDistance==1000",
-                "geometry": "Point",
-                "coordinates": [13.4, 52.5],
-                "geoproperty": LOCATION
-            }),
-            "urn:ngsi-ld:Subscription:test",
-        )
+        let geo_query = compile_geo_q(&serde_json::json!({
+            "georel": "near;maxDistance==1000",
+            "geometry": "Point",
+            "coordinates": [13.4, 52.5],
+            "geoproperty": LOCATION
+        }))
         .expect("the subscription geoQ fixture did not compile");
 
         assert!(matches_geo_query(&geo_query, &located(13.4, 52.5)));
         assert!(!matches_geo_query(&geo_query, &located(13.4, 53.5)));
         assert!(!matches_geo_query(&geo_query, &serde_json::json!([{"@id": "urn:ngsi-ld:Building:002"}])));
+    }
+
+    /// Clause 5.8.6: every changed entity is included only when no geoquery is
+    /// defined. A stored `geoQ` that no longer compiles is defined, so it
+    /// admits no entity instead of every one.
+    #[test]
+    fn a_stored_geo_q_that_no_longer_compiles_admits_no_entity() {
+        let mut sub = make_sub();
+        assert!(matches_entity_filters(&sub, &located(13.4, 52.5)), "no geoQ admits every entity");
+
+        sub.compiled_geo_q =
+            SubscriptionGeoFilter::from_stored(Some(&serde_json::json!({"georel": "near;maxDistance==1000"})), "urn:ngsi-ld:Subscription:test");
+        assert!(!matches_entity_filters(&sub, &located(13.4, 52.5)), "an unusable geoQ admits nothing");
+
+        sub.compiled_geo_q = SubscriptionGeoFilter::from_stored(
+            Some(&serde_json::json!({"georel": "near;maxDistance==1000", "geometry": "Point", "coordinates": [13.4, 52.5]})),
+            "urn:ngsi-ld:Subscription:test",
+        );
+        assert!(matches_entity_filters(&sub, &located(13.4, 52.5)), "a compiled geoQ admits what it matches");
+        assert!(!matches_entity_filters(&sub, &located(13.4, 53.5)), "and nothing else");
     }
 
     #[test]

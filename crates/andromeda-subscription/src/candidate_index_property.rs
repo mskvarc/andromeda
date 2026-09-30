@@ -5,7 +5,13 @@
 //! [`matches_subscription`], its funnel must shrink monotonically, and an
 //! index that had entries removed must behave like one rebuilt from scratch.
 
-use crate::{candidate_index::CandidateIndex, compiled::CompiledSubscription, error::SubscriptionError, matching::matches_subscription};
+use crate::{
+    candidate_index::CandidateIndex,
+    compiled::CompiledSubscription,
+    error::SubscriptionError,
+    geo_filter::SubscriptionGeoFilter,
+    matching::matches_subscription,
+};
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
@@ -175,7 +181,7 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         expires_at: None,
         created_at: DateTime::<Utc>::MIN_UTC,
         compiled_q: None,
-        compiled_geo_q: None,
+        compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
         compiled_scope_q: None,
         dataset_id: None,
         notification_join: None,

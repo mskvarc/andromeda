@@ -1,157 +1,30 @@
-//! Checking that every `GeoProperty` a write carries is a geometry the broker can
-//! read back (ETSI GS CIM 009 v1.9.1 clause 5.5.4).
+//! Checking that every `GeoProperty` a Core write carries is a geometry the
+//! broker can read back (ETSI GS CIM 009 v1.9.1 clause 5.5.4).
 //!
-//! Clause 4.7 makes a `GeoProperty` value a `GeoJSON` geometry per IETF RFC 7946,
-//! and section 3.1.1 of that RFC gives a position exactly two ordinates
-//! (longitude, latitude) or three (longitude, latitude, altitude). It permits
-//! further elements but assigns them no meaning, and NGSI-LD assigns them none
-//! either, so a four-ordinate position is a payload the broker has no reading
-//! of. Clause 5.5.4 makes that a `BadRequestData`, which is a thing to say at
-//! the boundary rather than to discover in the store — or, worse, to accept and
-//! then silently skip on every subsequent read.
-//!
-//! Every `GeoProperty` is checked, not only `location`, `observationSpace` and
-//! `operationSpace`: clause 4.7.1 lets any attribute be a `GeoProperty`, and one
-//! the broker cannot read is no more usable for being user-defined.
-//!
-//! A `GeometryCollection` is refused for a second, independent reason: clause
-//! 4.7.1 allows a `GeoProperty` value every geometry RFC 7946 defines *except*
-//! `GeometryCollection`, and clause 4.6.3 excludes it from reference geometries
-//! too, so one is `BadRequestData` however well-formed it is.
-//!
-//! Mixed arity *within* one geometry is accepted and preserved verbatim. RFC
-//! 7946 nowhere requires a uniform arity, and a `LineString` whose first position
-//! is flat and whose second is elevated is a legal `GeoJSON` document.
+//! The reading itself is shared with the Temporal API write paths and lives in
+//! [`andromeda_ngsi_ld_model::expanded::geo_property_admission`]; this module
+//! states the Core API's answer to it, a `BadRequestData` naming the
+//! `GeoProperty` by its compact term where the core context defines one.
 
 use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
-use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
-use andromeda_ngsi_ld_model::expanded::geo_property::validate_expanded_geo_node;
-use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use andromeda_ngsi_ld_model::expanded::geo_property_admission::{GeoPropertyRefusal, validate_expanded_geo_properties};
 use serde_json::Value;
-use std::slice::from_ref;
 
-/// Reject an expanded write payload carrying a `GeoProperty` whose geometry has an
-/// unusable position, or whose geometry is a `GeometryCollection`.
-///
-/// Accepts the shapes the rest of the write path passes around: one expanded
-/// entity object, or the array JSON-LD expansion produces. The payload may be a
-/// whole entity or a patch fragment — a `GeoProperty` is validated wherever it
-/// appears, so create, replace, update, partial-update, merge and every batch
-/// form are covered by the one reading.
+/// Reject an expanded write payload carrying a `GeoProperty` whose geometry has
+/// an unusable position, or whose geometry is a `GeometryCollection`.
 ///
 /// # Errors
 ///
 /// Returns [`EntityError::Validation`], which the HTTP layer renders as a 400
-/// `BadRequestData`, naming the `GeoProperty` and what makes its geometry
-/// unusable.
+/// `BadRequestData`, naming the `GeoProperty`, what makes its geometry unusable
+/// and, for a refused position, where in `coordinates` it sits.
 pub(crate) fn validate_geo_property_geometries(expanded: &Value) -> Result<(), EntityError> {
-    let entities = match expanded {
-        Value::Array(entities) => entities.as_slice(),
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => from_ref(other),
-    };
-
-    for entity in entities {
-        let Some(object) = entity.as_object() else {
-            continue;
-        };
-        for (attribute_iri, value) in object {
-            if attribute_iri.starts_with('@') {
-                continue;
-            }
-            validate_attribute(attribute_iri, value)?;
-        }
-    }
-    Ok(())
-}
-
-/// Validate every `GeoProperty` instance of one attribute.
-///
-/// Clause 4.5.5 lets an attribute carry several instances, each keyed by
-/// `datasetId`; every one of them is a geometry a later read has to cope with,
-/// so every one of them is checked rather than only the default.
-fn validate_attribute(attribute_iri: &str, value: &Value) -> Result<(), EntityError> {
-    let Value::Array(instances) = value else {
-        return Ok(());
-    };
-
-    for instance in instances {
-        let Some(object) = instance.as_object() else {
-            continue;
-        };
-        if !is_geo_property(object.get("@type")) {
-            continue;
-        }
-        let values = object.get(expanded_properties::VALUE.as_str()).and_then(Value::as_array);
-        for node in values.into_iter().flatten() {
-            validate_geo_node(attribute_iri, node)?;
-        }
-    }
-    Ok(())
-}
-
-/// Whether an expanded attribute instance's `@type` names `GeoProperty`.
-fn is_geo_property(types: Option<&Value>) -> bool {
-    types
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter_map(AttributeType::from_expanded_iri)
-        .any(|attribute_type| attribute_type == AttributeType::GeoProperty)
-}
-
-/// Validate one `hasValue` node of a `GeoProperty`, in either of the two forms
-/// clause 4.7 permits it to arrive in.
-///
-/// A literal `@value` is a whole `GeoJSON` document and is decoded outright, so
-/// its geometry type and coordinates are checked against each other as well as
-/// its arities. The fully expanded node form has no such decoder, and its
-/// positions are checked in place.
-fn validate_geo_node(attribute_iri: &str, node: &Value) -> Result<(), EntityError> {
-    match node.get("@value") {
-        Some(Value::String(document)) => match serde_json::from_str::<Value>(document) {
-            // A string that is not JSON at all is not this check's business:
-            // it is a `hasValue` the attribute-envelope reading rejects.
-            Err(_not_json) => Ok(()),
-            Ok(parsed) => validate_geojson_document(attribute_iri, &parsed),
-        },
-        Some(document @ Value::Object(_)) => validate_geojson_document(attribute_iri, document),
-        Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_)) | None => {
-            validate_expanded_geo_node(node).map_err(|error| geo_property_error(attribute_iri, error))
-        }
-    }
-}
-
-/// Decode a literal `GeoJSON` document, reporting what makes it unusable.
-///
-/// Only documents shaped as a geometry object are decoded. Anything else is
-/// left alone: refusing a `GeoProperty` for not being `GeoJSON` is a separate
-/// reading of clause 5.5.4 from refusing it for an ordinate count, and widening
-/// this one to cover it would change what unrelated payloads are answered.
-fn validate_geojson_document(attribute_iri: &str, document: &Value) -> Result<(), EntityError> {
-    let Some(object) = document.as_object() else {
-        return Ok(());
-    };
-    if object.get("type").zip(object.get("coordinates")).is_none() && object.get("type").zip(object.get("geometries")).is_none() {
-        return Ok(());
-    }
-    Geometry::from_geojson_value(document)
-        .map(|_geometry| ())
-        .map_err(|error| geo_property_error(attribute_iri, error))
-}
-
-/// The clause 5.5.4 `BadRequestData` detail for one unusable `GeoProperty`.
-///
-/// The `GeoProperty` is named by its compact term where the core context defines
-/// one, and by its expanded IRI otherwise: a user-defined term's compaction
-/// depends on the request's own `@context`, which validation does not hold, and
-/// an IRI the client can look up beats a guess it cannot.
-fn geo_property_error(attribute_iri: &str, cause: GeometryError) -> EntityError {
-    match attribute_iri.parse::<AttributeName>() {
-        Ok(attribute) => EntityError::Validation(EntityValidationReason::GeoProperty { attribute, source: cause }),
-        Err(source) => EntityError::Validation(EntityValidationReason::ExpandedAttributeName(source)),
-    }
+    validate_expanded_geo_properties(expanded).map_err(|refusal| {
+        EntityError::Validation(match refusal {
+            GeoPropertyRefusal::Geometry { attribute, source } => EntityValidationReason::GeoProperty { attribute, source },
+            GeoPropertyRefusal::AttributeName(source) => EntityValidationReason::ExpandedAttributeName(source),
+        })
+    })
 }
 
 #[cfg(test)]
@@ -223,7 +96,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             error.to_string(),
             "invalid entity operation: GeoProperty 'location': GeoJSON position has 4 ordinates; \
-             RFC 7946 allows exactly 2 (longitude, latitude) or 3 (longitude, latitude, altitude)"
+             RFC 7946 allows exactly 2 (longitude, latitude) or 3 (longitude, latitude, altitude) (at coordinates)"
         );
     }
 
@@ -282,7 +155,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             error.to_string(),
             "invalid entity operation: GeoProperty 'https://example.com/site': GeoJSON position has 4 ordinates; \
-             RFC 7946 allows exactly 2 (longitude, latitude) or 3 (longitude, latitude, altitude)"
+             RFC 7946 allows exactly 2 (longitude, latitude) or 3 (longitude, latitude, altitude) (at coordinates)"
         );
     }
 

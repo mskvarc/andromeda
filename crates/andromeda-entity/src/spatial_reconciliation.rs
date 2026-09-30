@@ -92,7 +92,9 @@ mod tests {
                     locations: vec![EntityLocation {
                         entity_id: "urn:ngsi-ld:Vehicle:stored".parse().expect("a well-formed URI"),
                         entity_types: vec!["https://example.org/Vehicle".parse().expect("a well-formed type")],
-                        location: Some(Geometry::new(GeometryForm::Point(Position::new(0.0, 0.0, None)))),
+                        location: Some(Geometry::new(GeometryForm::Point(
+                            Position::try_new(0.0, 0.0, None).expect("a test position lies on the CRS84 axes"),
+                        ))),
                     }],
                     horizon: ChangeHorizon::new(7),
                 })
@@ -122,7 +124,9 @@ mod tests {
             IriBuf::new("https://example.org/Vehicle".to_owned()).expect("a well-formed IRI"),
             placement.geoproperty().clone(),
         );
-        let reference = Geometry::new(GeometryForm::Point(Position::new(0.0, 0.0, None)));
+        let reference = Geometry::new(GeometryForm::Point(
+            Position::try_new(0.0, 0.0, None).expect("a test position lies on the CRS84 axes"),
+        ));
         assert!(index.query(&key, &GeoRel::Intersects, &reference).is_none());
 
         let outcome = rebuild_location_index(&index, &OneVehicle, &placement).await.expect("the store is readable");

@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_model::{
     subscription::Subscription,
 };
 use andromeda_ngsi_ld_query::filter::eval;
-use andromeda_subscription::compilation::compile_geo_q;
+use andromeda_subscription::geo_filter::SubscriptionGeoFilter;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -61,10 +61,11 @@ pub(crate) fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<V
     }
     let compiled_q = sub.filters.q.as_ref();
 
-    let compiled_geo = sub.filters.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref()));
+    let compiled_geo = SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref());
     let compiled_scope = sub.filters.scope_q.as_ref();
 
-    let has_filters = compiled_q.is_some() || compiled_geo.is_some() || compiled_scope.is_some();
+    let geo_restricts = !matches!(compiled_geo, SubscriptionGeoFilter::Unrestricted);
+    let has_filters = compiled_q.is_some() || geo_restricts || compiled_scope.is_some();
     if !has_filters {
         return entities;
     }
@@ -77,9 +78,7 @@ pub(crate) fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<V
             {
                 return false;
             }
-            if let Some(ref geo_q) = compiled_geo
-                && !matches_geo_query(geo_q, entity)
-            {
+            if !compiled_geo.admits(|geo_q| matches_geo_query(geo_q, entity)) {
                 return false;
             }
             if let Some(scope_q) = compiled_scope
@@ -147,5 +146,19 @@ mod tests {
     fn a_periodic_q_matches_through_a_standing_instance() {
         let matched = apply_subscription_filters(&speeding(), vec![vehicle("2030-01-01T00:00:00Z")], instant("2029-01-01T00:00:00Z"));
         assert_eq!(matched, vec![vehicle("2030-01-01T00:00:00Z")]);
+    }
+
+    /// Clause 5.8.6: "If none of query, geoquery and Scope query are defined,
+    /// then all subscribed Entities shall be included". A stored `geoQ` that no
+    /// longer compiles is defined, so the periodic notification carries no
+    /// entity rather than every one.
+    #[test]
+    fn a_periodic_geo_q_that_no_longer_compiles_carries_no_entity() {
+        let mut subscription = serde_json::to_value(speeding()).expect("the subscription serialises");
+        subscription["q"] = Value::Null;
+        subscription["geoQ"] = json!({"georel": "near;maxDistance==2000"});
+        let subscription: Subscription = serde_json::from_value(subscription).expect("valid subscription");
+        let matched = apply_subscription_filters(&subscription, vec![vehicle("2030-01-01T00:00:00Z")], instant("2029-01-01T00:00:00Z"));
+        assert_eq!(matched, Vec::<Value>::new());
     }
 }

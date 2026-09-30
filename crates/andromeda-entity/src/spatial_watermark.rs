@@ -208,7 +208,9 @@ mod tests {
     }
 
     fn point(x: f64) -> Geometry {
-        Geometry::new(GeometryForm::Point(Position::new(x, 0.0, None)))
+        Geometry::new(GeometryForm::Point(
+            Position::try_new(x, 0.0, None).expect("a test position lies on the CRS84 axes"),
+        ))
     }
 
     fn watermark(store: &Arc<SharedStore>) -> SpatialWatermark {
@@ -226,11 +228,11 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         );
         let square = Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![vec![
-            Position::new(-1.0, -1.0, None),
-            Position::new(1.0, -1.0, None),
-            Position::new(1.0, 1.0, None),
-            Position::new(-1.0, 1.0, None),
-            Position::new(-1.0, -1.0, None),
+            Position::try_new(-1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(1.0, 1.0, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(-1.0, 1.0, None).expect("a test position lies on the CRS84 axes"),
+            Position::try_new(-1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
         ]])));
         watermark.index().query(&key, &GeoRel::Within, &square)
     }

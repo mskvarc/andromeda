@@ -163,11 +163,11 @@ mod tests {
     use super::*;
 
     fn flat(longitude: f64, latitude: f64) -> Position {
-        Position::new(longitude, latitude, None)
+        Position::try_new(longitude, latitude, None).expect("a test position lies on the CRS84 axes")
     }
 
     fn tall(longitude: f64, latitude: f64, altitude: f64) -> Position {
-        Position::new(longitude, latitude, Some(altitude))
+        Position::try_new(longitude, latitude, Some(altitude)).expect("a test position lies on the CRS84 axes")
     }
 
     #[test]

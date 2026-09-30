@@ -43,7 +43,9 @@ pub(super) fn vehicle_key() -> SpatialKey {
 }
 
 pub(super) fn point(longitude: f64) -> Geometry {
-    Geometry::new(GeometryForm::Point(Position::new(longitude, 0.0, None)))
+    Geometry::new(GeometryForm::Point(
+        Position::try_new(longitude, 0.0, None).expect("a test position lies on the CRS84 axes"),
+    ))
 }
 
 pub(super) fn uri(raw: &str) -> Identifier {

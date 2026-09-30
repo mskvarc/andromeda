@@ -195,7 +195,13 @@ mod tests {
         // silently demoted to an ordinary Property carrying raw JSON.
         let error = try_geometry(&json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]})).expect_err("four ordinates have no meaning");
         assert!(
-            matches!(error, GeometryError::Position(PositionError::TooManyOrdinates { ordinates: 4 })),
+            matches!(
+                error,
+                GeometryError::Position {
+                    source: PositionError::TooManyOrdinates { ordinates: 4 },
+                    ..
+                }
+            ),
             "got {error:?}"
         );
     }
@@ -205,6 +211,15 @@ mod tests {
         pretty_assertions::assert_eq!(try_geometry(&json!({"type": "Point"})).expect("no coordinates member").is_none(), true);
         pretty_assertions::assert_eq!(try_geometry(&json!("a string")).expect("not an object").is_none(), true);
         pretty_assertions::assert_eq!(try_geometry(&json!({"speed": 42})).expect("an ordinary object").is_none(), true);
+    }
+
+    #[test]
+    fn deserializing_a_geometry_past_a_pole_fails_rather_than_demoting_to_json() {
+        // RFC 7946 section 4: a GeoJSON-shaped value is a geometry or an error,
+        // never an ordinary Property carrying a position that names no point.
+        let error = serde_json::from_value::<NgsiLdValue>(json!({"type": "Point", "coordinates": [0.0, 91.0]}))
+            .expect_err("the value family must refuse a position off the CRS84 axes");
+        assert!(error.to_string().contains("latitude 91 is outside [-90, 90]"), "got {error}");
     }
 
     #[test]

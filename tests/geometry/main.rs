@@ -88,7 +88,7 @@ async fn geometry_collection_absent_geometry_property_defaults_to_location_attri
             "id": id,
             "type": "Building",
             "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [2.3522, 48.8566]}},
-            "otherGeo": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [99.0, 99.0]}},
+            "otherGeo": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [99.0, 9.0]}},
             "@context": [TEST_SUITE_CONTEXT]
         }),
     )

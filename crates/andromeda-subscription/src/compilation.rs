@@ -2,9 +2,9 @@
 
 use crate::{
     compiled::{CompiledCsrSubscription, CompiledSubscription},
+    geo_filter::SubscriptionGeoFilter,
     stored_subscription::StoredSubscription,
 };
-use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_model::{
     notification::effective_notification_triggers,
@@ -12,12 +12,10 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
-    geo::query::GeoQuery,
     projection::{compiled::Projection, term::ProjectionTerm},
     temporal::window::TimeInterval,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use std::{collections::HashSet, num::NonZeroU32};
@@ -61,7 +59,7 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
         expires_at: sub.lifecycle.expires_at,
         created_at: sub.lifecycle.created_at,
         compiled_q: sub.filters.q.clone(), // clone: compiled state owns its filter AST.
-        compiled_geo_q: sub.filters.geo_q.as_ref().and_then(|value| compile_geo_q(value, sub.id.as_ref())),
+        compiled_geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
         compiled_scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
         dataset_id: sub.filters.dataset_id.clone(),    // clone: compiled state owns dataset identifiers.
         notification_join: sub.notification.join,
@@ -92,7 +90,7 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
         selectors,
         matching_attrs: csource_matching_attributes(sub.selection.watched_attributes.as_deref(), sub.notification.attributes.as_deref()),
         temporal_q: sub.filters.temporal_q.as_ref().and_then(|value| compile_temporal_q(value, sub.id.as_ref())),
-        geo_q: sub.filters.geo_q.as_ref().and_then(|value| compile_geo_q(value, sub.id.as_ref())),
+        geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
         scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
@@ -166,51 +164,6 @@ pub fn compile_temporal_q(temporal_q: &serde_json::Value, sub_id: &str) -> Optio
     Some(CompiledCsrTemporalFilter::builder().interval(interval).timeproperty(timeproperty).build())
 }
 
-/// Pre-parse a stored `geoQ` into the request-side [`GeoQuery`] type (clause 4.10).
-pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<GeoQuery> {
-    let geo_obj = geo_q.as_object()?;
-    let georel_str = geo_obj.get("georel").and_then(serde_json::Value::as_str)?;
-    let geometry_str = geo_obj.get("geometry").and_then(serde_json::Value::as_str)?;
-    let coordinates = match geo_obj.get("coordinates")? {
-        serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok()?,
-        other @ (serde_json::Value::Null
-        | serde_json::Value::Bool(_)
-        | serde_json::Value::Number(_)
-        | serde_json::Value::Array(_)
-        | serde_json::Value::Object(_)) => other.clone(), // clone: compiled state owns its reference geometry.
-    };
-    let raw_geoproperty = geo_obj
-        .get("geoproperty")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or(expanded_properties::LOCATION.as_str());
-    let geoproperty = match raw_geoproperty.parse() {
-        Ok(geoproperty) => geoproperty,
-        Err(error) => {
-            debug!(subscription = sub_id, %error, "Invalid subscription geoQ geoproperty");
-            return None;
-        }
-    };
-    let geometry_type = match geometry_str.parse::<GeometryType>() {
-        Ok(geometry_type) => geometry_type,
-        Err(error) => {
-            debug!(subscription = sub_id, %error, "Invalid subscription geoQ geometry type");
-            return None;
-        }
-    };
-    let geometry = match Geometry::from_type_and_coordinates(geometry_type, coordinates) {
-        Ok(geometry) => geometry,
-        Err(error) => {
-            debug!(subscription = sub_id, %error, "Invalid subscription geoQ geometry");
-            return None;
-        }
-    };
-    Some(GeoQuery {
-        georel: georel_str.parse().ok()?,
-        geometry,
-        geoproperty,
-    })
-}
-
 /// Compile the clause 5.2.14 `pick` and `omit` members into the projection a
 /// query's `pick`/`omit` parameters compile to (clause 4.21).
 ///
@@ -254,11 +207,10 @@ fn projection_terms(names: &[AttributeName], sub_id: &str) -> Vec<ProjectionTerm
 
 #[cfg(test)]
 mod tests {
-    use crate::compilation::{compile_geo_q, compile_temporal_q, csource_matching_attributes, notification_projection};
+    use crate::compilation::{compile_temporal_q, csource_matching_attributes, notification_projection};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::subscription::NotificationParams;
     use andromeda_ngsi_ld_query::{projection::term::ProjectionTerm, temporal::window::TimeInterval};
-    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use iri_rs::IriBuf;
 
     fn notification(value: serde_json::Value) -> NotificationParams {
@@ -364,22 +316,5 @@ mod tests {
             .is_none()
         );
         assert!(compile_temporal_q(&serde_json::json!("after"), "urn:ngsi-ld:Subscription:test").is_none());
-    }
-
-    #[test]
-    fn malformed_geo_query_does_not_compile() {
-        assert_eq!(compile_geo_q(&serde_json::json!({}), "urn:ngsi-ld:Subscription:test"), None);
-    }
-
-    #[test]
-    fn absent_geoproperty_uses_the_ngsi_ld_location_iri() {
-        let compiled = compile_geo_q(
-            &serde_json::json!({"georel": "within", "geometry": "Point", "coordinates": [13.4, 52.5]}),
-            "urn:ngsi-ld:Subscription:test",
-        );
-        assert_eq!(
-            compiled.as_ref().map(|query| query.geoproperty.as_str()),
-            Some(expanded_properties::LOCATION.as_str())
-        );
     }
 }

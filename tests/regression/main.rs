@@ -39,6 +39,7 @@ mod federated_query_source_pagination;
 mod federated_temporal_query_source_pagination;
 mod federated_write_type_coverage;
 mod forwarded_protocol_origin;
+mod geojson_coordinate_range;
 mod geojson_geometry_selection;
 mod hosted_context_lifecycle;
 mod http_binding_details;

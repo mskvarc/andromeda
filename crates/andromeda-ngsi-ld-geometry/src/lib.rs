@@ -30,6 +30,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod coordinate_path;
 pub mod dimension;
 pub mod distance;
 pub mod form;

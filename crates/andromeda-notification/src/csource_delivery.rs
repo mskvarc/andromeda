@@ -233,7 +233,7 @@ mod tests {
     use crate::csource_delivery::notified_registration;
     use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::SubscriptionStatus};
-    use andromeda_subscription::compiled::CompiledCsrSubscription;
+    use andromeda_subscription::{compiled::CompiledCsrSubscription, geo_filter::SubscriptionGeoFilter};
     use serde_json::json;
     use url::Url;
 
@@ -250,7 +250,7 @@ mod tests {
             selectors: vec![serde_json::from_value(json!({"type": raw_type})).expect("selector parses")],
             matching_attrs: Vec::new(),
             temporal_q: None,
-            geo_q: None,
+            geo_q: SubscriptionGeoFilter::Unrestricted,
             scope_q: None,
             throttling_secs: None,
             time_interval_secs: None,

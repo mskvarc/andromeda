@@ -97,7 +97,9 @@ mod tests {
     #[test]
     fn a_located_entity_occupies_one_location_partition_per_type() {
         let placement = LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name");
-        let point = Geometry::new(GeometryForm::Point(Position::new(1.0, 2.0, None)));
+        let point = Geometry::new(GeometryForm::Point(
+            Position::try_new(1.0, 2.0, None).expect("a test position lies on the CRS84 axes"),
+        ));
         let placed = placement.of(&types(&["https://example.org/Car", "https://example.org/Asset"]), Some(&point));
         let keys: Vec<(String, String)> = placed
             .iter()

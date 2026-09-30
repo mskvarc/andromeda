@@ -17,7 +17,8 @@ use std::{collections::HashMap, sync::Arc};
 /// Narrow `matching` to subscriptions whose pre-compiled `geoQ` actually has
 /// the entity in scope, by consulting the cache's spatial index.
 ///
-/// Subscriptions without a `compiled_geo_q` are kept verbatim. The entity is
+/// Subscriptions whose `geoQ` restricts by no compiled geoquery are kept
+/// verbatim; the exact predicate refuses an unusable one. The entity is
 /// probed with every instance of the target `GeoProperty` rather than with its
 /// default one: clause 4.10 counts one instance meeting the restriction as
 /// enough, so a subscription reached only by a `datasetId`-tagged instance
@@ -42,7 +43,7 @@ pub fn narrow_by_spatial_index(
     let mut kept: Vec<Arc<CompiledSubscription>> = Vec::new();
 
     for sub in matching {
-        let Some(ref geo_q) = sub.compiled_geo_q else {
+        let Some(geo_q) = sub.compiled_geo_q.restriction() else {
             kept.push(sub);
             continue;
         };

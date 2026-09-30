@@ -42,7 +42,7 @@ impl CsourceNotificationCadence {
 
 #[cfg(test)]
 mod tests {
-    use crate::{compiled::CompiledCsrSubscription, csource_notification_cadence::CsourceNotificationCadence};
+    use crate::{compiled::CompiledCsrSubscription, csource_notification_cadence::CsourceNotificationCadence, geo_filter::SubscriptionGeoFilter};
     use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
     use pretty_assertions::assert_eq;
     use url::Url;
@@ -60,7 +60,7 @@ mod tests {
             selectors: Vec::new(),
             matching_attrs: Vec::new(),
             temporal_q: None,
-            geo_q: None,
+            geo_q: SubscriptionGeoFilter::Unrestricted,
             scope_q: None,
             throttling_secs: None,
             time_interval_secs,

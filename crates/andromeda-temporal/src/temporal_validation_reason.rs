@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_lexicon::{
     identifier::IdentifierParseError,
     reference::NgsiLdReferenceError,
 };
+use andromeda_ngsi_ld_model::expanded::geo_property_admission::GeoPropertyRefusal;
 use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
 use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 use thiserror::Error;
@@ -88,6 +89,10 @@ pub enum TemporalValidationReason {
         /// The targeted attribute, by its expanded name.
         target: AttributeName,
     },
+    /// A `GeoProperty` instance carried a geometry the broker has no reading of
+    /// (clauses 4.7 and 5.5.4), refused before anything is staged.
+    #[error(transparent)]
+    GeoProperty(#[from] GeoPropertyRefusal),
     /// The submitted content cannot be stored as written (clause 5.5.6).
     #[error(transparent)]
     Refused(#[from] SubmissionRefusal),

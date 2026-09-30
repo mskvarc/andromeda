@@ -7,6 +7,7 @@
 //! throw altitude away before this crate ever saw it.
 
 use crate::{
+    coordinate_path::CoordinatePath,
     form::{GeometryForm, PolygonRings},
     position::{Position, PositionError},
 };
@@ -17,9 +18,16 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum GeometryError {
     /// A position of the geometry had an ordinate count that carries no meaning
-    /// under IETF RFC 7946 section 3.1.1.
-    #[error(transparent)]
-    Position(#[from] PositionError),
+    /// under IETF RFC 7946 section 3.1.1, a member that is not a number, or an
+    /// ordinate off the CRS84 axes of section 4.
+    #[error("{source} (at {at})")]
+    Position {
+        /// Where the refused position sits in the geometry's `coordinates`.
+        at: CoordinatePath,
+        /// What is wrong with it.
+        #[source]
+        source: PositionError,
+    },
     /// The raw JSON value was not a `GeoJSON` geometry object at all: an unknown
     /// `type`, a missing or misshapen `coordinates` member, or an ordinate that
     /// is not a number.
@@ -28,7 +36,7 @@ pub enum GeometryError {
     /// A JSON coordinate is outside the finite binary64 domain used for
     /// spatial operations.
     #[error("GeoJSON coordinate cannot be represented as a finite 64-bit float")]
-    CoordinateOutOfRange,
+    NonFiniteCoordinate,
     /// The value is a `GeoJSON` `GeometryCollection`. ETSI GS CIM 009 v1.9.1 clause
     /// 4.7.1 allows a `GeoProperty` value every geometry RFC 7946 defines except
     /// this one, and clause 4.6.3 excludes it from reference geometries too.
@@ -45,27 +53,30 @@ impl GeometryForm {
     /// # Errors
     ///
     /// Returns [`GeometryError::Position`] if any position of the geometry
-    /// carries fewer than two or more than three ordinates, and
+    /// carries fewer than two or more than three ordinates or lies off the
+    /// CRS84 axes, and
     /// [`GeometryError::GeometryCollectionUnsupported`] for a `GeometryCollection`,
     /// which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes.
     pub fn from_geojson(value: &GeometryValue) -> Result<GeometryForm, GeometryError> {
         match value {
-            GeometryValue::Point { coordinates } => Ok(GeometryForm::Point(Position::try_from(coordinates)?)),
-            GeometryValue::MultiPoint { coordinates } => Ok(GeometryForm::MultiPoint(decode_positions(coordinates)?)),
-            GeometryValue::LineString { coordinates } => Ok(GeometryForm::LineString(decode_positions(coordinates)?)),
+            GeometryValue::Point { coordinates } => Ok(GeometryForm::Point(decode_position(coordinates, &[])?)),
+            GeometryValue::MultiPoint { coordinates } => Ok(GeometryForm::MultiPoint(decode_positions(coordinates, &[])?)),
+            GeometryValue::LineString { coordinates } => Ok(GeometryForm::LineString(decode_positions(coordinates, &[])?)),
             GeometryValue::MultiLineString { coordinates } => {
                 let line_strings = coordinates
                     .iter()
-                    .map(|line_string| decode_positions(line_string))
-                    .collect::<Result<Vec<Vec<Position>>, PositionError>>()?;
+                    .enumerate()
+                    .map(|(line_string, positions)| decode_positions(positions, &[line_string]))
+                    .collect::<Result<Vec<Vec<Position>>, GeometryError>>()?;
                 Ok(GeometryForm::MultiLineString(line_strings))
             }
-            GeometryValue::Polygon { coordinates } => Ok(GeometryForm::Polygon(decode_rings(coordinates)?)),
+            GeometryValue::Polygon { coordinates } => Ok(GeometryForm::Polygon(decode_rings(coordinates, None)?)),
             GeometryValue::MultiPolygon { coordinates } => {
                 let polygons = coordinates
                     .iter()
-                    .map(|polygon| decode_rings(polygon))
-                    .collect::<Result<Vec<PolygonRings>, PositionError>>()?;
+                    .enumerate()
+                    .map(|(polygon, rings)| decode_rings(rings, Some(polygon)))
+                    .collect::<Result<Vec<PolygonRings>, GeometryError>>()?;
                 Ok(GeometryForm::MultiPolygon(polygons))
             }
             GeometryValue::GeometryCollection { geometries: _ } => Err(GeometryError::GeometryCollectionUnsupported),
@@ -101,17 +112,39 @@ impl GeometryForm {
     }
 }
 
-/// Decode a flat list of `GeoJSON` positions.
-fn decode_positions(positions: &[GeoJsonPosition]) -> Result<Vec<Position>, PositionError> {
-    positions.iter().map(Position::try_from).collect()
+/// Decode the position `enclosing` leads to, naming it on refusal.
+fn decode_position(position: &GeoJsonPosition, enclosing: &[usize]) -> Result<Position, GeometryError> {
+    Position::try_from(position).map_err(|source| GeometryError::Position {
+        at: CoordinatePath::new(enclosing.to_vec()),
+        source,
+    })
 }
 
-/// Decode the ring list of a `GeoJSON` Polygon.
-fn decode_rings(rings: &[Vec<GeoJsonPosition>]) -> Result<PolygonRings, PositionError> {
+/// Decode the flat list of `GeoJSON` positions `enclosing` leads to.
+fn decode_positions(positions: &[GeoJsonPosition], enclosing: &[usize]) -> Result<Vec<Position>, GeometryError> {
+    positions
+        .iter()
+        .enumerate()
+        .map(|(index, position)| {
+            Position::try_from(position).map_err(|source| GeometryError::Position {
+                at: CoordinatePath::nested(enclosing, index),
+                source,
+            })
+        })
+        .collect()
+}
+
+/// Decode the ring list of a `GeoJSON` Polygon, standalone or as the member at
+/// index `polygon` of a `MultiPolygon`.
+fn decode_rings(rings: &[Vec<GeoJsonPosition>], polygon: Option<usize>) -> Result<PolygonRings, GeometryError> {
     let rings = rings
         .iter()
-        .map(|ring| decode_positions(ring))
-        .collect::<Result<Vec<Vec<Position>>, PositionError>>()?;
+        .enumerate()
+        .map(|(ring, positions)| match polygon {
+            Some(polygon) => decode_positions(positions, &[polygon, ring]),
+            None => decode_positions(positions, &[ring]),
+        })
+        .collect::<Result<Vec<Vec<Position>>, GeometryError>>()?;
     Ok(PolygonRings::new(rings))
 }
 
@@ -139,7 +172,13 @@ mod tests {
     fn a_point_with_four_ordinates_is_a_position_error() {
         let error = decode(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0] })).expect_err("four ordinates have no defined meaning");
         assert!(
-            matches!(error, GeometryError::Position(PositionError::TooManyOrdinates { ordinates: 4 })),
+            matches!(
+                error,
+                GeometryError::Position {
+                    source: PositionError::TooManyOrdinates { ordinates: 4 },
+                    ..
+                }
+            ),
             "got {error:?}"
         );
     }
@@ -148,7 +187,13 @@ mod tests {
     fn a_line_string_position_with_one_ordinate_is_a_position_error() {
         let error = decode(serde_json::json!({ "type": "LineString", "coordinates": [[1.0], [2.0, 3.0]] })).expect_err("one ordinate is not a position");
         assert!(
-            matches!(error, GeometryError::Position(PositionError::TooFewOrdinates { ordinates: 1 })),
+            matches!(
+                error,
+                GeometryError::Position {
+                    source: PositionError::TooFewOrdinates { ordinates: 1 },
+                    ..
+                }
+            ),
             "got {error:?}"
         );
     }

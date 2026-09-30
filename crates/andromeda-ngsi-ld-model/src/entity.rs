@@ -201,10 +201,17 @@ impl Entity {
     /// `pick` and `omit` (clause 4.21) -- has to reach them all the same, so
     /// this is what such a narrowing iterates rather than `attrs` alone.
     pub fn attribute_member_names(&self) -> impl Iterator<Item = &str> {
-        self.attrs.keys().map(AttributeName::as_str).chain(
+        self.attribute_members().map(|(name, _value)| name)
+    }
+
+    /// Every Attribute member with its name, from wherever this type keeps it:
+    /// [`Entity::attrs`] in order, then `location`, `observationSpace` and
+    /// `operationSpace` where present.
+    pub fn attribute_members(&self) -> impl Iterator<Item = (&str, &AttributeValue)> {
+        self.attrs.iter().map(|(name, value)| (name.as_str(), value)).chain(
             self.geo_property_members()
                 .into_iter()
-                .filter_map(|(name, value)| value.is_some().then_some(name)),
+                .filter_map(|(name, value)| value.as_ref().map(|value| (name, value))),
         )
     }
 

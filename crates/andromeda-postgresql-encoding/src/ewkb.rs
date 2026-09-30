@@ -331,14 +331,20 @@ mod tests {
     fn a_three_dimensional_point_decodes_back_to_the_altitude_it_carried() {
         let ewkb = Ewkb::try_from(&elevated_point()).expect("encodes");
         let decoded = Geometry::try_from(&ewkb).expect("decodes");
-        pretty_assertions::assert_eq!(decoded.form(), &GeometryForm::Point(Position::new(13.38, 52.52, Some(34.5))));
+        pretty_assertions::assert_eq!(
+            decoded.form(),
+            &GeometryForm::Point(Position::try_new(13.38, 52.52, Some(34.5)).expect("a test position lies on the CRS84 axes"))
+        );
     }
 
     #[test]
     fn a_two_dimensional_buffer_decodes_to_positions_without_an_altitude() {
         let ewkb = Ewkb::try_from(&point()).expect("encodes");
         let decoded = Geometry::try_from(&ewkb).expect("decodes");
-        pretty_assertions::assert_eq!(decoded.form(), &GeometryForm::Point(Position::new(13.38, 52.52, None)));
+        pretty_assertions::assert_eq!(
+            decoded.form(),
+            &GeometryForm::Point(Position::try_new(13.38, 52.52, None).expect("a test position lies on the CRS84 axes"))
+        );
         pretty_assertions::assert_eq!(decoded.dimension(), GeometryDimension::TwoD);
     }
 
@@ -350,7 +356,10 @@ mod tests {
         let decoded = Geometry::try_from(&ewkb).expect("decodes");
         pretty_assertions::assert_eq!(
             decoded.form(),
-            &GeometryForm::LineString(vec![Position::new(1.0, 2.0, None), Position::new(4.0, 5.0, None)])
+            &GeometryForm::LineString(vec![
+                Position::try_new(1.0, 2.0, None).expect("a test position lies on the CRS84 axes"),
+                Position::try_new(4.0, 5.0, None).expect("a test position lies on the CRS84 axes")
+            ])
         );
     }
 

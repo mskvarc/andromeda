@@ -54,7 +54,7 @@ impl CsourceSubscriptionCache {
 
 #[cfg(test)]
 mod tests {
-    use crate::{compiled::CompiledCsrSubscription, csource_cache::CsourceSubscriptionCache};
+    use crate::{compiled::CompiledCsrSubscription, csource_cache::CsourceSubscriptionCache, geo_filter::SubscriptionGeoFilter};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
     use pretty_assertions::assert_eq;
@@ -74,7 +74,7 @@ mod tests {
             selectors: Vec::new(),
             matching_attrs: Vec::new(),
             temporal_q: None,
-            geo_q: None,
+            geo_q: SubscriptionGeoFilter::Unrestricted,
             scope_q: None,
             throttling_secs: None,
             time_interval_secs: None,

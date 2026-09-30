@@ -2,6 +2,7 @@
 
 use crate::expanded::{attribute_expiry::instance_expires_at, dataset_id::instance_has_dataset_id, node::expanded_object_ref};
 use andromeda_ngsi_ld_geometry::{
+    coordinate_path::CoordinatePath,
     form::{GeometryForm, PolygonRings},
     geojson::GeometryError,
     geometry::Geometry,
@@ -184,19 +185,21 @@ fn walk_expanded_geo_node(node: &Value) -> Option<GeometryForm> {
 /// Two things are checked. A node typed `GeometryCollection` is refused outright,
 /// because clause 4.7.1 allows a `GeoProperty` value every geometry IETF RFC 7946
 /// defines except that one, and clause 4.6.3 excludes it from reference
-/// geometries as well. Otherwise the ordinate count of every position is
-/// checked, traversing nesting rather than geometry type: a position is the
-/// innermost list, whatever encloses it, so one walk covers Point through
-/// `MultiPolygon`. A node carrying no coordinates at all passes — deciding
-/// whether a value is a geometry in the first place is not this function's
-/// question.
+/// geometries as well. Otherwise every position is checked, traversing nesting
+/// rather than geometry type: a position is the innermost list, whatever
+/// encloses it, so one walk covers Point through `MultiPolygon`. Each is built
+/// through [`Position::try_new`], the one rule every other geometry path uses,
+/// so the expanded form and the literal form refuse exactly the same positions.
+/// A node carrying no coordinates at all passes — deciding whether a value is a
+/// geometry in the first place is not this function's question.
 ///
 /// # Errors
 ///
 /// Returns [`GeometryError::GeometryCollectionUnsupported`] for a
 /// `GeometryCollection`, and [`GeometryError::Position`] for the first position
-/// whose ordinate count RFC 7946 section 3.1.1 gives no meaning to, or whose
-/// members are not all numbers as that section requires.
+/// whose ordinate count RFC 7946 section 3.1.1 gives no meaning to, whose
+/// members are not all numbers as that section requires, or whose longitude or
+/// latitude lies off the CRS84 axes of section 4.
 pub fn validate_expanded_geo_node(node: &Value) -> Result<(), GeometryError> {
     let Some(object) = node.as_object() else {
         return Ok(());
@@ -207,8 +210,18 @@ pub fn validate_expanded_geo_node(node: &Value) -> Result<(), GeometryError> {
     }
 
     match object.get(properties::COORDINATES.as_str()) {
-        Some(coordinates) => Ok(validate_coordinate_arity(coordinates)?),
+        Some(coordinates) => validate_positions(expanded_list(coordinates), &mut Vec::new()),
         None => Ok(()),
+    }
+}
+
+/// The ordered list JSON-LD expansion wraps a `coordinates` member in, as
+/// `[{"@list": [...]}]`, so positions are indexed as the compact
+/// `coordinates` array a client wrote indexes them.
+fn expanded_list(member: &Value) -> &Value {
+    match member.as_array().map(Vec::as_slice) {
+        Some([list]) if list.get("@list").is_some() => list,
+        Some(_) | None => member,
     }
 }
 
@@ -223,9 +236,10 @@ fn is_geometry_collection_node(types: Option<&Value>) -> bool {
         .any(|token| token == GEOMETRY_COLLECTION_TOKEN)
 }
 
-/// Check the ordinate count of every position reachable through one expanded
-/// coordinate member, at whatever depth its geometry type nests them.
-fn validate_coordinate_arity(node: &Value) -> Result<(), PositionError> {
+/// Check every position reachable through one expanded coordinate list, at
+/// whatever depth its geometry type nests them. `enclosing` holds the index at
+/// each level above `node`, so a refusal names the position it refuses.
+fn validate_positions(node: &Value, enclosing: &mut Vec<usize>) -> Result<(), GeometryError> {
     let Some(items) = list_items(node) else {
         return Ok(());
     };
@@ -235,17 +249,41 @@ fn validate_coordinate_arity(node: &Value) -> Result<(), PositionError> {
     // would let a non-numeric ordinate be mistaken for another level of
     // nesting, and the position would escape the check entirely.
     if !items.is_empty() && items.iter().all(|item| list_items(item).is_none()) {
-        if let Some((index, _member)) = items.iter().enumerate().find(|(_index, item)| scalar_number(item).is_none()) {
-            return Err(PositionError::NonNumericOrdinate { index });
-        }
-        return match items.len() {
-            2 | 3 => Ok(()),
-            ordinates if ordinates < 2 => Err(PositionError::TooFewOrdinates { ordinates }),
-            ordinates => Err(PositionError::TooManyOrdinates { ordinates }),
-        };
+        return validate_position(items).map_err(|source| GeometryError::Position {
+            at: CoordinatePath::new(enclosing.clone()), // clone: the refusal owns the path of the one position it names
+            source,
+        });
     }
 
-    items.iter().try_for_each(validate_coordinate_arity)
+    items.iter().enumerate().try_for_each(|(index, item)| {
+        enclosing.push(index);
+        let checked = validate_positions(item, enclosing);
+        enclosing.pop();
+        checked
+    })
+}
+
+/// Check one expanded position against the rules [`Position`] enforces: every
+/// member a number, two or three of them, longitude and latitude on the CRS84
+/// axes.
+fn validate_position(ordinates: &[Value]) -> Result<(), PositionError> {
+    if let Some((index, _member)) = ordinates.iter().enumerate().find(|(_index, item)| scalar_number(item).is_none()) {
+        return Err(PositionError::NonNumericOrdinate { index });
+    }
+    match ordinates {
+        [longitude, latitude] => checked_position(longitude, latitude, None),
+        [longitude, latitude, altitude] => checked_position(longitude, latitude, Some(altitude)),
+        ordinates if ordinates.len() < 2 => Err(PositionError::TooFewOrdinates { ordinates: ordinates.len() }),
+        ordinates => Err(PositionError::TooManyOrdinates { ordinates: ordinates.len() }),
+    }
+}
+
+/// Build one expanded position of two or three ordinates through
+/// [`Position::try_new`], the one range rule every geometry path shares.
+fn checked_position(longitude: &Value, latitude: &Value, altitude: Option<&Value>) -> Result<(), PositionError> {
+    let ordinate = |index: usize, node: &Value| scalar_number(node).ok_or(PositionError::NonNumericOrdinate { index });
+    let altitude = altitude.map(|altitude| ordinate(2, altitude)).transpose()?;
+    Position::try_new(ordinate(0, longitude)?, ordinate(1, latitude)?, altitude).map(|_position| ())
 }
 
 /// Iterate the children of either a bare `Array` or an `{"@list": [...]}`
@@ -268,18 +306,15 @@ fn scalar_number(node: &Value) -> Option<f64> {
 /// Reads one expanded position, keeping the optional third ordinate RFC 7946
 /// section 3.1.1 defines as altitude.
 ///
-/// A position with any other ordinate count has no meaning under that section
-/// and yields `None`. This is the lenient read path over documents the write
-/// path already validated, so an unusable position skips the whole geometry
-/// rather than reporting a failure.
+/// A position with any other ordinate count has no meaning under that section,
+/// and one off the CRS84 axes of section 4 names no position; both yield
+/// `None`. This is the lenient read path over documents the write path already
+/// validated, so an unusable position skips the whole geometry rather than
+/// reporting a failure.
 fn walk_position(node: &Value) -> Option<Position> {
     match list_items(node)? {
-        [longitude, latitude] => Some(Position::new(scalar_number(longitude)?, scalar_number(latitude)?, None)),
-        [longitude, latitude, altitude] => Some(Position::new(
-            scalar_number(longitude)?,
-            scalar_number(latitude)?,
-            Some(scalar_number(altitude)?),
-        )),
+        [longitude, latitude] => Position::try_new(scalar_number(longitude)?, scalar_number(latitude)?, None).ok(),
+        [longitude, latitude, altitude] => Position::try_new(scalar_number(longitude)?, scalar_number(latitude)?, Some(scalar_number(altitude)?)).ok(),
         _other => None,
     }
 }
@@ -315,7 +350,13 @@ mod tests {
         geo_property_instance_geometries,
         validate_expanded_geo_node,
     };
-    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geojson::GeometryError, geometry::Geometry, position::PositionError};
+    use andromeda_ngsi_ld_geometry::{
+        coordinate_path::CoordinatePath,
+        dimension::GeometryDimension,
+        geojson::GeometryError,
+        geometry::Geometry,
+        position::PositionError,
+    };
     use chrono::{DateTime, Utc};
     use serde_json::json;
 
@@ -608,7 +649,13 @@ mod tests {
         });
         let error = validate_expanded_geo_node(&expanded).expect_err("a string is not an ordinate");
         assert!(
-            matches!(error, GeometryError::Position(PositionError::NonNumericOrdinate { index: 0 })),
+            matches!(
+                error,
+                GeometryError::Position {
+                    source: PositionError::NonNumericOrdinate { index: 0 },
+                    ..
+                }
+            ),
             "got {error:?}"
         );
     }
@@ -623,7 +670,13 @@ mod tests {
         });
         let error = validate_expanded_geo_node(&expanded).expect_err("an altitude must be a number");
         assert!(
-            matches!(error, GeometryError::Position(PositionError::NonNumericOrdinate { index: 2 })),
+            matches!(
+                error,
+                GeometryError::Position {
+                    source: PositionError::NonNumericOrdinate { index: 2 },
+                    ..
+                }
+            ),
             "got {error:?}"
         );
     }
@@ -646,9 +699,63 @@ mod tests {
         });
         let error = validate_expanded_geo_node(&expanded).expect_err("a ring vertex is still a position");
         assert!(
-            matches!(error, GeometryError::Position(PositionError::NonNumericOrdinate { index: 1 })),
+            matches!(
+                error,
+                GeometryError::Position {
+                    source: PositionError::NonNumericOrdinate { index: 1 },
+                    ..
+                }
+            ),
             "got {error:?}"
         );
+    }
+
+    /// An expanded Point at latitude 100, which no CRS84 position has.
+    fn expanded_point_past_the_pole() -> serde_json::Value {
+        json!({
+            "@type": ["https://purl.org/geojson/vocab#Point"],
+            "https://purl.org/geojson/vocab#coordinates": [
+                {"@list": [{"@value": -1.0_f64}, {"@value": 100.0_f64}]}
+            ]
+        })
+    }
+
+    #[test]
+    fn the_strict_validator_refuses_an_expanded_position_past_a_pole() {
+        // RFC 7946 section 4: the same rule the literal form meets through
+        // `Geometry::from_geojson_value`, so neither form of a write escapes it.
+        let error = validate_expanded_geo_node(&expanded_point_past_the_pole()).expect_err("latitude 100 is no position");
+        assert!(
+            matches!(error, GeometryError::Position { ref at, source } if source == PositionError::LatitudeOutOfRange { latitude: 100.0 } && *at == CoordinatePath::default()),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn the_strict_validator_refuses_a_ring_vertex_past_the_antimeridian() {
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#Polygon"],
+            "https://purl.org/geojson/vocab#coordinates": [
+                {"@list": [
+                    {"@list": [
+                        {"@list": [{"@value": 0.0_f64}, {"@value": 0.0_f64}]},
+                        {"@list": [{"@value": 181.0_f64}, {"@value": 0.0_f64}]},
+                        {"@list": [{"@value": 0.0_f64}, {"@value": 1.0_f64}]},
+                        {"@list": [{"@value": 0.0_f64}, {"@value": 0.0_f64}]}
+                    ]}
+                ]}
+            ]
+        });
+        let error = validate_expanded_geo_node(&expanded).expect_err("longitude 181 is no position");
+        assert!(
+            matches!(error, GeometryError::Position { ref at, source } if source == PositionError::LongitudeOutOfRange { longitude: 181.0 } && *at == CoordinatePath::new(vec![0, 1])),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn the_lenient_walker_has_no_geometry_for_a_position_past_a_pole() {
+        assert!(expanded_geo_node_to_geometry(&expanded_point_past_the_pole()).is_none());
     }
 
     #[test]

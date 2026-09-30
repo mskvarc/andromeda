@@ -12,6 +12,7 @@ pub mod current_state_fold;
 pub mod dataset_id;
 pub mod entity_member;
 pub mod geo_property;
+pub mod geo_property_admission;
 pub mod instance_key;
 pub mod json_literal_merge;
 pub mod merge;
