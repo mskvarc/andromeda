@@ -194,6 +194,7 @@ mod tests {
             {"@list": [
                 {"@list": [ordinate(0.0), ordinate(0.0)]},
                 {"@list": [ordinate(4.0), ordinate(0.0), ordinate(12.0)]},
+                {"@list": [ordinate(4.0), ordinate(4.0)]},
                 {"@list": [ordinate(0.0), ordinate(0.0)]}
             ]}
         ]}));

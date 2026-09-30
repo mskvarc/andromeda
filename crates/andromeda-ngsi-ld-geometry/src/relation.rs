@@ -86,11 +86,15 @@ const fn topological_dimension(geometry: &geo::Geometry<f64>) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
         form::{GeometryForm, PolygonRings},
+        geo_rel::GeoRel,
+        geometry::Geometry,
+        line_string_coordinates::LineStringCoordinates,
+        linear_ring::LinearRing,
         position::Position,
         positive_distance::PositiveDistance,
+        relation::matches,
     };
     use std::str::FromStr;
 
@@ -101,13 +105,15 @@ mod tests {
     }
 
     fn square(centre_longitude: f64, centre_latitude: f64, half: f64) -> Geometry {
-        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![vec![
+        let ring = LinearRing::try_new(vec![
             Position::try_new(centre_longitude - half, centre_latitude - half, None).expect("a test position lies on the CRS84 axes"),
             Position::try_new(centre_longitude + half, centre_latitude - half, None).expect("a test position lies on the CRS84 axes"),
             Position::try_new(centre_longitude + half, centre_latitude + half, None).expect("a test position lies on the CRS84 axes"),
             Position::try_new(centre_longitude - half, centre_latitude + half, None).expect("a test position lies on the CRS84 axes"),
             Position::try_new(centre_longitude - half, centre_latitude - half, None).expect("a test position lies on the CRS84 axes"),
-        ]])))
+        ])
+        .expect("a test square is a closed ring");
+        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![ring])))
     }
 
     /// Lift every position of a geometry to the given altitude, leaving its
@@ -121,9 +127,9 @@ mod tests {
         match form {
             GeometryForm::Point(position) => GeometryForm::Point(lift_position(position, altitude)),
             GeometryForm::MultiPoint(positions) => GeometryForm::MultiPoint(lift_positions(positions, altitude)),
-            GeometryForm::LineString(positions) => GeometryForm::LineString(lift_positions(positions, altitude)),
+            GeometryForm::LineString(line_string) => GeometryForm::LineString(lift_line_string(line_string, altitude)),
             GeometryForm::MultiLineString(line_strings) => {
-                GeometryForm::MultiLineString(line_strings.iter().map(|line_string| lift_positions(line_string, altitude)).collect())
+                GeometryForm::MultiLineString(line_strings.iter().map(|line_string| lift_line_string(line_string, altitude)).collect())
             }
             GeometryForm::Polygon(rings) => GeometryForm::Polygon(lift_rings(rings, altitude)),
             GeometryForm::MultiPolygon(polygons) => GeometryForm::MultiPolygon(polygons.iter().map(|polygon| lift_rings(polygon, altitude)).collect()),
@@ -140,9 +146,20 @@ mod tests {
         positions.iter().map(|position| lift_position(position, altitude)).collect()
     }
 
+    /// Lift a line to the given altitude.
+    fn lift_line_string(line_string: &LineStringCoordinates, altitude: f64) -> LineStringCoordinates {
+        LineStringCoordinates::try_new(lift_positions(line_string.positions(), altitude)).expect("lifting keeps the position count")
+    }
+
     /// Lift the rings of a polygon to the given altitude.
     fn lift_rings(rings: &PolygonRings, altitude: f64) -> PolygonRings {
-        PolygonRings::new(rings.rings().iter().map(|ring| lift_positions(ring, altitude)).collect())
+        PolygonRings::new(
+            rings
+                .rings()
+                .iter()
+                .map(|ring| LinearRing::try_new(lift_positions(ring.positions(), altitude)).expect("lifting every vertex alike keeps the ring closed"))
+                .collect(),
+        )
     }
 
     /// One row of the conformance table: a relation, the two geometries it is

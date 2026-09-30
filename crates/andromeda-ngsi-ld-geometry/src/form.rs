@@ -1,32 +1,38 @@
 //! The shape of a geometry: its `GeoJSON` type together with its positions.
 //!
-//! This is the wire form held verbatim. IETF RFC 7946 section 3.1.6 requires
-//! the first and last position of a linear ring to be identical, but a ring
-//! received open is kept open here rather than silently closed: what a client
-//! sent is what a client reads back, and closing a ring is a concern of the
-//! evaluation projection in [`crate::planar`], which builds its own closed copy.
+//! This is the wire form held verbatim, down to the altitude of every position.
+//! Its structure is the one IETF RFC 7946 section 3.1 requires and nothing
+//! looser: a `LineString` is a [`LineStringCoordinates`] of two or more
+//! positions, and every ring of a Polygon a closed [`LinearRing`] of four or
+//! more, so a geometry that decoded is one every consumer can use as it stands.
 
-use crate::{dimension::GeometryDimension, position::Position};
+use crate::{dimension::GeometryDimension, line_string_coordinates::LineStringCoordinates, linear_ring::LinearRing, position::Position};
 
 /// The rings of a `GeoJSON` Polygon: an exterior ring followed by zero or more
 /// interior rings (IETF RFC 7946 section 3.1.6).
 ///
-/// A Polygon with no rings at all is representable, because RFC 7946 permits
-/// `"coordinates": []`.
+/// A Polygon with no rings at all is representable: section 3.1.6 asks for
+/// "an array of linear ring coordinate arrays", which an empty array is, and
+/// section 3.1 lets a processor read empty `coordinates` as a null geometry.
 #[derive(Debug, Clone, PartialEq)]
-pub struct PolygonRings(Vec<Vec<Position>>);
+pub struct PolygonRings(Vec<LinearRing>);
 
 impl PolygonRings {
     /// Build from the ring list of a `GeoJSON` Polygon, exterior ring first.
     #[must_use]
-    pub const fn new(rings: Vec<Vec<Position>>) -> PolygonRings {
+    pub const fn new(rings: Vec<LinearRing>) -> PolygonRings {
         PolygonRings(rings)
     }
 
     /// The rings, exterior ring first.
     #[must_use]
-    pub fn rings(&self) -> &[Vec<Position>] {
+    pub fn rings(&self) -> &[LinearRing] {
         &self.0
+    }
+
+    /// Every position of every ring, exterior ring first.
+    fn positions(&self) -> impl Iterator<Item = &Position> {
+        self.0.iter().flat_map(LinearRing::positions)
     }
 }
 
@@ -47,9 +53,9 @@ pub enum GeometryForm {
     /// An array of positions.
     MultiPoint(Vec<Position>),
     /// An array of two or more positions.
-    LineString(Vec<Position>),
+    LineString(LineStringCoordinates),
     /// An array of `LineString` coordinate arrays.
-    MultiLineString(Vec<Vec<Position>>),
+    MultiLineString(Vec<LineStringCoordinates>),
     /// An array of linear ring coordinate arrays.
     Polygon(PolygonRings),
     /// An array of Polygon coordinate arrays.
@@ -74,13 +80,14 @@ impl GeometryForm {
     fn take_census(&self, census: &mut PositionCensus) {
         match self {
             GeometryForm::Point(position) => census.record(position),
-            GeometryForm::MultiPoint(positions) | GeometryForm::LineString(positions) => positions.iter().for_each(|position| census.record(position)),
-            GeometryForm::MultiLineString(line_strings) => line_strings.iter().flatten().for_each(|position| census.record(position)),
-            GeometryForm::Polygon(rings) => rings.rings().iter().flatten().for_each(|position| census.record(position)),
-            GeometryForm::MultiPolygon(polygons) => polygons
+            GeometryForm::MultiPoint(positions) => positions.iter().for_each(|position| census.record(position)),
+            GeometryForm::LineString(line_string) => line_string.positions().iter().for_each(|position| census.record(position)),
+            GeometryForm::MultiLineString(line_strings) => line_strings
                 .iter()
-                .flat_map(|polygon| polygon.rings().iter().flatten())
+                .flat_map(LineStringCoordinates::positions)
                 .for_each(|position| census.record(position)),
+            GeometryForm::Polygon(rings) => rings.positions().for_each(|position| census.record(position)),
+            GeometryForm::MultiPolygon(polygons) => polygons.iter().flat_map(PolygonRings::positions).for_each(|position| census.record(position)),
         }
     }
 }
@@ -117,7 +124,13 @@ impl PositionCensus {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        dimension::GeometryDimension,
+        form::{GeometryForm, PolygonRings},
+        line_string_coordinates::LineStringCoordinates,
+        linear_ring::LinearRing,
+        position::Position,
+    };
 
     fn flat(longitude: f64, latitude: f64) -> Position {
         Position::try_new(longitude, latitude, None).expect("a test position lies on the CRS84 axes")
@@ -127,16 +140,25 @@ mod tests {
         Position::try_new(longitude, latitude, Some(altitude)).expect("a test position lies on the CRS84 axes")
     }
 
+    fn ring(positions: Vec<Position>) -> LinearRing {
+        LinearRing::try_new(positions).expect("a test ring is closed and long enough")
+    }
+
     #[test]
     fn a_geometry_whose_positions_all_carry_an_altitude_is_three_dimensional() {
-        let form = GeometryForm::Polygon(PolygonRings::new(vec![vec![tall(0.0, 0.0, 5.0), tall(1.0, 0.0, 5.0), tall(1.0, 1.0, 5.0)]]));
+        let form = GeometryForm::Polygon(PolygonRings::new(vec![ring(vec![
+            tall(0.0, 0.0, 5.0),
+            tall(1.0, 0.0, 5.0),
+            tall(1.0, 1.0, 5.0),
+            tall(0.0, 0.0, 5.0),
+        ])]));
         pretty_assertions::assert_eq!(form.dimension(), GeometryDimension::ThreeD);
     }
 
     #[test]
     fn a_geometry_with_mixed_position_arity_is_two_dimensional() {
-        let form = GeometryForm::LineString(vec![flat(0.0, 0.0), tall(1.0, 1.0, 50.0)]);
-        pretty_assertions::assert_eq!(form.dimension(), GeometryDimension::TwoD);
+        let line = LineStringCoordinates::try_new(vec![flat(0.0, 0.0), tall(1.0, 1.0, 50.0)]).expect("two positions trace a line");
+        pretty_assertions::assert_eq!(GeometryForm::LineString(line).dimension(), GeometryDimension::TwoD);
     }
 
     #[test]
@@ -147,12 +169,18 @@ mod tests {
 
     #[test]
     fn a_multi_polygon_is_three_dimensional_only_when_every_ring_vertex_is() {
-        let elevated = GeometryForm::MultiPolygon(vec![PolygonRings::new(vec![vec![
+        let elevated = GeometryForm::MultiPolygon(vec![PolygonRings::new(vec![ring(vec![
             tall(0.0, 0.0, 1.0),
             tall(1.0, 0.0, 1.0),
             tall(1.0, 1.0, 1.0),
-        ]])]);
-        let mixed = GeometryForm::MultiPolygon(vec![PolygonRings::new(vec![vec![tall(0.0, 0.0, 1.0), flat(1.0, 0.0), tall(1.0, 1.0, 1.0)]])]);
+            tall(0.0, 0.0, 1.0),
+        ])])]);
+        let mixed = GeometryForm::MultiPolygon(vec![PolygonRings::new(vec![ring(vec![
+            tall(0.0, 0.0, 1.0),
+            flat(1.0, 0.0),
+            tall(1.0, 1.0, 1.0),
+            tall(0.0, 0.0, 1.0),
+        ])])]);
         pretty_assertions::assert_eq!(elevated.dimension(), GeometryDimension::ThreeD);
         pretty_assertions::assert_eq!(mixed.dimension(), GeometryDimension::TwoD);
     }

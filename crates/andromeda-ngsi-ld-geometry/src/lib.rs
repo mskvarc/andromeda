@@ -38,6 +38,8 @@ pub mod geo_rel;
 pub mod geojson;
 pub mod geometry;
 pub mod geometry_type;
+pub mod line_string_coordinates;
+pub mod linear_ring;
 pub mod planar;
 pub mod position;
 pub mod positive_distance;

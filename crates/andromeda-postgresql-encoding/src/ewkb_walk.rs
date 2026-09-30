@@ -11,28 +11,18 @@
 //! WKB buffer has one type word for the whole geometry and `PostGIS` would fill
 //! the gaps of a partly-elevated geometry with a fabricated zero.
 //!
-//! ## Polygon rings are closed on the way out
-//!
-//! RFC 7946 section 3.1.6 requires the first and last position of a linear ring
-//! to be identical, but [`GeometryForm`] keeps a ring exactly as the client sent
-//! it, open ring included, so that the client reads back what it wrote. That
-//! verbatim form is not what belongs in a `PostGIS` `geometry` column: an open
-//! ring is not a valid OGC Simple Features polygon, and `PostGIS`'s WKB parser
-//! does not enforce ring closure the way its WKT parser does, so an open ring is
-//! accepted and stored as an *invalid* polygon. Every spatial predicate then
-//! rests on whatever `ST_MakeValid` decides that shape should have been — a
-//! repair chosen by the database rather than by the broker.
-//!
-//! So the walk closes each ring as it emits it, by repeating the ring's own
-//! first position. That is the identity operation on an already-closed ring, it
-//! invents no geometry that the ring did not already describe, and it never
-//! touches the stored form: the `GeoJSON` the client reads back still has the ring
-//! it sent, open or closed.
+//! Every ring is emitted exactly as held. `PostGIS`'s WKB parser does not
+//! enforce ring closure the way its WKT parser does, so an open ring would be
+//! stored as an *invalid* polygon, but a [`LinearRing`] is closed by
+//! construction (RFC 7946 section 3.1.6): no geometry that reaches this walk
+//! has one to emit.
 
 use andromeda_ngsi_ld_geometry::{
     dimension::GeometryDimension,
     form::{GeometryForm, PolygonRings},
     geometry::Geometry,
+    line_string_coordinates::LineStringCoordinates,
+    linear_ring::LinearRing,
     position::Position,
 };
 use geozero::{CoordDimensions, GeomProcessor, GeozeroGeometry, error::Result as GeozeroResult};
@@ -81,18 +71,22 @@ fn process_form<P: GeomProcessor>(form: &GeometryForm, idx: usize, processor: &m
             process_positions(positions, processor)?;
             processor.multipoint_end(idx)
         }
-        GeometryForm::LineString(positions) => {
-            processor.linestring_begin(true, positions.len(), idx)?;
-            process_positions(positions, processor)?;
+        GeometryForm::LineString(line_string) => {
+            processor.linestring_begin(true, line_string.positions().len(), idx)?;
+            process_positions(line_string.positions(), processor)?;
             processor.linestring_end(true, idx)
         }
         GeometryForm::MultiLineString(line_strings) => {
             processor.multilinestring_begin(line_strings.len(), idx)?;
-            line_strings.iter().enumerate().try_for_each(|(line_idx, positions)| {
-                processor.linestring_begin(false, positions.len(), line_idx)?;
-                process_positions(positions, processor)?;
-                processor.linestring_end(false, line_idx)
-            })?;
+            line_strings
+                .iter()
+                .map(LineStringCoordinates::positions)
+                .enumerate()
+                .try_for_each(|(line_idx, positions)| {
+                    processor.linestring_begin(false, positions.len(), line_idx)?;
+                    process_positions(positions, processor)?;
+                    processor.linestring_end(false, line_idx)
+                })?;
             processor.multilinestring_end(idx)
         }
         GeometryForm::Polygon(rings) => {
@@ -112,28 +106,13 @@ fn process_form<P: GeomProcessor>(form: &GeometryForm, idx: usize, processor: &m
     }
 }
 
-/// Emit every ring of a polygon as an untagged line string, closed.
+/// Emit every ring of a polygon as an untagged line string.
 fn process_rings<P: GeomProcessor>(rings: &PolygonRings, processor: &mut P) -> GeozeroResult<()> {
-    rings.rings().iter().enumerate().try_for_each(|(ring_idx, ring)| {
-        let closing = closing_position(ring);
-        processor.linestring_begin(false, ring.len() + usize::from(closing.is_some()), ring_idx)?;
-        ring.iter()
-            .chain(closing.iter())
-            .enumerate()
-            .try_for_each(|(position_idx, position)| process_position(position, position_idx, processor))?;
+    rings.rings().iter().map(LinearRing::positions).enumerate().try_for_each(|(ring_idx, ring)| {
+        processor.linestring_begin(false, ring.len(), ring_idx)?;
+        process_positions(ring, processor)?;
         processor.linestring_end(false, ring_idx)
     })
-}
-
-/// The position that has to be appended to `ring` to close it, or `None` when
-/// the ring is already closed or has no positions to close.
-///
-/// The appended position is the ring's own first one, so closing adds no
-/// geometry that the ring did not already describe.
-fn closing_position(ring: &[Position]) -> Option<Position> {
-    let first = ring.first()?;
-    let last = ring.last()?;
-    if first == last { None } else { Some(*first) }
 }
 
 /// Emit a run of positions, indexed from zero.
@@ -160,7 +139,9 @@ fn process_position<P: GeomProcessor>(position: &Position, idx: usize, processor
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::ewkb_walk::GeometryWalk;
+    use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, line_string_coordinates::LineStringCoordinates, position::Position};
+    use geozero::GeozeroGeometry;
 
     fn flat(longitude: f64, latitude: f64) -> Position {
         Position::try_new(longitude, latitude, None).expect("a test position lies on the CRS84 axes")
@@ -170,38 +151,21 @@ mod tests {
         Position::try_new(longitude, latitude, Some(altitude)).expect("a test position lies on the CRS84 axes")
     }
 
-    #[test]
-    fn an_open_ring_is_closed_by_repeating_its_first_position() {
-        let ring = [flat(1.0, 2.0), flat(5.0, 2.0), flat(5.0, 8.0)];
-        pretty_assertions::assert_eq!(closing_position(&ring), Some(flat(1.0, 2.0)));
-    }
-
-    #[test]
-    fn a_closed_ring_needs_no_closing_position() {
-        let ring = [flat(1.0, 2.0), flat(5.0, 2.0), flat(1.0, 2.0)];
-        pretty_assertions::assert_eq!(closing_position(&ring), None);
-    }
-
-    #[test]
-    fn an_empty_ring_needs_no_closing_position() {
-        pretty_assertions::assert_eq!(closing_position(&[]), None);
-    }
-
-    #[test]
-    fn a_ring_whose_ends_differ_only_in_altitude_is_closed() {
-        let ring = [tall(1.0, 2.0, 10.0), tall(5.0, 2.0, 10.0), tall(1.0, 2.0, 20.0)];
-        pretty_assertions::assert_eq!(closing_position(&ring), Some(tall(1.0, 2.0, 10.0)));
+    fn line(positions: Vec<Position>) -> Geometry {
+        Geometry::new(GeometryForm::LineString(
+            LineStringCoordinates::try_new(positions).expect("two positions trace a line"),
+        ))
     }
 
     #[test]
     fn a_geometry_whose_positions_all_carry_an_altitude_walks_as_xyz() {
-        let geometry = Geometry::new(GeometryForm::LineString(vec![tall(1.0, 2.0, 3.0), tall(4.0, 5.0, 6.0)]));
+        let geometry = line(vec![tall(1.0, 2.0, 3.0), tall(4.0, 5.0, 6.0)]);
         assert!(GeometryWalk(&geometry).dims().z, "every position is elevated");
     }
 
     #[test]
     fn a_geometry_of_mixed_arity_walks_as_xy() {
-        let geometry = Geometry::new(GeometryForm::LineString(vec![tall(1.0, 2.0, 3.0), flat(4.0, 5.0)]));
+        let geometry = line(vec![tall(1.0, 2.0, 3.0), flat(4.0, 5.0)]);
         assert!(!GeometryWalk(&geometry).dims().z, "a partly elevated geometry is planar");
     }
 }

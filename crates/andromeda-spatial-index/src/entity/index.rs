@@ -231,6 +231,7 @@ mod tests {
         form::{GeometryForm, PolygonRings},
         geo_rel::GeoRel,
         geometry::Geometry,
+        linear_ring::LinearRing,
         position::Position,
         positive_distance::PositiveDistance,
     };
@@ -262,13 +263,16 @@ mod tests {
     }
 
     fn square(cx: f64, cy: f64, half: f64) -> Geometry {
-        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![vec![
-            Position::try_new(cx - half, cy - half, None).expect("a test position lies on the CRS84 axes"),
-            Position::try_new(cx + half, cy - half, None).expect("a test position lies on the CRS84 axes"),
-            Position::try_new(cx + half, cy + half, None).expect("a test position lies on the CRS84 axes"),
-            Position::try_new(cx - half, cy + half, None).expect("a test position lies on the CRS84 axes"),
-            Position::try_new(cx - half, cy - half, None).expect("a test position lies on the CRS84 axes"),
-        ]])))
+        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![
+            LinearRing::try_new(vec![
+                Position::try_new(cx - half, cy - half, None).expect("a test position lies on the CRS84 axes"),
+                Position::try_new(cx + half, cy - half, None).expect("a test position lies on the CRS84 axes"),
+                Position::try_new(cx + half, cy + half, None).expect("a test position lies on the CRS84 axes"),
+                Position::try_new(cx - half, cy + half, None).expect("a test position lies on the CRS84 axes"),
+                Position::try_new(cx - half, cy - half, None).expect("a test position lies on the CRS84 axes"),
+            ])
+            .expect("a test square is a closed ring"),
+        ])))
     }
 
     /// An index whose `location` scope a rebuild over an empty store seeded.

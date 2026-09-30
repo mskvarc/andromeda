@@ -19,25 +19,25 @@
 
 use crate::{
     form::{GeometryForm, PolygonRings},
+    line_string_coordinates::LineStringCoordinates,
     position::Position,
 };
 use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 
 /// Project a geometry onto the horizontal plane.
 ///
-/// The projection is a distinct value, not a view: a polygon ring received open
-/// is closed in the projection, as `geo::Polygon` requires, while the form it
-/// was projected from keeps the ring exactly as it arrived.
+/// The projection is a distinct value, not a view: the form it was projected
+/// from keeps every altitude it arrived with.
 pub fn project(form: &GeometryForm) -> GeoGeometry<f64> {
     match form {
         GeometryForm::Point(position) => GeoGeometry::Point(Point::from(coord(position))),
         GeometryForm::MultiPoint(positions) => {
             GeoGeometry::MultiPoint(MultiPoint::new(positions.iter().map(|position| Point::from(coord(position))).collect()))
         }
-        GeometryForm::LineString(positions) => GeoGeometry::LineString(line_string(positions)),
-        GeometryForm::MultiLineString(line_strings) => {
-            GeoGeometry::MultiLineString(MultiLineString::new(line_strings.iter().map(|positions| line_string(positions)).collect()))
-        }
+        GeometryForm::LineString(line) => GeoGeometry::LineString(line_string(line.positions())),
+        GeometryForm::MultiLineString(lines) => GeoGeometry::MultiLineString(MultiLineString::new(
+            lines.iter().map(LineStringCoordinates::positions).map(line_string).collect(),
+        )),
         GeometryForm::Polygon(rings) => GeoGeometry::Polygon(polygon(rings)),
         GeometryForm::MultiPolygon(polygons) => GeoGeometry::MultiPolygon(MultiPolygon::new(polygons.iter().map(polygon).collect())),
     }
@@ -62,17 +62,27 @@ fn line_string(positions: &[Position]) -> LineString<f64> {
 /// is what `"coordinates": []` means: an area enclosing nothing.
 fn polygon(rings: &PolygonRings) -> Polygon<f64> {
     let rings = rings.rings();
-    let exterior = rings.first().map_or_else(|| LineString(Vec::new()), |ring| line_string(ring));
-    let interiors = rings.iter().skip(1).map(|ring| line_string(ring)).collect();
+    let exterior = rings.first().map_or_else(|| LineString(Vec::new()), |ring| line_string(ring.positions()));
+    let interiors = rings.iter().skip(1).map(|ring| line_string(ring.positions())).collect();
     Polygon::new(exterior, interiors)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        form::{GeometryForm, PolygonRings},
+        linear_ring::LinearRing,
+        planar::project,
+        position::Position,
+    };
+    use geo::{Geometry as GeoGeometry, Point};
 
     fn tall(longitude: f64, latitude: f64, altitude: f64) -> Position {
         Position::try_new(longitude, latitude, Some(altitude)).expect("a test position lies on the CRS84 axes")
+    }
+
+    fn ring(positions: Vec<Position>) -> LinearRing {
+        LinearRing::try_new(positions).expect("a test ring is closed and long enough")
     }
 
     #[test]
@@ -82,8 +92,13 @@ mod tests {
     }
 
     #[test]
-    fn projecting_an_open_polygon_ring_closes_the_projected_copy() {
-        let form = GeometryForm::Polygon(PolygonRings::new(vec![vec![tall(0.0, 0.0, 1.0), tall(1.0, 0.0, 1.0), tall(1.0, 1.0, 1.0)]]));
+    fn projecting_a_polygon_keeps_its_closed_exterior_ring() {
+        let form = GeometryForm::Polygon(PolygonRings::new(vec![ring(vec![
+            tall(0.0, 0.0, 1.0),
+            tall(1.0, 0.0, 1.0),
+            tall(1.0, 1.0, 1.0),
+            tall(0.0, 0.0, 1.0),
+        ])]));
         let GeoGeometry::Polygon(projected) = project(&form) else {
             panic!("expected a Polygon");
         };
@@ -102,8 +117,8 @@ mod tests {
 
     #[test]
     fn projecting_a_polygon_keeps_the_rings_after_the_first_as_interiors() {
-        let exterior_ring = vec![tall(0.0, 0.0, 1.0), tall(4.0, 0.0, 1.0), tall(4.0, 4.0, 1.0), tall(0.0, 0.0, 1.0)];
-        let interior_ring = vec![tall(1.0, 1.0, 1.0), tall(2.0, 1.0, 1.0), tall(2.0, 2.0, 1.0), tall(1.0, 1.0, 1.0)];
+        let exterior_ring = ring(vec![tall(0.0, 0.0, 1.0), tall(4.0, 0.0, 1.0), tall(4.0, 4.0, 1.0), tall(0.0, 0.0, 1.0)]);
+        let interior_ring = ring(vec![tall(1.0, 1.0, 1.0), tall(2.0, 1.0, 1.0), tall(2.0, 2.0, 1.0), tall(1.0, 1.0, 1.0)]);
         let form = GeometryForm::Polygon(PolygonRings::new(vec![exterior_ring, interior_ring]));
         let GeoGeometry::Polygon(projected) = project(&form) else {
             panic!("expected a Polygon");

@@ -18,6 +18,8 @@
 
 use andromeda_ngsi_ld_geometry::{
     form::{GeometryForm, PolygonRings},
+    line_string_coordinates::{LineStringCoordinates, LineStringError},
+    linear_ring::{LinearRing, LinearRingError},
     position::{Position, PositionError},
 };
 use geozero::{
@@ -40,6 +42,15 @@ pub enum GeometryBuildError {
     /// check or was not written by the broker.
     #[error("the buffer holds a coordinate that is no GeoJSON position: {0}")]
     Position(#[from] PositionError),
+    /// A line string of fewer than the two positions RFC 7946 section 3.1.4
+    /// requires. Every line the broker writes was built checked, so such a row
+    /// predates that check or was not written by the broker.
+    #[error("the buffer holds a line that is no GeoJSON LineString: {0}")]
+    LineString(#[from] LineStringError),
+    /// A polygon ring that is open or holds fewer than the four positions RFC
+    /// 7946 section 3.1.6 requires, which no ring the broker writes is.
+    #[error("the buffer holds a ring that is no GeoJSON linear ring: {0}")]
+    LinearRing(#[from] LinearRingError),
     /// A coordinate arrived while no geometry that holds positions was open.
     #[error("a coordinate arrived outside any geometry that can hold one")]
     UnexpectedCoordinate,
@@ -104,9 +115,9 @@ enum PartialGeometry {
     /// `MultiLineString`, or a polygon ring.
     LineString(Vec<Position>),
     /// A `MultiLineString` collecting finished line strings.
-    MultiLineString(Vec<Vec<Position>>),
+    MultiLineString(Vec<LineStringCoordinates>),
     /// A Polygon collecting finished rings, exterior ring first.
-    Polygon(Vec<Vec<Position>>),
+    Polygon(Vec<LinearRing>),
     /// A `MultiPolygon` collecting finished polygons.
     MultiPolygon(Vec<PolygonRings>),
 }
@@ -280,20 +291,20 @@ impl GeomProcessor for GeometryBuilder {
         // right.
         let standalone = match self.stack.last_mut() {
             Some(PartialGeometry::Polygon(rings)) => {
-                rings.push(positions);
+                rings.push(LinearRing::try_new(positions).map_err(GeometryBuildError::from)?);
                 None
             }
             Some(PartialGeometry::MultiLineString(line_strings)) => {
-                line_strings.push(positions);
+                line_strings.push(LineStringCoordinates::try_new(positions).map_err(GeometryBuildError::from)?);
                 None
             }
-            None => Some(positions),
+            None => Some(LineStringCoordinates::try_new(positions).map_err(GeometryBuildError::from)?),
             Some(PartialGeometry::Point(_) | PartialGeometry::MultiPoint(_) | PartialGeometry::LineString(_) | PartialGeometry::MultiPolygon(_)) => {
                 return Err(GeometryBuildError::MisplacedGeometry { geometry: "LineString" }.into());
             }
         };
         match standalone {
-            Some(positions) => Ok(self.complete(GeometryForm::LineString(positions))?),
+            Some(line_string) => Ok(self.complete(GeometryForm::LineString(line_string))?),
             None => Ok(()),
         }
     }
@@ -397,7 +408,17 @@ impl GeomProcessor for GeometryBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::ewkb_build::{GeometryBuildError, GeometryBuilder, unbalanced, unsupported};
+    use andromeda_ngsi_ld_geometry::{
+        form::GeometryForm,
+        line_string_coordinates::LineStringError,
+        linear_ring::LinearRingError,
+        position::{Position, PositionError},
+    };
+    use geozero::{
+        GeomProcessor,
+        error::{GeozeroError, Result as GeozeroResult},
+    };
 
     /// Feed a complete Point through the callbacks a reader would emit.
     fn feed_point(builder: &mut GeometryBuilder, altitude: Option<f64>) -> GeozeroResult<()> {
@@ -510,23 +531,50 @@ mod tests {
         );
     }
 
+    /// Feed one Polygon whose single ring runs through `ring`, and end it.
+    fn feed_polygon(builder: &mut GeometryBuilder, ring: &[(f64, f64)]) -> GeozeroResult<()> {
+        builder.polygon_begin(true, 1, 0)?;
+        builder.linestring_begin(false, ring.len(), 0)?;
+        for (index, (longitude, latitude)) in ring.iter().enumerate() {
+            builder.coordinate(*longitude, *latitude, None, None, None, None, index)?;
+        }
+        builder.linestring_end(false, 0)?;
+        builder.polygon_end(true, 0)
+    }
+
     #[test]
     fn a_polygon_ring_folds_into_the_polygon_rather_than_standing_alone() {
         let mut builder = GeometryBuilder::new();
-        builder.polygon_begin(true, 1, 0).expect("a Polygon may begin");
-        builder.linestring_begin(false, 3, 0).expect("a ring may begin");
-        for (longitude, latitude) in [(1.0, 2.0), (5.0, 2.0), (1.0, 2.0)] {
-            builder
-                .coordinate(longitude, latitude, None, None, None, None, 0)
-                .expect("a ring takes positions");
-        }
-        builder.linestring_end(false, 0).expect("a ring may end");
-        builder.polygon_end(true, 0).expect("a Polygon may end");
+        feed_polygon(&mut builder, &[(1.0, 2.0), (5.0, 2.0), (5.0, 8.0), (1.0, 2.0)]).expect("a closed ring of four positions");
         let GeometryForm::Polygon(rings) = builder.finish().expect("the Polygon is complete") else {
             panic!("a Polygon was built");
         };
         pretty_assertions::assert_eq!(rings.rings().len(), 1);
-        pretty_assertions::assert_eq!(rings.rings()[0].len(), 3);
+        pretty_assertions::assert_eq!(rings.rings()[0].positions().len(), 4);
+    }
+
+    #[test]
+    fn a_stored_open_ring_is_refused_rather_than_decoded() {
+        // No write builds an open ring any more, so a row holding one is
+        // reported rather than turned into a polygon the broker matches on.
+        let mut builder = GeometryBuilder::new();
+        let error = feed_polygon(&mut builder, &[(1.0, 2.0), (5.0, 2.0), (5.0, 8.0), (1.0, 8.0)]).expect_err("the ring is open");
+        pretty_assertions::assert_eq!(
+            error.to_string(),
+            GeozeroError::from(GeometryBuildError::LinearRing(LinearRingError::Open)).to_string()
+        );
+    }
+
+    #[test]
+    fn a_stored_line_of_one_position_is_refused_rather_than_decoded() {
+        let mut builder = GeometryBuilder::new();
+        builder.linestring_begin(true, 1, 0).expect("a LineString may begin");
+        builder.xy(1.0, 2.0, 0).expect("a line takes positions");
+        let error = builder.linestring_end(true, 0).expect_err("one position traces no line");
+        pretty_assertions::assert_eq!(
+            error.to_string(),
+            GeozeroError::from(GeometryBuildError::LineString(LineStringError::TooFewPositions { positions: 1 })).to_string()
+        );
     }
 
     #[test]

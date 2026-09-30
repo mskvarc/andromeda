@@ -7,6 +7,8 @@ use andromeda_ngsi_ld_geometry::{
     geojson::GeometryError,
     geometry::Geometry,
     geometry_type::GeometryType,
+    line_string_coordinates::LineStringCoordinates,
+    linear_ring::LinearRing,
     position::{Position, PositionError},
 };
 use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
@@ -146,32 +148,12 @@ fn literal_geojson_to_geometry(literal: &Value) -> Option<Geometry> {
 /// position keeps the altitude and the ordinate count it was written with, so
 /// what an entity was stored as is what it is read back as.
 ///
-/// Returns `None` for unknown geometry types or malformed input so the caller
-/// can fall through to the slow path if needed.
+/// Returns `None` for a node that names no geometry type, and for one
+/// [`validate_expanded_geo_node`] refuses: this is the lenient read path over
+/// documents the write path already validated, so an unusable geometry is
+/// skipped rather than reported.
 pub fn expanded_geo_node_to_geometry(node: &Value) -> Option<Geometry> {
-    walk_expanded_geo_node(node).map(Geometry::new)
-}
-
-/// Reads an expanded `GeoJSON` node, dispatching on its `@type` to the walker
-/// for that geometry kind.
-///
-/// A `GeometryCollection` yields `None`: clause 4.7.1 excludes it from `GeoProperty`
-/// geometries, so nothing the write path accepted can be one, and the lenient
-/// read simply has no geometry to offer for it.
-fn walk_expanded_geo_node(node: &Value) -> Option<GeometryForm> {
-    let obj = node.as_object()?;
-    let token = obj.get("@type")?.as_array()?.first()?.as_str()?.strip_prefix(prefix::GEOJSON.as_str())?;
-
-    let coordinates = obj.get(properties::COORDINATES.as_str())?.as_array()?.first()?;
-
-    match GeometryType::from_str(token).ok()? {
-        GeometryType::Point => Some(GeometryForm::Point(walk_position(coordinates)?)),
-        GeometryType::MultiPoint => Some(GeometryForm::MultiPoint(walk_positions(coordinates)?)),
-        GeometryType::LineString => Some(GeometryForm::LineString(walk_positions(coordinates)?)),
-        GeometryType::MultiLineString => Some(GeometryForm::MultiLineString(walk_position_lists(coordinates)?)),
-        GeometryType::Polygon => Some(GeometryForm::Polygon(walk_rings(coordinates)?)),
-        GeometryType::MultiPolygon => Some(GeometryForm::MultiPolygon(walk_ring_lists(coordinates)?)),
-    }
+    decode_typed_geo_node(node).ok().flatten().map(Geometry::new)
 }
 
 /// Check that an expanded `GeoJSON` node is a geometry a `GeoProperty` may carry.
@@ -182,36 +164,162 @@ fn walk_expanded_geo_node(node: &Value) -> Option<GeometryForm> {
 /// 5.5.4 requires instead of accepting a `GeoProperty` the broker will later
 /// refuse to read back.
 ///
-/// Two things are checked. A node typed `GeometryCollection` is refused outright,
-/// because clause 4.7.1 allows a `GeoProperty` value every geometry IETF RFC 7946
-/// defines except that one, and clause 4.6.3 excludes it from reference
-/// geometries as well. Otherwise every position is checked, traversing nesting
-/// rather than geometry type: a position is the innermost list, whatever
-/// encloses it, so one walk covers Point through `MultiPolygon`. Each is built
-/// through [`Position::try_new`], the one rule every other geometry path uses,
-/// so the expanded form and the literal form refuse exactly the same positions.
-/// A node carrying no coordinates at all passes — deciding whether a value is a
+/// A node typed `GeometryCollection` is refused outright, because clause 4.7.1
+/// allows a `GeoProperty` value every geometry IETF RFC 7946 defines except
+/// that one, and clause 4.6.3 excludes it from reference geometries as well.
+/// A node naming one of the other geometry types is read the way that type
+/// nests its `coordinates`, each position built through [`Position::try_new`],
+/// each `LineString` through [`LineStringCoordinates::try_new`] and each
+/// Polygon ring through [`LinearRing::try_new`]: the rules every other
+/// geometry path uses, so the expanded form and the literal form refuse
+/// exactly the same geometries. A node naming no geometry type still has every
+/// position it carries checked, traversing nesting rather than type, and one
+/// carrying no coordinates at all passes -- deciding whether a value is a
 /// geometry in the first place is not this function's question.
 ///
 /// # Errors
 ///
 /// Returns [`GeometryError::GeometryCollectionUnsupported`] for a
-/// `GeometryCollection`, and [`GeometryError::Position`] for the first position
-/// whose ordinate count RFC 7946 section 3.1.1 gives no meaning to, whose
+/// `GeometryCollection`, [`GeometryError::Misnested`] for coordinates nested
+/// otherwise than the named type requires, [`GeometryError::LineString`] and
+/// [`GeometryError::LinearRing`] for a line or ring RFC 7946 sections 3.1.4
+/// and 3.1.6 do not admit, and [`GeometryError::Position`] for the first
+/// position whose ordinate count section 3.1.1 gives no meaning to, whose
 /// members are not all numbers as that section requires, or whose longitude or
 /// latitude lies off the CRS84 axes of section 4.
 pub fn validate_expanded_geo_node(node: &Value) -> Result<(), GeometryError> {
     let Some(object) = node.as_object() else {
         return Ok(());
     };
-
     if is_geometry_collection_node(object.get("@type")) {
         return Err(GeometryError::GeometryCollectionUnsupported);
     }
-
+    if decode_typed_geo_node(node)?.is_some() {
+        return Ok(());
+    }
     match object.get(properties::COORDINATES.as_str()) {
         Some(coordinates) => validate_positions(expanded_list(coordinates), &mut Vec::new()),
         None => Ok(()),
+    }
+}
+
+/// Read an expanded node naming one of the geometry types [`GeometryType`]
+/// knows as that geometry, strictly.
+///
+/// `Ok(None)` when the node names no such type or carries no `coordinates`,
+/// which leaves the question of what it is to the caller.
+fn decode_typed_geo_node(node: &Value) -> Result<Option<GeometryForm>, GeometryError> {
+    let Some(object) = node.as_object() else {
+        return Ok(None);
+    };
+    let Some(geometry_type) = object
+        .get("@type")
+        .and_then(Value::as_array)
+        .and_then(|types| types.first())
+        .and_then(Value::as_str)
+        .and_then(|iri| iri.strip_prefix(prefix::GEOJSON.as_str()))
+        .and_then(|token| GeometryType::from_str(token).ok())
+    else {
+        return Ok(None);
+    };
+    let Some(coordinates) = object.get(properties::COORDINATES.as_str()) else {
+        return Ok(None);
+    };
+    let reader = CoordinateReader { geometry_type };
+    let coordinates = expanded_list(coordinates);
+    let enclosing = &mut Vec::new();
+    let form = match geometry_type {
+        GeometryType::Point => GeometryForm::Point(reader.position(coordinates, enclosing)?),
+        GeometryType::MultiPoint => GeometryForm::MultiPoint(reader.positions(coordinates, enclosing)?),
+        GeometryType::LineString => GeometryForm::LineString(reader.line_string(coordinates, enclosing)?),
+        GeometryType::MultiLineString => GeometryForm::MultiLineString(reader.each(coordinates, enclosing, CoordinateReader::line_string)?),
+        GeometryType::Polygon => GeometryForm::Polygon(reader.rings(coordinates, enclosing)?),
+        GeometryType::MultiPolygon => GeometryForm::MultiPolygon(reader.each(coordinates, enclosing, CoordinateReader::rings)?),
+    };
+    Ok(Some(form))
+}
+
+/// Reads the expanded `coordinates` of one geometry the way its type nests
+/// them (IETF RFC 7946 sections 3.1.2 through 3.1.7).
+///
+/// Every method takes `enclosing`, the index at each level above the node it
+/// reads, and builds a [`CoordinatePath`] from it only to name a refusal, so a
+/// geometry that reads cleanly allocates no path at all.
+#[derive(Debug, Clone, Copy)]
+struct CoordinateReader {
+    /// The geometry type whose nesting is read, named in a nesting refusal.
+    geometry_type: GeometryType,
+}
+
+impl CoordinateReader {
+    /// The refusal of a member found where the type nests something else.
+    fn misnested(self, enclosing: &[usize]) -> GeometryError {
+        GeometryError::Misnested {
+            geometry_type: self.geometry_type,
+            at: CoordinatePath::new(enclosing.to_vec()),
+        }
+    }
+
+    /// The items of the list `node` must be.
+    fn list<'a>(self, node: &'a Value, enclosing: &[usize]) -> Result<&'a [Value], GeometryError> {
+        list_items(node).ok_or_else(|| self.misnested(enclosing))
+    }
+
+    /// Read `node` as one position.
+    fn position(self, node: &Value, enclosing: &[usize]) -> Result<Position, GeometryError> {
+        let ordinates = self.list(node, enclosing)?;
+        if ordinates.iter().any(|ordinate| list_items(ordinate).is_some()) {
+            return Err(self.misnested(enclosing));
+        }
+        validate_position(ordinates).map_err(|source| GeometryError::Position {
+            at: CoordinatePath::new(enclosing.to_vec()),
+            source,
+        })
+    }
+
+    /// Read `node` as a list of positions.
+    fn positions(self, node: &Value, enclosing: &mut Vec<usize>) -> Result<Vec<Position>, GeometryError> {
+        self.each(node, enclosing, |reader, item, at| reader.position(item, at))
+    }
+
+    /// Read `node` as the positions of one `LineString`.
+    fn line_string(self, node: &Value, enclosing: &mut Vec<usize>) -> Result<LineStringCoordinates, GeometryError> {
+        LineStringCoordinates::try_new(self.positions(node, enclosing)?).map_err(|source| GeometryError::LineString {
+            at: CoordinatePath::new(enclosing.clone()), // clone: the refusal owns the path of the one line it names
+            source,
+        })
+    }
+
+    /// Read `node` as one Polygon ring.
+    fn ring(self, node: &Value, enclosing: &mut Vec<usize>) -> Result<LinearRing, GeometryError> {
+        LinearRing::try_new(self.positions(node, enclosing)?).map_err(|source| GeometryError::LinearRing {
+            at: CoordinatePath::new(enclosing.clone()), // clone: the refusal owns the path of the one ring it names
+            source,
+        })
+    }
+
+    /// Read `node` as the rings of one Polygon, exterior ring first.
+    fn rings(self, node: &Value, enclosing: &mut Vec<usize>) -> Result<PolygonRings, GeometryError> {
+        self.each(node, enclosing, CoordinateReader::ring).map(PolygonRings::new)
+    }
+
+    /// Read every item of the list `node` with `read`, each one level deeper.
+    fn each<T>(
+        self,
+        node: &Value,
+        enclosing: &mut Vec<usize>,
+        read: impl Fn(CoordinateReader, &Value, &mut Vec<usize>) -> Result<T, GeometryError>,
+    ) -> Result<Vec<T>, GeometryError> {
+        self.list(node, enclosing)?
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                enclosing.push(index);
+                let read_item = read(self, item, enclosing);
+                enclosing.pop();
+                read_item
+            })
+            .collect()
     }
 }
 
@@ -236,9 +344,10 @@ fn is_geometry_collection_node(types: Option<&Value>) -> bool {
         .any(|token| token == GEOMETRY_COLLECTION_TOKEN)
 }
 
-/// Check every position reachable through one expanded coordinate list, at
-/// whatever depth its geometry type nests them. `enclosing` holds the index at
-/// each level above `node`, so a refusal names the position it refuses.
+/// Check every position reachable through the coordinate list of a node that
+/// names no geometry type, at whatever depth it nests them. `enclosing` holds
+/// the index at each level above `node`, so a refusal names the position it
+/// refuses.
 fn validate_positions(node: &Value, enclosing: &mut Vec<usize>) -> Result<(), GeometryError> {
     let Some(items) = list_items(node) else {
         return Ok(());
@@ -249,7 +358,7 @@ fn validate_positions(node: &Value, enclosing: &mut Vec<usize>) -> Result<(), Ge
     // would let a non-numeric ordinate be mistaken for another level of
     // nesting, and the position would escape the check entirely.
     if !items.is_empty() && items.iter().all(|item| list_items(item).is_none()) {
-        return validate_position(items).map_err(|source| GeometryError::Position {
+        return validate_position(items).map(drop).map_err(|source| GeometryError::Position {
             at: CoordinatePath::new(enclosing.clone()), // clone: the refusal owns the path of the one position it names
             source,
         });
@@ -263,10 +372,10 @@ fn validate_positions(node: &Value, enclosing: &mut Vec<usize>) -> Result<(), Ge
     })
 }
 
-/// Check one expanded position against the rules [`Position`] enforces: every
+/// Read one expanded position under the rules [`Position`] enforces: every
 /// member a number, two or three of them, longitude and latitude on the CRS84
 /// axes.
-fn validate_position(ordinates: &[Value]) -> Result<(), PositionError> {
+fn validate_position(ordinates: &[Value]) -> Result<Position, PositionError> {
     if let Some((index, _member)) = ordinates.iter().enumerate().find(|(_index, item)| scalar_number(item).is_none()) {
         return Err(PositionError::NonNumericOrdinate { index });
     }
@@ -280,10 +389,10 @@ fn validate_position(ordinates: &[Value]) -> Result<(), PositionError> {
 
 /// Build one expanded position of two or three ordinates through
 /// [`Position::try_new`], the one range rule every geometry path shares.
-fn checked_position(longitude: &Value, latitude: &Value, altitude: Option<&Value>) -> Result<(), PositionError> {
+fn checked_position(longitude: &Value, latitude: &Value, altitude: Option<&Value>) -> Result<Position, PositionError> {
     let ordinate = |index: usize, node: &Value| scalar_number(node).ok_or(PositionError::NonNumericOrdinate { index });
     let altitude = altitude.map(|altitude| ordinate(2, altitude)).transpose()?;
-    Position::try_new(ordinate(0, longitude)?, ordinate(1, latitude)?, altitude).map(|_position| ())
+    Position::try_new(ordinate(0, longitude)?, ordinate(1, latitude)?, altitude)
 }
 
 /// Iterate the children of either a bare `Array` or an `{"@list": [...]}`
@@ -303,43 +412,6 @@ fn scalar_number(node: &Value) -> Option<f64> {
     node.as_object().and_then(|o| o.get("@value")).and_then(Value::as_f64)
 }
 
-/// Reads one expanded position, keeping the optional third ordinate RFC 7946
-/// section 3.1.1 defines as altitude.
-///
-/// A position with any other ordinate count has no meaning under that section,
-/// and one off the CRS84 axes of section 4 names no position; both yield
-/// `None`. This is the lenient read path over documents the write path already
-/// validated, so an unusable position skips the whole geometry rather than
-/// reporting a failure.
-fn walk_position(node: &Value) -> Option<Position> {
-    match list_items(node)? {
-        [longitude, latitude] => Position::try_new(scalar_number(longitude)?, scalar_number(latitude)?, None).ok(),
-        [longitude, latitude, altitude] => Position::try_new(scalar_number(longitude)?, scalar_number(latitude)?, Some(scalar_number(altitude)?)).ok(),
-        _other => None,
-    }
-}
-
-/// Reads an expanded list of positions, failing on the first that does not parse.
-fn walk_positions(node: &Value) -> Option<Vec<Position>> {
-    list_items(node)?.iter().map(walk_position).collect()
-}
-
-/// Reads an expanded list of position lists, as a `MultiLineString` carries.
-fn walk_position_lists(node: &Value) -> Option<Vec<Vec<Position>>> {
-    list_items(node)?.iter().map(walk_positions).collect()
-}
-
-/// Reads an expanded ring list as a polygon: the first ring is the exterior,
-/// every subsequent ring an interior (IETF RFC 7946 section 3.1.6).
-fn walk_rings(node: &Value) -> Option<PolygonRings> {
-    walk_position_lists(node).map(PolygonRings::new)
-}
-
-/// Reads an expanded list of ring lists, as a `MultiPolygon` carries.
-fn walk_ring_lists(node: &Value) -> Option<Vec<PolygonRings>> {
-    list_items(node)?.iter().map(walk_rings).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use crate::expanded::geo_property::{
@@ -355,6 +427,9 @@ mod tests {
         dimension::GeometryDimension,
         geojson::GeometryError,
         geometry::Geometry,
+        geometry_type::GeometryType,
+        line_string_coordinates::LineStringError,
+        linear_ring::LinearRingError,
         position::PositionError,
     };
     use chrono::{DateTime, Utc};
@@ -751,6 +826,99 @@ mod tests {
             matches!(error, GeometryError::Position { ref at, source } if source == PositionError::LongitudeOutOfRange { longitude: 181.0 } && *at == CoordinatePath::new(vec![0, 1])),
             "got {error:?}"
         );
+    }
+
+    /// An expanded position list of `[longitude, latitude]` pairs.
+    fn expanded_positions(positions: &[[f64; 2]]) -> serde_json::Value {
+        json!({"@list": positions
+            .iter()
+            .map(|[longitude, latitude]| json!({"@list": [{"@value": longitude}, {"@value": latitude}]}))
+            .collect::<Vec<_>>()})
+    }
+
+    /// An expanded node of `geometry_type` whose coordinates are `coordinates`.
+    fn expanded_node(geometry_type: &str, coordinates: &serde_json::Value) -> serde_json::Value {
+        json!({
+            "@type": [format!("https://purl.org/geojson/vocab#{geometry_type}")],
+            "https://purl.org/geojson/vocab#coordinates": [coordinates]
+        })
+    }
+
+    #[test]
+    fn the_strict_validator_refuses_an_expanded_open_ring_by_its_index() {
+        // IETF RFC 7946 section 3.1.6, as the literal form meets it.
+        let node = expanded_node(
+            "Polygon",
+            &json!({"@list": [
+                expanded_positions(&[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 0.0]]),
+                expanded_positions(&[[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]])
+            ]}),
+        );
+        let error = validate_expanded_geo_node(&node).expect_err("the hole is open");
+        assert!(
+            matches!(error, GeometryError::LinearRing { ref at, source: LinearRingError::Open } if *at == CoordinatePath::new(vec![1])),
+            "got {error:?}"
+        );
+        assert!(
+            expanded_geo_node_to_geometry(&node).is_none(),
+            "the lenient walker has no geometry for it either"
+        );
+    }
+
+    #[test]
+    fn the_strict_validator_refuses_an_expanded_ring_of_three_positions() {
+        let node = expanded_node(
+            "MultiPolygon",
+            &json!({"@list": [{"@list": [expanded_positions(&[[0.0, 0.0], [1.0, 0.0], [0.0, 0.0]])]}]}),
+        );
+        let error = validate_expanded_geo_node(&node).expect_err("three positions enclose nothing");
+        assert!(
+            matches!(
+                error,
+                GeometryError::LinearRing { ref at, source: LinearRingError::TooFewPositions { positions: 3 } } if *at == CoordinatePath::new(vec![0, 0])
+            ),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn the_strict_validator_refuses_an_expanded_line_string_of_one_position() {
+        // IETF RFC 7946 section 3.1.4.
+        let node = expanded_node("LineString", &expanded_positions(&[[0.0, 0.0]]));
+        let error = validate_expanded_geo_node(&node).expect_err("one position traces no line");
+        assert!(
+            matches!(
+                error,
+                GeometryError::LineString { ref at, source: LineStringError::TooFewPositions { positions: 1 } } if *at == CoordinatePath::default()
+            ),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn the_strict_validator_refuses_a_polygon_nested_one_level_short() {
+        // A ring written where the ring list belongs: its positions stand where
+        // rings do, and their ordinates where positions do.
+        let node = expanded_node("Polygon", &expanded_positions(&[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 0.0]]));
+        let error = validate_expanded_geo_node(&node).expect_err("the ring list is missing a level");
+        assert!(
+            matches!(error, GeometryError::Misnested { geometry_type: GeometryType::Polygon, ref at } if *at == CoordinatePath::new(vec![0, 0])),
+            "got {error:?}"
+        );
+        pretty_assertions::assert_eq!(
+            error.to_string(),
+            "GeoJSON coordinates do not nest as a Polygon requires (at coordinates[0][0])"
+        );
+    }
+
+    #[test]
+    fn the_strict_validator_accepts_an_expanded_closed_polygon() {
+        let node = expanded_node(
+            "Polygon",
+            &json!({"@list": [expanded_positions(&[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 0.0]])]}),
+        );
+        assert!(validate_expanded_geo_node(&node).is_ok());
+        assert!(expanded_geo_node_to_geometry(&node).is_some());
     }
 
     #[test]

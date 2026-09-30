@@ -202,6 +202,7 @@ mod tests {
         form::{GeometryForm, PolygonRings},
         geo_rel::GeoRel,
         geometry::Geometry,
+        linear_ring::LinearRing,
         position::Position,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -288,13 +289,16 @@ mod tests {
             IriBuf::new("https://example.org/Vehicle".to_owned()).expect("a well-formed IRI"),
             "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         );
-        let square = Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![vec![
-            Position::try_new(x - 1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
-            Position::try_new(x + 1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
-            Position::try_new(x + 1.0, 1.0, None).expect("a test position lies on the CRS84 axes"),
-            Position::try_new(x - 1.0, 1.0, None).expect("a test position lies on the CRS84 axes"),
-            Position::try_new(x - 1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
-        ]])));
+        let square = Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![
+            LinearRing::try_new(vec![
+                Position::try_new(x - 1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
+                Position::try_new(x + 1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
+                Position::try_new(x + 1.0, 1.0, None).expect("a test position lies on the CRS84 axes"),
+                Position::try_new(x - 1.0, 1.0, None).expect("a test position lies on the CRS84 axes"),
+                Position::try_new(x - 1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
+            ])
+            .expect("a test square is a closed ring"),
+        ])));
         index.query(&key, &GeoRel::Within, &square)
     }
 

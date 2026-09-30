@@ -54,7 +54,10 @@ impl Geometry {
     ///
     /// Returns [`GeometryError::Position`] if any position of the geometry
     /// carries fewer than two or more than three ordinates or lies off the
-    /// CRS84 axes, and [`GeometryError::GeometryCollectionUnsupported`] for a
+    /// CRS84 axes, [`GeometryError::LineString`] or
+    /// [`GeometryError::LinearRing`] for a line or ring RFC 7946 sections
+    /// 3.1.4 and 3.1.6 do not admit, and
+    /// [`GeometryError::GeometryCollectionUnsupported`] for a
     /// `GeometryCollection`, which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes.
     pub fn from_geojson(geometry: &GeoJsonGeometry) -> Result<Geometry, GeometryError> {
         Ok(Geometry::new(GeometryForm::from_geojson(&geometry.value)?))
@@ -68,7 +71,8 @@ impl Geometry {
     /// Returns [`GeometryError::GeojsonValue`] if `value` is not a `GeoJSON`
     /// geometry object, [`GeometryError::Position`] if one of its positions has
     /// an ordinate count RFC 7946 gives no meaning to or lies off the CRS84
-    /// axes, or
+    /// axes, [`GeometryError::LineString`] or [`GeometryError::LinearRing`]
+    /// for a line or ring RFC 7946 does not admit, or
     /// [`GeometryError::GeometryCollectionUnsupported`] if it is a
     /// `GeometryCollection`.
     pub fn from_geojson_value(value: &Value) -> Result<Geometry, GeometryError> {
@@ -101,7 +105,7 @@ impl Geometry {
     }
 
     /// The geometry as received: every position with the altitude and the
-    /// ordinate count it arrived with, every polygon ring exactly as written.
+    /// ordinate count it arrived with.
     #[must_use]
     pub const fn form(&self) -> &GeometryForm {
         &self.form
@@ -122,8 +126,8 @@ impl Geometry {
     /// Render as a `GeoJSON` geometry for the wire.
     ///
     /// Infallible, and byte-faithful to what was received: a position that
-    /// arrived with two ordinates renders with two, one that arrived with three
-    /// renders with three, and an open polygon ring stays open.
+    /// arrived with two ordinates renders with two, and one that arrived with
+    /// three renders with three.
     #[must_use]
     pub fn to_geojson(&self) -> GeoJsonGeometry {
         GeoJsonGeometry::new(self.form.to_geojson())
@@ -195,14 +199,28 @@ impl<V: JsonValue> ToJsonValue<V> for Geometry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{coordinate_path::CoordinatePath, position::PositionError};
+    use crate::{
+        coordinate_path::CoordinatePath,
+        dimension::GeometryDimension,
+        geojson::GeometryError,
+        geometry::Geometry,
+        geometry_type::GeometryType,
+        linear_ring::LinearRingError,
+        position::PositionError,
+    };
+    use jsonld_expandable_core::ToJsonValue;
+    use serde_json::Value;
 
     /// Where a refused position sits and what is wrong with it.
     fn refused_position(error: &GeometryError) -> (CoordinatePath, PositionError) {
         match error {
             GeometryError::Position { at, source } => (at.clone(), *source), // clone: the assertion owns the path it compares
-            other @ (GeometryError::GeojsonValue(_) | GeometryError::NonFiniteCoordinate | GeometryError::GeometryCollectionUnsupported) => {
+            other @ (GeometryError::LineString { .. }
+            | GeometryError::LinearRing { .. }
+            | GeometryError::Misnested { .. }
+            | GeometryError::GeojsonValue(_)
+            | GeometryError::NonFiniteCoordinate
+            | GeometryError::GeometryCollectionUnsupported) => {
                 panic!("expected a refused position, got {other:?}")
             }
         }
@@ -223,10 +241,10 @@ mod tests {
         })
     }
 
-    fn open_elevated_polygon_json() -> Value {
+    fn elevated_polygon_json() -> Value {
         serde_json::json!({
             "type": "Polygon",
-            "coordinates": [[[1.0, 2.0, 10.0], [5.0, 2.0, 10.0], [5.0, 8.0, 10.0], [1.0, 8.0, 10.0]]]
+            "coordinates": [[[1.0, 2.0, 10.0], [5.0, 2.0, 10.0], [5.0, 8.0, 10.0], [1.0, 8.0, 10.0], [1.0, 2.0, 10.0]]]
         })
     }
 
@@ -360,17 +378,25 @@ mod tests {
     }
 
     #[test]
-    fn an_open_elevated_polygon_ring_round_trips_without_a_fabricated_closing_position() {
-        let geometry = Geometry::from_geojson_value(&open_elevated_polygon_json()).expect("open polygon parses");
-        pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), open_elevated_polygon_json());
+    fn an_elevated_polygon_round_trips_with_every_altitude() {
+        let geometry = Geometry::from_geojson_value(&elevated_polygon_json()).expect("closed polygon parses");
+        pretty_assertions::assert_eq!(geometry.dimension(), GeometryDimension::ThreeD);
+        pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), elevated_polygon_json());
+    }
 
-        // The projection closes its own copy, as `geo::Polygon` requires, which
-        // is what leaves the wire form free to stay open.
-        let geo::Geometry::Polygon(projected) = geometry.planar() else {
-            panic!("expected a Polygon projection");
-        };
-        pretty_assertions::assert_eq!(projected.exterior().0.len(), 5);
-        pretty_assertions::assert_eq!(projected.exterior().0.first(), projected.exterior().0.last());
+    #[test]
+    fn an_open_polygon_ring_is_refused_rather_than_closed() {
+        // RFC 7946 section 3.1.6: the ring's ends MUST be identical, and which
+        // closing position a client meant is not the broker's to guess.
+        let open = serde_json::json!({
+            "type": "Polygon",
+            "coordinates": [[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0], [1.0, 8.0]]]
+        });
+        let error = Geometry::from_geojson_value(&open).expect_err("an open ring is no ring");
+        assert!(
+            matches!(error, GeometryError::LinearRing { ref at, source: LinearRingError::Open } if *at == CoordinatePath::new(vec![0])),
+            "got {error:?}"
+        );
     }
 
     #[test]

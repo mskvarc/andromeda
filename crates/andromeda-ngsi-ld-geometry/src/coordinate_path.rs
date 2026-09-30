@@ -51,7 +51,7 @@ impl fmt::Display for CoordinatePath {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::coordinate_path::CoordinatePath;
 
     #[test]
     fn a_point_position_is_the_coordinates_member_itself() {

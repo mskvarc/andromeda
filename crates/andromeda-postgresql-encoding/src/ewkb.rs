@@ -15,11 +15,9 @@
 //! [`GeometryWalk`], per geometry rather than per position, because a WKB type
 //! word describes the whole geometry.
 //!
-//! Polygon rings are closed on the way out, and only on the way out; the
-//! reasoning is in [`crate::ewkb_walk`]. An encode/decode round trip is
-//! therefore the identity on every geometry whose rings arrived closed, as RFC
-//! 7946 section 3.1.6 requires them to, and closes the rings of one whose did
-//! not.
+//! An encode/decode round trip is the identity: every Polygon ring a
+//! [`Geometry`] holds is closed, as RFC 7946 section 3.1.6 requires, so the
+//! OGC Simple Features polygon `PostGIS` stores is the one the client sent.
 //!
 //! There are deliberately no `sqlx` impls on [`Ewkb`]. They would forward to
 //! `&[u8]` anyway, and keeping them out means this crate carries no persistence
@@ -189,8 +187,14 @@ impl TryFrom<Bytes> for Ewkb {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, form::GeometryForm, position::Position};
+    use crate::ewkb::{BYTE_ORDER_LITTLE_ENDIAN, EWKB_M_FLAG, EWKB_SRID_FLAG, Ewkb, EwkbError, SRID_WGS84};
+    use andromeda_ngsi_ld_geometry::{
+        dimension::GeometryDimension,
+        form::GeometryForm,
+        geometry::Geometry,
+        line_string_coordinates::LineStringCoordinates,
+        position::Position,
+    };
     use serde_json::{Value, json};
 
     /// Bit set in the EWKB type word when Z coordinates are present.
@@ -356,28 +360,27 @@ mod tests {
         let decoded = Geometry::try_from(&ewkb).expect("decodes");
         pretty_assertions::assert_eq!(
             decoded.form(),
-            &GeometryForm::LineString(vec![
-                Position::try_new(1.0, 2.0, None).expect("a test position lies on the CRS84 axes"),
-                Position::try_new(4.0, 5.0, None).expect("a test position lies on the CRS84 axes")
-            ])
+            &GeometryForm::LineString(
+                LineStringCoordinates::try_new(vec![
+                    Position::try_new(1.0, 2.0, None).expect("a test position lies on the CRS84 axes"),
+                    Position::try_new(4.0, 5.0, None).expect("a test position lies on the CRS84 axes")
+                ])
+                .expect("two positions trace a line")
+            )
         );
     }
 
     #[test]
-    fn an_open_polygon_ring_is_closed_on_the_wire_without_touching_the_stored_form() {
-        let original = parse(&json!({ "type": "Polygon", "coordinates": [[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0]]] }));
+    fn a_polygon_with_a_hole_round_trips_ring_for_ring() {
+        let original = parse(&json!({
+            "type": "Polygon",
+            "coordinates": [
+                [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0]],
+                [[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 1.0]]
+            ]
+        }));
         let ewkb = Ewkb::try_from(&original).expect("encodes");
-        let decoded = Geometry::try_from(&ewkb).expect("decodes");
-        let GeometryForm::Polygon(rings) = decoded.form() else {
-            panic!("a Polygon was encoded");
-        };
-        pretty_assertions::assert_eq!(rings.rings()[0].len(), 4, "the ring is closed on the wire");
-        pretty_assertions::assert_eq!(rings.rings()[0].first(), rings.rings()[0].last());
-
-        let GeometryForm::Polygon(stored) = original.form() else {
-            panic!("a Polygon was parsed");
-        };
-        pretty_assertions::assert_eq!(stored.rings()[0].len(), 3, "the stored form keeps the open ring");
+        pretty_assertions::assert_eq!(Geometry::try_from(&ewkb).expect("decodes"), original);
     }
 
     #[test]
