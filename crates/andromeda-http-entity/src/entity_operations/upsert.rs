@@ -10,7 +10,6 @@ use crate::{
         EntityTenantState,
         ForwardedBatch,
         IntoResponse,
-        NgsiLdErrorType,
         NgsiLdRequestEnvelope,
         PreferHeader,
         ProblemResponse,
@@ -32,7 +31,6 @@ use crate::{
         merge_forwarded,
         multi_status_response,
         parse_batch_entities,
-        public_error,
     },
     written_payload_admission::admitted_batch_entities,
 };
@@ -71,14 +69,6 @@ pub(crate) async fn batch_upsert(
     let mut admitted = admitted_batch_entities(service, BatchUpsert(upsert_policy), entities, &context, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
-
-    if admitted.is_empty() && entity_errors.is_empty() {
-        return Err(public_error(
-            NgsiLdErrorType::BadRequestData,
-            "request body must contain a non-empty array of entities",
-            &uri,
-        ));
-    }
 
     let query_string = Some(format!("options={upsert_mode}"));
     let triggering = TriggeringRequest {

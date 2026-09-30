@@ -121,7 +121,7 @@ pub fn multi_status_result(entity_id: &Identifier, local: &LocalOutcome, forward
         LocalOutcome::Processed(Ok(())) => true,
         LocalOutcome::Processed(Err(report)) => {
             errors.push(BatchEntityError::from_classification(
-                entity_id.clone(),
+                entity_id.as_uri().clone(),
                 report.classification(),
                 report.detail(),
             )); // clone: the error owns the identifier of the entity it is about
@@ -130,7 +130,7 @@ pub fn multi_status_result(entity_id: &Identifier, local: &LocalOutcome, forward
     };
     let mut remote_ok = false;
     for result in forwarded {
-        match forwarded_write_error(entity_id.clone(), &result.registration_id, &result.outcome) {
+        match forwarded_write_error(entity_id.as_uri().clone(), &result.registration_id, &result.outcome) {
             // clone: each error owns the identifier of the entity it is about
             Some(error) => errors.push(error),
             None => remote_ok = true,

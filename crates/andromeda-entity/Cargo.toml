@@ -33,6 +33,7 @@ andromeda-spatial-index.workspace = true
 andromeda-subscription.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
+andromeda-unit-catalog.workspace = true
 async-lock = "3.4.2"
 chrono = { version = "0.4.45", features = ["serde"] }
 dashmap = { version = "6.2.1", features = ["inline"] }

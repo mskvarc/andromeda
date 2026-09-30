@@ -7,6 +7,7 @@
 use crate::outcome::InvalidTemporalOutcome;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 use andromeda_ngsi_ld_model::expanded::{dataset_id::InstanceDatasetIdError, entity_member::ExpandedMemberError};
+use andromeda_unit_catalog::unit_code_registry::UnitCodeSnapshotMalformed;
 use chrono::OutOfRangeError;
 use thiserror::Error;
 
@@ -21,6 +22,10 @@ pub enum TemporalInvariant {
     /// key that no longer reads as the value it stands for.
     #[error("an admitted entity carries an unreadable member: {0}")]
     AdmittedMember(#[from] ExpandedMemberError),
+    /// The compiled-in UN/CEFACT unit catalog did not parse, so no `unitCode`
+    /// can be checked.
+    #[error("the unit catalog is unreadable: {0}")]
+    UnitCatalog(#[source] UnitCodeSnapshotMalformed),
     /// Folding a Temporal Evolution into the current state produced no entity.
     #[error("folding a Temporal Evolution into no entity created none")]
     FoldCreatedNoEntity,

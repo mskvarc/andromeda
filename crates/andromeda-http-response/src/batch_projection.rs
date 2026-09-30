@@ -3,7 +3,7 @@
 
 use crate::classified_report::ClassifiedReport;
 use andromeda_federation::{outcome::ForwardedWriteOutcome, remote_answer::describe_remote_answer};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_problem_details::{
     batch_operation::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
     error_type::NgsiLdErrorType,
@@ -12,7 +12,7 @@ use andromeda_ngsi_ld_problem_details::{
 use serde::Deserialize;
 
 /// Project one policy error through its binding-supplied exhaustive classifier.
-pub fn batch_entity_error<E>(entity_id: Identifier, error: &E, classify: impl FnOnce(&E) -> ClassifiedReport) -> BatchEntityError {
+pub fn batch_entity_error<E>(entity_id: Uri, error: &E, classify: impl FnOnce(&E) -> ClassifiedReport) -> BatchEntityError {
     let report = classify(error);
     BatchEntityError::new(entity_id, report.error_type(), report.detail())
 }
@@ -21,7 +21,7 @@ pub fn batch_entity_error<E>(entity_id: Identifier, error: &E, classify: impl Fn
 pub fn batch_operation_result<E>(success: Vec<Identifier>, errors: Vec<(Identifier, E)>, classify: impl Fn(&E) -> ClassifiedReport) -> BatchOperationResult {
     let errors = errors
         .into_iter()
-        .map(|(entity_id, error)| batch_entity_error(entity_id, &error, &classify))
+        .map(|(entity_id, error)| batch_entity_error(entity_id.into(), &error, &classify))
         .collect();
     BatchOperationResult { success, errors }
 }
@@ -35,7 +35,7 @@ pub fn batch_operation_result<E>(success: Vec<Identifier>, errors: Vec<(Identifi
 /// response. Every error names the registration it came from (Table
 /// 5.2.17-1 `registrationId`).
 #[must_use]
-pub fn forwarded_write_error(entity_id: Identifier, registration_id: &Identifier, outcome: &ForwardedWriteOutcome) -> Option<BatchEntityError> {
+pub fn forwarded_write_error(entity_id: Uri, registration_id: &Identifier, outcome: &ForwardedWriteOutcome) -> Option<BatchEntityError> {
     let error = match outcome {
         ForwardedWriteOutcome::Completed { .. } => return None,
         ForwardedWriteOutcome::RemoteHttpFailure { status, body } => match body.as_ref().and_then(|body| BatchProblemDetail::deserialize(body).ok()) {
@@ -106,11 +106,15 @@ mod tests {
         raw.parse().expect("valid URI")
     }
 
+    fn entity(raw: &str) -> Uri {
+        raw.parse().expect("valid URI")
+    }
+
     #[test]
     fn a_completed_forward_contributes_no_error() {
         assert!(
             forwarded_write_error(
-                uri("urn:ngsi-ld:Entity:1"),
+                entity("urn:ngsi-ld:Entity:1"),
                 &uri("urn:ngsi-ld:ContextSourceRegistration:1"),
                 &ForwardedWriteOutcome::Completed { status: 204, body: None }
             )
@@ -121,7 +125,7 @@ mod tests {
     #[test]
     fn a_sources_problem_detail_is_carried_through_under_its_registration() {
         let error = forwarded_write_error(
-            uri("urn:ngsi-ld:Entity:1"),
+            entity("urn:ngsi-ld:Entity:1"),
             &uri("urn:ngsi-ld:ContextSourceRegistration:1"),
             &ForwardedWriteOutcome::RemoteHttpFailure {
                 status: 409,
@@ -147,7 +151,7 @@ mod tests {
             (504, ProblemClassification::GatewayTimeout),
         ] {
             let error = forwarded_write_error(
-                uri("urn:ngsi-ld:Entity:1"),
+                entity("urn:ngsi-ld:Entity:1"),
                 &uri("urn:ngsi-ld:ContextSourceRegistration:1"),
                 &ForwardedWriteOutcome::RemoteHttpFailure {
                     status,
@@ -186,7 +190,7 @@ mod tests {
                 ProblemClassification::Category(NgsiLdErrorType::OperationNotSupported),
             ),
         ] {
-            let error = forwarded_write_error(uri("urn:ngsi-ld:Entity:1"), &registration, &outcome).expect("a failure contributes an error");
+            let error = forwarded_write_error(entity("urn:ngsi-ld:Entity:1"), &registration, &outcome).expect("a failure contributes an error");
             pretty_assertions::assert_eq!(error.error.error_type, BatchErrorKind::Known(expected), "{outcome:?}");
             pretty_assertions::assert_eq!(error.registration_id.as_ref(), Some(&registration));
         }

@@ -6,9 +6,7 @@ use crate::entity_operations::{
     Bytes,
     EntityResultExt,
     EntityTenantState,
-    Identifier,
     IntoResponse,
-    NgsiLdErrorType,
     NgsiLdRequestEnvelope,
     PreferHeader,
     ProblemResponse,
@@ -23,9 +21,12 @@ use crate::entity_operations::{
     forward_identifiers,
     merge_forwarded,
     multi_status_response,
-    public_error,
 };
-use andromeda_http_extraction::{content_length_precondition::DeclaredBodyLength, context_target};
+use andromeda_http_extraction::{
+    content_length_precondition::DeclaredBodyLength,
+    context_target,
+    entity_id_batch::{EntityIdBatch, parse_batch_entity_ids},
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 
 pub(crate) async fn batch_delete(
@@ -51,21 +52,12 @@ pub(crate) async fn batch_delete(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
 
-    let entity_ids: Vec<Identifier> = serde_json::from_slice(&body).map_err(|error| {
-        public_error(
-            NgsiLdErrorType::InvalidRequest,
-            format!("request body must be a JSON array of entity IDs: {error}"),
-            &uri,
-        )
-    })?;
-
-    if entity_ids.is_empty() {
-        return Err(public_error(
-            NgsiLdErrorType::BadRequestData,
-            "request body must contain a non-empty array of entity IDs",
-            &uri,
-        ));
-    }
+    // Clause 5.6.10.4: an identifier refused on its own -- one too long to be
+    // stored -- is reported against itself, and the rest are deleted.
+    let EntityIdBatch {
+        ids: entity_ids,
+        refused: mut id_errors,
+    } = parse_batch_entity_ids(&body, &uri)?;
 
     let context: ContextSpec = context.into_inner();
     let triggering = TriggeringRequest {
@@ -80,6 +72,7 @@ pub(crate) async fn batch_delete(
     let mut batch = service.batch_delete(placement, &entity_ids).await.with_entity_instance(&uri)?;
     drop_absent_proxied(&mut batch.errors, &forwarded);
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
+    result.errors.append(&mut id_errors);
     merge_forwarded(&mut result, &forwarded);
 
     if result.errors.is_empty() {

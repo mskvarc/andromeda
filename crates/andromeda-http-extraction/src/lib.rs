@@ -7,11 +7,14 @@
 
 pub mod accept;
 pub mod addressed_uri;
+pub mod batch_body_refusal;
+pub mod batch_item_refusal;
 pub mod classification;
 pub mod content_length_precondition;
 pub mod context;
 pub mod context_target;
 pub mod entity_batch;
+pub mod entity_id_batch;
 pub mod entity_query;
 pub mod json_payload;
 pub mod jsonld;

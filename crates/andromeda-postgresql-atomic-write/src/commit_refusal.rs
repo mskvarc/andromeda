@@ -21,6 +21,7 @@ use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
 use andromeda_postgresql_pool::persistence_classification::classify;
 use andromeda_postgresql_temporal_store::{error::TemporalStoreError, unit_code_metadata::UnitCodeMetadataError};
 use andromeda_temporal::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
+use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 
 /// Classify a raw database failure raised while beginning or committing the
 /// commit transaction.
@@ -122,8 +123,10 @@ pub(crate) fn name_lookup(error: &NameLookupError) -> CommitError {
 #[track_caller]
 pub(crate) fn unit_code(error: UnitCodeMetadataError) -> CommitError {
     match error {
-        UnitCodeMetadataError::Malformed => CommitError::Submission(SubmissionRefusal::UnitCodeMalformed),
-        UnitCodeMetadataError::NotACommonCode | UnitCodeMetadataError::Unregistered { .. } => CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered),
+        UnitCodeMetadataError::Refused(UnitCodeRefusal::Malformed) => CommitError::Submission(SubmissionRefusal::UnitCodeMalformed),
+        UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode | UnitCodeRefusal::Unregistered { .. }) => {
+            CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered)
+        }
         drift @ (UnitCodeMetadataError::UnknownIdentity { .. } | UnitCodeMetadataError::Catalog(_)) => {
             CommitError::Persistence(PersistenceFailure::Undecodable.record(&drift))
         }
@@ -140,6 +143,7 @@ mod tests {
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
     use andromeda_postgresql_temporal_store::{error::TemporalStoreError, unit_code_metadata::UnitCodeMetadataError};
     use andromeda_temporal::error::TemporalError;
+    use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 
     fn entity_id() -> Identifier {
         "urn:ngsi-ld:Building:1".parse().expect("valid entity URI")
@@ -177,15 +181,15 @@ mod tests {
     /// can never be stored however often the client retries.
     #[test]
     fn an_unregistered_unit_code_is_reported_as_a_refused_submission() {
-        let error = unit_code(UnitCodeMetadataError::NotACommonCode);
+        let error = unit_code(UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode));
         assert!(matches!(error, CommitError::Submission(_)), "{error}");
-        let malformed = unit_code(UnitCodeMetadataError::Malformed);
+        let malformed = unit_code(UnitCodeMetadataError::Refused(UnitCodeRefusal::Malformed));
         assert!(matches!(malformed, CommitError::Submission(_)), "{malformed}");
     }
 
     #[test]
     fn a_unit_code_failure_inside_history_is_refused_on_the_same_terms() {
-        let error = temporal_store(TemporalStoreError::UnitCode(UnitCodeMetadataError::NotACommonCode));
+        let error = temporal_store(TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode)));
         assert!(matches!(error, CommitError::Submission(_)), "{error}");
     }
 

@@ -299,7 +299,9 @@ async fn regression_long_uri_references_temporal_history_records_and_returns_a_l
 
 /// An Entity id is an index key and keeps its documented bound: one octet
 /// past it is refused as `BadRequestData`, whose detail names the member and
-/// the bound, and nothing is stored.
+/// the bound, and nothing is stored. A batch reports it against the entity
+/// rather than failing the request: Table 5.2.17-1 types `entityId` as any
+/// valid URI, so the over-long `id` is what the error names (clause 5.6.8.4).
 #[tokio::test]
 async fn regression_long_uri_references_an_entity_id_one_octet_past_the_bound_is_refused_by_name() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -322,8 +324,17 @@ async fn regression_long_uri_references_an_entity_id_one_octet_past_the_bound_is
         .batch_upsert(&json!([{"id": id, "type": FIXTURE_TYPE, "@context": [TEST_SUITE_CONTEXT]}]))
         .await
         .expect("batch upsert request failed");
-    let problem = assert_bad_request_data(&batch, "upserting a batch entity whose id is one octet past the bound");
-    let detail = problem["detail"].as_str().expect("a problem detail carries a detail");
+    assert_eq!(
+        batch.status,
+        StatusCode::MULTI_STATUS,
+        "a batch reports the refusal per entity: {:?}",
+        batch.body
+    );
+    let result = batch.json_value().expect("a 207 carries a BatchOperationResult");
+    let error = &result["errors"][0];
+    assert_eq!(error["entityId"], json!(id), "the error names the over-long id byte for byte: {result}");
+    assert_eq!(error["error"]["type"], json!(BAD_REQUEST_DATA.as_str()), "{error}");
+    let detail = error["error"]["detail"].as_str().expect("a problem detail carries a detail");
     assert!(
         detail.contains("'id'") && detail.contains("1024 bytes"),
         "the refusal names the member and the bound: {detail}"

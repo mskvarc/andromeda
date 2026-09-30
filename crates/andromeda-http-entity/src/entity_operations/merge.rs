@@ -10,7 +10,6 @@ use crate::{
         EntityTenantState,
         ForwardedBatch,
         IntoResponse,
-        NgsiLdErrorType,
         NgsiLdRequestEnvelope,
         PreferHeader,
         ProblemResponse,
@@ -26,7 +25,6 @@ use crate::{
         merge_forwarded,
         multi_status_response,
         parse_batch_entities,
-        public_error,
     },
     written_payload_admission::admitted_batch_entities,
 };
@@ -56,14 +54,6 @@ pub(crate) async fn batch_merge(
     let mut admitted = admitted_batch_entities(service, BatchMerge, entities, &context, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
-
-    if admitted.is_empty() && entity_errors.is_empty() {
-        return Err(public_error(
-            NgsiLdErrorType::BadRequestData,
-            "request body must contain a non-empty array of entities",
-            &uri,
-        ));
-    }
 
     let triggering = TriggeringRequest {
         via: incoming_via.as_ref(),

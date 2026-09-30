@@ -9,10 +9,10 @@
 
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_unit_catalog::{
+    expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal, unit_code_identity},
     unit_code_id::UnitCodeId,
     unit_code_registry::{UnitCodeSnapshotMalformed, registry},
 };
-use cefact_units::UnitCode;
 use serde_json::{Map, Value};
 use thiserror::Error;
 
@@ -22,24 +22,9 @@ const VALUE_KEYWORD: &str = "@value";
 /// The `unitCode` member could not be moved between metadata and its column.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum UnitCodeMetadataError {
-    /// The expanded member was not a single `@value` string entry.
-    ///
-    /// Clause 4.5.2.2 makes `unitCode` "a string representing the measurement
-    /// unit", so the only well-formed expansion is one plain string node. The
-    /// message names what the client wrote rather than the storage shape it
-    /// failed to match, because this refusal reaches the client as the detail
-    /// of a `BadRequestData` problem.
-    #[error("'unitCode' shall be a single string holding a UN/CEFACT common code, not a reified attribute or a repeated member")]
-    Malformed,
-    /// The member names no UN/CEFACT common code at all.
-    #[error("'unitCode' is not a UN/CEFACT common code")]
-    NotACommonCode,
-    /// The code is a UN/CEFACT common code the catalog has no identity for.
-    #[error("the UN/CEFACT common code {code} is not one the unit catalog registers")]
-    Unregistered {
-        /// The common code the client wrote.
-        code: UnitCode,
-    },
+    /// The member the client wrote is not a usable unit code.
+    #[error(transparent)]
+    Refused(#[from] UnitCodeRefusal),
     /// A stored identity names no catalog registration.
     #[error("the stored unit-code identity {identity} names no catalog registration")]
     UnknownIdentity {
@@ -133,27 +118,17 @@ pub fn restore_unit_code(metadata: &mut Option<Value>, identity: Option<UnitCode
 
 /// Resolve the expanded member to the identity the catalog assigned its code.
 fn identity_of(member: &Value) -> Result<UnitCodeId, UnitCodeMetadataError> {
-    let Some(entries) = member.as_array() else {
-        return Err(UnitCodeMetadataError::Malformed);
-    };
-    let [single] = entries.as_slice() else {
-        return Err(UnitCodeMetadataError::Malformed);
-    };
-    let raw = single
-        .as_object()
-        .filter(|entry| entry.len() == 1)
-        .and_then(|entry| entry.get(VALUE_KEYWORD))
-        .and_then(Value::as_str)
-        .ok_or(UnitCodeMetadataError::Malformed)?;
-    let code = UnitCode::from_code(raw).ok_or(UnitCodeMetadataError::NotACommonCode)?;
-    registry()?.id_of(code).map_err(|_| UnitCodeMetadataError::Unregistered { code })
+    unit_code_identity(member).map_err(|error| match error {
+        ExpandedUnitCodeError::Refused(refusal) => UnitCodeMetadataError::Refused(refusal),
+        ExpandedUnitCodeError::Catalog(malformed) => UnitCodeMetadataError::Catalog(malformed),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use crate::unit_code_metadata::{UnitCodeMetadataError, restore_unit_code, take_unit_code};
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-    use andromeda_unit_catalog::unit_code_id::UnitCodeId;
+    use andromeda_unit_catalog::{expanded_unit_code::UnitCodeRefusal, unit_code_id::UnitCodeId};
     use serde_json::{Value, json};
 
     fn metadata_with_unit(code: &str) -> Value {
@@ -209,7 +184,10 @@ mod tests {
     #[test]
     fn a_code_outside_the_common_code_list_refuses_the_write() {
         let mut metadata = Some(metadata_with_unit("NOTACODE"));
-        pretty_assertions::assert_eq!(take_unit_code(&mut metadata), Err(UnitCodeMetadataError::NotACommonCode));
+        pretty_assertions::assert_eq!(
+            take_unit_code(&mut metadata),
+            Err(UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode))
+        );
     }
 
     #[test]
@@ -217,22 +195,25 @@ mod tests {
         // Recommendation 20 common codes are upper case; accepting `kgm` would
         // make two spellings of one unit collide on different identities.
         let mut metadata = Some(metadata_with_unit("kgm"));
-        pretty_assertions::assert_eq!(take_unit_code(&mut metadata), Err(UnitCodeMetadataError::NotACommonCode));
+        pretty_assertions::assert_eq!(
+            take_unit_code(&mut metadata),
+            Err(UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode))
+        );
     }
 
     #[test]
     fn a_unit_member_that_is_not_a_single_value_entry_refuses_the_write() {
         let mut object = Some(json!({ expanded_properties::UNIT_CODE.as_str(): "KGM" }));
-        pretty_assertions::assert_eq!(take_unit_code(&mut object), Err(UnitCodeMetadataError::Malformed));
+        pretty_assertions::assert_eq!(take_unit_code(&mut object), Err(UnitCodeMetadataError::Refused(UnitCodeRefusal::Malformed)));
 
         let mut repeated = Some(json!({ expanded_properties::UNIT_CODE.as_str(): [{"@value": "KGM"}, {"@value": "MTR"}] }));
-        pretty_assertions::assert_eq!(take_unit_code(&mut repeated), Err(UnitCodeMetadataError::Malformed));
+        pretty_assertions::assert_eq!(take_unit_code(&mut repeated), Err(UnitCodeMetadataError::Refused(UnitCodeRefusal::Malformed)));
 
         let mut identified = Some(json!({ expanded_properties::UNIT_CODE.as_str(): [{"@id": "KGM"}] }));
-        pretty_assertions::assert_eq!(take_unit_code(&mut identified), Err(UnitCodeMetadataError::Malformed));
+        pretty_assertions::assert_eq!(take_unit_code(&mut identified), Err(UnitCodeMetadataError::Refused(UnitCodeRefusal::Malformed)));
 
         let mut annotated = Some(json!({ expanded_properties::UNIT_CODE.as_str(): [{"@value": "KGM", "@type": "http://www.w3.org/2001/XMLSchema#string"}] }));
-        pretty_assertions::assert_eq!(take_unit_code(&mut annotated), Err(UnitCodeMetadataError::Malformed));
+        pretty_assertions::assert_eq!(take_unit_code(&mut annotated), Err(UnitCodeMetadataError::Refused(UnitCodeRefusal::Malformed)));
     }
 
     #[test]

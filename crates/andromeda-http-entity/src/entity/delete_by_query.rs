@@ -67,7 +67,7 @@ fn purge_dataset_scope(query: &EntityQueryParameters, enabled: EnabledExtensions
 fn merge_forwarded_purges(result: &mut BatchOperationResult, forwarded: &[ForwardedPurgeResult]) {
     for entry in forwarded {
         for id in &entry.reported_ids {
-            if let Some(error) = forwarded_write_error(id.clone(), &entry.result.registration_id, &entry.result.outcome) {
+            if let Some(error) = forwarded_write_error(id.as_uri().clone(), &entry.result.registration_id, &entry.result.outcome) {
                 // clone: each error owns the identifier it is reported against
                 result.errors.push(error);
             }

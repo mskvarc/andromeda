@@ -21,6 +21,8 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+/// Resolving an expanded JSON-LD `unitCode` member to its catalog identity.
+pub mod expanded_unit_code;
 /// The revision of UN/CEFACT Recommendation 20 a registration belongs to.
 pub mod rec20_revision;
 /// The digest identifying the artifact a catalog release was generated from.

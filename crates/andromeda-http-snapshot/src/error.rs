@@ -115,7 +115,7 @@ impl<T> SnapshotResultExt<T> for Result<T, SnapshotError> {
 
 pub(crate) fn project_purge_failure(failure: SnapshotPurgeFailure) -> BatchEntityError {
     let report = classify_snapshot_error(&failure.error);
-    BatchEntityError::new(failure.identifier, report.error_type(), report.detail())
+    BatchEntityError::new(failure.identifier.into(), report.error_type(), report.detail())
 }
 
 pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {

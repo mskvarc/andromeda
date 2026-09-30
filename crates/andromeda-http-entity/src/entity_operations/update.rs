@@ -10,7 +10,6 @@ use crate::{
         EntityTenantState,
         ForwardedBatch,
         IntoResponse,
-        NgsiLdErrorType,
         NgsiLdRequestEnvelope,
         OverwritePolicy,
         PreferHeader,
@@ -30,7 +29,6 @@ use crate::{
         merge_forwarded,
         multi_status_response,
         parse_batch_entities,
-        public_error,
     },
     written_payload_admission::admitted_batch_entities,
 };
@@ -62,14 +60,6 @@ pub(crate) async fn batch_update(
     let mut admitted = admitted_batch_entities(service, BatchUpdate, entities, &context, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
-
-    if admitted.is_empty() && entity_errors.is_empty() {
-        return Err(public_error(
-            NgsiLdErrorType::BadRequestData,
-            "request body must contain a non-empty array of entities",
-            &uri,
-        ));
-    }
 
     let requested = params.overwrite_policy().with_entity_instance(&uri)?;
     let overwrite = match requested {

@@ -152,7 +152,7 @@ mod tests {
         let identifier = entity_id();
         let source = EntityError::already_exists(&identifier);
         let single = classify_entity_error(&source);
-        let batch = batch_entity_error(identifier, &source, classify_entity_error);
+        let batch = batch_entity_error(identifier.into(), &source, classify_entity_error);
         pretty_assertions::assert_eq!(
             batch.error.error_type,
             BatchErrorKind::Known(ProblemClassification::Category(single.error_type()))

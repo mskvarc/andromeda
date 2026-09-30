@@ -9,7 +9,7 @@ use crate::{
         local_remainder,
         merge_forwarded,
     },
-    error::{EntityResultExt, public_error},
+    error::EntityResultExt,
     state::{EntityTenantState, EntityTenantStateOrCreate},
 };
 use andromeda_entity::{
@@ -36,7 +36,7 @@ use andromeda_http_response::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{expanded::mutation::selection::OverwritePolicy, query::body::Query};
-use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
+use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{
     entity_operations::{PostQueryParams, UpdateParams, UpsertParams},

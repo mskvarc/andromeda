@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_model::expanded::{
 };
 use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
 use andromeda_ngsi_ld_vocabulary::expanded_to_compact;
+use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 use thiserror::Error;
 
 /// Why an entity payload or operation is invalid.
@@ -150,6 +151,16 @@ pub enum EntityValidationReason {
         family: AttributeType,
         /// The offending attribute.
         attribute: AttributeName,
+    },
+    /// A `unitCode` names no UN/CEFACT common code the catalog registers, or
+    /// is not one plain string (Table 5.2.5-1, clause 4.5.2.2).
+    #[error("'{}' carries an unusable 'unitCode': {source}", compact_term(.attribute))]
+    UnitCodeUnusable {
+        /// The offending attribute.
+        attribute: AttributeName,
+        /// Why the `unitCode` is not usable.
+        #[source]
+        source: UnitCodeRefusal,
     },
     /// Two instances of one attribute share a `datasetId` (clause 4.5.5).
     #[error("attribute '{attribute}' repeats the instance with datasetId '{dataset_id}'")]

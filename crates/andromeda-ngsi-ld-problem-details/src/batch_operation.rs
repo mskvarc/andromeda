@@ -6,7 +6,7 @@ use crate::{
     problem_detail::{ProblemClassification, WireProblemClassification},
     problem_document_error::ProblemDocumentError,
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use iri_rs::IriRefBuf;
 use serde::{
     Deserialize,
@@ -34,9 +34,13 @@ pub struct BatchOperationResult {
 /// One entity's failure within a batch operation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BatchEntityError {
-    /// The entity the failure is about.
+    /// The entity the failure is about, as the client named it.
+    ///
+    /// Table 5.2.17-1 types `entityId` as any valid URI and sets no length on
+    /// it, so this is a [`Uri`] rather than an [`Identifier`]: an entity whose
+    /// `id` is too long to be stored is still reported against that `id`.
     #[serde(rename = "entityId")]
-    pub entity_id: Identifier,
+    pub entity_id: Uri,
     /// Registration responsible for a failed distributed operation.
     #[serde(rename = "registrationId", skip_serializing_if = "Option::is_none")]
     pub registration_id: Option<Identifier>,
@@ -47,7 +51,7 @@ pub struct BatchEntityError {
 impl BatchEntityError {
     /// Report `error_type` against `entity_id`, with a human-readable detail.
     #[must_use]
-    pub fn new(entity_id: Identifier, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
+    pub fn new(entity_id: Uri, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
         BatchEntityError::from_classification(entity_id, ProblemClassification::Category(error_type), detail)
     }
 
@@ -55,7 +59,7 @@ impl BatchEntityError {
     /// clause 6.3.17 statuses a forwarded part of a distributed operation can
     /// fail with (502, 504, 508) beside the ordinary clause 5.5.2 categories.
     #[must_use]
-    pub fn from_classification(entity_id: Identifier, classification: ProblemClassification, detail: &str) -> BatchEntityError {
+    pub fn from_classification(entity_id: Uri, classification: ProblemClassification, detail: &str) -> BatchEntityError {
         BatchEntityError {
             entity_id,
             registration_id: None,
@@ -208,12 +212,16 @@ mod tests {
         error_type::NgsiLdErrorType,
         problem_detail::ProblemClassification,
     };
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, identifier_length::IDENTIFIER_BYTE_LIMIT, uri::Uri};
     use iri_rs::IriRefBuf;
     use serde_json::json;
     use strum::IntoEnumIterator;
 
     fn uri(value: &str) -> Identifier {
+        value.parse().expect("valid test URI")
+    }
+
+    fn entity(value: &str) -> Uri {
         value.parse().expect("valid test URI")
     }
 
@@ -226,7 +234,7 @@ mod tests {
         let result = BatchOperationResult {
             success: vec![uri("urn:ngsi-ld:Entity:1")],
             errors: vec![BatchEntityError::new(
-                uri("urn:ngsi-ld:Entity:2"),
+                entity("urn:ngsi-ld:Entity:2"),
                 NgsiLdErrorType::AlreadyExists,
                 "Entity already exists",
             )],
@@ -236,6 +244,20 @@ mod tests {
         pretty_assertions::assert_eq!(rendered["success"], json!(["urn:ngsi-ld:Entity:1"]));
         pretty_assertions::assert_eq!(rendered["errors"][0]["entityId"], "urn:ngsi-ld:Entity:2");
         assert!(rendered["errors"][0].get("entity_id").is_none());
+    }
+
+    /// Table 5.2.17-1 sets no length on `entityId`: an entity whose `id` is
+    /// too long to be stored is reported against that `id`, byte for byte.
+    #[test]
+    fn an_entity_id_longer_than_an_identifier_is_reported_byte_for_byte() {
+        let prefix = "urn:ngsi-ld:Entity:";
+        let long = format!("{prefix}{}", "a".repeat(6000 - prefix.len()));
+        assert!(long.len() > IDENTIFIER_BYTE_LIMIT);
+        let original = BatchEntityError::new(entity(&long), NgsiLdErrorType::BadRequestData, "the 'id' is not storable");
+
+        let rendered = serde_json::to_value(&original).expect("serialises");
+        pretty_assertions::assert_eq!(rendered["entityId"].as_str(), Some(long.as_str()));
+        pretty_assertions::assert_eq!(serde_json::from_value::<BatchEntityError>(rendered).expect("deserialises"), original);
     }
 
     #[test]
@@ -261,7 +283,7 @@ mod tests {
         let error_only = serde_json::to_value(BatchOperationResult {
             success: vec![],
             errors: vec![BatchEntityError::new(
-                uri("urn:ngsi-ld:Entity:2"),
+                entity("urn:ngsi-ld:Entity:2"),
                 NgsiLdErrorType::AlreadyExists,
                 "Entity already exists",
             )],
@@ -276,7 +298,7 @@ mod tests {
     #[test]
     fn distributed_batch_error_uses_the_exact_registration_id_member() {
         let rendered = serde_json::to_value(
-            BatchEntityError::new(uri("urn:ngsi-ld:Entity:2"), NgsiLdErrorType::InternalError, "forwarding failed")
+            BatchEntityError::new(entity("urn:ngsi-ld:Entity:2"), NgsiLdErrorType::InternalError, "forwarding failed")
                 .with_registration_id(uri("urn:ngsi-ld:ContextSourceRegistration:7")),
         )
         .expect("serialises");
@@ -317,7 +339,7 @@ mod tests {
         let original = BatchOperationResult {
             success: vec![uri("urn:ngsi-ld:Entity:A"), uri("https://example.com/entities/B")],
             errors: vec![BatchEntityError::new(
-                uri("urn:ngsi-ld:Entity:C"),
+                entity("urn:ngsi-ld:Entity:C"),
                 NgsiLdErrorType::InternalError,
                 "Something went wrong",
             )],
@@ -394,7 +416,7 @@ mod tests {
             ),
         ] {
             let rendered = serde_json::to_value(BatchEntityError::from_classification(
-                uri("urn:ngsi-ld:Entity:1"),
+                entity("urn:ngsi-ld:Entity:1"),
                 classification,
                 "forwarding failed",
             ))

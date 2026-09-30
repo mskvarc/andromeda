@@ -29,15 +29,16 @@
 //! not one attribute carrying two default instances, and clause 4.5.5.1 says
 //! nothing about either.
 
-use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
+use crate::{entity_invariant::EntityInvariant, entity_validation_reason::EntityValidationReason, error::EntityError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::{
     dataset_id::get_instance_dataset_id,
     reserved_member::is_reserved_member,
-    unit_code_admission::forbidden_unit_code_family,
+    unit_code_admission::{forbidden_unit_code_family, usable_unit_code},
 };
 use andromeda_ngsi_ld_representation::family_member_admission::{MemberAdmission, cross_family_members, member_admission};
 use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, expanded_to_compact};
+use andromeda_unit_catalog::expanded_unit_code::ExpandedUnitCodeError;
 use serde_json::{Map, Value};
 use std::{collections::HashSet, slice::from_ref};
 
@@ -210,6 +211,14 @@ fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(
                 attribute: attr_name.clone(),
             }));
         }
+
+        usable_unit_code(instance).map_err(|error| match error {
+            ExpandedUnitCodeError::Refused(source) => EntityError::Validation(EntityValidationReason::UnitCodeUnusable {
+                attribute: attr_name.clone(),
+                source,
+            }),
+            ExpandedUnitCodeError::Catalog(source) => EntityError::Internal(EntityInvariant::UnitCatalog(source)),
+        })?;
     }
     Ok(())
 }
@@ -316,6 +325,35 @@ mod tests {
             expanded_properties::UNIT_CODE.as_str(): [{"@value": "KGM"}],
         });
         validate_attribute_envelopes(&entity_with(&instance)).expect("a Property defines a unitCode member");
+    }
+
+    /// Table 5.2.5-1 restricts `unitCode` to a UN/CEFACT common code, so a
+    /// Property carrying any other unit is refused before a write is built.
+    #[test]
+    fn a_property_carrying_a_unit_that_is_no_common_code_is_refused() {
+        let instance = json!({
+            "@type": [AttributeType::Property.iri().as_str()],
+            expanded_properties::VALUE.as_str(): [{"@value": 1}],
+            expanded_properties::UNIT_CODE.as_str(): [{"@value": "Celsius"}],
+        });
+        let error = validate_attribute_envelopes(&entity_with(&instance)).expect_err("Celsius is no common code");
+        pretty_assertions::assert_eq!(
+            error.to_string(),
+            "invalid entity operation: 'https://example.org/member' carries an unusable 'unitCode': 'unitCode' is not a UN/CEFACT common code"
+        );
+    }
+
+    /// The family check runs first: a registered code on a unitless family is
+    /// refused as forbidden, not resolved.
+    #[test]
+    fn a_registered_unit_code_on_a_relationship_is_still_forbidden() {
+        let instance = json!({
+            "@type": [AttributeType::Relationship.iri().as_str()],
+            expanded_properties::OBJECT.as_str(): [{"@id": "urn:ngsi-ld:Device:target"}],
+            expanded_properties::UNIT_CODE.as_str(): [{"@value": "KGM"}],
+        });
+        let error = validate_attribute_envelopes(&entity_with(&instance)).expect_err("a Relationship admits no unitCode");
+        assert!(error.to_string().contains("defined without one"), "{error}");
     }
 
     #[test]

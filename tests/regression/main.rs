@@ -16,6 +16,7 @@ mod attribute_system_timestamps;
 mod attrs_scope_admission;
 mod batch_context_expansion;
 mod batch_context_unavailable;
+mod batch_entity_errors;
 mod batch_update_no_overwrite_partial_append;
 mod batch_upsert_duplicates;
 mod coerced_term_representation;

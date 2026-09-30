@@ -1,4 +1,5 @@
-//! Whether an expanded attribute instance's declared family admits the `unitCode` member it carries.
+//! Whether an expanded attribute instance's declared family admits the `unitCode` member it carries,
+//! and whether that member names a unit.
 //!
 //! Clauses 4.5.18 (`LanguageProperty`), 4.5.20 (`VocabProperty`) and 4.5.24
 //! (`JsonProperty`) each state that `unitCode` shall
@@ -8,13 +9,20 @@
 //! API create and append paths, and the temporal instance PATCH path — must
 //! refuse a `unitCode` on one of those families rather than store it, so the
 //! check lives once here rather than once per path.
+//!
+//! Where a `unitCode` is admitted, Table 5.2.5-1 restricts it to a UN/CEFACT
+//! common code. The same write paths refuse any other value before a write is
+//! built, so the refusal is the one entity's, reported per entity by a batch
+//! (clause 5.6.8.4), rather than one the store raises for every write it
+//! commits together.
 
-use crate::expanded::instance_key::declared_attribute_type;
+use crate::expanded::{instance_key::declared_attribute_type, mutation::deletion_sentinel::member_is_deletion};
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     unit_code_admission::{UnitCodeAdmission, unit_code_admission},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use andromeda_unit_catalog::expanded_unit_code::{ExpandedUnitCodeError, unit_code_identity};
 use serde_json::Value;
 
 /// The attribute family that forbids the `unitCode` an expanded instance carries.
@@ -32,10 +40,31 @@ pub fn forbidden_unit_code_family(instance: &Value) -> Option<AttributeType> {
     (unit_code_admission(attribute_type) == UnitCodeAdmission::Forbidden).then_some(attribute_type)
 }
 
+/// Hold the `unitCode` member an expanded instance carries, if any, to Table
+/// 5.2.5-1: one string naming a UN/CEFACT common code the catalog registers.
+///
+/// A member that is the NGSI-LD Null asks for the unit to be deleted (clauses
+/// 4.5.0 and 5.5.8) rather than naming one, so it is not held to the rule;
+/// where a deletion may stand is the null-sentinel admission's to decide.
+///
+/// # Errors
+///
+/// Returns [`ExpandedUnitCodeError::Refused`] when the member is not a usable
+/// unit code, and [`ExpandedUnitCodeError::Catalog`] when the compiled-in
+/// catalog does not parse.
+pub fn usable_unit_code(instance: &Value) -> Result<(), ExpandedUnitCodeError> {
+    match instance.as_object().and_then(|object| object.get(properties::UNIT_CODE.as_str())) {
+        Some(member) if member_is_deletion(member) => Ok(()),
+        Some(member) => unit_code_identity(member).map(drop),
+        None => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::expanded::unit_code_admission::forbidden_unit_code_family;
+    use crate::expanded::unit_code_admission::{forbidden_unit_code_family, usable_unit_code};
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+    use andromeda_unit_catalog::expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal};
     use serde_json::json;
 
     #[test]
@@ -56,6 +85,53 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "KGM"}],
         });
         pretty_assertions::assert_eq!(forbidden_unit_code_family(&instance), None);
+    }
+
+    #[test]
+    fn a_property_carrying_a_registered_unit_code_is_usable() {
+        let instance = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+            "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "KMH"}],
+        });
+        pretty_assertions::assert_eq!(usable_unit_code(&instance), Ok(()));
+    }
+
+    /// Table 5.2.5-1: `unitCode` is a UN/CEFACT common code, which `km/h` is not.
+    #[test]
+    fn a_property_carrying_a_unit_that_is_no_common_code_is_refused() {
+        let instance = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+            "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "km/h"}],
+        });
+        pretty_assertions::assert_eq!(
+            usable_unit_code(&instance),
+            Err(ExpandedUnitCodeError::Refused(UnitCodeRefusal::NotACommonCode))
+        );
+    }
+
+    /// Clause 5.5.8: a merge deletes the unit with the NGSI-LD Null, which
+    /// names no unit and is not refused as one.
+    #[test]
+    fn a_unit_code_deletion_is_not_held_to_the_common_code_list() {
+        for member in [json!([{"@value": "urn:ngsi-ld:null"}]), json!([{"@id": "urn:ngsi-ld:null"}])] {
+            let instance = json!({
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+                "https://uri.etsi.org/ngsi-ld/unitCode": member,
+            });
+            pretty_assertions::assert_eq!(usable_unit_code(&instance), Ok(()), "{instance}");
+        }
+    }
+
+    #[test]
+    fn an_instance_without_a_unit_code_needs_none() {
+        let instance = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+        });
+        pretty_assertions::assert_eq!(usable_unit_code(&instance), Ok(()));
     }
 
     #[test]

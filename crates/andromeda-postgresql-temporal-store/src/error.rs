@@ -26,6 +26,7 @@ use andromeda_temporal::{
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_validation_reason::TemporalValidationReason,
 };
+use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 use sea_query::error::Error as SeaQueryError;
 use std::num::TryFromIntError;
 
@@ -163,9 +164,7 @@ impl TemporalStoreError {
             TemporalStoreError::NotFound(_)
             | TemporalStoreError::Refused(_)
             | TemporalStoreError::TimestampPrecision(_)
-            | TemporalStoreError::UnitCode(
-                UnitCodeMetadataError::Malformed | UnitCodeMetadataError::NotACommonCode | UnitCodeMetadataError::Unregistered { .. },
-            )
+            | TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(_))
             | TemporalStoreError::MixedAggregationGroup(_)
             | TemporalStoreError::DuplicateInstanceClaim(_)
             | TemporalStoreError::Collation(CollationProvisioningError::NotAnIcuCollation { .. }) => None,
@@ -183,8 +182,10 @@ impl From<TemporalStoreError> for TemporalError {
             TemporalStoreError::NotFound(reason) => TemporalError::NotFound(reason),
             TemporalStoreError::Refused(refusal) => TemporalError::from(refusal),
             // A unit the client sent is a request fault (clause 4.5.2).
-            TemporalStoreError::UnitCode(UnitCodeMetadataError::Malformed) => TemporalError::from(SubmissionRefusal::UnitCodeMalformed),
-            TemporalStoreError::UnitCode(UnitCodeMetadataError::NotACommonCode | UnitCodeMetadataError::Unregistered { .. }) => {
+            TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(UnitCodeRefusal::Malformed)) => {
+                TemporalError::from(SubmissionRefusal::UnitCodeMalformed)
+            }
+            TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode | UnitCodeRefusal::Unregistered { .. })) => {
                 TemporalError::from(SubmissionRefusal::UnitCodeUnregistered)
             }
             // A timestamp at a resolution the store cannot hold is client input,
@@ -247,6 +248,7 @@ mod tests {
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
     use andromeda_temporal::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
+    use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
@@ -283,7 +285,7 @@ mod tests {
 
     #[test]
     fn an_unregistered_unit_code_is_refused_without_echoing_the_code() {
-        let refused = TemporalError::from(TemporalStoreError::UnitCode(UnitCodeMetadataError::NotACommonCode));
+        let refused = TemporalError::from(TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode)));
         assert!(matches!(
             refused,
             TemporalError::Validation(TemporalValidationReason::Refused(SubmissionRefusal::UnitCodeUnregistered))

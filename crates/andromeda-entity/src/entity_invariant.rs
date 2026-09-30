@@ -7,6 +7,7 @@
 use crate::residual_predicate::ResidualPredicate;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_model::expanded::{dataset_id::InstanceDatasetIdError, entity_member::ExpandedMemberError};
+use andromeda_unit_catalog::unit_code_registry::UnitCodeSnapshotMalformed;
 use std::num::TryFromIntError;
 use thiserror::Error;
 
@@ -35,6 +36,10 @@ pub enum EntityInvariant {
         /// The entity the write addressed.
         entity: Identifier,
     },
+    /// The compiled-in UN/CEFACT unit catalog did not parse, so no `unitCode`
+    /// can be checked.
+    #[error("the unit catalog is unreadable: {0}")]
+    UnitCatalog(#[source] UnitCodeSnapshotMalformed),
     /// A durable side-effect job's attempt count left the range a retry counts in.
     #[error("a durable side-effect attempt count is out of range: {0}")]
     AttemptCountOutOfRange(#[source] TryFromIntError),

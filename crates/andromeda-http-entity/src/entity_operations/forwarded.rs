@@ -153,7 +153,7 @@ pub(crate) fn drop_absent_proxied(errors: &mut Vec<(Identifier, EntityError)>, f
 /// clause 5.2.17 error naming its registration.
 pub(crate) fn merge_forwarded(result: &mut BatchOperationResult, forwarded: &[BatchForwardedResult]) {
     for entry in forwarded {
-        match forwarded_write_error(entry.entity_id.clone(), &entry.registration_id, &entry.outcome) {
+        match forwarded_write_error(entry.entity_id.as_uri().clone(), &entry.registration_id, &entry.outcome) {
             // clone: the error owns the identifier of the entity it is about
             Some(error) => result.errors.push(error),
             None => {
@@ -265,7 +265,7 @@ mod tests {
         merge_forwarded(&mut merged, &forwarded);
         pretty_assertions::assert_eq!(merged.success, vec![uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")]);
         pretty_assertions::assert_eq!(merged.errors.len(), 1);
-        pretty_assertions::assert_eq!(merged.errors[0].entity_id, uri("urn:ngsi-ld:Vehicle:3"));
+        pretty_assertions::assert_eq!(merged.errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:3");
         pretty_assertions::assert_eq!(merged.errors[0].registration_id, Some(uri("urn:ngsi-ld:csr:1")));
         pretty_assertions::assert_eq!(created_remotely(&forwarded).collect::<Vec<_>>(), vec![&uri("urn:ngsi-ld:Vehicle:2")]);
     }

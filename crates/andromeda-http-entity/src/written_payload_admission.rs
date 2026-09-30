@@ -184,7 +184,7 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
         // request's own fault and still fails the operation.
         if refusal.classify_for_entity_http().error_type() == NgsiLdErrorType::LdContextNotAvailable {
             for entity in entities {
-                refused.push(batch_entity_error(entity.id, &refusal, EntityHttpClassify::classify_for_entity_http));
+                refused.push(batch_entity_error(entity.id.into(), &refusal, EntityHttpClassify::classify_for_entity_http));
             }
             return Ok(AdmittedBatch::empty(kind));
         }
@@ -194,13 +194,13 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
     for entity in entities {
         match render_and_validate(&entity) {
             Ok(representation) => rendered.push(RenderedEntity { entity, representation }),
-            Err(refusal) => refused.push(batch_entity_error(entity.id, &refusal, EntityHttpClassify::classify_for_entity_http)),
+            Err(refusal) => refused.push(batch_entity_error(entity.id.into(), &refusal, EntityHttpClassify::classify_for_entity_http)),
         }
     }
     let (admitted, placements) = service.admit_batch_write(kind, rendered, context).await;
     for (id, error) in placements {
         refused.push(batch_entity_error(
-            id,
+            id.into(),
             &WrittenPayloadRefusal::Placement(error),
             EntityHttpClassify::classify_for_entity_http,
         ));

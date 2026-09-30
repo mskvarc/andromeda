@@ -15,6 +15,7 @@ andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-unit-catalog.workspace = true
 cefact-units = { version = "0.1.2", features = ["serde"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 compact_str = { version = "0.10.0", features = ["serde"] }
