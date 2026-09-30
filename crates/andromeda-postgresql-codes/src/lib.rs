@@ -38,6 +38,8 @@ pub mod attribute_change_kind;
 pub mod attribute_kind;
 /// Translation between the NGSI-LD attribute family and its stored code.
 pub mod attribute_kind_code;
+/// The closed catalogue of compact code domains an unreadable number is reported against.
+pub mod compact_code_domain;
 /// The persisted distributed-operation mode of one registration.
 pub mod csr_mode;
 /// The persisted operation set of one context-source registration.

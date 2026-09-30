@@ -9,6 +9,7 @@
 //! `timeInterval`, `expiresAt`, `geoQ`, ...) keep their fixed casing, and clause
 //! numbers stay in doc comments.
 
+use crate::{endpoint_refusal::EndpointRefusal, subscription_member::SubscriptionMember};
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, spec_version::SpecVersionParseError};
 use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
@@ -51,14 +52,10 @@ pub enum SubscriptionValidationReason {
     /// The endpoint could not be served by any delivery binding the broker was
     /// built with.
     ///
-    /// The text is relayed verbatim from the injected endpoint validator, which
-    /// lives in a crate this one cannot depend on without inverting the layering,
-    /// so its reason arrives as opaque prose rather than a typed cause.
-    #[error("{detail}")]
-    EndpointRejected {
-        /// The endpoint validator's own refusal detail.
-        detail: String,
-    },
+    /// The injected endpoint validator lives in a crate this one cannot depend
+    /// on without inverting the layering, so its refusal arrives classified.
+    #[error(transparent)]
+    EndpointRejected(EndpointRefusal),
     /// `notifierInfo` was not an array of key-value pairs.
     #[error("notifierInfo must be an array of key-value pairs: {source}")]
     NotifierInfo {
@@ -73,10 +70,8 @@ pub enum SubscriptionValidationReason {
     #[error("expiresAt must be a valid ISO 8601 date-time")]
     ExpiresAtNotDateTime,
     /// `expiresAt` was a string that did not parse as an RFC 3339 timestamp.
-    #[error("invalid 'expiresAt' value '{raw}': {source}")]
+    #[error("invalid 'expiresAt' value: {source}")]
     ExpiresAt {
-        /// The rejected raw value.
-        raw: String,
         /// The timestamp grammar violation.
         #[source]
         source: chrono::ParseError,
@@ -117,7 +112,7 @@ pub enum SubscriptionValidationReason {
     #[error("invalid '{member}' value: {source}")]
     MemberValue {
         /// The member whose value was rejected.
-        member: String,
+        member: SubscriptionMember,
         /// The JSON shape violation.
         #[source]
         source: serde_json::Error,

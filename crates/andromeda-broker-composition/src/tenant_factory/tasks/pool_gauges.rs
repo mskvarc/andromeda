@@ -1,8 +1,9 @@
 //! Periodic sampling of one tenant's connection pool into the metrics gauges.
 
-use crate::tenant_factory::error::TenantAssemblyError;
+use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
+    failure::TaskFailure,
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule},
     registration::TaskRegistration,
     restart_policy::RestartPolicy,
@@ -14,7 +15,7 @@ use andromeda_task_runtime::{
 use andromeda_telemetry::pool::{PoolGauges, PoolSample};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
-use std::time::Duration;
+use std::{convert::Infallible, time::Duration};
 
 /// How often the pool occupancy is sampled.
 const SAMPLE_CADENCE: Duration = Duration::from_secs(5);
@@ -24,9 +25,8 @@ const SAMPLE_CADENCE: Duration = Duration::from_secs(5);
 /// The gauges are cheap reads of pool counters, so the task is merely observed:
 /// its failure never degrades the tenant.
 pub(super) fn register_pool_gauges(supervisor: &TaskSupervisor, pool: PgPool, tenant: &TenantRef) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(SAMPLE_CADENCE, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("pool-gauges").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(SAMPLE_CADENCE, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("pool-gauges").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -42,11 +42,11 @@ pub(super) fn register_pool_gauges(supervisor: &TaskSupervisor, pool: PgPool, te
                 open: pool.size(),
                 idle: pool.num_idle(),
             });
-            Ok(())
+            Ok::<(), TaskFailure<Infallible>>(())
         }
     });
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }

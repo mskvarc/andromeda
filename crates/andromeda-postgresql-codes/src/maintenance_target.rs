@@ -1,6 +1,6 @@
 //! The persisted relation one maintenance target row describes.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// A relation the opt-in PostgreSQL maintenance controller may act on.

@@ -1,6 +1,6 @@
 //! Embedded NGSI-LD core Context representation and metadata.
 
-use crate::error::ContextRegistryError;
+use crate::{error::ContextRegistryError, registry_invariant::RegistryInvariant};
 use andromeda_jsonld::core_context::{NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
@@ -15,25 +15,19 @@ pub(crate) fn is_core_context(identifier: &Identifier) -> bool {
 
 /// Parse the embedded v1.9 core Context document.
 pub(crate) fn payload() -> Result<Value, ContextRegistryError> {
-    serde_json::from_str(NGSI_LD_CORE_CONTEXT_V19).map_err(|error| ContextRegistryError::Invariant {
-        detail: format!("embedded core Context JSON is invalid: {error}"),
-    })
+    serde_json::from_str(NGSI_LD_CORE_CONTEXT_V19).map_err(|error| RegistryInvariant::CoreContextDocument(error).into())
 }
 
 /// Build the virtual metadata record for an embedded core Context.
 pub(crate) fn metadata(identifier: &Identifier) -> Result<ContextMetadata, ContextRegistryError> {
     let Some(url) = identifier.as_url() else {
-        return Err(ContextRegistryError::Invariant {
-            detail: "core Context identifier is not a URL".to_string(),
-        });
+        return Err(RegistryInvariant::CoreContextNotUrl.into());
     };
     let url = url.clone(); // clone: metadata owns both the public URL and its URI identifier.
     let local_id = identifier.clone(); // clone: the identifier is also retained as the metadata's local id.
     // The embedded core Context serves under its own URL; keep it verbatim as
     // the hit-counter key, the same string a `numberOfHits` fold looks up.
-    let serving_iri = IriBuf::new(url.as_str().to_owned()).map_err(|error| ContextRegistryError::Invariant {
-        detail: format!("core Context URL is not an IRI reference: {}", error.0),
-    })?;
+    let serving_iri = IriBuf::new(url.as_str().to_owned()).map_err(RegistryInvariant::IdentifierNotIri)?;
     let now = Utc::now();
     Ok(ContextMetadata::builder()
         .url(Some(url))
@@ -53,6 +47,7 @@ mod tests {
     use crate::{
         core_context::{is_core_context, metadata, payload},
         error::ContextRegistryError,
+        registry_invariant::RegistryInvariant,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
@@ -60,7 +55,7 @@ mod tests {
     fn identifier(value: &str) -> Result<Identifier, ContextRegistryError> {
         value
             .parse::<Identifier>()
-            .map_err(|error| ContextRegistryError::Invariant { detail: error.to_string() })
+            .map_err(|error| RegistryInvariant::CoreContextIdentifier(error).into())
     }
 
     #[test]

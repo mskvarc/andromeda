@@ -7,9 +7,11 @@
 //! its reason as separate fields all the way to whoever renders the Problem
 //! Detail, instead of being flattened into one message at the boundary.
 
-use crate::error::JsonLdError;
+use crate::{context_cache::ContextCacheError, error::JsonLdError};
 use iri_rs::IriBuf;
+use mediatype::{MediaTypeBuf, MediaTypeError};
 use reqwest::StatusCode;
+use std::{str::Utf8Error, sync::Arc};
 use thiserror::Error;
 
 /// A failure of the context-resolution pipeline, as
@@ -32,12 +34,9 @@ pub enum LoaderErrorKind {
     /// The HTTP request returned a non-success status code.
     #[error("upstream returned HTTP {0}")]
     Http(StatusCode),
-    /// Network or transport-level request failure.
-    #[error("request failed: {0}")]
-    Request(String),
-    /// The attached durable cache failed while remote loading was unavailable.
-    #[error("context cache failed: {0}")]
-    Cache(String),
+    /// The document could not be reached at all.
+    #[error(transparent)]
+    Unavailable(ContextUnavailable),
     /// The response body exceeds the configured size limit.
     #[error("context too large ({size} bytes exceeds the {max}-byte limit)")]
     TooLarge {
@@ -48,7 +47,45 @@ pub enum LoaderErrorKind {
     },
     /// The response body could not be parsed as valid JSON-LD.
     #[error("invalid context: {0}")]
-    Invalid(String),
+    Invalid(#[source] InvalidContextDocument),
+}
+
+/// Why a context document could not be reached.
+#[derive(Debug, Clone, Error)]
+pub enum ContextUnavailable {
+    /// Network or transport-level request failure.
+    ///
+    /// Shared rather than owned because the processor reports a loader failure
+    /// by reference, and the conversion into [`JsonLdError`] keeps the source.
+    #[error("request failed: {0}")]
+    Request(#[source] Arc<reqwest::Error>),
+    /// The attached durable cache failed while remote loading was unavailable.
+    #[error("context cache failed: {0}")]
+    Cache(#[source] ContextCacheError),
+}
+
+/// Why a retrieved response is not a usable `@context` document.
+#[derive(Debug, Clone, Error)]
+pub enum InvalidContextDocument {
+    /// The response declared a content type that is not JSON-shaped.
+    ///
+    /// Boxed so the rare refusal does not widen every loader failure.
+    #[error("unsupported context content type {0}")]
+    UnsupportedContentType(Box<MediaTypeBuf>),
+    /// The response declared a content type that is not a media type.
+    #[error("the response content type is not a media type: {0}")]
+    MalformedContentType(#[source] MediaTypeError),
+    /// The response body is not UTF-8.
+    #[error("the response body is not UTF-8: {0}")]
+    NotUtf8(#[source] Utf8Error),
+    /// The response body is not JSON.
+    ///
+    /// Shared for the same reason as [`ContextUnavailable::Request`].
+    #[error("the response body is not JSON: {0}")]
+    NotJson(#[source] Arc<serde_json::Error>),
+    /// The document carries no usable top-level `@context`.
+    #[error("the document has no usable top-level @context")]
+    NoContext,
 }
 
 impl LoaderError {
@@ -70,14 +107,14 @@ impl From<&LoaderError> for JsonLdError {
         match &error.kind {
             LoaderErrorKind::FetchDisabled => JsonLdError::ContextFetchDisabled { url },
             LoaderErrorKind::Http(status) => JsonLdError::ContextHttp { url, status: *status },
-            LoaderErrorKind::Request(message) | LoaderErrorKind::Cache(message) => JsonLdError::ContextLoad {
+            LoaderErrorKind::Unavailable(source) => JsonLdError::ContextLoad {
                 url,
-                message: message.clone(), // clone: the caller keeps the LoaderError
+                source: source.clone(), // clone: the caller keeps the LoaderError; the sources are shared or small
             },
             LoaderErrorKind::TooLarge { size, max } => JsonLdError::ContextTooLarge { url, size: *size, max: *max },
-            LoaderErrorKind::Invalid(message) => JsonLdError::ContextInvalid {
+            LoaderErrorKind::Invalid(source) => JsonLdError::ContextInvalid {
                 url,
-                message: message.clone(), // clone: the caller keeps the LoaderError
+                source: source.clone(), // clone: the caller keeps the LoaderError; the sources are shared or small
             },
         }
     }
@@ -86,9 +123,11 @@ impl From<&LoaderError> for JsonLdError {
 #[cfg(test)]
 mod tests {
     use crate::{
+        context_cache::ContextCacheError,
         error::JsonLdError,
-        loader::error::{LoaderError, LoaderErrorKind},
+        loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
     };
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use iri_rs::IriBuf;
     use reqwest::StatusCode;
 
@@ -97,8 +136,7 @@ mod tests {
         let kinds = [
             LoaderErrorKind::FetchDisabled,
             LoaderErrorKind::Http(StatusCode::NOT_FOUND),
-            LoaderErrorKind::Request("connection refused".to_string()),
-            LoaderErrorKind::Cache("database unavailable".to_string()),
+            LoaderErrorKind::Unavailable(ContextUnavailable::Cache(ContextCacheError::Read(PersistenceFailure::Unavailable))),
             LoaderErrorKind::TooLarge { size: 10, max: 5 },
         ];
         for kind in kinds {
@@ -113,7 +151,7 @@ mod tests {
         }
         let invalid = JsonLdError::from(&LoaderError {
             url: IriBuf::new("https://example.com/context.jsonld".to_string()).expect("valid URL"),
-            kind: LoaderErrorKind::Invalid("missing @context".to_string()),
+            kind: LoaderErrorKind::Invalid(InvalidContextDocument::NoContext),
         });
         assert!(!invalid.is_context_not_available(), "a retrieved invalid document is BadRequestData");
     }
@@ -134,13 +172,23 @@ mod tests {
             | JsonLdError::ContextLoad { .. }
             | JsonLdError::ContextTooLarge { .. }
             | JsonLdError::ContextInvalid { .. }
-            | JsonLdError::EmbeddedContextInvalid(_)
+            | JsonLdError::PreloadedContextUnreadable { .. }
+            | JsonLdError::PreloadedContextInvalid { .. }
+            | JsonLdError::PreloadedContextUrl(_)
+            | JsonLdError::EmbeddedContextMissing { .. }
+            | JsonLdError::EmbeddedContextInvalid { .. }
             | JsonLdError::InlineContextInvalid(_)
             | JsonLdError::ClientBuild(_)
             | JsonLdError::Expansion(_)
             | JsonLdError::Compaction(_)
-            | JsonLdError::InvalidIri(_)
-            | JsonLdError::InvalidDocument(_)
+            | JsonLdError::TypeNotExpanded
+            | JsonLdError::TermNotExpanded
+            | JsonLdError::ExpandedTermNotIri(_)
+            | JsonLdError::ContextUrlNotIri(_)
+            | JsonLdError::GeneratedVocabularyIri(_)
+            | JsonLdError::JsonLdContextText(_)
+            | JsonLdError::JsonLdContextShape
+            | JsonLdError::DocumentShape
             | JsonLdError::ScopedUserContext { .. }
             | JsonLdError::Json(_)) => panic!("expected ContextHttp, got {other}"),
         }

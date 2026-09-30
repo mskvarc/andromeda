@@ -49,8 +49,7 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
     }
 
     async fn serialize_for_response(&self, subscription: &Subscription, names: &NameCompactor<'_>) -> Result<Value, SubscriptionError> {
-        let mut value =
-            serde_json::to_value(subscription).map_err(|e| SubscriptionError::internal(format!("serializing subscription for response failed: {e}")))?;
+        let mut value = serde_json::to_value(subscription).map_err(SubscriptionError::Representation)?;
 
         normalization::fixup_expired_status(&mut value, subscription.lifecycle.expires_at);
         normalization::compact_subscription_iris(names, &mut value).await;

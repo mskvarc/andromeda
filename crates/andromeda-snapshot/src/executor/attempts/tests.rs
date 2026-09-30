@@ -2,6 +2,8 @@ use crate::{
     branch_condition::BranchCondition,
     error::SnapshotError,
     executor::attempts::{PREPARATION_ATTEMPTS, PreparationClaim, PreparationEnd, QueryCounts},
+    snapshot_invariant::SnapshotInvariant,
+    snapshot_validation_reason::SnapshotValidationReason,
     store::SnapshotStore,
     store_double::{ClaimHold, StoreDouble},
 };
@@ -121,7 +123,9 @@ async fn a_persistent_preparation_failure_is_recorded_without_a_restart() {
 
     let end = claim(&store, &id)
         .run(failing_first(&runs, u32::MAX, || {
-            SnapshotError::validation("Invalid status transition: preparing -> preparing")
+            SnapshotError::from(SnapshotValidationReason::StatusTransition {
+                status: SnapshotStatus::Preparing,
+            })
         }))
         .await;
 
@@ -142,7 +146,9 @@ async fn a_failed_preparation_without_queries_records_no_execution_results() {
     clone_claim.queries = QueryCounts::default();
 
     let end = clone_claim
-        .run(failing_first(&runs, u32::MAX, || SnapshotError::internal("Clone source does not exist")))
+        .run(failing_first(&runs, u32::MAX, || {
+            SnapshotError::from(SnapshotInvariant::PreparationChangedUnderPromotion)
+        }))
         .await;
 
     assert_eq!(end.expect("the failure is recorded"), PreparationEnd::Failed);

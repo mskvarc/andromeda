@@ -1,6 +1,9 @@
 //! `SubscriptionForwardingStore` implementation over the two mapping tables.
 
-use crate::subscription_forwarding::{persistence_error, repo::SubscriptionForwardingRepository};
+use crate::{
+    store_fault::undecodable,
+    subscription_forwarding::{persistence_error, repo::SubscriptionForwardingRepository},
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::subscription_forwarding::{ForwardedSubscriptions, SubscriptionCompanions};
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
@@ -26,7 +29,7 @@ fn forwarded_for_registration_statement(registration: &Identifier) -> SelectStat
 fn uri_column(row: &PgRow, column: &str) -> Result<Identifier, SubscriptionForwardingError> {
     let raw: String = row.try_get(column).map_err(persistence_error)?;
     raw.parse::<Identifier>()
-        .map_err(|error| SubscriptionForwardingError::persistence(format!("invalid {column} '{raw}': {error}")))
+        .map_err(|error| SubscriptionForwardingError::from(undecodable(&error)))
 }
 
 impl SubscriptionForwardingStore for SubscriptionForwardingRepository {

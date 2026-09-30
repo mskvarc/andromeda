@@ -3,7 +3,9 @@
 use crate::{
     criticality::TaskCriticality,
     failure::TaskFailure,
+    failure_report::FailureReport,
     lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
+    runtime_failure::RuntimeFailure,
     task_health::{TaskHealth, TaskHealthState},
     task_name::TaskName,
 };
@@ -26,7 +28,7 @@ pub(crate) enum DriverTerminal {
     /// The driver observed task-scope cancellation.
     Cancelled,
     /// Restart policy was exhausted for this classified failure.
-    Failed(TaskFailure),
+    Failed(FailureReport),
 }
 
 /// The task whose driver stopped, as terminal observation needs it: the
@@ -99,8 +101,8 @@ pub(crate) fn apply_criticality(scope_cancellation: &CancellationToken, process_
 }
 
 /// Convert a driver panic or external abort into an invariant failure.
-pub(crate) fn join_failure(error: &JoinError) -> TaskFailure {
-    TaskFailure::invariant_violation(format!("task execution stopped outside its runtime contract: {error}"))
+pub(crate) const fn join_failure(error: JoinError) -> TaskFailure<RuntimeFailure> {
+    TaskFailure::invariant_violation(RuntimeFailure::ExecutionStopped(error))
 }
 
 /// Publish a lifecycle event and tolerate the absence of diagnostic subscribers.

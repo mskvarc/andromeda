@@ -3,7 +3,7 @@
 
 use crate::{
     event::snapshot_notification_sink::{DeliverySnapshotNotificationSink, SnapshotStatusDeliveryDrain},
-    tenant_factory::{background_pacer::BackgroundPacer, error::TenantAssemblyError},
+    tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError},
 };
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_notification::delivery_config::DeliveryConfig;
@@ -18,7 +18,7 @@ use andromeda_snapshot::{
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
-    failure::TaskFailure,
+    failure::{FailureClass, TaskFailure},
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule},
     registration::TaskRegistration,
     restart_policy::RestartPolicy,
@@ -85,7 +85,7 @@ pub(super) fn register_snapshot_workers(
             Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(transport))), // clone: every worker delivers through one dispatcher.
             config,
         )
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?,
+        .map_err(|error| AssemblyInvariant::SnapshotStatusDrain(Box::new(error)))?,
     );
     let floor = config.poll_interval.duration().max(Duration::from_secs(1));
     let ceiling = config
@@ -109,9 +109,8 @@ pub(super) fn register_snapshot_expiry(
     store: Arc<dyn SnapshotStore>,
     cadence: Duration,
 ) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("snapshot-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("snapshot-expiry").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -126,7 +125,7 @@ pub(super) fn register_snapshot_expiry(
             pacer
                 .run(async move {
                     let cutoff = DateTime::<Utc>::from(execution.cutoff());
-                    let expired = expiry.execute(cutoff).await.map_err(|error| classify_snapshot_failure(&error))?;
+                    let expired = expiry.execute(cutoff).await.map_err(classify_snapshot_failure)?;
                     tracing::info!(expired, "snapshot expiry completed");
                     Ok(())
                 })
@@ -136,14 +135,13 @@ pub(super) fn register_snapshot_expiry(
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 fn register_snapshot_preparation(supervisor: &TaskSupervisor, recovery: PreparationRecovery, status_wake: WakeHandle) -> Result<(), TenantAssemblyError> {
     let PreparationRecovery { preparation, cadence, pacer } = recovery;
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("snapshot-preparation").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("snapshot-preparation").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -157,7 +155,7 @@ fn register_snapshot_preparation(supervisor: &TaskSupervisor, recovery: Preparat
         async move {
             pacer
                 .run(async move {
-                    match preparation.execute().await.map_err(|error| classify_snapshot_failure(&error))? {
+                    match preparation.execute().await.map_err(classify_snapshot_failure)? {
                         SnapshotPreparationOutcome::Idle => {}
                         SnapshotPreparationOutcome::Prepared { count } => {
                             tracing::info!(count, "snapshot preparation completed");
@@ -175,7 +173,7 @@ fn register_snapshot_preparation(supervisor: &TaskSupervisor, recovery: Preparat
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Wakes the Snapshot status-delivery drain from the service paths that enqueue
@@ -220,8 +218,8 @@ fn register_snapshot_status_delivery(
     wake: DrainWakeReceiver,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
-    let fallback = DrainFallbackPolicy::new(floor, ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("snapshot-status-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let fallback = DrainFallbackPolicy::new(floor, ceiling).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("snapshot-status-delivery").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -237,7 +235,7 @@ fn register_snapshot_status_delivery(
                     let delivered = drain
                         .execute(DateTime::<Utc>::from(execution.cutoff()))
                         .await
-                        .map_err(|error| classify_snapshot_failure(&error))?;
+                        .map_err(classify_snapshot_failure)?;
                     if delivered > 0 {
                         tracing::info!(claimed = delivered, "snapshot status notification delivery completed");
                     }
@@ -251,9 +249,7 @@ fn register_snapshot_status_delivery(
                 .await
         }
     });
-    supervisor
-        .register_drain(task, wake)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+    supervisor.register_drain(task, wake).map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Register the retention cleanup of the Snapshot status outbox on its own cadence.
@@ -262,9 +258,8 @@ fn register_snapshot_status_cleanup(
     drain: Arc<SnapshotStatusDeliveryDrain>,
     cadence: Duration,
 ) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("snapshot-status-cleanup").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("snapshot-status-cleanup").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -277,22 +272,21 @@ fn register_snapshot_status_cleanup(
             drain
                 .cleanup(DateTime::<Utc>::from(execution.cutoff()))
                 .await
-                .map_err(|error| classify_snapshot_failure(&error))?;
+                .map_err(classify_snapshot_failure)?;
             Ok(())
         }
     });
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Classify a snapshot policy failure at the task boundary.
-fn classify_snapshot_failure(error: &SnapshotError) -> TaskFailure {
-    let summary = error.to_string();
-    match error {
-        SnapshotError::Persistence { .. } | SnapshotError::StoreSaturated | SnapshotError::Contended => TaskFailure::transient(summary),
-        SnapshotError::Internal { .. } => TaskFailure::invariant_violation(summary),
+const fn classify_snapshot_failure(error: SnapshotError) -> TaskFailure<SnapshotError> {
+    let class = match &error {
+        SnapshotError::Persistence { .. } | SnapshotError::StoreSaturated | SnapshotError::Contended => FailureClass::Transient,
+        SnapshotError::Internal { .. } => FailureClass::InvariantViolation,
         SnapshotError::Validation { .. }
         | SnapshotError::NotFound { .. }
         | SnapshotError::AlreadyExists { .. }
@@ -302,8 +296,9 @@ fn classify_snapshot_failure(error: &SnapshotError) -> TaskFailure {
         | SnapshotError::Temporal(_)
         | SnapshotError::Federation(_)
         | SnapshotError::Request(_)
-        | SnapshotError::Representation(_) => TaskFailure::permanent(summary),
-    }
+        | SnapshotError::Representation(_) => FailureClass::Permanent,
+    };
+    TaskFailure::new(class, error)
 }
 
 #[cfg(test)]

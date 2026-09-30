@@ -27,15 +27,18 @@ impl SnapshotTargetResolver for BrokerSnapshotTargetResolver {
                 SnapshotError::PreparationTimeout { identifier } => ContextTargetResolutionError::PreparationTimeout { identifier },
                 SnapshotError::Quarantined { identifier } => ContextTargetResolutionError::Quarantined { identifier },
                 SnapshotError::StoreSaturated | SnapshotError::Contended => ContextTargetResolutionError::Saturated,
-                SnapshotError::Validation { .. }
+                SnapshotError::Persistence(failure) => ContextTargetResolutionError::Persistence(failure),
+                other @ (SnapshotError::Validation(_)
                 | SnapshotError::AlreadyExists { .. }
                 | SnapshotError::Entity(_)
                 | SnapshotError::Temporal(_)
                 | SnapshotError::Federation(_)
                 | SnapshotError::Request(_)
                 | SnapshotError::Representation(_)
-                | SnapshotError::Persistence { .. }
-                | SnapshotError::Internal { .. } => ContextTargetResolutionError::Internal { detail: error.to_string() },
+                | SnapshotError::Internal(_)) => {
+                    tracing::error!(error = %other, "Snapshot target resolution failed");
+                    ContextTargetResolutionError::Internal
+                }
             })
         })
     }

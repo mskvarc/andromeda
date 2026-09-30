@@ -42,6 +42,7 @@
 
 use crate::{
     committed_side_effect::CommittedSideEffect,
+    entity_invariant::EntityInvariant,
     error::EntityError,
     side_effect_notification::{SideEffectNotificationRoute, owed_subscription_matches},
     side_effect_queue::{DeadLetterAttempt, LeasedSideEffect, SideEffectQueue},
@@ -256,8 +257,7 @@ impl EntitySideEffectDrain {
     /// backoff from the instant of the release, or into the dead letters once
     /// the attempt that failed was the last one permitted.
     async fn release_failed(&self, id: SideEffectJobId, attempts: i32, error: &EntityError, clock: &LeasePassClock) -> Result<(), EntityError> {
-        let attempt = u16::try_from(attempts.saturating_add(1))
-            .map_err(|conversion| EntityError::internal(format!("invalid durable side-effect attempt count: {conversion}")))?;
+        let attempt = u16::try_from(attempts.saturating_add(1)).map_err(|conversion| EntityError::from(EntityInvariant::AttemptCountOutOfRange(conversion)))?;
         let detail = error.to_string();
         let (acknowledgement, outcome) = if attempt >= self.config.max_attempts {
             (
@@ -268,7 +268,8 @@ impl EntitySideEffectDrain {
             let exponent = u32::from(attempt.saturating_sub(1)).min(15);
             let multiplier = 1_u32 << exponent;
             let backoff = self.config.base_backoff.saturating_mul(multiplier);
-            let retry_at = clock.now() + chrono::Duration::from_std(backoff).map_err(|conversion| EntityError::internal(conversion.to_string()))?;
+            let retry_at =
+                clock.now() + chrono::Duration::from_std(backoff).map_err(|conversion| EntityError::from(EntityInvariant::BackoffOutOfRange(conversion)))?;
             (self.queue.nack(id, &self.config.lease_holder, &detail, retry_at).await?, QueueOutcome::Retried)
         };
         self.record_release(id, acknowledgement, outcome);
@@ -311,10 +312,10 @@ impl EntitySideEffectDrain {
             Err(
                 failure @ (CommitError::DuplicateEntity { .. }
                 | CommitError::Submission { .. }
-                | CommitError::Persistence { .. }
+                | CommitError::Persistence(_)
                 | CommitError::StoreSaturated
                 | CommitError::TransactionContended
-                | CommitError::Invariant { .. }
+                | CommitError::Invariant(_)
                 | CommitError::UnexpectedOutcomeCount { .. }),
             ) => Err(failure.into()),
         }
@@ -437,6 +438,7 @@ mod tests {
         },
         notification::ChangeOrigin,
     };
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use chrono::{DateTime, TimeZone, Utc};
     use futures::future::BoxFuture;
     use serde_json::{Value, json};
@@ -456,8 +458,8 @@ mod tests {
     }
 
     impl RecordingSink {
-        fn count(&self) -> Result<usize, EntityError> {
-            Ok(self.published.lock().map_err(|error| EntityError::internal(error.to_string()))?.len())
+        fn count(&self) -> usize {
+            self.published.lock().expect("the test lock is not poisoned").len()
         }
     }
 
@@ -508,30 +510,18 @@ mod tests {
 
     impl ContextCommitter for FixedCommitter {
         fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-            Box::pin(async move {
-                Err(CommitError::Invariant {
-                    detail: "the side-effect drain must replay, never mint a fresh commit".to_owned(),
-                })
-            })
+            Box::pin(async move { panic!("the side-effect drain must replay, never mint a fresh commit") })
         }
 
         fn commit_replayed(&self, _target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
             Box::pin(async move {
-                self.replays
-                    .lock()
-                    .map_err(|error| CommitError::Invariant { detail: error.to_string() })?
-                    .push(replay);
+                self.replays.lock().expect("the test lock is not poisoned").push(replay);
                 sleep(self.duration).await;
                 let outcomes = writes.iter().map(|_| WriteOutcome::NoEntityChange).collect();
-                self.replayed_writes
-                    .lock()
-                    .map_err(|error| CommitError::Invariant { detail: error.to_string() })?
-                    .extend(writes);
+                self.replayed_writes.lock().expect("the test lock is not poisoned").extend(writes);
                 match self.disposition {
                     CommitDisposition::Applied => Ok(outcomes),
-                    CommitDisposition::Failed => Err(CommitError::Persistence {
-                        detail: "scripted failure".to_string(),
-                    }),
+                    CommitDisposition::Failed => Err(CommitError::Persistence(PersistenceFailure::Unavailable)),
                     CommitDisposition::LeaseLost => Err(CommitError::ReplayLeaseLost { job: replay.lease.job }),
                 }
             })
@@ -560,14 +550,8 @@ mod tests {
             }
         }
 
-        fn dead_jobs(&self) -> Result<Vec<SideEffectJobId>, EntityError> {
-            Ok(self
-                .dead
-                .lock()
-                .map_err(|error| EntityError::internal(error.to_string()))?
-                .iter()
-                .map(|(id, _, _)| *id)
-                .collect())
+        fn dead_jobs(&self) -> Vec<SideEffectJobId> {
+            self.dead.lock().expect("the test lock is not poisoned").iter().map(|(id, _, _)| *id).collect()
         }
     }
 
@@ -584,12 +568,9 @@ mod tests {
             Self: 'async_trait,
         {
             Box::pin(async move {
-                self.claim_widths
-                    .lock()
-                    .map_err(|error| EntityError::internal(error.to_string()))?
-                    .push(batch_size);
-                let mut leased = self.leased.lock().map_err(|error| EntityError::internal(error.to_string()))?;
-                let width = usize::try_from(batch_size).map_err(|error| EntityError::internal(error.to_string()))?;
+                self.claim_widths.lock().expect("the test lock is not poisoned").push(batch_size);
+                let mut leased = self.leased.lock().expect("the test lock is not poisoned");
+                let width = usize::try_from(batch_size).expect("a non-negative claim width");
                 let taken = width.min(leased.len());
                 Ok(leased.drain(..taken).collect())
             })
@@ -609,10 +590,7 @@ mod tests {
             Self: 'async_trait,
         {
             Box::pin(async move {
-                self.retried
-                    .lock()
-                    .map_err(|error| EntityError::internal(error.to_string()))?
-                    .push((id, next_attempt_at));
+                self.retried.lock().expect("the test lock is not poisoned").push((id, next_attempt_at));
                 Ok(LeaseAcknowledgement::Applied)
             })
         }
@@ -631,10 +609,7 @@ mod tests {
             Self: 'async_trait,
         {
             Box::pin(async move {
-                self.dead
-                    .lock()
-                    .map_err(|error| EntityError::internal(error.to_string()))?
-                    .push((id, error.to_owned(), attempt));
+                self.dead.lock().expect("the test lock is not poisoned").push((id, error.to_owned(), attempt));
                 Ok(LeaseAcknowledgement::Applied)
             })
         }
@@ -704,17 +679,15 @@ mod tests {
 
     /// A lease whose job carries exactly one change event, so a test can count
     /// how many times it reaches the sink.
-    fn lease_with_change_event() -> Result<LeasedSideEffect, EntityError> {
-        let entity_id = "urn:ngsi-ld:Building:side-effect"
-            .parse()
-            .map_err(|error| EntityError::internal(format!("invalid test entity id: {error}")))?;
+    fn lease_with_change_event() -> LeasedSideEffect {
+        let entity_id = "urn:ngsi-ld:Building:side-effect".parse().expect("a valid test entity id");
         let event = ChangeEvent::builder()
             .entity_id(entity_id)
             .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
             .build();
-        Ok(LeasedSideEffect {
+        LeasedSideEffect {
             id: SideEffectJobId::mint(),
             attempts: 0,
             job: BatchSideEffectJob {
@@ -723,7 +696,7 @@ mod tests {
             },
             record: fixed_record(),
             base_ordinal: WriteOrdinal::at(3),
-        })
+        }
     }
 
     fn job_lease(job: SideEffectJobId) -> JobLease {
@@ -742,10 +715,10 @@ mod tests {
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
         let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 1);
-        let replays = committer.replays.lock().map_err(|error| EntityError::internal(error.to_string()))?;
+        let replays = committer.replays.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(replays.iter().map(|replay| replay.lease).collect::<Vec<JobLease>>(), vec![job_lease(id)]);
         assert!(
-            queue.retried.lock().map_err(|error| EntityError::internal(error.to_string()))?.is_empty(),
+            queue.retried.lock().expect("the test lock is not poisoned").is_empty(),
             "a settled job is not released for another attempt"
         );
         Ok(())
@@ -759,7 +732,7 @@ mod tests {
         let now = Utc::now();
         let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed).execute(now).await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
-        let retried = queue.retried.lock().map_err(|error| EntityError::internal(error.to_string()))?;
+        let retried = queue.retried.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(retried.iter().map(|(job, _)| *job).collect::<Vec<_>>(), vec![id]);
         let backoff = chrono::Duration::seconds(5);
         let retry_at = retried[0].1;
@@ -784,9 +757,8 @@ mod tests {
         )
         .execute(now)
         .await?;
-        let retried = queue.retried.lock().map_err(|error| EntityError::internal(error.to_string()))?;
-        let earliest =
-            now + chrono::Duration::seconds(5) + chrono::Duration::from_std(replay_duration).map_err(|error| EntityError::internal(error.to_string()))?;
+        let retried = queue.retried.lock().expect("the test lock is not poisoned");
+        let earliest = now + chrono::Duration::seconds(5) + chrono::Duration::from_std(replay_duration).expect("a representable replay duration");
         assert!(retried[0].1 >= earliest, "{} is earlier than {earliest}", retried[0].1);
         Ok(())
     }
@@ -798,8 +770,8 @@ mod tests {
         let queue = Arc::new(RecordingQueue::with_lease(lease));
         let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
-        pretty_assertions::assert_eq!(queue.dead_jobs()?, vec![id]);
-        let dead = queue.dead.lock().map_err(|error| EntityError::internal(error.to_string()))?;
+        pretty_assertions::assert_eq!(queue.dead_jobs(), vec![id]);
+        let dead = queue.dead.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(
             dead[0].2,
             DeadLetterAttempt::Failed,
@@ -822,10 +794,10 @@ mod tests {
         let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
         assert!(
-            committer.replays.lock().map_err(|error| EntityError::internal(error.to_string()))?.is_empty(),
+            committer.replays.lock().expect("the test lock is not poisoned").is_empty(),
             "a job past its ceiling is not replayed again"
         );
-        let dead = queue.dead.lock().map_err(|error| EntityError::internal(error.to_string()))?;
+        let dead = queue.dead.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(dead.iter().map(|(job, _, _)| *job).collect::<Vec<_>>(), vec![id]);
         pretty_assertions::assert_eq!(dead[0].2, DeadLetterAttempt::AlreadyCounted, "no attempt was made, so none is counted");
         assert!(
@@ -843,7 +815,7 @@ mod tests {
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
         let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 1);
-        pretty_assertions::assert_eq!(queue.dead_jobs()?, Vec::<SideEffectJobId>::new());
+        pretty_assertions::assert_eq!(queue.dead_jobs(), Vec::<SideEffectJobId>::new());
         Ok(())
     }
 
@@ -864,7 +836,7 @@ mod tests {
         let outcome = drain.execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 2);
         assert!(outcome.work_may_remain, "the pass stopped at its bound with a job still queued");
-        let widths = queue.claim_widths.lock().map_err(|error| EntityError::internal(error.to_string()))?;
+        let widths = queue.claim_widths.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(widths.as_slice(), &[1, 1]);
         Ok(())
     }
@@ -886,7 +858,7 @@ mod tests {
         let outcome = drain.execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 2);
         assert!(!outcome.work_may_remain);
-        let widths = queue.claim_widths.lock().map_err(|error| EntityError::internal(error.to_string()))?;
+        let widths = queue.claim_widths.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(widths.as_slice(), &[1, 1, 1], "the third claim found the queue empty");
         Ok(())
     }
@@ -903,7 +875,7 @@ mod tests {
         let queue = Arc::new(RecordingQueue::with_lease(leased));
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
         drain_with_committer(queue, Arc::clone(&committer)).execute(Utc::now()).await?;
-        let replays = committer.replays.lock().map_err(|error| EntityError::internal(error.to_string()))?;
+        let replays = committer.replays.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(replays.as_slice(), &[CommitReplay::new(expected_record, expected_base, expected_lease)]);
         Ok(())
     }
@@ -916,8 +888,8 @@ mod tests {
         let queue = Arc::new(RecordingQueue::with_lease(lease(0)));
         let outcome = drain(Arc::clone(&queue), CommitDisposition::LeaseLost).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
-        assert!(queue.retried.lock().map_err(|error| EntityError::internal(error.to_string()))?.is_empty());
-        pretty_assertions::assert_eq!(queue.dead_jobs()?, Vec::<SideEffectJobId>::new());
+        assert!(queue.retried.lock().expect("the test lock is not poisoned").is_empty());
+        pretty_assertions::assert_eq!(queue.dead_jobs(), Vec::<SideEffectJobId>::new());
         Ok(())
     }
 
@@ -925,13 +897,13 @@ mod tests {
     /// to the live sink exactly once.
     #[tokio::test]
     async fn an_applied_delivery_publishes_its_change_events_once() -> Result<(), EntityError> {
-        let queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()?));
+        let queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()));
         let sink = Arc::new(RecordingSink::default());
         let outcome = drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink))
             .execute(Utc::now())
             .await?;
         pretty_assertions::assert_eq!(outcome.completed, 1);
-        pretty_assertions::assert_eq!(sink.count()?, 1, "an applied delivery must publish its one change event exactly once");
+        pretty_assertions::assert_eq!(sink.count(), 1, "an applied delivery must publish its one change event exactly once");
         Ok(())
     }
 
@@ -940,13 +912,13 @@ mod tests {
     /// publish.
     #[tokio::test]
     async fn a_lost_lease_publishes_no_change_events() -> Result<(), EntityError> {
-        let queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()?));
+        let queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()));
         let sink = Arc::new(RecordingSink::default());
         let outcome = drain_with_sink(queue, CommitDisposition::LeaseLost, Arc::clone(&sink))
             .execute(Utc::now())
             .await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
-        pretty_assertions::assert_eq!(sink.count()?, 0, "a replay refused for a lost lease must publish no change event");
+        pretty_assertions::assert_eq!(sink.count(), 0, "a replay refused for a lost lease must publish no change event");
         Ok(())
     }
 
@@ -959,18 +931,18 @@ mod tests {
         let sink = Arc::new(RecordingSink::default());
 
         // First worker: its replay is refused, the lease having passed on.
-        let lost_queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()?));
+        let lost_queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()));
         drain_with_sink(lost_queue, CommitDisposition::LeaseLost, Arc::clone(&sink))
             .execute(Utc::now())
             .await?;
-        pretty_assertions::assert_eq!(sink.count()?, 0, "the worker that lost its lease publishes nothing");
+        pretty_assertions::assert_eq!(sink.count(), 0, "the worker that lost its lease publishes nothing");
 
         // Reclaiming worker: replays the same job and settles it.
-        let applied_queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()?));
+        let applied_queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()));
         drain_with_sink(applied_queue, CommitDisposition::Applied, Arc::clone(&sink))
             .execute(Utc::now())
             .await?;
-        pretty_assertions::assert_eq!(sink.count()?, 1, "the reclaiming worker performs the single publication");
+        pretty_assertions::assert_eq!(sink.count(), 1, "the reclaiming worker performs the single publication");
         Ok(())
     }
 
@@ -1061,7 +1033,7 @@ mod tests {
         let outcome = durable_drain(queue, Arc::clone(&committer)).await.execute(Utc::now()).await?;
 
         pretty_assertions::assert_eq!(outcome.completed, 1);
-        let writes = committer.replayed_writes.lock().map_err(|error| EntityError::internal(error.to_string()))?;
+        let writes = committer.replayed_writes.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(writes.len(), 1, "the owed match joins the entity's observation write");
         pretty_assertions::assert_eq!(writes[0].history.len(), 1);
         pretty_assertions::assert_eq!(writes[0].subscription_matches.len(), 1);
@@ -1085,7 +1057,7 @@ mod tests {
 
         durable_drain(queue, Arc::clone(&committer)).await.execute(Utc::now()).await?;
 
-        let writes = committer.replayed_writes.lock().map_err(|error| EntityError::internal(error.to_string()))?;
+        let writes = committer.replayed_writes.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(writes.len(), 1);
         assert!(writes[0].subscription_matches.is_empty(), "nothing is owed, so nothing is queued");
         Ok(())
@@ -1110,7 +1082,7 @@ mod tests {
             .await?;
 
         pretty_assertions::assert_eq!(outcome.completed, 1);
-        pretty_assertions::assert_eq!(sink.count()?, 0);
+        pretty_assertions::assert_eq!(sink.count(), 0);
         Ok(())
     }
 
@@ -1131,7 +1103,7 @@ mod tests {
             .execute(Utc::now())
             .await?;
 
-        let published = sink.published.lock().map_err(|error| EntityError::internal(error.to_string()))?;
+        let published = sink.published.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(published.len(), 1);
         pretty_assertions::assert_eq!(published[0].event.current_payload.as_deref(), Some(&building(id)));
         Ok(())

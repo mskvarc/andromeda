@@ -47,9 +47,7 @@ pub(crate) async fn building_subscription_cache() -> Arc<SubscriptionCache> {
 struct SingleSubscriptionStore;
 
 fn unused_store_call(method: &str) -> SubscriptionError {
-    SubscriptionError::internal(format!(
-        "SingleSubscriptionStore::{method} is not exercised by the durable-match recording tests"
-    ))
+    panic!("SingleSubscriptionStore::{method} is not exercised by the notification tests")
 }
 
 /// Build the one stored Building subscription the cache matches against.
@@ -57,7 +55,7 @@ fn unused_store_call(method: &str) -> SubscriptionError {
 /// It is stored in expanded form (its selector carries the expanded Building
 /// IRI), explicitly requests all six triggers, and is created in the past so
 /// the clause 5.2.12 `createdAt` guard admits the tests' events.
-fn stored_building_subscription() -> Result<StoredSubscription, SubscriptionError> {
+fn stored_building_subscription() -> StoredSubscription {
     let subscription = serde_json::from_value::<Subscription>(json!({
         "id": SUBSCRIPTION_ID,
         "type": "Subscription",
@@ -68,9 +66,9 @@ fn stored_building_subscription() -> Result<StoredSubscription, SubscriptionErro
         "createdAt": "2020-01-01T00:00:00Z",
         "modifiedAt": "2020-01-01T00:00:00Z"
     }))
-    .map_err(|error| SubscriptionError::internal(format!("invalid fixture subscription: {error}")))?;
-    let key = SubscriptionKey::try_from(SUBSCRIPTION_KEY).map_err(|error| SubscriptionError::internal(format!("invalid fixture subscription key: {error}")))?;
-    Ok(StoredSubscription { key, subscription })
+    .expect("a valid fixture subscription");
+    let key = SubscriptionKey::try_from(SUBSCRIPTION_KEY).expect("a valid fixture subscription key");
+    StoredSubscription { key, subscription }
 }
 
 /// The fixture subscription's surrogate key, as the store would have assigned it.
@@ -101,7 +99,7 @@ impl SubscriptionStore for SingleSubscriptionStore {
     }
 
     async fn list_active(&self, _target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
-        Ok(vec![stored_building_subscription()?])
+        Ok(vec![stored_building_subscription()])
     }
 
     async fn claim_notification_slot(

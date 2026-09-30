@@ -5,7 +5,7 @@ use crate::{
     error::XtaskError,
     etsi::EtsiArgs,
     lifecycle::{self, BrokerMode},
-    stack::{STACKS, Stack, StackName, Suite, stack_for_suite},
+    stack::{OwnedSuite, STACKS, Stack, StackName, Suite, stack_for_suite},
     test_binaries::build,
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
@@ -75,8 +75,8 @@ struct ItestArgs {
     #[arg(long, value_name = "NAME")]
     stack: Option<StackName>,
     /// Run the named suites, resolving each to its owning stack.
-    #[arg(long, value_name = "NAME", num_args = 1..)]
-    suite: Vec<String>,
+    #[arg(long, value_name = "NAME", num_args = 1.., value_parser = stack_for_suite)]
+    suite: Vec<OwnedSuite>,
     /// Run every stack in sequence.
     #[arg(long)]
     all: bool,
@@ -139,12 +139,12 @@ impl ItestArgs {
         Ok(plan)
     }
 
-    /// Resolve `--suite` names to a single owning stack, rejecting a cross-stack span.
+    /// Group the `--suite` selections under their single owning stack, rejecting a
+    /// cross-stack span.
     fn resolve_suites(&self) -> Result<Vec<(&'static Stack, Vec<&'static Suite>)>, XtaskError> {
         let mut owner: Option<&'static Stack> = None;
         let mut chosen: Vec<&'static Suite> = Vec::new();
-        for name in &self.suite {
-            let (stack, suite) = stack_for_suite(name).ok_or_else(|| XtaskError::UnknownSuite(name.clone()))?;
+        for &OwnedSuite { stack, suite } in &self.suite {
             match owner {
                 None => owner = Some(stack),
                 Some(existing) => {

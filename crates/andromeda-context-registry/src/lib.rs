@@ -27,6 +27,8 @@ pub mod listed_contexts;
 pub mod mutation;
 /// Folding un-flushed context accesses into a served `numberOfHits`.
 mod pending_hits;
+/// The invariants Context Registry policy relies on.
+pub mod registry_invariant;
 /// Delete and reload lifecycle commands.
 pub mod removal;
 /// Hosted and cached Context lifecycle policy.
@@ -43,6 +45,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-persistence-failure",
     ],
     allow_workspace_dev_dependencies: [
     ],

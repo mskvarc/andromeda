@@ -53,7 +53,7 @@ pub fn parse(input: &str) -> Result<Expr, QueryError> {
     if !cursor.is_exhausted() {
         return Err(QueryError::QUnexpectedToken {
             position: cursor.position(),
-            token: cursor.found_description(),
+            token: cursor.found(),
         });
     }
     Ok(expr)
@@ -241,6 +241,8 @@ fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: QueryPath) -> 
 mod tests {
     use super::*;
     use crate::filter::{
+        expectation::{QExpectation, QFound},
+        lexer::TokenKind,
         path::AttrPath,
         scalar::{CompareValue, Scalar},
         value_path::MAX_SUB_ATTRIBUTE_DEPTH,
@@ -806,7 +808,7 @@ mod tests {
         // `Store:category`. Nothing in the clause 4.9 grammar decides between
         // them, so the request is rejected and the client quotes what it meant.
         let error = parse("rel{Building,ex:Store:category==\"x\"}").expect_err("must reject");
-        assert!(matches!(error, QueryError::QExpected { .. }), "got {error:?}");
+        assert!(matches!(error, QueryError::QAmbiguousTypeGuard), "got {error:?}");
     }
 
     #[test]
@@ -827,7 +829,16 @@ mod tests {
     #[test]
     fn a_hop_left_unclosed_is_rejected() {
         let error = parse("a{b==1").expect_err("must reject");
-        assert!(matches!(&error, QueryError::QExpected { expected, .. } if expected == "}"), "got {error:?}");
+        assert!(
+            matches!(
+                error,
+                QueryError::QExpected {
+                    expected: QExpectation::Token(TokenKind::RBrace),
+                    found: QFound::EndOfInput
+                }
+            ),
+            "got {error:?}"
+        );
     }
 
     #[test]

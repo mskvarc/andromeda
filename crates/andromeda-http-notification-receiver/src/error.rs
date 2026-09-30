@@ -11,7 +11,9 @@ pub(crate) fn classify_resolution(error: &ReceiverResolutionError, instance: &Ur
     let report = match error {
         ReceiverResolutionError::Unknown { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
         ReceiverResolutionError::ForwardingDisabled { .. } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, error.to_string()),
-        ReceiverResolutionError::Tenant { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to resolve the notification tenant")),
+        ReceiverResolutionError::Routing(_) | ReceiverResolutionError::Tenant(_) => {
+            ClassifiedReport::internal(error, InternalFailureSummary::new("failed to resolve the notification tenant"))
+        }
     };
     report.with_instance(instance.clone())
 }
@@ -24,12 +26,11 @@ pub(crate) fn classify_forwarding(error: &SubscriptionForwardingError, instance:
         SubscriptionForwardingError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         SubscriptionForwardingError::Subscription(_)
         | SubscriptionForwardingError::Federation(_)
+        | SubscriptionForwardingError::Registration(_)
         | SubscriptionForwardingError::Entity(_)
         | SubscriptionForwardingError::JsonLd(_)
-        | SubscriptionForwardingError::Persistence { .. }
-        | SubscriptionForwardingError::Internal { .. } => {
-            ClassifiedReport::internal(error, InternalFailureSummary::new("internal notification-forwarding error"))
-        }
+        | SubscriptionForwardingError::Persistence(_)
+        | SubscriptionForwardingError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal notification-forwarding error")),
     };
     report.with_instance(instance.clone())
 }

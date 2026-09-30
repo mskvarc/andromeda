@@ -237,7 +237,7 @@ impl FederationService {
             })
             .await;
         if let ForwardedWriteOutcome::Transport(failure) = &outcome {
-            warn!("Failed to forward to context source {}: {}", registration.id, failure.detail());
+            warn!("Failed to forward to context source {}: {}", registration.id, failure);
         }
         ForwardedWriteResult {
             registration_id: registration.id,
@@ -261,22 +261,20 @@ impl FederationService {
         if self.registration_loops(registration, triggering.via) {
             return ForwardedWriteOutcome::LoopDetected;
         }
-        let unreachable = |detail: String| ForwardedWriteOutcome::Transport(TransportFailure::Unreachable { detail });
+        let unreachable = |error: FederationError| ForwardedWriteOutcome::Transport(TransportFailure::unprepared(error));
         let url = match url {
             Ok(url) => url,
-            Err(error) => return unreachable(error.to_string()),
+            Err(error) => return unreachable(error),
         };
         if let Some(remaining) = self.cooldowns.remaining(registration) {
             // Clause 5.2.34: a request inside the cooldown window is answered
             // with a timeout for the registration, without contacting it.
-            return ForwardedWriteOutcome::Transport(TransportFailure::Timeout {
-                detail: format!("registration is cooling down for another {}ms after a failure", remaining.as_millis()),
-            });
+            return ForwardedWriteOutcome::Transport(TransportFailure::CoolingDown { remaining });
         }
         debug!("CS forwarding {} {}", method, url);
         let payload = match self.payload_for(registration, context, body).await {
             Ok(payload) => payload,
-            Err(error) => return unreachable(error.to_string()),
+            Err(error) => return unreachable(error),
         };
         let request = match self.build_request(ForwardedRequest {
             method,
@@ -287,7 +285,7 @@ impl FederationService {
             linked_map,
         }) {
             Ok(request) => request,
-            Err(error) => return unreachable(error.to_string()),
+            Err(error) => return unreachable(error),
         };
 
         let sent = match self.send_request(registration, request).await {

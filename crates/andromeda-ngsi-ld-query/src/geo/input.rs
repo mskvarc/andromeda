@@ -100,15 +100,11 @@ impl Serialize for GeoQueryInput {
         S: Serializer,
     {
         let geometry = serde_json::to_value(&self.geometry).map_err(S::Error::custom)?;
-        let object = geometry
-            .as_object()
-            .ok_or_else(|| S::Error::custom("validated geometry did not serialize as an object"))?;
-        let geometry_type = object
-            .get("type")
-            .ok_or_else(|| S::Error::custom("validated geometry serialized without a type"))?;
+        let object = geometry.as_object().ok_or_else(|| S::Error::custom(GeometrySerializationError::NotAnObject))?;
+        let geometry_type = object.get("type").ok_or_else(|| S::Error::custom(GeometrySerializationError::NoType))?;
         let coordinates = object
             .get("coordinates")
-            .ok_or_else(|| S::Error::custom("validated geometry serialized without coordinates"))?;
+            .ok_or_else(|| S::Error::custom(GeometrySerializationError::NoCoordinates))?;
         let mut state = serializer.serialize_struct("GeoQuery", if self.geoproperty.is_some() { 4 } else { 3 })?;
         state.serialize_field("georel", &self.georel)?;
         state.serialize_field("geometry", geometry_type)?;
@@ -140,4 +136,38 @@ pub enum GeoQueryInputError {
     /// bare "invalid geometry".
     #[error("geo-query reference geometry: {0}")]
     Geometry(GeometryError),
+}
+
+/// Why a validated reference geometry could not be split into the two members
+/// Table 5.2.13-1 serialises it as.
+///
+/// Each is a broken invariant of the geometry type's own serialisation rather
+/// than anything a client sent.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+enum GeometrySerializationError {
+    /// The geometry did not serialise as a JSON object.
+    #[error("validated geometry did not serialize as an object")]
+    NotAnObject,
+    /// The geometry's object carried no `type` member.
+    #[error("validated geometry serialized without a type")]
+    NoType,
+    /// The geometry's object carried no `coordinates` member.
+    #[error("validated geometry serialized without coordinates")]
+    NoCoordinates,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::geo::input::GeoQueryInput;
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use serde_json::json;
+
+    #[test]
+    fn a_geo_query_serializes_its_geometry_as_type_and_coordinates_members() {
+        let geometry: Geometry = serde_json::from_value(json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("a valid point");
+        let georel: GeoRel = serde_json::from_value(json!("intersects")).expect("a valid georel");
+        let serialized = serde_json::to_value(GeoQueryInput::new(georel, geometry, None)).expect("serializes");
+        pretty_assertions::assert_eq!(serialized["geometry"], json!("Point"));
+        pretty_assertions::assert_eq!(serialized["coordinates"], json!([1.0, 2.0]));
+    }
 }

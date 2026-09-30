@@ -133,12 +133,7 @@ impl Scalar {
 /// `DateTime` -- which includes a numeric zone offset in place of the mandatory
 /// `Z`, and a fraction longer than six digits.
 pub fn parse_date_time(raw: &str) -> Result<DateTime<Utc>, QueryError> {
-    raw.parse::<NgsiLdDateTime>()
-        .map(NgsiLdDateTime::get)
-        .map_err(|source| QueryError::QInvalidDateTime {
-            value: raw.to_string(),
-            source,
-        })
+    raw.parse::<NgsiLdDateTime>().map(NgsiLdDateTime::get).map_err(QueryError::QInvalidDateTime)
 }
 
 /// Parse a clause 4.6.3 `Date` operand.
@@ -149,10 +144,7 @@ pub fn parse_date_time(raw: &str) -> Result<DateTime<Utc>, QueryError> {
 /// `Date`, whose components "shall appear in the string; reduced
 /// representations are not permitted".
 pub fn parse_date(raw: &str) -> Result<NaiveDate, QueryError> {
-    raw.parse::<NgsiLdDate>().map(NgsiLdDate::get).map_err(|source| QueryError::QInvalidDate {
-        value: raw.to_string(),
-        source,
-    })
+    raw.parse::<NgsiLdDate>().map(NgsiLdDate::get).map_err(QueryError::QInvalidDate)
 }
 
 /// Parse a clause 4.6.3 `Time` operand.
@@ -164,10 +156,7 @@ pub fn parse_date(raw: &str) -> Result<NaiveDate, QueryError> {
 /// and one carrying a numeric offset, since the clause states that the string
 /// "shall not contain expressions of the difference between local time and UTC".
 pub fn parse_time(raw: &str) -> Result<NaiveTime, QueryError> {
-    raw.parse::<NgsiLdTime>().map(NgsiLdTime::get).map_err(|source| QueryError::QInvalidTime {
-        value: raw.to_string(),
-        source,
-    })
+    raw.parse::<NgsiLdTime>().map(NgsiLdTime::get).map_err(QueryError::QInvalidTime)
 }
 
 /// Canonical rendering of a UTC instant: seconds always, fractional seconds

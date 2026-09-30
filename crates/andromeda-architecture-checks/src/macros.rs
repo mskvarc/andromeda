@@ -119,6 +119,12 @@ macro_rules! workspace_architecture {
                 );
             }
 
+            /// No production source lets a string stand in for a typed error.
+            #[test]
+            fn errors_carry_typed_values_not_strings() {
+                $crate::string_typed_error::assert_no_string_typed_errors(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// No production file crosses the length ceiling off the baseline.
             #[test]
             fn no_production_file_is_a_god_file() {

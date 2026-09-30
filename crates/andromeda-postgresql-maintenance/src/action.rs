@@ -8,6 +8,7 @@ use crate::{
     evidence::inspection_result::InspectionResult,
     inspection,
     policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, safety_deferral},
+    safety_gate_inspection,
     state::{RegisteredTenant, target_record, tenant_inspection},
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
@@ -30,7 +31,7 @@ pub(crate) async fn recover_artifact(
     cancellation: &CancellationToken,
 ) -> Result<PassOutcome, MaintenanceError> {
     let target = MaintenanceTarget::Index(artifact.name.owner());
-    let gates = inspection::safety_gates(tenant_connection, target).await?;
+    let gates = safety_gate_inspection::safety_gates(tenant_connection, target).await?;
     if let Some(reason) = safety_deferral(profile, gates) {
         tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Deferred).await?;
         info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "deferred", reason = ?reason, "PostgreSQL maintenance recovery deferred");
@@ -74,7 +75,7 @@ pub(crate) async fn execute_pending(
     profile: PolicyProfile,
     cancellation: &CancellationToken,
 ) -> Result<PassOutcome, MaintenanceError> {
-    let gates = inspection::safety_gates(tenant_connection, target).await?;
+    let gates = safety_gate_inspection::safety_gates(tenant_connection, target).await?;
     let target_state = target_record::load_target_state(platform, tenant, target).await?;
     let decision = decide(mode, profile, target_state, empty_sample(), gates, Utc::now());
     target_record::record_decision(platform, tenant, target, None, decision).await?;

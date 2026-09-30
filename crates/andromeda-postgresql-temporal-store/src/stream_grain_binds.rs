@@ -10,6 +10,8 @@
 use crate::{
     error::TemporalStoreError,
     resolved_evolutions::{EvolutionOrigin, ResolvedEvolutions},
+    stored_catalog_error::StoredCatalogError,
+    temporal_store_invariant::TemporalStoreInvariant,
     temporal_stream::{TemporalCatalogUpsert, TemporalStreamKey},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -122,9 +124,10 @@ impl<'a> StreamGrainBinds<'a> {
                 EvolutionOrigin::Existing => &mut binds.existing,
             };
             for grain in &upsert.streams {
-                let attribute_name_key = *name_to_id.get(&grain.attribute_name).ok_or_else(|| {
-                    TemporalStoreError::UnresolvedName(format!("Attribute name '{}' not found in dictionary after resolve", grain.attribute_name))
-                })?;
+                // clone: the invariant owns the name the dictionary failed to resolve.
+                let attribute_name_key = *name_to_id
+                    .get(&grain.attribute_name)
+                    .ok_or_else(|| TemporalStoreInvariant::AttributeNameUnresolved(grain.attribute_name.clone()))?;
                 let stored = (entity_key.get(), attribute_name_key.get(), grain.dataset_id.as_ref().map(Identifier::as_str));
                 if binds.positions.contains_key(&stored) {
                     continue;
@@ -156,20 +159,21 @@ impl<'a> StreamGrainBinds<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalStoreError::Decode`] when a row carries an invalid
-    /// stream key or answers for a grain this chunk never requested.
+    /// Returns [`TemporalStoreError::StoredCatalog`] when a row carries an
+    /// invalid stream key, and [`TemporalStoreError::Invariant`] when it answers
+    /// for a grain this chunk never requested.
     pub(crate) fn resolve(&self, resolution: &mut GrainResolution, rows: Vec<StreamRow>) -> Result<(), TemporalStoreError> {
         for (temporal_entity_key, attribute_name_key, dataset_id, stream_key) in rows {
             let position = *self
                 .positions
                 .get(&(temporal_entity_key, attribute_name_key, dataset_id.as_deref()))
-                .ok_or_else(|| TemporalStoreError::Decode(format!("temporal catalogue returned stream {stream_key}, which the chunk did not request")))?;
+                .ok_or(TemporalStoreInvariant::UnrequestedStream { stream_key })?;
             let (entity_key, grain) = self
                 .grains
                 .get(position)
                 .copied()
-                .ok_or_else(|| TemporalStoreError::Decode(format!("stream grain position {position} is out of range")))?;
-            let stream_key = StreamKey::try_from(stream_key).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
+                .ok_or(TemporalStoreInvariant::GrainPositionOutOfRange { position })?;
+            let stream_key = StreamKey::try_from(stream_key).map_err(StoredCatalogError::StreamKey)?;
             // clone: the resolved map outlives the chunk's borrowed grains.
             resolution.streams.insert((entity_key, grain.clone()), stream_key);
             resolution.positions.insert(position);

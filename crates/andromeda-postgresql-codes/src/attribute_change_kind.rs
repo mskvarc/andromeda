@@ -1,7 +1,7 @@
 //! The persisted transition of one Attribute instance a notification event
 //! records.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// What one write did to one Attribute instance (clause 4.5.5 identity).

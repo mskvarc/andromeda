@@ -188,7 +188,11 @@ impl BackgroundPacer {
     /// work. The first pass always runs. A pass is not itself a change: it
     /// either only reads or only removes what no obligation depends on, so
     /// counting it would have it run again on every tick.
-    pub(crate) async fn run_when_written(&self, observed: &AtomicU64, sample: impl Future<Output = Result<(), TaskFailure>>) -> Result<(), TaskFailure> {
+    pub(crate) async fn run_when_written<E>(
+        &self,
+        observed: &AtomicU64,
+        sample: impl Future<Output = Result<(), TaskFailure<E>>>,
+    ) -> Result<(), TaskFailure<E>> {
         // One more than the count, so a freshly created observation (holding
         // zero) samples once even before anything changes.
         let changes = self.changes.load(Ordering::Acquire) + 1;
@@ -239,7 +243,7 @@ impl BackgroundPacer {
     ///
     /// `sweep` is a future, so a resting tick never starts it and never touches
     /// the database; the sweep's own schedule brings the next tick.
-    pub(crate) async fn run(&self, sweep: impl Future<Output = Result<(), TaskFailure>>) -> Result<(), TaskFailure> {
+    pub(crate) async fn run<E>(&self, sweep: impl Future<Output = Result<(), TaskFailure<E>>>) -> Result<(), TaskFailure<E>> {
         match self.admit().await {
             PassAdmission::Sweep => self.run_changing(sweep).await,
             PassAdmission::Rest { .. } => Ok(()),
@@ -253,11 +257,11 @@ impl BackgroundPacer {
     /// something is due; otherwise it reports the drain idle until the rest
     /// ends, so the drain sleeps exactly until the tenant's earliest obligation
     /// falls due rather than polling toward it.
-    pub(crate) async fn run_drain_pass(
+    pub(crate) async fn run_drain_pass<E>(
         &self,
         cause: DrainCause,
-        pass: impl Future<Output = Result<DrainPassOutcome, TaskFailure>>,
-    ) -> Result<DrainPassOutcome, TaskFailure> {
+        pass: impl Future<Output = Result<DrainPassOutcome, TaskFailure<E>>>,
+    ) -> Result<DrainPassOutcome, TaskFailure<E>> {
         match cause {
             DrainCause::Wake | DrainCause::Continuation => self.run_changing(pass).await,
             DrainCause::Fallback => match self.admit().await {
@@ -303,10 +307,11 @@ impl RuntimeActivity for BackgroundPacer {
 mod tests {
     use crate::tenant_factory::background_pacer::{BackgroundPacer, ObligationSource, PassAdmission, QUIET_CEILING_CADENCES};
     use andromeda_postgresql_context_store::error::ContextStoreError;
-    use andromeda_task_runtime::{control::DrainCause, drain_task::DrainPassOutcome};
+    use andromeda_task_runtime::{control::DrainCause, drain_task::DrainPassOutcome, failure::TaskFailure};
     use andromeda_tenancy::state_factory::RuntimeActivity;
     use async_trait::async_trait;
     use std::{
+        convert::Infallible,
         sync::{
             Arc,
             Mutex,
@@ -352,7 +357,7 @@ mod tests {
         async fn earliest_due(&self) -> Result<Option<SystemTime>, ContextStoreError> {
             self.reads.fetch_add(1, Ordering::Relaxed);
             if self.failing {
-                return Err(ContextStoreError::Internal("unreadable".to_string()));
+                return Err(ContextStoreError::Database(sqlx::Error::RowNotFound));
             }
             let due_in = *self.due_in.lock().expect("script lock");
             Ok(due_in.map(|offset| SystemTime::now() + offset))
@@ -443,7 +448,7 @@ mod tests {
             .run_drain_pass(DrainCause::Wake, async {
                 assert!(matches!(pacer.admit().await, PassAdmission::Rest { .. }), "another timer reads mid-pass");
                 obligations.answer(Some(Duration::ZERO)); // the pass schedules a retry
-                Ok(DrainPassOutcome::Idle)
+                Ok::<_, TaskFailure<Infallible>>(DrainPassOutcome::Idle)
             })
             .await;
         assert!(matches!(outcome, Ok(DrainPassOutcome::Idle)), "{outcome:?}");
@@ -456,7 +461,9 @@ mod tests {
         let obligations = ScriptedObligations::answering(None);
         let pacer = pacer_over(&obligations);
         for cause in [DrainCause::Wake, DrainCause::Continuation] {
-            let outcome = pacer.run_drain_pass(cause, async { Ok(DrainPassOutcome::WorkMayRemain) }).await;
+            let outcome = pacer
+                .run_drain_pass(cause, async { Ok::<_, TaskFailure<Infallible>>(DrainPassOutcome::WorkMayRemain) })
+                .await;
             assert!(matches!(outcome, Ok(DrainPassOutcome::WorkMayRemain)), "{cause:?}: {outcome:?}");
         }
         pretty_assertions::assert_eq!(obligations.reads(), 0);
@@ -473,7 +480,7 @@ mod tests {
         let outcome = pacer
             .run_drain_pass(DrainCause::Fallback, async {
                 ran.fetch_add(1, Ordering::Relaxed);
-                Ok(DrainPassOutcome::Idle)
+                Ok::<_, TaskFailure<Infallible>>(DrainPassOutcome::Idle)
             })
             .await
             .expect("a resting pass cannot fail");
@@ -498,7 +505,7 @@ mod tests {
         let samples = AtomicUsize::new(0);
         let sample = || async {
             samples.fetch_add(1, Ordering::Relaxed);
-            Ok(())
+            Ok::<(), TaskFailure<Infallible>>(())
         };
         pacer.run_when_written(&observed, sample()).await.expect("sample");
         pacer.run_when_written(&observed, sample()).await.expect("sample");
@@ -506,7 +513,7 @@ mod tests {
         pacer.record_activity();
         pacer.run_when_written(&observed, sample()).await.expect("sample");
         pretty_assertions::assert_eq!(samples.load(Ordering::Relaxed), 2, "a use may have written");
-        pacer.run(async { Ok(()) }).await.expect("an admitted sweep");
+        pacer.run(async { Ok::<(), TaskFailure<Infallible>>(()) }).await.expect("an admitted sweep");
         pacer.run_when_written(&observed, sample()).await.expect("sample");
         pretty_assertions::assert_eq!(samples.load(Ordering::Relaxed), 3, "a background pass may have written");
         pacer.run_when_written(&observed, sample()).await.expect("sample");

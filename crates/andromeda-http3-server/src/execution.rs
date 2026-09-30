@@ -30,13 +30,10 @@ pub enum Http3ServeError {
     LocalAddress(#[source] io::Error),
     /// The HTTP/3 connection accept loop terminated with an error.
     ///
-    /// The underlying `h3` failure is type-erased upstream, so its human-readable
-    /// rendering is captured here rather than the opaque error itself.
-    #[error("HTTP/3 serving failed: {message}")]
-    Serve {
-        /// The rendered cause of the serving failure.
-        message: String,
-    },
+    /// `axum_h3` hands the failure back type-erased, so there is no typed cause
+    /// to chain; the erased error is logged where it surfaces instead.
+    #[error("HTTP/3 connection accept loop failed")]
+    Serve,
 }
 
 /// Serve `router` over the bound QUIC `endpoint` until `shutdown` resolves,
@@ -66,7 +63,10 @@ where
         never = install_rotations(&endpoint, feed) => match never {},
     };
     endpoint.wait_idle().await;
-    result.map_err(|error| Http3ServeError::Serve { message: error.to_string() })
+    result.map_err(|error| {
+        tracing::error!(error = %error, "HTTP/3 connection accept loop failed");
+        Http3ServeError::Serve
+    })
 }
 
 /// Install every configuration `feed` rebuilds on `endpoint`, for as long as
@@ -458,5 +458,14 @@ mod tests {
         assert_eq!(response.text()?, "h3 works");
         authenticated.close().await;
         running.stop().await
+    }
+
+    #[test]
+    fn a_failed_accept_loop_is_reported_without_an_erased_cause() {
+        assert_eq!(Http3ServeError::Serve.to_string(), "HTTP/3 connection accept loop failed");
+        assert!(
+            Http3ServeError::Serve.source().is_none(),
+            "the upstream cause is type-erased and logged, not chained"
+        );
     }
 }

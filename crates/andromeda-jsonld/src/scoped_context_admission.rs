@@ -111,8 +111,10 @@ pub async fn reject_scoped_user_contexts(engine: &JsonLdEngine, context: &Contex
 
 /// Refuse one resolved context document that declares a scoped `@context`.
 fn refuse_scoped_term(table: &UserTermTable) -> Result<(), JsonLdError> {
-    match table.scoped_context_term.as_deref() {
-        Some(term) => Err(JsonLdError::ScopedUserContext { term: term.to_owned() }),
+    match &table.scoped_context_term {
+        Some(term) => Err(JsonLdError::ScopedUserContext {
+            term: term.clone(), // clone: the term table is cached and outlives the refusal
+        }),
         None => Ok(()),
     }
 }
@@ -183,11 +185,11 @@ mod tests {
 
     /// The term a refusal names, so a test asserts on the term rather than on
     /// the rendered message.
-    fn refused_term(error: &JsonLdError) -> String {
+    fn refused_term(error: &JsonLdError) -> &str {
         let JsonLdError::ScopedUserContext { term } = error else {
             panic!("expected a scoped-context refusal, got {error}");
         };
-        term.clone() // clone: the assertion owns the term the borrowed error keeps
+        term.as_str()
     }
 
     #[tokio::test]

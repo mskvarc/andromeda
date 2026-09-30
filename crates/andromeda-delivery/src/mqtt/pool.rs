@@ -1,6 +1,7 @@
 //! The broker connections this process is holding open.
 
 use crate::{
+    connection_failure::ConnectionFailure,
     endpoint::mqtt::MqttEndpointConfig,
     error::TransportError,
     mqtt::{
@@ -147,7 +148,7 @@ impl MqttTransportPool {
         if !self.may_dial(&key) {
             return Err(TransportError::ConnectionFailed {
                 endpoint: config.endpoint_uri.clone(), // clone: the error owns the endpoint it names
-                detail: "connection unhealthy, backoff active".to_string(),
+                cause: ConnectionFailure::BackoffActive,
             });
         }
 

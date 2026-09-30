@@ -41,15 +41,20 @@ use andromeda_ngsi_ld_query::{
     projection::grammar::RawProjectionTerm,
     type_selection::grammar::TypeExprRaw,
 };
-use strum::IntoEnumIterator;
+use strum::{Display, IntoEnumIterator};
 use typed_builder::TypedBuilder;
 
 /// Whether the operation's clause lists the local scope among its narrowings.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// Renders as the inputs the operation admits, which is what a too-wide-query
+/// refusal names.
+#[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
 pub enum LocalScopeNarrowing {
     /// Input (e) of clauses 5.6.21.4, 5.7.2.4, 5.7.4.4 and 5.14.4.4.
+    #[strum(serialize = "type, attrs, q, georel or local=true")]
     Listed,
     /// Clause 5.10.2.4 lists only the four content narrowings.
+    #[strum(serialize = "type, attrs, q or georel")]
     Unlisted,
 }
 
@@ -132,14 +137,6 @@ impl AdmittedNarrowings {
         local_scope: LocalScopeNarrowing::Unlisted,
         system_attributes: SystemAttributeNarrowing::Counted,
     };
-
-    /// The inputs this operation admits, as its rejection names them.
-    const fn detail(self) -> &'static str {
-        match self.local_scope {
-            LocalScopeNarrowing::Listed => "too wide query: at least one of type, attrs, q, georel or local=true must be provided (clause 5.7.2.4)",
-            LocalScopeNarrowing::Unlisted => "too wide query: at least one of type, attrs, q or georel must be provided (clause 5.10.2.4)",
-        }
-    }
 }
 
 impl NarrowingInputs<'_> {
@@ -195,7 +192,7 @@ pub fn require_narrowing(inputs: &NarrowingInputs<'_>) -> Result<(), ParameterEr
     if inputs.narrows() {
         Ok(())
     } else {
-        Err(ParameterError::SelectorRequired(inputs.admitted.detail()))
+        Err(ParameterError::SelectorRequired(inputs.admitted.local_scope))
     }
 }
 

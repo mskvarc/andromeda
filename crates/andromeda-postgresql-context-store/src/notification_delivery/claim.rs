@@ -76,7 +76,7 @@ const DELIVERY_CLAIM: StatementName = StatementName("notification-delivery-claim
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when a statement fails for a reason
-/// other than a reaped branch, or [`ContextStoreError::Internal`] when the
+/// other than a reaped branch, or [`ContextStoreError::StoredSnapshot`] when the
 /// branch enumeration cannot read back a stored Snapshot identity. A single
 /// unreadable row is reported inside the returned vector, still leased and
 /// naming its branch and key, rather than as a failure of the claim.

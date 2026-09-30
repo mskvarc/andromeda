@@ -6,10 +6,11 @@ use derive_more::{Deref, DerefMut, From};
 use indexmap::IndexMap;
 use jsonld::{Expandable, ExpandableLanguageMap};
 use jsonld_expandable_core::JsonValue;
-use langtag::LangTagBuf;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+use langtag::{InvalidLangTag, LangTagBuf};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
 use serde_with::skip_serializing_none;
 use std::fmt;
+use thiserror::Error;
 
 /// Key in an NGSI-LD language map: either a BCP 47 tag or `@none`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -46,9 +47,14 @@ impl<'de> Deserialize<'de> for LanguageMapKey {
         }
         LangTagBuf::new(raw)
             .map(LanguageMapKey::Tag)
-            .map_err(|error| Error::custom(format!("invalid BCP47 language tag: {error}")))
+            .map_err(|error| DeserializeError::custom(InvalidLanguageMapKey(error)))
     }
 }
+
+/// A language-map key that is neither `@none` nor a BCP 47 language tag.
+#[derive(Debug, Error)]
+#[error("invalid BCP47 language tag: {0}")]
+struct InvalidLanguageMapKey(#[source] InvalidLangTag<String>);
 
 /// Value in an NGSI-LD language map.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

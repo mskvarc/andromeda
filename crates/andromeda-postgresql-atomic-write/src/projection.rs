@@ -18,7 +18,10 @@ use crate::{
     commit_refusal::{context_store, unit_code},
     projected_entity_key::ProjectedEntityKey,
 };
-use andromeda_context_commit::error::CommitError;
+use andromeda_context_commit::{
+    commit_invariant::{CommitInvariant, NameDictionary},
+    error::CommitError,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::attribute_expiry::instance_expires_at;
@@ -139,9 +142,10 @@ fn grain(
     dataset_id: Option<&Identifier>,
     dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<ProjectedAttributeKey, CommitError> {
-    let attribute_name_key = dictionary.get(attribute_name).copied().ok_or_else(|| CommitError::Invariant {
-        detail: format!("attribute name dictionary returned no key for {attribute_name}"),
-    })?;
+    let attribute_name_key = dictionary
+        .get(attribute_name)
+        .copied()
+        .ok_or(CommitError::Invariant(CommitInvariant::UnresolvedName(NameDictionary::AttributeName)))?;
     Ok(ProjectedAttributeKey {
         entity_key,
         attribute_name_key,

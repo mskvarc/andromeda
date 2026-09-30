@@ -30,10 +30,8 @@ pub enum ExpandedMemberError {
     #[error("the expanded entity carries no '@id'")]
     MissingId,
     /// The `@id` is not an identifier.
-    #[error("the entity identifier '{raw}' is not a valid identifier: {source}")]
+    #[error("the entity identifier is not a valid identifier: {source}")]
     Id {
-        /// The `@id` as the payload spells it.
-        raw: String,
         /// Why it is not an identifier.
         #[source]
         source: IdentifierParseError,
@@ -42,19 +40,15 @@ pub enum ExpandedMemberError {
     #[error("an expanded entity '@type' entry is not a string")]
     TypeNotString,
     /// A `@type` entry is not an entity type name.
-    #[error("the entity type '{raw}' is not a valid type name: {source}")]
+    #[error("an entity type is not a valid type name: {source}")]
     Type {
-        /// The type as the payload spells it.
-        raw: String,
         /// Why it is not a type name.
         #[source]
         source: NgsiLdReferenceError,
     },
     /// A member key is not an attribute name.
-    #[error("the member '{raw}' is not a valid attribute name: {source}")]
+    #[error("a member name is not a valid attribute name: {source}")]
     AttributeName {
-        /// The member key as the payload spells it.
-        raw: String,
         /// Why it is not an attribute name.
         #[source]
         source: NgsiLdReferenceError,
@@ -73,7 +67,7 @@ pub fn extract_id(expanded: &Value) -> Result<Identifier, ExpandedMemberError> {
         .and_then(|obj| obj.get("@id"))
         .and_then(Value::as_str)
         .ok_or(ExpandedMemberError::MissingId)?;
-    raw.parse().map_err(|source| ExpandedMemberError::Id { raw: raw.to_owned(), source })
+    raw.parse().map_err(|source| ExpandedMemberError::Id { source })
 }
 
 /// Extract `@type` IRIs from an expanded entity payload.
@@ -98,7 +92,7 @@ pub fn extract_types(expanded: &Value) -> Result<Vec<EntityTypeName>, ExpandedMe
         .iter()
         .map(|entry| {
             let raw = entry.as_str().ok_or(ExpandedMemberError::TypeNotString)?;
-            raw.parse().map_err(|source| ExpandedMemberError::Type { raw: raw.to_owned(), source })
+            raw.parse().map_err(|source| ExpandedMemberError::Type { source })
         })
         .collect()
 }
@@ -123,7 +117,7 @@ pub fn extract_attribute_names(expanded: &Value) -> Result<Vec<AttributeName>, E
     obj.keys()
         .filter(|key| !key.starts_with('@'))
         // clone: the error owns the refused key; only the failing path copies it.
-        .map(|key| key.parse().map_err(|source| ExpandedMemberError::AttributeName { raw: key.clone(), source }))
+        .map(|key| key.parse().map_err(|source| ExpandedMemberError::AttributeName { source }))
         .collect()
 }
 

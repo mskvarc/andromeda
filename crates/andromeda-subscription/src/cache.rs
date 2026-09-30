@@ -240,6 +240,7 @@ mod tests {
     use andromeda_ngsi_ld_model::subscription::{EntitySelector, Subscription, SubscriptionStatus};
     use andromeda_ngsi_ld_query::{cursor::PageCursor, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
@@ -262,14 +263,14 @@ mod tests {
     }
 
     fn unused(method: &str) -> SubscriptionError {
-        SubscriptionError::internal(format!("AnsweringStore::{method} is not exercised by the cache refresh tests"))
+        panic!("{}", format!("AnsweringStore::{method} is not exercised by the cache refresh tests"))
     }
 
     #[async_trait]
     impl SubscriptionStore for AnsweringStore {
         async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
             match self.answer {
-                StoredAnswer::Unreadable => Err(SubscriptionError::persistence("the subscription store is unreachable")),
+                StoredAnswer::Unreadable => Err(SubscriptionError::from(PersistenceFailure::Unavailable)),
                 StoredAnswer::Absent => Ok(None),
             }
         }
@@ -352,15 +353,12 @@ mod tests {
         ContextTarget::Live
     }
 
-    fn make_compiled_sub(id: &str, key: i64, type_: &str, triggers: Vec<&str>) -> Result<CompiledSubscription, SubscriptionError> {
-        Ok(CompiledSubscription {
-            id: format!("urn:ngsi-ld:Subscription:{id}")
-                .parse()
-                .map_err(|error| SubscriptionError::internal(format!("invalid fixture subscription URI: {error}")))?,
-            key: SubscriptionKey::try_from(key).map_err(|error| SubscriptionError::internal(format!("invalid fixture subscription key: {error}")))?,
+    fn make_compiled_sub(id: &str, key: i64, type_: &str, triggers: Vec<&str>) -> CompiledSubscription {
+        CompiledSubscription {
+            id: format!("urn:ngsi-ld:Subscription:{id}").parse().expect("invalid fixture subscription URI:"),
+            key: SubscriptionKey::try_from(key).expect("invalid fixture subscription key:"),
             status: SubscriptionStatus::Active,
-            endpoint_uri: Url::parse("http://example.com/notify")
-                .map_err(|error| SubscriptionError::internal(format!("invalid fixture endpoint URI: {error}")))?,
+            endpoint_uri: Url::parse("http://example.com/notify").expect("invalid fixture endpoint URI:"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_notifier_info: None,
@@ -368,19 +366,13 @@ mod tests {
             endpoint_timeout: None,
             triggers: triggers
                 .into_iter()
-                .map(|trigger| {
-                    trigger
-                        .parse()
-                        .map_err(|error| SubscriptionError::internal(format!("invalid fixture trigger: {error}")))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(|trigger| trigger.parse().unwrap_or_else(|error| panic!("invalid fixture trigger: {error}")))
+                .collect(),
             watched_attrs: None,
             selectors: vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: type_
-                    .parse()
-                    .map_err(|error| SubscriptionError::internal(format!("invalid fixture type expression: {error}")))?,
+                type_: type_.parse().expect("invalid fixture type expression:"),
             }],
             throttling_secs: None,
             time_interval_secs: None,
@@ -401,36 +393,34 @@ mod tests {
             local_only: false,
             ngsild_conformance: None,
             notification_projection: Projection::default(),
-        })
+        }
     }
 
     #[test]
-    fn len_reflects_cache_size() -> Result<(), SubscriptionError> {
+    fn len_reflects_cache_size() {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
         let target = live_target();
         assert!(cache.is_empty(&target));
         assert_eq!(cache.len(&target), 0);
 
-        let sub1 = make_compiled_sub("sub1", 1, "Vehicle", vec!["entityCreated"])?;
+        let sub1 = make_compiled_sub("sub1", 1, "Vehicle", vec!["entityCreated"]);
         cache.insert(&target, sub1);
         assert_eq!(cache.len(&target), 1);
 
-        let sub2 = make_compiled_sub("sub2", 2, "Building", vec!["entityCreated"])?;
+        let sub2 = make_compiled_sub("sub2", 2, "Building", vec!["entityCreated"]);
         cache.insert(&target, sub2);
         assert_eq!(cache.len(&target), 2);
-        Ok(())
     }
 
     #[test]
-    fn a_cached_subscription_carries_its_store_key_beside_its_identifier() -> Result<(), SubscriptionError> {
+    fn a_cached_subscription_carries_its_store_key_beside_its_identifier() {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
         let target = live_target();
-        let subscription = make_compiled_sub("keyed", 7, "Vehicle", vec!["entityCreated"])?;
+        let subscription = make_compiled_sub("keyed", 7, "Vehicle", vec!["entityCreated"]);
         let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
         cache.insert(&target, subscription);
 
         assert_eq!(cache.get(&target, &id).map(|compiled| compiled.key), SubscriptionKey::try_from(7).ok());
-        Ok(())
     }
 
     /// A subscription the store could not be asked about is not a subscription
@@ -440,7 +430,7 @@ mod tests {
     async fn a_refresh_the_store_cannot_answer_reports_the_failure_and_keeps_the_entry() -> Result<(), SubscriptionError> {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
         let target = live_target();
-        let subscription = make_compiled_sub("unreadable", 3, "Vehicle", vec!["entityCreated"])?;
+        let subscription = make_compiled_sub("unreadable", 3, "Vehicle", vec!["entityCreated"]);
         let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
         cache.insert(&target, subscription);
 
@@ -464,7 +454,7 @@ mod tests {
     async fn a_refresh_that_finds_the_subscription_gone_drops_it() -> Result<(), SubscriptionError> {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
         let target = live_target();
-        let subscription = make_compiled_sub("gone", 4, "Vehicle", vec!["entityCreated"])?;
+        let subscription = make_compiled_sub("gone", 4, "Vehicle", vec!["entityCreated"]);
         let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
         cache.insert(&target, subscription);
 

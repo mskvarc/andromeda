@@ -40,17 +40,17 @@ impl TemporalHistoryReader for RefusingReader {
 
     async fn entity_exists(&self, _target: &ContextTarget, _entity_id: &Identifier) -> Result<bool, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
-        Err(TemporalError::internal("query must not execute"))
+        panic!("query must not execute")
     }
 
     async fn entity_types(&self, _target: &ContextTarget, _entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
-        Err(TemporalError::internal("query must not execute"))
+        panic!("query must not execute")
     }
 
     async fn query_entity_ids(&self, _target: &ContextTarget, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
-        Err(TemporalError::internal("query must not execute"))
+        panic!("query must not execute")
     }
 
     async fn query_entity_history(
@@ -60,7 +60,7 @@ impl TemporalHistoryReader for RefusingReader {
         _compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
-        Err(TemporalError::internal("query must not execute"))
+        panic!("query must not execute")
     }
 
     async fn query_entity_aggregation(
@@ -70,7 +70,7 @@ impl TemporalHistoryReader for RefusingReader {
         _compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
-        Err(TemporalError::internal("query must not execute"))
+        panic!("query must not execute")
     }
 
     async fn recorded_attribute_shapes(
@@ -79,7 +79,7 @@ impl TemporalHistoryReader for RefusingReader {
         _attributes: &[AttributeName],
     ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
-        Err(TemporalError::internal("query must not execute"))
+        panic!("query must not execute")
     }
 }
 

@@ -61,7 +61,7 @@ pub fn resolve_context_value(document_context: Option<&Value>, spec: &ContextSpe
 ///
 /// # Errors
 ///
-/// Returns [`JsonLdError::InvalidDocument`] when the document is neither an
+/// Returns [`JsonLdError::DocumentShape`] when the document is neither an
 /// object nor an array of them.
 pub fn apply_context(document: Value, spec: &ContextSpec) -> Result<Value, JsonLdError> {
     match document {
@@ -75,7 +75,7 @@ pub fn apply_context(document: Value, spec: &ContextSpec) -> Result<Value, JsonL
                 })
                 .collect(),
         )),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Err(JsonLdError::invalid_document("Document must be an object or array")),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Err(JsonLdError::DocumentShape),
     }
 }
 

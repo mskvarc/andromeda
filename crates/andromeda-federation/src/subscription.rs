@@ -9,6 +9,7 @@
 
 use crate::{
     FederationService,
+    error::FederationError,
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
     outcome::{ForwardedWriteOutcome, TransportFailure},
@@ -127,7 +128,7 @@ impl FederationService {
 
     /// Send the forward and read the source's answer.
     async fn send_subscription_forward(&self, registration: &ContextSourceRegistration, forward: SubscriptionForward<'_>) -> ForwardedWriteOutcome {
-        let unreachable = |detail: String| ForwardedWriteOutcome::Transport(TransportFailure::Unreachable { detail });
+        let unreachable = |error: FederationError| ForwardedWriteOutcome::Transport(TransportFailure::unprepared(error));
         // A subscription forward originates here rather than continuing an
         // inbound request, so there is no `Via` chain to extend; the
         // registration's own alias still cannot be one this broker answers for.
@@ -144,12 +145,12 @@ impl FederationService {
         };
         let url = match forwarding_url(registration.access.endpoint.url(), &path, "") {
             Ok(url) => url,
-            Err(error) => return unreachable(error.to_string()),
+            Err(error) => return unreachable(error),
         };
         debug!("CS forwarding subscription {} {}", method, url);
         let payload = match self.payload_for(registration, context, body).await {
             Ok(payload) => payload,
-            Err(error) => return unreachable(error.to_string()),
+            Err(error) => return unreachable(error),
         };
         let request = match self.build_request(ForwardedRequest {
             method,
@@ -160,7 +161,7 @@ impl FederationService {
             linked_map: None,
         }) {
             Ok(request) => request,
-            Err(error) => return unreachable(error.to_string()),
+            Err(error) => return unreachable(error),
         };
         let sent = match self.send_request(registration, request).await {
             Ok(sent) => sent,

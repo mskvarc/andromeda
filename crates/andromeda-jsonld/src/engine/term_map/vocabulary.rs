@@ -30,7 +30,7 @@ impl CoreVocabulary {
             .map(|(compact, expanded)| {
                 IriBuf::new(expanded.to_owned())
                     .map(|iri| (Box::<str>::from(compact), iri))
-                    .map_err(|error| JsonLdError::invalid_iri(format!("generated vocabulary term {compact}: {}", error.0)))
+                    .map_err(JsonLdError::GeneratedVocabularyIri)
             })
             .collect::<Result<HashMap<_, _>, _>>()?;
         Ok(CoreVocabulary { terms })
@@ -45,7 +45,7 @@ mod tests {
     fn malformed_generated_vocabulary_returns_a_typed_error() {
         let result = CoreVocabulary::try_from_entries([("invalid", "not an IRI")]);
 
-        assert!(matches!(result, Err(JsonLdError::InvalidIri(_))));
+        assert!(matches!(result, Err(JsonLdError::GeneratedVocabularyIri(_))));
     }
 
     #[test]

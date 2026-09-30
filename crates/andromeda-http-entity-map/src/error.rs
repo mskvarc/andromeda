@@ -26,7 +26,7 @@ impl EntityMapHttpClassify for EntityMapError {
             // the request that created the map are an invalid request.
             EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
             EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => {
+            EntityMapError::Persistence(_) | EntityMapError::Invariant(_) => {
                 ClassifiedReport::internal(self, InternalFailureSummary::new("the entity store is unavailable"))
             }
         }
@@ -145,9 +145,10 @@ pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSu
 #[cfg(test)]
 mod tests {
     use super::EntityMapHttpClassify;
-    use andromeda_entity_map::error::EntityMapError;
+    use andromeda_entity_map::{entity_map_invariant::EntityMapInvariant, error::EntityMapError};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use std::error::Error;
 
     #[test]
@@ -161,13 +162,11 @@ mod tests {
                 NgsiLdErrorType::ResourceNotFound,
             ),
             (EntityMapError::RequestChanged { identifier: map_identifier }, NgsiLdErrorType::InvalidRequest),
+            (EntityMapError::Persistence(PersistenceFailure::Unavailable), NgsiLdErrorType::InternalError),
             (
-                EntityMapError::Persistence {
-                    detail: "database host".to_string(),
-                },
+                EntityMapError::Invariant(EntityMapInvariant::LifetimeOutOfRange),
                 NgsiLdErrorType::InternalError,
             ),
-            (EntityMapError::Invariant { detail: "broken".to_string() }, NgsiLdErrorType::InternalError),
         ] {
             let report = error.classify_for_entity_map_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);

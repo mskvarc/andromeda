@@ -93,7 +93,7 @@ pub async fn upsert_projection_in_tx(
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Internal`] if the projection's expression count
+/// Returns [`ContextStoreError::StatementBuild`] if the projection's expression count
 /// ever stops matching the insert's sixteen-wide column list, which the fixed
 /// shapes of the stages make unreachable.
 fn projection_upsert_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
@@ -108,9 +108,7 @@ fn projection_upsert_sql(target: &ContextTarget) -> Result<String, ContextStoreE
     insert.into_table(table_of(target, CurrentAttributeValues::Table)).columns(PROJECTION_COLUMNS);
     // `select_from` fails only on a column/expression arity mismatch, which the
     // fixed sixteen-wide column list and projection above make unreachable.
-    insert
-        .select_from(unmatched_input_select())
-        .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+    insert.select_from(unmatched_input_select())?;
     insert.on_conflict(concurrent_insert_conflict()).with_cte(stages);
 
     let sql = insert.to_string(PostgresQueryBuilder);

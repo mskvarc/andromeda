@@ -103,7 +103,7 @@ fn identifier_matches(ids: &[Identifier], id_pattern: Option<&Pattern>, expanded
     if ids.is_empty() && id_pattern.is_none() {
         return Ok(true);
     }
-    let id = extract_id(expanded).map_err(EntityError::internal)?;
+    let id = extract_id(expanded).map_err(|error| EntityError::Internal(error.into()))?;
     if !ids.is_empty() && !ids.contains(&id) {
         return Ok(false);
     }
@@ -115,7 +115,7 @@ fn type_matches(type_expr: Option<&TypeExpr>, expanded: &Value) -> Result<bool, 
     let Some(type_expr) = type_expr else {
         return Ok(true);
     };
-    let types = extract_types(expanded).map_err(EntityError::internal)?;
+    let types = extract_types(expanded).map_err(|error| EntityError::Internal(error.into()))?;
     let names: Vec<&str> = types.iter().map(EntityTypeName::as_str).collect();
     Ok(type_expr.matches(&names))
 }

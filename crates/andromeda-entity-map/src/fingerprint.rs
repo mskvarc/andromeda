@@ -11,7 +11,7 @@
 //! and every representation parameter are left out, and list-valued
 //! parameters are sorted so the order the client wrote them in is irrelevant.
 
-use crate::error::EntityMapError;
+use crate::{entity_map_invariant::EntityMapInvariant, error::EntityMapError};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity_map_fingerprint::{MapRequestKind, RequestFingerprint};
 use andromeda_ngsi_ld_query::{
@@ -134,11 +134,7 @@ struct FilterRecord {
 fn filter_record(filters: &QueryFilters<'_>) -> Result<FilterRecord, EntityMapError> {
     let geo = filters
         .geo
-        .map(|geo| {
-            serde_json::to_string(geo).map_err(|error| EntityMapError::Invariant {
-                detail: format!("the geo-query cannot be written back: {error}"),
-            })
-        })
+        .map(|geo| serde_json::to_string(geo).map_err(|error| EntityMapError::from(EntityMapInvariant::GeoQueryUnserializable(error))))
         .transpose()?;
     Ok(FilterRecord {
         values: [
@@ -236,17 +232,17 @@ mod tests {
     };
 
     fn entity_query(query: &str) -> Result<RequestFingerprint, EntityMapError> {
-        let params = serde_urlencoded::from_str::<EntityQueryParameters>(query).map_err(|error| EntityMapError::Invariant { detail: error.to_string() })?;
+        let params = serde_urlencoded::from_str::<EntityQueryParameters>(query).expect("a valid test fixture");
         fingerprint_of(FingerprintedRequest::QueryEntities(&params))
     }
 
     fn temporal_query(query: &str) -> Result<RequestFingerprint, EntityMapError> {
-        let params = serde_urlencoded::from_str::<TemporalQueryParameters>(query).map_err(|error| EntityMapError::Invariant { detail: error.to_string() })?;
+        let params = serde_urlencoded::from_str::<TemporalQueryParameters>(query).expect("a valid test fixture");
         fingerprint_of(FingerprintedRequest::QueryTemporal(&params))
     }
 
     fn retrieve(query: &str) -> Result<RequestFingerprint, EntityMapError> {
-        let params = serde_urlencoded::from_str::<GetEntityParams>(query).map_err(|error| EntityMapError::Invariant { detail: error.to_string() })?;
+        let params = serde_urlencoded::from_str::<GetEntityParams>(query).expect("a valid test fixture");
         fingerprint_of(FingerprintedRequest::RetrieveEntity(&params))
     }
 
@@ -316,9 +312,8 @@ mod tests {
     #[test]
     fn a_post_body_selector_fingerprints_by_type_and_pattern_without_identifiers() -> Result<(), EntityMapError> {
         let body = |entities: &str| -> Result<RequestFingerprint, EntityMapError> {
-            let query = serde_json::from_str::<Query>(&format!(r#"{{"type":"Query","entities":{entities}}}"#))
-                .map_err(|error| EntityMapError::Invariant { detail: error.to_string() })?;
-            let params = EntityQueryParameters::try_from(query).map_err(|error| EntityMapError::Invariant { detail: error.to_string() })?;
+            let query = serde_json::from_str::<Query>(&format!(r#"{{"type":"Query","entities":{entities}}}"#)).expect("a valid test fixture");
+            let params = EntityQueryParameters::try_from(query).expect("a valid test fixture");
             fingerprint_of(FingerprintedRequest::QueryEntities(&params))
         };
         let created = body(r#"[{"type":"Vehicle","id":"urn:ngsi-ld:Vehicle:1"},{"type":"Building"}]"#)?;

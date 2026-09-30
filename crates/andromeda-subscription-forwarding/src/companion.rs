@@ -28,6 +28,7 @@ use andromeda_subscription::{
     csource_matching::csource_subscription_selects_registration,
     error::SubscriptionError,
     forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook, SubscriptionTeardown},
+    subscription_invariant::SubscriptionInvariant,
 };
 use futures::future::BoxFuture;
 use serde_json::{Map, Value, json};
@@ -133,7 +134,7 @@ impl SubscriptionForwardingService {
             let page = store
                 .find_all_active(after.as_ref(), REGISTRATION_PAGE)
                 .await
-                .map_err(|error| SubscriptionForwardingError::persistence(error.to_string()))?;
+                .map_err(SubscriptionForwardingError::from)?;
             let exhausted = page.len() < REGISTRATION_PAGE as usize;
             for registration in page {
                 after = Some(registration.id.clone()); // clone: the cursor outlives the page
@@ -358,13 +359,17 @@ fn into_subscription_error(error: SubscriptionForwardingError) -> SubscriptionEr
         // Saturation stays saturation across the boundary so it is still shed as
         // a 503 rather than folded into a persistence fault.
         SubscriptionForwardingError::StoreSaturated => SubscriptionError::StoreSaturated,
+        SubscriptionForwardingError::Persistence(failure) => SubscriptionError::from(failure),
+        SubscriptionForwardingError::JsonLd(error) => SubscriptionError::JsonLd(error),
+        SubscriptionForwardingError::Representation(error) => SubscriptionError::Representation(error),
         other @ (SubscriptionForwardingError::Federation(_)
+        | SubscriptionForwardingError::Registration(_)
         | SubscriptionForwardingError::Entity(_)
-        | SubscriptionForwardingError::JsonLd(_)
-        | SubscriptionForwardingError::Representation(_)
         | SubscriptionForwardingError::UnknownSubscription { .. }
-        | SubscriptionForwardingError::Persistence { .. }
-        | SubscriptionForwardingError::Internal { .. }) => SubscriptionError::persistence(other.to_string()),
+        | SubscriptionForwardingError::Internal(_)) => {
+            tracing::error!(error = %other, "the distributed side of a subscription failed");
+            SubscriptionInvariant::DistributedSide.into()
+        }
     }
 }
 

@@ -20,11 +20,12 @@ andromeda-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-persistence-failure.workspace = true
 async-trait = "0.1.92"
 backon = { version = "1.6.0", features = ["tokio-sleep"] }
 contextual = "0.1.6"
 dashmap = { version = "6.2.1", features = ["inline"] }
-derive_more = { version = "2.1.1", features = ["debug"] }
+derive_more = { version = "2.1.1", features = ["debug", "display"] }
 headers = "0.4.1"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 jsonld = { version = "0.23.1", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }

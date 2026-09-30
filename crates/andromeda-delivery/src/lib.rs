@@ -24,6 +24,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod connection_failure;
 pub mod delivery_deadline;
 pub mod dispatch;
 pub mod endpoint;

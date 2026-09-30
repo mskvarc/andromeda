@@ -1,6 +1,6 @@
 //! Standards-safe construction of federated context-source URLs.
 
-use crate::error::FederationError;
+use crate::{error::FederationError, federation_invariant::FederationInvariant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use url::{Url, form_urlencoded};
 
@@ -30,9 +30,11 @@ pub(crate) fn forwarding_url(endpoint: &Url, path: &[&str], query_string: &str) 
     let mut url = endpoint.clone(); // clone: a forwarding target owns a mutated URL while the registration remains reusable
     let has_base = ends_with_api_base(endpoint);
     {
-        let mut segments = url
-            .path_segments_mut()
-            .map_err(|()| FederationError::internal(format!("Context source endpoint cannot be a base URL: {endpoint}")))?;
+        let mut segments = url.path_segments_mut().map_err(|()| {
+            FederationError::from(FederationInvariant::EndpointCannotBeBase {
+                endpoint: Box::new(endpoint.clone()), // clone: the error owns the endpoint it names
+            })
+        })?;
         segments.pop_if_empty();
         if !has_base {
             segments.extend(API_BASE);

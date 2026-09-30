@@ -10,6 +10,7 @@ use crate::{
     temporal_linked_forwarding::ForwardedTemporalLinkedSource,
     tenant_factory::{
         TenantFactoryConfig,
+        assembly_invariant::AssemblyInvariant,
         error::TenantAssemblyError,
         storage::TenantStorage,
         subscription_services::{DistributedSubscriptionEdge, compose_subscription_services},
@@ -109,7 +110,7 @@ pub(super) fn construct_services(
             aliases.for_tenant(&storage.tenant),
             &config.federation,
         )
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?,
+        .map_err(|error| AssemblyInvariant::Federation(Box::new(error)))?,
     );
     let temporal = compose_temporal_service(config, storage, temporal_ports, &notifier, writes, &forwarding);
     let entity_query = compose_entity_query_service(storage, &forwarding);

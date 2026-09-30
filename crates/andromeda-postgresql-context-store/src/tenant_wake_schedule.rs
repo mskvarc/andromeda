@@ -9,6 +9,7 @@
 //! names, so a name is resolved to its key through a scalar subquery on write and
 //! the claimed keys are mapped back to names on read.
 
+use crate::store_fault::{persistence_failure, undecodable};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_schema::tenancy::{TenantWakeSchedule as WakeScheduleTable, Tenants};
 use andromeda_tenancy::wake_schedule::{TenantWakeSchedule, WakeScheduleError};
@@ -103,21 +104,21 @@ impl TenantWakeSchedule for PostgresTenantWakeSchedule {
 }
 
 /// A platform-statement failure becomes a wake-schedule store error.
+#[track_caller]
 fn store_error(error: &sqlx::Error) -> WakeScheduleError {
-    WakeScheduleError::Store { detail: error.to_string() }
+    WakeScheduleError::Store(persistence_failure(error))
 }
 
 /// A statement whose column and value arity disagree is an internal invariant,
 /// surfaced as a store error since the port exposes no other channel.
+#[track_caller]
 fn arity_error(error: &SeaQueryError) -> WakeScheduleError {
-    WakeScheduleError::Store { detail: error.to_string() }
+    WakeScheduleError::Store(persistence_failure(error))
 }
 
 /// A registry name that is not a valid tenant name is an internal invariant.
 fn tenant_name(name: String) -> Result<TenantName, WakeScheduleError> {
-    TenantName::try_from(name).map_err(|error| WakeScheduleError::Store {
-        detail: format!("the registry holds a name that is not a tenant name: {error}"),
-    })
+    TenantName::try_from(name).map_err(|error| WakeScheduleError::Store(undecodable(&error)))
 }
 
 /// Upsert `tenant`'s schedule row: probed now, next due at `wake_at` (NULL when

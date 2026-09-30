@@ -1,28 +1,22 @@
 //! How an adapter failure surfaces at the subscription policy boundary.
 
-use crate::error::violates_unique_constraint;
+use crate::{
+    error::violates_unique_constraint,
+    store_fault::{StoreFault, persistence_failure},
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_subscription::error::SubscriptionError;
-use std::{any::Any, fmt::Display};
 
 /// The unique constraint migration 0023 names on `subscriptions.id`.
 const UQ_SUBSCRIPTIONS_ID: &str = "uq_subscriptions_id";
 
 /// Flatten an adapter failure at the policy boundary.
 ///
-/// This is the one boundary where an adapter failure is erased into the policy's
-/// persistence category, so it is also where a saturated pool is recognised: a
-/// `sqlx` pool-acquire timeout arriving here becomes
-/// [`SubscriptionError::StoreSaturated`] (a 503), while every other failure —
-/// including a non-`sqlx` decode fault — stays a persistence fault. The concrete
-/// [`sqlx::Error`] is recovered by downcast because callers hand it in already
-/// erased behind `impl Display`.
-pub fn persistence_error(error: impl Display + Any) -> SubscriptionError {
-    match (&error as &dyn Any).downcast_ref::<sqlx::Error>() {
-        Some(sqlx_error) if is_pool_saturated(sqlx_error) => SubscriptionError::StoreSaturated,
-        Some(_) | None => SubscriptionError::persistence(error),
-    }
+/// Classify an adapter failure at the port boundary: backpressure keeps the
+/// port's retryable category and every fault becomes its persistence failure.
+#[track_caller]
+pub fn persistence_error(error: impl StoreFault) -> SubscriptionError {
+    SubscriptionError::from(persistence_failure(&error))
 }
 
 /// Preserve a uniqueness race on the identifier as the semantic identifier

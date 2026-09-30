@@ -5,7 +5,7 @@
 //! permanent backend and never makes the tenant resident -- the expensive
 //! `?options=usage` half of tenant introspection stays off the dormancy path.
 
-use crate::tenant_database::DatabaseUrl;
+use crate::{store_fault::persistence_failure, tenant_database::DatabaseUrl};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_pool::configure_pool_options;
@@ -92,8 +92,9 @@ async fn fetch_count(pool: &PgPool, statement: SelectStatement) -> Result<u64, T
 }
 
 /// The failure a usage read becomes.
+#[track_caller]
 fn usage_read_failure(error: &sqlx::Error) -> TenancyError {
-    TenancyError::RegistryUnavailable { detail: error.to_string() }
+    TenancyError::RegistryUnavailable(persistence_failure(error))
 }
 
 /// The total on-disk size of the tenant's database, in bytes.

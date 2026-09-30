@@ -1,6 +1,6 @@
 //! The persisted outcome of one maintenance action.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// How the last maintenance action on a target ended.

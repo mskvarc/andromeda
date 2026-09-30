@@ -7,6 +7,7 @@
 //! spec clause numbers stay in these doc comments, never in the message.
 
 use crate::merge_fragment::MergeFragmentError;
+use andromeda_context_commit::submission_refusal::SubmissionRefusal;
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -20,6 +21,8 @@ use andromeda_ngsi_ld_model::expanded::{
     mutation::error::ExpandedEntityError,
     scope_member::ScopeMemberError,
 };
+use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
+use andromeda_ngsi_ld_vocabulary::expanded_to_compact;
 use thiserror::Error;
 
 /// Why an entity payload or operation is invalid.
@@ -27,32 +30,14 @@ use thiserror::Error;
 pub enum EntityValidationReason {
     /// An Attribute member name of a compacted entity does not satisfy the
     /// attribute-name grammar.
-    #[error("invalid attribute member name '{name}': {source}")]
-    AttributeMemberName {
-        /// The rejected member name.
-        name: String,
-        /// The grammar violation.
-        #[source]
-        source: NgsiLdReferenceError,
-    },
+    #[error("invalid attribute member name: {0}")]
+    AttributeMemberName(#[source] NgsiLdReferenceError),
     /// An expanded JSON-LD member key does not satisfy the attribute-name grammar.
-    #[error("invalid expanded attribute name '{name}': {source}")]
-    ExpandedAttributeName {
-        /// The rejected expanded member key.
-        name: String,
-        /// The grammar violation.
-        #[source]
-        source: NgsiLdReferenceError,
-    },
+    #[error("invalid expanded attribute name: {0}")]
+    ExpandedAttributeName(#[source] NgsiLdReferenceError),
     /// An expanded attribute IRI does not satisfy the attribute-name grammar.
-    #[error("invalid attribute name '{iri}': {source}")]
-    AttributeName {
-        /// The rejected expanded attribute IRI.
-        iri: String,
-        /// The grammar violation.
-        #[source]
-        source: NgsiLdReferenceError,
-    },
+    #[error("invalid attribute name: {0}")]
+    AttributeName(#[source] NgsiLdReferenceError),
     /// An expanded entity's `@id`, `@type` or member key cannot be read as the
     /// identifier, type name or attribute name it stands for (clause 5.5.4).
     #[error(transparent)]
@@ -69,12 +54,10 @@ pub enum EntityValidationReason {
     },
     /// An attribute instance carries an `instanceId` that is not an identifier
     /// (clauses 4.5.7 and 5.5.4).
-    #[error("attribute '{attribute}' carries the instanceId '{raw}', which is not a valid identifier: {source}")]
+    #[error("attribute '{attribute}' carries an instanceId that is not a valid identifier: {source}")]
     ExpandedInstanceId {
         /// The attribute the instance belongs to.
         attribute: AttributeName,
-        /// The `instanceId` as the payload spells it.
-        raw: String,
         /// Why it is not an identifier.
         #[source]
         source: IdentifierParseError,
@@ -87,10 +70,8 @@ pub enum EntityValidationReason {
     },
     /// The short name the active `@context` declares for a requested attribute is
     /// not itself an NGSI-LD name.
-    #[error("the context declares '{declared}' for {requested}, which is not an NGSI-LD name: {source}")]
+    #[error("the context declares a short name for {requested} that is not an NGSI-LD name: {source}")]
     DeclaredName {
-        /// The short name the context maps the attribute to.
-        declared: String,
         /// The attribute the client requested.
         requested: AttributeName,
         /// The grammar violation.
@@ -135,14 +116,14 @@ pub enum EntityValidationReason {
     ScopeNotReplaceable,
     /// An attribute instance carried a member its family never defines (clauses
     /// 4.5.2 through 4.5.24).
-    #[error("{} cannot carry '{term}': that member is never present on this attribute family", forbidden_member_subject(.family.as_ref(), .attribute.as_ref()))]
+    #[error("{} cannot carry '{}': that member is never present on this attribute family", forbidden_member_subject(.family.as_ref(), .attribute.as_ref()), compact_term(.member))]
     MemberForbidden {
         /// The attribute the instance belongs to, when it has a name.
         attribute: Option<AttributeName>,
         /// The attribute family, when the instance declares one.
         family: Option<AttributeType>,
-        /// The expanded IRI of the forbidden member.
-        term: String,
+        /// The forbidden member, by its expanded IRI.
+        member: AttributeName,
     },
     /// An attribute instance declared a `@type` outside the NGSI-LD set (clause 5.2.4).
     #[error("attribute type is not a supported NGSI-LD attribute type")]
@@ -186,10 +167,10 @@ pub enum EntityValidationReason {
         attribute: AttributeName,
     },
     /// A `GeoProperty` instance did not carry a usable `GeoJSON` geometry (clause 5.5.4).
-    #[error("GeoProperty '{name}': {source}")]
+    #[error("GeoProperty '{}': {source}", compact_term(.attribute))]
     GeoProperty {
-        /// The `GeoProperty`, by compact term where the core context defines one.
-        name: String,
+        /// The `GeoProperty`, by its expanded IRI.
+        attribute: AttributeName,
         /// The geometry fault.
         #[source]
         source: GeometryError,
@@ -226,7 +207,7 @@ pub enum EntityValidationReason {
     #[error("'{collation}' does not conform to a valid ICU collation")]
     Collation {
         /// The rejected collation identifier.
-        collation: String,
+        collation: IcuCollation,
     },
     /// A `noOverwrite` batch update named only attributes that already exist, so
     /// clause 5.6.9.4's local Append (clause 5.6.3) appended nothing and the
@@ -234,15 +215,8 @@ pub enum EntityValidationReason {
     #[error("no attributes were appended: every named attribute already exists and noOverwrite was set")]
     NoOverwriteConflict,
     /// The atomic commit port refused the submission as unusable (clause 5.5.6).
-    ///
-    /// The text is relayed verbatim from the commit port: `context-commit`
-    /// cannot depend on the domain error types that shape it without a
-    /// dependency cycle, so its refusal reason arrives as opaque prose.
-    #[error("{detail}")]
-    CommitRefused {
-        /// The commit port's own refusal detail.
-        detail: String,
-    },
+    #[error(transparent)]
+    CommitRefused(SubmissionRefusal),
     /// An expanded entity- or attribute-level mutation rejected malformed input.
     #[error(transparent)]
     Expanded(ExpandedEntityError),
@@ -259,4 +233,12 @@ fn forbidden_member_subject(family: Option<&AttributeType>, attribute: Option<&A
         (None, Some(attribute)) => format!("attribute '{attribute}'"),
         (None, None) => "the attribute fragment".to_string(),
     }
+}
+
+/// Name an attribute or member by its compact term where the core context
+/// defines one, and by its expanded IRI otherwise: a user-defined term's
+/// compaction depends on the request's own `@context`, which validation does
+/// not hold, and an IRI the client can look up beats a guess it cannot.
+fn compact_term(name: &AttributeName) -> &str {
+    expanded_to_compact(name.as_str()).unwrap_or_else(|| name.as_str())
 }

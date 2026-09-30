@@ -55,8 +55,7 @@ impl RegistrationService {
         }
 
         let existing = self.repo.get(id).await?.ok_or_else(|| RegistrationError::not_found(id))?;
-        let pre_update_snapshot =
-            serde_json::to_value(&existing).map_err(|error| RegistrationError::internal(format!("Failed to serialize the pre-update CSR: {error}")))?;
+        let pre_update_snapshot = serde_json::to_value(&existing).map_err(RegistrationError::Representation)?;
         let mut fragment = extract_update_fragment(&payload)?;
         fragment.additional_properties = expanded_properties;
         let resolved = apply_fragment(existing, &fragment)?;

@@ -28,14 +28,14 @@ const RANGE_UNIT: &str = "DateTime";
 #[derive(Debug, Error)]
 pub enum NgsiLdContentRangeError {
     /// The value did not open with the clause 6.3.10 `DateTime` range unit.
-    #[error("content-range must use the '{RANGE_UNIT}' range unit: '{0}'")]
-    UnitMissing(String),
+    #[error("content-range must use the '{RANGE_UNIT}' range unit")]
+    UnitMissing,
     /// The value carried no `/` separating the range from its size.
-    #[error("content-range must separate range and size with '/': '{0}'")]
-    SizeMissing(String),
+    #[error("content-range must separate range and size with '/'")]
+    SizeMissing,
     /// The range halves were not separated by a UTC-terminated start instant.
-    #[error("content-range must separate range-start and range-end with 'Z-': '{0}'")]
-    RangeMalformed(String),
+    #[error("content-range must separate range-start and range-end with 'Z-'")]
+    RangeMalformed,
     /// One of the two instants was not an RFC 3339 timestamp.
     #[error("content-range instant is not an RFC 3339 timestamp: {0}")]
     Instant(#[from] chrono::ParseError),
@@ -105,11 +105,9 @@ impl FromStr for NgsiLdContentRange {
         let spec = value
             .strip_prefix(RANGE_UNIT)
             .and_then(|rest| rest.strip_prefix(' '))
-            .ok_or_else(|| NgsiLdContentRangeError::UnitMissing(value.to_owned()))?;
-        let (range, total) = spec.rsplit_once('/').ok_or_else(|| NgsiLdContentRangeError::SizeMissing(value.to_owned()))?;
-        let (start, end) = range
-            .split_once("Z-")
-            .ok_or_else(|| NgsiLdContentRangeError::RangeMalformed(value.to_owned()))?;
+            .ok_or(NgsiLdContentRangeError::UnitMissing)?;
+        let (range, total) = spec.rsplit_once('/').ok_or(NgsiLdContentRangeError::SizeMissing)?;
+        let (start, end) = range.split_once("Z-").ok_or(NgsiLdContentRangeError::RangeMalformed)?;
         let start = format!("{start}Z");
         let start = DateTime::parse_from_rfc3339(&start)?.with_timezone(&Utc);
         let end = DateTime::parse_from_rfc3339(end)?.with_timezone(&Utc);
@@ -185,7 +183,7 @@ mod tests {
     fn the_kebab_cased_range_unit_is_rejected() {
         let error = NgsiLdContentRange::from_str("date-time 2020-01-01T20:00:00Z-2021-01-01T01:01:00Z/*").expect_err("must reject");
 
-        assert!(matches!(error, NgsiLdContentRangeError::UnitMissing(_)), "got {error:?}");
+        assert!(matches!(error, NgsiLdContentRangeError::UnitMissing), "got {error:?}");
     }
 
     /// A client resumes a page from its bounds, so an instant keeps the

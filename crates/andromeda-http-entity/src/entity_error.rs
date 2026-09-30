@@ -43,6 +43,7 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
 mod tests {
     use crate::entity_error::classify_entity_error;
     use andromeda_entity::{
+        entity_invariant::EntityInvariant,
         entity_operation_unsupported::EntityOperationUnsupported,
         entity_validation_reason::EntityValidationReason,
         error::EntityError,
@@ -51,17 +52,18 @@ mod tests {
     use andromeda_http_response::batch_projection::batch_entity_error;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use axum::http::StatusCode;
     use std::time::Duration;
 
-    fn entity_id() -> Result<Identifier, EntityError> {
-        "urn:ngsi-ld:Entity:1".parse::<Identifier>().map_err(EntityError::internal)
+    fn entity_id() -> Identifier {
+        "urn:ngsi-ld:Entity:1".parse::<Identifier>().expect("a valid identifier")
     }
 
     #[test]
-    fn semantic_entity_variants_map_exhaustively_to_public_categories() -> Result<(), EntityError> {
-        let identifier = entity_id()?;
-        let attribute = "speed".parse::<AttributeName>().map_err(EntityError::internal)?;
+    fn semantic_entity_variants_map_exhaustively_to_public_categories() {
+        let identifier = entity_id();
+        let attribute = "speed".parse::<AttributeName>().expect("a valid attribute name");
         for (error, expected) in [
             (
                 EntityError::Validation(EntityValidationReason::EntityMissingId),
@@ -81,12 +83,11 @@ mod tests {
             pretty_assertions::assert_eq!(report.error_type(), expected, "wrong category for {error:?}");
             pretty_assertions::assert_eq!(report.classification().status_code(), expected.status_code());
         }
-        Ok(())
     }
 
     #[test]
-    fn exhausted_write_contention_is_reported_as_a_retryable_conflict() -> Result<(), EntityError> {
-        let identifier = entity_id()?;
+    fn exhausted_write_contention_is_reported_as_a_retryable_conflict() {
+        let identifier = entity_id();
         let attempts = 12;
         let report = classify_entity_error(&EntityError::contention(&identifier, attempts));
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::Conflict);
@@ -101,14 +102,21 @@ mod tests {
             "the detail hides how hard the broker tried: {}",
             report.detail()
         );
-        Ok(())
     }
 
     #[test]
     fn internal_entity_variants_never_disclose_their_detail() {
         for (error, secret, expected_detail) in [
-            (EntityError::persistence("db-7.internal"), "db-7.internal", "the entity store is unavailable"),
-            (EntityError::internal("secret invariant"), "secret invariant", "internal entity error"),
+            (
+                EntityError::Persistence(PersistenceFailure::Unavailable),
+                "unreachable",
+                "the entity store is unavailable",
+            ),
+            (
+                EntityError::from(EntityInvariant::BatchPreparationFailed),
+                "preparation executor",
+                "internal entity error",
+            ),
         ] {
             let report = classify_entity_error(&error);
             pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
@@ -140,8 +148,8 @@ mod tests {
     }
 
     #[test]
-    fn single_and_batch_paths_use_the_identical_classifier() -> Result<(), EntityError> {
-        let identifier = entity_id()?;
+    fn single_and_batch_paths_use_the_identical_classifier() {
+        let identifier = entity_id();
         let source = EntityError::already_exists(&identifier);
         let single = classify_entity_error(&source);
         let batch = batch_entity_error(identifier, &source, classify_entity_error);
@@ -150,6 +158,5 @@ mod tests {
             BatchErrorKind::Known(ProblemClassification::Category(single.error_type()))
         );
         pretty_assertions::assert_eq!(batch.error.detail, single.detail());
-        Ok(())
     }
 }

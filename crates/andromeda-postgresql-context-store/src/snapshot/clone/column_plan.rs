@@ -99,10 +99,7 @@ pub(crate) async fn column_plan(conn: &mut PgConnection, schema: &str, table: &s
 /// identity column.
 fn identity_generation(stored: Option<&str>) -> Result<Option<IdentityGeneration>, ContextStoreError> {
     stored
-        .map(|text| {
-            text.parse::<IdentityGeneration>()
-                .map_err(|_| ContextStoreError::Internal(format!("unknown identity generation {text:?} in the catalogue")))
-        })
+        .map(|text| text.parse::<IdentityGeneration>().map_err(ContextStoreError::CatalogueIdentityGeneration))
         .transpose()
 }
 

@@ -14,9 +14,14 @@
 //! path for every attribute-shaped row and the Scope travels down it rather
 //! than down a second one of its own.
 
-use crate::{error::TemporalStoreError, scope_history_value::ScopeHistoryValue, semantic_time_axes::SemanticTimeAxes};
-use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity};
+use crate::{
+    error::TemporalStoreError,
+    history_row_identity::{decode_instance_identity, decode_write_identity, nullable_instant, required_column},
+    scope_history_value::ScopeHistoryValue,
+    semantic_time_axes::SemanticTimeAxes,
+    stored_history_error::{HistoryColumn, HistoryTable, StoredHistoryError},
+};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity};
 use andromeda_ngsi_ld_model::{
     scope_instance_value::scope_instance_value,
     temporal::{TemporalHistoryRow, TemporalValue},
@@ -24,11 +29,12 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
 use andromeda_postgresql_query::ltree::ltree_to_scope;
-use andromeda_postgresql_temporal_query::scope_history::{SCOPE_EVENT_AT, SCOPE_PATH_TEXT};
 use andromeda_temporal::{append_intent::TemporalObservationIdentity, port::history_reader::TemporalHistoryObservation};
 use chrono::{DateTime, Utc};
 use sqlx::{Row, postgres::PgRow};
-use uuid::Uuid;
+
+/// The table every row this module decodes comes from.
+const TABLE: HistoryTable = HistoryTable::ScopeHistory;
 
 /// One decoded `scope_history` row, before the rows of one event are folded
 /// into the single instance clause 4.18 allows an Entity.
@@ -62,14 +68,12 @@ struct StoredScopeRow {
 ///
 /// # Errors
 ///
-/// Returns [`TemporalStoreError::Decode`] when a row carries a value shape, a
-/// label path, an instance identity or a deletion instant that `scope_history`
-/// cannot have written.
+/// Returns [`TemporalStoreError::StoredHistory`] when a row carries a value
+/// shape, a label path, an instance identity or a deletion instant that
+/// `scope_history` cannot have written, and [`TemporalStoreError::Database`]
+/// when a column cannot be read at all.
 pub(crate) fn decode_scope_history(rows: &[PgRow]) -> Result<Vec<TemporalHistoryObservation>, TemporalStoreError> {
-    let scope_attribute: AttributeName = expanded_properties::SCOPE
-        .as_str()
-        .parse()
-        .map_err(|error| TemporalStoreError::Decode(format!("the scope IRI does not name an attribute: {error}")))?;
+    let scope_attribute: AttributeName = expanded_properties::SCOPE.as_str().parse().map_err(StoredHistoryError::ScopeAttribute)?;
 
     let mut decoded = Vec::with_capacity(rows.len());
     for row in rows {
@@ -102,9 +106,7 @@ pub(crate) fn decode_scope_history(rows: &[PgRow]) -> Result<Vec<TemporalHistory
 /// broker set them from the write itself rather than per path.
 fn fold_event(event: &[&StoredScopeRow], scope_attribute: &AttributeName) -> Result<TemporalHistoryObservation, TemporalStoreError> {
     let write = event;
-    let first = write
-        .first()
-        .ok_or_else(|| TemporalStoreError::Decode("a scope event was folded from no rows at all".to_owned()))?;
+    let first = write.first().ok_or(StoredHistoryError::EmptyScopeEvent)?;
 
     let row = TemporalHistoryRow {
         attribute_name: scope_attribute.clone(), // clone: every folded instance owns the name it is keyed by.
@@ -151,101 +153,41 @@ fn scope_value(write: &[&StoredScopeRow]) -> Result<TemporalValue, TemporalStore
         }
     }
     let paths = paths;
-    scope_instance_value(&paths).ok_or_else(|| TemporalStoreError::Decode("a scope write recorded neither a path nor a removal".to_owned()))
+    Ok(scope_instance_value(&paths).ok_or(StoredHistoryError::ScopeWriteWithoutValue)?)
 }
 
 /// Decode one `scope_history` row.
 fn decode_scope_row(row: &PgRow) -> Result<StoredScopeRow, TemporalStoreError> {
     Ok(StoredScopeRow {
-        identity: decode_write_identity(row)?,
-        event_at: required_instant(row, SCOPE_EVENT_AT)?,
-        recorded_at: required_instant(row, "recorded_at")?,
+        identity: decode_write_identity(row, TABLE)?,
+        event_at: required_column(row, TABLE, HistoryColumn::ScopeEventAt)?,
+        recorded_at: required_column(row, TABLE, HistoryColumn::RecordedAt)?,
         // Each axis is read from its own column: a row that recorded no instant
         // on an axis keeps none, because the operational write clock is not a
         // Temporal Property (clauses 4.11 and 5.2.21).
         axes: SemanticTimeAxes {
-            observed_at: nullable_instant(row, "observed_at")?,
-            created_at: nullable_instant(row, "created_at")?,
-            modified_at: nullable_instant(row, "modified_at")?,
+            observed_at: nullable_instant(row, HistoryColumn::ObservedAt)?,
+            created_at: nullable_instant(row, HistoryColumn::CreatedAt)?,
+            modified_at: nullable_instant(row, HistoryColumn::ModifiedAt)?,
         },
         value: decode_scope_value(row)?,
-        instance: decode_instance_identity(row)?,
+        instance: decode_instance_identity(row, TABLE)?,
     })
 }
 
 /// Read the row's value from the column its stored value kind names.
 fn decode_scope_value(row: &PgRow) -> Result<ScopeHistoryValue, TemporalStoreError> {
-    let stored: i16 = row
-        .try_get("value_kind")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.value_kind: {error}")))?;
-    let kind = ScopeValueKind::try_from(stored).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
+    let stored: i16 = row.try_get("value_kind")?;
+    let kind = ScopeValueKind::try_from(stored).map_err(|source| StoredHistoryError::ValueKind { table: TABLE, source })?;
     match kind {
         ScopeValueKind::Tombstone => Ok(ScopeHistoryValue::Tombstone {
-            deleted_at: required_instant(row, "deleted_at")?,
+            deleted_at: required_column(row, TABLE, HistoryColumn::DeletedAt)?,
         }),
         ScopeValueKind::ScopePath => {
-            let stored: String = row
-                .try_get::<Option<String>, _>(SCOPE_PATH_TEXT)
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.scope_path: {error}")))?
-                .ok_or_else(|| TemporalStoreError::Decode("scope_history.scope_path is empty but the row declares a path".to_owned()))?;
-            ltree_to_scope(&stored)
-                .map(ScopeHistoryValue::Path)
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.scope_path '{stored}': {error}")))
+            let stored: String = required_column(row, TABLE, HistoryColumn::ScopePathText)?;
+            Ok(ltree_to_scope(&stored).map(ScopeHistoryValue::Path).map_err(StoredHistoryError::ScopePath)?)
         }
     }
-}
-
-/// Reassemble the identifier this scope instance is published to clients under.
-///
-/// The two identifier columns are mutually exclusive by check constraint, so a
-/// row populating both or neither is corrupt rather than ambiguous, and is
-/// reported instead of being resolved by precedence.
-fn decode_instance_identity(row: &PgRow) -> Result<InstanceIdentity, TemporalStoreError> {
-    let generated: Option<Uuid> = row
-        .try_get("generated_instance_id")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.generated_instance_id: {error}")))?;
-    let verbatim: Option<String> = row
-        .try_get("verbatim_instance_id")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.verbatim_instance_id: {error}")))?;
-    match (generated, verbatim) {
-        (Some(uuid), None) => Ok(InstanceIdentity::Generated(uuid)),
-        (None, Some(raw)) => Ok(InstanceIdentity::Verbatim(raw.parse::<Identifier>().map_err(|error| {
-            TemporalStoreError::Decode(format!("invalid scope_history.verbatim_instance_id '{raw}': {error}"))
-        })?)),
-        (Some(_), Some(_)) => Err(TemporalStoreError::Decode(
-            "scope_history row populates both instance identifier columns".to_owned(),
-        )),
-        (None, None) => Err(TemporalStoreError::Decode(
-            "scope_history row populates neither instance identifier column".to_owned(),
-        )),
-    }
-}
-
-/// Read the identity of the atomic write that produced the row.
-fn decode_write_identity(row: &PgRow) -> Result<TemporalObservationIdentity, TemporalStoreError> {
-    let write_id: Uuid = row
-        .try_get("write_id")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.write_id: {error}")))?;
-    let ordinal: i32 = row
-        .try_get("write_ordinal")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.write_ordinal: {error}")))?;
-    Ok(TemporalObservationIdentity {
-        write_id: WriteId::from_uuid(write_id),
-        ordinal: WriteOrdinal::try_from(ordinal).map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.write_ordinal: {error}")))?,
-    })
-}
-
-/// Read a non-null timestamp column.
-fn required_instant(row: &PgRow, column: &str) -> Result<DateTime<Utc>, TemporalStoreError> {
-    row.try_get::<Option<DateTime<Utc>>, _>(column)
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.{column}: {error}")))?
-        .ok_or_else(|| TemporalStoreError::Decode(format!("scope_history.{column} is absent and has no substitute")))
-}
-
-/// Read a nullable timestamp column, preserving its absence.
-fn nullable_instant(row: &PgRow, column: &str) -> Result<Option<DateTime<Utc>>, TemporalStoreError> {
-    row.try_get::<Option<DateTime<Utc>>, _>(column)
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid scope_history.{column}: {error}")))
 }
 
 #[cfg(test)]
@@ -254,6 +196,7 @@ mod tests {
         scope_history_read::{StoredScopeRow, fold_event},
         scope_history_value::ScopeHistoryValue,
         semantic_time_axes::SemanticTimeAxes,
+        stored_history_error::HistoryColumn,
     };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_ngsi_ld_lexicon::{
@@ -264,6 +207,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_model::temporal::TemporalValue;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+    use andromeda_postgresql_temporal_query::scope_history::{SCOPE_EVENT_AT, SCOPE_PATH_TEXT};
     use andromeda_temporal::append_intent::TemporalObservationIdentity;
     use chrono::{DateTime, TimeZone, Utc};
     use uuid::Uuid;
@@ -350,6 +294,17 @@ mod tests {
         pretty_assertions::assert_eq!(folded.row.modified_at, Some(instant(1_533_121_200)));
         assert!(folded.row.metadata.is_none());
         assert!(folded.row.partition_total.is_none());
+    }
+
+    /// The scope statement projects its event instant and its label path under
+    /// aliases the query crate names; the decoder reads them through the typed
+    /// columns, which must spell the same aliases.
+    #[test]
+    fn the_scope_columns_read_the_aliases_the_scope_statement_projects() {
+        let event_at: &'static str = HistoryColumn::ScopeEventAt.into();
+        let path_text: &'static str = HistoryColumn::ScopePathText.into();
+        pretty_assertions::assert_eq!(event_at, SCOPE_EVENT_AT);
+        pretty_assertions::assert_eq!(path_text, SCOPE_PATH_TEXT);
     }
 
     /// Clause 4.18 gives an Entity at most one instance of the scope Property,

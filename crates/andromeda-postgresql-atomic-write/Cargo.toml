@@ -20,6 +20,7 @@ andromeda-context-space.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
+andromeda-persistence-failure.workspace = true
 andromeda-postgresql-branch.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-store.workspace = true

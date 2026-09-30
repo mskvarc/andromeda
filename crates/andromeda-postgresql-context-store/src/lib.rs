@@ -40,14 +40,18 @@ pub mod migration_set;
 pub mod notification_delivery;
 /// Durable side-effect queue for opt-in async batch processing.
 pub mod pending_side_effects;
-/// Persistence layer for snapshot records.
+/// Reading a tenant's database for the earliest instant it has work due.
 pub mod pending_work;
 /// The schema contract one tenant database carries, and what it is checked against.
 pub mod schema_contract;
 /// Dialect DDL and session statements SeaQuery cannot express.
 pub mod schema_ddl;
+/// Persistence layer for snapshot records.
 pub mod snapshot;
-/// Filling the entity spatial index from the store.
+/// How the context store's own failures reach the ports it implements.
+mod store_fault;
+/// Conditions the context store's own callers guarantee.
+pub mod store_invariant;
 /// Repository for NGSI-LD entity subscriptions.
 pub mod subscription;
 /// Subscription forwarding mappings (clause 5.8.1.4).
@@ -84,6 +88,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-notification",
+        "andromeda-persistence-failure",
         "andromeda-postgresql-branch",
         "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-pool",

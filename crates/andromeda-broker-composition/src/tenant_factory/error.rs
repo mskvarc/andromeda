@@ -1,9 +1,12 @@
 //! Focused tenant construction failures.
 
+use crate::tenant_factory::assembly_invariant::AssemblyInvariant;
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_context_store::error::ContextStoreError;
-use andromeda_postgresql_pool::is_pool_saturated;
+use andromeda_postgresql_pool::{is_pool_saturated, persistence_classification::classify};
 use andromeda_postgresql_temporal_store::error::TemporalStoreError;
+use andromeda_tenancy::runtime_build_failure::RuntimeBuildFailure;
 use sqlx::{Error as SqlxError, migrate::MigrateError};
 use thiserror::Error;
 
@@ -25,15 +28,24 @@ pub(super) enum TenantAssemblyError {
     /// The temporal hypertables' storage policy could not be reconciled.
     #[error("tenant temporal storage policy reconciliation failed: {0}")]
     TemporalStoragePolicy(#[from] TemporalStoreError),
-    /// A typed construction invariant could not be established.
+    /// A part of the runtime refused to be constructed.
     #[error("tenant runtime construction failed: {0}")]
-    Invariant(String),
+    Invariant(#[from] AssemblyInvariant),
 }
 
 impl TenantAssemblyError {
-    /// Preserve operator-facing detail for a failed typed construction invariant.
-    pub(super) fn invariant(detail: impl Into<String>) -> TenantAssemblyError {
-        TenantAssemblyError::Invariant(detail.into())
+    /// The backend-neutral cause a tenancy port reports this failure as.
+    pub(super) fn build_failure(&self) -> RuntimeBuildFailure {
+        match self {
+            TenantAssemblyError::Database(error) => RuntimeBuildFailure::Persistence(classify(error)),
+            TenantAssemblyError::Migration(_) => RuntimeBuildFailure::Persistence(PersistenceFailure::SchemaMismatch),
+            TenantAssemblyError::ContextStore(error) => RuntimeBuildFailure::Persistence(error.failure_class()),
+            TenantAssemblyError::TemporalStoragePolicy(error) => {
+                RuntimeBuildFailure::Persistence(error.failure_class().unwrap_or(PersistenceFailure::ContractBroken))
+            }
+            TenantAssemblyError::JsonLd(_) => RuntimeBuildFailure::JsonLdEngine,
+            TenantAssemblyError::Invariant(_) => RuntimeBuildFailure::Invariant,
+        }
     }
 
     /// Whether construction failed because a backend connection pool was
@@ -56,7 +68,10 @@ impl TenantAssemblyError {
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_factory::error::TenantAssemblyError;
+    use crate::tenant_factory::{
+        assembly_invariant::{AssemblyInvariant, CountSetting},
+        error::TenantAssemblyError,
+    };
     use andromeda_postgresql_context_store::error::ContextStoreError;
     use sqlx::Error as SqlxError;
 
@@ -67,6 +82,6 @@ mod tests {
         assert!(TenantAssemblyError::Database(SqlxError::PoolTimedOut).is_saturation());
         assert!(TenantAssemblyError::ContextStore(ContextStoreError::Saturated).is_saturation());
         assert!(!TenantAssemblyError::Database(SqlxError::RowNotFound).is_saturation());
-        assert!(!TenantAssemblyError::invariant("not a pool problem").is_saturation());
+        assert!(!TenantAssemblyError::from(AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentBatchSize)).is_saturation());
     }
 }

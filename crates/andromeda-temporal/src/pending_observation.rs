@@ -46,7 +46,7 @@ pub(crate) fn intent_matches_query(
     selection: &ResidualFilter,
 ) -> Result<bool, TemporalError> {
     let selection_matches = match sequenced.intent.selection_value.as_ref() {
-        Some(value) => residual_filter::matches(selection, value).map_err(TemporalError::internal)?,
+        Some(value) => residual_filter::matches(selection, value).map_err(TemporalError::from_entity_failure)?,
         None => false,
     };
     Ok(selection_matches && !pending_observations(sequenced, compiled).is_empty())

@@ -17,6 +17,7 @@ use crate::{
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
+    commit_invariant::{CommitInvariant, NameDictionary},
     error::CommitError,
     subscription_key::SubscriptionKey,
     subscription_match::SubscriptionMatch,
@@ -79,12 +80,10 @@ pub(crate) async fn apply(
         .map(|(position, group)| event(base, position, group, &dictionary))
         .collect::<Result<Vec<NewNotificationEvent<'_>>, CommitError>>()?;
     insert_events_in_tx(tx, target, record, &events).await.map_err(context_store)?;
-    let advance = u32::try_from(events.len()).map_err(|error| CommitError::Invariant {
-        detail: format!("commit produced more notification events than an ordinal can number: {error}"),
-    })?;
-    let next = base.advanced_by(advance).map_err(|error| CommitError::Invariant {
-        detail: format!("notification consequence ordinal overflowed: {error}"),
-    })?;
+    let advance = u32::try_from(events.len()).map_err(|error| CommitError::from(CommitInvariant::ConsequenceCount(error)))?;
+    let next = base
+        .advanced_by(advance)
+        .map_err(|error| CommitError::from(CommitInvariant::OrdinalOverflow(error)))?;
     Ok((next, ConsequenceWrite::Written))
 }
 
@@ -140,7 +139,7 @@ async fn resolve_dictionary(
     names.sort_unstable();
     names.dedup();
     let names = names;
-    attribute_names.resolve_or_create(tx, &names).await.map_err(name_lookup)
+    attribute_names.resolve_or_create(tx, &names).await.map_err(|error| name_lookup(&error))
 }
 
 /// Turn one group into the event row it is written as.
@@ -150,21 +149,20 @@ fn event<'a>(
     group: EventGroup<'a>,
     dictionary: &HashMap<AttributeName, AttributeNameKey>,
 ) -> Result<NewNotificationEvent<'a>, CommitError> {
-    let delta = u32::try_from(position).map_err(|error| CommitError::Invariant {
-        detail: format!("notification event position {position}: {error}"),
-    })?;
-    let ordinal = base.advanced_by(delta).map_err(|error| CommitError::Invariant {
-        detail: format!("notification event ordinal overflowed at position {position}: {error}"),
-    })?;
+    let delta = u32::try_from(position).map_err(|error| CommitError::from(CommitInvariant::ConsequenceCount(error)))?;
+    let ordinal = base
+        .advanced_by(delta)
+        .map_err(|error| CommitError::from(CommitInvariant::OrdinalOverflow(error)))?;
     let change_attribute_name_keys = group
         .change
         .change
         .instances
         .iter()
         .map(|instance| {
-            dictionary.get(&instance.key.attr).copied().ok_or_else(|| CommitError::Invariant {
-                detail: format!("attribute name dictionary returned no key for {}", instance.key.attr),
-            })
+            dictionary
+                .get(&instance.key.attr)
+                .copied()
+                .ok_or(CommitError::Invariant(CommitInvariant::UnresolvedName(NameDictionary::AttributeName)))
         })
         .collect::<Result<Vec<AttributeNameKey>, CommitError>>()?;
     Ok(NewNotificationEvent {

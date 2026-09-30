@@ -13,13 +13,15 @@
 use crate::{
     linked_entity_forwarding::ForwardedLinkedEntitySource,
     tenant_factory::{
+        assembly_invariant::AssemblyInvariant,
         background_pacer::BackgroundPacer,
         error::TenantAssemblyError,
         storage::TenantStorage,
         tasks::{
             EntityNotificationDelivery,
             notification_delivery::{DeliveryDrainDrive, register_notification_delivery},
-            notification_schedule::{classify_notification_failure, register_notification_schedule, register_periodic_wake},
+            notification_schedule::{register_notification_schedule, register_periodic_wake},
+            notification_worker_failure::{ChangeChannel, channel_closed, worker_notification_failure},
         },
     },
 };
@@ -36,7 +38,6 @@ use andromeda_notification::{
 use andromeda_subscription::{change::SubscriptionChange, store::SubscriptionStore};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
-    failure::TaskFailure,
     registration::TaskRegistration,
     resident_task::ResidentTask,
     restart_policy::RestartPolicy,
@@ -154,7 +155,13 @@ pub(super) fn register_interval_notification(
         storage.tenant.clone(), // clone: interval policy owns its tenant partition.
     ));
     let (interval_wake, receiver) = wake_channel();
-    register_periodic_wake(supervisor, "notification-interval-wake", interval_wake, subscription_changes)?;
+    register_periodic_wake(
+        supervisor,
+        "notification-interval-wake",
+        interval_wake,
+        ChangeChannel::Subscription,
+        subscription_changes,
+    )?;
     register_notification_schedule(supervisor, "notification-interval", interval_max_sleep, receiver, pacer, move |cutoff| {
         let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
         async move {
@@ -172,7 +179,7 @@ fn register_notification_processor(
     delivery: EntityNotificationDelivery,
 ) -> Result<(), TenantAssemblyError> {
     let restart_delay = Duration::from_secs(1);
-    let name = TaskName::try_from("notification-events").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from("notification-events").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
@@ -184,7 +191,7 @@ fn register_notification_processor(
         let mut subscription_receiver = subscription_changes.subscribe();
         let processor = Arc::clone(&processor); // clone: every resident attempt owns the shared policy operation.
         async move {
-            processor.reload_cache().await.map_err(|error| classify_notification_failure(&error))?;
+            processor.reload_cache().await.map_err(worker_notification_failure)?;
             execution.mark_running();
             loop {
                 tokio::select! {
@@ -193,9 +200,9 @@ fn register_notification_processor(
                         Ok(change) => processor.apply_subscription_change(change).await,
                         Err(RecvError::Lagged(skipped)) => {
                             tracing::debug!(skipped, "notification subscription stream lagged; reloading policy cache");
-                            processor.reload_cache().await.map_err(|error| classify_notification_failure(&error))?;
+                            processor.reload_cache().await.map_err(worker_notification_failure)?;
                         }
-                        Err(RecvError::Closed) => return Err(TaskFailure::transient("notification subscription channel closed")),
+                        Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Subscription)),
                     },
                     received = entity_receiver.recv(), if matches!(delivery, EntityNotificationDelivery::Live) => match received {
                         Ok(event) => {
@@ -204,7 +211,7 @@ fn register_notification_processor(
                                     Ok(change) => processor.apply_subscription_change(change).await,
                                     Err(TryRecvError::Lagged(skipped)) => {
                                         tracing::debug!(skipped, "notification subscription stream lagged before entity evaluation; reloading policy cache");
-                                        processor.reload_cache().await.map_err(|error| classify_notification_failure(&error))?;
+                                        processor.reload_cache().await.map_err(worker_notification_failure)?;
                                     }
                                     Err(TryRecvError::Empty | TryRecvError::Closed) => break,
                                 }
@@ -216,7 +223,7 @@ fn register_notification_processor(
                             run_in_operation_scope(processor.apply_entity_change(event)).await;
                         }
                         Err(RecvError::Lagged(skipped)) => tracing::debug!(skipped, "notification entity stream lagged"),
-                        Err(RecvError::Closed) => return Err(TaskFailure::transient("notification entity channel closed")),
+                        Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Entity)),
                     },
                 }
             }
@@ -225,5 +232,5 @@ fn register_notification_processor(
     supervisor
         .register_resident(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }

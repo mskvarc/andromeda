@@ -53,7 +53,7 @@ impl CompactionContext {
     pub(crate) async fn prepare(spec: &ContextSpec, loader: &HttpContextLoader) -> Result<CompactionContext, CompactionContextError> {
         let unprocessed = match spec.to_context_value() {
             Some(value) => JsonLdContext::try_from_json(&jsonld_syntax::Value::from_serde_json(value))
-                .map_err(|error| CompactionContextError::Invalid(JsonLdError::InlineContextInvalid(error.to_string())))?,
+                .map_err(|error| CompactionContextError::Invalid(JsonLdError::InlineContextInvalid(error)))?,
             None => JsonLdContext::default(),
         };
         let processed = unprocessed

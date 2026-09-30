@@ -19,6 +19,7 @@ andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
+andromeda-persistence-failure.workspace = true
 andromeda-registration.workspace = true
 andromeda-subscription.workspace = true
 andromeda-tenancy.workspace = true

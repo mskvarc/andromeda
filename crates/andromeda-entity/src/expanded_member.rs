@@ -20,12 +20,9 @@ pub(crate) fn unwrap_expanded_ref(value: &Value) -> &Value {
 /// the NGSI-LD name grammar means the caller asked for something that cannot
 /// name an attribute at all.
 pub(crate) fn attr_name_of(attr_iri: &str) -> Result<AttributeName, EntityError> {
-    attr_iri.parse().map_err(|err| {
-        EntityError::Validation(EntityValidationReason::AttributeName {
-            iri: attr_iri.to_string(),
-            source: err,
-        })
-    })
+    attr_iri
+        .parse()
+        .map_err(|err| EntityError::Validation(EntityValidationReason::AttributeName(err)))
 }
 
 /// A member of a payload the write path built from an admitted request that
@@ -62,5 +59,5 @@ pub(crate) fn written_attribute_names(payload: &Value) -> Result<Vec<AttributeNa
 /// Reports [`EntityError::Internal`] for a type that cannot be read: every
 /// stored payload was admitted when it was written.
 pub(crate) fn stored_entity_types(payload: &Value) -> Result<Vec<EntityTypeName>, EntityError> {
-    extract_types(payload).map_err(EntityError::internal)
+    extract_types(payload).map_err(|error| EntityError::Internal(error.into()))
 }

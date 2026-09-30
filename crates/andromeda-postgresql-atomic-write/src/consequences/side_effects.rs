@@ -4,6 +4,7 @@ use crate::{commit_refusal::context_store, consequences::ConsequenceWrite};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
+    commit_invariant::CommitInvariant,
     error::CommitError,
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
@@ -44,9 +45,7 @@ pub(crate) async fn apply(
     match target {
         ContextTarget::Live => {}
         ContextTarget::Snapshot(_) => {
-            return Err(CommitError::Invariant {
-                detail: "a Snapshot branch commit carries a deferred side-effect job; only the live branch defers side effects".to_owned(),
-            });
+            return Err(CommitInvariant::SnapshotSideEffectJob.into());
         }
     }
     PendingSideEffectsRepository::enqueue_in_tx(tx, record, base_ordinal, &merged)

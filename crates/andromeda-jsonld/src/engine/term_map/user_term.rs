@@ -1,6 +1,7 @@
 //! Parsing and caching of request-supplied JSON-LD term declarations.
 
 use crate::{
+    context_term::ContextTerm,
     engine::{
         core_term_semantics::{coercion_of, container_of},
         term_map::{
@@ -47,7 +48,7 @@ pub(crate) struct UserTermTable {
     /// The fastpath only needs to know that one exists; the clause 5.5.7
     /// refusal in [`crate::scoped_context_admission`] names it in the problem
     /// detail, which is why the term is kept rather than a flag.
-    pub(crate) scoped_context_term: Option<Box<str>>,
+    pub(crate) scoped_context_term: Option<ContextTerm>,
     /// Whether the context uses unsupported JSON-LD behavior.
     pub(crate) has_unsupported_feature: bool,
     /// The remote contexts this document references rather than declares.
@@ -159,7 +160,7 @@ fn parse_term_declaration(term: &str, declaration: &Value, table: &mut UserTermT
             }
             let has_scoped_context = definition.contains_key("@context");
             if has_scoped_context && table.scoped_context_term.is_none() {
-                table.scoped_context_term = Some(Box::<str>::from(term));
+                table.scoped_context_term = Some(ContextTerm::new(term));
             }
             let Some(iri) = definition.get("@id").and_then(Value::as_str) else {
                 return;
@@ -203,7 +204,7 @@ fn iri_from_context(value: &str) -> Option<IriBuf> {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::term_map::user_term::parse_user_context;
+    use crate::{context_term::ContextTerm, engine::term_map::user_term::parse_user_context};
     use iri_rs::IriBuf;
     use serde_json::json;
 
@@ -223,7 +224,7 @@ mod tests {
         let table = parse_user_context(&json!({
             "speed": {"@id": "https://example.org/speed", "@context": {"observedAt": "https://example.org/rewritten"}}
         }));
-        pretty_assertions::assert_eq!(table.scoped_context_term.as_deref(), Some("speed"));
+        pretty_assertions::assert_eq!(table.scoped_context_term.as_ref().map(ContextTerm::as_str), Some("speed"));
     }
 
     /// A term whose definition carries a scoped `@context` but no `@id` is not
@@ -231,7 +232,7 @@ mod tests {
     #[test]
     fn a_scoped_context_on_a_definition_without_an_id_is_still_recorded() {
         let table = parse_user_context(&json!({"speed": {"@context": {}}}));
-        pretty_assertions::assert_eq!(table.scoped_context_term.as_deref(), Some("speed"));
+        pretty_assertions::assert_eq!(table.scoped_context_term.as_ref().map(ContextTerm::as_str), Some("speed"));
         assert!(!table.terms.contains_key("speed"));
     }
 
@@ -265,7 +266,7 @@ mod tests {
     fn an_array_term_declaration_demotes_the_fastpath_and_is_still_searched() {
         let table = parse_user_context(&json!({"speed": [{"@id": "https://example.org/speed", "@context": {}}]}));
         assert!(table.has_unsupported_feature, "an array term definition is not a shape the fastpath models");
-        pretty_assertions::assert_eq!(table.scoped_context_term.as_deref(), Some("speed"));
+        pretty_assertions::assert_eq!(table.scoped_context_term.as_ref().map(ContextTerm::as_str), Some("speed"));
     }
 
     /// The first scoped term found is the one reported; a second one does not
@@ -276,7 +277,7 @@ mod tests {
             "alpha": {"@id": "https://example.org/alpha", "@context": {}},
             "beta": {"@id": "https://example.org/beta", "@context": {}}
         }));
-        pretty_assertions::assert_eq!(table.scoped_context_term.as_deref(), Some("alpha"));
+        pretty_assertions::assert_eq!(table.scoped_context_term.as_ref().map(ContextTerm::as_str), Some("alpha"));
     }
 
     /// A JSON-LD keyword the fastpath does not model demotes it, and `@vocab`

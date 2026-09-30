@@ -24,6 +24,8 @@ pub mod pushdown;
 pub mod read;
 /// The PostgreSQL entity store.
 pub mod repo;
+/// What an Entity row or census ledger that no longer reads back looks like.
+pub mod stored_entity_error;
 /// The clause 4.5.1 invariant that every stored entity carries at least one type.
 pub mod types_present;
 /// The statements that write the three current-state entity relations.

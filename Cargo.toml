@@ -156,6 +156,7 @@ andromeda-ngsi-ld-representation = { path = "crates/andromeda-ngsi-ld-representa
 andromeda-ngsi-ld-request = { path = "crates/andromeda-ngsi-ld-request" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
 andromeda-notification = { path = "crates/andromeda-notification" }
+andromeda-persistence-failure = { path = "crates/andromeda-persistence-failure" }
 andromeda-postgresql-atomic-write = { path = "crates/andromeda-postgresql-atomic-write" }
 andromeda-postgresql-branch = { path = "crates/andromeda-postgresql-branch" }
 andromeda-postgresql-codes = { path = "crates/andromeda-postgresql-codes" }

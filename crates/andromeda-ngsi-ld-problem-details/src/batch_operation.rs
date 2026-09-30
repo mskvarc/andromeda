@@ -4,6 +4,7 @@
 use crate::{
     error_type::NgsiLdErrorType,
     problem_detail::{ProblemClassification, WireProblemClassification},
+    problem_document_error::ProblemDocumentError,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use iri_rs::IriRefBuf;
@@ -186,7 +187,7 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
             if let Some(status) = status
                 && status != distributed.status_code().as_u16()
             {
-                return Err(de::Error::custom("problem status disagrees with its distributed NGSI-LD type"));
+                return Err(de::Error::custom(ProblemDocumentError::DistributedStatusMismatch));
             }
             BatchErrorKind::Known(distributed)
         } else {

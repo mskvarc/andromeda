@@ -18,21 +18,12 @@ pub enum EndpointParseError {
     #[error("MQTT URI has an invalid topic: {0}")]
     InvalidTopic(#[from] MqttTopicError),
     /// The scheme names a protocol this broker does not deliver over.
-    #[error("unsupported endpoint URI scheme: {scheme}")]
-    UnsupportedScheme {
-        /// The scheme that was given.
-        scheme: String,
-    },
+    #[error("unsupported endpoint URI scheme; expected http, https, mqtt, mqtts, sse or ws")]
+    UnsupportedScheme,
     /// `notifierInfo` asked for an MQTT version this broker does not speak.
-    #[error("unsupported MQTT-Version: {value}")]
-    UnsupportedMqttVersion {
-        /// The value that was given.
-        value: String,
-    },
+    #[error("unsupported MQTT-Version; expected mqtt5.0 or mqtt3.1.1")]
+    UnsupportedMqttVersion,
     /// `notifierInfo` asked for a `QoS` level MQTT does not define.
-    #[error("unsupported MQTT-QoS: {value}")]
-    UnsupportedMqttQos {
-        /// The value that was given.
-        value: String,
-    },
+    #[error("unsupported MQTT-QoS; expected 0, 1 or 2")]
+    UnsupportedMqttQos,
 }

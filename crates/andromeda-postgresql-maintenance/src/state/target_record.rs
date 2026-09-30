@@ -2,6 +2,7 @@
 
 use crate::{
     candidate::{IndexTarget, MaintenanceTarget},
+    catalog_counter::CatalogCounter,
     error::MaintenanceError,
     evidence::{
         action_result::ActionResult,
@@ -51,7 +52,7 @@ pub(crate) async fn load_target_state(
         let breaches = row.try_get::<i32, _>(PostgresqlMaintenanceTargets::ConsecutiveBreaches.to_string().as_str())?;
         Ok(TargetState {
             consecutive_breaches: u32::try_from(breaches).map_err(|_| MaintenanceError::NegativeCatalogValue {
-                field: "consecutive_breaches",
+                counter: CatalogCounter::ConsecutiveBreaches,
                 value: i64::from(breaches),
             })?,
             is_action_pending: row.try_get(PostgresqlMaintenanceTargets::IsActionPending.to_string().as_str())?,
@@ -110,7 +111,7 @@ pub(crate) async fn index_probe_states(connection: &mut PgConnection, tenant: &R
         .map(|row| {
             let code = MaintenanceTargetCode::try_from(row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?)?;
             let MaintenanceTarget::Index(target) = target_of(code) else {
-                return Err(MaintenanceError::ProbeTargetNotAnIndex(code.label()));
+                return Err(MaintenanceError::ProbeTargetNotAnIndex(code));
             };
             Ok(IndexProbeState {
                 target,
@@ -141,11 +142,11 @@ pub(crate) async fn record_decision(
             .value(PostgresqlMaintenanceTargets::LastSampledAt, Expr::current_timestamp())
             .value(
                 PostgresqlMaintenanceTargets::LastRelationBytes,
-                persisted_bytes(sample.relation_bytes, "sample relation bytes")?,
+                persisted_bytes(sample.relation_bytes, CatalogCounter::SampleRelationBytes)?,
             )
             .value(
                 PostgresqlMaintenanceTargets::LastReclaimableBytes,
-                persisted_bytes(sample.reclaimable_bytes, "sample reclaimable bytes")?,
+                persisted_bytes(sample.reclaimable_bytes, CatalogCounter::SampleReclaimableBytes)?,
             )
             .value(PostgresqlMaintenanceTargets::LastDegradedPercent, i16::from(sample.degraded_percent))
             .value(PostgresqlMaintenanceTargets::LastThresholdPercent, i16::from(sample.threshold_percent));
@@ -220,8 +221,14 @@ pub(crate) async fn record_action_success(
         .value(PostgresqlMaintenanceTargets::ConsecutiveFailures, 0)
         .value(PostgresqlMaintenanceTargets::LastActionAt, Expr::current_timestamp())
         .value(PostgresqlMaintenanceTargets::LastActionResult, ActionResult::Succeeded.code().code())
-        .value(PostgresqlMaintenanceTargets::LastBeforeBytes, persisted_bytes(before_bytes, "before bytes")?)
-        .value(PostgresqlMaintenanceTargets::LastAfterBytes, persisted_bytes(after_bytes, "after bytes")?)
+        .value(
+            PostgresqlMaintenanceTargets::LastBeforeBytes,
+            persisted_bytes(before_bytes, CatalogCounter::BeforeBytes)?,
+        )
+        .value(
+            PostgresqlMaintenanceTargets::LastAfterBytes,
+            persisted_bytes(after_bytes, CatalogCounter::AfterBytes)?,
+        )
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()))
         .to_owned();
@@ -267,6 +274,6 @@ fn target_state_insert(tenant: TenantKey, target: MaintenanceTarget) -> Result<I
 }
 
 /// Convert a physical byte count to the platform schema's signed storage type.
-fn persisted_bytes(value: u64, field: &'static str) -> Result<i64, MaintenanceError> {
-    i64::try_from(value).map_err(|_| MaintenanceError::CatalogValueOverflow { field, value })
+fn persisted_bytes(value: u64, counter: CatalogCounter) -> Result<i64, MaintenanceError> {
+    i64::try_from(value).map_err(|_| MaintenanceError::CatalogValueOverflow { counter, value })
 }

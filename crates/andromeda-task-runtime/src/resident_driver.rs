@@ -4,8 +4,10 @@ use crate::{
     control::{ResidentExecution, ResidentReadiness},
     driver_supervision::DriverSupervision,
     failure::TaskFailure,
+    failure_report::FailureReport,
     lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
     resident_task::ResidentOperation,
+    runtime_failure::RuntimeFailure,
     task_observer::{DriverTerminal, emit},
 };
 use std::{sync::Arc, time::SystemTime};
@@ -42,7 +44,7 @@ pub(crate) async fn run(supervision: DriverSupervision, operation: Arc<ResidentO
             return DriverTerminal::Cancelled;
         }
         let failure = match result {
-            Ok(()) => TaskFailure::transient("resident task completed without cancellation"),
+            Ok(()) => FailureReport::of(&TaskFailure::transient(RuntimeFailure::ResidentCompleted)),
             Err(failure) => failure,
         };
         let count = health.write().await.failed_attempt(SystemTime::now(), &failure);

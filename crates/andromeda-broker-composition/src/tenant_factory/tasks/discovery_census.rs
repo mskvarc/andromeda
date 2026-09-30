@@ -1,6 +1,6 @@
 //! Periodic folding of one tenant's discovery census ledgers.
 
-use crate::tenant_factory::{background_pacer::BackgroundPacer, error::TenantAssemblyError};
+use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError};
 use andromeda_postgresql_context_store::entity::census::fold::fold_every_census;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -40,9 +40,8 @@ const FOLD_CADENCE: Duration = Duration::from_secs(30);
 /// Returns [`TenantAssemblyError::Invariant`] when the cadence names no usable
 /// schedule or the supervisor refuses the registration.
 pub(super) fn register_discovery_census_fold(supervisor: &TaskSupervisor, pacer: Arc<BackgroundPacer>, pool: PgPool) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(FOLD_CADENCE, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("discovery-census-fold").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(FOLD_CADENCE, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("discovery-census-fold").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -58,7 +57,7 @@ pub(super) fn register_discovery_census_fold(supervisor: &TaskSupervisor, pacer:
         async move {
             pacer
                 .run_when_written(&observed, async move {
-                    let outcome = fold_every_census(&pool).await.map_err(|error| TaskFailure::transient(error.to_string()))?;
+                    let outcome = fold_every_census(&pool).await.map_err(TaskFailure::transient)?;
                     tracing::debug!(summed_rows = outcome.summed_rows, "discovery census folded");
                     Ok(())
                 })
@@ -68,5 +67,5 @@ pub(super) fn register_discovery_census_fold(supervisor: &TaskSupervisor, pacer:
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }

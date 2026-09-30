@@ -1,6 +1,7 @@
 //! Publishing one notification to one MQTT endpoint.
 
 use crate::{
+    connection_failure::ConnectionFailure,
     delivery_deadline::delivery_deadline,
     endpoint::mqtt::{MqttEndpointConfig, MqttQoS},
     error::TransportError,
@@ -117,18 +118,18 @@ impl MqttTransportHandle {
                 client
                     .publish_with_properties(self.config.topic.as_str(), self.config.qos.as_v5(), false, envelope, properties)
                     .await
-                    .map_err(|error| error.to_string())
+                    .map_err(|error| ConnectionFailure::MqttV5Publish(Box::new(error)))
             }
             // MQTT 3.1.1 has no user properties, so the envelope is the only
             // place the metadata can go.
             MqttClientVariant::V311 { client } => client
                 .publish(self.config.topic.as_str(), self.config.qos.as_v311(), false, envelope)
                 .await
-                .map_err(|error| error.to_string()),
+                .map_err(|error| ConnectionFailure::MqttV311Publish(Box::new(error))),
         };
         drop(publish_guard);
 
-        if let Err(detail) = published {
+        if let Err(cause) = published {
             // The packet never reached the wire, so its waiter never will be
             // assigned an id; drop it before it desynchronises the tracker.
             if ack_receiver.is_some() {
@@ -137,7 +138,7 @@ impl MqttTransportHandle {
             connection.state.mark_unhealthy();
             return Err(TransportError::ConnectionFailed {
                 endpoint: self.config.endpoint_uri.clone(), // clone: the error owns the endpoint it names
-                detail,
+                cause,
             });
         }
 
@@ -167,7 +168,7 @@ impl MqttTransportHandle {
             // The connection failed before the acknowledgement arrived.
             Ok(Err(_cancelled)) => Err(TransportError::ConnectionFailed {
                 endpoint: self.config.endpoint_uri.clone(), // clone: the error owns the endpoint it names
-                detail: "connection lost before the broker acknowledged the publish".to_string(),
+                cause: ConnectionFailure::AcknowledgementLost,
             }),
             // The broker did not acknowledge within the allowed time; the delivery queue
             // retransmits rather than assuming it arrived.

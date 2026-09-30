@@ -9,6 +9,7 @@
 //! `geoproperty`, `propertyNames`, ...) keep their fixed casing, and clause
 //! numbers stay in doc comments.
 
+use crate::csr_member::CsrMember;
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
 use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
@@ -62,30 +63,28 @@ pub enum RegistrationValidationReason {
     #[error("{member} is required")]
     MemberRequired {
         /// The absent member.
-        member: String,
+        member: CsrMember,
     },
     /// A member expected to be a string was not one.
     #[error("'{member}' must be a string")]
     MemberNotString {
         /// The member whose value was not a string.
-        member: String,
+        member: CsrMember,
     },
     /// A typed member was not the JSON shape its data type requires.
     #[error("invalid '{member}' value: {source}")]
     MemberValue {
         /// The member whose value was rejected.
-        member: String,
+        member: CsrMember,
         /// The JSON shape violation.
         #[source]
         source: serde_json::Error,
     },
     /// A `DateTime` member was a string outside the RFC 3339 grammar.
-    #[error("invalid '{member}' value '{raw}': {source}")]
+    #[error("invalid '{member}' value: {source}")]
     DateTimeMember {
         /// The member whose value was rejected.
-        member: String,
-        /// The rejected raw value.
-        raw: String,
+        member: CsrMember,
         /// The timestamp grammar violation.
         #[source]
         source: chrono::ParseError,
@@ -93,14 +92,11 @@ pub enum RegistrationValidationReason {
     /// A `Duration` member was a string outside the ISO 8601 grammar.
     ///
     /// The `iso8601_duration` parse error implements neither `Display` nor
-    /// `Error`, so it cannot be chained; the rejected value is carried instead so
-    /// the client still sees what it sent.
-    #[error("invalid '{member}' value '{raw}'")]
+    /// `Error`, so it cannot be chained; the message names the grammar instead.
+    #[error("invalid '{member}' value: not an ISO 8601 duration")]
     DurationMember {
         /// The member whose value was rejected.
-        member: String,
-        /// The rejected raw value.
-        raw: String,
+        member: CsrMember,
     },
     /// A `q` filter named an attribute that did not expand to an IRI.
     #[error("q names a non-IRI attribute: {source}")]
@@ -127,7 +123,7 @@ pub enum RegistrationValidationReason {
     #[error("invalid existing {member} GeoJSON: {source}")]
     ExistingGeometry {
         /// The member whose stored geometry could not be read back.
-        member: String,
+        member: CsrMember,
         /// The geometry decoding failure.
         #[source]
         source: GeometryError,

@@ -14,6 +14,7 @@ mod port;
 use crate::{
     branch_condition::BranchCondition,
     error::SnapshotError,
+    snapshot_invariant::SnapshotInvariant,
     store::SnapshotPreparationJob,
     store_double::entry::{Entry, Stage},
 };
@@ -108,8 +109,8 @@ impl StoreDouble {
     }
 
     /// The stored Snapshots.
-    fn entries(&self) -> Result<MutexGuard<'_, Vec<Entry>>, SnapshotError> {
-        self.entries.lock().map_err(|_| SnapshotError::internal("StoreDouble entries were poisoned"))
+    fn entries(&self) -> MutexGuard<'_, Vec<Entry>> {
+        self.entries.lock().expect("the store double lock is not poisoned")
     }
 
     /// Move a preparation this worker holds out of `preparing`, recording the
@@ -120,69 +121,62 @@ impl StoreDouble {
         status: SnapshotStatus,
         queries_details: Option<&[ExecutionResultDetails]>,
         temporal_queries_details: Option<&[ExecutionResultDetails]>,
-    ) -> Result<u64, SnapshotError> {
+    ) -> u64 {
         if self.claim == ClaimHold::Lost {
-            return Ok(0);
+            return 0;
         }
-        let mut entries = self.entries()?;
+        let mut entries = self.entries();
         let Some(entry) = entries.iter_mut().find(|entry| entry.snapshot.id == *id && entry.stage == Stage::Claimed) else {
-            return Ok(0);
+            return 0;
         };
         entry.stage = Stage::Ended(status);
-        self.recorded
-            .lock()
-            .map_err(|_| SnapshotError::internal("StoreDouble recorder was poisoned"))?
-            .push(RecordedStatus {
-                id: id.clone(), // clone: the record owns the identifier it names.
-                status,
-                queries_details: queries_details.map(<[ExecutionResultDetails]>::to_vec),
-                temporal_queries_details: temporal_queries_details.map(<[ExecutionResultDetails]>::to_vec),
-            });
-        Ok(1)
+        self.recorded.lock().expect("the store double lock is not poisoned").push(RecordedStatus {
+            id: id.clone(), // clone: the record owns the identifier it names.
+            status,
+            queries_details: queries_details.map(<[ExecutionResultDetails]>::to_vec),
+            temporal_queries_details: temporal_queries_details.map(<[ExecutionResultDetails]>::to_vec),
+        });
+        1
     }
 
     /// Claim the first waiting Snapshot whose clone source, if any, has left
     /// `preparing` or is gone -- the store's claim predicate.
-    fn claim_next(&self) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
-        let mut entries = self.entries()?;
+    fn claim_next(&self) -> Option<SnapshotPreparationJob> {
+        let mut entries = self.entries();
         let source_preparing = |source: &Identifier, entries: &[Entry]| {
             entries
                 .iter()
                 .any(|entry| entry.snapshot.id == *source && entry.status() == SnapshotStatus::Preparing)
         };
-        let Some(position) = entries
+        let position = entries
             .iter()
-            .position(|entry| entry.stage == Stage::Waiting && entry.clone_source.as_ref().is_none_or(|source| !source_preparing(source, &entries)))
-        else {
-            return Ok(None);
-        };
+            .position(|entry| entry.stage == Stage::Waiting && entry.clone_source.as_ref().is_none_or(|source| !source_preparing(source, &entries)))?;
         let entry = &mut entries[position];
         entry.stage = Stage::Claimed;
-        Ok(Some(SnapshotPreparationJob {
+        Some(SnapshotPreparationJob {
             snapshot: entry.snapshot.clone(),            // clone: the job owns its Snapshot.
             clone_source_id: entry.clone_source.clone(), // clone: the job owns its source identifier.
             query_context: Value::Null,
-        }))
+        })
     }
 
     /// Copy `source` into the claimed clone `target` and end it `success`, or
     /// refuse as the store does when the source is gone.
     fn copy_clone(&self, source: &Identifier, target: &Identifier) -> Result<(), SnapshotError> {
         let source_status = self
-            .entries()?
+            .entries()
             .iter()
             .find(|entry| entry.snapshot.id == *source)
             .map(Entry::status)
-            .ok_or_else(|| SnapshotError::internal(format!("Clone source {source} does not exist")))?;
-        self.copies
-            .lock()
-            .map_err(|_| SnapshotError::internal("StoreDouble copies were poisoned"))?
-            .push(CloneCopy {
-                target: target.clone(), // clone: the record owns the identifier it names.
-                source_status,
-            });
-        match self.end_preparation(target, SnapshotStatus::Success, None, None)? {
-            0 => Err(SnapshotError::internal(format!("Snapshot {target} is no longer preparing under this claim"))),
+            .ok_or_else(|| SnapshotInvariant::CloneSourceMissing {
+                source_snapshot: source.clone(),
+            })?; // clone: the error owns the Snapshot it names.
+        self.copies.lock().expect("the store double lock is not poisoned").push(CloneCopy {
+            target: target.clone(), // clone: the record owns the identifier it names.
+            source_status,
+        });
+        match self.end_preparation(target, SnapshotStatus::Success, None, None) {
+            0 => Err(SnapshotInvariant::ClaimLost { snapshot: target.clone() }.into()), // clone: the error owns the Snapshot it names.
             _ => Ok(()),
         }
     }

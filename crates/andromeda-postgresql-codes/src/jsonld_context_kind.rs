@@ -1,6 +1,6 @@
 //! The persisted kind of one stored JSON-LD context.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// The kind of a stored `@context` document (clause 5.2.19).

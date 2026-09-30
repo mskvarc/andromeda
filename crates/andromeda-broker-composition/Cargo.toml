@@ -48,6 +48,7 @@ andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-notification.workspace = true
+andromeda-persistence-failure.workspace = true
 andromeda-postgresql-atomic-write.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-maintenance.workspace = true
@@ -71,6 +72,7 @@ etcetera = "0.11.0"
 figment2 = { version = "0.11.5", features = ["env", "toml"] }
 file-rotate = "0.8.0"
 futures = "0.3.34"
+humantime = "2.4.0"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }

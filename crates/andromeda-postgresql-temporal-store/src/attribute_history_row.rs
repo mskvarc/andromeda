@@ -62,10 +62,7 @@ impl AttributeHistoryRow {
     /// the column holds, which means the write carried more entries than the
     /// broker can address rather than that the row is malformed.
     pub fn write_ordinal(&self) -> Result<i32, TemporalStoreError> {
-        self.identity
-            .ordinal
-            .as_i32()
-            .map_err(|error| TemporalStoreError::Validation(format!("temporal write ordinal {} is out of range: {error}", self.identity.ordinal)))
+        self.identity.ordinal.as_i32().map_err(TemporalStoreError::WriteOrdinal)
     }
 }
 

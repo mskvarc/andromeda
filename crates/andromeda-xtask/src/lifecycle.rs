@@ -111,7 +111,7 @@ pub(crate) fn run_stack(
 
 /// Run the given suites against the already-running stack, either from a prebuilt
 /// manifest when CI sets [`TEST_MANIFEST_ENV`] or by compiling through `cargo test`.
-fn run_suites(repository_root: &Path, stack: &Stack, suites: &[&Suite], callback_host: &str, cargo_args: &[String]) -> Result<(), XtaskError> {
+fn run_suites(repository_root: &Path, stack: &Stack, suites: &[&'static Suite], callback_host: &str, cargo_args: &[String]) -> Result<(), XtaskError> {
     let mut env: Vec<(&str, String)> = stack.env.iter().map(|(key, value)| (*key, (*value).to_owned())).collect();
     env.push((CALLBACK_HOST_ENV, callback_host.to_owned()));
 
@@ -122,11 +122,17 @@ fn run_suites(repository_root: &Path, stack: &Stack, suites: &[&Suite], callback
 }
 
 /// Run each suite from its packaged binary, listed in the manifest at `manifest_path`.
-fn run_prebuilt(manifest_path: &str, suites: &[&Suite], env: &[(&str, String)], harness_args: &[String], working_directory: &Path) -> Result<(), XtaskError> {
+fn run_prebuilt(
+    manifest_path: &str,
+    suites: &[&'static Suite],
+    env: &[(&str, String)],
+    harness_args: &[String],
+    working_directory: &Path,
+) -> Result<(), XtaskError> {
     let manifest = TestManifest::load(Path::new(manifest_path))?;
     let mut all_passed = true;
-    for suite in suites {
-        let binary = manifest.resolve(suite.name)?;
+    for &suite in suites {
+        let binary = manifest.resolve(suite)?;
         // Drive every selected suite to completion regardless of an earlier
         // failure, matching the `--no-fail-fast` the cargo path passes.
         let passed = run::run_suite(&binary, suite.test_threads, harness_args, env, working_directory)?;

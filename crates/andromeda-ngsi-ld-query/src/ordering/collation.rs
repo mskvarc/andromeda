@@ -1,8 +1,8 @@
 //! ICU collation identifiers for `orderBy` string sorting (clause 4.23).
 
-use crate::ordering::unicode_collation_keyword::{UnregisteredKeyword, unregistered_collation_keyword};
+use crate::ordering::unicode_collation_keyword::{CollationKeyword, UnregisteredKeyword, unregistered_collation_keyword};
 use derive_more::Display;
-use langtag::LangTagBuf;
+use langtag::{InvalidLangTag, LangTagBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -70,21 +70,11 @@ impl IcuCollation {
             return Err(IcuCollationError::Empty);
         }
 
-        let tag = LangTagBuf::new(trimmed.to_string()).map_err(|source| IcuCollationError::InvalidTag {
-            value: trimmed.to_string(),
-            source,
-        })?;
+        let tag = LangTagBuf::new(trimmed.to_string()).map_err(IcuCollationError::InvalidTag)?;
 
         match unregistered_collation_keyword(trimmed) {
-            Some(UnregisteredKeyword::Key(keyword)) => Err(IcuCollationError::UnknownCollationKeyword {
-                value: trimmed.to_string(),
-                keyword: keyword.to_string(),
-            }),
-            Some(UnregisteredKeyword::Type { key, value }) => Err(IcuCollationError::UnknownCollationKeywordType {
-                value: trimmed.to_string(),
-                keyword: key.to_string(),
-                keyword_type: value.to_string(),
-            }),
+            Some(UnregisteredKeyword::Key(_)) => Err(IcuCollationError::UnknownCollationKeyword),
+            Some(UnregisteredKeyword::Type { key, value: _ }) => Err(IcuCollationError::UnknownCollationKeywordType { keyword: key }),
             None => Ok(IcuCollation(tag)),
         }
     }
@@ -118,38 +108,26 @@ pub enum IcuCollationError {
     Empty,
     /// The identifier's Unicode extension declared a keyword that is not a
     /// collation setting.
-    #[error("collation identifier '{value}' declares '{keyword}', which is not an ICU collation setting")]
-    UnknownCollationKeyword {
-        /// The rejected value.
-        value: String,
-        /// The keyword key that names no collation setting.
-        keyword: String,
-    },
+    #[error("collation identifier declares a Unicode keyword that is not an ICU collation setting")]
+    UnknownCollationKeyword,
     /// A collation keyword carried a type IETF RFC 6067 does not register for
     /// that key.
-    #[error("collation identifier '{value}' sets '{keyword}' to '{keyword_type}', which IETF RFC 6067 does not register for it")]
+    #[error("collation identifier sets '{keyword}' to a type IETF RFC 6067 does not register for it")]
     UnknownCollationKeywordType {
-        /// The rejected value.
-        value: String,
         /// The collation key the unregistered type was written under.
-        keyword: String,
-        /// The type the registry does not list for that key.
-        keyword_type: String,
+        keyword: CollationKeyword,
     },
     /// The identifier was not a well-formed BCP47 language tag.
-    #[error("invalid BCP47 collation identifier '{value}'")]
-    InvalidTag {
-        /// The rejected value.
-        value: String,
-        /// The underlying language-tag parse error.
-        #[source]
-        source: langtag::InvalidLangTag<String>,
-    },
+    #[error("invalid BCP47 collation identifier")]
+    InvalidTag(#[source] InvalidLangTag<String>),
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ordering::collation::{IcuCollation, IcuCollationError};
+    use crate::ordering::{
+        collation::{IcuCollation, IcuCollationError},
+        unicode_collation_keyword::CollationKeyword,
+    };
     use pretty_assertions::assert_eq;
 
     /// The identifier renders as the tag it parsed, which is what an error
@@ -202,7 +180,7 @@ mod tests {
     #[test]
     fn a_value_that_is_not_a_language_tag_is_rejected() {
         let error = IcuCollation::parse("not a tag").expect_err("must reject");
-        assert!(matches!(error, IcuCollationError::InvalidTag { .. }), "got {error:?}");
+        assert!(matches!(error, IcuCollationError::InvalidTag(_)), "got {error:?}");
     }
 
     /// Clause 5.7.2.4 raises `BadRequestData` for a preferred collation setting
@@ -212,7 +190,7 @@ mod tests {
     fn a_unicode_keyword_that_is_not_a_collation_setting_is_rejected() {
         for rejected in ["de-u-nu-latn", "de-u-ca-buddhist", "und-u-zz-nonsense"] {
             let error = IcuCollation::parse(rejected).expect_err("must reject");
-            assert!(matches!(error, IcuCollationError::UnknownCollationKeyword { .. }), "{rejected}: got {error:?}");
+            assert!(matches!(error, IcuCollationError::UnknownCollationKeyword), "{rejected}: got {error:?}");
         }
     }
 
@@ -236,5 +214,20 @@ mod tests {
     #[test]
     fn a_collation_keyword_is_recognised_whatever_case_it_is_written_in() {
         assert!(IcuCollation::parse("de-U-CO-phonebk").is_ok());
+    }
+
+    /// The refusal names the registered key the unregistered type was written
+    /// under, which is what the client has to correct.
+    #[test]
+    fn an_unregistered_type_is_reported_under_its_collation_key() {
+        let error = IcuCollation::parse("de-u-ks-zzz").expect_err("must reject");
+        assert!(
+            matches!(error, IcuCollationError::UnknownCollationKeywordType { keyword: CollationKeyword::Ks }),
+            "got {error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "collation identifier sets 'ks' to a type IETF RFC 6067 does not register for it"
+        );
     }
 }

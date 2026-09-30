@@ -11,7 +11,7 @@
 //! [RFC 9110 Section 12.4.2](https://www.rfc-editor.org/rfc/rfc9110#section-12.4.2)
 //! (formerly [RFC 7231 Section 5.3.1](https://tools.ietf.org/html/rfc7231#section-5.3.1)).
 
-use std::{cmp::Ordering, fmt};
+use std::{cmp::Ordering, fmt, num::ParseIntError};
 use thiserror::Error;
 
 /// Quality factor as defined in RFC 9110 Section 12.4.2.
@@ -59,11 +59,11 @@ impl Quality {
         let whole = match whole {
             "0" => 0_u16,
             "1" => 1_u16,
-            _ => return Err(QualityParseError::Invalid(raw.to_string())),
+            _ => return Err(QualityParseError::WholePart),
         };
 
         if fractional.len() > 3 || !fractional.chars().all(|character| character.is_ascii_digit()) {
-            return Err(QualityParseError::Invalid(raw.to_string()));
+            return Err(QualityParseError::FractionalDigits);
         }
 
         let fractional_value = if fractional.is_empty() {
@@ -73,14 +73,14 @@ impl Quality {
             while padded.len() < 3 {
                 padded.push('0');
             }
-            padded.parse::<u16>().map_err(|_| QualityParseError::Invalid(raw.to_string()))?
+            padded.parse::<u16>().map_err(QualityParseError::FractionalValue)?
         };
 
         if whole == 1 && fractional_value > 0 {
-            return Err(QualityParseError::Invalid(raw.to_string()));
+            return Err(QualityParseError::AboveOne);
         }
 
-        Quality::new((whole * 1000) + fractional_value).ok_or_else(|| QualityParseError::Invalid(raw.to_string()))
+        Quality::new((whole * 1000) + fractional_value).ok_or(QualityParseError::AboveOne)
     }
 }
 
@@ -90,10 +90,19 @@ pub enum QualityParseError {
     /// The input string was empty.
     #[error("quality value cannot be empty")]
     Empty,
-    /// The input was not a valid quality value: out of range, too many decimal
-    /// places, or non-numeric.
-    #[error("invalid quality value `{0}`")]
-    Invalid(String),
+    /// The part before the decimal point is neither `0` nor `1`.
+    #[error("quality value must begin with 0 or 1")]
+    WholePart,
+    /// The fraction carries more than three digits, or a character that is not
+    /// a digit.
+    #[error("quality value must have at most three decimal digits")]
+    FractionalDigits,
+    /// The fraction's digits did not read as a number.
+    #[error("quality value fraction is not a number")]
+    FractionalValue(#[source] ParseIntError),
+    /// The value is greater than 1.
+    #[error("quality value must not exceed 1")]
+    AboveOne,
 }
 
 // The RFC 9110 default is 1.0, so the derived `Quality(0)` would be wrong.
@@ -204,9 +213,11 @@ mod tests {
 
     #[test]
     fn a_quality_outside_the_grammar_is_rejected() {
-        pretty_assertions::assert_eq!(Quality::parse_decimal("1.1"), Err(QualityParseError::Invalid("1.1".to_string())));
-        pretty_assertions::assert_eq!(Quality::parse_decimal("0.1234"), Err(QualityParseError::Invalid("0.1234".to_string())));
-        pretty_assertions::assert_eq!(Quality::parse_decimal("abc"), Err(QualityParseError::Invalid("abc".to_string())));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("1.1"), Err(QualityParseError::AboveOne));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("0.1234"), Err(QualityParseError::FractionalDigits));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("0.1a"), Err(QualityParseError::FractionalDigits));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("abc"), Err(QualityParseError::WholePart));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("2"), Err(QualityParseError::WholePart));
         pretty_assertions::assert_eq!(Quality::parse_decimal(""), Err(QualityParseError::Empty));
     }
 

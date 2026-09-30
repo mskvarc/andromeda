@@ -41,9 +41,8 @@ impl TemporalRepository {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalStoreError::Database`] when a statement fails and
-    /// [`TemporalStoreError::Decode`] when a removed row's write identity does
-    /// not carry the expected type.
+    /// Returns [`TemporalStoreError::Database`] when a statement fails, including
+    /// when a removed row's write identity does not carry the expected type.
     pub(crate) async fn delete_attribute_streams(
         &self,
         target: &ContextTarget,
@@ -71,11 +70,8 @@ impl TemporalRepository {
         let removed = sqlx::query_with(AssertSqlSafe(history_sql), history_values).fetch_all(&mut *tx).await?;
         let touched_writes = removed
             .iter()
-            .map(|row| {
-                row.try_get::<Uuid, _>("write_id")
-                    .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.write_id: {error}")))
-            })
-            .collect::<Result<Vec<Uuid>, _>>()?;
+            .map(|row| row.try_get::<Uuid, _>("write_id"))
+            .collect::<Result<Vec<Uuid>, sqlx::Error>>()?;
         let (streams_sql, streams_values) = delete_streams_query(schema.as_ref(), &stream_keys).build_sqlx(PostgresQueryBuilder);
         let streams = sqlx::query_with(AssertSqlSafe(streams_sql), streams_values)
             .execute(&mut *tx)

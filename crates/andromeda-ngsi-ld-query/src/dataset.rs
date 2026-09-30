@@ -39,9 +39,7 @@ impl DatasetSelector {
         if raw == DEFAULT_INSTANCE_TOKEN {
             return Ok(DatasetSelector::Default);
         }
-        raw.parse::<Identifier>()
-            .map(DatasetSelector::Id)
-            .map_err(|source| QueryError::ParamDatasetIdInvalid { raw: raw.to_string(), source })
+        raw.parse::<Identifier>().map(DatasetSelector::Id).map_err(QueryError::ParamDatasetIdInvalid)
     }
 }
 

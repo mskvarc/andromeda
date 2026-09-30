@@ -20,11 +20,35 @@
 use crate::family_member_admission::MemberAdmission;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use strum::{Display, IntoStaticStr};
+
+/// One of the two data-integrity seal members of clause 4.5.2.2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
+pub enum ProofSealMember {
+    /// The `entityIdSealed` member.
+    #[strum(serialize = "entityIdSealed")]
+    EntityIdSealed,
+    /// The `entityTypeSealed` member.
+    #[strum(serialize = "entityTypeSealed")]
+    EntityTypeSealed,
+}
+
+impl ProofSealMember {
+    /// The seal a compacted member name spells, if it spells one.
+    #[must_use]
+    pub fn of(member: &str) -> Option<ProofSealMember> {
+        match member {
+            compact_properties::ENTITY_ID_SEALED => Some(ProofSealMember::EntityIdSealed),
+            compact_properties::ENTITY_TYPE_SEALED => Some(ProofSealMember::EntityTypeSealed),
+            _ => None,
+        }
+    }
+}
 
 /// Whether a compacted member name is one of the two seals of clause 4.5.2.2.
 #[must_use]
 pub fn is_proof_seal(member: &str) -> bool {
-    member == compact_properties::ENTITY_ID_SEALED || member == compact_properties::ENTITY_TYPE_SEALED
+    ProofSealMember::of(member).is_some()
 }
 
 /// Whether the attribute named `attribute_name`, of family `family`, may carry
@@ -66,9 +90,17 @@ pub fn is_admitted_proof_seal(attribute_name: &str, family: AttributeType, membe
 mod tests {
     use crate::{
         family_member_admission::MemberAdmission,
-        proof_seal_admission::{is_proof_seal, proof_seal_admission},
+        proof_seal_admission::{ProofSealMember, is_proof_seal, proof_seal_admission},
     };
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+
+    #[test]
+    fn each_seal_member_renders_as_the_compact_term_it_is_read_from() {
+        for member in [ProofSealMember::EntityIdSealed, ProofSealMember::EntityTypeSealed] {
+            pretty_assertions::assert_eq!(ProofSealMember::of(&member.to_string()), Some(member));
+        }
+        pretty_assertions::assert_eq!(ProofSealMember::of("speed"), None);
+    }
 
     #[test]
     fn the_two_seals_of_clause_4_5_2_2_are_recognised_and_nothing_else_is() {

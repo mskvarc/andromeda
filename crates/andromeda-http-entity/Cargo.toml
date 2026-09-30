@@ -38,6 +38,7 @@ typed-builder = "0.23.2"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-persistence-failure.workspace = true
 chrono = { version = "0.4.45", features = ["serde"] }
 pretty_assertions = "1.4.1"
 serde_urlencoded = "0.7.1"

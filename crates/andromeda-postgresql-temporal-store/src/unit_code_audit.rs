@@ -52,20 +52,15 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the audit statement fails
-    /// and [`TemporalStoreError::Decode`] when a returned column does not carry
-    /// the expected type.
+    /// and when a returned column does not carry the expected type.
     pub async fn audit_unregistered_unit_codes(&self) -> Result<Vec<UnregisteredUnitCodeRows>, TemporalStoreError> {
         let (sql, values) = audit_statement().build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
                 Ok(UnregisteredUnitCodeRows {
-                    stored_identity: row
-                        .try_get("unit_code_id")
-                        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.unit_code_id: {error}")))?,
-                    rows: row
-                        .try_get("row_count")
-                        .map_err(|error| TemporalStoreError::Decode(format!("invalid unit-code audit count: {error}")))?,
+                    stored_identity: row.try_get("unit_code_id")?,
+                    rows: row.try_get("row_count")?,
                 })
             })
             .collect()

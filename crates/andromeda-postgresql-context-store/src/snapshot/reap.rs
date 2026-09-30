@@ -5,7 +5,10 @@
 //! which cascades the preparation and outbox rows. A quarantined Snapshot is
 //! reaped like any other: nothing here reads its branch schema version.
 
-use crate::snapshot::{branch_schema::drop_branch_schema, persistence_error};
+use crate::{
+    snapshot::{branch_schema::drop_branch_schema, persistence_error},
+    store_fault::undecodable,
+};
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::Snapshots;
@@ -61,7 +64,7 @@ async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, Sna
         transaction.rollback().await.map_err(persistence_error)?;
         return Ok(0);
     };
-    let snapshot_key = SnapshotKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string()))?;
+    let snapshot_key = SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error)))?;
     reap_branch(&mut transaction, snapshot_key).await?;
     let deleted = delete_control_record(&mut transaction, snapshot_key).await?;
     transaction.commit().await.map_err(persistence_error)?;
@@ -101,7 +104,7 @@ async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> 
     }
     let mut deleted = 0;
     for raw in rows {
-        let snapshot_key = SnapshotKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string()))?;
+        let snapshot_key = SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error)))?;
         reap_branch(&mut transaction, snapshot_key).await?;
         deleted += delete_control_record(&mut transaction, snapshot_key).await?;
     }

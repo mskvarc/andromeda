@@ -22,11 +22,20 @@
 //! internal errors.
 
 use crate::{
-    filter::json_string::UnicodeEscapeFault,
+    filter::{
+        expectation::{QExpectation, QFound},
+        json_string::UnicodeEscapeFault,
+        path::AttrPath,
+        serialize::serialize_attr_path,
+    },
+    non_posix_construct::NonPosixConstruct,
     ordering::{collation::IcuCollationError, term::OrderDirection},
+    scope::pattern_fault::ScopePatternFault,
+    term_expander::TermExpansionFailure,
 };
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError};
 use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
     identifier::IdentifierParseError,
     ngsi_ld_date::NgsiLdDateError,
     ngsi_ld_date_time::NgsiLdDateTimeError,
@@ -75,21 +84,25 @@ pub enum QueryError {
         position: usize,
     },
     /// A token remained after the parser reached end of expression.
-    #[error("q expression: unexpected token at position {position}: {token}")]
+    #[error("q expression: unexpected {token} at position {position}")]
     QUnexpectedToken {
         /// Zero-based offset into the token stream.
         position: usize,
-        /// Debug rendering of the offending token.
-        token: String,
+        /// What remained.
+        token: QFound,
     },
     /// The parser expected a specific token but found something else.
     #[error("q expression: expected {expected}, found {found}")]
     QExpected {
-        /// Human-readable description of what was expected.
-        expected: String,
-        /// Debug rendering of what was encountered instead.
-        found: String,
+        /// What the grammar required at this position.
+        expected: QExpectation,
+        /// What stood there instead.
+        found: QFound,
     },
+    /// The last type of a linked-entity type guard is written bare and holds
+    /// two colons, so which one ends the guard cannot be told.
+    #[error("q expression: quote the entity type, so the colon ending the type guard is unambiguous")]
+    QAmbiguousTypeGuard,
     /// An identifier or character could not be tokenized.
     #[error("q expression: unexpected character '{ch}' at position {position}")]
     QUnexpectedChar {
@@ -99,14 +112,8 @@ pub enum QueryError {
         position: usize,
     },
     /// A numeric literal was lexed but failed to parse.
-    #[error("q expression: invalid number literal {value}: {source}")]
-    QInvalidNumber {
-        /// The rejected numeric operand.
-        value: String,
-        /// The exact-number syntax or supported-range failure.
-        #[source]
-        source: JsonNumberError,
-    },
+    #[error("q expression: invalid number literal: {0}")]
+    QInvalidNumber(#[source] JsonNumberError),
     /// An attribute path nested more sub-attributes than the parser admits.
     ///
     /// A guard against a pathological path whose backend rendering grows with
@@ -119,32 +126,14 @@ pub enum QueryError {
         limit: usize,
     },
     /// A bare literal written in the clause 4.6.3 `DateTime` form was not one.
-    #[error("q expression: invalid date-time literal '{value}'")]
-    QInvalidDateTime {
-        /// The rejected literal.
-        value: String,
-        /// The clause 4.6.3 rule the literal broke.
-        #[source]
-        source: NgsiLdDateTimeError,
-    },
+    #[error("q expression: invalid date-time literal: {0}")]
+    QInvalidDateTime(#[source] NgsiLdDateTimeError),
     /// A bare literal written in the clause 4.6.3 `Date` form was not one.
-    #[error("q expression: invalid date literal '{value}'")]
-    QInvalidDate {
-        /// The rejected literal.
-        value: String,
-        /// The clause 4.6.3 rule the literal broke.
-        #[source]
-        source: NgsiLdDateError,
-    },
+    #[error("q expression: invalid date literal: {0}")]
+    QInvalidDate(#[source] NgsiLdDateError),
     /// A bare literal written in the clause 4.6.3 `Time` form was not one.
-    #[error("q expression: invalid time literal '{value}'")]
-    QInvalidTime {
-        /// The rejected literal.
-        value: String,
-        /// The clause 4.6.3 rule the literal broke.
-        #[source]
-        source: NgsiLdTimeError,
-    },
+    #[error("q expression: invalid time literal: {0}")]
+    QInvalidTime(#[source] NgsiLdTimeError),
 
     // -----------------------------------------------------------------------
     // Type expression grammar (NGSI-LD 4.17)
@@ -170,12 +159,13 @@ pub enum QueryError {
     #[error("type expression: empty type name at position {0}")]
     TypeExprEmptyName(usize),
     /// A type name did not satisfy the clause 4.6.2 name grammar.
-    #[error("type expression: invalid type name '{name}' at position {position}")]
+    #[error("type expression: invalid type name at position {position}: {source}")]
     TypeExprInvalidName {
-        /// The offending name.
-        name: String,
         /// Zero-based byte offset of the name in the input.
         position: usize,
+        /// The clause 4.6.2 rule the name broke.
+        #[source]
+        source: NgsiLdReferenceError,
     },
 
     // -----------------------------------------------------------------------
@@ -204,7 +194,7 @@ pub enum QueryError {
     #[error("projection: keyword '{keyword}' cannot carry a linked-entity term")]
     ProjectionKeywordWithLinkedTerm {
         /// The offending keyword.
-        keyword: String,
+        keyword: AttributeName,
     },
 
     // -----------------------------------------------------------------------
@@ -225,8 +215,8 @@ pub enum QueryError {
     /// the client intended. `crate::posix_dialect` names each case.
     #[error("invalid POSIX regular expression: {construct} is not supported")]
     PatternNonPosixConstruct {
-        /// How the unsupported construct is spelled.
-        construct: &'static str,
+        /// The unsupported construct.
+        construct: NonPosixConstruct,
     },
     /// A pattern the `regex` crate compiled could not be translated into the
     /// intermediate representation its store restatement is rendered from.
@@ -264,41 +254,18 @@ pub enum QueryError {
     // -----------------------------------------------------------------------
     /// A compact term could not be expanded through the active `@context`.
     ///
-    /// The cause is deliberately carried as text: the expander is a
-    /// [`TermExpander`](crate::term_expander::TermExpander)
-    /// implementation chosen by the caller, so its failure type is not
-    /// knowable here without this module naming the JSON-LD layer.
-    #[error("could not expand term '{term}': {message}")]
-    TermExpansion {
-        /// The compact term that failed to expand.
-        term: String,
-        /// Human-readable rendering of the expander's own failure.
-        message: String,
-    },
+    /// The expander is a [`TermExpander`](crate::term_expander::TermExpander)
+    /// implementation chosen by the caller, so the cause is the expander's own
+    /// classification of its failure rather than a type this module would have
+    /// to name the JSON-LD layer to hold.
+    #[error("could not expand a term: {0}")]
+    TermExpansion(#[source] TermExpansionFailure),
     /// A `scopeQ` pattern was outside the clause 4.19 grammar.
-    #[error("invalid scopeQ pattern: '{0}'")]
-    ScopePatternInvalid(String),
-    /// An expanded IRI was not usable as an attribute name (clause 5.2.4).
-    #[error("'{value}' is not a valid attribute name")]
-    AttributeNameInvalid {
-        /// The rejected value.
-        value: String,
-        /// The underlying grammar violation.
-        #[source]
-        source: NgsiLdReferenceError,
-    },
-    /// A term expanded to something that is not an absolute IRI.
-    ///
-    /// NGSI-LD requires the core `@context`, whose `@vocab` resolves every
-    /// unmapped term, so this means the active context is broken rather than
-    /// that the client sent something unusual.
-    #[error("term '{term}' expanded to '{expanded}', which is not an absolute IRI")]
-    TermNotAnIri {
-        /// The compact term that was expanded.
-        term: String,
-        /// What it expanded to.
-        expanded: String,
-    },
+    #[error("invalid scopeQ pattern: {0}")]
+    ScopePatternInvalid(#[source] ScopePatternFault),
+    /// A name was not usable as an attribute name (clause 5.2.4).
+    #[error("invalid attribute name: {0}")]
+    AttributeNameInvalid(#[source] NgsiLdReferenceError),
 
     // -----------------------------------------------------------------------
     // ICU collation (NGSI-LD 4.23)
@@ -315,8 +282,8 @@ pub enum QueryError {
     /// Clause 5.7.4.4: "If the ordering parameter is present and refers an
     /// entity name other than "id", then an error of type `BadRequestData`
     /// shall be raised."
-    #[error("a temporal query can only be ordered by the Entity member id, not by '{0}'")]
-    TemporalOrderingMember(String),
+    #[error("a temporal query can only be ordered by the Entity member id, not by '{}'", serialize_attr_path(.0))]
+    TemporalOrderingMember(Box<AttrPath>),
     /// A temporal query's `orderBy` asked for a distance ordering.
     ///
     /// Table 6.18.3.2-1 admits only the sorting styles `asc` and `desc`, and
@@ -330,14 +297,8 @@ pub enum QueryError {
     // -----------------------------------------------------------------------
     /// An `id` value could not be parsed as a URI, or is one too long to be
     /// an identifier.
-    #[error("invalid id value '{raw}': {source}")]
-    ParamIdInvalid {
-        /// The value as the request spelled it.
-        raw: String,
-        /// Why it is not an identifier.
-        #[source]
-        source: IdentifierParseError,
-    },
+    #[error("invalid id value: {0}")]
+    ParamIdInvalid(#[source] IdentifierParseError),
     /// An empty value appeared in a comma-separated id list.
     #[error("invalid id: empty value in comma-separated list")]
     ParamIdListEmpty,
@@ -345,19 +306,50 @@ pub enum QueryError {
     #[error("timerel and timeAt must both be present or both absent")]
     ParamTimerelTimeatPair,
     /// The `aggrPeriodDuration` value was not an ISO 8601 duration.
-    #[error("invalid aggrPeriodDuration value: '{0}'")]
-    ParamAggrPeriodDurationInvalid(String),
+    #[error("invalid aggrPeriodDuration value: not an ISO 8601 duration at position {position}")]
+    ParamAggrPeriodDurationInvalid {
+        /// Zero-based byte offset at which the duration grammar failed.
+        position: usize,
+    },
     /// A `datasetId` entry was neither `@none` nor a URI short enough to be
     /// an identifier.
-    #[error("invalid datasetId value '{raw}': {source}")]
-    ParamDatasetIdInvalid {
-        /// The value as the request spelled it.
-        raw: String,
-        /// Why it is not an identifier.
-        #[source]
-        source: IdentifierParseError,
-    },
+    #[error("invalid datasetId value: {0}")]
+    ParamDatasetIdInvalid(#[source] IdentifierParseError),
     /// `timerel=between` was provided without an `endTimeAt`.
     #[error("endTimeAt is required when timerel is 'between'")]
     ParamEndTimeAtRequired,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        error::QueryError,
+        filter::{
+            expectation::{QExpectation, QFound},
+            lexer::TokenKind,
+        },
+    };
+
+    #[test]
+    fn a_missing_token_is_reported_by_kind_or_as_the_end_of_input() {
+        let found = QueryError::QExpected {
+            expected: QExpectation::Token(TokenKind::RParen),
+            found: QFound::Token(TokenKind::Semi),
+        };
+        pretty_assertions::assert_eq!(found.to_string(), "q expression: expected ), found ;");
+        let ended = QueryError::QExpected {
+            expected: QExpectation::Value,
+            found: QFound::EndOfInput,
+        };
+        pretty_assertions::assert_eq!(ended.to_string(), "q expression: expected value, found end of input");
+    }
+
+    #[test]
+    fn a_trailing_token_is_reported_by_kind_and_position() {
+        let error = QueryError::QUnexpectedToken {
+            position: 3,
+            token: QFound::Token(TokenKind::Ident),
+        };
+        pretty_assertions::assert_eq!(error.to_string(), "q expression: unexpected identifier at position 3");
+    }
 }

@@ -1,6 +1,6 @@
 //! Framework-independent single-error problem details from clause 5.5.3.
 
-use crate::error_type::NgsiLdErrorType;
+use crate::{error_type::NgsiLdErrorType, problem_document_error::ProblemDocumentError};
 use http::{StatusCode, Uri};
 use iri_rs::{Iri, IriRefBuf, iri};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeStruct};
@@ -289,11 +289,11 @@ impl<'de> Deserialize<'de> for ProblemDetail {
             if let Some(status) = wire.status
                 && status != distributed.status_code().as_u16()
             {
-                return Err(de::Error::custom("problem status disagrees with its distributed NGSI-LD type"));
+                return Err(de::Error::custom(ProblemDocumentError::DistributedStatusMismatch));
             }
             (distributed, distributed.title())
         } else {
-            let error_type = NgsiLdErrorType::from_type_iri(&wire.type_iri).ok_or_else(|| de::Error::custom("unknown NGSI-LD problem type"))?;
+            let error_type = NgsiLdErrorType::from_type_iri(&wire.type_iri).ok_or_else(|| de::Error::custom(ProblemDocumentError::UnknownType))?;
             let classification = WireProblemClassification {
                 category: error_type,
                 status: wire.status,
@@ -305,7 +305,7 @@ impl<'de> Deserialize<'de> for ProblemDetail {
         if let Some(title) = wire.title
             && title != expected_title
         {
-            return Err(de::Error::custom("problem title disagrees with its NGSI-LD type"));
+            return Err(de::Error::custom(ProblemDocumentError::TitleMismatch));
         }
         let instance = wire
             .instance

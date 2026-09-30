@@ -14,6 +14,10 @@ pub mod prepare;
 pub mod query_validation;
 /// Snapshot lifecycle service and purge outcomes.
 pub mod service;
+/// The invariants Snapshot policy relies on.
+pub mod snapshot_invariant;
+/// Why a Snapshot request is rejected as `BadRequestData`.
+pub mod snapshot_validation_reason;
 pub mod status;
 /// Port for waking durable Snapshot status-notification delivery.
 pub mod status_delivery_signal;
@@ -36,6 +40,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-persistence-failure",
         "andromeda-temporal",
     ],
     allow_workspace_dev_dependencies: [],

@@ -17,8 +17,10 @@
 
 use crate::dictionary_growth::DictionaryGrowthExceeded;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
-use andromeda_postgresql_pool::is_pool_saturated;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_postgresql_pool::{is_pool_saturated, persistence_classification::classify};
 use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
+use sea_query::error::Error as SeaQueryError;
 use sqlx::PgConnection;
 use std::{collections::HashMap, fmt::Debug};
 
@@ -36,31 +38,34 @@ pub enum NameLookupError {
     /// A dictionary statement could not be assembled, which a column/value arity
     /// mismatch is the only cause of.
     #[error("name dictionary statement could not be built: {0}")]
-    StatementBuild(String),
-    /// A stored `attribute_names` row holds text that is not an attribute name.
-    ///
-    /// The raw text is carried rather than a typed name because the value is
-    /// exactly the one that failed to be one.
-    #[error("attribute_names.name '{name}' is not a valid attribute name: {source}")]
-    StoredAttributeName {
-        /// The stored text the row carried.
-        name: String,
-        /// Why the grammar of clause 4.6.2 rejected it.
-        source: NgsiLdReferenceError,
-    },
-    /// A stored `entity_type_names` row holds text that is not an entity type
-    /// name.
-    #[error("entity_type_names.name '{name}' is not a valid entity type name: {source}")]
-    StoredEntityTypeName {
-        /// The stored text the row carried.
-        name: String,
-        /// Why the grammar of clause 4.6.2 rejected it.
-        source: NgsiLdReferenceError,
-    },
+    StatementBuild(#[source] SeaQueryError),
+    /// A stored `attribute_names` row holds text that the grammar of clause
+    /// 4.6.2 rejects as an attribute name.
+    #[error("a stored attribute_names.name is not a valid attribute name: {0}")]
+    StoredAttributeName(#[source] NgsiLdReferenceError),
+    /// A stored `entity_type_names` row holds text that the grammar of clause
+    /// 4.6.2 rejects as an entity type name.
+    #[error("a stored entity_type_names.name is not a valid entity type name: {0}")]
+    StoredEntityTypeName(#[source] NgsiLdReferenceError),
     /// The names the caller asked for would take the tenant's dictionary past
     /// its configured bound.
     #[error(transparent)]
     Growth(#[from] DictionaryGrowthExceeded),
+}
+
+impl NameLookupError {
+    /// The backend-neutral class of this failure, for a port that cannot name
+    /// the dictionary's own error.
+    #[must_use]
+    pub fn failure_class(&self) -> PersistenceFailure {
+        match self {
+            NameLookupError::Saturated => PersistenceFailure::Saturated,
+            NameLookupError::Statement(error) => classify(error),
+            NameLookupError::StatementBuild(_) => PersistenceFailure::StatementUnbuildable,
+            NameLookupError::StoredAttributeName(_) | NameLookupError::StoredEntityTypeName(_) => PersistenceFailure::Undecodable,
+            NameLookupError::Growth(_) => PersistenceFailure::CapacityExceeded,
+        }
+    }
 }
 
 // Written by hand because the variant depends on the error's content: a

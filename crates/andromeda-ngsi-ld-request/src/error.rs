@@ -10,7 +10,8 @@
 //! a parameter is parsed by the language wherever the language defines its
 //! grammar, and there is one error chain either way.
 
-use crate::linked_retrieval_term::LinkedRetrievalTerm;
+use crate::{linked_retrieval_term::LinkedRetrievalTerm, query_narrowing::LocalScopeNarrowing, unsupported_representation::UnsupportedRepresentation};
+use andromeda_http_headers::ngsild_response_format::NgsiLdResponseFormat;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{
     cursor::CursorDecodeError,
@@ -18,6 +19,7 @@ use andromeda_ngsi_ld_query::{
     projection::exclusivity::ProjectionConflict,
     temporal::grouping::GroupingParseError,
 };
+use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentationError;
 use thiserror::Error;
 
 /// A query parameter the broker cannot act on.
@@ -31,33 +33,26 @@ pub enum ParameterError {
     Query(#[from] QueryError),
 
     /// The `options` parameter carried a value the operation does not support
-    /// (clause 6.3.20). The message names the token and why.
-    #[error("{0}")]
-    OptionsInvalid(String),
+    /// (clause 6.3.20).
+    #[error("invalid options value: {0}")]
+    OptionsInvalid(#[source] UnsupportedRepresentation),
     /// The `format` parameter value was not a recognised output format.
-    #[error("invalid format value: '{0}'")]
-    FormatInvalid(String),
+    #[error("invalid format value: {0}")]
+    FormatInvalid(#[source] UnsupportedRepresentation),
+    /// The `format` a merge selected is a rendering Table 6.5.3.4-1 does not
+    /// admit as a merge input.
+    #[error("invalid format value: {0}")]
+    MergeFormatInvalid(#[source] MergeRepresentationError),
+    /// The `NGSILD-Response-Format` header named a rendering the requested
+    /// resource does not have.
+    #[error("invalid NGSILD-Response-Format value: this resource has no '{0}' rendering")]
+    ResponseFormatHeaderInvalid(NgsiLdResponseFormat),
     /// The `idPattern` parameter was present but empty.
     #[error("invalid idPattern: empty value")]
     IdPatternEmpty,
-    /// An `orderBy` term carried a direction outside the clause 4.23 grammar.
-    #[error("invalid orderBy direction: '{0}'")]
-    OrderByDirectionInvalid(String),
-    /// The `orderGeometry` parameter value was not a valid geometry kind.
-    #[error("invalid orderGeometry value: '{0}'")]
-    OrderGeometryInvalid(String),
     /// `orderGeometry=GeometryCollection` is not supported.
     #[error("orderGeometry does not support GeometryCollection")]
     OrderGeometryCollection,
-    /// The `orderFrom` JSON value could not be parsed.
-    #[error("invalid orderFrom value: '{value}' is not valid JSON")]
-    OrderFromInvalid {
-        /// The raw value from the request.
-        value: String,
-        /// The underlying JSON parse error.
-        #[source]
-        source: serde_json::Error,
-    },
     /// `drop` and `keep` were both provided on an entity purge.
     #[error("drop and keep parameters are mutually exclusive")]
     DropKeepExclusive,
@@ -126,15 +121,6 @@ pub enum ParameterError {
     /// The deprecated `attrs` parameter named a structural Entity member.
     #[error("'{0}' is an Entity member and is not allowed in attrs")]
     AttrsReservedMember(AttributeName),
-    /// The `timerel` value was not one of `before`, `after`, `between`.
-    #[error("invalid timerel value: {0}")]
-    TimerelInvalid(String),
-    /// The `timeproperty` value did not name a temporal property (clause 4.8).
-    #[error("invalid timeproperty value: {0}")]
-    TimePropertyInvalid(String),
-    /// The `aggrMethod` value was not a recognised aggregation method.
-    #[error("invalid aggrMethod value: {0}")]
-    AggrMethodInvalid(String),
     /// A temporal query was issued without the required `timerel`/`timeAt` pair.
     #[error("timerel and timeAt are required for temporal query")]
     TimerelTimeatRequired,
@@ -142,8 +128,8 @@ pub enum ParameterError {
     ///
     /// Clause 5.7.2 and 5.10.2 both require at least one selector, because a
     /// query with none of them asks for everything the broker holds.
-    #[error("{0}")]
-    SelectorRequired(&'static str),
+    #[error("too wide query: at least one of {0} must be provided")]
+    SelectorRequired(LocalScopeNarrowing),
     /// `format=aggregatedValues` was sent without the methods to aggregate by
     /// (clause 4.5.19).
     #[error("aggrMethods is required when format is 'aggregatedValues'")]
@@ -176,12 +162,6 @@ pub enum ParameterError {
     /// `lastN`.
     #[error("lastN is not applicable together with aggrGroupBy")]
     LastNWithGrouping,
-    /// A POST query body named a resource type other than `Query`.
-    ///
-    /// Clause 5.2.23 fixes the body's `type` as `Query`; a different value is a
-    /// malformed request rather than one the broker reinterprets.
-    #[error("the query body type must be 'Query', not '{0}'")]
-    RequestTypeInvalid(String),
     /// A non-temporal query carried members that only temporal queries accept.
     #[error("entity queries must not contain temporalQ or aggrParams")]
     EntityQueryTemporalMembers,

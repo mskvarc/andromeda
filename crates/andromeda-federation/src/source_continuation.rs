@@ -35,10 +35,8 @@ pub(crate) enum SourceContinuation {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub(crate) enum UnfollowableNext {
     /// The pointer does not resolve against the URL that answered.
-    #[error("its next-page pointer `{target}` does not resolve against the answering URL: {source}")]
+    #[error("its next-page pointer does not resolve against the answering URL: {source}")]
     Unresolvable {
-        /// The pointer as the source wrote it.
-        target: String,
         /// Why it did not resolve.
         #[source]
         source: url::ParseError,
@@ -62,10 +60,7 @@ impl SourceContinuation {
         match answered.join(next.as_str()) {
             Ok(resolved) if resolved.origin() == endpoint.origin() => SourceContinuation::Next(Box::new(resolved)),
             Ok(resolved) => SourceContinuation::Unfollowable(UnfollowableNext::ForeignOrigin { target: Box::new(resolved) }),
-            Err(source) => SourceContinuation::Unfollowable(UnfollowableNext::Unresolvable {
-                target: next.as_str().to_owned(),
-                source,
-            }),
+            Err(source) => SourceContinuation::Unfollowable(UnfollowableNext::Unresolvable { source }),
         }
     }
 }

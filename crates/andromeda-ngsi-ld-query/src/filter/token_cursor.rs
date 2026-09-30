@@ -7,7 +7,13 @@
 //! clause 4.9, and an `orderBy` term is read with the same cursor over the same
 //! tokens as a `q` predicate.
 
-use crate::{error::QueryError, filter::lexer::Token};
+use crate::{
+    error::QueryError,
+    filter::{
+        expectation::{QExpectation, QFound},
+        lexer::{Token, TokenKind},
+    },
+};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// Cursor over a tokenised clause 4.9 expression.
@@ -82,17 +88,16 @@ impl<'a> TokenCursor<'a> {
             Ok(())
         } else {
             Err(QueryError::QExpected {
-                expected: expected.spelling().to_string(),
-                found: self.found_description(),
+                expected: QExpectation::Token(TokenKind::from(expected)),
+                found: self.found(),
             })
         }
     }
 
-    /// How a parse failure describes whatever stands where a token was
-    /// required.
+    /// What stands where a token was required.
     #[must_use]
-    pub fn found_description(&self) -> String {
-        describe(self.peek())
+    pub fn found(&self) -> QFound {
+        QFound::of(self.peek())
     }
 
     /// Consume an identifier, quoted or bare.
@@ -104,8 +109,8 @@ impl<'a> TokenCursor<'a> {
         match self.advance() {
             Some(Token::Ident(text) | Token::QuotedStr(text)) => Ok(text.as_str()),
             other => Err(QueryError::QExpected {
-                expected: "identifier".to_string(),
-                found: describe(other),
+                expected: QExpectation::Token(TokenKind::Ident),
+                found: QFound::of(other),
             }),
         }
     }
@@ -122,15 +127,6 @@ impl<'a> TokenCursor<'a> {
     }
 }
 
-/// How a parse failure describes the token it found, or its absence.
-#[must_use]
-pub fn describe(token: Option<&Token>) -> String {
-    match token {
-        Some(token) => token.spelling().to_string(),
-        None => "end of input".to_string(),
-    }
-}
-
 /// Read an identifier as an attribute name.
 ///
 /// The clause 4.6.2 name grammar accepts a short name, a prefixed name and an
@@ -142,8 +138,5 @@ pub fn describe(token: Option<&Token>) -> String {
 /// Returns [`QueryError::AttributeNameInvalid`] when the name is outside that
 /// grammar.
 pub fn attribute_name(raw: &str) -> Result<AttributeName, QueryError> {
-    raw.parse().map_err(|source| QueryError::AttributeNameInvalid {
-        value: raw.to_string(),
-        source,
-    })
+    raw.parse().map_err(QueryError::AttributeNameInvalid)
 }

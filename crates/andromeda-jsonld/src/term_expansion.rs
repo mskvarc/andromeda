@@ -9,7 +9,10 @@ use crate::{
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
     error::JsonLdError,
 };
-use andromeda_ngsi_ld_query::{error::QueryError, term_expander::TermExpander};
+use andromeda_ngsi_ld_query::{
+    error::QueryError,
+    term_expander::{TermExpander, TermExpansionFailure},
+};
 use iri_rs::IriBuf;
 use std::future::Future;
 
@@ -54,18 +57,52 @@ impl TermExpander for ContextualExpander<'_> {
 ///
 /// The engine already yields an [`IriBuf`], so a term that expands to something
 /// that is not an absolute IRI surfaces here as an expansion failure rather than
-/// through a separate re-parse.
+/// through a separate re-parse. The query language cannot hold the JSON-LD
+/// failure itself, so it is recorded here, beside the term, while it is still
+/// in hand.
 fn expansion_failed(term: &str, error: &JsonLdError) -> QueryError {
-    QueryError::TermExpansion {
-        term: term.to_string(),
-        message: error.to_string(),
+    tracing::debug!(term, error = %error, "a query term did not expand against the request @context");
+    QueryError::TermExpansion(expansion_failure(error))
+}
+
+/// The class of expansion failure a JSON-LD failure is.
+const fn expansion_failure(error: &JsonLdError) -> TermExpansionFailure {
+    match error {
+        JsonLdError::TypeNotExpanded | JsonLdError::TermNotExpanded => TermExpansionFailure::NotExpanded,
+        JsonLdError::ExpandedTermNotIri(_) => TermExpansionFailure::NotAnIri,
+        JsonLdError::ContextFetchDisabled { .. } | JsonLdError::ContextLoad { .. } | JsonLdError::ContextHttp { .. } | JsonLdError::ContextTooLarge { .. } => {
+            TermExpansionFailure::ContextUnavailable
+        }
+        JsonLdError::ProtectedContextPreload { .. }
+        | JsonLdError::ContextInvalid { .. }
+        | JsonLdError::PreloadedContextUnreadable { .. }
+        | JsonLdError::PreloadedContextInvalid { .. }
+        | JsonLdError::PreloadedContextUrl(_)
+        | JsonLdError::EmbeddedContextMissing { .. }
+        | JsonLdError::EmbeddedContextInvalid { .. }
+        | JsonLdError::InlineContextInvalid(_)
+        | JsonLdError::ScopedUserContext { .. }
+        | JsonLdError::ClientBuild(_)
+        | JsonLdError::Expansion(_)
+        | JsonLdError::Compaction(_)
+        | JsonLdError::ContextUrlNotIri(_)
+        | JsonLdError::GeneratedVocabularyIri(_)
+        | JsonLdError::JsonLdContextText(_)
+        | JsonLdError::JsonLdContextShape
+        | JsonLdError::DocumentShape
+        | JsonLdError::Json(_) => TermExpansionFailure::ContextUnprocessable,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
-    use andromeda_ngsi_ld_query::term_expander::TermExpander;
+    use crate::{
+        context_spec::ContextSpec,
+        engine::processor::JsonLdEngine,
+        error::JsonLdError,
+        term_expansion::{ContextualExpander, expansion_failure},
+    };
+    use andromeda_ngsi_ld_query::term_expander::{TermExpander, TermExpansionFailure};
 
     #[tokio::test]
     async fn a_core_context_term_expands_to_an_absolute_iri() {
@@ -79,5 +116,12 @@ mod tests {
 
         assert!(attribute.as_str().starts_with("https://"), "got {attribute}");
         assert!(entity_type.as_str().starts_with("https://"), "got {entity_type}");
+    }
+
+    #[test]
+    fn a_json_ld_failure_is_classified_by_what_went_wrong() {
+        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TermNotExpanded), TermExpansionFailure::NotExpanded);
+        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TypeNotExpanded), TermExpansionFailure::NotExpanded);
+        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::DocumentShape), TermExpansionFailure::ContextUnprocessable);
     }
 }

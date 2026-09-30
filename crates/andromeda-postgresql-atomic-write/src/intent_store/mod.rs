@@ -16,6 +16,8 @@ use crate::intent_store::lease_statements::{acknowledge_statement, claim_stateme
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_postgresql_pool::persistence_classification::classify;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use andromeda_temporal::{
     append_intent::{KeyedTemporalAppendIntent, TemporalIntentKey},
@@ -31,7 +33,6 @@ use sea_query::PostgresQueryBuilder;
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{PgPool, Row, postgres::PgRow};
-use std::fmt::Display;
 
 /// The statement name the intent claim is observed under.
 const INTENT_CLAIM: StatementName = StatementName("temporal-intent-claim");
@@ -56,10 +57,10 @@ impl PostgresTemporalIntentStore {
 
     /// Decode one durable queue row.
     fn decode(row: &PgRow) -> Result<KeyedTemporalAppendIntent, TemporalError> {
-        let raw_key: i64 = row.try_get("intent_key").map_err(persistence)?;
-        let key = TemporalIntentKey::new(raw_key).map_err(|error| TemporalError::internal(error.to_string()))?;
-        let payload: Value = row.try_get("payload").map_err(persistence)?;
-        let intent = deserialize_exact(&payload).map_err(|error| TemporalError::persistence(format!("failed to decode temporal append intent: {error}")))?;
+        let raw_key: i64 = row.try_get("intent_key").map_err(|error| persistence(&error))?;
+        let key = TemporalIntentKey::new(raw_key).map_err(|error| TemporalError::from(PersistenceFailure::Undecodable.record(&error)))?;
+        let payload: Value = row.try_get("payload").map_err(|error| persistence(&error))?;
+        let intent = deserialize_exact(&payload).map_err(|error| TemporalError::from(PersistenceFailure::Undecodable.record(&error)))?;
         Ok(KeyedTemporalAppendIntent { key, intent })
     }
 
@@ -74,12 +75,12 @@ impl PostgresTemporalIntentStore {
         let (sql, values) = claim_statement(owner, entity_id.map(Identifier::as_str), limit.get(), lease_until).build_sqlx(PostgresQueryBuilder);
         let rows = observe_statement(INTENT_CLAIM, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool))
             .await
-            .map_err(persistence)?;
+            .map_err(|error| persistence(&error))?;
         let mut claimed = rows
             .iter()
             .map(|row| {
-                let attempts: i32 = row.try_get("attempt_count").map_err(persistence)?;
-                let attempts = u32::try_from(attempts).map_err(|error| TemporalError::internal(format!("negative temporal intent attempt count: {error}")))?;
+                let attempts: i32 = row.try_get("attempt_count").map_err(|error| persistence(&error))?;
+                let attempts = u32::try_from(attempts).map_err(|error| TemporalError::from(PersistenceFailure::Undecodable.record(&error)))?;
                 Ok(ClaimedTemporalAppendIntent {
                     pending: PostgresTemporalIntentStore::decode(row)?,
                     attempts: attempts.saturating_sub(1),
@@ -98,7 +99,7 @@ impl PendingTemporalIntentReader for PostgresTemporalIntentStore {
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.pool)
             .await
-            .map_err(persistence)?;
+            .map_err(|error| persistence(&error))?;
         rows.iter().map(PostgresTemporalIntentStore::decode).collect()
     }
 
@@ -107,7 +108,7 @@ impl PendingTemporalIntentReader for PostgresTemporalIntentStore {
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.pool)
             .await
-            .map_err(persistence)?;
+            .map_err(|error| persistence(&error))?;
         rows.iter().map(PostgresTemporalIntentStore::decode).collect()
     }
 }
@@ -140,7 +141,7 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool),
         )
         .await
-        .map_err(persistence)?;
+        .map_err(|error| persistence(&error))?;
         held(result.rows_affected())
     }
 
@@ -158,7 +159,7 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool),
         )
         .await
-        .map_err(persistence)?;
+        .map_err(|error| persistence(&error))?;
         held(result.rows_affected())
     }
 }
@@ -171,15 +172,14 @@ fn held(rows_affected: u64) -> Result<LeaseAcknowledgement, TemporalError> {
     match rows_affected {
         0 => Ok(LeaseAcknowledgement::Lost),
         1 => Ok(LeaseAcknowledgement::Applied),
-        other => Err(TemporalError::internal(format!(
-            "a lease-guarded temporal intent statement reached {other} rows"
-        ))),
+        _more => Err(TemporalError::from(PersistenceFailure::ContractBroken.record_bare())),
     }
 }
 
 /// Classify one anchor-store failure at the temporal port boundary.
-pub(super) fn persistence(error: impl Display) -> TemporalError {
-    TemporalError::persistence(error.to_string())
+#[track_caller]
+pub(super) fn persistence(error: &sqlx::Error) -> TemporalError {
+    TemporalError::from(classify(error).record(error))
 }
 
 #[cfg(test)]

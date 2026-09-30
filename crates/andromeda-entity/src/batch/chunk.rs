@@ -15,6 +15,7 @@
 use crate::{
     EntityService,
     batch::prepare::PreparedEntity,
+    entity_invariant::EntityInvariant,
     error::EntityError,
     expanded_member::written_entity_types,
     notification_plan::{NotificationPlan, creation},
@@ -333,11 +334,11 @@ impl EntityService {
 
         let outcomes = self.writes.commit(target, writes).await?;
         if outcomes.len() != settled.len() {
-            return Err(EntityError::internal(format!(
-                "chunk of {} writes produced {} outcomes",
-                settled.len(),
-                outcomes.len()
-            )));
+            return Err(EntityInvariant::OutcomeCountMismatch {
+                submitted: settled.len(),
+                returned: outcomes.len(),
+            }
+            .into());
         }
 
         let mut chunk = ChunkOutcome::default();

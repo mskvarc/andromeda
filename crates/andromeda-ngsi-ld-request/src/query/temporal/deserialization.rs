@@ -15,8 +15,12 @@ where
     D: Deserializer<'de>,
 {
     let raw: Option<String> = Option::deserialize(deserializer)?;
-    raw.map(|value| value.parse::<TimeRel>().map_err(|_| Error::custom(format!("invalid timerel: '{value}'"))))
-        .transpose()
+    raw.map(|value| {
+        value
+            .parse::<TimeRel>()
+            .map_err(|source| Error::custom(TemporalParameterError::Timerel(source)))
+    })
+    .transpose()
 }
 
 /// Deserialise the `timeproperty` query parameter as the [`TimeProp`] axis it
@@ -31,8 +35,23 @@ where
     D: Deserializer<'de>,
 {
     let raw: Option<String> = Option::deserialize(deserializer)?;
-    raw.map(|value| value.parse::<TimeProp>().map_err(|_| Error::custom(format!("invalid timeproperty: '{value}'"))))
-        .transpose()
+    raw.map(|value| {
+        value
+            .parse::<TimeProp>()
+            .map_err(|source| Error::custom(TemporalParameterError::TimeProperty(source)))
+    })
+    .transpose()
+}
+
+/// Why a temporal-only query parameter names nothing its clause defines.
+#[derive(Debug, thiserror::Error)]
+enum TemporalParameterError {
+    /// `timerel` is not one of `before`, `after`, `between` (clause 4.11).
+    #[error("invalid timerel: {0}")]
+    Timerel(#[source] strum::ParseError),
+    /// `timeproperty` names no temporal property (clause 4.8).
+    #[error("invalid timeproperty: {0}")]
+    TimeProperty(#[source] strum::ParseError),
 }
 
 /// Deserialize a comma-separated `aggrMethods` value into validated methods.
@@ -65,7 +84,8 @@ mod tests {
     fn timerel_invalid_is_rejected_at_the_boundary() {
         // Clause 4.11: an unknown `timerel` is a malformed request, rejected
         // while the query deserialises rather than by a later parse.
-        assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("timerel=invalid").is_err());
+        let error = serde_urlencoded::from_str::<TemporalQueryParameters>("timerel=invalid").expect_err("an unknown timerel is refused");
+        assert!(error.to_string().contains("invalid timerel"), "{error}");
     }
 
     #[test]
@@ -78,7 +98,8 @@ mod tests {
         // Clause 4.8: `timeproperty` names the temporal axis. An unrecognised
         // value is a malformed request, not a silent fallback to observedAt --
         // a client's typo must not quietly query a different axis.
-        assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("timeproperty=bogus").is_err());
+        let error = serde_urlencoded::from_str::<TemporalQueryParameters>("timeproperty=bogus").expect_err("an unknown timeproperty is refused");
+        assert!(error.to_string().contains("invalid timeproperty"), "{error}");
     }
 
     #[test]

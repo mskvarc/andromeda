@@ -3,6 +3,7 @@
 use crate::{
     branch_condition::BranchCondition,
     error::SnapshotError,
+    snapshot_invariant::SnapshotInvariant,
     store::{InsertSnapshotParams, SnapshotPreparationJob, SnapshotStore},
     store_double::{ClaimHold, StoreDouble, entry::Stage},
 };
@@ -22,7 +23,7 @@ use url::Url;
 
 /// The answer of an operation no test exercises.
 fn unused<T: Send + 'static>(method: &'static str) -> BoxFuture<'static, Result<T, SnapshotError>> {
-    Box::pin(async move { Err(SnapshotError::internal(format!("StoreDouble::{method} is not exercised by the policy tests"))) })
+    Box::pin(async move { panic!("StoreDouble::{method} is not exercised by the policy tests") })
 }
 
 impl SnapshotStore for StoreDouble {
@@ -31,13 +32,16 @@ impl SnapshotStore for StoreDouble {
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        let found = self.entries().map(|entries| {
-            entries.iter().find(|entry| entry.snapshot.id == *id).map(|entry| Snapshot {
-                status: entry.status(),
-                ..entry.snapshot.clone() // clone: the port hands out an owned Snapshot
-            })
-        });
-        Box::pin(async move { found })
+        let found = {
+            let entries = self.entries();
+            {
+                entries.iter().find(|entry| entry.snapshot.id == *id).map(|entry| Snapshot {
+                    status: entry.status(),
+                    ..entry.snapshot.clone() // clone: the port hands out an owned Snapshot
+                })
+            }
+        };
+        Box::pin(async move { Ok(found) })
     }
 
     fn branch_condition<'life0, 'life1, 'async_trait>(
@@ -48,10 +52,11 @@ impl SnapshotStore for StoreDouble {
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        let condition = self
-            .entries()
-            .map(|entries| entries.iter().any(|entry| entry.snapshot.id == *id).then_some(self.condition));
-        Box::pin(async move { condition })
+        let condition = {
+            let entries = self.entries();
+            entries.iter().any(|entry| entry.snapshot.id == *id).then_some(self.condition)
+        };
+        Box::pin(async move { Ok(condition) })
     }
 
     fn touch_last_used<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
@@ -86,12 +91,14 @@ impl SnapshotStore for StoreDouble {
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        let released = self.entries().map(|mut entries| {
-            for entry in entries.iter_mut().filter(|entry| entry.snapshot.id == *id && entry.stage == Stage::Claimed) {
-                entry.stage = Stage::Waiting;
-            }
-        });
-        Box::pin(async move { released })
+        for entry in self
+            .entries()
+            .iter_mut()
+            .filter(|entry| entry.snapshot.id == *id && entry.stage == Stage::Claimed)
+        {
+            entry.stage = Stage::Waiting;
+        }
+        Box::pin(async move { Ok(()) })
     }
 
     fn update_status<'life0, 'life1, 'life2, 'life3, 'async_trait>(
@@ -109,7 +116,7 @@ impl SnapshotStore for StoreDouble {
         'life3: 'async_trait,
     {
         let outcome = self.end_preparation(id, status, queries_details, temporal_queries_details);
-        Box::pin(async move { outcome })
+        Box::pin(async move { Ok(outcome) })
     }
 
     fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
@@ -117,12 +124,15 @@ impl SnapshotStore for StoreDouble {
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        let deleted = self.entries().map(|mut entries| {
-            let before = entries.len();
-            entries.retain(|entry| entry.snapshot.id != *id);
-            u64::try_from(before - entries.len()).unwrap_or(u64::MAX)
-        });
-        Box::pin(async move { deleted })
+        let deleted = {
+            let mut entries = self.entries();
+            {
+                let before = entries.len();
+                entries.retain(|entry| entry.snapshot.id != *id);
+                u64::try_from(before - entries.len()).unwrap_or(u64::MAX)
+            }
+        };
+        Box::pin(async move { Ok(deleted) })
     }
 
     fn create<'life0, 'life1, 'async_trait>(&'life0 self, _params: InsertSnapshotParams<'life1>) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
@@ -169,7 +179,7 @@ impl SnapshotStore for StoreDouble {
         'life0: 'async_trait,
     {
         let job = self.claim_next();
-        Box::pin(async move { job })
+        Box::pin(async move { Ok(job) })
     }
 
     fn renew_preparation_lease<'life0, 'life1, 'async_trait>(
@@ -218,9 +228,8 @@ impl SnapshotStore for StoreDouble {
         'life3: 'async_trait,
     {
         let promoted = match self.end_preparation(id, status, queries_details, temporal_queries_details) {
-            Ok(0) => Err(SnapshotError::internal(format!("Snapshot {id} is no longer preparing under this claim"))),
-            Ok(_) => Ok(()),
-            Err(error) => Err(error),
+            0 => Err(SnapshotInvariant::ClaimLost { snapshot: id.clone() }.into()), // clone: the error owns the Snapshot it names.
+            _ended => Ok(()),
         };
         Box::pin(async move { promoted })
     }

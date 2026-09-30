@@ -35,6 +35,7 @@ mod tests {
         state::{LeasedForwarding, NotificationReceiverResolver, ReceiverResolutionError},
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_tenancy::error::TenancyError;
     use axum::{
         body::{Body, to_bytes},
         http::{Request, StatusCode},
@@ -53,6 +54,37 @@ mod tests {
                 })
             })
         }
+    }
+
+    struct FailingTenantResolver;
+
+    impl NotificationReceiverResolver for FailingTenantResolver {
+        fn resolve<'a>(&'a self, _subscription: &'a Identifier) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>> {
+            Box::pin(async move { Err(ReceiverResolutionError::Tenant(TenancyError::MultiTenancyDisabled)) })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tenant_resolution_failure_is_an_internal_error() -> Result<(), Box<dyn Error>> {
+        let body = serde_json::json!({
+            "id": "urn:ngsi-ld:Notification:1",
+            "type": "Notification",
+            "subscriptionId": "urn:ngsi-ld:Subscription:minted",
+            "notifiedAt": "2024-01-01T00:00:00Z",
+            "data": []
+        })
+        .to_string();
+        let response = NotificationReceiverRoutes::new(Arc::new(FailingTenantResolver))
+            .into_router()
+            .oneshot(
+                Request::post("/notifications")
+                    .header("content-type", "application/json")
+                    .header("content-length", body.len())
+                    .body(Body::from(body))?,
+            )
+            .await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        Ok(())
     }
 
     #[tokio::test]

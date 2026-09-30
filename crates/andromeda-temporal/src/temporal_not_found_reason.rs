@@ -5,7 +5,7 @@
 //! [`TemporalError::NotFound`](crate::error::TemporalError::NotFound) never holds
 //! an ad-hoc string. Each `#[error]` renders lowercase client prose.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_family::InstanceFamily, instance_identity::InstanceIdentity};
 use thiserror::Error;
 
 /// Why a temporal resource could not be found.
@@ -47,10 +47,17 @@ pub enum TemporalNotFoundReason {
         entity: Identifier,
     },
     /// The attribute holds no instance with the requested `instanceId`.
-    #[error("attribute instance {instance} not found")]
+    #[error("attribute instance {} not found", .instance.rendered(InstanceFamily::Attribute))]
     AttributeInstance {
-        /// The rendered instance identifier that selected no instance.
-        instance: String,
+        /// The instance identifier that selected no instance.
+        instance: InstanceIdentity,
+    },
+    /// The entity has no Temporal Evolution, and the write declares no entity
+    /// type to create one with (clause 4.5.1).
+    #[error("the Temporal Evolution of entity {entity} does not exist and the write declares no entity type to create it with")]
+    UntypedEvolution {
+        /// The entity the write addressed.
+        entity: Identifier,
     },
     /// The temporal window or the `attrs` selection left no instance of the
     /// entity at all (clause 5.7.3.4, step S1).
@@ -65,15 +72,5 @@ pub enum TemporalNotFoundReason {
     ProjectionLeftNothing {
         /// The entity the projection was applied to.
         entity: Identifier,
-    },
-    /// The history store reported a missing resource.
-    ///
-    /// The text is relayed verbatim from the store adapter, which lives in a
-    /// crate this one cannot depend on without a dependency cycle, so its reason
-    /// arrives as opaque prose rather than a typed cause.
-    #[error("{detail}")]
-    Store {
-        /// The store adapter's own missing-resource detail.
-        detail: String,
     },
 }

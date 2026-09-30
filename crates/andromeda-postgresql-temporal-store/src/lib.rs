@@ -32,7 +32,7 @@ pub mod bulk_write_mode;
 /// Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
 pub mod columnstore_capability;
 /// Enabling the hypercore columnstore on the temporal hypertables.
-mod columnstore_enablement;
+pub mod columnstore_enablement;
 /// Binary COPY path for bulk attribute-history inserts.
 pub(crate) mod copy;
 /// The invariant that one client-supplied `instanceId` names one attribute
@@ -43,6 +43,8 @@ mod entity_attribute_history;
 pub mod error;
 /// Decoding `PgRow` into the backend-neutral temporal row types.
 pub(crate) mod history_row_decode;
+/// The identity and column reads the two history hypertables share.
+pub(crate) mod history_row_identity;
 mod instance_mutation;
 /// Idempotent PostgreSQL implementation of deferred temporal appends.
 pub mod intent_sink;
@@ -71,10 +73,14 @@ pub mod scope_history_write;
 pub mod semantic_time_axes;
 /// Reconciling the temporal hypertables' storage policy with configuration.
 pub mod storage_policy;
+/// What an aggregation row that does not read back looks like.
+pub mod stored_aggregation_error;
 /// The family and value shape one attribute-history row was written with.
 pub(crate) mod stored_attribute_shape;
-/// The JSON number a stored `NUMERIC` column names.
-pub(crate) mod stored_decimal;
+/// What a temporal catalogue row that no longer reads back looks like.
+pub mod stored_catalog_error;
+/// What a history row that no longer reads back looks like.
+pub mod stored_history_error;
 /// Splitting one stored instance identity across its two history columns.
 pub mod stored_instance_columns;
 /// The stream grains one chunk requests, bound column-major and indexed back.
@@ -89,6 +95,8 @@ pub mod temporal_entity_catalog_write;
 pub mod temporal_entity_deletion;
 /// Running one compiled temporal statement against the tenant pool.
 pub(crate) mod temporal_query_execution;
+/// Conditions the temporal store's own statements and callers guarantee.
+pub mod temporal_store_invariant;
 /// The grain one temporal attribute stream is keyed by.
 pub mod temporal_stream;
 /// Establishing the `temporal_attribute_streams` half of the catalogue for a chunk.
@@ -118,6 +126,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-persistence-failure",
         "andromeda-postgresql-branch",
         "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-pool",

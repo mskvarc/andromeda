@@ -1,103 +1,97 @@
 //! Tokeniser for the NGSI-LD Query Language (clause 4.9).
 
 use crate::{error::QueryError, filter::json_string::scan_quoted_literal};
+use strum::EnumDiscriminants;
 
 /// A single lexical token of a `q` expression.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// [`TokenKind`] names a token without its text. A parse failure reports a
+/// kind rather than the Rust variant name, so the `BadRequestData` detail a
+/// client receives names the character the clause 4.9 grammar expected; the
+/// three kinds that carry text are described by kind instead, because their
+/// spelling is whatever the client wrote.
+#[derive(Debug, Clone, PartialEq, EnumDiscriminants)]
+#[strum_discriminants(name(TokenKind), derive(derive_more::Display, Hash))]
 pub enum Token {
     /// A bare identifier: attribute name, IRI, or an unquoted temporal literal.
+    #[strum_discriminants(display("identifier"))]
     Ident(String),
     /// A double-quoted string literal, taken verbatim after backslash-escape
     /// processing. The contents are not percent-decoded: percent-encoding is an
     /// HTTP-URI transport concern (clause 4.9), decoded once by the HTTP binding
     /// before the filter reaches this tokeniser, and a `q` carried in a JSON
     /// body (a subscription) is not percent-encoded at all.
+    #[strum_discriminants(display("quoted string"))]
     QuotedStr(String),
     /// A numeric literal, kept as text until the parser types it.
+    #[strum_discriminants(display("number"))]
     NumberLit(String),
     /// The `true` keyword.
+    #[strum_discriminants(display("true"))]
     True,
     /// The `false` keyword.
+    #[strum_discriminants(display("false"))]
     False,
     /// `==`
+    #[strum_discriminants(display("=="))]
     Eq,
     /// `!=`
+    #[strum_discriminants(display("!="))]
     Neq,
     /// `>`
+    #[strum_discriminants(display(">"))]
     Gt,
     /// `>=`
+    #[strum_discriminants(display(">="))]
     Ge,
     /// `<`
+    #[strum_discriminants(display("<"))]
     Lt,
     /// `<=`
+    #[strum_discriminants(display("<="))]
     Le,
     /// `~=`
+    #[strum_discriminants(display("~="))]
     Match,
     /// `!~=`
+    #[strum_discriminants(display("!~="))]
     NotMatch,
     /// `..`, the range separator.
+    #[strum_discriminants(display(".."))]
     Dots,
     /// `;`, the conjunction operator.
+    #[strum_discriminants(display(";"))]
     Semi,
     /// `|`, the disjunction operator.
+    #[strum_discriminants(display("|"))]
     Pipe,
     /// `(`
+    #[strum_discriminants(display("("))]
     LParen,
     /// `)`
+    #[strum_discriminants(display(")"))]
     RParen,
     /// `[`, opening a compound value path.
+    #[strum_discriminants(display("["))]
     LBracket,
     /// `]`, closing a compound value path.
+    #[strum_discriminants(display("]"))]
     RBracket,
     /// `{`, opening a linked-entity traversal.
+    #[strum_discriminants(display("{{"))]
     LBrace,
     /// `}`, closing a linked-entity traversal.
+    #[strum_discriminants(display("}}"))]
     RBrace,
     /// `*`, the language-suppression marker inside `[*]`.
+    #[strum_discriminants(display("*"))]
     Star,
     /// `.`, the sub-attribute separator.
+    #[strum_discriminants(display("."))]
     Dot,
     /// `,`, the value-list separator.
+    #[strum_discriminants(display(","))]
     Comma,
-}
-
-impl Token {
-    /// How the clause 4.9 grammar spells this token.
-    ///
-    /// A parse failure quotes this rather than the Rust variant name, so the
-    /// `BadRequestData` detail a client receives names the character the grammar
-    /// expected. The three token kinds that carry text describe their kind
-    /// instead, because their spelling is whatever the client wrote.
-    #[must_use]
-    pub const fn spelling(&self) -> &'static str {
-        match self {
-            Token::Ident(_) => "identifier",
-            Token::QuotedStr(_) => "quoted string",
-            Token::NumberLit(_) => "number",
-            Token::True => "true",
-            Token::False => "false",
-            Token::Eq => "==",
-            Token::Neq => "!=",
-            Token::Gt => ">",
-            Token::Ge => ">=",
-            Token::Lt => "<",
-            Token::Le => "<=",
-            Token::Match => "~=",
-            Token::NotMatch => "!~=",
-            Token::Dots => "..",
-            Token::Semi => ";",
-            Token::Pipe => "|",
-            Token::LParen => "(",
-            Token::RParen => ")",
-            Token::LBracket => "[",
-            Token::RBracket => "]",
-            Token::LBrace => "{",
-            Token::RBrace => "}",
-            Token::Star => "*",
-            Token::Dot => ".",
-            Token::Comma => ",",
-        }
-    }
 }
 
 /// Split a `q` expression into tokens.

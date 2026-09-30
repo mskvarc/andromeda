@@ -159,12 +159,9 @@ fn reject_in_attribute_members(members: &Map<String, Value>, admission: NullSent
         if key.starts_with('@') {
             continue;
         }
-        let attribute = key.parse::<AttributeName>().map_err(|error| {
-            EntityError::Validation(EntityValidationReason::ExpandedAttributeName {
-                name: key.clone(),
-                source: error,
-            })
-        })?;
+        let attribute = key
+            .parse::<AttributeName>()
+            .map_err(|error| EntityError::Validation(EntityValidationReason::ExpandedAttributeName(error)))?;
         if is_reserved_member(&attribute) {
             continue;
         }

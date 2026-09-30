@@ -176,9 +176,13 @@ mod tests {
     use andromeda_federation::{
         error::FederationError,
         federation_conflict_reason::FederationConflictReason,
+        federation_invariant::FederationInvariant,
         federation_operation_unsupported::FederationOperationUnsupported,
+        gateway_failure::GatewayFailure,
         outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
+        remote_answer::RemoteAnswer,
     };
+    use andromeda_http_headers::received_protocol::ReceivedProtocol;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
@@ -367,8 +371,8 @@ mod tests {
         // Table 5.2.17-1: `registrationId` is the registration responsible for a
         // failed distributed operation; the local failure names none.
         let mut timed_out = result(ForwardingMode::Inclusive, 504);
-        timed_out.outcome = ForwardedWriteOutcome::Transport(TransportFailure::Timeout {
-            detail: "no response within 5000ms".to_string(),
+        timed_out.outcome = ForwardedWriteOutcome::Transport(TransportFailure::TimedOut {
+            after: Duration::from_millis(5000),
         });
         timed_out.registration_id = uri("urn:ngsi-ld:ContextSourceRegistration:slow");
         let body = serde_json::to_value(multi_status_result(
@@ -407,15 +411,14 @@ mod tests {
         let registration = uri("urn:ngsi-ld:ContextSourceRegistration:test");
         for (error, expected) in [
             (
-                FederationError::Conflict(FederationConflictReason::RemoteRejected {
-                    detail: "not advertised".to_string(),
-                }),
+                FederationError::Conflict(FederationConflictReason::RemoteRejected(Box::new(RemoteAnswer { status: 409, body: None }))),
                 ProblemClassification::Category(NgsiLdErrorType::Conflict),
             ),
             (
-                FederationError::OperationNotSupported(FederationOperationUnsupported::RemoteUnsupported {
-                    detail: "no follow-up".to_string(),
-                }),
+                FederationError::OperationNotSupported(FederationOperationUnsupported::RemoteUnsupported(Box::new(RemoteAnswer {
+                    status: 422,
+                    body: None,
+                }))),
                 ProblemClassification::Category(NgsiLdErrorType::OperationNotSupported),
             ),
             (
@@ -440,13 +443,17 @@ mod tests {
             (
                 FederationError::BadGateway {
                     registration,
-                    status: Some(403),
-                    detail: "denied".to_string(),
+                    cause: Box::new(GatewayFailure::Answered(RemoteAnswer {
+                        status: 403,
+                        body: Some(serde_json::json!({"detail": "denied"})),
+                    })),
                 },
                 ProblemClassification::BadGateway,
             ),
             (
-                FederationError::internal("broken"),
+                FederationError::from(FederationInvariant::ForwardingProtocol(
+                    "".parse::<ReceivedProtocol>().expect_err("an empty protocol is not a Via protocol"),
+                )),
                 ProblemClassification::Category(NgsiLdErrorType::InternalError),
             ),
         ] {

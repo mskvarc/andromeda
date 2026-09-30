@@ -14,11 +14,12 @@
 use crate::{
     error::QueryError,
     filter::{
+        expectation::{QExpectation, QFound},
         json_string::decode_quoted_str,
         lexer::Token,
         quoting::Quoting,
         scalar::{CompareValue, Scalar},
-        token_cursor::{TokenCursor, describe},
+        token_cursor::TokenCursor,
     },
     pattern::Pattern,
 };
@@ -110,11 +111,7 @@ fn uri_equivalent_spellings(operand: Scalar) -> CompareValue {
 pub fn parse_scalar(cursor: &mut TokenCursor<'_>) -> Result<Scalar, QueryError> {
     match cursor.advance() {
         Some(Token::NumberLit(literal)) => {
-            // clone: only on the error path, where the message owns the literal
-            let number = literal.parse::<JsonNumber>().map_err(|source| QueryError::QInvalidNumber {
-                value: literal.clone(),
-                source,
-            })?;
+            let number = literal.parse::<JsonNumber>().map_err(QueryError::QInvalidNumber)?;
             Ok(Scalar::Number(number))
         }
         // Clause 4.9 `ComparableValue = Number / quotedStr / dateTime / date /
@@ -125,8 +122,8 @@ pub fn parse_scalar(cursor: &mut TokenCursor<'_>) -> Result<Scalar, QueryError> 
         Some(Token::True) => Ok(Scalar::Bool(true)),
         Some(Token::False) => Ok(Scalar::Bool(false)),
         other => Err(QueryError::QExpected {
-            expected: "value".to_string(),
-            found: describe(other),
+            expected: QExpectation::Value,
+            found: QFound::of(other),
         }),
     }
 }
@@ -151,8 +148,8 @@ pub fn parse_pattern_string(cursor: &mut TokenCursor<'_>) -> Result<Pattern, Que
         // `^example\.com$`.
         Some(Token::QuotedStr(literal) | Token::Ident(literal)) => Pattern::parse(literal),
         other => Err(QueryError::QExpected {
-            expected: "pattern string".to_string(),
-            found: describe(other),
+            expected: QExpectation::PatternString,
+            found: QFound::of(other),
         }),
     }
 }

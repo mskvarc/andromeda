@@ -8,6 +8,8 @@
 //! inheriting the Core Entity path's coverage.
 
 use crate::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
+use andromeda_context_commit::submission_refusal::SubmissionRefusal;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::expanded::unit_code_admission::forbidden_unit_code_family;
 use serde_json::Value;
 use std::slice::from_ref;
@@ -47,9 +49,12 @@ pub(crate) fn validate_entity_unit_code_admission(expanded: &Value) -> Result<()
 /// hands this the single replacement instance rather than an entity payload.
 pub(crate) fn validate_instance_unit_code_admission(attribute_name: &str, instance: &Value) -> Result<(), TemporalError> {
     if let Some(unitless) = forbidden_unit_code_family(instance) {
+        let attribute = attribute_name
+            .parse::<AttributeName>()
+            .map_err(|source| TemporalError::from(SubmissionRefusal::ExpandedAttributeName(source)))?;
         return Err(TemporalError::Validation(TemporalValidationReason::InstanceUnitCodeForbidden {
             family: unitless,
-            attribute: attribute_name.to_string(),
+            attribute,
         }));
     }
     Ok(())

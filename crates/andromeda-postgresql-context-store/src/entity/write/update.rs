@@ -16,6 +16,7 @@ use crate::{
         written_entity::WrittenEntity,
     },
     error::ContextStoreError,
+    store_invariant::{GuardedEntityWrite, StoreInvariant},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -87,7 +88,7 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Internal`] if the membership insert ever stops
+/// Returns [`ContextStoreError::StatementBuild`] if the membership insert ever stops
 /// matching its column list, which its fixed shape makes unreachable.
 pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = update_staging_columns();
@@ -233,11 +234,12 @@ impl EntityRepository {
             return Ok(Vec::new());
         }
         if expected_modified_at.len() != entities.ids.len() {
-            return Err(ContextStoreError::Internal(format!(
-                "entity update given {} expectations for {} rows",
-                expected_modified_at.len(),
-                entities.ids.len()
-            )));
+            return Err(StoreInvariant::ExpectationCount {
+                write: GuardedEntityWrite::Update,
+                expectations: expected_modified_at.len(),
+                rows: entities.ids.len(),
+            }
+            .into());
         }
         types_present(entities)?;
 

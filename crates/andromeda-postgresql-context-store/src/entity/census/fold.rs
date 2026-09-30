@@ -85,7 +85,7 @@ impl Ledger {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::Internal`] if the insert ever stops matching
+    /// Returns [`ContextStoreError::StatementBuild`] if the insert ever stops matching
     /// its column list, which the fixed shape makes unreachable.
     fn fold(&self, target: &ContextTarget) -> Result<WithQuery, ContextStoreError> {
         let key_tuple = || Expr::tuple(self.keys.iter().map(|key| Expr::col(key.clone()))); // clone: the tuple owns the idens it names.
@@ -109,8 +109,7 @@ impl Ledger {
         insert
             .into_table(table_of(target, self.table.clone())) // clone: as above.
             .columns(self.keys.iter().cloned().chain([self.delta.clone()])) // clone: the column list owns its idens.
-            .select_from(summed.take())
-            .map_err(|error| ContextStoreError::Internal(error.to_string()))?
+            .select_from(summed.take())?
             .returning(Query::returning().column(self.delta.clone())); // clone: as above.
         Ok(WithClause::new()
             .cte(CommonTableExpression::new().table_name(Moved).query(moved).to_owned())

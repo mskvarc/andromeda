@@ -87,7 +87,7 @@ fn keyword_term(term: &RawProjectionTerm, expanded: ProjectionTerm) -> Result<Pr
         Ok(expanded)
     } else {
         Err(QueryError::ProjectionKeywordWithLinkedTerm {
-            keyword: term.name.as_str().to_string(),
+            keyword: term.name.clone(), // clone: the raw projection is borrowed and the refusal outlives it
         })
     }
 }
@@ -200,7 +200,7 @@ mod tests {
         }];
         let error = expand_projection_terms(&raw, &PrefixExpander).await.expect_err("must reject");
         assert!(
-            matches!(&error, QueryError::ProjectionKeywordWithLinkedTerm { keyword } if keyword == "id"),
+            matches!(&error, QueryError::ProjectionKeywordWithLinkedTerm { keyword } if keyword.as_str() == "id"),
             "got {error:?}"
         );
     }

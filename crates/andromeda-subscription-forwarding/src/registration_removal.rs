@@ -12,6 +12,7 @@ use andromeda_federation::subscription::{SubscriptionForward, SubscriptionForwar
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_registration::{
     error::RegistrationError,
+    registration_invariant::RegistrationInvariant,
     removal_hook::{RegistrationRemovalHook, RegistrationTeardown},
 };
 use futures::future::BoxFuture;
@@ -32,7 +33,21 @@ impl RegistrationRemovalHook for SubscriptionForwardingService {
                 .mappings
                 .forwarded_for_registration(&registration.id)
                 .await
-                .map_err(|error: SubscriptionForwardingError| RegistrationError::persistence(error))?;
+                .map_err(|error: SubscriptionForwardingError| match error {
+                    SubscriptionForwardingError::Persistence(failure) => RegistrationError::from(failure),
+                    SubscriptionForwardingError::StoreSaturated => RegistrationError::StoreSaturated,
+                    other @ (SubscriptionForwardingError::Subscription(_)
+                    | SubscriptionForwardingError::Federation(_)
+                    | SubscriptionForwardingError::Registration(_)
+                    | SubscriptionForwardingError::Entity(_)
+                    | SubscriptionForwardingError::JsonLd(_)
+                    | SubscriptionForwardingError::Representation(_)
+                    | SubscriptionForwardingError::UnknownSubscription { .. }
+                    | SubscriptionForwardingError::Internal(_)) => {
+                        tracing::error!(error = %other, "the subscriptions forwarded under a registration could not be read");
+                        RegistrationInvariant::ForwardedSubscriptionLookup.into()
+                    }
+                })?;
             Ok(RegistrationTeardown {
                 // clone: the teardown outlives the registration row it names,
                 // which is what reaches the context source once the row is gone

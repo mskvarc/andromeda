@@ -18,6 +18,8 @@ use crate::{
     prepare::to_insert_params,
     query_validation::validate_snapshot_query_shapes,
     service::lifetime::{effective_snapshot_lifetime, iso8601_lifetime},
+    snapshot_invariant::SnapshotInvariant,
+    snapshot_validation_reason::SnapshotValidationReason,
     status_delivery_signal::StatusDeliverySignal,
     store::SnapshotStore,
 };
@@ -126,9 +128,7 @@ impl SnapshotService {
     /// record cannot be persisted or the tenant quotas cannot be enforced.
     pub async fn create(&self, input: SnapshotInput, context: ContextSpec) -> Result<Snapshot, SnapshotError> {
         if input.snapshot_queries.is_none() && input.snapshot_temporal_queries.is_none() {
-            return Err(SnapshotError::validation(
-                "At least one of snapshotQueries or snapshotTemporalQueries must be present",
-            ));
+            return Err(SnapshotValidationReason::QueryCollectionsMissing.into());
         }
         // Reject a malformed query shape before persistence (clause 5.16.1), so
         // an unparseable `q`, geometry or `timerel` is a 400 rather than a
@@ -170,9 +170,7 @@ impl SnapshotService {
             .last_used_at(Some(now))
             .build();
 
-        let query_context = context
-            .to_context_value()
-            .ok_or_else(|| SnapshotError::internal("Snapshot request context could not be materialized"))?;
+        let query_context = context.to_context_value().ok_or(SnapshotInvariant::RequestContextUnmaterialized)?;
         self.repo.create(to_insert_params(&snapshot, query_context)?).await?;
         self.enforce_quotas().await?;
 
@@ -219,10 +217,10 @@ impl SnapshotService {
         self.get(id).await?;
 
         if patch.id.as_ref().is_some_and(|patch_id| patch_id != id) {
-            return Err(SnapshotError::validation("Snapshot id is immutable"));
+            return Err(SnapshotValidationReason::IdImmutable.into());
         }
         if !matches!(patch.snapshot_queries, MergePatchValue::Absent) || !matches!(patch.snapshot_temporal_queries, MergePatchValue::Absent) {
-            return Err(SnapshotError::validation("Snapshot query definitions are immutable"));
+            return Err(SnapshotValidationReason::QueryDefinitionsImmutable.into());
         }
 
         let patch_priority = patch.snapshot_priority;
@@ -348,9 +346,7 @@ impl SnapshotService {
 /// A fresh broker-minted Snapshot identifier.
 fn build_snapshot_id() -> Result<Identifier, SnapshotError> {
     let value = format!("urn:ngsi-ld:Snapshot:{}", uuid::Uuid::new_v4());
-    value
-        .parse()
-        .map_err(|error| SnapshotError::internal(format!("Generated snapshot id is not a valid URI: {error}")))
+    value.parse().map_err(|error| SnapshotInvariant::MintedIdentifier(error).into())
 }
 
 #[cfg(test)]

@@ -22,17 +22,26 @@ pub enum ReceivedProtocolError {
     /// The value was empty.
     #[error("received-protocol must not be empty")]
     Empty,
-    /// The value did not match `[ protocol-name "/" ] protocol-version`.
-    #[error("`{0}` is not a valid received-protocol")]
-    Malformed(String),
+    /// The value holds more than the one `/` between name and version.
+    #[error("received-protocol holds more than one '/'")]
+    TooManySeparators,
+    /// The protocol name or version is empty.
+    #[error("received-protocol has an empty protocol name or version")]
+    EmptyComponent,
+    /// A character outside the HTTP `token` character class.
+    #[error("received-protocol holds {} outside the HTTP token characters", offending.escape_unicode())]
+    NotAToken {
+        /// The first character that is not a `tchar`.
+        offending: char,
+    },
 }
 
-/// Whether a byte is an RFC 9110 `tchar` (the character class of an HTTP `token`).
-const fn is_tchar(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
+/// Whether a character is an RFC 9110 `tchar` (the character class of an HTTP `token`).
+const fn is_tchar(character: char) -> bool {
+    character.is_ascii_alphanumeric()
         || matches!(
-            byte,
-            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+            character,
+            '!' | '#' | '$' | '%' | '&' | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '`' | '|' | '~'
         )
 }
 
@@ -41,8 +50,10 @@ impl ReceivedProtocol {
     ///
     /// # Errors
     ///
-    /// Returns [`ReceivedProtocolError::Empty`] for an empty value and
-    /// [`ReceivedProtocolError::Malformed`] when the value is not an optional
+    /// Returns [`ReceivedProtocolError::Empty`] for an empty value, and
+    /// [`ReceivedProtocolError::TooManySeparators`],
+    /// [`ReceivedProtocolError::EmptyComponent`] or
+    /// [`ReceivedProtocolError::NotAToken`] when the value is not an optional
     /// `protocol-name` and a `protocol-version` separated by a single `/`, each
     /// an HTTP `token`.
     pub fn new(value: impl Into<String>) -> Result<ReceivedProtocol, ReceivedProtocolError> {
@@ -52,12 +63,16 @@ impl ReceivedProtocol {
         }
         // received-protocol = [ protocol-name "/" ] protocol-version, so at most
         // one `/`, and every component is a non-empty run of `tchar`.
-        let is_valid = value.matches('/').count() <= 1 && value.split('/').all(|component| !component.is_empty() && component.bytes().all(is_tchar));
-        if is_valid {
-            Ok(ReceivedProtocol(value))
-        } else {
-            Err(ReceivedProtocolError::Malformed(value))
+        if value.matches('/').count() > 1 {
+            return Err(ReceivedProtocolError::TooManySeparators);
         }
+        if value.split('/').any(str::is_empty) {
+            return Err(ReceivedProtocolError::EmptyComponent);
+        }
+        if let Some(offending) = value.chars().find(|character| *character != '/' && !is_tchar(*character)) {
+            return Err(ReceivedProtocolError::NotAToken { offending });
+        }
+        Ok(ReceivedProtocol(value))
     }
 
     /// The received-protocol as a string slice.
@@ -112,11 +127,11 @@ mod tests {
     fn a_value_that_breaks_the_grammar_is_rejected() {
         // Whitespace, an empty component, more than one `/`, and a non-tchar
         // byte each fall outside `[ protocol-name "/" ] protocol-version`.
-        assert!(matches!(ReceivedProtocol::new("1 1"), Err(ReceivedProtocolError::Malformed(_))));
-        assert!(matches!(ReceivedProtocol::new("HTTP/"), Err(ReceivedProtocolError::Malformed(_))));
-        assert!(matches!(ReceivedProtocol::new("/1.1"), Err(ReceivedProtocolError::Malformed(_))));
-        assert!(matches!(ReceivedProtocol::new("a/b/c"), Err(ReceivedProtocolError::Malformed(_))));
-        assert!(matches!(ReceivedProtocol::new("HTTP:1.1"), Err(ReceivedProtocolError::Malformed(_))));
+        pretty_assertions::assert_eq!(ReceivedProtocol::new("1 1"), Err(ReceivedProtocolError::NotAToken { offending: ' ' }));
+        pretty_assertions::assert_eq!(ReceivedProtocol::new("HTTP/"), Err(ReceivedProtocolError::EmptyComponent));
+        pretty_assertions::assert_eq!(ReceivedProtocol::new("/1.1"), Err(ReceivedProtocolError::EmptyComponent));
+        pretty_assertions::assert_eq!(ReceivedProtocol::new("a/b/c"), Err(ReceivedProtocolError::TooManySeparators));
+        pretty_assertions::assert_eq!(ReceivedProtocol::new("HTTP:1.1"), Err(ReceivedProtocolError::NotAToken { offending: ':' }));
     }
 
     #[test]

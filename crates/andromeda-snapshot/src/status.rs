@@ -3,7 +3,7 @@
 //! Pure business logic: no I/O, no SQL. Called by the snapshot executor
 //! before any `update_status` request reaches the repository.
 
-use crate::{branch_condition::BranchCondition, error::SnapshotError};
+use crate::{branch_condition::BranchCondition, error::SnapshotError, snapshot_validation_reason::SnapshotValidationReason};
 use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
 
 /// Whether a snapshot in a given status can scope a request (clause 6.3.18).
@@ -47,7 +47,7 @@ pub fn validate_preparing_transition(status: SnapshotStatus) -> Result<(), Snaps
     if SnapshotStatus::Preparing.can_transition_to(status) {
         Ok(())
     } else {
-        Err(SnapshotError::validation(format!("Invalid status transition: preparing -> {status}")))
+        Err(SnapshotValidationReason::StatusTransition { status }.into())
     }
 }
 

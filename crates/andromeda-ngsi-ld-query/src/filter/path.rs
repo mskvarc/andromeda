@@ -190,8 +190,5 @@ impl QueryPath {
 /// Returns [`QueryError::AttributeNameInvalid`] when the IRI does not satisfy
 /// the clause 4.6.2 attribute-name grammar.
 pub fn expanded_attribute_name(iri: &IriBuf) -> Result<AttributeName, QueryError> {
-    iri.as_str().parse().map_err(|source| QueryError::AttributeNameInvalid {
-        value: iri.as_str().to_string(),
-        source,
-    })
+    iri.as_str().parse().map_err(QueryError::AttributeNameInvalid)
 }

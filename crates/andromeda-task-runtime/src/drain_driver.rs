@@ -7,6 +7,8 @@ use crate::{
     drain_task::{DrainOperation, DrainPassOutcome},
     driver_supervision::DriverSupervision,
     failure::TaskFailure,
+    failure_report::FailureReport,
+    runtime_failure::RuntimeFailure,
     task_observer::DriverTerminal,
     wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver},
 };
@@ -37,7 +39,7 @@ pub(crate) async fn run(
             () = cancellation.cancelled() => return DriverTerminal::Cancelled,
             signal = wake.recv() => {
                 if signal.is_none() {
-                    return DriverTerminal::Failed(TaskFailure::invariant_violation("drain wake channel closed while task was active"));
+                    return DriverTerminal::Failed(FailureReport::of(&TaskFailure::invariant_violation(RuntimeFailure::DrainWakeChannelClosed)));
                 }
                 backoff.record_wake();
                 DrainCause::Wake

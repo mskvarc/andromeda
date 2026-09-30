@@ -1,7 +1,7 @@
 //! Row-to-domain mapping for context source registrations.
 
 use crate::{
-    csource_registration::{mode_code::mode_of, operation_code::operation_of, status_code::status_of},
+    csource_registration::{mode_code::mode_of, operation_code::operation_of, status_code::status_of, stored_registration_error::StoredRegistrationError},
     error::ContextStoreError,
 };
 use andromeda_ngsi_ld_lexicon::{
@@ -39,33 +39,32 @@ use sqlx::{Row, postgres::PgRow};
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Internal`] when a stored column does not parse
-/// back into its domain type: the registration URI, the `registrationName` or
-/// `description` text, the tenant name, the `information` document and the rest
-/// of the coverage members, the endpoint, media type, forwarding mode code,
-/// operation codes, refresh rate and remaining access members, or the health
-/// status code. It is also returned when the `context_source_alias` column exists but
-/// fails to read for a reason other than being absent or undecodable.
+/// Returns [`ContextStoreError::StoredRegistration`] when a stored column does
+/// not parse back into its domain type: the registration URI, the
+/// `registrationName` or `description` text, the tenant name, the `information`
+/// document and the rest of the coverage members, the endpoint, media type,
+/// forwarding mode code, operation codes, refresh rate and remaining access
+/// members, or the health status code, and [`ContextStoreError::Database`] when
+/// the `context_source_alias` column exists but fails to read for a reason
+/// other than being absent or undecodable.
 pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStoreError> {
     let id_raw: String = row.get("id");
-    let id: Identifier = id_raw
-        .parse()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR id '{id_raw}': {e}")))?;
+    let id: Identifier = id_raw.parse().map_err(StoredRegistrationError::Id)?;
     let registration_name = row
         .get::<Option<String>, _>("registration_name")
         .map(NonEmptyText::try_from)
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR registrationName: {e}")))?;
+        .map_err(StoredRegistrationError::RegistrationName)?;
     let description = row
         .get::<Option<String>, _>("description")
         .map(NonEmptyText::try_from)
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR description: {e}")))?;
+        .map_err(StoredRegistrationError::Description)?;
     let tenant = row
         .get::<Option<String>, _>("tenant")
         .map(TenantName::try_from)
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(e.to_string()))?;
+        .map_err(StoredRegistrationError::Tenant)?;
     let additional_properties: Option<Value> = row.get("additional_properties");
 
     Ok(ContextSourceRegistration::builder()
@@ -82,21 +81,21 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
 }
 
 /// Rebuild the coverage members: what context the registration claims to serve.
-fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreError> {
+fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, StoredRegistrationError> {
     let information_json: Value = row.get("information");
-    let information = serde_json::from_value(information_json).map_err(|e| ContextStoreError::Internal(format!("Failed to parse CSR information: {e}")))?;
+    let information = serde_json::from_value(information_json).map_err(StoredRegistrationError::Information)?;
     let dataset_id = row
         .get::<Option<Vec<String>>, _>("dataset_id")
         .map(|values| values.iter().map(|raw| DatasetSelector::parse(raw)).collect::<Result<Vec<_>, _>>())
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR datasetId: {e}")))?;
+        .map_err(|error| StoredRegistrationError::DatasetId(Box::new(error)))?;
     // Projected as the `ltree` label paths the scopes are stored as.
     let scope: Option<Vec<ScopePath>> = row
         .get::<Option<Vec<String>>, _>("scope")
         .map(|values| {
             values
                 .iter()
-                .map(|stored| ltree_to_scope(stored).map_err(|e| ContextStoreError::Internal(format!("Invalid CSR scope label path '{stored}': {e}"))))
+                .map(|stored| ltree_to_scope(stored).map_err(StoredRegistrationError::Scope))
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
@@ -104,12 +103,12 @@ fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreErro
         .get::<Option<Value>, _>("observation_interval")
         .map(serde_json::from_value::<TimeInterval>)
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR observationInterval: {e}")))?;
+        .map_err(StoredRegistrationError::ObservationInterval)?;
     let management_interval = row
         .get::<Option<Value>, _>("management_interval")
         .map(serde_json::from_value::<TimeInterval>)
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR managementInterval: {e}")))?;
+        .map_err(StoredRegistrationError::ManagementInterval)?;
     let location: Option<Value> = row.get("location");
     let observation_space: Option<Value> = row.get("observation_space");
     let operation_space: Option<Value> = row.get("operation_space");
@@ -129,51 +128,45 @@ fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreErro
 /// Rebuild the access members: how the broker reaches the context source.
 fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> {
     let endpoint_raw: String = row.get("endpoint");
-    let endpoint = endpoint_raw
-        .parse::<DereferenceableUri>()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR endpoint '{endpoint_raw}': {e}")))?;
+    let endpoint = endpoint_raw.parse::<DereferenceableUri>().map_err(StoredRegistrationError::Endpoint)?;
     let accept: Option<MediaTypeBuf> = row
         .get::<Option<String>, _>("accept")
         .map(|raw| raw.parse())
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR accept media type: {e}")))?;
+        .map_err(StoredRegistrationError::Accept)?;
     // A number the registry never assigned is a typed decode failure naming
     // the registry, rather than an opaque sqlx one deep in the driver.
-    let mode = mode_of(CsrModeCode::try_from(row.get::<i16, _>("mode")).map_err(|e| ContextStoreError::Internal(format!("Invalid CSR mode: {e}")))?);
+    let mode = mode_of(CsrModeCode::try_from(row.get::<i16, _>("mode")).map_err(StoredRegistrationError::Mode)?);
     let operations: Option<Vec<CsrOperation>> = row
         .get::<Option<Vec<i16>>, _>("operations")
         .map(|codes| {
             codes
                 .into_iter()
-                .map(|code| {
-                    CsrOperationCode::try_from(code)
-                        .map(operation_of)
-                        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR operation: {e}")))
-                })
+                .map(|code| CsrOperationCode::try_from(code).map(operation_of).map_err(StoredRegistrationError::Operation))
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
     let refresh_rate: Option<Iso8601Duration> = row
         .get::<Option<String>, _>("refresh_rate")
-        .map(|raw| raw.parse::<Iso8601Duration>().map_err(|e| format!("{e:?}")))
+        .map(|raw| raw.parse::<Iso8601Duration>())
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR refreshRate: {e}")))?;
+        .map_err(|error| StoredRegistrationError::RefreshRate { position: error.position })?;
     let management = row
         .get::<Option<Value>, _>("management")
         .map(serde_json::from_value::<RegistrationManagementInfo>)
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR management: {e}")))?;
+        .map_err(StoredRegistrationError::Management)?;
     let context_source_info = row
         .get::<Option<Value>, _>("context_source_info")
         .map(serde_json::from_value::<Vec<KeyValuePair>>)
         .transpose()
-        .map_err(|error| ContextStoreError::Internal(format!("Invalid CSR contextSourceInfo: {error}")))?;
+        .map_err(StoredRegistrationError::ContextSourceInfo)?;
     let jsonld_context: Option<DereferenceableUri> = row
         .get::<Option<String>, _>("jsonld_context")
         .as_deref()
         .map(str::parse)
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR jsonldContext: {e}")))?;
+        .map_err(StoredRegistrationError::JsonldContext)?;
     let context_source_alias = row_to_alias(row)?;
 
     Ok(ContextSourceAccess::builder()
@@ -199,9 +192,9 @@ fn row_to_alias(row: &PgRow) -> Result<Option<ContextSourcePseudonym>, ContextSt
         Ok(value) => value
             .map(ContextSourcePseudonym::try_from)
             .transpose()
-            .map_err(|error| ContextStoreError::Internal(format!("Invalid CSR contextSourceAlias: {error}"))),
+            .map_err(|error| StoredRegistrationError::ContextSourceAlias(error).into()),
         Err(sqlx::Error::ColumnNotFound(_) | sqlx::Error::ColumnDecode { .. }) => Ok(None),
-        Err(e) => Err(ContextStoreError::Internal(format!("Failed to read context_source_alias column: {e}"))),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -220,7 +213,7 @@ fn row_to_alias(row: &PgRow) -> Result<Option<ContextSourcePseudonym>, ContextSt
 ///
 /// The delivery state is `LEFT JOIN`ed, so a registration whose state row is
 /// missing reads as one that has observed nothing.
-fn row_to_health(row: &PgRow) -> Result<RegistrationHealth, ContextStoreError> {
+fn row_to_health(row: &PgRow) -> Result<RegistrationHealth, StoredRegistrationError> {
     let last_success: Option<DateTime<Utc>> = row.get("last_success");
     let last_failure: Option<DateTime<Utc>> = row.get("last_failure");
     let attempted = last_success.is_some() || last_failure.is_some();
@@ -230,7 +223,7 @@ fn row_to_health(row: &PgRow) -> Result<RegistrationHealth, ContextStoreError> {
         .filter(|_| attempted)
         .map(|code| CsrStatusCode::try_from(code).map(status_of))
         .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR status: {e}")))?;
+        .map_err(StoredRegistrationError::Status)?;
 
     Ok(RegistrationHealth::builder()
         .status(status)

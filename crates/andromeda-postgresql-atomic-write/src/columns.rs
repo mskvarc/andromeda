@@ -1,14 +1,18 @@
 //! Encoding semantic entity records into PostgreSQL bind columns.
 
-use crate::{commit_refusal::persistence, entity_group::IndexedWrite, name_resolution::ResolvedWriteNames};
-use andromeda_context_commit::{error::CommitError, projected_attributes::ProjectedAttributes};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use crate::{entity_group::IndexedWrite, name_resolution::ResolvedWriteNames};
+use andromeda_context_commit::{
+    commit_invariant::{CommitInvariant, NameDictionary},
+    error::CommitError,
+    projected_attributes::ProjectedAttributes,
+};
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind};
 use andromeda_postgresql_context_store::entity::params::PreparedEntityColumns;
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, ltree::scope_to_ltree};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::{collections::HashMap, fmt::Display, hash::Hash};
+use std::{collections::HashMap, hash::Hash};
 
 /// Build parallel bind vectors for one fused entity statement.
 ///
@@ -18,26 +22,30 @@ use std::{collections::HashMap, fmt::Display, hash::Hash};
 pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteNames) -> Result<PreparedEntityColumns, CommitError> {
     let mut columns = PreparedEntityColumns::with_capacity(writes.len());
     for (_, write) in writes {
-        let record = write.entity.record().ok_or_else(|| CommitError::Invariant {
-            detail: format!("atomic write for {} carries no entity record", write.entity_id),
+        let record = write.entity.record().ok_or_else(|| {
+            CommitError::from(CommitInvariant::MissingEntityRecord {
+                entity: write.entity_id.as_ref().clone(), // clone: the error owns the entity it names
+            })
         })?;
         let projection = &record.projection;
         columns.ids.push(write.entity_id.as_ref().clone()); // clone: the SQL column set owns identifiers borrowed from the writes.
-        columns.push_entity_type_name_keys(key_array(&projection.types, &names.types, "entity type", &write.entity_id)?);
-        let attribute_keys = key_array(projection.attributes.names(), &names.attributes, "attribute name", &write.entity_id)?;
+        columns.push_entity_type_name_keys(key_array(&projection.types, &names.types, NameDictionary::EntityType)?);
+        let attribute_keys = key_array(projection.attributes.names(), &names.attributes, NameDictionary::AttributeName)?;
         columns.push_attribute_instances(instance_keys(&projection.attributes, &attribute_keys));
         columns.push_attribute_name_keys(attribute_keys);
         columns.scope_paths_json.push(Value::Array(
             projection.scopes.iter().map(|scope| Value::String(scope_to_ltree(scope))).collect(),
         ));
-        columns.push_payload(&record.payload).map_err(persistence)?;
+        columns
+            .push_payload(&record.payload)
+            .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
         columns
             .push_geometries(
                 projection.location.as_ref(),
                 projection.observation_space.as_ref(),
                 projection.operation_space.as_ref(),
             )
-            .map_err(persistence)?;
+            .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
         columns.location_expires_ats.push(projection.location_expires_at);
         columns.expires_ats.push(record.expires_at);
         columns.min_attribute_expires_ats.push(record.min_attribute_expires_at);
@@ -47,19 +55,19 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteName
 
 /// The JSON array of dictionary keys for `names`, in declaration order.
 ///
-/// `dictionary` describes the dictionary in the invariant failure a missing
-/// key raises, so the message names which dictionary broke its promise.
-fn key_array<N, K>(names: &[N], keys: &HashMap<N, K>, dictionary: &str, entity_id: &Identifier) -> Result<Vec<K>, CommitError>
+/// `dictionary` names the dictionary in the invariant failure a missing key
+/// raises, so the failure says which dictionary broke its promise.
+fn key_array<N, K>(names: &[N], keys: &HashMap<N, K>, dictionary: NameDictionary) -> Result<Vec<K>, CommitError>
 where
-    N: Eq + Hash + Display,
+    N: Eq + Hash,
     K: Copy,
 {
     names
         .iter()
         .map(|name| {
-            keys.get(name).copied().ok_or_else(|| CommitError::Invariant {
-                detail: format!("{dictionary} dictionary returned no key for {name} on {entity_id}"),
-            })
+            keys.get(name)
+                .copied()
+                .ok_or(CommitError::Invariant(CommitInvariant::UnresolvedName(dictionary)))
         })
         .collect()
 }
@@ -83,7 +91,7 @@ pub(crate) fn expectations(writes: &[IndexedWrite<'_>]) -> Vec<Option<DateTime<U
 #[cfg(test)]
 mod tests {
     use crate::{
-        columns::{columns_for, expectations},
+        columns::{CommitInvariant, NameDictionary, columns_for, expectations},
         name_resolution::ResolvedWriteNames,
     };
     use andromeda_context_commit::{
@@ -232,14 +240,14 @@ mod tests {
         let writes = [scoped_write("urn:ngsi-ld:A", Vec::new(), None)];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let refused = columns_for(&indexed, &ResolvedWriteNames::default()).expect_err("an unresolved name is refused");
-        assert!(matches!(refused, CommitError::Invariant { .. }), "{refused:?}");
+        assert!(matches!(refused, CommitError::Invariant(_)), "{refused:?}");
         let types_only = ResolvedWriteNames {
             types: resolved().types,
             attributes: HashMap::new(),
         };
         let refused = columns_for(&indexed, &types_only).expect_err("an unresolved attribute name is refused");
         assert!(
-            matches!(refused, CommitError::Invariant { ref detail } if detail.contains("attribute name")),
+            matches!(refused, CommitError::Invariant(CommitInvariant::UnresolvedName(NameDictionary::AttributeName))),
             "{refused:?}"
         );
     }

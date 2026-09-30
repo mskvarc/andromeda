@@ -111,7 +111,7 @@ fn event_desc() -> impl Strategy<Value = EventDesc> {
 }
 
 fn internal(error: &impl ToString) -> SubscriptionError {
-    SubscriptionError::internal(error.to_string())
+    panic!("invalid test fixture: {}", error.to_string())
 }
 
 fn entity_uri(index: usize) -> Result<Identifier, SubscriptionError> {

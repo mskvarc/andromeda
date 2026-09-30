@@ -14,7 +14,7 @@ use std::{fmt::Display, time::Duration};
 #[must_use]
 pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
     match error {
-        SnapshotError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
+        SnapshotError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
         SnapshotError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
         SnapshotError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, error.to_string()),
         SnapshotError::PreparationTimeout { .. } => {
@@ -29,8 +29,8 @@ pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
         SnapshotError::Request(source) => classify_parameter_error(source),
         SnapshotError::StoreSaturated | SnapshotError::Contended => ClassifiedReport::store_saturated(error.to_string()),
         SnapshotError::Representation(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to render the snapshot")),
-        SnapshotError::Persistence { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("the snapshot store is unavailable")),
-        SnapshotError::Internal { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("internal snapshot error")),
+        SnapshotError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the snapshot store is unavailable")),
+        SnapshotError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal snapshot error")),
     }
 }
 
@@ -127,14 +127,18 @@ mod tests {
     use super::classify_snapshot_error;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use andromeda_snapshot::error::SnapshotError;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant, snapshot_validation_reason::SnapshotValidationReason};
     use std::error::Error;
 
     #[test]
     fn focused_snapshot_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
         let identifier = "urn:ngsi-ld:Snapshot:1".parse::<Identifier>()?;
         for (error, expected) in [
-            (SnapshotError::Validation { detail: "invalid".to_string() }, NgsiLdErrorType::BadRequestData),
+            (
+                SnapshotError::Validation(SnapshotValidationReason::IdImmutable),
+                NgsiLdErrorType::BadRequestData,
+            ),
             (
                 SnapshotError::NotFound {
                     identifier: identifier.clone(),
@@ -142,26 +146,24 @@ mod tests {
                 NgsiLdErrorType::ResourceNotFound,
             ),
             (SnapshotError::AlreadyExists { identifier }, NgsiLdErrorType::AlreadyExists),
+            (SnapshotError::Persistence(PersistenceFailure::Unavailable), NgsiLdErrorType::InternalError),
             (
-                SnapshotError::Persistence {
-                    detail: "database host".to_string(),
-                },
+                SnapshotError::Internal(SnapshotInvariant::LeaseDeadlineOverflow),
                 NgsiLdErrorType::InternalError,
             ),
-            (SnapshotError::Internal { detail: "broken".to_string() }, NgsiLdErrorType::InternalError),
         ] {
             let report = classify_snapshot_error(&error);
             pretty_assertions::assert_eq!(report.error_type(), expected);
             match &error {
-                SnapshotError::Persistence { detail } => {
+                SnapshotError::Persistence(failure) => {
                     pretty_assertions::assert_eq!(report.detail(), "the snapshot store is unavailable");
-                    assert!(!report.detail().contains(detail.as_str()), "the raw cause leaked: {}", report.detail());
+                    assert!(!report.detail().contains(&failure.to_string()), "the raw cause leaked: {}", report.detail());
                 }
-                SnapshotError::Internal { detail } => {
+                SnapshotError::Internal(invariant) => {
                     pretty_assertions::assert_eq!(report.detail(), "internal snapshot error");
-                    assert!(!report.detail().contains(detail.as_str()), "the raw cause leaked: {}", report.detail());
+                    assert!(!report.detail().contains(&invariant.to_string()), "the raw cause leaked: {}", report.detail());
                 }
-                SnapshotError::Validation { .. }
+                SnapshotError::Validation(_)
                 | SnapshotError::NotFound { .. }
                 | SnapshotError::AlreadyExists { .. }
                 | SnapshotError::PreparationTimeout { .. }

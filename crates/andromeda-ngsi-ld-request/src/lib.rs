@@ -38,6 +38,7 @@ pub mod linked_retrieval_consistency;
 pub mod linked_retrieval_term;
 pub mod local;
 pub mod options;
+pub mod options_token;
 pub mod pagination_cursor;
 pub mod protocol;
 pub mod query;
@@ -45,6 +46,7 @@ pub mod query_narrowing;
 pub mod representation_format;
 pub mod representation_parameter;
 pub mod subscription;
+pub mod unsupported_representation;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

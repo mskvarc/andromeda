@@ -31,6 +31,7 @@ pub mod lifecycle;
 pub mod pending_work;
 pub mod residency;
 pub mod runtime;
+pub mod runtime_build_failure;
 pub mod state_factory;
 pub mod status;
 pub mod tenant_keyset;
@@ -48,6 +49,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-configuration-scalars",
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-persistence-failure",
         "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [

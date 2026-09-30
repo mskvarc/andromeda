@@ -7,25 +7,22 @@ use crate::config::{
 };
 use andromeda_http_server::config::ListenerTransport;
 use andromeda_http3_server::config::Http3Mode;
-use std::{
-    fmt::Display,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
-    config.server.validate().map_err(owner_configuration_error)?;
-    config.http.validate().map_err(owner_configuration_error)?;
-    config.database.validate().map_err(owner_configuration_error)?;
-    config.jsonld.validate().map_err(owner_configuration_error)?;
-    config.temporal.validate().map_err(owner_configuration_error)?;
-    config.tenancy.validate().map_err(owner_configuration_error)?;
-    config.entity.validate().map_err(owner_configuration_error)?;
-    config.federation.validate().map_err(owner_configuration_error)?;
-    config.snapshot.validate().map_err(owner_configuration_error)?;
-    config.notifications.validate().map_err(owner_configuration_error)?;
-    config.spatial.validate().map_err(owner_configuration_error)?;
-    config.management.validate().map_err(owner_configuration_error)?;
-    config.extensions.validate().map_err(owner_configuration_error)?;
+    config.server.validate()?;
+    config.http.validate()?;
+    config.database.validate()?;
+    config.jsonld.validate()?;
+    config.temporal.validate()?;
+    config.tenancy.validate()?;
+    config.entity.validate()?;
+    config.federation.validate()?;
+    config.snapshot.validate()?;
+    config.notifications.validate()?;
+    config.spatial.validate()?;
+    config.management.validate()?;
+    config.extensions.validate()?;
     validate_acquire_timeout_below_request_timeout(config)?;
     validate_side_effect_lease_over_acquire_timeout(config)?;
     validate_build_admission_timeout_below_request_timeout(config)?;
@@ -49,7 +46,7 @@ fn validate_tls_material_for_listeners(config: &RuntimeConfig) -> Result<(), Con
         (ManagementMode::SeparatePort, ListenerTransport::Tls)
     );
     if tcp || quic || management {
-        config.tls.material_sources().map_err(owner_configuration_error)?;
+        config.tls.material_sources()?;
     }
     Ok(())
 }
@@ -63,7 +60,7 @@ fn validate_tls_material_for_listeners(config: &RuntimeConfig) -> Result<(), Con
 fn validate_management_port_distinct_from_server(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
     let management = &config.management;
     if matches!(management.mode, ManagementMode::SeparatePort) && management.port == config.server.port {
-        return Err(owner_configuration_error(ManagementConfigError::PortCollision { port: management.port }));
+        return Err(ManagementConfigError::PortCollision { port: management.port }.into());
     }
     Ok(())
 }
@@ -76,13 +73,11 @@ fn validate_management_port_distinct_from_server(config: &RuntimeConfig) -> Resu
 /// request deadline for a connection, a saturated pool would race the request
 /// timeout and surface as a stalled 500 rather than the fast 503 with
 /// `Retry-After` the acquire deadline exists to produce.
-fn validate_acquire_timeout_below_request_timeout(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
-    let acquire = config.database.acquire_timeout.duration().as_secs();
-    let request = config.http.request_timeout.duration().as_secs();
-    if acquire >= request {
-        return Err(ConfigurationError::invalid(format!(
-            "database.acquire_timeout ({acquire}s) must be below http.request_timeout ({request}s) so a saturated pool answers 503 before the request deadline"
-        )));
+const fn validate_acquire_timeout_below_request_timeout(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
+    let acquire = config.database.acquire_timeout.duration();
+    let request = config.http.request_timeout.duration();
+    if acquire.as_secs() >= request.as_secs() {
+        return Err(ConfigurationError::AcquireTimeoutNotBelowRequestTimeout { acquire, request });
     }
     Ok(())
 }
@@ -95,10 +90,7 @@ fn validate_acquire_timeout_below_request_timeout(config: &RuntimeConfig) -> Res
 /// replay's connection may take up to `database.acquire_timeout`. The entity
 /// configuration owns the bound and its margin; this supplies the deadline.
 fn validate_side_effect_lease_over_acquire_timeout(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
-    config
-        .entity
-        .validate_side_effect_lease_over(config.database.acquire_timeout.duration())
-        .map_err(owner_configuration_error)
+    Ok(config.entity.validate_side_effect_lease_over(config.database.acquire_timeout.duration())?)
 }
 
 /// The tenant cold-build admission deadline must be strictly below the HTTP
@@ -112,15 +104,9 @@ fn validate_build_admission_timeout_below_request_timeout(config: &RuntimeConfig
     let admission = config.tenancy.build_admission_timeout.duration();
     let request = config.http.request_timeout.duration();
     if admission >= request {
-        return Err(ConfigurationError::invalid(format!(
-            "tenancy.build_admission_timeout ({admission:?}) must be below http.request_timeout ({request:?}) so a request that cannot be admitted to a cold build answers 503 before the request deadline"
-        )));
+        return Err(ConfigurationError::BuildAdmissionNotBelowRequestTimeout { admission, request });
     }
     Ok(())
-}
-
-fn owner_configuration_error(error: impl Display) -> ConfigurationError {
-    ConfigurationError::invalid(error.to_string())
 }
 
 pub(super) fn normalize_preload_context_paths(config: &mut RuntimeConfig, config_file: Option<&Path>) {

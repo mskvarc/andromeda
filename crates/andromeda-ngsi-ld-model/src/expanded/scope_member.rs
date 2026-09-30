@@ -34,10 +34,8 @@ pub enum ScopeMemberError {
     #[error("a scope value is not a string")]
     NotAString,
     /// One value is not a scope path.
-    #[error("scope '{raw}' is not a scope path: {source}")]
+    #[error("a scope value is not a scope path: {source}")]
     NotAScopePath {
-        /// The value as the client wrote it.
-        raw: String,
         /// Why it is not a scope path.
         source: ScopePathError,
     },
@@ -89,10 +87,7 @@ fn read_scope_nodes(nodes: &[Value]) -> Result<ScopeMember, ScopeMemberError> {
             continue;
         }
         let raw = scope_value(node).ok_or(ScopeMemberError::NotAString)?;
-        let path = raw.parse::<ScopePath>().map_err(|source| ScopeMemberError::NotAScopePath {
-            raw: raw.to_owned(), // clone: the error outlives the borrowed payload
-            source,
-        })?;
+        let path = raw.parse::<ScopePath>().map_err(|source| ScopeMemberError::NotAScopePath { source })?;
         paths.push(path);
     }
 
@@ -265,8 +260,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             read_scope_member(&entity).expect_err("a hyphen is not a scope level character"),
             ScopeMemberError::NotAScopePath {
-                raw: "/A/B-C".to_owned(),
-                source: ScopePathError::Malformed("/A/B-C".to_owned()),
+                source: ScopePathError::Malformed,
             }
         );
     }
@@ -280,7 +274,6 @@ mod tests {
         pretty_assertions::assert_eq!(
             read_scope_member(&entity).expect_err("a level beyond the bound cannot be stored"),
             ScopeMemberError::NotAScopePath {
-                raw,
                 source: ScopePathError::LevelTooLong(1001),
             }
         );
@@ -304,8 +297,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             read_scope_member(&payload).expect_err("the second node carries a value outside clause 4.18"),
             ScopeMemberError::NotAScopePath {
-                raw: "/A/B-C".to_owned(),
-                source: ScopePathError::Malformed("/A/B-C".to_owned()),
+                source: ScopePathError::Malformed,
             }
         );
 

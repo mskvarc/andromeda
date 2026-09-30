@@ -1,6 +1,6 @@
 //! What one tenant's inspection came to.
 
-use crate::{controller::PassOutcome, inspection::CapabilityStatus};
+use crate::{capability::CapabilityStatus, controller::PassOutcome};
 use andromeda_postgresql_codes::maintenance_inspection_result::MaintenanceInspectionResultCode;
 use strum::EnumIter;
 

@@ -1,7 +1,7 @@
 //! Composition of one tenant's entity spatial index for the configured
 //! consistency mode.
 
-use crate::tenant_factory::error::TenantAssemblyError;
+use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError};
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_entity::{
     port::spatial_snapshot::EntitySpatialSnapshotSource,
@@ -79,7 +79,8 @@ pub(super) fn indexed_commits(
 
 /// Where an entity's location sits in `tenant`'s index.
 pub(super) fn location_placement(tenant: &TenantRef) -> Result<LocationPlacement, TenantAssemblyError> {
-    LocationPlacement::new(tenant.clone()).map_err(|error| TenantAssemblyError::invariant(error.to_string())) // clone: the placement owns its tenant
+    // clone: the placement owns its tenant
+    LocationPlacement::new(tenant.clone()).map_err(|error| AssemblyInvariant::LocationPlacement(Box::new(error)).into())
 }
 
 #[cfg(test)]

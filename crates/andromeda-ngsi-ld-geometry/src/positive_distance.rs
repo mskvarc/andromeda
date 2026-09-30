@@ -11,23 +11,23 @@ use thiserror::Error;
 /// laxer than that grammar: it accepts a leading `+`, a bare leading or trailing
 /// `.`, leading zeros, and the non-finite spellings `NaN` / `inf`. Each is
 /// rejected here so only a well-formed positive distance is representable.
-#[derive(Debug, Error, Clone, PartialEq)]
+#[derive(Debug, Error)]
 pub enum PositiveDistanceParseError {
     /// The value is not an RFC 8259 JSON `Number` (a leading `+`, a bare leading
     /// or trailing `.`, a leading zero, thousands separators, or non-numeric
     /// text all land here).
-    #[error("invalid distance: {0}")]
-    InvalidSyntax(String),
+    #[error("invalid distance")]
+    InvalidSyntax(#[source] serde_json::Error),
     /// The value parsed as a JSON number but is not representable as a finite
     /// `f64` (`NaN` or an infinity). Left unchecked such a value reaches `PostGIS`
     /// as a bare identifier rather than a distance.
     #[error("non-finite distance: {0}")]
-    NonFinite(String),
+    NonFinite(Number),
     /// The value is a finite number that is zero or negative. Clause 4.10's
     /// grammar is `distance equal PositiveNumber`, so a non-positive distance is
     /// not a `near` query at all.
     #[error("non-positive distance: {0}")]
-    NonPositive(String),
+    NonPositive(Number),
 }
 
 /// A strictly positive distance in metres, validated against the clause 4.10
@@ -55,13 +55,12 @@ impl FromStr for PositiveDistance {
         // `serde_json::Number` accepts exactly the RFC 8259 `Number` grammar, so
         // it rejects the leading `+`, bare `.`, and leading zeros that `f64`'s
         // own parser tolerates but clause 4.10 forbids.
-        let number = Number::from_str(value).map_err(|_| PositiveDistanceParseError::InvalidSyntax(value.to_string()))?;
-        let metres = number.as_f64().ok_or_else(|| PositiveDistanceParseError::NonFinite(value.to_string()))?;
-        if !metres.is_finite() {
-            return Err(PositiveDistanceParseError::NonFinite(value.to_string()));
-        }
+        let number = Number::from_str(value).map_err(PositiveDistanceParseError::InvalidSyntax)?;
+        let Some(metres) = number.as_f64().filter(|metres| metres.is_finite()) else {
+            return Err(PositiveDistanceParseError::NonFinite(number));
+        };
         if metres <= 0.0 {
-            return Err(PositiveDistanceParseError::NonPositive(value.to_string()));
+            return Err(PositiveDistanceParseError::NonPositive(number));
         }
         Ok(PositiveDistance(metres))
     }
@@ -99,9 +98,11 @@ mod tests {
     #[test]
     fn a_value_outside_the_rfc_8259_number_grammar_is_a_syntax_error() {
         for input in ["+500", ".5", "5.", "007", "1,000", "", "far"] {
-            pretty_assertions::assert_eq!(
-                PositiveDistance::from_str(input).expect_err(input),
-                PositiveDistanceParseError::InvalidSyntax(input.to_string()),
+            assert!(
+                matches!(
+                    PositiveDistance::from_str(input).expect_err(input),
+                    PositiveDistanceParseError::InvalidSyntax(_)
+                ),
                 "{input} must be a syntax error"
             );
         }
@@ -119,10 +120,10 @@ mod tests {
     #[test]
     fn a_non_positive_value_is_rejected() {
         for input in ["0", "0.0", "-5"] {
-            pretty_assertions::assert_eq!(
-                PositiveDistance::from_str(input).expect_err(input),
-                PositiveDistanceParseError::NonPositive(input.to_string()),
-                "{input} must be non-positive"
+            let error = PositiveDistance::from_str(input).expect_err(input);
+            assert!(
+                matches!(&error, PositiveDistanceParseError::NonPositive(number) if number.to_string() == input),
+                "{input} must be non-positive and name the rejected number"
             );
         }
     }

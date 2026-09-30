@@ -241,7 +241,7 @@ mod tests {
         query::{SharedQueryParams, temporal::TemporalQueryParameters},
     };
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
-    use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
+    use andromeda_ngsi_ld_query::{error::QueryError, filter::serialize::serialize_attr_path, projection::exclusivity::ProjectionConflict};
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
@@ -575,7 +575,7 @@ mod tests {
         assert!(params_from_query(&format!("{window}&orderBy=id")).validate(true).is_ok());
         assert!(matches!(
             params_from_query(&format!("{window}&local=true&orderBy=speed")).validate(true),
-            Err(ParameterError::Query(QueryError::TemporalOrderingMember(member))) if member == "speed"
+            Err(ParameterError::Query(QueryError::TemporalOrderingMember(member))) if serialize_attr_path(&member) == "speed"
         ));
         assert!(params_from_query(&format!("{window}&local=true&orderBy=id")).validate(true).is_ok());
     }

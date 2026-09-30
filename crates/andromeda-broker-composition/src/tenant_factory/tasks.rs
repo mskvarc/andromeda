@@ -7,6 +7,7 @@ mod expiry;
 mod maintenance;
 mod notification_delivery;
 mod notification_schedule;
+mod notification_worker_failure;
 mod pool_gauges;
 mod retention;
 mod snapshot;

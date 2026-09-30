@@ -1,7 +1,9 @@
 //! Failures reported by Context Registry policy and implementations.
 
-use crate::identifier::ContextIdentifier;
+use crate::{identifier::ContextIdentifier, registry_invariant::RegistryInvariant};
+use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use iri_rs::IriBuf;
 use thiserror::Error;
 
@@ -44,19 +46,17 @@ pub enum ContextRegistryError {
         identifier: Identifier,
     },
     /// A remote Context could not be downloaded for reload.
-    #[error("context is not available from {source_url}: {detail}")]
+    #[error("context is not available from {source_url}: {source}")]
     ContextUnavailable {
         /// The remote Context source.
         source_url: IriBuf,
-        /// Human-readable resolver failure detail.
-        detail: String,
+        /// Why the resolver could not provide the document.
+        #[source]
+        source: Box<JsonLdError>,
     },
     /// A persistence implementation could not complete an operation.
-    #[error("context registry persistence failed: {detail}")]
-    Persistence {
-        /// Human-readable backend-neutral failure detail.
-        detail: String,
-    },
+    #[error("context registry persistence failed: {0}")]
+    Persistence(#[source] PersistenceFailure),
     /// A connection pool was saturated before the operation could run.
     ///
     /// Backpressure, not a fault: no backend became free within the acquire
@@ -65,28 +65,51 @@ pub enum ContextRegistryError {
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
     /// A response could not be represented as JSON.
-    #[error("context registry representation failed: {detail}")]
-    Representation {
-        /// Human-readable serialization failure detail.
-        detail: String,
-    },
-    /// Policy or an implementation produced an invalid domain value.
-    #[error("context registry invariant failed: {detail}")]
-    Invariant {
-        /// Human-readable invariant failure detail.
-        detail: String,
-    },
+    #[error("context registry representation failed: {0}")]
+    Representation(#[source] serde_json::Error),
+    /// Policy produced an invalid domain value.
+    #[error("context registry invariant failed: {0}")]
+    Invariant(#[from] RegistryInvariant),
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A saturated store is backpressure the client can retry, so it keeps its own
+/// retryable category; every other failure is a persistence fault.
+impl From<PersistenceFailure> for ContextRegistryError {
+    fn from(failure: PersistenceFailure) -> ContextRegistryError {
+        match failure {
+            PersistenceFailure::Saturated => ContextRegistryError::StoreSaturated,
+            fault @ (PersistenceFailure::RolledBack
+            | PersistenceFailure::Unavailable
+            | PersistenceFailure::ConstraintViolated
+            | PersistenceFailure::StatementRejected
+            | PersistenceFailure::RecordMissing
+            | PersistenceFailure::Undecodable
+            | PersistenceFailure::Unencodable
+            | PersistenceFailure::StatementUnbuildable
+            | PersistenceFailure::CapacityExceeded
+            | PersistenceFailure::SchemaMismatch
+            | PersistenceFailure::ContractBroken) => ContextRegistryError::Persistence(fault),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::error::ContextRegistryError;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 
     #[test]
     fn persistence_error_does_not_expose_a_backend_type() {
-        let error = ContextRegistryError::Persistence {
-            detail: "connection closed".to_string(),
-        };
-        pretty_assertions::assert_eq!(error.to_string(), "context registry persistence failed: connection closed");
+        let error = ContextRegistryError::from(PersistenceFailure::Unavailable);
+        pretty_assertions::assert_eq!(error.to_string(), "context registry persistence failed: the store is unreachable");
+    }
+
+    #[test]
+    fn a_saturated_store_keeps_its_retryable_category() {
+        assert!(matches!(
+            ContextRegistryError::from(PersistenceFailure::Saturated),
+            ContextRegistryError::StoreSaturated
+        ));
     }
 }

@@ -5,8 +5,8 @@
 //! `Accept-Language` syntax of RFC 7231 section 5.3.5, so the grammar is owned
 //! here rather than by either carrier.
 
-use crate::quality::{Quality, QualityValue};
-use langtag::{LangTag, LangTagBuf};
+use crate::quality::{Quality, QualityParseError, QualityValue};
+use langtag::{InvalidLangTag, LangTag, LangTagBuf};
 use std::{cmp::Reverse, fmt};
 use thiserror::Error;
 
@@ -31,10 +31,7 @@ impl LanguageRange {
             return Ok(LanguageRange::Wildcard);
         }
 
-        let tag = LangTagBuf::new(raw.to_string()).map_err(|error| LanguageFilterError::InvalidLanguageTag {
-            value: raw.to_string(),
-            source: error,
-        })?;
+        let tag = LangTagBuf::new(raw.to_string()).map_err(LanguageFilterError::InvalidLanguageTag)?;
 
         Ok(LanguageRange::Tag(tag))
     }
@@ -62,18 +59,16 @@ impl LanguageRange {
         for parameter in segments {
             let parameter = parameter.trim();
             if parameter.is_empty() {
-                return Err(LanguageFilterError::MalformedParameter(trimmed.to_string()));
+                return Err(LanguageFilterError::MalformedParameter);
             }
 
-            let (name, value) = parameter
-                .split_once('=')
-                .ok_or_else(|| LanguageFilterError::MalformedParameter(parameter.to_string()))?;
+            let (name, value) = parameter.split_once('=').ok_or(LanguageFilterError::MalformedParameter)?;
 
             if name.trim() != "q" {
-                return Err(LanguageFilterError::UnsupportedParameter(name.trim().to_string()));
+                return Err(LanguageFilterError::UnsupportedParameter);
             }
 
-            quality = Quality::parse_decimal(value.trim()).map_err(|_| LanguageFilterError::InvalidQuality(value.trim().to_string()))?;
+            quality = Quality::parse_decimal(value.trim()).map_err(LanguageFilterError::InvalidQuality)?;
         }
 
         Ok(QualityValue::new(range, quality))
@@ -208,31 +203,25 @@ pub enum LanguageFilterError {
     /// One of the comma-delimited preferences was empty.
     #[error("the `lang` query parameter contains an empty language preference")]
     EmptyPreference,
-    /// A malformed parameter segment was found.
-    #[error("malformed language preference parameter `{0}`")]
-    MalformedParameter(String),
+    /// A parameter segment is empty or not a `name=value` pair.
+    #[error("a language preference parameter is not a name=value pair")]
+    MalformedParameter,
     /// A parameter other than `q` was provided.
-    #[error("unsupported language preference parameter `{0}`")]
-    UnsupportedParameter(String),
+    #[error("a language preference accepts only the q parameter")]
+    UnsupportedParameter,
     /// A `q` value was syntactically invalid.
-    #[error("invalid language preference quality value `{0}`")]
-    InvalidQuality(String),
+    #[error("invalid language preference quality value")]
+    InvalidQuality(#[source] QualityParseError),
     /// A language tag was invalid.
-    #[error("invalid language tag `{value}`")]
-    InvalidLanguageTag {
-        /// The original invalid input.
-        value: String,
-        /// The source parser error.
-        #[source]
-        source: langtag::InvalidLangTag<String>,
-    },
+    #[error("invalid language tag")]
+    InvalidLanguageTag(#[source] InvalidLangTag<String>),
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         language::{LanguageFilter, LanguageFilterError, LanguageRange},
-        quality::{Quality, QualityValue},
+        quality::{Quality, QualityParseError, QualityValue},
     };
     use langtag::{LangTag, LangTagBuf};
 
@@ -339,17 +328,21 @@ mod tests {
 
     #[test]
     fn a_malformed_quality_parameter_is_rejected() {
-        assert!(matches!(LanguageFilter::parse("fr;q=1.1"), Err(LanguageFilterError::InvalidQuality(quality)) if quality == "1.1"));
-        assert!(matches!(LanguageFilter::parse("fr;q"), Err(LanguageFilterError::MalformedParameter(_))));
+        assert!(matches!(
+            LanguageFilter::parse("fr;q=1.1"),
+            Err(LanguageFilterError::InvalidQuality(QualityParseError::AboveOne))
+        ));
+        assert!(matches!(LanguageFilter::parse("fr;q"), Err(LanguageFilterError::MalformedParameter)));
+        assert!(matches!(LanguageFilter::parse("fr;"), Err(LanguageFilterError::MalformedParameter)));
     }
 
     #[test]
     fn a_parameter_other_than_quality_is_rejected() {
-        assert!(matches!(LanguageFilter::parse("fr;level=1"), Err(LanguageFilterError::UnsupportedParameter(name)) if name == "level"));
+        assert!(matches!(LanguageFilter::parse("fr;level=1"), Err(LanguageFilterError::UnsupportedParameter)));
     }
 
     #[test]
     fn an_invalid_language_tag_is_rejected() {
-        assert!(matches!(LanguageFilter::parse("123"), Err(LanguageFilterError::InvalidLanguageTag { .. })));
+        assert!(matches!(LanguageFilter::parse("123"), Err(LanguageFilterError::InvalidLanguageTag(_))));
     }
 }

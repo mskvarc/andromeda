@@ -1,11 +1,12 @@
 //! Direct PostgreSQL implementation of durable Context hit accounting.
 
-use crate::jsonld_context::repo::JsonLdContextRepository;
+use crate::{jsonld_context::repo::JsonLdContextRepository, store_fault::persistence_failure};
 use andromeda_context_registry::{
     error::ContextRegistryError,
     hit_store::{ContextHitStore, ContextHitStoreFuture},
 };
 use andromeda_jsonld::hit_counter::HitDelta;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 
 impl ContextHitStore for JsonLdContextRepository {
     fn flush_hits<'a>(&'a self, deltas: &'a [HitDelta]) -> ContextHitStoreFuture<'a> {
@@ -16,11 +17,7 @@ impl ContextHitStore for JsonLdContextRepository {
             let urls: Vec<&str> = deltas.iter().map(|delta| delta.url.as_str()).collect();
             let counts = deltas
                 .iter()
-                .map(|delta| {
-                    i64::try_from(delta.count).map_err(|_| ContextRegistryError::Invariant {
-                        detail: format!("Context hit delta exceeds PostgreSQL bigint: {}", delta.count),
-                    })
-                })
+                .map(|delta| i64::try_from(delta.count).map_err(|error| ContextRegistryError::from(PersistenceFailure::Unencodable.record(&error))))
                 .collect::<Result<Vec<i64>, ContextRegistryError>>()?;
             sqlx::query(
                 r"
@@ -35,7 +32,7 @@ impl ContextHitStore for JsonLdContextRepository {
             .bind(&counts)
             .execute(&self.pool)
             .await
-            .map_err(|error| ContextRegistryError::Persistence { detail: error.to_string() })?;
+            .map_err(|error| ContextRegistryError::from(persistence_failure(&error)))?;
             Ok(())
         })
     }
@@ -49,8 +46,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_hit_batch_does_not_open_a_database_connection() -> Result<(), ContextRegistryError> {
-        let pool = PgPool::connect_lazy("postgres://postgres:postgres@localhost/andromeda")
-            .map_err(|error| ContextRegistryError::Invariant { detail: error.to_string() })?;
+        let pool = PgPool::connect_lazy("postgres://postgres:postgres@localhost/andromeda").expect("a valid test fixture");
         let repository = JsonLdContextRepository::new(&pool);
         repository.flush_hits(&[]).await
     }

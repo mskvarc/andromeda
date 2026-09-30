@@ -1,38 +1,54 @@
 //! Typed results of context-source federation attempts.
 
-use crate::source_continuation::SourceContinuation;
+use crate::{error::FederationError, source_continuation::SourceContinuation};
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
 use serde_json::Value;
+use std::{sync::Arc, time::Duration};
+use thiserror::Error;
 
 /// Why no HTTP response was obtained from a context source.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Shared between every outcome that reports the attempt, so the causes that
+/// are not `Clone` are held behind an `Arc`.
+#[derive(Debug, Clone, Error)]
 pub enum TransportFailure {
-    /// The source did not answer within the registration's timeout, or is
-    /// inside its cooldown window and was not contacted (clause 5.2.34).
-    Timeout {
-        /// Sanitized transport detail, relayed opaquely from the failed attempt
-        /// and not broker-authored.
-        detail: String,
+    /// The source did not answer within the registration's timeout.
+    #[error("no response within {}ms", .after.as_millis())]
+    TimedOut {
+        /// The timeout that elapsed.
+        after: Duration,
     },
-    /// The request could not be delivered: connection refused, DNS failure,
-    /// TLS failure, or a malformed request.
-    Unreachable {
-        /// Sanitized transport detail, relayed opaquely from the failed attempt
-        /// and not broker-authored.
-        detail: String,
+    /// The source is inside its clause 5.2.34 cooldown window and was not
+    /// contacted.
+    #[error("registration is cooling down for another {}ms after a failure", .remaining.as_millis())]
+    CoolingDown {
+        /// How much of the window is left.
+        remaining: Duration,
     },
+    /// The broker could not prepare the request for this registration.
+    #[error("the forwarded request could not be prepared: {0}")]
+    Unprepared(Arc<FederationError>),
+    /// The request could not be delivered: connection refused, DNS failure or
+    /// TLS failure.
+    #[error("the forwarded request could not be delivered: {0}")]
+    Undelivered(Arc<reqwest::Error>),
 }
 
 impl TransportFailure {
-    /// The sanitized detail of the failure.
+    /// A failure to prepare the request for a registration.
     #[must_use]
-    pub fn detail(&self) -> &str {
-        match self {
-            TransportFailure::Timeout { detail } | TransportFailure::Unreachable { detail } => detail,
-        }
+    pub fn unprepared(error: FederationError) -> TransportFailure {
+        TransportFailure::Unprepared(Arc::new(error))
+    }
+
+    /// Whether the failure is the source not answering in time, which clause
+    /// 6.3.17 reports as a gateway timeout rather than a bad gateway.
+    #[must_use]
+    pub const fn is_timeout(&self) -> bool {
+        matches!(self, TransportFailure::TimedOut { .. } | TransportFailure::CoolingDown { .. })
     }
 }
 
@@ -63,8 +79,8 @@ pub(crate) enum ForwardGetOutcome {
     /// about its own sources: a broker that found nothing because its only
     /// registration looped back still names the loop.
     NotFound(Vec<NgsiLdWarning>),
-    /// Successful HTTP response with invalid JSON.
-    InvalidPayload(String),
+    /// Successful HTTP response whose body is not JSON.
+    InvalidPayload(serde_json::Error),
     /// Non-success HTTP status other than 404.
     ErrorStatus(u16),
     /// No HTTP response arrived.
@@ -98,14 +114,13 @@ impl ForwardGetOutcome {
         match self {
             ForwardGetOutcome::Success(_) | ForwardGetOutcome::NotFound(_) => None,
             ForwardGetOutcome::InvalidPayload(detail) => Some(NgsiLdWarning::RevalidationFailed(format!(
-                "Context source {registration} returned invalid payload: {detail}"
+                "Context source {registration} returned a payload that is not JSON: {detail}"
             ))),
             ForwardGetOutcome::ErrorStatus(status) => Some(NgsiLdWarning::MiscellaneousPersistentWarning(format!(
                 "Context source {registration} returned HTTP {status}"
             ))),
             ForwardGetOutcome::Transport(failure) => Some(NgsiLdWarning::MiscellaneousWarning(format!(
-                "Context source {registration} did not respond: {}",
-                failure.detail()
+                "Context source {registration} did not respond: {failure}"
             ))),
             ForwardGetOutcome::LoopDetected => Some(NgsiLdWarning::MiscellaneousWarning(format!("registration loop detected for {registration}"))),
         }
@@ -243,7 +258,7 @@ pub struct ForwardedWriteResult {
 }
 
 /// Result classification for one forwarded write.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum ForwardedWriteOutcome {
     /// The context source completed the operation.
     Completed {
@@ -283,8 +298,8 @@ impl ForwardedWriteResult {
     pub const fn status(&self) -> u16 {
         match &self.outcome {
             ForwardedWriteOutcome::Completed { status, .. } | ForwardedWriteOutcome::RemoteHttpFailure { status, .. } => *status,
-            ForwardedWriteOutcome::Transport(TransportFailure::Timeout { .. }) => 504,
-            ForwardedWriteOutcome::Transport(TransportFailure::Unreachable { .. }) => 502,
+            ForwardedWriteOutcome::Transport(TransportFailure::TimedOut { .. } | TransportFailure::CoolingDown { .. }) => 504,
+            ForwardedWriteOutcome::Transport(TransportFailure::Unprepared(_) | TransportFailure::Undelivered(_)) => 502,
             ForwardedWriteOutcome::LoopDetected => 508,
             ForwardedWriteOutcome::NotAdvertised => 409,
             ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => 422,
@@ -313,7 +328,7 @@ impl ForwardedWriteResult {
     #[must_use]
     pub fn failure_detail(&self) -> Option<String> {
         match &self.outcome {
-            ForwardedWriteOutcome::Transport(failure) => Some(failure.detail().to_string()),
+            ForwardedWriteOutcome::Transport(failure) => Some(failure.to_string()),
             ForwardedWriteOutcome::LoopDetected => Some(format!("registration {} loops back into the request's Via chain", self.registration_id)),
             ForwardedWriteOutcome::NotAdvertised => Some(format!("registration {} does not advertise the requested operation", self.registration_id)),
             ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => Some(format!(
@@ -340,6 +355,7 @@ mod tests {
         source_continuation::SourceContinuation,
     };
     use serde_json::json;
+    use std::time::Duration;
 
     /// Only an HTTP error status is a status a source answered with. The
     /// outcomes that produced no response, and the ones that produced a good
@@ -359,10 +375,13 @@ mod tests {
         });
         pretty_assertions::assert_eq!(success.error_status(), None);
         pretty_assertions::assert_eq!(ForwardGetOutcome::NotFound(Vec::new()).error_status(), None);
-        pretty_assertions::assert_eq!(ForwardGetOutcome::InvalidPayload("not JSON".to_owned()).error_status(), None);
         pretty_assertions::assert_eq!(
-            ForwardGetOutcome::Transport(TransportFailure::Timeout {
-                detail: "no response within 100ms".to_owned()
+            ForwardGetOutcome::InvalidPayload(serde_json::from_str::<serde_json::Value>("not JSON").expect_err("not JSON")).error_status(),
+            None
+        );
+        pretty_assertions::assert_eq!(
+            ForwardGetOutcome::Transport(TransportFailure::TimedOut {
+                after: Duration::from_millis(100)
             })
             .error_status(),
             None

@@ -77,9 +77,21 @@ impl RequestFingerprint {
 }
 
 /// Why stored text is not a [`RequestFingerprint`].
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("entity map request fingerprint '{0}' is not <operation>:<64 lowercase hex digits>")]
-pub struct RequestFingerprintError(String);
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum RequestFingerprintError {
+    /// The text has no `:` between the operation and the digest.
+    #[error("entity map request fingerprint is not <operation>:<64 lowercase hex digits>")]
+    MissingSeparator,
+    /// The text before the `:` names no known operation.
+    #[error("entity map request fingerprint names no known operation: {0}")]
+    UnknownOperation(#[source] strum::ParseError),
+    /// The digest is not 64 hex digits.
+    #[error("entity map request fingerprint digest is not 64 hex digits: {0}")]
+    Digest(#[source] hex::FromHexError),
+    /// The digest is hex, but not in the lowercase spelling the broker writes.
+    #[error("entity map request fingerprint digest is not lowercase hex")]
+    NonCanonicalDigest,
+}
 
 // The stored form carries two fields behind one separator, which no derive
 // can split and validate.
@@ -87,12 +99,12 @@ impl FromStr for RequestFingerprint {
     type Err = RequestFingerprintError;
 
     fn from_str(value: &str) -> Result<RequestFingerprint, RequestFingerprintError> {
-        let (kind, digest) = value.split_once(':').ok_or_else(|| RequestFingerprintError(value.to_owned()))?;
-        let kind = kind.parse::<MapRequestKind>().map_err(|_| RequestFingerprintError(value.to_owned()))?;
+        let (kind, digest) = value.split_once(':').ok_or(RequestFingerprintError::MissingSeparator)?;
+        let kind = kind.parse::<MapRequestKind>().map_err(RequestFingerprintError::UnknownOperation)?;
         let mut bytes = [0_u8; 32];
-        hex::decode_to_slice(digest, &mut bytes).map_err(|_| RequestFingerprintError(value.to_owned()))?;
+        hex::decode_to_slice(digest, &mut bytes).map_err(RequestFingerprintError::Digest)?;
         if hex::encode(bytes) != digest {
-            return Err(RequestFingerprintError(value.to_owned()));
+            return Err(RequestFingerprintError::NonCanonicalDigest);
         }
         Ok(RequestFingerprint { kind, digest: bytes })
     }
@@ -112,11 +124,20 @@ mod tests {
     }
 
     #[test]
-    fn malformed_stored_text_is_refused() {
-        assert!("query-entities".parse::<RequestFingerprint>().is_err());
-        assert!("purge:00".parse::<RequestFingerprint>().is_err());
-        assert!(format!("retrieve-entity:{}", "0".repeat(63)).parse::<RequestFingerprint>().is_err());
-        assert!(format!("retrieve-entity:{}", "A".repeat(64)).parse::<RequestFingerprint>().is_err());
+    fn malformed_stored_text_is_refused_with_the_reason_it_is_malformed() {
+        pretty_assertions::assert_eq!("query-entities".parse::<RequestFingerprint>(), Err(RequestFingerprintError::MissingSeparator));
+        assert!(matches!(
+            "purge:00".parse::<RequestFingerprint>(),
+            Err(RequestFingerprintError::UnknownOperation(_))
+        ));
+        assert!(matches!(
+            format!("retrieve-entity:{}", "0".repeat(63)).parse::<RequestFingerprint>(),
+            Err(RequestFingerprintError::Digest(_))
+        ));
+        pretty_assertions::assert_eq!(
+            format!("retrieve-entity:{}", "A".repeat(64)).parse::<RequestFingerprint>(),
+            Err(RequestFingerprintError::NonCanonicalDigest)
+        );
     }
 
     #[test]

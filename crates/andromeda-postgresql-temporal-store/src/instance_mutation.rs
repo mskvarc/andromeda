@@ -19,7 +19,6 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
-    instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
     uri::Uri,
 };
@@ -31,6 +30,7 @@ use andromeda_postgresql_schema::{
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::{clock::now, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
+use andromeda_temporal::temporal_not_found_reason::TemporalNotFoundReason;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
 use sea_query::{CaseStatement, Expr, ExprTrait, Iden, JoinType, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
@@ -192,8 +192,10 @@ impl TemporalRepository {
 }
 
 /// Report an instance the addressed attribute does not hold.
-fn instance_not_found(instance: &InstanceIdentity) -> String {
-    format!("Attribute instance {} not found", instance.rendered(InstanceFamily::Attribute))
+fn instance_not_found(instance: &InstanceIdentity) -> TemporalNotFoundReason {
+    TemporalNotFoundReason::AttributeInstance {
+        instance: instance.clone(), // clone: the reason owns the instance it names
+    }
 }
 
 /// Owned update values kept alive while PostgreSQL binds borrow them.

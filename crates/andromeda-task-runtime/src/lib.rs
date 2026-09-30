@@ -19,6 +19,7 @@ pub mod drain_task;
 mod driver_supervision;
 /// Runtime-neutral task failure classification.
 pub mod failure;
+mod failure_report;
 /// Observable task lifecycle events.
 pub mod lifecycle_event;
 /// Periodic scheduling policy.
@@ -31,6 +32,8 @@ mod resident_registration;
 pub mod resident_task;
 /// Restart decisions after task failures.
 pub mod restart_policy;
+/// Failures the runtime raises against its own execution contract.
+pub mod runtime_failure;
 mod scheduled_driver;
 mod scheduled_registration;
 /// Periodically triggered bounded task execution.

@@ -1,6 +1,6 @@
 //! Failures produced by entity policy and its persistence ports.
 
-use crate::{entity_diagnostic::EntityDiagnostic, entity_operation_unsupported::EntityOperationUnsupported, entity_validation_reason::EntityValidationReason};
+use crate::{entity_invariant::EntityInvariant, entity_operation_unsupported::EntityOperationUnsupported, entity_validation_reason::EntityValidationReason};
 use andromeda_context_commit::error::CommitError;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::{
@@ -12,8 +12,8 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::expanded::mutation::error::ExpandedEntityError;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_request::error::ParameterError;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use derive_more::IsVariant;
-use std::fmt::Display;
 use thiserror::Error;
 
 /// A failure while validating, reading, querying, mutating, or persisting an entity.
@@ -94,7 +94,7 @@ pub enum EntityError {
     Commit(CommitError),
     /// A persistence adapter could not complete the operation.
     #[error("entity persistence failed: {0}")]
-    Persistence(EntityDiagnostic),
+    Persistence(#[source] PersistenceFailure),
     /// A connection pool was saturated before the operation could run.
     ///
     /// Backpressure, not a fault: no backend became free within the acquire
@@ -113,7 +113,7 @@ pub enum EntityError {
     TransactionContended,
     /// An internal entity invariant could not be satisfied.
     #[error("entity invariant failed: {0}")]
-    Internal(EntityDiagnostic),
+    Internal(#[from] EntityInvariant),
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
@@ -123,20 +123,40 @@ pub enum EntityError {
 impl From<CommitError> for EntityError {
     fn from(error: CommitError) -> EntityError {
         match error {
-            // The commit port cannot depend on this crate's error types without a
-            // cycle, so a refused submission arrives as opaque prose relayed into
-            // the typed validation reason rather than as a typed cause.
-            CommitError::Submission { detail } => EntityError::Validation(EntityValidationReason::CommitRefused { detail }),
+            CommitError::Submission(refusal) => EntityError::Validation(EntityValidationReason::CommitRefused(refusal)),
             // Saturation is backpressure the client can retry, so it keeps its
             // own category rather than being folded into the internal-fault
             // `Commit` variant.
             CommitError::StoreSaturated => EntityError::StoreSaturated,
             CommitError::TransactionContended => EntityError::TransactionContended,
             failure @ (CommitError::DuplicateEntity { .. }
-            | CommitError::Persistence { .. }
-            | CommitError::Invariant { .. }
+            | CommitError::Persistence(_)
+            | CommitError::Invariant(_)
             | CommitError::ReplayLeaseLost { .. }
             | CommitError::UnexpectedOutcomeCount { .. }) => EntityError::Commit(failure),
+        }
+    }
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A saturated store and a transaction rolled back under contention are
+/// backpressure the client can retry, so each keeps its own retryable category;
+/// only a fault becomes [`EntityError::Persistence`].
+impl From<PersistenceFailure> for EntityError {
+    fn from(failure: PersistenceFailure) -> EntityError {
+        match failure {
+            PersistenceFailure::Saturated => EntityError::StoreSaturated,
+            PersistenceFailure::RolledBack => EntityError::TransactionContended,
+            fault @ (PersistenceFailure::Unavailable
+            | PersistenceFailure::ConstraintViolated
+            | PersistenceFailure::StatementRejected
+            | PersistenceFailure::RecordMissing
+            | PersistenceFailure::Undecodable
+            | PersistenceFailure::Unencodable
+            | PersistenceFailure::StatementUnbuildable
+            | PersistenceFailure::CapacityExceeded
+            | PersistenceFailure::SchemaMismatch
+            | PersistenceFailure::ContractBroken) => EntityError::Persistence(fault),
         }
     }
 }
@@ -182,18 +202,30 @@ impl EntityError {
             attempts,
         }
     }
+}
 
-    /// Construct a persistence-adapter failure from its masked diagnostic source.
-    ///
-    /// The detail is captured for operators and masked before any client sees
-    /// it, so this takes `impl Display` — a typed adapter error is handed over
-    /// directly rather than pre-rendered to a string at the call site.
-    pub fn persistence(source: impl Display) -> EntityError {
-        EntityError::Persistence(EntityDiagnostic::new(source))
+#[cfg(test)]
+mod tests {
+    use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
+    use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+
+    #[test]
+    fn backpressure_keeps_its_retryable_categories() {
+        assert!(matches!(EntityError::from(PersistenceFailure::Saturated), EntityError::StoreSaturated));
+        assert!(matches!(EntityError::from(PersistenceFailure::RolledBack), EntityError::TransactionContended));
+        assert!(matches!(
+            EntityError::from(PersistenceFailure::Undecodable),
+            EntityError::Persistence(PersistenceFailure::Undecodable)
+        ));
     }
 
-    /// Construct an internal-invariant failure from its masked diagnostic source.
-    pub fn internal(source: impl Display) -> EntityError {
-        EntityError::Internal(EntityDiagnostic::new(source))
+    #[test]
+    fn a_refused_commit_is_a_validation_failure_carrying_the_typed_refusal() {
+        let error = EntityError::from(CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered));
+        assert!(matches!(
+            error,
+            EntityError::Validation(EntityValidationReason::CommitRefused(SubmissionRefusal::UnitCodeUnregistered))
+        ));
     }
 }

@@ -228,6 +228,7 @@ fn schema_error_is_migratable(error: &SchemaContractError) -> bool {
         SchemaContractError::MigrationsDigestMismatch { .. }
         | SchemaContractError::PostgresBelowMinimum { .. }
         | SchemaContractError::ServerEncodingNotUtf8 { .. }
+        | SchemaContractError::ServerEncodingUnreadable(_)
         | SchemaContractError::NoMigrations
         | SchemaContractError::SchemaVersionValue(_)
         | SchemaContractError::MigrationsDigestValue(_)

@@ -5,8 +5,8 @@
 //! tenant removes its routes; the name is resolved against the registry when a
 //! route is written and read back through it when a route is followed.
 
+use crate::store_fault::{StoreFault, persistence_failure, undecodable};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
-use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_postgresql_schema::{subscription_forwarding::ForwardedSubscriptionRoutes, tenancy::Tenants};
 use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, mapping::ForwardedSubscriptionRouter};
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -26,19 +26,14 @@ use sea_query::{
 };
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
-use std::{any::Any, fmt::Display};
 
 /// Erase an adapter failure into the forwarding policy's persistence category.
 ///
-/// A `sqlx` pool-acquire timeout is backpressure, not a fault, so it becomes
-/// [`SubscriptionForwardingError::StoreSaturated`] (a 503); every other failure
-/// stays a persistence fault. The concrete [`sqlx::Error`] is recovered by
-/// downcast because callers hand it in already erased behind `impl Display`.
-fn persistence_error(error: impl Display + Any) -> SubscriptionForwardingError {
-    match (&error as &dyn Any).downcast_ref::<sqlx::Error>() {
-        Some(sqlx_error) if is_pool_saturated(sqlx_error) => SubscriptionForwardingError::StoreSaturated,
-        Some(_) | None => SubscriptionForwardingError::persistence(error.to_string()),
-    }
+/// Classify an adapter failure at the port boundary: backpressure keeps the
+/// port's retryable category and every fault becomes its persistence failure.
+#[track_caller]
+fn persistence_error(error: impl StoreFault) -> SubscriptionForwardingError {
+    SubscriptionForwardingError::from(persistence_failure(&error))
 }
 
 /// `tenants` rows that are `tenant`: the named row, or the one unnamed default.
@@ -150,7 +145,7 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
             let tenant = tenant
                 .map(|name| name.parse::<TenantName>())
                 .transpose()
-                .map_err(|error| SubscriptionForwardingError::persistence(format!("invalid routed tenant: {error}")))?;
+                .map_err(|error| SubscriptionForwardingError::from(undecodable(&error)))?;
             Ok(Some(TenantRef::from_header(tenant)))
         })
     }

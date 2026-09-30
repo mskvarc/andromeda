@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_registration::{
     entity_probe::{EntityPresence, RegisteredEntityProbe},
     error::RegistrationError,
+    registration_invariant::RegistrationInvariant,
 };
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
@@ -74,9 +75,34 @@ impl EntityStoreRegistrationProbe {
     }
 }
 
-/// Erase an entity-store failure at the registration policy boundary.
+/// Classify an entity-store failure at the registration policy boundary:
+/// backpressure and a store fault keep their categories, and any other entity
+/// failure is recorded and reported as the admission check it broke.
 fn probe_error(error: &EntityError) -> RegistrationError {
-    RegistrationError::internal(format!("entity store could not answer a registration admission check: {error}"))
+    match error {
+        EntityError::StoreSaturated | EntityError::TransactionContended => RegistrationError::StoreSaturated,
+        EntityError::Persistence(failure) => RegistrationError::from(*failure),
+        other @ (EntityError::Validation(_)
+        | EntityError::NotFound { .. }
+        | EntityError::TypeNotFound { .. }
+        | EntityError::AttributeNotFound { .. }
+        | EntityError::MemberNotFound(_)
+        | EntityError::AlreadyExists { .. }
+        | EntityError::Contention { .. }
+        | EntityError::OperationNotSupported(_)
+        | EntityError::JsonLd(_)
+        | EntityError::Query(_)
+        | EntityError::Request(_)
+        | EntityError::Representation(_)
+        | EntityError::Identifier(_)
+        | EntityError::EntityTypeListIdentifier(_)
+        | EntityError::AttributeListIdentifier(_)
+        | EntityError::Commit(_)
+        | EntityError::Internal(_)) => {
+            tracing::error!(error = %other, "the entity store could not answer a registration admission check");
+            RegistrationInvariant::EntityProbe.into()
+        }
+    }
 }
 
 impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
@@ -137,9 +163,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
             // An identifier-only read leaves nothing to finish a declined
             // predicate against, so a store that declined one cannot answer.
             if !outcome.unapplied.is_empty() {
-                return Err(RegistrationError::internal(
-                    "entity store declined a predicate of a registration admission check",
-                ));
+                return Err(RegistrationInvariant::EntityProbeDeclinedPredicate.into());
             }
             Ok(if outcome.rows.is_empty() {
                 EntityPresence::Absent

@@ -63,7 +63,7 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Internal`] if a child projection ever stops
+/// Returns [`ContextStoreError::StatementBuild`] if a child projection ever stops
 /// matching its column list, which the fixed shapes here make unreachable.
 pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = insert_staging_columns();
@@ -79,8 +79,7 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
                 .expr(projected(Entities::MinAttributeExpiresAt))
                 .from(Proj)
                 .take(),
-        )
-        .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+        )?;
     identity
         .on_conflict(OnConflict::column(Entities::Id).do_nothing().to_owned())
         .returning(Query::returning().columns([Entities::EntityKey, Entities::Id]));
@@ -94,8 +93,7 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
                 .expr(Expr::col((Ins, Entities::EntityKey)))
                 .expr(projected(EntityDocuments::Payload))
                 .take(),
-        )
-        .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+        )?;
 
     let mut search = Query::insert();
     search
@@ -125,8 +123,7 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
                 .expr(projected(EntitySearch::ObservationSpace))
                 .expr(projected(EntitySearch::OperationSpace))
                 .take(),
-        )
-        .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+        )?;
     search.returning(Query::returning().columns([
         EntitySearch::EntityKey,
         EntitySearch::EntityTypeNameKeys,

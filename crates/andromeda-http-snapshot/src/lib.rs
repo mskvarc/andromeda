@@ -24,7 +24,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-temporal",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: [],
+    allow_workspace_dev_dependencies: ["andromeda-persistence-failure"],
     allow_production_dependencies: ["axum"],
 }
 

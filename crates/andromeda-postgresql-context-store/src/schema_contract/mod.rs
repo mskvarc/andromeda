@@ -21,5 +21,7 @@ pub mod migrations_digest;
 pub mod schema_metadata;
 /// The stamped schema version.
 pub mod schema_version;
+/// The server-side character sets a PostgreSQL database can be created with.
+pub mod server_encoding;
 /// The server and extension versions the tenant schema depends on.
 pub mod server_requirements;

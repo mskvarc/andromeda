@@ -18,6 +18,7 @@ use crate::{
     },
     entity::inserted_entity::MintedEntityKey,
     error::ContextStoreError,
+    store_invariant::StoreInvariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
@@ -42,16 +43,16 @@ impl MintedProjection {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::Internal`] when the row is keyed to an
+    /// Returns [`ContextStoreError::Invariant`] when the row is keyed to an
     /// entity other than `entity`, which would let a row of an existing entity
     /// bypass the upsert.
     pub fn push(&mut self, entity: MintedEntityKey, row: ProjectedAttributeRow) -> Result<(), ContextStoreError> {
         if row.key.entity_key != entity.key() {
-            return Err(ContextStoreError::Internal(format!(
-                "projection row of entity {} offered under minted key {}",
-                row.key.entity_key,
-                entity.key()
-            )));
+            return Err(StoreInvariant::ProjectionRowOfAnotherEntity {
+                row: row.key.entity_key,
+                minted: entity.key(),
+            }
+            .into());
         }
         self.rows.push(row);
         Ok(())
@@ -93,16 +94,14 @@ pub async fn insert_minted_projection_in_tx(
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Internal`] if the staged selection ever stops
+/// Returns [`ContextStoreError::StatementBuild`] if the staged selection ever stops
 /// matching the sixteen-wide column list, which the fixed shapes make
 /// unreachable.
 fn minted_insert_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = staging_columns();
     let mut insert = Query::insert();
     insert.into_table(table_of(target, CurrentAttributeValues::Table)).columns(PROJECTION_COLUMNS);
-    insert
-        .select_from(Query::select().columns(PROJECTION_COLUMNS.map(|column| (Input, column))).from(Input).take())
-        .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+    insert.select_from(Query::select().columns(PROJECTION_COLUMNS.map(|column| (Input, column))).from(Input).take())?;
     insert.with_cte(WithClause::new().cte(input_cte(&columns)).to_owned());
     let insert = insert;
 

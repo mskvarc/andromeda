@@ -1,6 +1,6 @@
 //! Construction of one tenant's notification transports.
 
-use crate::tenant_factory::error::TenantAssemblyError;
+use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError};
 use andromeda_delivery::{
     dispatch::TransportDispatcher,
     http::config::HttpTransportConfig,
@@ -33,7 +33,7 @@ pub(super) fn construct_transports(request_timeout: Duration) -> Result<TenantTr
             Arc::clone(&sse_registry),
             Arc::clone(&ws_registry),
         )
-        .map_err(|error| TenantAssemblyError::invariant(format!("Failed to create transport dispatcher: {error}")))?,
+        .map_err(AssemblyInvariant::from)?,
     );
     Ok(TenantTransports {
         dispatcher,

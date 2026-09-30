@@ -11,6 +11,9 @@ mod action;
 mod artifact;
 /// Compile-time maintenance targets and their fixed statements.
 pub mod candidate;
+mod capability;
+/// The PostgreSQL counters the controller reads and records.
+pub mod catalog_counter;
 /// One bounded fleet-wide maintenance pass.
 pub mod controller;
 /// Typed controller failures.
@@ -19,6 +22,8 @@ mod evidence;
 mod inspection;
 /// Threshold and safety-gate decision policy.
 pub mod policy;
+mod safety_gate_inspection;
+mod scalar_query;
 mod state;
 /// Bounded on-disk size sampling of the live schema's base tables.
 pub mod table_size;

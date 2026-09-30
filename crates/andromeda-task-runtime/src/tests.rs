@@ -34,10 +34,32 @@ use tokio::{
     time::{advance, sleep},
 };
 
+/// The typed failure a scripted test operation reports.
+#[derive(Debug, Error)]
+enum ScriptedFailure {
+    #[error("configuration unavailable")]
+    ConfigurationUnavailable,
+    #[error("retry")]
+    Retry,
+    #[error("failed after reaching running state")]
+    FailedAfterRunning,
+    #[error("operator action required")]
+    OperatorActionRequired,
+    #[error("broken tenant invariant")]
+    BrokenTenantInvariant,
+    #[error("done")]
+    Done,
+    #[error("test runtime identity lock was poisoned")]
+    IdentityLockPoisoned,
+}
+
+/// What a scripted test operation reports.
+type Scripted<T> = Result<T, TaskFailure<ScriptedFailure>>;
+
 #[derive(Debug, Error)]
 enum TestError {
     #[error(transparent)]
-    Failure(#[from] TaskFailure),
+    Failure(#[from] TaskFailure<ScriptedFailure>),
     #[error(transparent)]
     TaskName(#[from] TaskNameError),
     #[error(transparent)]
@@ -45,7 +67,7 @@ enum TestError {
     #[error(transparent)]
     Registration(#[from] TaskRegistrationError),
     #[error(transparent)]
-    Startup(#[from] StartupTaskError),
+    Startup(#[from] StartupTaskError<ScriptedFailure>),
     #[error(transparent)]
     Receive(#[from] RecvError),
     #[error(transparent)]
@@ -85,7 +107,7 @@ async fn immediate_scheduled_execution_obeys_the_first_cadence() -> Result<(), T
             let observed = Arc::clone(&observed);
             async move {
                 observed.fetch_add(1, Ordering::SeqCst);
-                Ok(())
+                Scripted::Ok(())
             }
         },
     );
@@ -114,7 +136,7 @@ async fn delayed_scheduled_execution_waits_one_complete_cadence() -> Result<(), 
             let observed = Arc::clone(&observed);
             async move {
                 observed.fetch_add(1, Ordering::SeqCst);
-                Ok(())
+                Scripted::Ok(())
             }
         },
     );
@@ -156,7 +178,7 @@ async fn elapsed_ticks_coalesce_without_concurrent_execution() -> Result<(), Tes
                         release.notified().await;
                     }
                     active.fetch_sub(1, Ordering::SeqCst);
-                    Ok(())
+                    Scripted::Ok(())
                 }
             }
         },
@@ -186,7 +208,7 @@ async fn idle_scheduled_task_cancels_without_waiting_for_its_cadence() -> Result
             let observed = Arc::clone(&observed);
             async move {
                 observed.fetch_add(1, Ordering::SeqCst);
-                Ok(())
+                Scripted::Ok(())
             }
         },
     );
@@ -213,7 +235,7 @@ async fn active_operation_can_return_its_lease_before_cancellation_completes() -
             async move {
                 execution.cancellation().cancelled().await;
                 observed.store(true, Ordering::SeqCst);
-                Ok(())
+                Scripted::Ok(())
             }
         },
     );
@@ -231,7 +253,7 @@ async fn active_operation_can_return_its_lease_before_cancellation_completes() -
 async fn shutdown_forces_a_task_that_ignores_its_deadline() -> Result<(), TestError> {
     let supervisor = TaskSupervisor::process(Handle::current());
     let task = ResidentTask::new(registration("forced", RestartPolicy::Never, Duration::from_secs(10))?, |_| async {
-        future::pending::<Result<(), TaskFailure>>().await
+        future::pending::<Result<(), TaskFailure<ScriptedFailure>>>().await
     });
     supervisor.register_resident(task)?;
     settle().await;
@@ -262,7 +284,7 @@ async fn unexpected_resident_completion_consults_restart_policy() -> Result<(), 
             let observed = Arc::clone(&observed);
             async move {
                 observed.fetch_add(1, Ordering::SeqCst);
-                Ok(())
+                Scripted::Ok(())
             }
         },
     );
@@ -297,7 +319,7 @@ async fn failed_startup_is_returned_before_dependent_tasks_start() -> Result<(),
     let supervisor = TaskSupervisor::process(Handle::current());
     let dependent_started = Arc::new(AtomicBool::new(false));
     let task = StartupTask::new(registration("startup-failure", RestartPolicy::Never, Duration::from_secs(1))?, |_| async {
-        Err(TaskFailure::permanent("configuration unavailable"))
+        Err(TaskFailure::permanent(ScriptedFailure::ConfigurationUnavailable))
     });
     let result = supervisor.run_startup(task).await;
     if result.is_ok() {
@@ -324,10 +346,10 @@ async fn transient_restarts_follow_one_and_two_second_backoff() -> Result<(), Te
             async move {
                 let attempt = observed.fetch_add(1, Ordering::SeqCst);
                 if attempt < 2 {
-                    return Err(TaskFailure::transient("retry"));
+                    return Err(TaskFailure::transient(ScriptedFailure::Retry));
                 }
                 execution.mark_running();
-                future::pending::<Result<(), TaskFailure>>().await
+                future::pending::<Result<(), TaskFailure<ScriptedFailure>>>().await
             }
         },
     );
@@ -370,13 +392,13 @@ async fn resident_readiness_resets_failures_before_an_immediate_later_failure() 
             async move {
                 let attempt = observed.fetch_add(1, Ordering::SeqCst);
                 if attempt == 0 {
-                    return Err(TaskFailure::transient("startup retry"));
+                    return Err(TaskFailure::transient(ScriptedFailure::Retry));
                 }
                 execution.mark_running();
                 if attempt == 1 {
-                    return Err(TaskFailure::transient("failed after reaching running state"));
+                    return Err(TaskFailure::transient(ScriptedFailure::FailedAfterRunning));
                 }
-                future::pending::<Result<(), TaskFailure>>().await
+                future::pending::<Result<(), TaskFailure<ScriptedFailure>>>().await
             }
         },
     );
@@ -412,7 +434,7 @@ async fn permanent_failure_does_not_restart() -> Result<(), TestError> {
             let observed = Arc::clone(&observed);
             async move {
                 observed.fetch_add(1, Ordering::SeqCst);
-                Err(TaskFailure::permanent("operator action required"))
+                Err(TaskFailure::permanent(ScriptedFailure::OperatorActionRequired))
             }
         },
     );
@@ -438,7 +460,7 @@ async fn tenant_fatal_invariant_cancels_siblings_but_not_process_scope() -> Resu
             async move {
                 execution.cancellation().cancelled().await;
                 observed.store(true, Ordering::SeqCst);
-                Ok(())
+                Scripted::Ok(())
             }
         },
     ))?;
@@ -449,7 +471,7 @@ async fn tenant_fatal_invariant_cancels_siblings_but_not_process_scope() -> Resu
         ShutdownPolicy::new(Duration::from_secs(1)),
     );
     tenant.register_resident(ResidentTask::new(fatal_registration, |_| async {
-        Err(TaskFailure::invariant_violation("broken tenant invariant"))
+        Err(TaskFailure::invariant_violation(ScriptedFailure::BrokenTenantInvariant))
     }))?;
     settle().await;
     assert!(tenant.cancellation_token().is_cancelled());
@@ -469,7 +491,7 @@ async fn tenant_cancellation_is_isolated_from_sibling_tenant() -> Result<(), Tes
             registration(name, RestartPolicy::Never, Duration::from_secs(1))?,
             |execution| async move {
                 execution.cancellation().cancelled().await;
-                Ok(())
+                Scripted::Ok(())
             },
         ))?;
     }
@@ -493,7 +515,7 @@ async fn process_cancellation_reaches_process_and_all_tenant_tasks() -> Result<(
             registration(name, RestartPolicy::Never, Duration::from_secs(1))?,
             |execution| async move {
                 execution.cancellation().cancelled().await;
-                Ok(())
+                Scripted::Ok(())
             },
         ))?;
     }
@@ -520,7 +542,7 @@ async fn run_now_signals_coalesce_into_one_prompt_execution() -> Result<(), Test
             let observed = Arc::clone(&observed);
             async move {
                 observed.fetch_add(1, Ordering::SeqCst);
-                Ok(())
+                Scripted::Ok(())
             }
         },
     );
@@ -552,7 +574,7 @@ async fn drain_wake_runs_one_bounded_pass_and_acknowledges_only_after_processing
                 let acknowledgements = Arc::clone(&acknowledgements);
                 async move {
                     if durable_items.load(Ordering::SeqCst) == 0 {
-                        return Ok(DrainPassOutcome::Idle);
+                        return Scripted::Ok(DrainPassOutcome::Idle);
                     }
                     assert_eq!(acknowledgements.load(Ordering::SeqCst), 0);
                     sink_effects.fetch_add(1, Ordering::SeqCst);
@@ -588,7 +610,7 @@ async fn an_idle_drain_runs_at_most_six_passes_in_thirty_seconds() -> Result<(),
             let observed = Arc::clone(&observed);
             async move {
                 observed.fetch_add(1, Ordering::SeqCst);
-                Ok(DrainPassOutcome::Idle)
+                Scripted::Ok(DrainPassOutcome::Idle)
             }
         },
     );
@@ -623,7 +645,7 @@ async fn every_drain_pass_reports_whether_a_wake_its_predecessor_or_the_fallback
                 let mut causes = observed.lock().expect("cause log");
                 causes.push(execution.cause());
                 // The woken pass reports more work, so exactly one continuation follows it.
-                Ok(if causes.len() == 1 {
+                Scripted::Ok(if causes.len() == 1 {
                     DrainPassOutcome::WorkMayRemain
                 } else {
                     DrainPassOutcome::Idle
@@ -659,7 +681,7 @@ async fn a_wake_sent_before_registration_is_not_lost() -> Result<(), TestError> 
             let observed = Arc::clone(&observed);
             async move {
                 observed.fetch_add(1, Ordering::SeqCst);
-                Ok(DrainPassOutcome::Idle)
+                Scripted::Ok(DrainPassOutcome::Idle)
             }
         },
     );
@@ -694,7 +716,7 @@ async fn missed_cadences_need_no_persisted_timer_jobs_for_level_triggered_work()
                     if enabled.load(Ordering::SeqCst) {
                         processed.fetch_add(due.swap(0, Ordering::SeqCst), Ordering::SeqCst);
                     }
-                    Ok(())
+                    Scripted::Ok(())
                 }
             }
         },
@@ -722,7 +744,7 @@ async fn terminal_events_are_observed_in_completion_order_with_task_names() -> R
             registration(name, RestartPolicy::Never, Duration::from_secs(1))?,
             move |_| async move {
                 sleep(Duration::from_secs(delay)).await;
-                Err(TaskFailure::permanent("done"))
+                Err(TaskFailure::permanent(ScriptedFailure::Done))
             },
         ))?;
     }
@@ -772,7 +794,7 @@ async fn health_transitions_from_backoff_to_success_and_resets_failures() -> Res
             let observed = Arc::clone(&observed);
             async move {
                 if observed.fetch_add(1, Ordering::SeqCst) == 0 {
-                    Err(TaskFailure::transient("retry once"))
+                    Err(TaskFailure::transient(ScriptedFailure::Retry))
                 } else {
                     Ok(())
                 }
@@ -813,7 +835,7 @@ async fn managed_tasks_run_on_the_supplied_primary_execution_host() -> Result<()
             let lock = captured.lock();
             match lock {
                 Ok(mut value) => *value = Some(Handle::current().id()),
-                Err(_) => return Err(TaskFailure::invariant_violation("test runtime identity lock was poisoned")),
+                Err(_) => return Err(TaskFailure::invariant_violation(ScriptedFailure::IdentityLockPoisoned)),
             }
             Ok(())
         }
@@ -822,7 +844,7 @@ async fn managed_tasks_run_on_the_supplied_primary_execution_host() -> Result<()
     let lock = observed.lock();
     match lock {
         Ok(value) => assert_eq!(*value, Some(expected)),
-        Err(_) => return Err(TaskFailure::invariant_violation("test runtime identity lock was poisoned").into()),
+        Err(_) => return Err(TaskFailure::invariant_violation(ScriptedFailure::IdentityLockPoisoned).into()),
     }
     Ok(())
 }

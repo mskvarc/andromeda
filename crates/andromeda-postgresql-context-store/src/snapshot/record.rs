@@ -6,13 +6,16 @@
 //! its URI; the surrogate `snapshot_key` is issued by the database and used only
 //! to name the branch schema and to key the preparation row.
 
-use crate::snapshot::{
-    branch_schema::{promote_staging_schema, publish_empty_branch},
-    mapper::row_to_snapshot,
-    metadata_change::MetadataChange,
-    persistence_error,
-    status_code::stored_status,
-    status_outbox::enqueue_terminal_notification,
+use crate::{
+    snapshot::{
+        branch_schema::{promote_staging_schema, publish_empty_branch},
+        mapper::row_to_snapshot,
+        metadata_change::MetadataChange,
+        persistence_error,
+        status_code::stored_status,
+        status_outbox::enqueue_terminal_notification,
+    },
+    store_fault::undecodable,
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
@@ -83,7 +86,7 @@ where
         .fetch_optional(executor)
         .await
         .map_err(persistence_error)?;
-    raw.map(|raw| SnapshotKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string())))
+    raw.map(|raw| SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error))))
         .transpose()
 }
 
@@ -267,9 +270,7 @@ pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPu
     let mut ids = Vec::with_capacity(rows.len());
     for row in &rows {
         let raw: String = row.try_get("id").map_err(persistence_error)?;
-        let parsed = raw
-            .parse::<Identifier>()
-            .map_err(|e| SnapshotError::internal(format!("Invalid snapshot id '{raw}' in snapshots table: {e}")))?;
+        let parsed = raw.parse::<Identifier>().map_err(|e| SnapshotError::from(undecodable(&e)))?;
         ids.push(parsed);
     }
     Ok(ids)

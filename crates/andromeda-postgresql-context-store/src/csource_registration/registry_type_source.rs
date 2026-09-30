@@ -7,13 +7,15 @@
 //! lets a discovery take from the registry is one scan of the projection joined
 //! to the attribute-name dictionary.
 
-use crate::csource_registration::registration_store::PostgresRegistrationStore;
+use crate::{
+    csource_registration::registration_store::PostgresRegistrationStore,
+    store_fault::{StoreFault, contract_broken, persistence_failure, undecodable},
+};
 use andromeda_entity::{
     error::EntityError,
     port::registry_types::{RegisteredAttribute, RegisteredType, RegistryTypeSource},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_postgresql_schema::{
     csr::{Csr, RegistrationInformation},
     name_dictionary::AttributeNames,
@@ -22,7 +24,6 @@ use andromeda_postgresql_seaquery::{clock::now, pg_array::any};
 use async_trait::async_trait;
 use sea_query::{Alias, Cond, Expr as SeaExpr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, extension::postgres::PgExpr};
 use sea_query_sqlx::SqlxBinder;
-use std::{any::Any, fmt::Display};
 
 /// The type-axis sentinel the projection stores where a row admits every type;
 /// it names no type and is not reported.
@@ -77,29 +78,23 @@ fn registered_pairs_sql() -> SelectStatement {
 
 /// Erase an adapter-specific diagnostic at the entity port's boundary.
 ///
-/// A `sqlx` pool-acquire timeout is backpressure, not a fault, so it becomes
-/// [`EntityError::StoreSaturated`] (a 503); every other failure stays a
-/// persistence fault. The concrete [`sqlx::Error`] is recovered by downcast
-/// because callers hand it in already erased behind `impl Display`.
-fn persistence_error(error: impl Display + Any) -> EntityError {
-    match (&error as &dyn Any).downcast_ref::<sqlx::Error>() {
-        Some(sqlx_error) if is_pool_saturated(sqlx_error) => EntityError::StoreSaturated,
-        Some(_) | None => EntityError::persistence(error),
-    }
+/// Classify an adapter failure at the port boundary: backpressure keeps the
+/// port's retryable category and every fault becomes its persistence failure.
+#[track_caller]
+fn persistence_error(error: impl StoreFault) -> EntityError {
+    EntityError::from(persistence_failure(&error))
 }
 
 /// Read a stored type name; the projection wrote it, so a malformed one is an
 /// internal fault.
 fn stored_type_name(raw: &str) -> Result<EntityTypeName, EntityError> {
-    raw.parse()
-        .map_err(|error| EntityError::internal(format!("projected entity type is not a type name: {error}")))
+    raw.parse().map_err(|error| EntityError::from(undecodable(&error)))
 }
 
 /// Read a stored attribute name; the dictionary wrote it, so a malformed one is
 /// an internal fault.
 fn stored_attribute_name(raw: &str) -> Result<AttributeName, EntityError> {
-    raw.parse()
-        .map_err(|error| EntityError::internal(format!("dictionary attribute name is not an attribute name: {error}")))
+    raw.parse().map_err(|error| EntityError::from(undecodable(&error)))
 }
 
 /// Fold the joined rows into one entry per registered type, each with the
@@ -124,9 +119,7 @@ pub fn registered_types_of(pairs: &[RegisteredPair]) -> Result<Vec<RegisteredTyp
                     name,
                     attribute_names: Vec::new(),
                 });
-                types
-                    .last_mut()
-                    .ok_or_else(|| EntityError::internal("a just-pushed registered type is missing"))?
+                types.last_mut().ok_or_else(|| EntityError::from(contract_broken()))?
             };
             if let Some(attribute) = &attribute
                 && !entry.attribute_names.contains(attribute)
@@ -161,9 +154,7 @@ pub fn registered_attributes_of(pairs: &[RegisteredPair]) -> Result<Vec<Register
                 name,
                 entity_types: Vec::new(),
             });
-            attributes
-                .last_mut()
-                .ok_or_else(|| EntityError::internal("a just-pushed registered attribute is missing"))?
+            attributes.last_mut().ok_or_else(|| EntityError::from(contract_broken()))?
         };
         for raw in pair.entity_types.iter().filter(|raw| raw.as_str() != ANY_TYPE) {
             let entity_type = stored_type_name(raw)?;

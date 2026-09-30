@@ -60,7 +60,6 @@ async fn declared_name(name: &AttributeName, names: &NameCompactor<'_>) -> Resul
     let compacted = names.compact_attr_iri(name.as_str()).await;
     compacted.parse().map_err(|error| {
         EntityError::Validation(EntityValidationReason::DeclaredName {
-            declared: compacted,
             requested: name.clone(),
             source: error,
         })

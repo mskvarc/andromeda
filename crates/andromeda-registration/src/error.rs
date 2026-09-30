@@ -2,13 +2,13 @@
 
 use crate::{
     registration_conflict_reason::RegistrationConflictReason,
-    registration_diagnostic::RegistrationDiagnostic,
+    registration_invariant::RegistrationInvariant,
     registration_validation_reason::RegistrationValidationReason,
 };
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
-use std::fmt::Display;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use thiserror::Error;
 
 /// A failure while validating, applying, or persisting a registration operation.
@@ -47,7 +47,7 @@ pub enum RegistrationError {
     Identifier(#[from] urn_rs::Error),
     /// The persistence adapter could not complete the requested operation.
     #[error("registration persistence failed: {0}")]
-    Persistence(RegistrationDiagnostic),
+    Persistence(#[source] PersistenceFailure),
     /// A connection pool was saturated before the operation could run.
     ///
     /// Backpressure, not a fault: no backend became free within the acquire
@@ -57,7 +57,29 @@ pub enum RegistrationError {
     StoreSaturated,
     /// An internal registration invariant could not be satisfied.
     #[error("registration invariant failed: {0}")]
-    Internal(RegistrationDiagnostic),
+    Internal(#[from] RegistrationInvariant),
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A saturated store is backpressure the client can retry, so it keeps its own
+/// retryable category; every other failure is a persistence fault.
+impl From<PersistenceFailure> for RegistrationError {
+    fn from(failure: PersistenceFailure) -> RegistrationError {
+        match failure {
+            PersistenceFailure::Saturated => RegistrationError::StoreSaturated,
+            fault @ (PersistenceFailure::RolledBack
+            | PersistenceFailure::Unavailable
+            | PersistenceFailure::ConstraintViolated
+            | PersistenceFailure::StatementRejected
+            | PersistenceFailure::RecordMissing
+            | PersistenceFailure::Undecodable
+            | PersistenceFailure::Unencodable
+            | PersistenceFailure::StatementUnbuildable
+            | PersistenceFailure::CapacityExceeded
+            | PersistenceFailure::SchemaMismatch
+            | PersistenceFailure::ContractBroken) => RegistrationError::Persistence(fault),
+        }
+    }
 }
 
 impl RegistrationError {
@@ -75,19 +97,5 @@ impl RegistrationError {
         RegistrationError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error must outlive the borrowed request identifier.
         }
-    }
-
-    /// Construct a persistence-adapter error from its masked diagnostic source.
-    ///
-    /// The detail is captured for operators and masked before any client sees
-    /// it, so this takes `impl Display` — a typed adapter error is handed over
-    /// directly rather than pre-rendered to a string at the call site.
-    pub fn persistence(source: impl Display) -> RegistrationError {
-        RegistrationError::Persistence(RegistrationDiagnostic::new(source))
-    }
-
-    /// Construct an internal-invariant error from its masked diagnostic source.
-    pub fn internal(source: impl Display) -> RegistrationError {
-        RegistrationError::Internal(RegistrationDiagnostic::new(source))
     }
 }

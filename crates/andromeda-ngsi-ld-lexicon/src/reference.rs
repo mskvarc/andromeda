@@ -18,8 +18,8 @@ pub enum NgsiLdReferenceError {
     #[error(transparent)]
     TooLong(#[from] IdentifierTooLong),
     /// The reference did not match any supported NGSI-LD compacted or expanded form.
-    #[error("invalid NGSI-LD reference: {0}")]
-    Invalid(String),
+    #[error("invalid NGSI-LD reference")]
+    Invalid,
 }
 
 /// Validate a value against the NGSI-LD compacted-name grammar (clause 4.6.2).
@@ -51,7 +51,7 @@ pub fn validate_ngsi_ld_name(value: &str) -> Result<(), NgsiLdReferenceError> {
     if is_compact_iri(value) || Name::new(value).is_ok() || Uri::from_str(value).is_ok() || IriBuf::from_str(value).is_ok() {
         return Ok(());
     }
-    Err(NgsiLdReferenceError::Invalid(value.to_string()))
+    Err(NgsiLdReferenceError::Invalid)
 }
 
 /// Whether a value is a compact IRI `prefix:suffix` whose prefix is a term and

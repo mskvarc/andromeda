@@ -10,6 +10,7 @@ use crate::{
         rendered_entity::{HistoryPresence, RenderedTemporalEntity},
     },
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalService},
+    temporal_invariant::TemporalInvariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
@@ -45,7 +46,7 @@ impl TemporalService {
             let id_outcome = self.reader.query_entity_ids(target, &compiled).await?;
             let (entity_ids, total_count) = id_outcome
                 .complete(compiled.pagination)
-                .map_err(|error| TemporalError::internal(error.to_string()))?;
+                .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
 
             // One batch read of the temporal catalogue, which owns the entity types
             // (clauses 4.5.1 and 4.5.6) and answers for entities whose current

@@ -10,6 +10,7 @@ use andromeda_http_response::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
 use axum::{
     extract::FromRequestParts,
@@ -46,12 +47,13 @@ pub enum ContextTargetResolutionError {
     /// resolved. Backpressure, not a fault: shed as 503 with `Retry-After`.
     #[error("the datastore connection pool is saturated; retry shortly")]
     Saturated,
-    /// Durable target resolution failed internally.
-    #[error("Snapshot target resolution failed: {detail}")]
-    Internal {
-        /// Operator-facing diagnostic.
-        detail: String,
-    },
+    /// The store holding the Snapshot's control record could not be read.
+    #[error("the Snapshot target could not be read: {0}")]
+    Persistence(#[source] PersistenceFailure),
+    /// Durable target resolution failed internally; the resolver records the
+    /// failure for operators where it classifies it.
+    #[error("Snapshot target resolution failed")]
+    Internal,
 }
 
 impl ContextTargetResolutionError {
@@ -70,7 +72,7 @@ impl ContextTargetResolutionError {
                 ClassifiedReport::public(NgsiLdErrorType::InternalError, self.to_string()).with_instance(instance)
             }
             ContextTargetResolutionError::Saturated => ClassifiedReport::store_saturated(self.to_string()).with_instance(instance),
-            ContextTargetResolutionError::Internal { .. } => {
+            ContextTargetResolutionError::Persistence(_) | ContextTargetResolutionError::Internal => {
                 ClassifiedReport::internal(&self, InternalFailureSummary::new("failed to resolve the request's snapshot target")).with_instance(instance)
             }
         }

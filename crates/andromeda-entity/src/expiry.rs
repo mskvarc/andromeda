@@ -226,7 +226,7 @@ fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Result<Optio
         return Ok(None);
     }
     let history = removed_attribute_instances(&previous, &purged)
-        .map_err(EntityError::internal)?
+        .map_err(|error| EntityError::Internal(error.into()))?
         .into_iter()
         .map(HistoryRecord::Tombstone)
         .collect();

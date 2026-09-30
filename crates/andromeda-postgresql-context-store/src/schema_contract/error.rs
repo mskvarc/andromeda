@@ -3,6 +3,7 @@
 use crate::schema_contract::{
     migrations_digest::{MigrationsDigest, MigrationsDigestError},
     schema_version::{SchemaVersion, SchemaVersionError},
+    server_encoding::ServerEncoding,
     server_requirements::{ExtensionPresence, ExtensionVersion, ExtensionVersionError, PostgresVersion},
 };
 use andromeda_postgresql_pool::is_pool_saturated;
@@ -63,8 +64,12 @@ pub enum SchemaContractError {
     #[error("tenant schema contract: the server encoding is {found}, but the schema requires UTF8")]
     ServerEncodingNotUtf8 {
         /// The encoding the server reports.
-        found: String,
+        found: ServerEncoding,
     },
+    /// The server reports an encoding name PostgreSQL does not list as a
+    /// server-side character set.
+    #[error("tenant schema contract: the server encoding is not a known PostgreSQL server encoding: {0}")]
+    ServerEncodingUnreadable(#[source] strum::ParseError),
     /// The server is below the version the schema depends on.
     #[error("tenant schema contract: PostgreSQL {found} is below the required minimum {required}")]
     PostgresBelowMinimum {
@@ -110,6 +115,7 @@ impl SchemaContractError {
             | SchemaContractError::SchemaVersionMismatch { .. }
             | SchemaContractError::MigrationsDigestMismatch { .. }
             | SchemaContractError::ServerEncodingNotUtf8 { .. }
+            | SchemaContractError::ServerEncodingUnreadable(_)
             | SchemaContractError::PostgresBelowMinimum { .. }
             | SchemaContractError::PostGisBelowMinimum { .. }
             | SchemaContractError::TimescaleDbBelowMinimum { .. } => false,

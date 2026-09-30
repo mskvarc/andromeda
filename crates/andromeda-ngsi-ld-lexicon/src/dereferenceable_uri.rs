@@ -43,10 +43,8 @@ pub struct DereferenceableUri {
 
 /// A URI that cannot be dereferenced.
 #[derive(Debug, Error)]
-#[error("'{written}' is not a dereferenceable URI: {source}")]
+#[error("value is not a dereferenceable URI: {source}")]
 pub struct NotDereferenceable {
-    /// The value as it was written.
-    written: String,
     /// Why the URL parser refused it.
     source: url::ParseError,
 }
@@ -82,10 +80,7 @@ impl FromStr for DereferenceableUri {
                 written: value.to_owned(),
                 dereferenced,
             }),
-            Err(source) => Err(NotDereferenceable {
-                written: value.to_owned(),
-                source,
-            }),
+            Err(source) => Err(NotDereferenceable { source }),
         }
     }
 }
@@ -158,7 +153,7 @@ mod tests {
     #[test]
     fn a_relative_reference_is_not_dereferenceable() {
         let error = "/broker1".parse::<DereferenceableUri>().expect_err("a relative reference is refused");
-        assert!(error.to_string().contains("/broker1"), "{error}");
+        pretty_assertions::assert_eq!(error.source, url::ParseError::RelativeUrlWithoutBase);
     }
 
     /// Equality is the written spelling, and the parsed URL is what says where

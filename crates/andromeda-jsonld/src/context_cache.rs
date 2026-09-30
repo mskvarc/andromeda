@@ -6,6 +6,7 @@
 //! processing may depend on which was made.
 
 use crate::loader::cache_lifetime::{CacheLifetime, ResidualLifetime};
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -13,14 +14,14 @@ use std::fmt::Debug;
 use thiserror::Error;
 
 /// A durable context-cache operation failed.
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ContextCacheError {
     /// A cached context could not be read.
     #[error("failed to read durable context cache: {0}")]
-    Read(String),
+    Read(#[source] PersistenceFailure),
     /// A context could not be persisted.
     #[error("failed to write durable context cache: {0}")]
-    Write(String),
+    Write(#[source] PersistenceFailure),
 }
 
 /// One durable cache hit: the stored document and what is left of its lifetime.

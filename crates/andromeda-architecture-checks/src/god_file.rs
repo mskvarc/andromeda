@@ -33,8 +33,6 @@ pub const GOD_FILE_SIGNAL_LIMIT: usize = 400;
 /// can only shrink toward empty.
 pub const GOD_FILE_BASELINE: &[&str] = &[
     "crates/andromeda-http-temporal/src/temporal/query.rs",
-    "crates/andromeda-postgresql-maintenance/src/inspection.rs",
-    "crates/andromeda-postgresql-name-dictionary/src/name_cache.rs",
     "crates/andromeda-postgresql-temporal-store/src/instance_mutation.rs",
 ];
 

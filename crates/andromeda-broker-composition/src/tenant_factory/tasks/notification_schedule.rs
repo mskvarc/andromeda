@@ -7,12 +7,17 @@
 //! [`NotificationError`]. Registering the schedule and reading that error are
 //! the two things they genuinely share.
 
-use crate::tenant_factory::{background_pacer::BackgroundPacer, error::TenantAssemblyError};
+use crate::tenant_factory::{
+    assembly_invariant::AssemblyInvariant,
+    background_pacer::BackgroundPacer,
+    error::TenantAssemblyError,
+    tasks::notification_worker_failure::{ChangeChannel, channel_closed},
+};
 use andromeda_notification::error::NotificationError;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
-    failure::TaskFailure,
+    failure::{FailureClass, TaskFailure},
     registration::TaskRegistration,
     resident_task::ResidentTask,
     restart_policy::RestartPolicy,
@@ -51,8 +56,8 @@ where
     // Clause 5.8.6 fixes the shortest period at one second; the ceiling only
     // bounds how long the drain waits when nothing is due.
     let floor = Duration::from_secs(1);
-    let fallback = DrainFallbackPolicy::new(floor, ceiling.max(floor)).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from(task_name).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let fallback = DrainFallbackPolicy::new(floor, ceiling.max(floor)).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from(task_name).map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -67,7 +72,7 @@ where
             pacer
                 .run_drain_pass(execution.cause(), async move {
                     let cutoff = DateTime::<Utc>::from(execution.cutoff());
-                    match operation(cutoff).await.map_err(|error| classify_notification_failure(&error))? {
+                    match operation(cutoff).await.map_err(classify_notification_failure)? {
                         Some(next_due) => Ok(DrainPassOutcome::IdleUntil(next_due.into())),
                         None => Ok(DrainPassOutcome::Idle),
                     }
@@ -75,9 +80,7 @@ where
                 .await
         }
     });
-    supervisor
-        .register_drain(task, wake)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+    supervisor.register_drain(task, wake).map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Register a resident task that pulses `wake` whenever a lifecycle change
@@ -103,13 +106,14 @@ pub(super) fn register_periodic_wake<T>(
     supervisor: &TaskSupervisor,
     task_name: &'static str,
     wake: WakeHandle,
+    channel: ChangeChannel,
     changes: broadcast::Sender<T>,
 ) -> Result<(), TenantAssemblyError>
 where
     T: Clone + Send + 'static,
 {
     let restart_delay = Duration::from_secs(1);
-    let name = TaskName::try_from(task_name).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from(task_name).map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -128,7 +132,7 @@ where
                         Ok(_) | Err(RecvError::Lagged(_)) => {
                             let _ = wake.wake();
                         }
-                        Err(RecvError::Closed) => return Err(TaskFailure::transient("subscription change channel closed")),
+                        Err(RecvError::Closed) => return Err(channel_closed(channel)),
                     },
                 }
             }
@@ -137,19 +141,19 @@ where
     supervisor
         .register_resident(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Whether a notification failure ends the worker, degrades the tenant, or is
 /// worth another attempt.
-pub(super) fn classify_notification_failure(error: &NotificationError) -> TaskFailure {
-    let summary = error.to_string();
-    match error {
+pub(super) const fn classify_notification_failure(error: NotificationError) -> TaskFailure<NotificationError> {
+    let class = match &error {
         NotificationError::Entity(_) | NotificationError::Subscription(_) | NotificationError::Registration(_) | NotificationError::JsonLd(_) => {
-            TaskFailure::transient(summary)
+            FailureClass::Transient
         }
-        NotificationError::Persistence { .. } => TaskFailure::transient(summary),
-        NotificationError::Representation { .. } => TaskFailure::permanent(summary),
-        NotificationError::Invariant { .. } => TaskFailure::invariant_violation(summary),
-    }
+        NotificationError::Persistence { .. } => FailureClass::Transient,
+        NotificationError::Representation { .. } => FailureClass::Permanent,
+        NotificationError::Invariant { .. } => FailureClass::InvariantViolation,
+    };
+    TaskFailure::new(class, error)
 }

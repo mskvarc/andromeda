@@ -39,16 +39,14 @@ fn insert_rows_statement(registration: &Identifier, rows: &[RegistrationInformat
     ]);
     for row in rows {
         let (properties, relationships) = row.attributes.stored();
-        insert
-            .values([
-                Expr::val(registration.as_str()),
-                Expr::val(row.types.stored()),
-                Expr::val(row.identifier.stored()),
-                Expr::val(row.identifier_pattern.map(Pattern::as_str)),
-                Expr::val(properties),
-                Expr::val(relationships),
-            ])
-            .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+        insert.values([
+            Expr::val(registration.as_str()),
+            Expr::val(row.types.stored()),
+            Expr::val(row.identifier.stored()),
+            Expr::val(row.identifier_pattern.map(Pattern::as_str)),
+            Expr::val(properties),
+            Expr::val(relationships),
+        ])?;
     }
     Ok(insert.build_sqlx(PostgresQueryBuilder))
 }

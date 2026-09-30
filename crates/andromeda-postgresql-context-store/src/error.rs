@@ -1,16 +1,24 @@
 //! Error types for the context store crate.
 
 use crate::{
-    entity::types_present::EntityTypesMissing,
+    csource_registration::stored_registration_error::StoredRegistrationError,
+    entity::{stored_entity_error::StoredEntityError, types_present::EntityTypesMissing},
+    entity_map::mapper::StoredEntityMapError,
     jsonld_context::mapper::ContextMapperError,
     migration_set::branch::BranchVersionError,
     schema_contract::error::SchemaContractError,
+    snapshot::stored_snapshot_error::StoredSnapshotError,
+    store_invariant::StoreInvariant,
+    subscription_store::stored_subscription_error::StoredSubscriptionError,
 };
+use andromeda_context_commit::write_ordinal::WriteOrdinalOutOfRange;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
-use andromeda_postgresql_pool::{is_pool_saturated, is_transaction_rolled_back};
+use andromeda_postgresql_pool::{is_pool_saturated, is_transaction_rolled_back, persistence_classification::classify};
 use andromeda_postgresql_query::error::RenderError;
+use sea_query::error::Error as SeaQueryError;
 use sqlx::migrate::MigrateError;
 
 /// The SQLSTATE of a unique violation.
@@ -100,10 +108,43 @@ pub enum ContextStoreError {
     /// rendered again.
     #[error("context store registration information: {0}")]
     StoredRegistrationInformation(#[source] serde_json::Error),
-    /// An internal invariant was violated (malformed stored data, serialization
-    /// failure, etc.).
-    #[error("context store internal: {0}")]
-    Internal(String),
+    /// A statement could not be assembled, which a column/value arity mismatch
+    /// between a builder's column list and its rows is the only cause of.
+    #[error("context store statement could not be built: {0}")]
+    StatementBuild(#[from] SeaQueryError),
+    /// A JSON document the store writes could not be serialised.
+    #[error("context store payload could not be encoded: {0}")]
+    PayloadEncoding(#[source] serde_json::Error),
+    /// A write ordinal is past the `INTEGER` column that stores it.
+    #[error("context store write ordinal: {0}")]
+    OrdinalOutOfRange(#[from] WriteOrdinalOutOfRange),
+    /// A stored context source registration no longer reads back.
+    #[error("context store registration row: {0}")]
+    StoredRegistration(#[from] StoredRegistrationError),
+    /// A stored subscription no longer reads back.
+    #[error("context store subscription row: {0}")]
+    StoredSubscription(#[from] StoredSubscriptionError),
+    /// A stored Snapshot control record no longer reads back.
+    #[error("context store snapshot row: {0}")]
+    StoredSnapshot(#[from] StoredSnapshotError),
+    /// A stored Entity row or census ledger no longer reads back.
+    #[error("context store entity row: {0}")]
+    StoredEntity(#[from] StoredEntityError),
+    /// A stored Entity Map no longer reads back.
+    #[error("context store entity map row: {0}")]
+    StoredEntityMap(#[from] StoredEntityMapError),
+    /// The catalogue reports an identity generation PostgreSQL does not define,
+    /// so the Snapshot clone cannot tell how to copy the column.
+    #[error("context store catalogue identity generation: {0}")]
+    CatalogueIdentityGeneration(#[source] strum::ParseError),
+    /// A contract between two parts of the store, or an identifier it minted,
+    /// was broken.
+    #[error("context store invariant: {0}")]
+    Invariant(#[from] StoreInvariant),
+    /// The configured database URL carries no path segment, so it names no
+    /// database.
+    #[error("context store database URL names no database")]
+    DatabaseUrlUnnamed,
 }
 
 impl From<sqlx::Error> for ContextStoreError {
@@ -132,14 +173,45 @@ impl From<NameLookupError> for ContextStoreError {
             NameLookupError::Saturated => ContextStoreError::Saturated,
             NameLookupError::Statement(_)
             | NameLookupError::StatementBuild(_)
-            | NameLookupError::StoredAttributeName { .. }
-            | NameLookupError::StoredEntityTypeName { .. }
+            | NameLookupError::StoredAttributeName(_)
+            | NameLookupError::StoredEntityTypeName(_)
             | NameLookupError::Growth(_) => ContextStoreError::NameLookup(error),
         }
     }
 }
 
 impl ContextStoreError {
+    /// The backend-neutral class of this failure, for a port that cannot name
+    /// this adapter's error.
+    #[must_use]
+    pub fn failure_class(&self) -> PersistenceFailure {
+        if self.is_pool_saturation() {
+            return PersistenceFailure::Saturated;
+        }
+        match self {
+            ContextStoreError::Database(error) => classify(error),
+            ContextStoreError::NameLookup(error) => error.failure_class(),
+            ContextStoreError::UniqueViolation(_) | ContextStoreError::EntityTypes(_) => PersistenceFailure::ConstraintViolated,
+            ContextStoreError::InvalidRegex(_) | ContextStoreError::Collation(_) => PersistenceFailure::StatementRejected,
+            ContextStoreError::Encoding(_)
+            | ContextStoreError::CopyField(_)
+            | ContextStoreError::PayloadEncoding(_)
+            | ContextStoreError::OrdinalOutOfRange(_) => PersistenceFailure::Unencodable,
+            ContextStoreError::Render(_) | ContextStoreError::StatementBuild(_) => PersistenceFailure::StatementUnbuildable,
+            ContextStoreError::Migration(_) | ContextStoreError::SchemaContract(_) | ContextStoreError::BranchVersion(_) => PersistenceFailure::SchemaMismatch,
+            ContextStoreError::Saturated => PersistenceFailure::Saturated,
+            ContextStoreError::ContextMapper(_)
+            | ContextStoreError::StoredRegistrationInformation(_)
+            | ContextStoreError::StoredRegistration(_)
+            | ContextStoreError::StoredSubscription(_)
+            | ContextStoreError::StoredSnapshot(_)
+            | ContextStoreError::StoredEntity(_)
+            | ContextStoreError::StoredEntityMap(_)
+            | ContextStoreError::CatalogueIdentityGeneration(_) => PersistenceFailure::Undecodable,
+            ContextStoreError::Invariant(_) | ContextStoreError::DatabaseUrlUnnamed => PersistenceFailure::ContractBroken,
+        }
+    }
+
     /// Whether this failure is a saturated connection pool anywhere in a cold
     /// build's error tree, rather than a genuine fault.
     ///
@@ -166,7 +238,17 @@ impl ContextStoreError {
             | ContextStoreError::Migration(_)
             | ContextStoreError::BranchVersion(_)
             | ContextStoreError::StoredRegistrationInformation(_)
-            | ContextStoreError::Internal(_) => false,
+            | ContextStoreError::StatementBuild(_)
+            | ContextStoreError::PayloadEncoding(_)
+            | ContextStoreError::OrdinalOutOfRange(_)
+            | ContextStoreError::StoredRegistration(_)
+            | ContextStoreError::StoredSubscription(_)
+            | ContextStoreError::StoredSnapshot(_)
+            | ContextStoreError::StoredEntity(_)
+            | ContextStoreError::StoredEntityMap(_)
+            | ContextStoreError::CatalogueIdentityGeneration(_)
+            | ContextStoreError::Invariant(_)
+            | ContextStoreError::DatabaseUrlUnnamed => false,
         }
     }
 
@@ -195,7 +277,17 @@ impl ContextStoreError {
             | ContextStoreError::Migration(_)
             | ContextStoreError::BranchVersion(_)
             | ContextStoreError::StoredRegistrationInformation(_)
-            | ContextStoreError::Internal(_) => false,
+            | ContextStoreError::StatementBuild(_)
+            | ContextStoreError::PayloadEncoding(_)
+            | ContextStoreError::OrdinalOutOfRange(_)
+            | ContextStoreError::StoredRegistration(_)
+            | ContextStoreError::StoredSubscription(_)
+            | ContextStoreError::StoredSnapshot(_)
+            | ContextStoreError::StoredEntity(_)
+            | ContextStoreError::StoredEntityMap(_)
+            | ContextStoreError::CatalogueIdentityGeneration(_)
+            | ContextStoreError::Invariant(_)
+            | ContextStoreError::DatabaseUrlUnnamed => false,
         }
     }
 }

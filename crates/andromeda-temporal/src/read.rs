@@ -7,6 +7,7 @@ use crate::{
     read::{dataset_step::DatasetStep, rendered_entity::HistoryPresence},
     requested_identifiers::RequestedIdentifiers,
     service::{TemporalRange, TemporalReadResult, TemporalService},
+    temporal_invariant::TemporalInvariant,
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_operation_unsupported::TemporalOperationUnsupported,
 };
@@ -272,7 +273,7 @@ impl TemporalService {
             let outcome = self.reader.query_entity_ids(target, &unpaged).await?;
             let (identifiers, _total) = outcome
                 .complete(unpaged.pagination)
-                .map_err(|error| TemporalError::internal(error.to_string()))?;
+                .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
             Ok(identifiers)
         }
         .await;
@@ -299,7 +300,7 @@ impl TemporalService {
             .iter()
             .map(|iri| iri.as_str().parse::<AttributeName>())
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| TemporalError::internal(format!("an expanded attribute IRI is not an attribute name: {error}")))?;
+            .map_err(|error| TemporalError::from(TemporalInvariant::ExpandedAttributeName(error)))?;
         let recorded = self.reader.recorded_attribute_shapes(target, &attributes).await?;
         ensure_aggregation_eligible(&attributes, &compiled.representation.aggr_methods, &recorded).map_err(TemporalError::from)
     }

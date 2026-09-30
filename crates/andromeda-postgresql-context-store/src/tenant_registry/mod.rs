@@ -6,6 +6,7 @@ pub mod status_code;
 
 use crate::{
     error::ContextStoreError,
+    store_fault::{persistence_failure, undecodable},
     tenant_database::{DatabaseUrl, create_database_if_missing, generate_database_name},
     tenant_migration::{configure_platform_database, migrate_platform_db, migrate_single_tenant_db},
     tenant_registry::{
@@ -39,7 +40,7 @@ use andromeda_tenancy::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sea_query::{PostgresQueryBuilder, error::Error as SeaQueryError};
+use sea_query::PostgresQueryBuilder;
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row, postgres::PgRow};
 use std::time::Duration;
@@ -79,8 +80,9 @@ impl PostgresTenantRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::Internal`] when the base URL names no
-    /// database or the default-tenant upsert cannot be assembled,
+    /// Returns [`ContextStoreError::DatabaseUrlUnnamed`] when the base URL names
+    /// no database, [`ContextStoreError::StatementBuild`] when the
+    /// default-tenant upsert cannot be assembled,
     /// [`ContextStoreError::Migration`] or [`ContextStoreError::SchemaContract`]
     /// when the platform database cannot be migrated to this binary's contract,
     /// and [`ContextStoreError::Database`] when the upsert fails.
@@ -132,7 +134,7 @@ impl PostgresTenantRegistry {
     /// Record the unnamed default tenant, so it appears in the registry like
     /// any other.
     async fn register_default_tenant(&self) -> Result<(), ContextStoreError> {
-        let statement = default_tenant_upsert(self.default_database.as_str(), stored_status(TenantStatus::Active)).map_err(|error| statement_error(&error))?;
+        let statement = default_tenant_upsert(self.default_database.as_str(), stored_status(TenantStatus::Active))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.main_pool).await?;
         Ok(())
@@ -140,8 +142,9 @@ impl PostgresTenantRegistry {
 }
 
 /// The failure a fleet-wide registry read becomes.
+#[track_caller]
 fn registry_unavailable(error: &sqlx::Error) -> TenancyError {
-    TenancyError::RegistryUnavailable { detail: error.to_string() }
+    TenancyError::RegistryUnavailable(persistence_failure(error))
 }
 
 /// The failure a per-tenant registry read becomes, telling a saturated backend
@@ -154,14 +157,6 @@ fn registry_read_failure(error: &sqlx::Error, name: &TenantName) -> TenancyError
     } else {
         registry_unavailable(error)
     }
-}
-
-/// The failure a statement that could not be assembled becomes.
-///
-/// A column/value arity mismatch is the only cause, so it is an internal
-/// invariant rather than a database failure.
-fn statement_error(error: &SeaQueryError) -> ContextStoreError {
-    ContextStoreError::Internal(error.to_string())
 }
 
 /// Build a [`TenantRecord`] from one registry row, projected as `name`, `status`,
@@ -177,12 +172,8 @@ fn record_from_row(row: &PgRow) -> Result<TenantRecord, TenancyError> {
     let created_at: DateTime<Utc> = row.try_get("created_at").map_err(|error| registry_unavailable(&error))?;
     let modified_at: DateTime<Utc> = row.try_get("modified_at").map_err(|error| registry_unavailable(&error))?;
 
-    let tenant_name = TenantName::try_from(name).map_err(|error| TenancyError::RegistryUnavailable {
-        detail: format!("the registry holds a name that is not a tenant name: {error}"),
-    })?;
-    let status = status_of(TenantStatusCode::try_from(status).map_err(|error| TenancyError::RegistryUnavailable {
-        detail: format!("the registry holds an unrecognised tenant status: {error}"),
-    })?);
+    let tenant_name = TenantName::try_from(name).map_err(|error| TenancyError::RegistryUnavailable(undecodable(&error)))?;
+    let status = status_of(TenantStatusCode::try_from(status).map_err(|error| TenancyError::RegistryUnavailable(undecodable(&error)))?);
     Ok(TenantRecord::new(
         tenant_name,
         status,
@@ -207,11 +198,7 @@ impl TenantDatabase for PostgresTenantRegistry {
 
         names
             .into_iter()
-            .map(|name| {
-                TenantName::try_from(name).map_err(|error| TenancyError::RegistryUnavailable {
-                    detail: format!("the registry holds a name that is not a tenant name: {error}"),
-                })
-            })
+            .map(|name| TenantName::try_from(name).map_err(|error| TenancyError::RegistryUnavailable(undecodable(&error))))
             .collect()
     }
 
@@ -256,7 +243,7 @@ impl TenantDatabase for PostgresTenantRegistry {
             } else {
                 TenancyError::ProvisioningFailed {
                     name: name.clone(), // clone: the error outlives this borrow
-                    detail: error.to_string(),
+                    cause: persistence_failure(&error),
                 }
             }
         })
@@ -299,7 +286,7 @@ impl PostgresTenantRegistry {
         let database_name = generate_database_name(&self.tenancy.tenant_db_prefix, name);
         create_database_if_missing(&self.direct_url, &database_name, self.synchronous_commit_setting).await?;
 
-        let statement = tenant_insert(name.as_str(), database_name.as_str(), stored_status(TenantStatus::Active)).map_err(|error| statement_error(&error))?;
+        let statement = tenant_insert(name.as_str(), database_name.as_str(), stored_status(TenantStatus::Active))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
         tx.commit().await?;

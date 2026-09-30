@@ -24,27 +24,20 @@ pub const MAX_FRACTIONAL_DIGITS: i64 = 16_383;
 #[derive(Debug, Error)]
 pub enum JsonNumberError {
     /// The input is not JSON number syntax.
-    #[error("invalid JSON number {value}: {source}")]
+    #[error("invalid JSON number: {source}")]
     InvalidSyntax {
-        /// The rejected input.
-        value: String,
         /// The JSON grammar error.
         source: serde_json::Error,
     },
     /// A syntactically valid JSON number could not be represented as a decimal.
-    #[error("invalid decimal value {value}: {source}")]
+    #[error("invalid decimal value: {source}")]
     InvalidDecimal {
-        /// The rejected JSON number.
-        value: String,
         /// The decimal parsing error.
         source: ParseBigDecimalError,
     },
     /// A non-zero value exceeds PostgreSQL's supported `NUMERIC` range.
-    #[error("JSON number {value} exceeds the supported range of {MAX_INTEGRAL_DIGITS} integral digits and {MAX_FRACTIONAL_DIGITS} fractional digits")]
-    OutOfSupportedRange {
-        /// The rejected JSON number.
-        value: String,
-    },
+    #[error("JSON number exceeds the supported range of {MAX_INTEGRAL_DIGITS} integral digits and {MAX_FRACTIONAL_DIGITS} fractional digits")]
+    OutOfSupportedRange,
     /// A floating-point value has no JSON number representation.
     #[error("a JSON number cannot carry the non-finite floating-point value {value}")]
     NotFinite {
@@ -71,7 +64,7 @@ impl JsonNumber {
     /// value cannot be stored in PostgreSQL `NUMERIC`.
     pub fn from_decimal(value: &BigDecimal) -> Result<JsonNumber, JsonNumberError> {
         let value = value.normalized();
-        validate_decimal_range(&value, &value.to_string())?;
+        validate_decimal_range(&value)?;
         Ok(JsonNumber(value))
     }
 
@@ -118,10 +111,7 @@ impl FromStr for JsonNumber {
     type Err = JsonNumberError;
 
     fn from_str(value: &str) -> Result<JsonNumber, JsonNumberError> {
-        let number = Number::from_str(value).map_err(|source| JsonNumberError::InvalidSyntax {
-            value: value.to_string(),
-            source,
-        })?;
+        let number = Number::from_str(value).map_err(|source| JsonNumberError::InvalidSyntax { source })?;
         JsonNumber::try_from(&number)
     }
 }
@@ -184,27 +174,24 @@ fn checked_decimal_from_json(value: &str) -> Result<JsonNumber, JsonNumberError>
         return Ok(JsonNumber(BigDecimal::zero()));
     }
     if shape.integral_digits > MAX_INTEGRAL_DIGITS || shape.fractional_digits > MAX_FRACTIONAL_DIGITS {
-        return Err(JsonNumberError::OutOfSupportedRange { value: value.to_string() });
+        return Err(JsonNumberError::OutOfSupportedRange);
     }
-    let decimal = BigDecimal::from_str(value).map_err(|source| JsonNumberError::InvalidDecimal {
-        value: value.to_string(),
-        source,
-    })?;
+    let decimal = BigDecimal::from_str(value).map_err(|source| JsonNumberError::InvalidDecimal { source })?;
     Ok(JsonNumber(decimal.normalized()))
 }
 
 /// Validate a decimal supplied by a non-JSON source without rendering an
 /// expanded plain-decimal representation.
-fn validate_decimal_range(value: &BigDecimal, rendered: &str) -> Result<(), JsonNumberError> {
+fn validate_decimal_range(value: &BigDecimal) -> Result<(), JsonNumberError> {
     if value.is_zero() {
         return Ok(());
     }
-    let digits = i64::try_from(value.digits()).map_err(|_| JsonNumberError::OutOfSupportedRange { value: rendered.to_string() })?;
+    let digits = i64::try_from(value.digits()).map_err(|_| JsonNumberError::OutOfSupportedRange)?;
     let scale = value.fractional_digit_count();
     let integral_digits = digits.checked_sub(scale).unwrap_or(i64::MAX).max(0);
     let fractional_digits = scale.max(0);
     if integral_digits > MAX_INTEGRAL_DIGITS || fractional_digits > MAX_FRACTIONAL_DIGITS {
-        Err(JsonNumberError::OutOfSupportedRange { value: rendered.to_string() })
+        Err(JsonNumberError::OutOfSupportedRange)
     } else {
         Ok(())
     }
@@ -237,18 +224,18 @@ impl DecimalShape {
         let exponent = exponent_text
             .map(parse_exponent)
             .transpose()
-            .map_err(|_source| JsonNumberError::OutOfSupportedRange { value: value.to_string() })?
+            .map_err(|_source| JsonNumberError::OutOfSupportedRange)?
             .unwrap_or(0);
         let last_nonzero = digits.iter().rposition(|digit| *digit != b'0').unwrap_or(first_nonzero);
         let point = i64::try_from(integral_width)
             .ok()
             .and_then(|width| width.checked_add(exponent))
-            .ok_or_else(|| JsonNumberError::OutOfSupportedRange { value: value.to_string() })?;
-        let first_nonzero = i64::try_from(first_nonzero).map_err(|_| JsonNumberError::OutOfSupportedRange { value: value.to_string() })?;
+            .ok_or(JsonNumberError::OutOfSupportedRange)?;
+        let first_nonzero = i64::try_from(first_nonzero).map_err(|_| JsonNumberError::OutOfSupportedRange)?;
         let after_last_nonzero = i64::try_from(last_nonzero)
             .ok()
             .and_then(|index| index.checked_add(1))
-            .ok_or_else(|| JsonNumberError::OutOfSupportedRange { value: value.to_string() })?;
+            .ok_or(JsonNumberError::OutOfSupportedRange)?;
         Ok(DecimalShape {
             is_zero: false,
             integral_digits: point.checked_sub(first_nonzero).unwrap_or(i64::MAX).max(0),
@@ -309,16 +296,13 @@ mod tests {
         let largest_integral = "9".repeat(usize::try_from(MAX_INTEGRAL_DIGITS).expect("positive limit"));
         assert!(JsonNumber::from_str(&largest_integral).is_ok());
         let oversized_integral = format!("{largest_integral}9");
-        assert!(matches!(
-            JsonNumber::from_str(&oversized_integral),
-            Err(JsonNumberError::OutOfSupportedRange { .. })
-        ));
+        assert!(matches!(JsonNumber::from_str(&oversized_integral), Err(JsonNumberError::OutOfSupportedRange)));
         assert!(JsonNumber::from_str("1e-16383").is_ok());
-        assert!(matches!(JsonNumber::from_str("1e-16384"), Err(JsonNumberError::OutOfSupportedRange { .. })));
+        assert!(matches!(JsonNumber::from_str("1e-16384"), Err(JsonNumberError::OutOfSupportedRange)));
         assert!(JsonNumber::from_str("0e-999999999999999999999999999999999999").is_ok());
         assert!(matches!(
             JsonNumber::from_str("1e999999999999999999999999999999999999"),
-            Err(JsonNumberError::OutOfSupportedRange { .. })
+            Err(JsonNumberError::OutOfSupportedRange)
         ));
         pretty_assertions::assert_eq!(MAX_FRACTIONAL_DIGITS, 16_383);
     }

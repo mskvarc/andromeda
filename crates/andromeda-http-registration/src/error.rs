@@ -81,6 +81,7 @@ mod tests {
         uri::UriParseError,
     };
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_registration::{
         error::RegistrationError,
         registration_conflict_reason::RegistrationConflictReason,
@@ -109,13 +110,17 @@ mod tests {
                 RegistrationError::Conflict(RegistrationConflictReason::LocalEntityMatchesRedirect),
                 NgsiLdErrorType::Conflict,
             ),
-            (RegistrationError::persistence("database host"), NgsiLdErrorType::InternalError),
+            (RegistrationError::Persistence(PersistenceFailure::Unavailable), NgsiLdErrorType::InternalError),
         ] {
             let report = error.classify_for_registration_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
                 pretty_assertions::assert_eq!(report.detail(), "the registration store is unavailable");
-                assert!(!report.detail().contains("database host"), "the raw cause leaked: {}", report.detail());
+                assert!(
+                    !report.detail().contains(&PersistenceFailure::Unavailable.to_string()),
+                    "the raw cause leaked: {}",
+                    report.detail()
+                );
             }
         }
         Ok(())

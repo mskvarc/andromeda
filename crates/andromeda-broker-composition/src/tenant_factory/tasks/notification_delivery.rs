@@ -10,6 +10,7 @@
 //! able to deliver them.
 
 use crate::tenant_factory::{
+    assembly_invariant::{AssemblyInvariant, RetentionSetting},
     background_pacer::BackgroundPacer,
     error::TenantAssemblyError,
     tasks::{notification_schedule::classify_notification_failure, retention::retention_duration},
@@ -18,6 +19,7 @@ use andromeda_notification::{
     delivery_config::DeliveryConfig,
     delivery_drain::{NotificationDeliveryDrain, NotificationDeliveryTransport},
     delivery_store::DeliveryStore,
+    error::NotificationError,
 };
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use andromeda_task_runtime::{
@@ -66,7 +68,7 @@ pub(super) fn register_notification_delivery(
     drive: DeliveryDrainDrive,
 ) -> Result<(), TenantAssemblyError> {
     let store = Arc::new(NotificationDeliveryQueue::new(pool)) as Arc<dyn DeliveryStore>;
-    let drain = Arc::new(NotificationDeliveryDrain::new(store, transport, config).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?);
+    let drain = Arc::new(NotificationDeliveryDrain::new(store, transport, config).map_err(|error| AssemblyInvariant::NotificationDrain(Box::new(error)))?);
     let DeliveryDrainDrive { wake, pacer } = drive;
     // clone: delivery and cleanup share one stateless delivery operation and the tenant's one pacer.
     register_delivery_drain(supervisor, Arc::clone(&drain), config, wake, Arc::clone(&pacer))?;
@@ -88,8 +90,8 @@ fn register_delivery_drain(
         .duration()
         .max(config.poll_interval.duration())
         .max(Duration::from_secs(1));
-    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("notification-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("notification-delivery").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
@@ -103,7 +105,7 @@ fn register_delivery_drain(
             pacer
                 .run_drain_pass(execution.cause(), async move {
                     let now = DateTime::<Utc>::from(execution.cutoff());
-                    let outcome = drain.execute(now).await.map_err(|error| classify_notification_failure(&error))?;
+                    let outcome = drain.execute(now).await.map_err(classify_notification_failure)?;
                     if outcome.work_may_remain {
                         Ok(DrainPassOutcome::WorkMayRemain)
                     } else {
@@ -113,9 +115,7 @@ fn register_delivery_drain(
                 .await
         }
     });
-    supervisor
-        .register_drain(task, wake)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+    supervisor.register_drain(task, wake).map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// How old each kind of finished queue row may grow before cleanup reaps it.
@@ -133,9 +133,9 @@ impl CleanupRetention {
     /// The retention ages `config` sets.
     fn configured(config: &DeliveryConfig) -> Result<CleanupRetention, TenantAssemblyError> {
         Ok(CleanupRetention {
-            delivered: retention_duration(config.cleanup_after.duration().as_secs(), "notification delivery cleanup age")?,
-            dead_lettered: retention_duration(config.dead_letter_after.duration().as_secs(), "notification delivery dead-letter age")?,
-            orphaned: retention_duration(config.orphan_event_after.duration().as_secs(), "notification delivery orphan-event age")?,
+            delivered: retention_duration(config.cleanup_after.duration().as_secs(), RetentionSetting::NotificationCleanup)?,
+            dead_lettered: retention_duration(config.dead_letter_after.duration().as_secs(), RetentionSetting::NotificationDeadLetter)?,
+            orphaned: retention_duration(config.orphan_event_after.duration().as_secs(), RetentionSetting::NotificationOrphanEvent)?,
         })
     }
 }
@@ -150,9 +150,8 @@ fn register_delivery_cleanup(
 ) -> Result<(), TenantAssemblyError> {
     let cadence = config.cleanup_interval.duration().max(Duration::from_secs(1));
     let retention = CleanupRetention::configured(config)?;
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("notification-delivery-cleanup").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("notification-delivery-cleanup").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -170,7 +169,7 @@ fn register_delivery_cleanup(
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Run one cleanup tick if the tenant may have written since the last cleanup
@@ -188,24 +187,21 @@ async fn paced_cleanup(
     drain: &NotificationDeliveryDrain,
     retention: CleanupRetention,
     now: DateTime<Utc>,
-) -> Result<(), TaskFailure> {
+) -> Result<(), TaskFailure<NotificationError>> {
     pacer
         .run_when_written(observed, async {
-            let purged = drain
-                .purge_delivered(now - retention.delivered)
-                .await
-                .map_err(|error| classify_notification_failure(&error))?;
+            let purged = drain.purge_delivered(now - retention.delivered).await.map_err(classify_notification_failure)?;
             // Dead letters are reaped before the orphan pass so an event a
             // dead-lettered delivery just released can be swept in the same
             // tick once it also clears the orphan-event horizon.
             let dead_lettered = drain
                 .purge_exhausted(now - retention.dead_lettered)
                 .await
-                .map_err(|error| classify_notification_failure(&error))?;
+                .map_err(classify_notification_failure)?;
             let orphaned = drain
                 .purge_orphan_events(now - retention.orphaned)
                 .await
-                .map_err(|error| classify_notification_failure(&error))?;
+                .map_err(classify_notification_failure)?;
             tracing::debug!(purged, dead_lettered, orphaned, "notification delivery cleanup completed");
             Ok(())
         })

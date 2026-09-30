@@ -8,7 +8,7 @@
 //! dropped. Whatever remains is delivered to the local endpoint under the local
 //! subscription's identifier.
 
-use crate::{error::SubscriptionForwardingError, service::SubscriptionForwardingService};
+use crate::{error::SubscriptionForwardingError, forwarding_invariant::ForwardingInvariant, service::SubscriptionForwardingService};
 use andromeda_delivery::{endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_entity::{
     error::EntityError,
@@ -59,8 +59,8 @@ use uuid::Uuid;
 fn notification_id() -> Result<Identifier, SubscriptionForwardingError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Notification:{}", Uuid::new_v4()))
         .build()
-        .map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
-    Identifier::try_from(urn).map_err(|error| SubscriptionForwardingError::internal(error.to_string()))
+        .map_err(ForwardingInvariant::MintedUrn)?;
+    Identifier::try_from(urn).map_err(|error| ForwardingInvariant::MintedIdentifier(error).into())
 }
 
 impl SubscriptionForwardingService {
@@ -113,8 +113,7 @@ impl SubscriptionForwardingService {
             });
         }
         sources.extend(remote.results);
-        merge_retrieve_results(Some(received), sources)
-            .ok_or_else(|| SubscriptionForwardingError::internal("merging a present entity with its other parts produced nothing"))
+        merge_retrieve_results(Some(received), sources).ok_or_else(|| ForwardingInvariant::MergeProducedNothing.into())
     }
 
     /// One entity of the inbound notification, re-spelled from the sender's
@@ -212,7 +211,7 @@ impl SubscriptionForwardingService {
             let rendered = EntityRenderer::new(&entity)
                 .with_mode(format)
                 .render()
-                .map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
+                .map_err(ForwardingInvariant::Rendering)?;
             data.push(rendered);
         }
         // Clause 5.8.6: the copy is sent to the local subscription's endpoint,
@@ -234,8 +233,7 @@ impl SubscriptionForwardingService {
         };
         let payload = serde_json::to_value(&copy)?;
         let endpoint = &subscription.notification.endpoint;
-        let transport = parse_endpoint_transport(endpoint.uri.url(), endpoint.notifier_info.as_deref())
-            .map_err(|error| SubscriptionForwardingError::internal(format!("local subscription endpoint is not deliverable: {error}")))?;
+        let transport = parse_endpoint_transport(endpoint.uri.url(), endpoint.notifier_info.as_deref()).map_err(ForwardingInvariant::LocalEndpoint)?;
         let request = NotificationDelivery {
             payload: &payload,
             endpoint_uri: endpoint.uri.url(),

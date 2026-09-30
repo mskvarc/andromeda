@@ -1,14 +1,14 @@
 //! Exact-number validation for recursively parsed JSON values.
 
 mod decode_route;
-mod json_pointer;
+pub mod json_pointer;
 
 use crate::{
     JsonNumber,
     JsonNumberError,
     json_value::{
         decode_route::{DecodeRoute, document_decode_route, typed_decode_route},
-        json_pointer::{PathSegment, render_pointer},
+        json_pointer::{JsonPointer, PathSegment},
     },
     number_token::NumberToken,
 };
@@ -20,8 +20,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[error("invalid JSON number at {path}: {source}")]
 pub struct JsonNumberPathError {
-    /// JSON Pointer locating the rejected member, or `/` for the root.
-    pub path: String,
+    /// JSON Pointer locating the rejected member.
+    pub path: JsonPointer,
     /// The exact-number syntax or supported-range failure.
     #[source]
     pub source: JsonNumberError,
@@ -113,7 +113,7 @@ fn canonicalize_at<'a>(value: &'a mut Value, path: &mut Vec<PathSegment<'a>>) ->
 /// Validate one number and give it the spelling [`JsonNumber`] renders.
 fn canonicalize_number(number: &mut Number, path: &[PathSegment<'_>]) -> Result<(), JsonNumberPathError> {
     let exact = JsonNumber::try_from(&*number).map_err(|source| JsonNumberPathError {
-        path: render_pointer(path),
+        path: JsonPointer::from_walk(path),
         source,
     })?;
     if !NumberToken::parse(number.as_str()).is_some_and(|token| token.is_canonical()) {
@@ -295,10 +295,10 @@ mod tests {
     fn an_out_of_range_member_reports_its_json_pointer() {
         let mut value: Value = serde_json::from_str(r#"{"property":{"value":[0,{"too/large":1e-16384}]}}"#).expect("valid JSON");
         let error = canonicalize_numbers(&mut value).expect_err("the fractional range is exceeded");
-        pretty_assertions::assert_eq!(error.path, "/property/value/1/too~1large");
+        pretty_assertions::assert_eq!(error.path.to_string(), "/property/value/1/too~1large");
         pretty_assertions::assert_eq!(
             error.to_string(),
-            "invalid JSON number at /property/value/1/too~1large: JSON number 1e-16384 exceeds the supported range of 131072 integral digits and 16383 fractional digits"
+            "invalid JSON number at /property/value/1/too~1large: JSON number exceeds the supported range of 131072 integral digits and 16383 fractional digits"
         );
     }
 
@@ -306,14 +306,14 @@ mod tests {
     fn an_out_of_range_root_number_reports_the_root_pointer() {
         let mut value = number("1e-16384");
         let error = canonicalize_numbers(&mut value).expect_err("the fractional range is exceeded");
-        pretty_assertions::assert_eq!(error.path, "/");
+        pretty_assertions::assert_eq!(error.path.to_string(), "/");
     }
 
     #[test]
     fn a_member_name_with_a_tilde_is_escaped_in_the_reported_pointer() {
         let mut value = object([("a~b", object([("c/d~", array([number("1"), number("2"), number("1e-16384")]))]))]);
         let error = canonicalize_numbers(&mut value).expect_err("the fractional range is exceeded");
-        pretty_assertions::assert_eq!(error.path, "/a~0b/c~1d~0/2");
+        pretty_assertions::assert_eq!(error.path.to_string(), "/a~0b/c~1d~0/2");
     }
 
     #[test]

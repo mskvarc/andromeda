@@ -7,6 +7,7 @@
 //! module sees a `Value` for a member the specification has given a shape.
 
 use crate::{
+    csr_member::CsrMember,
     error::RegistrationError,
     geometry::unwrap_geo_property_to_geometry,
     mode_rules::default_operations,
@@ -35,59 +36,49 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 /// Read one optional member into its type; absent stays `None`.
-fn deserialize_member<T>(payload: &Value, key: &str) -> Result<Option<T>, RegistrationError>
+fn deserialize_member<T>(payload: &Value, key: CsrMember) -> Result<Option<T>, RegistrationError>
 where
     T: DeserializeOwned,
 {
     payload
-        .get(key)
+        .get(key.key())
         .map(|value| {
             serde_json::from_value(value.clone()) // clone: serde owns the selected member while the payload remains borrowed.
-                .map_err(|source| {
-                    RegistrationError::Validation(RegistrationValidationReason::MemberValue {
-                        member: key.to_string(),
-                        source,
-                    })
-                })
+                .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::MemberValue { member: key, source }))
         })
         .transpose()
 }
 
 /// Read one mandatory member into its type (clause 5.2.9 cardinality 1).
-fn deserialize_required<T>(payload: &Value, key: &str) -> Result<T, RegistrationError>
+fn deserialize_required<T>(payload: &Value, key: CsrMember) -> Result<T, RegistrationError>
 where
     T: DeserializeOwned,
 {
-    deserialize_member(payload, key)?.ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::MemberRequired { member: key.to_string() }))
+    deserialize_member(payload, key)?.ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::MemberRequired { member: key }))
 }
 
 /// Read one nullable member for an update (clause 5.5.8 member removal).
-fn deserialize_nullable<T>(payload: &Value, key: &str) -> Result<NullableMember<T>, RegistrationError>
+fn deserialize_nullable<T>(payload: &Value, key: CsrMember) -> Result<NullableMember<T>, RegistrationError>
 where
     T: DeserializeOwned,
 {
-    match payload.get(key) {
+    match payload.get(key.key()) {
         None => Ok(NullableMember::Absent),
         Some(value) if value.is_null() => Ok(NullableMember::Cleared),
         Some(value) => serde_json::from_value(value.clone()) // clone: serde owns the selected member while the update payload remains borrowed.
             .map(NullableMember::Set)
-            .map_err(|source| {
-                RegistrationError::Validation(RegistrationValidationReason::MemberValue {
-                    member: key.to_string(),
-                    source,
-                })
-            }),
+            .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::MemberValue { member: key, source })),
     }
 }
 
 /// Read one optional `GeoJSON` geometry member, unwrapping a `GeoProperty` carrier.
-fn deserialize_geometry(payload: &Value, key: &str) -> Result<Option<Geometry>, RegistrationError> {
-    payload.get(key).map(unwrap_geo_property_to_geometry).transpose()
+fn deserialize_geometry(payload: &Value, key: CsrMember) -> Result<Option<Geometry>, RegistrationError> {
+    payload.get(key.key()).map(unwrap_geo_property_to_geometry).transpose()
 }
 
 /// Read one nullable `GeoJSON` geometry member for an update.
-fn deserialize_nullable_geometry(payload: &Value, key: &str) -> Result<NullableMember<Geometry>, RegistrationError> {
-    match payload.get(key) {
+fn deserialize_nullable_geometry(payload: &Value, key: CsrMember) -> Result<NullableMember<Geometry>, RegistrationError> {
+    match payload.get(key.key()) {
         None => Ok(NullableMember::Absent),
         Some(value) if value.is_null() => Ok(NullableMember::Cleared),
         Some(value) => unwrap_geo_property_to_geometry(value).map(NullableMember::Set),
@@ -95,30 +86,22 @@ fn deserialize_nullable_geometry(payload: &Value, key: &str) -> Result<NullableM
 }
 
 /// Parse a clause 4.6.3 `DateTime` member, naming the member in the error.
-fn parse_datetime(value: &Value, key: &str) -> Result<DateTime<Utc>, RegistrationError> {
+fn parse_datetime(value: &Value, key: CsrMember) -> Result<DateTime<Utc>, RegistrationError> {
     let raw = value
         .as_str()
-        .ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::MemberNotString { member: key.to_string() }))?;
-    DateTime::parse_from_rfc3339(raw).map(|parsed| parsed.with_timezone(&Utc)).map_err(|source| {
-        RegistrationError::Validation(RegistrationValidationReason::DateTimeMember {
-            member: key.to_string(),
-            raw: raw.to_string(),
-            source,
-        })
-    })
+        .ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::MemberNotString { member: key }))?;
+    DateTime::parse_from_rfc3339(raw)
+        .map(|parsed| parsed.with_timezone(&Utc))
+        .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::DateTimeMember { member: key, source }))
 }
 
 /// Parse an ISO 8601 duration member, naming the member in the error.
-pub(super) fn parse_duration_value(value: &Value, key: &str) -> Result<Iso8601Duration, RegistrationError> {
+pub(super) fn parse_duration_value(value: &Value, key: CsrMember) -> Result<Iso8601Duration, RegistrationError> {
     let raw = value
         .as_str()
-        .ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::MemberNotString { member: key.to_string() }))?;
-    raw.parse::<Iso8601Duration>().map_err(|_| {
-        RegistrationError::Validation(RegistrationValidationReason::DurationMember {
-            member: key.to_string(),
-            raw: raw.to_string(),
-        })
-    })
+        .ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::MemberNotString { member: key }))?;
+    raw.parse::<Iso8601Duration>()
+        .map_err(|_| RegistrationError::Validation(RegistrationValidationReason::DurationMember { member: key }))
 }
 
 /// Table 5.2.9-1: `information` is an array of at least one block; an empty
@@ -132,76 +115,82 @@ const fn reject_empty_information(information: &[RegistrationInfo]) -> Result<()
 
 pub(super) fn extract_create_params(payload: &Value) -> Result<CreateCsrParams, RegistrationError> {
     // Table 5.2.9-1 gives `type`, `endpoint` and `information` cardinality 1.
-    let _: ContextSourceRegistrationType = deserialize_required(payload, "type")?;
-    let information = deserialize_required::<Vec<RegistrationInfo>>(payload, "information")?;
+    let _: ContextSourceRegistrationType = deserialize_required(payload, CsrMember::Type)?;
+    let information = deserialize_required::<Vec<RegistrationInfo>>(payload, CsrMember::Information)?;
     reject_empty_information(&information)?;
     // Table 5.2.9-1: absent `mode` is `inclusive`. The mode is read before
     // `operations` because it decides which default set applies to it.
-    let mode = deserialize_member::<ForwardingMode>(payload, "mode")?.unwrap_or_default();
+    let mode = deserialize_member::<ForwardingMode>(payload, CsrMember::Mode)?.unwrap_or_default();
     // The effective value is what gets stored, so retrieval and routing read
     // the same thing the admission check saw.
-    let operations = deserialize_member::<Vec<CsrOperation>>(payload, "operations")?.unwrap_or_else(|| default_operations(mode).to_vec());
+    let operations = deserialize_member::<Vec<CsrOperation>>(payload, CsrMember::Operations)?.unwrap_or_else(|| default_operations(mode).to_vec());
     Ok(CreateCsrParams {
-        registration_name: deserialize_member::<NonEmptyText>(payload, "registrationName")?,
-        description: deserialize_member::<NonEmptyText>(payload, "description")?,
+        registration_name: deserialize_member::<NonEmptyText>(payload, CsrMember::RegistrationName)?,
+        description: deserialize_member::<NonEmptyText>(payload, CsrMember::Description)?,
         information,
-        dataset_id: deserialize_member::<Vec<DatasetSelector>>(payload, "datasetId")?,
-        tenant: deserialize_member::<TenantName>(payload, "tenant")?,
-        observation_interval: deserialize_member::<TimeInterval>(payload, "observationInterval")?,
-        management_interval: deserialize_member::<TimeInterval>(payload, "managementInterval")?,
-        location: deserialize_geometry(payload, "location")?,
-        observation_space: deserialize_geometry(payload, "observationSpace")?,
-        operation_space: deserialize_geometry(payload, "operationSpace")?,
-        expires_at: payload.get("expiresAt").map(|value| parse_datetime(value, "expiresAt")).transpose()?,
-        endpoint: deserialize_required::<DereferenceableUri>(payload, "endpoint")?,
-        accept: deserialize_member::<MediaTypeBuf>(payload, "accept")?,
+        dataset_id: deserialize_member::<Vec<DatasetSelector>>(payload, CsrMember::DatasetId)?,
+        tenant: deserialize_member::<TenantName>(payload, CsrMember::Tenant)?,
+        observation_interval: deserialize_member::<TimeInterval>(payload, CsrMember::ObservationInterval)?,
+        management_interval: deserialize_member::<TimeInterval>(payload, CsrMember::ManagementInterval)?,
+        location: deserialize_geometry(payload, CsrMember::Location)?,
+        observation_space: deserialize_geometry(payload, CsrMember::ObservationSpace)?,
+        operation_space: deserialize_geometry(payload, CsrMember::OperationSpace)?,
+        expires_at: payload
+            .get(CsrMember::ExpiresAt.key())
+            .map(|value| parse_datetime(value, CsrMember::ExpiresAt))
+            .transpose()?,
+        endpoint: deserialize_required::<DereferenceableUri>(payload, CsrMember::Endpoint)?,
+        accept: deserialize_member::<MediaTypeBuf>(payload, CsrMember::Accept)?,
         mode,
         operations,
-        scope: deserialize_member(payload, "scope")?,
-        refresh_rate: payload.get("refreshRate").map(|value| parse_duration_value(value, "refreshRate")).transpose()?,
-        management: deserialize_member::<RegistrationManagementInfo>(payload, "management")?,
-        context_source_info: deserialize_member::<Vec<KeyValuePair>>(payload, "contextSourceInfo")?,
-        jsonld_context: deserialize_member::<DereferenceableUri>(payload, "jsonldContext")?,
-        context_source_alias: deserialize_member::<ContextSourcePseudonym>(payload, "contextSourceAlias")?,
+        scope: deserialize_member(payload, CsrMember::Scope)?,
+        refresh_rate: payload
+            .get(CsrMember::RefreshRate.key())
+            .map(|value| parse_duration_value(value, CsrMember::RefreshRate))
+            .transpose()?,
+        management: deserialize_member::<RegistrationManagementInfo>(payload, CsrMember::Management)?,
+        context_source_info: deserialize_member::<Vec<KeyValuePair>>(payload, CsrMember::ContextSourceInfo)?,
+        jsonld_context: deserialize_member::<DereferenceableUri>(payload, CsrMember::JsonldContext)?,
+        context_source_alias: deserialize_member::<ContextSourcePseudonym>(payload, CsrMember::ContextSourceAlias)?,
         additional_properties: extract_additional_properties(payload),
     })
 }
 
 pub(super) fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, RegistrationError> {
-    let information = deserialize_member::<Vec<RegistrationInfo>>(fragment, "information")?;
+    let information = deserialize_member::<Vec<RegistrationInfo>>(fragment, CsrMember::Information)?;
     if let Some(information) = information.as_deref() {
         reject_empty_information(information)?;
     }
     Ok(CsrUpdateFragment {
-        registration_name: deserialize_nullable::<NonEmptyText>(fragment, "registrationName")?,
-        description: deserialize_nullable::<NonEmptyText>(fragment, "description")?,
+        registration_name: deserialize_nullable::<NonEmptyText>(fragment, CsrMember::RegistrationName)?,
+        description: deserialize_nullable::<NonEmptyText>(fragment, CsrMember::Description)?,
         information,
-        dataset_id: deserialize_nullable::<Vec<DatasetSelector>>(fragment, "datasetId")?,
-        tenant: deserialize_nullable::<TenantName>(fragment, "tenant")?,
-        observation_interval: deserialize_nullable::<TimeInterval>(fragment, "observationInterval")?,
-        management_interval: deserialize_nullable::<TimeInterval>(fragment, "managementInterval")?,
-        location: deserialize_nullable_geometry(fragment, "location")?,
-        observation_space: deserialize_nullable_geometry(fragment, "observationSpace")?,
-        operation_space: deserialize_nullable_geometry(fragment, "operationSpace")?,
-        expires_at: match fragment.get("expiresAt") {
+        dataset_id: deserialize_nullable::<Vec<DatasetSelector>>(fragment, CsrMember::DatasetId)?,
+        tenant: deserialize_nullable::<TenantName>(fragment, CsrMember::Tenant)?,
+        observation_interval: deserialize_nullable::<TimeInterval>(fragment, CsrMember::ObservationInterval)?,
+        management_interval: deserialize_nullable::<TimeInterval>(fragment, CsrMember::ManagementInterval)?,
+        location: deserialize_nullable_geometry(fragment, CsrMember::Location)?,
+        observation_space: deserialize_nullable_geometry(fragment, CsrMember::ObservationSpace)?,
+        operation_space: deserialize_nullable_geometry(fragment, CsrMember::OperationSpace)?,
+        expires_at: match fragment.get(CsrMember::ExpiresAt.key()) {
             None => NullableMember::Absent,
             Some(value) if value.is_null() => NullableMember::Cleared,
-            Some(value) => NullableMember::Set(parse_datetime(value, "expiresAt")?),
+            Some(value) => NullableMember::Set(parse_datetime(value, CsrMember::ExpiresAt)?),
         },
-        endpoint: deserialize_member::<DereferenceableUri>(fragment, "endpoint")?,
-        accept: deserialize_nullable::<MediaTypeBuf>(fragment, "accept")?,
-        mode: deserialize_member::<ForwardingMode>(fragment, "mode")?,
-        operations: deserialize_nullable::<Vec<CsrOperation>>(fragment, "operations")?,
-        scope: deserialize_nullable(fragment, "scope")?,
-        refresh_rate: match fragment.get("refreshRate") {
+        endpoint: deserialize_member::<DereferenceableUri>(fragment, CsrMember::Endpoint)?,
+        accept: deserialize_nullable::<MediaTypeBuf>(fragment, CsrMember::Accept)?,
+        mode: deserialize_member::<ForwardingMode>(fragment, CsrMember::Mode)?,
+        operations: deserialize_nullable::<Vec<CsrOperation>>(fragment, CsrMember::Operations)?,
+        scope: deserialize_nullable(fragment, CsrMember::Scope)?,
+        refresh_rate: match fragment.get(CsrMember::RefreshRate.key()) {
             None => NullableMember::Absent,
             Some(value) if value.is_null() => NullableMember::Cleared,
-            Some(value) => NullableMember::Set(parse_duration_value(value, "refreshRate")?),
+            Some(value) => NullableMember::Set(parse_duration_value(value, CsrMember::RefreshRate)?),
         },
-        management: deserialize_nullable::<RegistrationManagementInfo>(fragment, "management")?,
-        context_source_info: deserialize_nullable::<Vec<KeyValuePair>>(fragment, "contextSourceInfo")?,
-        jsonld_context: deserialize_nullable::<DereferenceableUri>(fragment, "jsonldContext")?,
-        context_source_alias: deserialize_nullable::<ContextSourcePseudonym>(fragment, "contextSourceAlias")?,
+        management: deserialize_nullable::<RegistrationManagementInfo>(fragment, CsrMember::Management)?,
+        context_source_info: deserialize_nullable::<Vec<KeyValuePair>>(fragment, CsrMember::ContextSourceInfo)?,
+        jsonld_context: deserialize_nullable::<DereferenceableUri>(fragment, CsrMember::JsonldContext)?,
+        context_source_alias: deserialize_nullable::<ContextSourcePseudonym>(fragment, CsrMember::ContextSourceAlias)?,
         additional_properties: extract_additional_properties(fragment),
     })
 }

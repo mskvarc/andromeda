@@ -7,7 +7,7 @@ use crate::jsonld_context::{
 use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 use andromeda_postgresql_codes::{jsonld_context_kind::JsonldContextKindCode, registry::UnknownCompactCode};
-use iri_rs::IriBuf;
+use iri_rs::{InvalidIri, IriBuf};
 use thiserror::Error;
 use url::Url;
 
@@ -15,11 +15,8 @@ use url::Url;
 #[derive(Debug, Error)]
 pub enum ContextMapperError {
     /// Stored local identifier is not a valid URI.
-    #[error("invalid URI in database: {value}")]
-    LocalId {
-        /// Raw database value.
-        value: String,
-    },
+    #[error("a stored local context identifier is not a valid URI: {0}")]
+    LocalId(#[source] IdentifierParseError),
     /// Stored URL column is not a valid URL.
     #[error("invalid URL in database: {source}")]
     Url {
@@ -40,16 +37,13 @@ pub enum ContextMapperError {
     #[error("unreadable context kind in database: {0}")]
     Kind(#[from] UnknownCompactCode),
     /// Stored serving URL is not an IRI reference the hit counter can key on.
-    #[error("invalid serving URL in database: {value}")]
-    ServingIri {
-        /// Raw database value.
-        value: String,
-    },
+    #[error("a stored serving URL is not an IRI: {0}")]
+    ServingIri(#[source] InvalidIri<String>),
 }
 
 /// Convert a detailed-projection row into the domain [`ContextMetadata`].
 pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata, ContextMapperError> {
-    let local_id: Identifier = row.local_id.parse().map_err(|_| ContextMapperError::LocalId { value: row.local_id.clone() })?;
+    let local_id: Identifier = row.local_id.parse().map_err(ContextMapperError::LocalId)?;
 
     let url = row
         .url
@@ -64,7 +58,7 @@ pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata
     let serving_iri = row
         .url
         .as_deref()
-        .map(|raw| IriBuf::new(raw.to_owned()).map_err(|error| ContextMapperError::ServingIri { value: error.0 }))
+        .map(|raw| IriBuf::new(raw.to_owned()).map_err(ContextMapperError::ServingIri))
         .transpose()?;
 
     let number_of_hits = u64::try_from(row.number_of_hits).map_err(|_| ContextMapperError::NegativeHits { value: row.number_of_hits })?;
@@ -88,6 +82,6 @@ pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata
 pub(crate) fn row_to_identifier(row: ContextSummaryRow) -> Result<Identifier, ContextMapperError> {
     match row.url {
         Some(raw) => Ok(Identifier::try_from(Url::parse(&raw).map_err(|source| ContextMapperError::Url { source })?)?),
-        None => row.id.parse().map_err(|_| ContextMapperError::LocalId { value: row.id }),
+        None => row.id.parse().map_err(ContextMapperError::LocalId),
     }
 }

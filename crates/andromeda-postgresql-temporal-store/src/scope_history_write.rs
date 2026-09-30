@@ -163,13 +163,9 @@ fn scope_history_binds(entries: &[ScopeHistoryEntry]) -> Result<ScopeHistoryBind
         binds.recorded_ats.push(entry.recorded_at);
         binds.entity_ids.push(entry.entity_id.as_str());
         binds.write_ids.push(entry.identity.write_id.as_uuid());
-        binds.write_ordinals.push(
-            entry
-                .identity
-                .ordinal
-                .as_i32()
-                .map_err(|error| TemporalStoreError::Validation(format!("scope write ordinal {} is out of range: {error}", entry.identity.ordinal)))?,
-        );
+        binds
+            .write_ordinals
+            .push(entry.identity.ordinal.as_i32().map_err(TemporalStoreError::WriteOrdinal)?);
         binds.value_kinds.push(ScopeValueKind::code(entry.value.kind()));
         binds.observed_ats.push(entry.axes.observed_at);
         binds.created_ats.push(entry.axes.created_at);
@@ -286,14 +282,11 @@ fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalSt
         ScopeHistory::VerbatimInstanceId,
         ScopeHistory::ScopePath,
     ]);
-    insert
-        .select_from(select)
-        .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
-        .on_conflict(
-            OnConflict::columns([ScopeHistory::RecordedAt, ScopeHistory::WriteId, ScopeHistory::WriteOrdinal])
-                .do_nothing()
-                .to_owned(),
-        );
+    insert.select_from(select).map_err(TemporalStoreError::StatementBuild)?.on_conflict(
+        OnConflict::columns([ScopeHistory::RecordedAt, ScopeHistory::WriteId, ScopeHistory::WriteOrdinal])
+            .do_nothing()
+            .to_owned(),
+    );
 
     let sql = insert.to_string(PostgresQueryBuilder);
     Ok(apply_column_alias(sql, &D, &columns))

@@ -77,7 +77,7 @@ const COPY_INTO_STAGE_SQL: &str = "COPY stage_entities (id, entity_type_name_key
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Internal`] if the membership insert ever stops
+/// Returns [`ContextStoreError::StatementBuild`] if the membership insert ever stops
 /// matching its column list, which its fixed shape makes unreachable.
 fn insert_from_stage_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let schema = schema_prefix(target);

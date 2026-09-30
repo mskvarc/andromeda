@@ -1,6 +1,7 @@
 //! Delivering one notification as an HTTP POST.
 
 use crate::{
+    connection_failure::ConnectionFailure,
     delivery_deadline::delivery_deadline,
     error::TransportError,
     host_port::HostPort,
@@ -81,7 +82,7 @@ impl HttpTransport {
             // reqwest's own.
             .dns_resolver(PrivateIpResolver::new(config.private_ip_blocking))
             .build()
-            .map_err(|error| TransportError::ClientInitializationFailed { detail: error.to_string() })?;
+            .map_err(TransportError::ClientInitializationFailed)?;
         let dns_cache = Cache::builder().max_capacity(DNS_CHECK_CAPACITY).time_to_live(DNS_CHECK_TTL).build();
         Ok(HttpTransport { client, config, dns_cache })
     }
@@ -96,7 +97,7 @@ impl HttpTransport {
             .host()
             .ok_or_else(|| TransportError::ConnectionFailed {
                 endpoint: endpoint_uri.clone(), // clone: the error owns the endpoint it names
-                detail: "URL has no host".to_string(),
+                cause: ConnectionFailure::NoHost,
             })?
             .to_owned();
         let port = endpoint_uri.port_or_known_default().unwrap_or(DEFAULT_HTTP_PORT);
@@ -116,9 +117,9 @@ impl HttpTransport {
                 endpoint: endpoint_uri.clone(), // clone: the error owns the endpoint it names
                 ip,
             }),
-            PrivateIpCheck::DnsFailed { detail } => Err(TransportError::DnsResolutionFailed {
+            PrivateIpCheck::DnsFailed { source } => Err(TransportError::DnsResolutionFailed {
                 endpoint: endpoint_uri.clone(), // clone: same
-                detail,
+                source,
             }),
         }
     }
@@ -130,29 +131,28 @@ impl HttpTransport {
 /// Table 5.2.15-1 `timeout` where it named one shorter than the system bound,
 /// and the system bound otherwise, so a reported timeout names the deadline
 /// that expired rather than one that did not apply.
-fn send_failure(endpoint: Url, deadline: Duration, error: &reqwest::Error) -> TransportError {
+fn send_failure(endpoint: Url, deadline: Duration, error: reqwest::Error) -> TransportError {
     if error.is_timeout() {
         return TransportError::Timeout { endpoint, duration: deadline };
     }
-    if chain_indicates_tls(error) {
-        TransportError::TlsError {
-            endpoint,
-            detail: error_chain_text(error),
-        }
+    if chain_indicates_tls(&error) {
+        TransportError::TlsError { endpoint, source: error }
     } else {
         TransportError::ConnectionFailed {
             endpoint,
-            detail: error_chain_text(error),
+            cause: ConnectionFailure::Http(error),
         }
     }
 }
 
-/// The message of `error` followed by that of every error below it.
+/// The message of `error` followed by that of every error below it, joined by
+/// `": "`.
 ///
 /// `reqwest`'s own message names only the request that failed ("error sending
 /// request for url ..."); whether the connection was refused, reset, or closed
-/// before a response is said by the errors below it.
-fn error_chain_text(error: &(dyn Error + 'static)) -> String {
+/// before a response is said by the errors below it, so the `Display` of every
+/// transport failure carrying a `reqwest` error renders the whole chain.
+pub(crate) fn error_chain_text(error: &(dyn Error + 'static)) -> String {
     iter::successors(Some(error), |&current| current.source())
         .map(ToString::to_string)
         .collect::<Vec<_>>()
@@ -282,7 +282,7 @@ impl HttpTransport {
         }
 
         let start = Instant::now();
-        let response = request.send().await.map_err(|error| send_failure(req.endpoint_uri.clone(), deadline, &error))?; // clone: the error path owns the endpoint it names
+        let response = request.send().await.map_err(|error| send_failure(req.endpoint_uri.clone(), deadline, error))?; // clone: the error path owns the endpoint it names
         let status = response.status().as_u16();
         let duration = start.elapsed();
 

@@ -6,6 +6,7 @@
 //! an unconditional UPDATE.
 
 use crate::{
+    csr_member::CsrMember,
     error::RegistrationError,
     mode_rules::default_operations,
     nullable_member::NullableMember,
@@ -90,14 +91,12 @@ pub struct ResolvedCsrUpdate {
 /// An omitted member keeps whatever the stored registration holds, which is
 /// still `GeoJSON` at that point and is decoded on its way into the resolved
 /// value set. `member` names the payload member in the failure message.
-fn resolve_geometry(fragment: &NullableMember<Geometry>, stored: Option<&Value>, member: &str) -> Result<Option<Geometry>, RegistrationError> {
+fn resolve_geometry(fragment: &NullableMember<Geometry>, stored: Option<&Value>, member: CsrMember) -> Result<Option<Geometry>, RegistrationError> {
     match fragment {
-        NullableMember::Absent => stored.map(Geometry::from_geojson_value).transpose().map_err(|source| {
-            RegistrationError::Validation(RegistrationValidationReason::ExistingGeometry {
-                member: member.to_string(),
-                source,
-            })
-        }),
+        NullableMember::Absent => stored
+            .map(Geometry::from_geojson_value)
+            .transpose()
+            .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::ExistingGeometry { member, source })),
         NullableMember::Cleared => Ok(None),
         // clone: own fragment side; the fragment is borrowed
         NullableMember::Set(geometry) => Ok(Some(geometry.clone())),
@@ -159,9 +158,13 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
         (None, None) => None,
     };
 
-    let location = resolve_geometry(&fragment.location, existing.coverage.location.as_ref(), "location")?;
-    let observation_space = resolve_geometry(&fragment.observation_space, existing.coverage.observation_space.as_ref(), "observationSpace")?;
-    let operation_space = resolve_geometry(&fragment.operation_space, existing.coverage.operation_space.as_ref(), "operationSpace")?;
+    let location = resolve_geometry(&fragment.location, existing.coverage.location.as_ref(), CsrMember::Location)?;
+    let observation_space = resolve_geometry(
+        &fragment.observation_space,
+        existing.coverage.observation_space.as_ref(),
+        CsrMember::ObservationSpace,
+    )?;
+    let operation_space = resolve_geometry(&fragment.operation_space, existing.coverage.operation_space.as_ref(), CsrMember::OperationSpace)?;
 
     Ok(ResolvedCsrUpdate {
         registration_name,

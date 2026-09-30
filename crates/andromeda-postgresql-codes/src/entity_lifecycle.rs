@@ -1,6 +1,6 @@
 //! The persisted lifecycle transition of one notification event.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// What one write did to the Entity a notification event records.

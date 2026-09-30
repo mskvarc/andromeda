@@ -1,7 +1,7 @@
 //! Periodic sampling of one tenant's base-table sizes into the metrics gauges.
 
-use crate::tenant_factory::{background_pacer::BackgroundPacer, error::TenantAssemblyError};
-use andromeda_postgresql_maintenance::table_size::table_sizes;
+use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError};
+use andromeda_postgresql_maintenance::{error::MaintenanceError, table_size::table_sizes};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     failure::TaskFailure,
@@ -44,9 +44,8 @@ pub(super) fn register_table_size_gauges(
     pool: PgPool,
     tenant: &TenantRef,
 ) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(SAMPLE_CADENCE, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("table-size-gauges").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(SAMPLE_CADENCE, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("table-size-gauges").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -64,8 +63,11 @@ pub(super) fn register_table_size_gauges(
         async move {
             pacer
                 .run_when_written(&observed, async move {
-                    let mut connection = pool.acquire().await.map_err(|error| TaskFailure::transient(error.to_string()))?;
-                    let samples = table_sizes(&mut connection).await.map_err(|error| TaskFailure::transient(error.to_string()))?;
+                    let mut connection = pool
+                        .acquire()
+                        .await
+                        .map_err(|error| TaskFailure::transient(MaintenanceError::Database(error)))?;
+                    let samples = table_sizes(&mut connection).await.map_err(TaskFailure::transient)?;
                     for sample in samples {
                         gauges.record(
                             sample.table.relation_name(),
@@ -83,5 +85,5 @@ pub(super) fn register_table_size_gauges(
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }

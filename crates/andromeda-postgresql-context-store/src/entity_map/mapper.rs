@@ -1,12 +1,36 @@
 //! Row-to-domain conversions for Entity Map records.
 
 use crate::{entity_map::lifecycle::MapControlRecord, error::ContextStoreError};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_model::{
-    entity_map::{EntityMap, EntityMapSource},
-    entity_map_fingerprint::RequestFingerprint,
+    entity_map::{EntityMap, EntityMapSource, EntityMapSourceError},
+    entity_map_fingerprint::{RequestFingerprint, RequestFingerprintError},
 };
 use indexmap::IndexMap;
+use thiserror::Error;
+
+/// A stored Entity Map column that does not parse back into its domain type.
+///
+/// The broker only ever writes values it validated, so each variant is a column
+/// holding something the broker never wrote.
+#[derive(Debug, Error)]
+pub enum StoredEntityMapError {
+    /// The control record's request fingerprint is not a fingerprint.
+    #[error("a stored entity map request fingerprint is not a fingerprint: {0}")]
+    RequestFingerprint(#[source] RequestFingerprintError),
+    /// An entry's entity identifier is not a URI.
+    #[error("a stored entity map entry id is not a URI: {0}")]
+    EntryId(#[source] IdentifierParseError),
+    /// An entry's source is not an entity map source.
+    #[error("a stored entity map entry source is not a source: {0}")]
+    EntrySource(#[source] EntityMapSourceError),
+    /// A link's registration identifier is not a URI.
+    #[error("a stored entity map link registration is not a URI: {0}")]
+    LinkRegistration(#[source] IdentifierParseError),
+    /// A link's linked map identifier is not a URI.
+    #[error("a stored linked entity map id is not a URI: {0}")]
+    LinkedMap(#[source] IdentifierParseError),
+}
 
 /// Assemble a map from its control record and the child rows read for it.
 pub(crate) fn rows_to_entity_map(
@@ -18,28 +42,18 @@ pub(crate) fn rows_to_entity_map(
     let request_fingerprint = control
         .request_fingerprint
         .as_deref()
-        .map(|stored| {
-            stored
-                .parse::<RequestFingerprint>()
-                .map_err(|error| ContextStoreError::Internal(format!("Invalid entity map request fingerprint: {error}")))
-        })
+        .map(|stored| stored.parse::<RequestFingerprint>().map_err(StoredEntityMapError::RequestFingerprint))
         .transpose()?;
     let mut entity_map: IndexMap<Identifier, Vec<EntityMapSource>> = IndexMap::new();
     for (entity_id, source) in entries {
-        let entity_id = entity_id
-            .parse::<Identifier>()
-            .map_err(|error| ContextStoreError::Internal(format!("Invalid entity map entry id '{entity_id}': {error}")))?;
-        let source = EntityMapSource::try_from(source).map_err(|error| ContextStoreError::Internal(format!("Invalid entity map source: {error}")))?;
+        let entity_id = entity_id.parse::<Identifier>().map_err(StoredEntityMapError::EntryId)?;
+        let source = EntityMapSource::try_from(source).map_err(StoredEntityMapError::EntrySource)?;
         entity_map.entry(entity_id).or_default().push(source);
     }
     let mut linked_maps = IndexMap::new();
     for (registration_id, linked_map_id) in links {
-        let registration_id = registration_id
-            .parse::<Identifier>()
-            .map_err(|error| ContextStoreError::Internal(format!("Invalid entity map link registration '{registration_id}': {error}")))?;
-        let linked_map_id = linked_map_id
-            .parse::<Identifier>()
-            .map_err(|error| ContextStoreError::Internal(format!("Invalid linked entity map id '{linked_map_id}': {error}")))?;
+        let registration_id = registration_id.parse::<Identifier>().map_err(StoredEntityMapError::LinkRegistration)?;
+        let linked_map_id = linked_map_id.parse::<Identifier>().map_err(StoredEntityMapError::LinkedMap)?;
         linked_maps.insert(registration_id, linked_map_id);
     }
     Ok(EntityMap::builder()

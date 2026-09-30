@@ -315,14 +315,11 @@ fn attribute_history_insert_sql(target: &ContextTarget) -> Result<String, Tempor
         AttributeHistory::ValueUri,
         AttributeHistory::Metadata,
     ]);
-    insert
-        .select_from(select)
-        .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
-        .on_conflict(
-            OnConflict::columns([AttributeHistory::RecordedAt, AttributeHistory::WriteId, AttributeHistory::WriteOrdinal])
-                .do_nothing()
-                .to_owned(),
-        );
+    insert.select_from(select).map_err(TemporalStoreError::StatementBuild)?.on_conflict(
+        OnConflict::columns([AttributeHistory::RecordedAt, AttributeHistory::WriteId, AttributeHistory::WriteOrdinal])
+            .do_nothing()
+            .to_owned(),
+    );
 
     let sql = insert.to_string(PostgresQueryBuilder);
     Ok(apply_column_alias(sql, &D, &columns))

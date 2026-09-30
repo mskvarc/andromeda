@@ -2,7 +2,11 @@
 //! [`TestManifest`], so CI builds the suites a single time and fans the artifact
 //! out to each stack leg instead of recompiling the workspace per leg.
 
-use crate::{error::XtaskError, stack::STACKS, test_binaries::TestManifest};
+use crate::{
+    error::XtaskError,
+    stack::{STACKS, Suite},
+    test_binaries::TestManifest,
+};
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
@@ -53,21 +57,21 @@ pub(crate) fn build(out_dir: &Path) -> Result<(), XtaskError> {
     // Every integration-test target across all stacks, deduplicated. Naming each
     // one keeps the compile to the suites this pipeline runs, leaving the lib and
     // bin unit tests to their own workflow.
-    let mut suites: Vec<&'static str> = STACKS.iter().flat_map(|stack| stack.suites.iter().map(|suite| suite.name)).collect();
-    suites.sort_unstable();
-    suites.dedup();
+    let mut suites: Vec<&'static Suite> = STACKS.iter().flat_map(|stack| stack.suites.iter()).collect();
+    suites.sort_unstable_by_key(|suite| suite.name);
+    suites.dedup_by_key(|suite| suite.name);
     let suites = suites;
 
     let executables = compile_suites(&suites)?;
     package(out_dir, &suites, executables)
 }
 
-/// Run `cargo test --no-run` for the named suites and collect each one's executable.
-fn compile_suites(suites: &[&'static str]) -> Result<BTreeMap<String, PathBuf>, XtaskError> {
+/// Run `cargo test --no-run` for the given suites and collect each one's executable.
+fn compile_suites(suites: &[&'static Suite]) -> Result<BTreeMap<String, PathBuf>, XtaskError> {
     let mut command = Command::new("cargo");
     command.args(["test", "--package", "andromeda", "--no-run", "--locked", "--message-format=json"]);
     for suite in suites {
-        command.arg("--test").arg(suite);
+        command.arg("--test").arg(suite.name);
     }
     command.stdout(Stdio::piped());
 
@@ -81,7 +85,7 @@ fn compile_suites(suites: &[&'static str]) -> Result<BTreeMap<String, PathBuf>, 
         if line.is_empty() {
             continue;
         }
-        let message: CargoMessage = serde_json::from_str(&line).map_err(|error| XtaskError::BuildMessageParse(error.to_string()))?;
+        let message: CargoMessage = serde_json::from_str(&line).map_err(XtaskError::BuildMessageParse)?;
         match message {
             CargoMessage::CompilerArtifact { target, executable } => {
                 // An integration test's kind is exactly `["test"]`; the lib and
@@ -101,7 +105,7 @@ fn compile_suites(suites: &[&'static str]) -> Result<BTreeMap<String, PathBuf>, 
 }
 
 /// Copy each suite's executable into `out_dir/bin` and write the manifest.
-fn package(out_dir: &Path, suites: &[&'static str], executables: BTreeMap<String, PathBuf>) -> Result<(), XtaskError> {
+fn package(out_dir: &Path, suites: &[&'static Suite], executables: BTreeMap<String, PathBuf>) -> Result<(), XtaskError> {
     let bin_dir = out_dir.join("bin");
     fs::create_dir_all(&bin_dir)?;
 
@@ -114,10 +118,8 @@ fn package(out_dir: &Path, suites: &[&'static str], executables: BTreeMap<String
 
     // A registered suite that produced no executable would fail only later, in a
     // leg that cannot find its binary; reject it here where the cause is obvious.
-    for suite in suites {
-        if !binaries.contains_key(*suite) {
-            return Err(XtaskError::SuiteBinaryMissing((*suite).to_owned()));
-        }
+    if let Some(missing) = suites.iter().copied().find(|suite| !binaries.contains_key(suite.name)) {
+        return Err(XtaskError::SuiteBinaryMissing(missing));
     }
 
     let manifest = TestManifest::new(binaries);

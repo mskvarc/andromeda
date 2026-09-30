@@ -93,16 +93,19 @@ struct Report<'runs> {
 /// identifier with the last occurrence winning, as the reference tool does.
 fn collect(path: &Path) -> Result<BTreeMap<String, TestOutcome>, XtaskError> {
     if !path.is_file() {
-        return Err(XtaskError::OutputXmlMissing(path.display().to_string()));
+        return Err(XtaskError::OutputXmlMissing(path.to_path_buf()));
     }
     let text = fs::read_to_string(path)?;
-    collect_str(&text).map_err(|error| XtaskError::OutputXmlParse(path.display().to_string(), error))
+    collect_str(&text).map_err(|source| XtaskError::OutputXmlParse {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
-/// Parse the outcomes out of the text of one `output.xml`, returning the parse
-/// error message on failure so the caller can attribute it to a path.
-fn collect_str(text: &str) -> Result<BTreeMap<String, TestOutcome>, String> {
-    let document = Document::parse(text).map_err(|error| error.to_string())?;
+/// Parse the outcomes out of the text of one `output.xml`, returning the XML
+/// parse error on failure so the caller can attribute it to a path.
+fn collect_str(text: &str) -> Result<BTreeMap<String, TestOutcome>, roxmltree::Error> {
+    let document = Document::parse(text)?;
     let mut outcomes = BTreeMap::new();
     for test in document.descendants().filter(|node| node.has_tag_name("test")) {
         if let Some(outcome) = outcome_of(test) {
@@ -247,8 +250,11 @@ fn render_section(title: &str, rows: &[&TestOutcome], style: ReportStyle) -> Vec
 
 #[cfg(test)]
 mod tests {
-    use crate::etsi::diff::{Verdict, collect_str, compare, official_identifier};
-    use std::fmt::Write;
+    use crate::{
+        error::XtaskError,
+        etsi::diff::{Verdict, collect, collect_str, compare, official_identifier},
+    };
+    use std::{env, fmt::Write, fs, process};
 
     /// One robot `output.xml` with a single suite and the given `(name, status)`
     /// tests, enough to exercise the comparison.
@@ -311,5 +317,21 @@ mod tests {
         let report = compare(&baseline, &candidate);
         assert!(report.newly_passing.is_empty());
         assert!(report.newly_failing.is_empty());
+    }
+
+    #[test]
+    fn a_missing_output_xml_names_the_absent_path() {
+        let path = env::temp_dir().join(format!("andromeda-xtask-diff-missing-{}.xml", process::id()));
+        let error = collect(&path).err().expect("an absent output.xml is rejected");
+        assert!(matches!(error, XtaskError::OutputXmlMissing(missing) if missing == path));
+    }
+
+    #[test]
+    fn a_malformed_output_xml_carries_its_path_and_the_xml_parse_error() {
+        let path = env::temp_dir().join(format!("andromeda-xtask-diff-malformed-{}.xml", process::id()));
+        fs::write(&path, "<robot><suite>").expect("write the malformed output.xml");
+        let error = collect(&path).err().expect("a malformed output.xml is rejected");
+        fs::remove_file(&path).expect("clean up the malformed output.xml");
+        assert!(matches!(error, XtaskError::OutputXmlParse { path: parsed, .. } if parsed == path));
     }
 }

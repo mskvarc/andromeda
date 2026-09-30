@@ -146,17 +146,11 @@ pub enum OrderDirection {
 pub enum OrderTermError {
     /// The term did not satisfy the clause 4.9 `ValuePath` production that
     /// clause 4.23.3 delegates its `AttrName` to.
-    #[error("invalid orderBy member '{member}': {source}")]
-    Member {
-        /// The member text as the client wrote it.
-        member: String,
-        /// Which part of the production it failed.
-        #[source]
-        source: QueryError,
-    },
+    #[error("invalid orderBy member: {0}")]
+    Member(#[source] QueryError),
     /// The term used an unsupported direction.
     #[error("invalid orderBy direction: {0}")]
-    Direction(String),
+    Direction(#[source] strum::ParseError),
     /// The term carried the `[*]` language-suppression marker.
     ///
     /// Clause 4.9 gives `[*]` to a `q` predicate, where it matches a
@@ -165,8 +159,8 @@ pub enum OrderTermError {
     /// based and its prose names only the dotted and bracketed paths, so an
     /// ordering that suppressed language selection would be ordering by a value
     /// the clause never says how to choose.
-    #[error("invalid orderBy member '{0}': the [*] language marker belongs to the q filter grammar, not to orderBy")]
-    LanguageSuppression(String),
+    #[error("invalid orderBy member: the [*] language marker belongs to the q filter grammar, not to orderBy")]
+    LanguageSuppression,
 }
 
 impl FromStr for OrderTerm {
@@ -176,10 +170,7 @@ impl FromStr for OrderTerm {
         let raw = raw.trim();
         let (member, direction) = match raw.split_once(';') {
             Some((member, direction)) => {
-                let direction = direction
-                    .trim()
-                    .parse::<OrderDirection>()
-                    .map_err(|_| OrderTermError::Direction(direction.trim().to_string()))?;
+                let direction = direction.trim().parse::<OrderDirection>().map_err(OrderTermError::Direction)?;
                 (member.trim(), direction)
             }
             None => match raw.strip_prefix('!') {
@@ -187,12 +178,9 @@ impl FromStr for OrderTerm {
                 None => (raw, OrderDirection::Asc),
             },
         };
-        let attr = parse_attribute_path(member).map_err(|source| OrderTermError::Member {
-            member: member.to_string(),
-            source,
-        })?;
+        let attr = parse_attribute_path(member).map_err(OrderTermError::Member)?;
         if attr.match_all_languages {
-            return Err(OrderTermError::LanguageSuppression(member.to_string()));
+            return Err(OrderTermError::LanguageSuppression);
         }
         Ok(OrderTerm { attr, direction })
     }
@@ -337,7 +325,7 @@ mod tests {
     fn a_linked_entity_traversal_is_not_an_ordering_member() {
         for rejected in ["rel{attr}", "rel{Building,Store:attr}"] {
             let error = rejected.parse::<OrderTerm>().expect_err("a hop is not an ordering member");
-            assert!(matches!(error, OrderTermError::Member { .. }), "{rejected}: got {error:?}");
+            assert!(matches!(error, OrderTermError::Member(_)), "{rejected}: got {error:?}");
         }
     }
 
@@ -345,7 +333,7 @@ mod tests {
     #[test]
     fn the_language_suppression_marker_is_not_an_ordering_member() {
         let error = "name[*]".parse::<OrderTerm>().expect_err("[*] orders by no defined value");
-        assert!(matches!(error, OrderTermError::LanguageSuppression(_)), "got {error:?}");
+        assert!(matches!(error, OrderTermError::LanguageSuppression), "got {error:?}");
     }
 
     /// A term is carried in the request text, so it has to spell itself back.

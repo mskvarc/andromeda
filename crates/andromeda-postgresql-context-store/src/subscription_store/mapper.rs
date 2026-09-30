@@ -6,10 +6,16 @@
 
 use crate::{
     error::ContextStoreError,
-    subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow, status_code::status_of, trigger_code::trigger_of},
+    subscription_store::{
+        params::DatasetIdPresence,
+        rows::SubscriptionRow,
+        status_code::status_of,
+        stored_subscription_error::StoredSubscriptionError,
+        trigger_code::trigger_of,
+    },
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReferenceError, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{
@@ -40,37 +46,32 @@ use url::Url;
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Internal`] when the stored text is not a valid
-/// URI, which means the column holds a value the broker never wrote.
+/// Returns [`ContextStoreError::StoredSubscription`] when the stored text is not
+/// a valid URI, which means the column holds a value the broker never wrote.
 pub fn stored_subscription_uri(raw: &str) -> Result<Identifier, ContextStoreError> {
-    raw.parse()
-        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription id '{raw}': {error}")))
+    Ok(raw.parse().map_err(StoredSubscriptionError::Id)?)
 }
 
 /// The entity selectors the `entities` column holds.
 fn stored_entities(row: &PgRow) -> Result<Option<Vec<EntitySelector>>, ContextStoreError> {
     let entities_json: Option<Value> = row.try_get(Subscriptions::Entities.unquoted())?;
     entities_json
-        .map(|value| {
-            serde_json::from_value::<Vec<EntitySelector>>(value)
-                .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription entities: {error}")))
-        })
+        .map(|value| serde_json::from_value::<Vec<EntitySelector>>(value).map_err(|error| StoredSubscriptionError::Entities(error).into()))
         .transpose()
 }
 
 /// The attribute names one `TEXT[]` column of expanded names holds.
-fn stored_attribute_names(row: &PgRow, column: &str) -> Result<Option<Vec<AttributeName>>, ContextStoreError> {
-    let stored: Option<Vec<String>> = row.try_get(column)?;
+///
+/// `unreadable` names the column in the failure, so the three columns that hold
+/// attribute names are told apart without carrying the column's text.
+fn stored_attribute_names(
+    row: &PgRow,
+    column: Subscriptions,
+    unreadable: fn(NgsiLdReferenceError) -> StoredSubscriptionError,
+) -> Result<Option<Vec<AttributeName>>, ContextStoreError> {
+    let stored: Option<Vec<String>> = row.try_get(column.unquoted())?;
     stored
-        .map(|names| {
-            names
-                .into_iter()
-                .map(|raw| {
-                    raw.parse()
-                        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored attribute name '{raw}' in column '{column}': {error}")))
-                })
-                .collect()
-        })
+        .map(|names| names.into_iter().map(|raw| raw.parse().map_err(|error| unreadable(error).into())).collect())
         .transpose()
 }
 
@@ -84,7 +85,7 @@ fn stored_notification_triggers(row: &PgRow) -> Result<Option<Vec<NotificationTr
                 .map(|code| {
                     NotificationTriggerCode::try_from(code)
                         .map(trigger_of)
-                        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored notification trigger code {code}: {error}")))
+                        .map_err(|error| StoredSubscriptionError::NotificationTrigger(error).into())
                 })
                 .collect()
         })
@@ -93,7 +94,7 @@ fn stored_notification_triggers(row: &PgRow) -> Result<Option<Vec<NotificationTr
 
 /// Parse a stored surrogate key into a [`SubscriptionKey`].
 fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreError> {
-    SubscriptionKey::try_from(raw).map_err(|error| ContextStoreError::Internal(format!("stored subscription key is not a valid surrogate key: {error}")))
+    Ok(SubscriptionKey::try_from(raw).map_err(StoredSubscriptionError::Key)?)
 }
 
 /// Read a `SubscriptionRow` from a `PgRow`, honouring [`DatasetIdPresence`].
@@ -101,7 +102,7 @@ fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreErro
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when a projected column is missing or
-/// cannot be decoded, and [`ContextStoreError::Internal`] when a stored value no
+/// cannot be decoded, and [`ContextStoreError::StoredSubscription`] when a stored value no
 /// longer parses into its domain type: the subscription URI, an entity selector,
 /// a watched attribute name, a notification trigger code, the `q`, `scopeQ` or
 /// `csf` filter, the notification parameters, the language tag, the JSON-LD
@@ -112,52 +113,44 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         DatasetIdPresence::Absent => None,
     };
     let dataset_id = dataset_id_raw
-        .map(|ids| ids.iter().map(String::as_str).map(stored_subscription_uri).collect())
+        .map(|ids| {
+            ids.iter()
+                .map(|raw| raw.parse().map_err(StoredSubscriptionError::DatasetId))
+                .collect::<Result<Vec<Identifier>, StoredSubscriptionError>>()
+        })
         .transpose()?;
     let id = stored_subscription_uri(row.try_get(Subscriptions::Id.unquoted())?)?;
     let entities = stored_entities(row)?;
-    let watched_attributes = stored_attribute_names(row, Subscriptions::WatchedAttributes.unquoted())?;
+    let watched_attributes = stored_attribute_names(row, Subscriptions::WatchedAttributes, StoredSubscriptionError::WatchedAttribute)?;
     let notification_trigger = stored_notification_triggers(row)?;
     let q_raw: Option<String> = row.try_get(Subscriptions::Q.unquoted())?;
     let q = q_raw
-        .map(|raw| {
-            raw.parse()
-                .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription q filter '{raw}': {error}")))
-        })
+        .map(|raw| raw.parse().map_err(|error| StoredSubscriptionError::Q(Box::new(error))))
         .transpose()?;
     let scope_q_raw: Option<String> = row.try_get(Subscriptions::ScopeQ.unquoted())?;
     let scope_q = scope_q_raw
-        .map(|raw| ScopeQuery::parse(&raw).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription scopeQ '{raw}': {error}"))))
+        .map(|raw| ScopeQuery::parse(&raw).map_err(|error| StoredSubscriptionError::ScopeQ(Box::new(error))))
         .transpose()?;
     let csf_raw: Option<String> = row.try_get(Subscriptions::Csf.unquoted())?;
     let csf = csf_raw
-        .map(|raw| {
-            raw.parse()
-                .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription csf filter '{raw}': {error}")))
-        })
+        .map(|raw| raw.parse().map_err(|error| StoredSubscriptionError::Csf(Box::new(error))))
         .transpose()?;
-    let expand_values = stored_attribute_names(row, Subscriptions::ExpandValues.unquoted())?;
-    let json_keys = stored_attribute_names(row, Subscriptions::JsonKeys.unquoted())?;
+    let expand_values = stored_attribute_names(row, Subscriptions::ExpandValues, StoredSubscriptionError::ExpandValue)?;
+    let json_keys = stored_attribute_names(row, Subscriptions::JsonKeys, StoredSubscriptionError::JsonKey)?;
     let notification_json: Value = row.try_get(Subscriptions::Notification.unquoted())?;
-    let notification =
-        serde_json::from_value(notification_json).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription notification: {error}")))?;
+    let notification = serde_json::from_value(notification_json).map_err(StoredSubscriptionError::Notification)?;
     let lang_raw: Option<String> = row.try_get(Subscriptions::Lang.unquoted())?;
-    let lang = lang_raw
-        .map(LangTagBuf::new)
-        .transpose()
-        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription lang: {error}")))?;
+    let lang = lang_raw.map(LangTagBuf::new).transpose().map_err(StoredSubscriptionError::Lang)?;
     let jsonld_context_raw: Option<String> = row.try_get(Subscriptions::JsonldContext.unquoted())?;
     let jsonld_context = jsonld_context_raw
-        .map(|raw| Url::parse(&raw).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription jsonldContext '{raw}': {error}"))))
+        .map(|raw| Url::parse(&raw).map_err(StoredSubscriptionError::JsonldContext))
         .transpose()?;
     let status = SubscriptionStatusCode::try_from(row.try_get::<i16, _>(Subscriptions::Status.unquoted())?)
         .map(status_of)
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid subscription status: {e}")))?;
+        .map_err(StoredSubscriptionError::Status)?;
     let ngsild_conformance_raw: Option<String> = row.try_get(Subscriptions::NgsildConformance.unquoted())?;
     let ngsild_conformance = ngsild_conformance_raw
-        .map(|raw| {
-            SpecVersion::from_str(&raw).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription ngsildConformance '{raw}': {error}")))
-        })
+        .map(|raw| SpecVersion::from_str(&raw).map_err(StoredSubscriptionError::NgsildConformance))
         .transpose()?;
     Ok(SubscriptionRow {
         id,

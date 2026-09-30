@@ -25,6 +25,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-persistence-failure.workspace = true
 andromeda-temporal.workspace = true
 chrono = "0.4.45"
 futures = "0.3.34"

@@ -1,7 +1,7 @@
 //! Failures raised by the entity- and attribute-level mutation operations.
 
 use crate::expanded::dataset_id::InstanceDatasetIdError;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReferenceError};
 use iri_rs::IriBuf;
 use thiserror::Error;
 
@@ -31,10 +31,11 @@ pub enum ExpandedEntityError {
     #[error("attributes must be a JSON object")]
     AttributesNotObject,
     /// An attribute member did not satisfy the attribute-name grammar (clause 4.6.2).
-    #[error("invalid attribute name '{name}'")]
+    #[error("invalid attribute name: {source}")]
     InvalidAttributeName {
-        /// The offending attribute key carried by the fragment.
-        name: String,
+        /// Why the fragment's attribute key is not an attribute name.
+        #[source]
+        source: NgsiLdReferenceError,
     },
     /// An attribute instance carries a `datasetId` that is not an identifier,
     /// so the instance it names cannot be told apart from any other (clause

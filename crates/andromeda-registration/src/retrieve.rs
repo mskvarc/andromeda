@@ -23,7 +23,7 @@ impl RegistrationService {
     pub async fn get(&self, id: &Identifier, context: &ContextSpec) -> Result<Value, RegistrationError> {
         let mut registration = self.repo.get(id).await?.ok_or_else(|| RegistrationError::not_found(id))?;
         let additional_properties = registration.additional_properties.take();
-        let mut value = serde_json::to_value(registration).map_err(|error| RegistrationError::internal(format!("Failed to serialize CSR: {error}")))?;
+        let mut value = serde_json::to_value(registration).map_err(RegistrationError::Representation)?;
         let names = NameCompactor::new(&self.engine, context);
         if let Some(information) = value.get_mut("information") {
             compact_information(&names, information).await;

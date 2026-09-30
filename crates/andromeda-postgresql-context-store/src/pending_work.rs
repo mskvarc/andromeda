@@ -23,6 +23,7 @@ use crate::{
     migration_set::branch::{BranchSchemaVersion, current_branch_version},
     notification_delivery::branches::{drainable_targets, is_reaped_branch},
     snapshot::{branch_version::branch_is_current, status_code::stored_status as stored_snapshot_status},
+    store_fault::persistence_failure,
     subscription_store::{
         delivery_state::interval_anchor_select,
         periodic_due::unexpired_at,
@@ -88,7 +89,7 @@ impl PostgresPendingWorkProbe {
         } else {
             PendingWorkError::ProbeFailed {
                 database: database.clone(), // clone: the error outlives this borrow
-                detail: error.to_string(),
+                cause: persistence_failure(&error),
             }
         }
     }
@@ -140,10 +141,20 @@ impl PostgresPendingWorkProbe {
                 | ContextStoreError::Migration(_)
                 | ContextStoreError::BranchVersion(_)
                 | ContextStoreError::StoredRegistrationInformation(_)
-                | ContextStoreError::Internal(_)),
+                | ContextStoreError::StatementBuild(_)
+                | ContextStoreError::PayloadEncoding(_)
+                | ContextStoreError::OrdinalOutOfRange(_)
+                | ContextStoreError::StoredRegistration(_)
+                | ContextStoreError::StoredSubscription(_)
+                | ContextStoreError::StoredSnapshot(_)
+                | ContextStoreError::StoredEntity(_)
+                | ContextStoreError::StoredEntityMap(_)
+                | ContextStoreError::CatalogueIdentityGeneration(_)
+                | ContextStoreError::Invariant(_)
+                | ContextStoreError::DatabaseUrlUnnamed),
             ) => Err(PendingWorkError::ProbeFailed {
                 database: database.clone(), // clone: the error outlives this borrow
-                detail: error.to_string(),
+                cause: persistence_failure(&error),
             }),
         }
     }

@@ -13,6 +13,7 @@ andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-persistence-failure.workspace = true
 chrono = { version = "0.4.45", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["display"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }

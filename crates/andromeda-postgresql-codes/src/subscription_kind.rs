@@ -1,6 +1,6 @@
 //! The persisted family of one stored subscription.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// Which family a stored subscription belongs to.

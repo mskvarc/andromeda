@@ -9,10 +9,12 @@ use crate::{
     scope_history_value::ScopeHistoryValue,
     semantic_time_axes::SemanticTimeAxes,
     temporal_catalog_write::TemporalCatalog,
+    temporal_store_invariant::TemporalStoreInvariant,
     temporal_stream::{TemporalCatalogUpsert, TemporalStreamKey},
     unit_code_metadata::take_unit_code,
     write_record_persist::persist_write_record,
 };
+use andromeda_context_commit::submission_refusal::SubmissionRefusal;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -28,7 +30,7 @@ use andromeda_temporal::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::{fmt::Display, slice, sync::Arc};
+use std::{slice, sync::Arc};
 
 /// PostgreSQL temporal history used through the idempotent append port.
 ///
@@ -95,12 +97,8 @@ impl PostgresTemporalHistorySink {
                 continue;
             };
             for (position, entry) in intent.entries.iter().enumerate() {
-                let delta = u32::try_from(position)
-                    .map_err(|error| TemporalStoreError::Validation(format!("temporal intent entry position {position} is out of range: {error}")))?;
-                let ordinal = intent
-                    .base_ordinal
-                    .advanced_by(delta)
-                    .map_err(|error| TemporalStoreError::Validation(format!("temporal intent entry ordinal at position {position} overflowed: {error}")))?;
+                let delta = u32::try_from(position).map_err(TemporalStoreError::EntryPosition)?;
+                let ordinal = intent.base_ordinal.advanced_by(delta).map_err(TemporalStoreError::WriteOrdinal)?;
                 let identity = TemporalObservationIdentity {
                     write_id: intent.record.write_id(),
                     ordinal,
@@ -241,10 +239,8 @@ fn recording_entity_key(catalog: &TemporalCatalog, intent: &TemporalAppendIntent
         Some(entity_key) => Ok(Some(entity_key)),
         None => match intent.write_purpose() {
             TemporalWritePurpose::Deletion => Ok(None),
-            TemporalWritePurpose::Observation => Err(TemporalStoreError::Query(format!(
-                "temporal catalogue resolved no narrow key for entity {}",
-                intent.entity_id
-            ))),
+            // clone: the invariant owns the entity whose key the catalogue failed to resolve.
+            TemporalWritePurpose::Observation => Err(TemporalStoreInvariant::EntityKeyUnresolved(intent.entity_id.clone()).into()),
         },
     }
 }
@@ -271,7 +267,8 @@ fn resolve_stream(
         .streams
         .get(&(entity_key, key))
         .copied()
-        .ok_or_else(|| TemporalStoreError::Query("temporal sink catalogue upsert returned no matching stream".to_owned()))
+        // clone: the invariant owns the attribute whose stream the catalogue failed to return.
+        .ok_or_else(|| TemporalStoreInvariant::StreamUnresolved(attribute_name.clone()).into())
 }
 
 /// Build one history row from a neutral observation.
@@ -310,7 +307,7 @@ fn stored_value(row: &TemporalHistoryRow) -> Result<AttributeHistoryValue, Tempo
         TemporalValue::String(value) => Ok(AttributeHistoryValue::String(value.clone())), // clone: the persisted row owns the string.
         TemporalValue::Boolean(value) => Ok(AttributeHistoryValue::Boolean(*value)),
         TemporalValue::Geometry(value) => Ok(AttributeHistoryValue::Geometry(
-            Geometry::from_geojson_value(value).map_err(|error| TemporalStoreError::Validation(error.to_string()))?,
+            Geometry::from_geojson_value(value).map_err(|_not_a_geometry| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyGeometryInvalid))?,
         )),
         TemporalValue::Object(value) => Ok(AttributeHistoryValue::Object(Value::clone(value))), // clone: the persisted row owns the structured value.
         TemporalValue::DateTime(value) => Ok(AttributeHistoryValue::DateTime(*value)),
@@ -320,19 +317,23 @@ fn stored_value(row: &TemporalHistoryRow) -> Result<AttributeHistoryValue, Tempo
         // `TemporalAppendEntry::Scope` and stored in `scope_history`; one that
         // reached the attribute conversion would have to invent the stream the
         // clause denies it.
-        TemporalValue::Scopes(_) => Err(TemporalStoreError::Validation(
-            "an entity scope has no attribute history row; clause 4.5.4 gives it no attribute stream".to_owned(),
-        )),
+        TemporalValue::Scopes(_) => Err(TemporalStoreError::ScopeHasNoAttributeRow),
     }
 }
 
 /// Classify one store failure at the temporal port boundary.
-fn persistence(error: impl Display) -> TemporalError {
-    TemporalError::persistence(error.to_string())
+#[track_caller]
+fn persistence(error: impl Into<TemporalStoreError>) -> TemporalError {
+    TemporalError::from(error.into())
 }
 #[cfg(test)]
 mod tests {
-    use crate::{error::TemporalStoreError, intent_sink::recording_entity_key, temporal_catalog_write::TemporalCatalog};
+    use crate::{
+        error::TemporalStoreError,
+        intent_sink::recording_entity_key,
+        temporal_catalog_write::TemporalCatalog,
+        temporal_store_invariant::TemporalStoreInvariant,
+    };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
@@ -418,7 +419,10 @@ mod tests {
     #[test]
     fn an_observation_whose_evolution_is_gone_is_reported_rather_than_dropped() {
         let error = recording_entity_key(&empty_catalog(), &intent(vec![observation()])).expect_err("an observation needs its evolution");
-        assert!(matches!(error, TemporalStoreError::Query(_)), "{error:?}");
+        assert!(
+            matches!(error, TemporalStoreError::Invariant(TemporalStoreInvariant::EntityKeyUnresolved(_))),
+            "{error:?}"
+        );
     }
 
     /// A resolved key is handed back whatever the intent is for.

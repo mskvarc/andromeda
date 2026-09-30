@@ -6,7 +6,11 @@
 //! delete that returns the pair it removed. Brokers sharing the tenant database
 //! therefore agree on which of them sends a notification without coordinating.
 
-use crate::error::ContextStoreError;
+use crate::{
+    error::ContextStoreError,
+    store_fault::{persistence_failure, undecodable},
+    subscription_store::stored_subscription_error::StoredSubscriptionError,
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_notification::{
     error::NotificationError,
@@ -66,7 +70,7 @@ impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
                 .map(|(subscription,)| {
                     subscription
                         .parse::<Identifier>()
-                        .map_err(|error| NotificationError::persistence(format!("notified subscription identifier: {error}")))
+                        .map_err(|error| NotificationError::Persistence(undecodable(&error)))
                 })
                 .collect()
         })
@@ -84,7 +88,7 @@ impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
                 .map(|(registration,)| {
                     registration
                         .parse::<Identifier>()
-                        .map_err(|error| NotificationError::persistence(format!("notified registration identifier: {error}")))
+                        .map_err(|error| NotificationError::Persistence(undecodable(&error)))
                 })
                 .collect()
         })
@@ -92,8 +96,9 @@ impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
 }
 
 /// A store failure as the notification policy reports it.
+#[track_caller]
 fn persistence(error: &ContextStoreError) -> NotificationError {
-    NotificationError::persistence(error.to_string())
+    NotificationError::Persistence(persistence_failure(error))
 }
 
 /// Record `registrations` as notified to `subscription`, returning those
@@ -111,7 +116,7 @@ async fn claim<'e>(executor: impl PgExecutor<'e>, subscription: &Identifier, reg
         .map(|(registration,)| {
             registration
                 .parse::<Identifier>()
-                .map_err(|error| ContextStoreError::Internal(format!("notified registration identifier: {error}")))
+                .map_err(|error| StoredSubscriptionError::NotifiedRegistration(error).into())
         })
         .collect()
 }
@@ -162,7 +167,7 @@ fn claim_statement(subscription: &Identifier, registrations: &[Identifier]) -> R
             SubscriptionNotifiedRegistrations::RegistrationId,
         ])
         .select_from(source)
-        .map_err(|error| ContextStoreError::Internal(format!("notified registration claim: {error}")))?
+        .map_err(ContextStoreError::StatementBuild)?
         .on_conflict(
             OnConflict::columns([
                 SubscriptionNotifiedRegistrations::SubscriptionKey,

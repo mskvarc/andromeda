@@ -11,6 +11,7 @@ use crate::{
     listed_contexts::ListedContexts,
     mutation::ContextMutation,
     pending_hits::fold_pending_hits,
+    registry_invariant::RegistryInvariant,
     removal::ContextRemoval,
     store::ContextRegistryStore,
 };
@@ -239,9 +240,7 @@ impl ContextRegistryService {
         if let Some(source_url) = source_url {
             self.engine.invalidate_context(&source_url).await;
         }
-        let identifier_iri = IriBuf::new(identifier.to_string()).map_err(|error| ContextRegistryError::Invariant {
-            detail: format!("validated Context URI is not an IRI reference: {}", error.0),
-        })?;
+        let identifier_iri = IriBuf::new(identifier.to_string()).map_err(RegistryInvariant::IdentifierNotIri)?;
         self.engine.invalidate_context(&identifier_iri).await;
         Ok(())
     }
@@ -270,7 +269,7 @@ impl ContextRegistryService {
             .await
             .map_err(|error| ContextRegistryError::ContextUnavailable {
                 source_url: source_url.clone(), // clone: the source is also needed to invalidate the previous document.
-                detail: error.to_string(),
+                source: Box::new(error),
             })?;
         // Clause 5.13.5.4: "the existing @context is replaced with the newly
         // downloaded one." The resolver hands the download back already reduced
@@ -305,14 +304,15 @@ fn hosted_context_subtree(payload: Value) -> Result<Value, ContextRegistryError>
 
 /// Parse the compile-time vocabulary constant into the HTTP resource identifier type.
 fn core_context_identifier() -> Result<Identifier, ContextRegistryError> {
-    NGSI_LD_CORE_CONTEXT_URL.as_str().parse().map_err(|error| ContextRegistryError::Invariant {
-        detail: format!("core Context URL is invalid: {error}"),
-    })
+    NGSI_LD_CORE_CONTEXT_URL
+        .as_str()
+        .parse()
+        .map_err(|error| RegistryInvariant::CoreContextIdentifier(error).into())
 }
 
 /// Serialize a registry representation with one policy-owned error category.
 fn serialize<T: serde::Serialize>(value: T) -> Result<Value, ContextRegistryError> {
-    serde_json::to_value(value).map_err(|error| ContextRegistryError::Representation { detail: error.to_string() })
+    serde_json::to_value(value).map_err(ContextRegistryError::Representation)
 }
 
 #[cfg(test)]

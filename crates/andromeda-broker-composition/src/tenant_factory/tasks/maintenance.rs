@@ -4,6 +4,7 @@ use crate::{
     event::entity_change_sink::BroadcastEntityChangeSink,
     tenant_factory::{
         TenantFactoryConfig,
+        assembly_invariant::{AssemblyInvariant, RetentionSetting},
         background_pacer::BackgroundPacer,
         error::TenantAssemblyError,
         spatial::location_placement,
@@ -27,7 +28,7 @@ use andromeda_subscription::error::SubscriptionError;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
-    failure::TaskFailure,
+    failure::{FailureClass, TaskFailure},
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule},
     registration::TaskRegistration,
     restart_policy::RestartPolicy,
@@ -102,7 +103,7 @@ pub(super) fn register_entity_side_effects(
         entity_config.pending_side_effects_cleanup_interval.duration(),
         retention_duration(
             entity_config.pending_side_effects_dead_letter_after.duration().as_secs(),
-            "pending side-effect dead-letter age",
+            RetentionSetting::SideEffectDeadLetter,
         )?,
     )?;
     Ok(())
@@ -154,8 +155,8 @@ fn register_entity_side_effect_drain(
     wake: DrainWakeReceiver,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
-    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("entity-side-effect-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("entity-side-effect-delivery").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
@@ -169,7 +170,7 @@ fn register_entity_side_effect_drain(
             pacer
                 .run_drain_pass(execution.cause(), async move {
                     let now = DateTime::<Utc>::from(execution.cutoff());
-                    let outcome = drain.execute(now).await.map_err(|error| classify_entity_expiry_failure(&error))?;
+                    let outcome = drain.execute(now).await.map_err(classify_entity_expiry_failure)?;
                     if outcome.work_may_remain {
                         Ok(DrainPassOutcome::WorkMayRemain)
                     } else {
@@ -179,9 +180,7 @@ fn register_entity_side_effect_drain(
                 .await
         }
     });
-    supervisor
-        .register_drain(task, wake)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+    supervisor.register_drain(task, wake).map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Register the periodic reap of dead-lettered side-effect jobs.
@@ -195,9 +194,8 @@ fn register_entity_side_effect_reap(
     cadence: Duration,
     dead_letter_after: chrono::Duration,
 ) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("entity-side-effect-dead-letter-reap").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("entity-side-effect-dead-letter-reap").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -208,10 +206,7 @@ fn register_entity_side_effect_reap(
         let drain = Arc::clone(&drain); // clone: each reap execution owns the policy operation while executing.
         async move {
             let now = DateTime::<Utc>::from(execution.cutoff());
-            let purged = drain
-                .purge_dead(now - dead_letter_after)
-                .await
-                .map_err(|error| classify_entity_expiry_failure(&error))?;
+            let purged = drain.purge_dead(now - dead_letter_after).await.map_err(classify_entity_expiry_failure)?;
             tracing::debug!(purged, "pending side-effect dead-letter reap completed");
             Ok(())
         }
@@ -219,7 +214,7 @@ fn register_entity_side_effect_reap(
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Register one periodic spatial rebuild pass at `cadence`.
@@ -228,9 +223,8 @@ where
     Rebuild: Fn() -> Pass + Send + Sync + 'static,
     Pass: Future<Output = Result<RebuildOutcome, EntityError>> + Send + 'static,
 {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("spatial-rebuild").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("spatial-rebuild").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -240,7 +234,7 @@ where
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
         let pass = rebuild();
         async move {
-            let outcome = pass.await.map_err(|error| classify_entity_expiry_failure(&error))?;
+            let outcome = pass.await.map_err(classify_entity_expiry_failure)?;
             tracing::info!(
                 partitions = outcome.partition_count,
                 entries = outcome.total_entries,
@@ -252,29 +246,28 @@ where
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
-pub(super) fn classify_subscription_expiry_failure(error: &SubscriptionError) -> TaskFailure {
-    let summary = error.to_string();
-    match error {
-        SubscriptionError::Persistence(_) | SubscriptionError::StoreSaturated => TaskFailure::transient(summary),
-        SubscriptionError::Internal(_) => TaskFailure::invariant_violation(summary),
+pub(super) const fn classify_subscription_expiry_failure(error: SubscriptionError) -> TaskFailure<SubscriptionError> {
+    let class = match &error {
+        SubscriptionError::Persistence(_) | SubscriptionError::StoreSaturated => FailureClass::Transient,
+        SubscriptionError::Internal(_) => FailureClass::InvariantViolation,
         SubscriptionError::Validation(_)
         | SubscriptionError::NotFound { .. }
         | SubscriptionError::AlreadyExists { .. }
         | SubscriptionError::JsonLd(_)
         | SubscriptionError::Query(_)
         | SubscriptionError::Representation(_)
-        | SubscriptionError::Identifier(_) => TaskFailure::permanent(summary),
-    }
+        | SubscriptionError::Identifier(_) => FailureClass::Permanent,
+    };
+    TaskFailure::new(class, error)
 }
 
-pub(super) fn classify_registration_expiry_failure(error: &RegistrationError) -> TaskFailure {
-    let summary = error.to_string();
-    match error {
-        RegistrationError::Persistence(_) | RegistrationError::StoreSaturated => TaskFailure::transient(summary),
-        RegistrationError::Internal(_) => TaskFailure::invariant_violation(summary),
+pub(super) const fn classify_registration_expiry_failure(error: RegistrationError) -> TaskFailure<RegistrationError> {
+    let class = match &error {
+        RegistrationError::Persistence(_) | RegistrationError::StoreSaturated => FailureClass::Transient,
+        RegistrationError::Internal(_) => FailureClass::InvariantViolation,
         RegistrationError::Validation(_)
         | RegistrationError::NotFound { .. }
         | RegistrationError::AlreadyExists { .. }
@@ -282,20 +275,20 @@ pub(super) fn classify_registration_expiry_failure(error: &RegistrationError) ->
         | RegistrationError::JsonLd(_)
         | RegistrationError::Query(_)
         | RegistrationError::Representation(_)
-        | RegistrationError::Identifier(_) => TaskFailure::permanent(summary),
-    }
+        | RegistrationError::Identifier(_) => FailureClass::Permanent,
+    };
+    TaskFailure::new(class, error)
 }
 
 /// Classify exhaustive entity-policy failures at the binary composition boundary.
-pub(super) fn classify_entity_expiry_failure(error: &EntityError) -> TaskFailure {
-    let summary = error.to_string();
-    match error {
+pub(super) const fn classify_entity_expiry_failure(error: EntityError) -> TaskFailure<EntityError> {
+    let class = match &error {
         EntityError::Commit(_)
         | EntityError::Persistence(_)
         | EntityError::StoreSaturated
         | EntityError::TransactionContended
-        | EntityError::Contention { identifier: _, attempts: _ } => TaskFailure::transient(summary),
-        EntityError::Internal(_) => TaskFailure::invariant_violation(summary),
+        | EntityError::Contention { identifier: _, attempts: _ } => FailureClass::Transient,
+        EntityError::Internal(_) => FailureClass::InvariantViolation,
         EntityError::Validation(_)
         | EntityError::NotFound { identifier: _ }
         | EntityError::TypeNotFound { name: _ }
@@ -309,6 +302,7 @@ pub(super) fn classify_entity_expiry_failure(error: &EntityError) -> TaskFailure
         | EntityError::Representation(_)
         | EntityError::Identifier(_)
         | EntityError::EntityTypeListIdentifier(_)
-        | EntityError::AttributeListIdentifier(_) => TaskFailure::permanent(summary),
-    }
+        | EntityError::AttributeListIdentifier(_) => FailureClass::Permanent,
+    };
+    TaskFailure::new(class, error)
 }

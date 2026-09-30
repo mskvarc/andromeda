@@ -234,7 +234,7 @@ impl FromStr for TimeValue {
 
     fn from_str(literal: &str) -> Result<TimeValue, TimeValueError> {
         let Some(form) = TimeValueForm::of(literal) else {
-            return Err(TimeValueError::NoTimeValueForm { value: literal.to_owned() });
+            return Err(TimeValueError::NoTimeValueForm);
         };
         form.parse(literal)
     }
@@ -253,11 +253,8 @@ pub enum TimeValueError {
     #[error(transparent)]
     Time(#[from] NgsiLdTimeError),
     /// The literal is written in none of the three forms (ETSI GS CIM 009 clause 4.6.3).
-    #[error("value is written in no NGSI-LD time value form: {value}")]
-    NoTimeValueForm {
-        /// The rejected literal.
-        value: String,
-    },
+    #[error("value is written in no NGSI-LD time value form")]
+    NoTimeValueForm,
 }
 
 #[cfg(test)]
@@ -425,6 +422,6 @@ mod tests {
     #[test]
     fn a_literal_in_no_form_reports_that_rather_than_a_lexical_refusal() {
         let error = "atrium".parse::<TimeValue>().expect_err("not a time value");
-        assert!(matches!(error, TimeValueError::NoTimeValueForm { .. }), "got {error:?}");
+        assert!(matches!(error, TimeValueError::NoTimeValueForm), "got {error:?}");
     }
 }

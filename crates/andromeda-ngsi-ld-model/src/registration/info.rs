@@ -3,6 +3,7 @@
 use crate::entity_info::EntityInfo;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IdentifierTooLong};
 use serde::{Deserialize, Serialize};
+use strum::{Display, IntoStaticStr};
 use thiserror::Error;
 
 /// Information block describing what a context source provides (ETSI GS CIM 009 clause 5.2.10).
@@ -36,6 +37,18 @@ impl RegistrationInfo {
     }
 }
 
+/// The three array members of a [`RegistrationInfo`] (Table 5.2.10-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
+#[strum(serialize_all = "camelCase")]
+pub enum RegistrationInfoMember {
+    /// The `entities` member.
+    Entities,
+    /// The `propertyNames` member.
+    PropertyNames,
+    /// The `relationshipNames` member.
+    RelationshipNames,
+}
+
 /// Why a wire document cannot be a [`RegistrationInfo`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum RegistrationInfoError {
@@ -44,7 +57,7 @@ pub enum RegistrationInfoError {
     Empty,
     /// A member was present as an empty array.
     #[error("RegistrationInfo member {0} must not be an empty array")]
-    EmptyMember(&'static str),
+    EmptyMember(RegistrationInfoMember),
     /// An `idPattern` is longer than the identifier bound.
     #[error("a RegistrationInfo idPattern is not storable: {0}")]
     IdPatternTooLong(#[from] IdentifierTooLong),
@@ -70,13 +83,13 @@ impl TryFrom<RegistrationInfoWire> for RegistrationInfo {
             return Err(RegistrationInfoError::Empty);
         }
         if wire.entities.as_ref().is_some_and(Vec::is_empty) {
-            return Err(RegistrationInfoError::EmptyMember("entities"));
+            return Err(RegistrationInfoError::EmptyMember(RegistrationInfoMember::Entities));
         }
         if wire.property_names.as_ref().is_some_and(Vec::is_empty) {
-            return Err(RegistrationInfoError::EmptyMember("propertyNames"));
+            return Err(RegistrationInfoError::EmptyMember(RegistrationInfoMember::PropertyNames));
         }
         if wire.relationship_names.as_ref().is_some_and(Vec::is_empty) {
-            return Err(RegistrationInfoError::EmptyMember("relationshipNames"));
+            return Err(RegistrationInfoError::EmptyMember(RegistrationInfoMember::RelationshipNames));
         }
         wire.entities
             .iter()

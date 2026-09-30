@@ -1,6 +1,9 @@
 //! The `scopeQ` query parameter value (clause 4.19).
 
-use crate::{error::QueryError, scope::pattern::ScopePattern};
+use crate::{
+    error::QueryError,
+    scope::{pattern::ScopePattern, pattern_fault::ScopePatternFault},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Write},
@@ -57,10 +60,10 @@ impl ScopeQuery {
     pub fn parse(raw: &str) -> Result<ScopeQuery, QueryError> {
         let tokens = tokenize_scope_query(raw);
         let mut parser = ScopeQueryParser { tokens: &tokens, position: 0 };
-        let alternatives = parser.parse_or(raw)?;
+        let alternatives = parser.parse_or()?;
         if !parser.is_exhausted() {
             // A dangling `)` or trailing operator: the whole input is malformed.
-            return Err(QueryError::ScopePatternInvalid(raw.to_string()));
+            return Err(QueryError::ScopePatternInvalid(ScopePatternFault::TrailingInput));
         }
         Ok(ScopeQuery { alternatives })
     }
@@ -149,38 +152,38 @@ impl ScopeQueryParser<'_> {
     }
 
     /// Parse a disjunction: the union of its conjunctions' alternatives.
-    fn parse_or(&mut self, raw: &str) -> Result<Vec<Vec<ScopePattern>>, QueryError> {
-        let mut alternatives = self.parse_and(raw)?;
+    fn parse_or(&mut self) -> Result<Vec<Vec<ScopePattern>>, QueryError> {
+        let mut alternatives = self.parse_and()?;
         while matches!(self.peek(), Some(ScopeToken::Or)) {
             self.position += 1;
-            alternatives.extend(self.parse_and(raw)?);
+            alternatives.extend(self.parse_and()?);
         }
         Ok(alternatives)
     }
 
     /// Parse a conjunction: the cartesian product of its terms' alternatives,
     /// which distributes AND over the OR inside any grouped sub-expression.
-    fn parse_and(&mut self, raw: &str) -> Result<Vec<Vec<ScopePattern>>, QueryError> {
-        let mut conjunction = self.parse_term(raw)?;
+    fn parse_and(&mut self) -> Result<Vec<Vec<ScopePattern>>, QueryError> {
+        let mut conjunction = self.parse_term()?;
         while matches!(self.peek(), Some(ScopeToken::And)) {
             self.position += 1;
-            conjunction = distribute_and(&conjunction, &self.parse_term(raw)?);
+            conjunction = distribute_and(&conjunction, &self.parse_term()?);
         }
         Ok(conjunction)
     }
 
     /// Parse one term: a parenthesised sub-expression or a single pattern.
-    fn parse_term(&mut self, raw: &str) -> Result<Vec<Vec<ScopePattern>>, QueryError> {
+    fn parse_term(&mut self) -> Result<Vec<Vec<ScopePattern>>, QueryError> {
         match self.peek().cloned() {
             Some(ScopeToken::Open) => {
                 self.position += 1;
-                let inner = self.parse_or(raw)?;
+                let inner = self.parse_or()?;
                 match self.peek() {
                     Some(ScopeToken::Close) => {
                         self.position += 1;
                         Ok(inner)
                     }
-                    _ => Err(QueryError::ScopePatternInvalid(raw.to_string())),
+                    _ => Err(QueryError::ScopePatternInvalid(ScopePatternFault::UnclosedGroup)),
                 }
             }
             Some(ScopeToken::Pattern(pattern)) => {
@@ -188,7 +191,7 @@ impl ScopeQueryParser<'_> {
                 Ok(vec![vec![ScopePattern::parse(&pattern)?]])
             }
             // An operator, a `)`, or the end of input where a term was expected.
-            Some(ScopeToken::Or | ScopeToken::And | ScopeToken::Close) | None => Err(QueryError::ScopePatternInvalid(raw.to_string())),
+            Some(ScopeToken::Or | ScopeToken::And | ScopeToken::Close) | None => Err(QueryError::ScopePatternInvalid(ScopePatternFault::MissingPattern)),
         }
     }
 }
@@ -309,13 +312,31 @@ mod tests {
     #[test]
     fn a_malformed_pattern_is_rejected_when_the_scope_query_is_parsed() {
         let error = ScopeQuery::parse("/A,/1Floor").expect_err("must reject");
-        assert!(matches!(error, QueryError::ScopePatternInvalid(_)), "got {error:?}");
+        assert!(
+            matches!(error, QueryError::ScopePatternInvalid(ScopePatternFault::InvalidLevel)),
+            "got {error:?}"
+        );
     }
 
     #[test]
     fn an_empty_alternative_is_rejected() {
-        assert!(ScopeQuery::parse("/A,").is_err());
+        assert!(matches!(
+            ScopeQuery::parse("/A,"),
+            Err(QueryError::ScopePatternInvalid(ScopePatternFault::MissingPattern))
+        ));
         assert!(ScopeQuery::parse("/A;;/B").is_err());
+    }
+
+    #[test]
+    fn an_unclosed_group_and_a_dangling_parenthesis_are_told_apart() {
+        assert!(matches!(
+            ScopeQuery::parse("(/A,/B"),
+            Err(QueryError::ScopePatternInvalid(ScopePatternFault::UnclosedGroup))
+        ));
+        assert!(matches!(
+            ScopeQuery::parse("/A)"),
+            Err(QueryError::ScopePatternInvalid(ScopePatternFault::TrailingInput))
+        ));
     }
 
     #[test]

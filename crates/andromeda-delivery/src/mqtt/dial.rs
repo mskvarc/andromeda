@@ -8,6 +8,7 @@
 //! over that would hide which protocol a line belongs to.
 
 use crate::{
+    connection_failure::ConnectionFailure,
     endpoint::mqtt::{MqttEndpointConfig, MqttVersion},
     error::TransportError,
     mqtt::{
@@ -119,10 +120,10 @@ pub async fn dial(
 }
 
 /// The failure a connect attempt that did not complete becomes.
-fn connect_failed(label: &BrokerLabel, detail: &str) -> TransportError {
+fn connect_failed(label: &BrokerLabel, cause: ConnectionFailure) -> TransportError {
     TransportError::ConnectionFailed {
         endpoint: label.endpoint_uri.clone(), // clone: the error owns the endpoint label it names
-        detail: format!("MQTT {} connection failed: {detail}", label.version),
+        cause,
     }
 }
 
@@ -157,7 +158,7 @@ async fn dial_v5(
 
     match timeout(pool.connect_timeout, eventloop.poll()).await {
         Ok(Ok(_connected)) => info!(version = %label.version, endpoint = %label.endpoint_uri, "MQTT connected"),
-        Ok(Err(error)) => return Err(connect_failed(&label, &error.to_string())),
+        Ok(Err(error)) => return Err(connect_failed(&label, ConnectionFailure::MqttV5Connect(Box::new(error)))),
         Err(_elapsed) => return Err(connect_timed_out(&label, pool)),
     }
 
@@ -233,7 +234,7 @@ async fn dial_v311(
 
     match timeout(pool.connect_timeout, eventloop.poll()).await {
         Ok(Ok(_connected)) => info!(version = %label.version, endpoint = %label.endpoint_uri, "MQTT connected"),
-        Ok(Err(error)) => return Err(connect_failed(&label, &error.to_string())),
+        Ok(Err(error)) => return Err(connect_failed(&label, ConnectionFailure::MqttV311Connect(Box::new(error)))),
         Err(_elapsed) => return Err(connect_timed_out(&label, pool)),
     }
 

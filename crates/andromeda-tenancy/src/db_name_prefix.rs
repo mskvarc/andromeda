@@ -25,8 +25,11 @@ pub enum DbNamePrefixError {
     #[error("database name prefix must not be empty")]
     Empty,
     /// The value held a character outside `[A-Za-z0-9_]`, or began with a digit.
-    #[error("database name prefix must match [A-Za-z_][A-Za-z0-9_]*: '{0}'")]
-    Invalid(String),
+    #[error("database name prefix must match [A-Za-z_][A-Za-z0-9_]*, but holds '{}'", .offending.escape_default())]
+    Invalid {
+        /// The first character the grammar does not admit at its position.
+        offending: char,
+    },
 }
 
 impl DbNamePrefix {
@@ -57,13 +60,13 @@ impl TryFrom<String> for DbNamePrefix {
         }
         // A leading digit is illegal for an unquoted identifier; every later
         // position also admits digits.
-        let legal = value.bytes().enumerate().all(|(index, byte)| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'_' => true,
-            b'0'..=b'9' => index > 0,
-            _ => false,
+        let offending = value.chars().enumerate().find_map(|(index, character)| match character {
+            'A'..='Z' | 'a'..='z' | '_' => None,
+            '0'..='9' if index > 0 => None,
+            other => Some(other),
         });
-        if !legal {
-            return Err(DbNamePrefixError::Invalid(value));
+        if let Some(offending) = offending {
+            return Err(DbNamePrefixError::Invalid { offending });
         }
         Ok(DbNamePrefix(value))
     }
@@ -102,14 +105,21 @@ mod tests {
     }
 
     #[test]
-    fn a_prefix_starting_with_a_digit_is_rejected() {
-        assert!(DbNamePrefix::try_from("1tenant".to_string()).is_err());
+    fn a_prefix_starting_with_a_digit_is_rejected_naming_the_digit() {
+        pretty_assertions::assert_eq!(
+            DbNamePrefix::try_from("1tenant".to_string()),
+            Err(DbNamePrefixError::Invalid { offending: '1' })
+        );
     }
 
     #[test]
-    fn a_prefix_with_an_illegal_character_is_rejected() {
-        assert!(DbNamePrefix::try_from("tenant-db".to_string()).is_err());
-        assert!(DbNamePrefix::try_from("tenant db".to_string()).is_err());
+    fn a_prefix_with_an_illegal_character_is_rejected_naming_the_character() {
+        pretty_assertions::assert_eq!(
+            DbNamePrefix::try_from("tenant-db".to_string()),
+            Err(DbNamePrefixError::Invalid { offending: '-' })
+        );
+        let spaced = DbNamePrefix::try_from("tenant db".to_string()).expect_err("a space is not an identifier character");
+        pretty_assertions::assert_eq!(spaced.to_string(), "database name prefix must match [A-Za-z_][A-Za-z0-9_]*, but holds ' '");
     }
 
     #[test]

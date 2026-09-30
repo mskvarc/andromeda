@@ -40,7 +40,7 @@
 //! the collation `docs/text-collation-invariant.md` pins on every column a
 //! pattern is applied to — rather than from either engine's documentation.
 
-use crate::error::QueryError;
+use crate::{error::QueryError, non_posix_construct::NonPosixConstruct};
 use regex_syntax::ast::{
     Assertion,
     AssertionKind,
@@ -85,7 +85,7 @@ pub fn check_posix_dialect(ast: &Ast) -> Result<(), QueryError> {
         Ast::Alternation(alternation) => alternation.asts.iter().try_for_each(check_posix_dialect),
         Ast::Concat(concatenation) => concatenation.asts.iter().try_for_each(check_posix_dialect),
         Ast::ClassBracketed(bracketed) => check_class_set(&bracketed.kind),
-        Ast::ClassUnicode(_) => Err(unsupported(UNICODE_PROPERTY_CLASS)),
+        Ast::ClassUnicode(_) => Err(unsupported(NonPosixConstruct::UnicodePropertyClass)),
         Ast::Assertion(assertion) => check_assertion(assertion),
         Ast::Literal(literal) => check_literal(literal),
         Ast::Flags(flags) => check_set_flags(flags),
@@ -118,7 +118,11 @@ const fn check_repetition_count(kind: &RepetitionKind) -> Result<(), QueryError>
 
 /// Whether one repetition count is within `RE_DUP_MAX`.
 const fn bounded_count(count: u32) -> Result<(), QueryError> {
-    if count > RE_DUP_MAX { Err(unsupported(REPETITION_COUNT)) } else { Ok(()) }
+    if count > RE_DUP_MAX {
+        Err(unsupported(NonPosixConstruct::RepetitionCount))
+    } else {
+        Ok(())
+    }
 }
 
 /// The largest repetition count IEEE 1003.2 guarantees and PostgreSQL accepts.
@@ -133,7 +137,7 @@ const RE_DUP_MAX: u32 = 255;
 fn check_group(group: &Group) -> Result<(), QueryError> {
     match &group.kind {
         GroupKind::CaptureIndex(_) => {}
-        GroupKind::CaptureName { .. } => return Err(unsupported(NAMED_CAPTURE_GROUP)),
+        GroupKind::CaptureName { .. } => return Err(unsupported(NonPosixConstruct::NamedCaptureGroup)),
         GroupKind::NonCapturing(flags) => check_group_flags(flags)?,
     }
     check_posix_dialect(&group.ast)
@@ -151,8 +155,8 @@ fn check_group(group: &Group) -> Result<(), QueryError> {
 fn check_group_flags(flags: &Flags) -> Result<(), QueryError> {
     flags.items.iter().try_for_each(|item| match &item.kind {
         FlagsItemKind::Negation | FlagsItemKind::Flag(Flag::CaseInsensitive) => Ok(()),
-        FlagsItemKind::Flag(Flag::MultiLine | Flag::DotMatchesNewLine | Flag::IgnoreWhitespace) => Err(unsupported(INLINE_FLAG_GROUP)),
-        FlagsItemKind::Flag(Flag::Unicode | Flag::SwapGreed | Flag::CRLF) => Err(unsupported(NON_POSIX_FLAG)),
+        FlagsItemKind::Flag(Flag::MultiLine | Flag::DotMatchesNewLine | Flag::IgnoreWhitespace) => Err(unsupported(NonPosixConstruct::InlineFlagGroup)),
+        FlagsItemKind::Flag(Flag::Unicode | Flag::SwapGreed | Flag::CRLF) => Err(unsupported(NonPosixConstruct::NonPosixFlag)),
     })
 }
 
@@ -169,7 +173,7 @@ fn check_set_flags(flags: &SetFlags) -> Result<(), QueryError> {
             FlagsItemKind::Flag(Flag::CaseInsensitive) => {}
             FlagsItemKind::Flag(flag) if negated => {
                 check_flag(*flag)?;
-                return Err(unsupported(NEGATED_EMBEDDED_OPTION));
+                return Err(unsupported(NonPosixConstruct::NegatedEmbeddedOption));
             }
             FlagsItemKind::Flag(flag) => check_flag(*flag)?,
         }
@@ -187,7 +191,7 @@ fn check_set_flags(flags: &SetFlags) -> Result<(), QueryError> {
 const fn check_flag(flag: Flag) -> Result<(), QueryError> {
     match flag {
         Flag::CaseInsensitive | Flag::MultiLine | Flag::DotMatchesNewLine | Flag::IgnoreWhitespace => Ok(()),
-        Flag::Unicode | Flag::SwapGreed | Flag::CRLF => Err(unsupported(NON_POSIX_FLAG)),
+        Flag::Unicode | Flag::SwapGreed | Flag::CRLF => Err(unsupported(NonPosixConstruct::NonPosixFlag)),
     }
 }
 
@@ -203,7 +207,7 @@ const fn check_flag(flag: Flag) -> Result<(), QueryError> {
 const fn check_assertion(assertion: &Assertion) -> Result<(), QueryError> {
     match assertion.kind {
         AssertionKind::StartLine | AssertionKind::EndLine | AssertionKind::StartText => Ok(()),
-        AssertionKind::EndText => Err(unsupported(END_TEXT_ANCHOR)),
+        AssertionKind::EndText => Err(unsupported(NonPosixConstruct::EndTextAnchor)),
         AssertionKind::WordBoundary
         | AssertionKind::NotWordBoundary
         | AssertionKind::WordBoundaryStart
@@ -211,7 +215,7 @@ const fn check_assertion(assertion: &Assertion) -> Result<(), QueryError> {
         | AssertionKind::WordBoundaryStartAngle
         | AssertionKind::WordBoundaryEndAngle
         | AssertionKind::WordBoundaryStartHalf
-        | AssertionKind::WordBoundaryEndHalf => Err(unsupported(WORD_BOUNDARY_ASSERTION)),
+        | AssertionKind::WordBoundaryEndHalf => Err(unsupported(NonPosixConstruct::WordBoundaryAssertion)),
     }
 }
 
@@ -233,7 +237,7 @@ const fn check_assertion(assertion: &Assertion) -> Result<(), QueryError> {
 const fn check_literal(literal: &Literal) -> Result<(), QueryError> {
     match literal.kind {
         LiteralKind::Verbatim | LiteralKind::Meta | LiteralKind::Superfluous | LiteralKind::Special(_) => Ok(()),
-        LiteralKind::Octal | LiteralKind::HexFixed(_) | LiteralKind::HexBrace(_) => Err(unsupported(NUMERIC_CHARACTER_ESCAPE)),
+        LiteralKind::Octal | LiteralKind::HexFixed(_) | LiteralKind::HexBrace(_) => Err(unsupported(NonPosixConstruct::NumericCharacterEscape)),
     }
 }
 
@@ -247,7 +251,7 @@ const fn check_literal(literal: &Literal) -> Result<(), QueryError> {
 fn check_class_set(set: &ClassSet) -> Result<(), QueryError> {
     match set {
         ClassSet::Item(item) => check_class_set_item(item),
-        ClassSet::BinaryOp(_) => Err(unsupported(CLASS_SET_OPERATION)),
+        ClassSet::BinaryOp(_) => Err(unsupported(NonPosixConstruct::ClassSetOperation)),
     }
 }
 
@@ -259,8 +263,8 @@ fn check_class_set(set: &ClassSet) -> Result<(), QueryError> {
 /// [`check_posix_dialect`].
 fn check_class_set_item(item: &ClassSetItem) -> Result<(), QueryError> {
     match item {
-        ClassSetItem::Unicode(_) => Err(unsupported(UNICODE_PROPERTY_CLASS)),
-        ClassSetItem::Bracketed(_) => Err(unsupported(NESTED_BRACKET_EXPRESSION)),
+        ClassSetItem::Unicode(_) => Err(unsupported(NonPosixConstruct::UnicodePropertyClass)),
+        ClassSetItem::Bracketed(_) => Err(unsupported(NonPosixConstruct::NestedBracketExpression)),
         ClassSetItem::Ascii(class) => check_ascii_class(class),
         ClassSetItem::Literal(literal) => check_literal(literal),
         ClassSetItem::Range(range) => check_class_set_range(range),
@@ -279,7 +283,11 @@ fn check_class_set_item(item: &ClassSetItem) -> Result<(), QueryError> {
 /// PostgreSQL answers with "invalid character class"; the portable spelling of
 /// the same set is `[^[:alpha:]]`, which both engines run.
 const fn check_ascii_class(class: &ClassAscii) -> Result<(), QueryError> {
-    if class.negated { Err(unsupported(NEGATED_POSIX_CLASS)) } else { Ok(()) }
+    if class.negated {
+        Err(unsupported(NonPosixConstruct::NegatedPosixClass))
+    } else {
+        Ok(())
+    }
 }
 
 /// Walk the endpoints of a bracketed range.
@@ -304,7 +312,7 @@ fn check_class_set_union(union: &ClassSetUnion) -> Result<(), QueryError> {
     let last = union.items.len().saturating_sub(1);
     for (position, item) in union.items.iter().enumerate() {
         if position != 0 && position != last && is_bare_hyphen(item) {
-            return Err(unsupported(MEDIAL_HYPHEN));
+            return Err(unsupported(NonPosixConstruct::MedialHyphen));
         }
         check_class_set_item(item)?;
     }
@@ -326,48 +334,9 @@ const fn is_bare_hyphen(item: &ClassSetItem) -> bool {
 }
 
 /// Name the construct in the rejection a client receives.
-const fn unsupported(construct: &'static str) -> QueryError {
+const fn unsupported(construct: NonPosixConstruct) -> QueryError {
     QueryError::PatternNonPosixConstruct { construct }
 }
-
-/// How the rejection names a Unicode property class.
-const UNICODE_PROPERTY_CLASS: &str = "a Unicode property class (\\p{...})";
-
-/// How the rejection names the `\z` anchor.
-const END_TEXT_ANCHOR: &str = "the \\z anchor (write \\Z)";
-
-/// How the rejection names a word-boundary assertion.
-const WORD_BOUNDARY_ASSERTION: &str = "a word-boundary assertion (\\b, \\B)";
-
-/// How the rejection names a numeric character escape.
-const NUMERIC_CHARACTER_ESCAPE: &str = "a numeric character escape (\\x61, \\x{61}, \\141)";
-
-/// How the rejection names a named capture group.
-const NAMED_CAPTURE_GROUP: &str = "a named capture group";
-
-/// How the rejection names an inline flag group.
-const INLINE_FLAG_GROUP: &str = "an inline flag group other than (?i:...) and (?-i:...) ((?m:...), (?s:...), (?x:...))";
-
-/// How the rejection names a flag letter IEEE 1003.2 has no counterpart for.
-const NON_POSIX_FLAG: &str = "an embedded option other than i, m, s and x";
-
-/// How the rejection names a negated embedded option.
-const NEGATED_EMBEDDED_OPTION: &str = "a negated embedded option other than (?-i) ((?-m), (?-s), (?-x))";
-
-/// How the rejection names a repetition count above `RE_DUP_MAX`.
-const REPETITION_COUNT: &str = "a repetition count above 255";
-
-/// How the rejection names a bracket expression nested inside another.
-const NESTED_BRACKET_EXPRESSION: &str = "a bracket expression nested inside another ([[=a=]], [[.a.]], [[abc]])";
-
-/// How the rejection names a class set operation.
-const CLASS_SET_OPERATION: &str = "a class set operation ([a&&b], [a--b], [a~~b])";
-
-/// How the rejection names a negated POSIX character class.
-const NEGATED_POSIX_CLASS: &str = "a negated character class ([[:^alpha:]]; write [^[:alpha:]])";
-
-/// How the rejection names a hyphen neither opening nor closing its list.
-const MEDIAL_HYPHEN: &str = "an unescaped - inside a bracket expression that neither opens nor closes it (write \\-)";
 
 #[cfg(test)]
 mod tests {

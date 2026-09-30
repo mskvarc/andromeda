@@ -1,7 +1,7 @@
 //! Wake-triggered bounded durable drain definition.
 
-use crate::{control::DrainExecution, failure::TaskFailure, registration::TaskRegistration, wake_trigger::DrainFallbackPolicy};
-use std::{future::Future, pin::Pin, sync::Arc, time::SystemTime};
+use crate::{control::DrainExecution, failure::TaskFailure, failure_report::FailureReport, registration::TaskRegistration, wake_trigger::DrainFallbackPolicy};
+use std::{error::Error, future::Future, pin::Pin, sync::Arc, time::SystemTime};
 
 /// How a bounded drain pass resolved, deciding when the next pass runs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,7 +18,11 @@ pub enum DrainPassOutcome {
 }
 
 /// Type-erased bounded operation invoked by drain execution mechanics.
-pub(crate) type DrainOperation = dyn Fn(DrainExecution) -> Pin<Box<dyn Future<Output = Result<DrainPassOutcome, TaskFailure>> + Send + 'static>> + Send + Sync;
+///
+/// The operation's typed failure is rendered into a [`FailureReport`] where it
+/// is adapted, so drivers of unrelated tasks share one operation shape.
+pub(crate) type DrainOperation =
+    dyn Fn(DrainExecution) -> Pin<Box<dyn Future<Output = Result<DrainPassOutcome, FailureReport>> + Send + 'static>> + Send + Sync;
 
 /// Complete drain task definition accepted by a supervisor.
 pub struct DrainTask {
@@ -32,15 +36,19 @@ pub struct DrainTask {
 
 impl DrainTask {
     /// Adapt a policy-owned bounded drain into runtime mechanics.
-    pub fn new<F, Fut>(registration: TaskRegistration, fallback: DrainFallbackPolicy, operation: F) -> DrainTask
+    pub fn new<F, Fut, E>(registration: TaskRegistration, fallback: DrainFallbackPolicy, operation: F) -> DrainTask
     where
         F: Fn(DrainExecution) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<DrainPassOutcome, TaskFailure>> + Send + 'static,
+        Fut: Future<Output = Result<DrainPassOutcome, TaskFailure<E>>> + Send + 'static,
+        E: Error,
     {
         DrainTask {
             registration,
             fallback,
-            operation: Arc::new(move |execution| Box::pin(operation(execution))),
+            operation: Arc::new(move |execution| {
+                let pass = operation(execution);
+                Box::pin(async move { pass.await.map_err(|failure| FailureReport::of(&failure)) })
+            }),
         }
     }
 

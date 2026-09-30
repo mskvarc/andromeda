@@ -29,7 +29,6 @@ use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_replay::CommitReplay,
     committer::{CommitFuture, ContextCommitter},
-    error::CommitError,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
@@ -59,6 +58,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use indexmap::IndexSet;
@@ -352,7 +352,7 @@ impl StubBroker {
 }
 
 fn unsupported(method: &str) -> TemporalError {
-    TemporalError::internal(format!("StubBroker::{method} is not exercised by the traversal harness"))
+    panic!("StubBroker::{method} is not exercised by the traversal harness")
 }
 
 #[async_trait]
@@ -433,19 +433,19 @@ impl EntityReader for StubBroker {
     }
 
     async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
-        Err(EntityError::internal("get_snapshot is not exercised by the traversal harness"))
+        panic!("get_snapshot is not exercised by the traversal harness")
     }
 
     async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
-        Err(EntityError::internal("get_snapshot_batch is not exercised by the traversal harness"))
+        panic!("get_snapshot_batch is not exercised by the traversal harness")
     }
 
     async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-        Err(EntityError::internal("get_sys_attrs is not exercised by the traversal harness"))
+        panic!("get_sys_attrs is not exercised by the traversal harness")
     }
 
     async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
-        Err(EntityError::internal("get_sys_attrs_batch is not exercised by the traversal harness"))
+        panic!("get_sys_attrs_batch is not exercised by the traversal harness")
     }
 }
 
@@ -537,19 +537,11 @@ impl TemporalMutator for StubBroker {
 
 impl ContextCommitter for StubBroker {
     fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        Box::pin(async {
-            Err(CommitError::Invariant {
-                detail: "commit is not exercised by the traversal harness".to_owned(),
-            })
-        })
+        Box::pin(async { panic!("commit is not exercised by the traversal harness") })
     }
 
     fn commit_replayed(&self, _target: &ContextTarget, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        Box::pin(async {
-            Err(CommitError::Invariant {
-                detail: "commit_replayed is not exercised by the traversal harness".to_owned(),
-            })
-        })
+        Box::pin(async { panic!("commit_replayed is not exercised by the traversal harness") })
     }
 }
 
@@ -766,7 +758,7 @@ impl RemoteTemporalLinkedSource for RecordingSource {
                 entities: entities.get(id).cloned().unwrap_or_default(), // clone: the source hands back owned values
                 failures: Vec::new(),
             }),
-            RemoteOutcome::Fails => Err(TemporalError::internal("the remainder of the system is unreachable")),
+            RemoteOutcome::Fails => Err(TemporalError::from(PersistenceFailure::Unavailable)),
         }
     }
 }

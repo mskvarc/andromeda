@@ -1,6 +1,7 @@
 //! Enqueueing temporal append intents inside the entity anchor transaction.
 
 use crate::intent_store::PostgresTemporalIntentStore;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
 use andromeda_postgresql_seaquery::{
     pg_array::text_array,
@@ -97,12 +98,12 @@ impl PostgresTemporalIntentStore {
                 intent
                     .base_ordinal
                     .as_i32()
-                    .map_err(|error| TemporalError::internal(format!("temporal append intent base ordinal is out of range: {error}")))?,
+                    .map_err(|error| TemporalError::from(PersistenceFailure::Unencodable.record(&error)))?,
             );
-            payloads.push(serde_json::to_value(intent).map_err(|error| TemporalError::internal(format!("failed to encode temporal append intent: {error}")))?);
+            payloads.push(serde_json::to_value(intent).map_err(|error| TemporalError::from(PersistenceFailure::Unencodable.record(&error)))?);
         }
         let statement = enqueue_statement(ids, &entity_ids, bases, payloads)
-            .map_err(|error| TemporalError::internal(format!("failed to build intent enqueue: {error}")))?;
+            .map_err(|error| TemporalError::from(PersistenceFailure::StatementUnbuildable.record(&error)))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         let sql = apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns());
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)

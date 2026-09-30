@@ -6,11 +6,11 @@ use std::{fmt, str::FromStr};
 use thiserror::Error;
 
 /// Failures parsing a `georel` expression.
-#[derive(Debug, Error, Clone, PartialEq)]
+#[derive(Debug, Error)]
 pub enum GeoRelParseError {
     /// The relationship token is not one clause 4.10 defines.
-    #[error("unknown georel: {0}")]
-    UnknownRel(String),
+    #[error("unknown georel")]
+    UnknownRel,
     /// A `maxDistance` / `minDistance` modifier held a value that is not a valid
     /// clause 4.10 `PositiveNumber`.
     #[error(transparent)]
@@ -23,8 +23,8 @@ pub enum GeoRelParseError {
     /// A `near` relationship carried a modifier that is neither `maxDistance`
     /// nor `minDistance`. Silently dropping it (as an earlier reading did) let
     /// a typo such as `maxDistanc==500` parse as an unbounded `near`.
-    #[error("unknown georel modifier: {0}")]
-    UnknownModifier(String),
+    #[error("unknown georel modifier")]
+    UnknownModifier,
 }
 
 /// Geo-spatial relationship operators per NGSI-LD clause 4.10.
@@ -112,7 +112,7 @@ impl FromStr for GeoRel {
                     } else {
                         // A malformed modifier is a rejected request, never a
                         // silently unbounded `near`.
-                        return Err(GeoRelParseError::UnknownModifier(part.to_string()));
+                        return Err(GeoRelParseError::UnknownModifier);
                     }
                 }
                 if max_distance.is_none() && min_distance.is_none() {
@@ -120,7 +120,7 @@ impl FromStr for GeoRel {
                 }
                 Ok(GeoRel::Near { max_distance, min_distance })
             }
-            other => Err(GeoRelParseError::UnknownRel(other.to_string())),
+            _ => Err(GeoRelParseError::UnknownRel),
         }
     }
 }
@@ -185,10 +185,7 @@ mod tests {
 
     #[test]
     fn an_unknown_relationship_is_a_typed_error() {
-        pretty_assertions::assert_eq!(
-            "beside".parse::<GeoRel>().expect_err("must fail"),
-            GeoRelParseError::UnknownRel("beside".to_string())
-        );
+        assert!(matches!("beside".parse::<GeoRel>().expect_err("must fail"), GeoRelParseError::UnknownRel));
     }
 
     #[test]
@@ -233,7 +230,10 @@ mod tests {
     fn near_without_either_distance_is_rejected() {
         // Clause 4.10: `nearRel` requires one mandatory positive distance, so a
         // bare `near` is not a valid relationship.
-        pretty_assertions::assert_eq!("near".parse::<GeoRel>().expect_err("must fail"), GeoRelParseError::NearMissingDistance);
+        assert!(matches!(
+            "near".parse::<GeoRel>().expect_err("must fail"),
+            GeoRelParseError::NearMissingDistance
+        ));
     }
 
     #[test]
@@ -256,7 +256,7 @@ mod tests {
         // unbounded `near`.
         assert!(matches!(
             "near;maxDistanc==500".parse::<GeoRel>().expect_err("must fail"),
-            GeoRelParseError::UnknownModifier(_)
+            GeoRelParseError::UnknownModifier
         ));
     }
 

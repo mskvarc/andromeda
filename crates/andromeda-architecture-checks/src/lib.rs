@@ -20,6 +20,7 @@ pub mod raw_constant;
 pub mod raw_sql;
 mod source_scan;
 pub mod sql;
+pub mod string_typed_error;
 pub mod type_erased_error;
 
 /// Declarative macros that generate caller-side architecture tests.

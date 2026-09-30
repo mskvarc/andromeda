@@ -17,6 +17,7 @@ use crate::{
         capture_sources::SnapshotCaptureSources,
         drain::DrainWorker,
     },
+    snapshot_invariant::SnapshotInvariant,
     status::validate_preparing_transition,
     store::{SnapshotPreparationJob, SnapshotStore},
 };
@@ -71,7 +72,9 @@ impl SnapshotExecutor {
             .staging_target(&snapshot.id)
             .await?
             .map(ContextTarget::Snapshot)
-            .ok_or_else(|| SnapshotError::internal(format!("Snapshot {} has no durable staging context target", snapshot.id)))?;
+            .ok_or_else(|| SnapshotInvariant::NoStagingTarget {
+                snapshot: snapshot.id.clone(), // clone: the error owns the Snapshot it names.
+            })?;
         let mut aggregate = status::ExecutionAggregate::default();
         let context = ContextSpec::none()
             // clone: a restarted preparation executes against the same persisted context again.
@@ -266,9 +269,8 @@ impl SnapshotPreparation {
 
 /// A checked wall-clock deadline `lease` from now.
 fn lease_deadline(lease: Duration) -> Result<chrono::DateTime<Utc>, SnapshotError> {
-    let lease =
-        chrono::Duration::from_std(lease).map_err(|error| SnapshotError::internal(format!("Configured Snapshot preparation lease is invalid: {error}")))?;
+    let lease = chrono::Duration::from_std(lease).map_err(SnapshotInvariant::LeaseOutOfRange)?;
     Utc::now()
         .checked_add_signed(lease)
-        .ok_or_else(|| SnapshotError::internal("Snapshot preparation lease deadline exceeds the supported timestamp range"))
+        .ok_or_else(|| SnapshotInvariant::LeaseDeadlineOverflow.into())
 }

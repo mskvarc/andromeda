@@ -161,10 +161,13 @@ impl JsonLdEngineBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`JsonLdError::EmbeddedContextInvalid`] if an embedded context
-    /// will not parse, [`JsonLdError::ContextLoad`] if a preloaded file
-    /// cannot be read, [`JsonLdError::ContextInvalid`] if one will not parse,
-    /// and [`JsonLdError::ClientBuild`] if the HTTP client cannot be built.
+    /// Returns [`JsonLdError::EmbeddedContextMissing`] or
+    /// [`JsonLdError::EmbeddedContextInvalid`] if an embedded context is absent
+    /// or will not parse, [`JsonLdError::PreloadedContextUrl`] if a preloaded
+    /// URL is not an IRI, [`JsonLdError::PreloadedContextUnreadable`] if a
+    /// preloaded file cannot be read, [`JsonLdError::PreloadedContextInvalid`]
+    /// if one will not parse, and [`JsonLdError::ClientBuild`] if the HTTP
+    /// client cannot be built.
     pub fn build(self) -> Result<JsonLdEngine, JsonLdError> {
         for url in NGSI_LD_CORE_CONTEXT_URL_LIST {
             self.registry.register(IriBuf::from(url), parse_core_context(url)?);
@@ -232,19 +235,22 @@ impl Default for JsonLdEngineBuilder {
 
 /// Parse the embedded payload of one core context URL.
 fn parse_core_context(url: Iri<&str>) -> Result<jsonld_syntax::Value, JsonLdError> {
-    let payload = embedded_core_context_payload(url).ok_or_else(|| JsonLdError::EmbeddedContextInvalid(format!("no embedded payload for {url}")))?;
+    let payload = embedded_core_context_payload(url).ok_or_else(|| JsonLdError::EmbeddedContextMissing { url: IriBuf::from(url) })?;
     parse_embedded(payload, url)
 }
 
 /// Parse an embedded context payload.
 fn parse_embedded(payload: &str, url: Iri<&str>) -> Result<jsonld_syntax::Value, JsonLdError> {
-    let (value, _) = jsonld_syntax::Value::parse_str(payload).map_err(|error| JsonLdError::EmbeddedContextInvalid(format!("{url}: {error}")))?;
+    let (value, _) = jsonld_syntax::Value::parse_str(payload).map_err(|source| JsonLdError::EmbeddedContextInvalid {
+        url: IriBuf::from(url),
+        source,
+    })?;
     Ok(value)
 }
 
-/// Parse a compile-time or configuration URL before it enters an internal registry.
+/// Parse a configuration URL before it enters an internal registry.
 fn iri_buf(url: &Url) -> Result<IriBuf, JsonLdError> {
-    IriBuf::new(url.as_str().to_owned()).map_err(|error| JsonLdError::EmbeddedContextInvalid(format!("{url}: invalid IRI: {}", error.0)))
+    IriBuf::new(url.as_str().to_owned()).map_err(JsonLdError::PreloadedContextUrl)
 }
 
 /// Read the preloaded contexts from disk and register them.
@@ -259,16 +265,15 @@ fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &Contex
         if is_ngsi_ld_core_context_url(typed_url.as_ref()) {
             return Err(JsonLdError::ProtectedContextPreload { url: typed_url });
         }
-        let raw = fs::read_to_string(file).map_err(|error| JsonLdError::ContextLoad {
-            url: typed_url.clone(),
-            message: format!("Failed reading preloaded context file '{}': {error}", file.display()),
+        let raw = fs::read_to_string(file).map_err(|source| JsonLdError::PreloadedContextUnreadable {
+            path: file.clone(), // clone: the configuration map is borrowed and the failure outlives it
+            source,
         })?;
-        let (value, _) = jsonld_syntax::Value::parse_str(&raw).map_err(|error| JsonLdError::ContextInvalid {
-            url: typed_url.clone(),
-            message: format!("Invalid preloaded context file '{}': {error}", file.display()),
+        let (value, _) = jsonld_syntax::Value::parse_str(&raw).map_err(|source| JsonLdError::PreloadedContextInvalid {
+            path: file.clone(), // clone: the configuration map is borrowed and the failure outlives it
+            source,
         })?;
-        let iri = iri_buf(url)?;
-        registry.register_preloaded(iri, value);
+        registry.register_preloaded(typed_url, value);
         loaded.push((url.clone(), file.clone())); // clone: the configuration map is borrowed and stays valid
     }
     Ok(loaded)
@@ -444,7 +449,7 @@ mod tests {
 
         let built = JsonLdEngine::builder().preload_contexts(preloads).build();
 
-        assert!(matches!(built, Err(JsonLdError::ContextLoad { .. })));
+        assert!(matches!(built, Err(JsonLdError::PreloadedContextUnreadable { .. })));
     }
 
     #[test]
@@ -455,7 +460,7 @@ mod tests {
 
         let built = JsonLdEngine::builder().preload_contexts(preloads).build();
 
-        assert!(matches!(built, Err(JsonLdError::ContextInvalid { .. })));
+        assert!(matches!(built, Err(JsonLdError::PreloadedContextInvalid { .. })));
         let _ = fs::remove_file(path);
     }
 

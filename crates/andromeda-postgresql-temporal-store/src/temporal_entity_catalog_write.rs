@@ -15,6 +15,8 @@ use crate::{
     error::TemporalStoreError,
     repo::TemporalRepository,
     resolved_evolutions::{EvolutionOrigin, ResolvedEvolutions},
+    stored_catalog_error::StoredCatalogError,
+    temporal_store_invariant::TemporalStoreInvariant,
     temporal_stream::TemporalCatalogUpsert,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -32,7 +34,7 @@ use andromeda_postgresql_seaquery::{
     returning_image::Old,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
-use andromeda_temporal::write_purpose::TemporalWritePurpose;
+use andromeda_temporal::{temporal_not_found_reason::TemporalNotFoundReason, write_purpose::TemporalWritePurpose};
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Iden, OnConflict, PostgresQueryBuilder, Query};
 use serde_json::Value;
@@ -84,7 +86,7 @@ impl TemporalRepository {
     /// Returns [`TemporalStoreError::NameLookup`] when the type dictionary cannot
     /// resolve a name, [`TemporalStoreError::NotFound`] when a typeless
     /// observation has no temporal evolution to extend,
-    /// [`TemporalStoreError::Decode`] when a harvested key is unreadable, and
+    /// [`TemporalStoreError::StoredCatalog`] when a harvested key is unreadable, and
     /// [`TemporalStoreError::Database`] when a statement fails.
     pub(crate) async fn upsert_temporal_entities_batch(
         &self,
@@ -121,9 +123,9 @@ impl TemporalRepository {
                 harvest_key(&mut resolved, stored, &id, EvolutionOrigin::Existing)?;
             }
             if let Some(missing) = first_missing_typeless_observation(&resolving, resolved.keys()) {
-                return Err(TemporalStoreError::NotFound(format!(
-                    "Temporal evolution of {missing} does not exist and the write declares no entity type to create it with"
-                )));
+                return Err(TemporalStoreError::NotFound(TemporalNotFoundReason::UntypedEvolution {
+                    entity: missing.clone(),
+                })); // clone: the reason owns the entity it names
             }
         }
         Ok(resolved)
@@ -171,10 +173,8 @@ const fn evolution_resolution(upsert: &TemporalCatalogUpsert) -> EvolutionResolu
 
 /// Record one harvested `(entity_key, id)` pair under its typed identifier.
 fn harvest_key(resolved: &mut ResolvedEvolutions, stored: i64, id: &str, origin: EvolutionOrigin) -> Result<(), TemporalStoreError> {
-    let key = TemporalEntityKey::try_from(stored).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
-    let id = id
-        .parse::<Identifier>()
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.id '{id}': {error}")))?;
+    let key = TemporalEntityKey::try_from(stored).map_err(StoredCatalogError::EntityKey)?;
+    let id = id.parse::<Identifier>().map_err(StoredCatalogError::EntityId)?;
     resolved.record(id, key, origin);
     Ok(())
 }
@@ -243,7 +243,8 @@ fn entity_upsert_binds<'a>(
                 type_keys
                     .get(entity_type)
                     .map(|key| key.get())
-                    .ok_or_else(|| TemporalStoreError::UnresolvedName(format!("Entity type '{entity_type}' not found in dictionary after resolve")))
+                    // clone: the invariant owns the type the dictionary failed to resolve.
+                    .ok_or_else(|| TemporalStoreInvariant::EntityTypeUnresolved(entity_type.clone()).into())
             })
             .collect::<Result<Vec<i32>, TemporalStoreError>>()?;
         binds.ids.push(upsert.entity_id.as_str());
@@ -307,7 +308,7 @@ fn temporal_entity_upsert_batch_sql(target: &ContextTarget) -> Result<String, Te
     ]);
     insert
         .select_from(select)
-        .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
+        .map_err(TemporalStoreError::StatementBuild)?
         .on_conflict(
             OnConflict::column(TemporalEntities::Id)
                 .update_columns([TemporalEntities::ModifiedAt, TemporalEntities::EntityTypeNameKeys])

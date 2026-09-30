@@ -45,6 +45,8 @@ pub mod interval;
 mod interval_match;
 /// The immutable notification event a write produces.
 pub mod notification_event;
+/// The invariants notification delivery relies on.
+pub mod notification_invariant;
 /// The registrations each context source subscription was notified of.
 pub mod notified_registration_store;
 /// Entity event notification evaluation.
@@ -68,6 +70,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-persistence-failure",
         "andromeda-registration",
         "andromeda-spatial-index",
         "andromeda-subscription",

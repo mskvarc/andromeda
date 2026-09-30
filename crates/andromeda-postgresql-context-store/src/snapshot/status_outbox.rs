@@ -1,6 +1,9 @@
 //! Durable delivery queue for Snapshot lifecycle notifications.
 
-use crate::snapshot::{mapper::row_to_snapshot, persistence_error, record::snapshot_select};
+use crate::{
+    snapshot::{mapper::row_to_snapshot, persistence_error, record::snapshot_select},
+    store_fault::undecodable,
+};
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, snapshot::SnapshotStatus};
@@ -278,10 +281,8 @@ fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
         .transpose()?;
     Ok(SnapshotStatusDelivery {
         id: row.try_get("id").map_err(persistence_error)?,
-        snapshot_id: raw_snapshot
-            .parse()
-            .map_err(|error| SnapshotError::internal(format!("Invalid Snapshot URI in status outbox: {error}")))?,
-        endpoint: Url::parse(&raw_endpoint).map_err(|error| SnapshotError::internal(format!("Invalid endpoint in Snapshot status outbox: {error}")))?,
+        snapshot_id: raw_snapshot.parse().map_err(|error| SnapshotError::from(undecodable(&error)))?,
+        endpoint: Url::parse(&raw_endpoint).map_err(|error| SnapshotError::from(undecodable(&error)))?,
         receiver_info,
         payload: row.try_get("payload").map_err(persistence_error)?,
         attempt_count: row.try_get("attempt_count").map_err(persistence_error)?,

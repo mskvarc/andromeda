@@ -11,7 +11,7 @@ use std::{fs, path::Path, process::Command};
 const SUITE_ORIGIN: Iri<&str> = iri!("https://forge.etsi.org/rep/cim/ngsi-ld-test-suite.git");
 /// The commit the test-case matrix in `docs/official-ngsi-ld-tests.md` is recorded
 /// against; every corrected-material patch is authored to apply at this revision.
-const PINNED_COMMIT: &str = "48d5ff4e5c6f83527d64d0960703a25939521308";
+pub(crate) const PINNED_COMMIT: &str = "48d5ff4e5c6f83527d64d0960703a25939521308";
 
 /// Ensure the checkout exists at the pinned commit with a pristine working tree.
 ///
@@ -55,7 +55,7 @@ fn reset(checkout: &Path) -> Result<(), XtaskError> {
         .args(["reset", "--hard", "--quiet", PINNED_COMMIT])
         .status()?;
     if !reset.success() {
-        return Err(XtaskError::SuiteReset(PINNED_COMMIT.to_owned()));
+        return Err(XtaskError::SuiteReset);
     }
     // `reset --hard` restores tracked files but leaves untracked ones behind. A
     // corrected-material patch that adds a file leaves that file untracked, so an
@@ -64,11 +64,7 @@ fn reset(checkout: &Path) -> Result<(), XtaskError> {
     // in working directory". Removing untracked files here makes provisioning
     // idempotent regardless of how a previous run ended.
     let cleaned = Command::new("git").arg("-C").arg(checkout).args(["clean", "-fdq"]).status()?;
-    if cleaned.success() {
-        Ok(())
-    } else {
-        Err(XtaskError::SuiteReset(PINNED_COMMIT.to_owned()))
-    }
+    if cleaned.success() { Ok(()) } else { Err(XtaskError::SuiteReset) }
 }
 
 /// Whether the local repository already has the pinned commit as a commit object.

@@ -1,6 +1,8 @@
 //! What can go wrong between this broker and a notification endpoint.
 
-use std::{net::IpAddr, time::Duration};
+use crate::{connection_failure::ConnectionFailure, http::transport::error_chain_text};
+use humantime::format_duration;
+use std::{io, net::IpAddr, sync::Arc, time::Duration};
 use url::Url;
 
 /// Transport-level errors that prevent delivery from completing.
@@ -12,16 +14,17 @@ use url::Url;
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
     /// The connection could not be established, or was lost mid-delivery.
-    #[error("connection to {endpoint} failed: {detail}")]
+    #[error("connection to {endpoint} failed: {cause}")]
     ConnectionFailed {
         /// The endpoint that could not be reached.
         endpoint: Url,
-        /// What the transport reported.
-        detail: String,
+        /// Why the connection failed.
+        #[source]
+        cause: ConnectionFailure,
     },
 
     /// The endpoint did not answer within the configured timeout.
-    #[error("request to {endpoint} timed out after {duration:?}")]
+    #[error("request to {endpoint} timed out after {}", format_duration(*.duration))]
     Timeout {
         /// The endpoint that did not answer.
         endpoint: Url,
@@ -30,12 +33,13 @@ pub enum TransportError {
     },
 
     /// The TLS handshake failed.
-    #[error("TLS handshake with {endpoint} failed: {detail}")]
+    #[error("TLS handshake with {endpoint} failed: {}", error_chain_text(.source))]
     TlsError {
         /// The endpoint whose certificate or handshake was rejected.
         endpoint: Url,
-        /// What the TLS stack reported.
-        detail: String,
+        /// The send failure whose source chain carries the TLS error.
+        #[source]
+        source: reqwest::Error,
     },
 
     /// The serialised notification exceeds the transport's configured limit.
@@ -58,12 +62,13 @@ pub enum TransportError {
     },
 
     /// The endpoint host could not be resolved at all.
-    #[error("failed to resolve host for {endpoint}: {detail}")]
+    #[error("failed to resolve host for {endpoint}: {source}")]
     DnsResolutionFailed {
         /// The endpoint whose host could not be resolved.
         endpoint: Url,
-        /// What the resolver reported.
-        detail: String,
+        /// What the resolver reported, shared with the cached guard outcome.
+        #[source]
+        source: Arc<io::Error>,
     },
 
     /// The notification payload could not be serialised for delivery.
@@ -80,11 +85,8 @@ pub enum TransportError {
     ///
     /// Carries no endpoint: it fails once, at startup, before any endpoint is
     /// known, so there is no URI to name and no placeholder is invented for one.
-    #[error("HTTP client initialization failed: {detail}")]
-    ClientInitializationFailed {
-        /// What the client builder reported.
-        detail: String,
-    },
+    #[error("HTTP client initialization failed: {}", error_chain_text(.0))]
+    ClientInitializationFailed(#[source] reqwest::Error),
 }
 
 impl TransportError {
@@ -106,7 +108,50 @@ impl TransportError {
             TransportError::PayloadTooLarge { .. }
             | TransportError::PrivateIpBlocked { .. }
             | TransportError::PayloadSerialization { .. }
-            | TransportError::ClientInitializationFailed { .. } => false,
+            | TransportError::ClientInitializationFailed(_) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{connection_failure::ConnectionFailure, error::TransportError};
+    use std::{error::Error, io, sync::Arc, time::Duration};
+    use url::Url;
+
+    fn endpoint() -> Url {
+        Url::parse("http://receiver.example/notify").unwrap_or_else(|error| panic!("fixture endpoint parses: {error}"))
+    }
+
+    #[test]
+    fn a_timeout_names_its_deadline_in_human_units() {
+        let timeout = TransportError::Timeout {
+            endpoint: endpoint(),
+            duration: Duration::from_millis(1500),
+        };
+        pretty_assertions::assert_eq!(timeout.to_string(), "request to http://receiver.example/notify timed out after 1s 500ms");
+    }
+
+    #[test]
+    fn a_connection_failure_names_its_typed_cause() {
+        let failed = TransportError::ConnectionFailed {
+            endpoint: endpoint(),
+            cause: ConnectionFailure::BackoffActive,
+        };
+        pretty_assertions::assert_eq!(
+            failed.to_string(),
+            "connection to http://receiver.example/notify failed: connection unhealthy, backoff active"
+        );
+        assert!(failed.is_retryable());
+    }
+
+    #[test]
+    fn a_dns_failure_chains_the_resolver_error_as_its_source() {
+        let failed = TransportError::DnsResolutionFailed {
+            endpoint: endpoint(),
+            source: Arc::new(io::Error::new(io::ErrorKind::NotFound, "no such host")),
+        };
+        pretty_assertions::assert_eq!(failed.to_string(), "failed to resolve host for http://receiver.example/notify: no such host");
+        assert!(failed.source().is_some(), "the resolver error is the source");
     }
 }

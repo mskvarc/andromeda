@@ -46,6 +46,7 @@ mod tests {
         cached_context_invalidation::{CachedContextInvalidation, CachedContextInvalidationFuture, InvalidatedContexts},
         error::ContextRegistryError,
     };
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use std::sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -75,9 +76,7 @@ mod tests {
             Box::pin(async move {
                 match outcome {
                     PassOutcome::Reclaimed => Ok(InvalidatedContexts::reclaimed(1)),
-                    PassOutcome::Unavailable => Err(ContextRegistryError::Persistence {
-                        detail: "connection closed".to_owned(),
-                    }),
+                    PassOutcome::Unavailable => Err(ContextRegistryError::Persistence(PersistenceFailure::Unavailable)),
                 }
             })
         }

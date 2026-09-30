@@ -1,6 +1,6 @@
 //! The persisted health of one registration's context source.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// The health of a registration's context source (clause 5.2.9 `status`).

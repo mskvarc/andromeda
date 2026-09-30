@@ -17,12 +17,9 @@ pub struct TenantOptions {
 }
 
 /// An `options` value naming a keyword the tenant surface does not define.
-#[derive(Debug, thiserror::Error)]
-#[error("unsupported options keyword '{keyword}'; the tenant surface accepts 'sysAttrs' and 'usage'")]
-pub struct UnsupportedOption {
-    /// The keyword that was not recognised.
-    keyword: String,
-}
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("unsupported options keyword; the tenant surface accepts 'sysAttrs' and 'usage'")]
+pub struct UnsupportedOption;
 
 impl UnsupportedOption {
     /// The clause 6.3.20 `InvalidRequest` this becomes as a classified report.
@@ -41,7 +38,7 @@ impl TenantOptions {
     ///
     /// # Errors
     ///
-    /// Returns [`UnsupportedOption`] naming the first keyword outside
+    /// Returns [`UnsupportedOption`] when any keyword lies outside
     /// `{sysAttrs, usage}`.
     pub fn parse(written: Option<&str>) -> Result<TenantOptions, UnsupportedOption> {
         let mut options = TenantOptions::default();
@@ -52,9 +49,7 @@ impl TenantOptions {
             match keyword {
                 "sysAttrs" => options.sys_attrs = true,
                 "usage" => options.usage = true,
-                other => {
-                    return Err(UnsupportedOption { keyword: other.to_owned() });
-                }
+                _unsupported => return Err(UnsupportedOption),
             }
         }
         Ok(options)
@@ -63,7 +58,7 @@ impl TenantOptions {
 
 #[cfg(test)]
 mod tests {
-    use crate::options::TenantOptions;
+    use crate::options::{TenantOptions, UnsupportedOption};
 
     #[test]
     fn an_absent_or_empty_value_selects_nothing() {
@@ -89,7 +84,6 @@ mod tests {
 
     #[test]
     fn an_unknown_keyword_is_refused() {
-        let error = TenantOptions::parse(Some("sysAttrs,bogus")).expect_err("refused");
-        assert!(error.to_string().contains("bogus"), "{error}");
+        pretty_assertions::assert_eq!(TenantOptions::parse(Some("sysAttrs,bogus")), Err(UnsupportedOption));
     }
 }

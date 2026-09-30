@@ -27,3 +27,5 @@ pub mod registry_type_source;
 pub mod routing_rewrite;
 /// The number the delivery state stores a registration's health as.
 pub mod status_code;
+/// What a registration row that no longer reads back as a registration looks like.
+pub mod stored_registration_error;

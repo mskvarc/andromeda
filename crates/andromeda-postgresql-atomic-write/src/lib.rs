@@ -40,6 +40,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-number",
+        "andromeda-persistence-failure",
         "andromeda-postgresql-branch",
         "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-pool",

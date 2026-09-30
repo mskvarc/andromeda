@@ -375,6 +375,7 @@ mod tests {
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use async_trait::async_trait;
     use serde_json::{Value, json};
@@ -435,7 +436,7 @@ mod tests {
     }
 
     fn unsupported(method: &str) -> EntityError {
-        EntityError::internal(format!("StubStore::{method} is not exercised by the traversal harness"))
+        panic!("StubStore::{method} is not exercised by the traversal harness")
     }
 
     #[async_trait]
@@ -561,7 +562,7 @@ mod tests {
                         detail: "the context source answered with a refusal".to_owned(),
                     }],
                 }),
-                RemoteOutcome::Fails => Err(EntityError::internal("the remainder of the system is unreachable")),
+                RemoteOutcome::Fails => Err(EntityError::from(PersistenceFailure::Unavailable)),
             }
         }
     }
@@ -793,7 +794,7 @@ mod tests {
             vec![LinkedResolutionFailure {
                 id: uri("urn:ngsi-ld:T:B"),
                 kind: LinkedResolutionFailureKind::Unreachable,
-                detail: EntityError::internal("the remainder of the system is unreachable").to_string(),
+                detail: EntityError::from(PersistenceFailure::Unavailable).to_string(),
             }]
         );
     }

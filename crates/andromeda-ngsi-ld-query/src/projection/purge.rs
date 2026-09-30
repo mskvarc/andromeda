@@ -83,13 +83,7 @@ impl PurgeMode {
 /// clause 4.6.2 attribute-name grammar.
 pub fn parse_attribute_list(raw: &str) -> Result<Vec<AttributeName>, QueryError> {
     raw.split(',')
-        .map(|entry| {
-            let trimmed = entry.trim();
-            trimmed.parse().map_err(|source| QueryError::AttributeNameInvalid {
-                value: trimmed.to_string(),
-                source,
-            })
-        })
+        .map(|entry| entry.trim().parse().map_err(QueryError::AttributeNameInvalid))
         .collect()
 }
 

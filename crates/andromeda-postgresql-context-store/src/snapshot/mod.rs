@@ -1,9 +1,7 @@
 //! Persistence layer for snapshot records.
 
-use crate::error::ContextStoreError;
-use andromeda_postgresql_pool::{is_pool_saturated, is_transaction_rolled_back};
+use crate::store_fault::{StoreFault, persistence_failure};
 use andromeda_snapshot::error::SnapshotError;
-use std::{any::Any, fmt::Display};
 
 /// Per-Snapshot branch schema creation, promotion and teardown.
 mod branch_schema;
@@ -32,35 +30,16 @@ pub mod status_code;
 /// Durable Snapshot status-notification delivery queue.
 pub mod status_outbox;
 pub mod store;
+/// What a Snapshot control record that no longer reads back as a Snapshot looks like.
+pub mod stored_snapshot_error;
 
 /// Erase an adapter failure into the snapshot policy's persistence category.
 ///
-/// A pool-acquire timeout is backpressure, not a fault, so it becomes
-/// [`SnapshotError::StoreSaturated`] (a 503); a deadlock or serialization
-/// rollback is transient contention the store can retry, so it becomes
-/// [`SnapshotError::Contended`]; every other failure stays a persistence fault.
-/// Callers hand the error in already erased behind `impl Display`, so the
-/// concrete failure is recovered by downcast -- as a raw [`sqlx::Error`] from the
-/// statements this module runs directly, or as a [`ContextStoreError`] from the
-/// branch-schema DDL, which is where a `DROP SCHEMA` deadlock surfaces.
-fn persistence_error(error: impl Display + Any) -> SnapshotError {
-    let erased = &error as &dyn Any;
-    if let Some(sqlx_error) = erased.downcast_ref::<sqlx::Error>() {
-        if is_pool_saturated(sqlx_error) {
-            return SnapshotError::StoreSaturated;
-        }
-        if is_transaction_rolled_back(sqlx_error) {
-            return SnapshotError::Contended;
-        }
-    } else if let Some(store_error) = erased.downcast_ref::<ContextStoreError>() {
-        if store_error.is_pool_saturation() {
-            return SnapshotError::StoreSaturated;
-        }
-        if store_error.is_transaction_rolled_back() {
-            return SnapshotError::Contended;
-        }
-    }
-    SnapshotError::persistence(error.to_string())
+/// Classify an adapter failure at the port boundary: backpressure keeps the
+/// port's retryable category and every fault becomes its persistence failure.
+#[track_caller]
+fn persistence_error(error: impl StoreFault) -> SnapshotError {
+    SnapshotError::from(persistence_failure(&error))
 }
 
 #[cfg(test)]

@@ -179,7 +179,7 @@ mod tests {
         error::QueryError,
         geo::{compile::compile_geo_query, input::GeoQueryInput},
         projection::compiled::Projection,
-        term_expander::TermExpander,
+        term_expander::{TermExpander, TermExpansionFailure},
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::DateTime;
@@ -193,22 +193,20 @@ mod tests {
     };
     use url::Url;
 
-    fn parse_fixture<T>(value: &str, description: &str) -> Result<T, SubscriptionError>
+    fn parse_fixture<T>(value: &str, description: &str) -> T
     where
         T: FromStr,
         T::Err: Display,
     {
-        value
-            .parse()
-            .map_err(|error| SubscriptionError::internal(format!("invalid {description} fixture: {error}")))
+        value.parse().unwrap_or_else(|error| panic!("invalid {description} fixture: {error}"))
     }
 
-    fn make_sub() -> Result<CompiledSubscription, SubscriptionError> {
-        Ok(CompiledSubscription {
-            id: parse_fixture("urn:ngsi-ld:Subscription:test", "subscription URI")?,
-            key: SubscriptionKey::try_from(1).map_err(|error| SubscriptionError::internal(format!("invalid subscription key fixture: {error}")))?,
+    fn make_sub() -> CompiledSubscription {
+        CompiledSubscription {
+            id: parse_fixture("urn:ngsi-ld:Subscription:test", "subscription URI"),
+            key: SubscriptionKey::try_from(1).expect("invalid subscription key fixture:"),
             status: SubscriptionStatus::Active,
-            endpoint_uri: Url::parse("http://example.com/notify").map_err(|error| SubscriptionError::internal(format!("invalid endpoint fixture: {error}")))?,
+            endpoint_uri: Url::parse("http://example.com/notify").expect("invalid endpoint fixture:"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_notifier_info: None,
@@ -236,38 +234,38 @@ mod tests {
             local_only: false,
             ngsild_conformance: None,
             notification_projection: Projection::default(),
-        })
+        }
     }
 
-    fn change(lifecycle: EntityLifecycle, kind: AttributeChangeKind) -> Result<EntityChange, SubscriptionError> {
-        Ok(EntityChange::new(
+    fn change(lifecycle: EntityLifecycle, kind: AttributeChangeKind) -> EntityChange {
+        EntityChange::new(
             lifecycle,
             vec![AttributeChange {
                 key: AttributeInstanceKey {
-                    attr: parse_fixture("temperature", "attribute name")?,
+                    attr: parse_fixture("temperature", "attribute name"),
                     dataset_id: None,
                 },
                 kind,
             }],
-        ))
+        )
     }
 
-    fn event_of(change: EntityChange) -> Result<ChangeEvent, SubscriptionError> {
-        Ok(ChangeEvent::builder()
-            .entity_id(parse_fixture("urn:ngsi-ld:Entity:001", "entity URI")?)
-            .entity_types(vec![parse_fixture("Building", "entity type")?])
+    fn event_of(change: EntityChange) -> ChangeEvent {
+        ChangeEvent::builder()
+            .entity_id(parse_fixture("urn:ngsi-ld:Entity:001", "entity URI"))
+            .entity_types(vec![parse_fixture("Building", "entity type")])
             .change(change)
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
-            .build())
+            .build()
     }
 
-    fn make_event() -> Result<ChangeEvent, SubscriptionError> {
-        event_of(change(EntityLifecycle::Created, AttributeChangeKind::Created)?)
+    fn make_event() -> ChangeEvent {
+        event_of(change(EntityLifecycle::Created, AttributeChangeKind::Created))
     }
 
-    fn at(unix_seconds: i64) -> Result<DateTime<Utc>, SubscriptionError> {
-        DateTime::from_timestamp(unix_seconds, 0).ok_or_else(|| SubscriptionError::internal("fixture timestamp out of range".to_owned()))
+    fn at(unix_seconds: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(unix_seconds, 0).expect("a fixture timestamp in range")
     }
 
     /// Clause 5.2.12: a subscription has no initial notification, so a change
@@ -275,26 +273,25 @@ mod tests {
     /// notification worker can still see such a change after the subscription has
     /// entered the cache, which is when this guard has to hold.
     #[test]
-    fn a_change_that_occurred_before_the_subscription_was_created_is_not_matched() -> Result<(), SubscriptionError> {
-        let mut event = make_event()?;
-        event.occurred_at = at(1_000)?;
-        let mut sub = make_sub()?;
+    fn a_change_that_occurred_before_the_subscription_was_created_is_not_matched() {
+        let mut event = make_event();
+        event.occurred_at = at(1_000);
+        let mut sub = make_sub();
 
-        sub.created_at = at(2_000)?;
+        sub.created_at = at(2_000);
         assert!(
             !matches_subscription(&sub, &event),
             "a change before the subscription's creation must not match"
         );
 
-        sub.created_at = at(1_000)?;
+        sub.created_at = at(1_000);
         assert!(
             matches_subscription(&sub, &event),
             "a change at the subscription's creation instant still matches"
         );
 
-        sub.created_at = at(500)?;
+        sub.created_at = at(500);
         assert!(matches_subscription(&sub, &event), "a change after the subscription's creation matches");
-        Ok(())
     }
 
     /// Resolves every term to the NGSI-LD `location` `GeoProperty`, which is what
@@ -302,18 +299,12 @@ mod tests {
     struct LocationExpander;
 
     impl TermExpander for LocationExpander {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(IriBuf::new(LOCATION.to_owned()).map_err(|error| QueryError::TermExpansion {
-                term: term.to_owned(),
-                message: error.to_string(),
-            }))
+        fn expand_term(&self, _term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(IriBuf::new(LOCATION.to_owned()).map_err(|_| QueryError::TermExpansion(TermExpansionFailure::NotAnIri)))
         }
 
         fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(IriBuf::new(format!("https://example.com/{term}")).map_err(|error| QueryError::TermExpansion {
-                term: term.to_owned(),
-                message: error.to_string(),
-            }))
+            ready(IriBuf::new(format!("https://example.com/{term}")).map_err(|_| QueryError::TermExpansion(TermExpansionFailure::NotAnIri)))
         }
     }
 
@@ -341,24 +332,23 @@ mod tests {
             }),
             "urn:ngsi-ld:Subscription:test",
         )
-        .ok_or_else(|| SubscriptionError::internal("the subscription geoQ fixture did not compile"))?;
+        .expect("the subscription geoQ fixture did not compile");
 
         let request_geo = GeoQueryInput::from_wire(
             "near;maxDistance==1000",
             "Point",
             serde_json::json!([13.4, 52.5]),
-            Some(parse_fixture("location", "geoproperty")?),
+            Some(parse_fixture("location", "geoproperty")),
         )
-        .map_err(SubscriptionError::internal)?;
-        let from_request = block_on(compile_geo_query(Some(&request_geo), &LocationExpander))?
-            .ok_or_else(|| SubscriptionError::internal("the complete request geo fixture did not compile"))?;
+        .expect("a valid test fixture");
+        let from_request = block_on(compile_geo_query(Some(&request_geo), &LocationExpander))?.expect("the complete request geo fixture did not compile");
 
         pretty_assertions::assert_eq!(from_subscription, from_request);
         Ok(())
     }
 
     #[test]
-    fn a_subscription_geo_filter_accepts_only_entities_inside_the_relation() -> Result<(), SubscriptionError> {
+    fn a_subscription_geo_filter_accepts_only_entities_inside_the_relation() {
         let geo_query = compile_geo_q(
             &serde_json::json!({
                 "georel": "near;maxDistance==1000",
@@ -368,84 +358,75 @@ mod tests {
             }),
             "urn:ngsi-ld:Subscription:test",
         )
-        .ok_or_else(|| SubscriptionError::internal("the subscription geoQ fixture did not compile"))?;
+        .expect("the subscription geoQ fixture did not compile");
 
         assert!(matches_geo_query(&geo_query, &located(13.4, 52.5)));
         assert!(!matches_geo_query(&geo_query, &located(13.4, 53.5)));
         assert!(!matches_geo_query(&geo_query, &serde_json::json!([{"@id": "urn:ngsi-ld:Building:002"}])));
-        Ok(())
     }
 
     #[test]
-    fn subscription_matches_without_local_only() -> Result<(), SubscriptionError> {
-        let sub = make_sub()?;
-        let event = make_event()?;
+    fn subscription_matches_without_local_only() {
+        let sub = make_sub();
+        let event = make_event();
         assert!(matches_subscription(&sub, &event));
-        Ok(())
     }
 
     #[test]
-    fn subscription_matches_against_local_event() -> Result<(), SubscriptionError> {
-        let sub = make_sub()?;
-        let event = make_event()?;
+    fn subscription_matches_against_local_event() {
+        let sub = make_sub();
+        let event = make_event();
         assert!(matches_subscription(&sub, &event));
-        Ok(())
     }
 
     #[test]
-    fn subscription_skips_when_paused() -> Result<(), SubscriptionError> {
-        let mut sub = make_sub()?;
+    fn subscription_skips_when_paused() {
+        let mut sub = make_sub();
         sub.status = SubscriptionStatus::Paused;
-        let event = make_event()?;
+        let event = make_event();
         assert!(!matches_subscription(&sub, &event));
-        Ok(())
     }
 
     #[test]
-    fn subscription_skips_wrong_trigger() -> Result<(), SubscriptionError> {
-        let sub = make_sub()?;
-        let event = event_of(change(EntityLifecycle::Deleted, AttributeChangeKind::Deleted)?)?;
+    fn subscription_skips_wrong_trigger() {
+        let sub = make_sub();
+        let event = event_of(change(EntityLifecycle::Deleted, AttributeChangeKind::Deleted));
         assert!(!matches_subscription(&sub, &event));
-        Ok(())
     }
 
     /// ETSI GS CIM 009 v1.9.1, clause 5.5.13: localOnly=true rejects forwarded events.
     #[test]
-    fn local_only_subscription_rejects_forwarded_event() -> Result<(), SubscriptionError> {
-        let mut sub = make_sub()?;
+    fn local_only_subscription_rejects_forwarded_event() {
+        let mut sub = make_sub();
         sub.local_only = true;
-        let mut event = make_event()?;
+        let mut event = make_event();
         event.origin = ChangeOrigin::Forwarded;
         assert!(!matches_subscription(&sub, &event));
-        Ok(())
     }
 
     /// ETSI GS CIM 009 v1.9.1, clause 5.5.13: localOnly=true still matches local events.
     #[test]
-    fn local_only_subscription_accepts_local_event() -> Result<(), SubscriptionError> {
-        let mut sub = make_sub()?;
+    fn local_only_subscription_accepts_local_event() {
+        let mut sub = make_sub();
         sub.local_only = true;
-        let event = make_event()?;
+        let event = make_event();
         assert!(matches_subscription(&sub, &event));
-        Ok(())
     }
 
     /// ETSI GS CIM 009 v1.9.1, clause 5.5.13: localOnly=false allows forwarded events.
     #[test]
-    fn non_local_only_subscription_accepts_forwarded_event() -> Result<(), SubscriptionError> {
-        let sub = make_sub()?;
-        let mut event = make_event()?;
+    fn non_local_only_subscription_accepts_forwarded_event() {
+        let sub = make_sub();
+        let mut event = make_event();
         event.origin = ChangeOrigin::Forwarded;
         assert!(matches_subscription(&sub, &event));
-        Ok(())
     }
 
     /// ETSI GS CIM 009 v1.9.1, clause 5.5.13: localOnly=false allows local events (baseline).
     #[test]
-    fn non_local_only_subscription_accepts_local_event() -> Result<(), SubscriptionError> {
-        let sub = make_sub()?;
-        let event = make_event()?;
+    fn non_local_only_subscription_accepts_local_event() {
+        let sub = make_sub();
+        let event = make_event();
         assert!(matches_subscription(&sub, &event));
-        Ok(())
     }
 }

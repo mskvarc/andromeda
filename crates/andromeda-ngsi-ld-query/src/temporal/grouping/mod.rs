@@ -40,24 +40,18 @@ pub enum GroupingParseError {
     #[error("aggrGroupBy has an empty grouping term")]
     EmptyTerm,
     /// A grouping key was not a well-formed clause 4.9 `ValuePath`.
-    #[error("invalid aggrGroupBy key '{key}': {source}")]
-    Key {
-        /// The key text as the client wrote it.
-        key: String,
-        /// Which part of the `ValuePath` production it failed.
-        #[source]
-        source: QueryError,
-    },
+    #[error("invalid aggrGroupBy key: {0}")]
+    Key(#[source] QueryError),
     /// A bucket modifier used an unknown token.
-    #[error("invalid aggrGroupBy bucket '{0}'")]
-    Bucket(String),
+    #[error("invalid aggrGroupBy bucket: {0}")]
+    Bucket(#[source] strum::ParseError),
     /// A bucket modifier was attached to a key that is not a temporal property.
     ///
     /// A bucket truncates or folds a timestamp, so it is meaningful only on one
     /// of the clause 4.8 temporal properties; on any other key it names no
     /// value the bucket could apply to.
-    #[error("aggrGroupBy bucket on non-temporal key '{0}': a bucket applies only to a temporal property")]
-    BucketOnNonTemporalKey(String),
+    #[error("aggrGroupBy bucket '{0}' is on a key that is not a temporal property: a bucket applies only to a temporal property")]
+    BucketOnNonTemporalKey(BucketTerm),
 }
 
 /// One term of an `aggrGroupBy` value: what it keys on, and an optional bucket.
@@ -78,17 +72,16 @@ impl GroupingTerm {
         }
         let (key_text, bucket) = match text.split_once(';') {
             Some((key_text, bucket_text)) => {
-                let bucket = BucketTerm::from_str(bucket_text.trim()).map_err(|_| GroupingParseError::Bucket(bucket_text.trim().to_string()))?;
+                let bucket = BucketTerm::from_str(bucket_text.trim()).map_err(GroupingParseError::Bucket)?;
                 (key_text.trim(), Some(bucket))
             }
             None => (text, None),
         };
-        let key = GroupKey::parse(key_text).map_err(|source| GroupingParseError::Key {
-            key: key_text.to_string(),
-            source,
-        })?;
-        if bucket.is_some() && key.temporal_property().is_none() {
-            return Err(GroupingParseError::BucketOnNonTemporalKey(key_text.to_string()));
+        let key = GroupKey::parse(key_text).map_err(GroupingParseError::Key)?;
+        if let Some(bucket) = bucket
+            && key.temporal_property().is_none()
+        {
+            return Err(GroupingParseError::BucketOnNonTemporalKey(bucket));
         }
         Ok(GroupingTerm { key, bucket })
     }

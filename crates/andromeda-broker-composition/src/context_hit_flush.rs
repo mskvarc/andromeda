@@ -113,6 +113,7 @@ mod tests {
         hit_store::{ContextHitStore, ContextHitStoreFuture},
     };
     use andromeda_jsonld::hit_counter::{HitCounter, HitDelta};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use iri_rs::IriBuf;
     use std::{
         sync::atomic::{AtomicU32, Ordering},
@@ -129,11 +130,7 @@ mod tests {
     impl ContextHitStore for UnreachableStore {
         fn flush_hits<'a>(&'a self, _deltas: &'a [HitDelta]) -> ContextHitStoreFuture<'a> {
             self.attempts.fetch_add(1, Ordering::Relaxed);
-            Box::pin(async {
-                Err(ContextRegistryError::Persistence {
-                    detail: "connection refused".to_owned(),
-                })
-            })
+            Box::pin(async { Err(ContextRegistryError::Persistence(PersistenceFailure::Unavailable)) })
         }
     }
 

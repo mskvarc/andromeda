@@ -21,7 +21,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity::EntityPatch,
     expanded::{
@@ -176,8 +176,17 @@ impl EntityService {
                 continue;
             }
             let iri = self.engine.expand_term(member, prepared_context).await?;
-            adapt_member(member, value, existing_types.get(iri.as_str()).copied(), options.representation, options.lang)
-                .map_err(|error| EntityError::Validation(EntityValidationReason::MemberAdaptation(error)))?;
+            let attribute = member
+                .parse::<AttributeName>()
+                .map_err(|source| EntityError::Validation(EntityValidationReason::AttributeMemberName(source)))?;
+            adapt_member(
+                &attribute,
+                value,
+                existing_types.get(iri.as_str()).copied(),
+                options.representation,
+                options.lang,
+            )
+            .map_err(|error| EntityError::Validation(EntityValidationReason::MemberAdaptation(error)))?;
         }
         Ok(())
     }

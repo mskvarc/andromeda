@@ -4,6 +4,7 @@
 
 use crate::certs::StackMaterial;
 use clap::ValueEnum;
+use thiserror::Error;
 
 /// Environment variable naming the broker API base a suite talks to.
 pub(crate) const BROKER_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_URL";
@@ -59,6 +60,7 @@ const PREFIX_ISOLATED_THREADS: u16 = 4;
 /// (harness `TestEnvironment`, a shared advisory lock) runs in parallel; one that
 /// resets the tenant (`SerializedEnvironment`, an exclusive lock), selects a bare
 /// shared entity type, or reads tenant-wide state must run single-threaded.
+#[derive(Debug)]
 pub(crate) struct Suite {
     /// The cargo `--test` target name.
     pub(crate) name: &'static str,
@@ -146,11 +148,33 @@ impl Stack {
     }
 }
 
-/// Locate the stack that owns a suite, returning the owning entry and the interned suite.
-pub(crate) fn stack_for_suite(name: &str) -> Option<(&'static Stack, &'static Suite)> {
+/// A registered suite together with the stack that owns it.
+#[derive(Clone, Copy)]
+pub(crate) struct OwnedSuite {
+    /// The stack whose topology the suite runs against.
+    pub(crate) stack: &'static Stack,
+    /// The interned registry entry for the suite.
+    pub(crate) suite: &'static Suite,
+}
+
+/// A suite name that no registered stack owns.
+#[derive(Debug, Error)]
+#[error("no registered stack owns this suite")]
+pub(crate) struct UnknownSuite;
+
+/// Locate the stack that owns a suite by its cargo `--test` target name.
+///
+/// Doubles as the `--suite` value parser, so an unregistered name is rejected
+/// while the command line is parsed, with clap naming the offending value.
+///
+/// # Errors
+///
+/// Returns [`UnknownSuite`] when no registered stack owns a suite of that name.
+pub(crate) fn stack_for_suite(name: &str) -> Result<OwnedSuite, UnknownSuite> {
     STACKS
         .iter()
-        .find_map(|stack| stack.suites.iter().find(|suite| suite.name == name).map(|suite| (stack, suite)))
+        .find_map(|stack| stack.suites.iter().find(|suite| suite.name == name).map(|suite| OwnedSuite { stack, suite }))
+        .ok_or(UnknownSuite)
 }
 
 /// The base tier's suites: every non-distributed suite plus the trusted-edge
@@ -359,23 +383,23 @@ mod tests {
 
     #[test]
     fn underscore_distop_suites_belong_to_base_and_bare_distop_to_distributed() {
-        let (base, _) = stack_for_suite("distop_entity").expect("distop_entity is registered");
+        let base = stack_for_suite("distop_entity").expect("distop_entity is registered").stack;
         assert_eq!(base.name, StackName::Base);
-        let (distributed, _) = stack_for_suite("distop").expect("distop is registered");
+        let distributed = stack_for_suite("distop").expect("distop is registered").stack;
         assert_eq!(distributed.name, StackName::Distributed);
     }
 
     #[test]
     fn singular_extension_is_base_and_plural_extensions_is_the_extensions_stack() {
-        let (base, _) = stack_for_suite("extension").expect("extension is registered");
+        let base = stack_for_suite("extension").expect("extension is registered").stack;
         assert_eq!(base.name, StackName::Base);
-        let (extensions, _) = stack_for_suite("extensions").expect("extensions is registered");
+        let extensions = stack_for_suite("extensions").expect("extensions is registered").stack;
         assert_eq!(extensions.name, StackName::Extensions);
     }
 
     #[test]
     fn the_tls_suite_belongs_to_the_tls_stack_and_generates_its_authority() {
-        let (tls, _) = stack_for_suite("tls").expect("tls is registered");
+        let tls = stack_for_suite("tls").expect("tls is registered").stack;
         assert_eq!(tls.name, StackName::Tls);
         assert_eq!(tls.material, StackMaterial::TlsAuthority);
         assert_eq!(Stack::get(StackName::Http3).material, StackMaterial::Http3Leaf);
@@ -384,12 +408,12 @@ mod tests {
 
     #[test]
     fn the_core_write_history_suite_belongs_to_its_own_stack() {
-        let (stack, _) = stack_for_suite("core_write_history").expect("core_write_history is registered");
+        let stack = stack_for_suite("core_write_history").expect("core_write_history is registered").stack;
         assert_eq!(stack.name, StackName::CoreWriteHistory);
     }
 
     #[test]
     fn an_unregistered_suite_resolves_to_no_stack() {
-        assert!(stack_for_suite("does_not_exist").is_none());
+        assert!(stack_for_suite("does_not_exist").is_err());
     }
 }

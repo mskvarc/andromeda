@@ -149,7 +149,7 @@ mod tests {
 
     /// The methods this harness does not drive.
     fn unused(method: &str) -> EntityError {
-        EntityError::internal(format!("ProfiledEntityStore::{method} is not exercised by the residual conformance harness"))
+        panic!("ProfiledEntityStore::{method} is not exercised by the residual conformance harness")
     }
 
     #[async_trait]

@@ -1,6 +1,10 @@
 //! Endpoint-specific interpretations of the HTTP `options` parameter.
 
-use crate::representation_parameter::{RepresentationGrammar, RepresentationParameter, SelectedRepresentation};
+use crate::{
+    options_token::OptionsToken,
+    representation_parameter::{RepresentationGrammar, RepresentationParameter, SelectedRepresentation},
+    unsupported_representation::UnsupportedRepresentation,
+};
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 use andromeda_ngsi_ld_query::pagination::CountPolicy;
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
@@ -89,16 +93,21 @@ impl SelectedRepresentation for TemporalRepresentationOptions {
 impl RepresentationGrammar for EntityRepresentationOptions {
     const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
 
-    fn parse(written: &str) -> Result<EntityRepresentationOptions, String> {
+    fn parse(written: &str) -> Result<EntityRepresentationOptions, UnsupportedRepresentation> {
         let mut parsed = EntityRepresentationOptions::default();
         for token in option_tokens(written)? {
             match token {
-                "normalized" => set_entity_format(&mut parsed, ResponseFormat::Normalized)?,
-                "concise" => set_entity_format(&mut parsed, ResponseFormat::Concise)?,
-                "simplified" | "keyValues" => set_entity_format(&mut parsed, ResponseFormat::Simplified)?,
-                "sysAttrs" if parsed.sys_attrs == SysAttrsInclusion::Strip => parsed.sys_attrs = SysAttrsInclusion::Include,
-                "sysAttrs" => return Err("duplicate options token 'sysAttrs'".to_owned()),
-                other => return Err(format!("unsupported options token '{other}'")),
+                OptionsToken::Normalized => set_entity_format(&mut parsed, token, ResponseFormat::Normalized)?,
+                OptionsToken::Concise => set_entity_format(&mut parsed, token, ResponseFormat::Concise)?,
+                OptionsToken::Simplified | OptionsToken::KeyValues => set_entity_format(&mut parsed, token, ResponseFormat::Simplified)?,
+                OptionsToken::SysAttrs => include_sys_attrs(&mut parsed.sys_attrs)?,
+                OptionsToken::TemporalValues
+                | OptionsToken::AggregatedValues
+                | OptionsToken::GroupedValues
+                | OptionsToken::Count
+                | OptionsToken::NoOverwrite
+                | OptionsToken::Replace
+                | OptionsToken::Update => return Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
             }
         }
         Ok(parsed)
@@ -110,19 +119,25 @@ impl RepresentationGrammar for EntityRepresentationOptions {
 impl RepresentationGrammar for TemporalRepresentationOptions {
     const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
 
-    fn parse(written: &str) -> Result<TemporalRepresentationOptions, String> {
+    fn parse(written: &str) -> Result<TemporalRepresentationOptions, UnsupportedRepresentation> {
         let mut parsed = TemporalRepresentationOptions::default();
         for token in option_tokens(written)? {
             match token {
-                "temporalValues" => set_temporal_format(&mut parsed, TemporalFormat::TemporalValues)?,
-                "aggregatedValues" => set_temporal_format(&mut parsed, TemporalFormat::AggregatedValues)?,
+                OptionsToken::TemporalValues => set_temporal_format(&mut parsed, token, TemporalFormat::TemporalValues)?,
+                OptionsToken::AggregatedValues => set_temporal_format(&mut parsed, token, TemporalFormat::AggregatedValues)?,
                 // Non-standard, from the temporal aggregation grouping
                 // extension: the grouped counterpart of `aggregatedValues`,
                 // named through `options` as well as `format`.
-                "groupedValues" => set_temporal_format(&mut parsed, TemporalFormat::GroupedValues)?,
-                "sysAttrs" if parsed.sys_attrs == SysAttrsInclusion::Strip => parsed.sys_attrs = SysAttrsInclusion::Include,
-                "sysAttrs" => return Err("duplicate options token 'sysAttrs'".to_owned()),
-                other => return Err(format!("unsupported options token '{other}'")),
+                OptionsToken::GroupedValues => set_temporal_format(&mut parsed, token, TemporalFormat::GroupedValues)?,
+                OptionsToken::SysAttrs => include_sys_attrs(&mut parsed.sys_attrs)?,
+                OptionsToken::Normalized
+                | OptionsToken::Concise
+                | OptionsToken::Simplified
+                | OptionsToken::KeyValues
+                | OptionsToken::Count
+                | OptionsToken::NoOverwrite
+                | OptionsToken::Replace
+                | OptionsToken::Update => return Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
             }
         }
         Ok(parsed)
@@ -134,15 +149,25 @@ impl RepresentationGrammar for TemporalRepresentationOptions {
 impl RepresentationGrammar for ListOptions {
     const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
 
-    fn parse(written: &str) -> Result<ListOptions, String> {
+    fn parse(written: &str) -> Result<ListOptions, UnsupportedRepresentation> {
         let mut parsed = ListOptions::default();
         for token in option_tokens(written)? {
             match token {
-                "count" if parsed.count == CountPolicy::Omit => parsed.count = CountPolicy::Emit,
-                "count" => return Err("duplicate options token 'count'".to_owned()),
-                "sysAttrs" if parsed.sys_attrs == SysAttrsInclusion::Strip => parsed.sys_attrs = SysAttrsInclusion::Include,
-                "sysAttrs" => return Err("duplicate options token 'sysAttrs'".to_owned()),
-                other => return Err(format!("unsupported options token '{other}'")),
+                OptionsToken::Count => match parsed.count {
+                    CountPolicy::Omit => parsed.count = CountPolicy::Emit,
+                    CountPolicy::Emit => return Err(UnsupportedRepresentation::DuplicateOptionsToken(token)),
+                },
+                OptionsToken::SysAttrs => include_sys_attrs(&mut parsed.sys_attrs)?,
+                OptionsToken::Normalized
+                | OptionsToken::Concise
+                | OptionsToken::Simplified
+                | OptionsToken::KeyValues
+                | OptionsToken::TemporalValues
+                | OptionsToken::AggregatedValues
+                | OptionsToken::GroupedValues
+                | OptionsToken::NoOverwrite
+                | OptionsToken::Replace
+                | OptionsToken::Update => return Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
             }
         }
         Ok(parsed)
@@ -154,12 +179,22 @@ impl RepresentationGrammar for ListOptions {
 impl RepresentationGrammar for SysAttrsOptions {
     const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
 
-    fn parse(written: &str) -> Result<SysAttrsOptions, String> {
-        match written {
-            "sysAttrs" => Ok(SysAttrsOptions {
+    fn parse(written: &str) -> Result<SysAttrsOptions, UnsupportedRepresentation> {
+        match single_token(written)? {
+            OptionsToken::SysAttrs => Ok(SysAttrsOptions {
                 sys_attrs: SysAttrsInclusion::Include,
             }),
-            other => Err(format!("unsupported options token '{other}'")),
+            token @ (OptionsToken::Normalized
+            | OptionsToken::Concise
+            | OptionsToken::Simplified
+            | OptionsToken::KeyValues
+            | OptionsToken::TemporalValues
+            | OptionsToken::AggregatedValues
+            | OptionsToken::GroupedValues
+            | OptionsToken::Count
+            | OptionsToken::NoOverwrite
+            | OptionsToken::Replace
+            | OptionsToken::Update) => Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
         }
     }
 }
@@ -168,10 +203,20 @@ impl RepresentationGrammar for SysAttrsOptions {
 impl RepresentationGrammar for OverwritePolicy {
     const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
 
-    fn parse(written: &str) -> Result<OverwritePolicy, String> {
-        match written {
-            "noOverwrite" => Ok(OverwritePolicy::NoOverwrite),
-            other => Err(format!("unsupported options token '{other}'")),
+    fn parse(written: &str) -> Result<OverwritePolicy, UnsupportedRepresentation> {
+        match single_token(written)? {
+            OptionsToken::NoOverwrite => Ok(OverwritePolicy::NoOverwrite),
+            token @ (OptionsToken::Normalized
+            | OptionsToken::Concise
+            | OptionsToken::Simplified
+            | OptionsToken::KeyValues
+            | OptionsToken::SysAttrs
+            | OptionsToken::TemporalValues
+            | OptionsToken::AggregatedValues
+            | OptionsToken::GroupedValues
+            | OptionsToken::Count
+            | OptionsToken::Replace
+            | OptionsToken::Update) => Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
         }
     }
 }
@@ -180,44 +225,69 @@ impl RepresentationGrammar for OverwritePolicy {
 impl RepresentationGrammar for UpsertMode {
     const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
 
-    fn parse(written: &str) -> Result<UpsertMode, String> {
-        match written {
-            "replace" => Ok(UpsertMode::Replace),
-            "update" => Ok(UpsertMode::Update),
-            other => Err(format!("unsupported options token '{other}'")),
+    fn parse(written: &str) -> Result<UpsertMode, UnsupportedRepresentation> {
+        match single_token(written)? {
+            OptionsToken::Replace => Ok(UpsertMode::Replace),
+            OptionsToken::Update => Ok(UpsertMode::Update),
+            token @ (OptionsToken::Normalized
+            | OptionsToken::Concise
+            | OptionsToken::Simplified
+            | OptionsToken::KeyValues
+            | OptionsToken::SysAttrs
+            | OptionsToken::TemporalValues
+            | OptionsToken::AggregatedValues
+            | OptionsToken::GroupedValues
+            | OptionsToken::Count
+            | OptionsToken::NoOverwrite) => Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
         }
     }
 }
 
-/// Validate and iterate a comma-separated option list.
-fn option_tokens(raw: &str) -> Result<impl Iterator<Item = &str>, String> {
+/// Read a value an operation admits exactly one token for.
+fn single_token(written: &str) -> Result<OptionsToken, UnsupportedRepresentation> {
+    written.parse().map_err(|_| UnsupportedRepresentation::UnknownOptionsToken)
+}
+
+/// Validate and read a comma-separated option list.
+fn option_tokens(raw: &str) -> Result<Vec<OptionsToken>, UnsupportedRepresentation> {
     if raw.is_empty() || raw.split(',').any(|token| token.trim().is_empty()) {
-        return Err("options must contain non-empty comma-separated tokens".to_owned());
+        return Err(UnsupportedRepresentation::EmptyOptionsToken);
     }
-    Ok(raw.split(',').map(str::trim))
+    raw.split(',').map(|token| single_token(token.trim())).collect()
+}
+
+/// Ask for the system-generated temporal properties, refusing a second ask.
+const fn include_sys_attrs(sys_attrs: &mut SysAttrsInclusion) -> Result<(), UnsupportedRepresentation> {
+    match sys_attrs {
+        SysAttrsInclusion::Strip => {
+            *sys_attrs = SysAttrsInclusion::Include;
+            Ok(())
+        }
+        SysAttrsInclusion::Include => Err(UnsupportedRepresentation::DuplicateOptionsToken(OptionsToken::SysAttrs)),
+    }
 }
 
 /// Set an entity response format while rejecting conflicting tokens.
-fn set_entity_format(options: &mut EntityRepresentationOptions, format: ResponseFormat) -> Result<(), String> {
+fn set_entity_format(options: &mut EntityRepresentationOptions, token: OptionsToken, format: ResponseFormat) -> Result<(), UnsupportedRepresentation> {
     match options.format {
         None => {
             options.format = Some(format);
             Ok(())
         }
-        Some(existing) if existing == format => Err(format!("duplicate representation option '{format}'")),
-        Some(_) => Err("conflicting representation options".to_owned()),
+        Some(existing) if existing == format => Err(UnsupportedRepresentation::DuplicateOptionsToken(token)),
+        Some(_) => Err(UnsupportedRepresentation::ConflictingRepresentations),
     }
 }
 
 /// Set a temporal response format while rejecting conflicting tokens.
-fn set_temporal_format(options: &mut TemporalRepresentationOptions, format: TemporalFormat) -> Result<(), String> {
+fn set_temporal_format(options: &mut TemporalRepresentationOptions, token: OptionsToken, format: TemporalFormat) -> Result<(), UnsupportedRepresentation> {
     match options.format {
         None => {
             options.format = Some(format);
             Ok(())
         }
-        Some(existing) if existing == format => Err(format!("duplicate temporal representation option '{format}'")),
-        Some(_) => Err("conflicting temporal representation options".to_owned()),
+        Some(existing) if existing == format => Err(UnsupportedRepresentation::DuplicateOptionsToken(token)),
+        Some(_) => Err(UnsupportedRepresentation::ConflictingRepresentations),
     }
 }
 
@@ -225,7 +295,9 @@ fn set_temporal_format(options: &mut TemporalRepresentationOptions, format: Temp
 mod tests {
     use crate::{
         options::{EntityRepresentationOptions, ListOptions, OverwritePolicy, SysAttrsOptions, TemporalRepresentationOptions, UpsertMode},
+        options_token::OptionsToken,
         representation_parameter::RepresentationGrammar,
+        unsupported_representation::UnsupportedRepresentation,
     };
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
     use andromeda_ngsi_ld_query::pagination::CountPolicy;
@@ -236,10 +308,27 @@ mod tests {
         let options = EntityRepresentationOptions::parse("keyValues,sysAttrs").expect("valid options");
         pretty_assertions::assert_eq!(options.format, Some(ResponseFormat::Simplified));
         pretty_assertions::assert_eq!(options.sys_attrs, SysAttrsInclusion::Include);
-        assert!(EntityRepresentationOptions::parse("normalized,concise").is_err());
-        assert!(EntityRepresentationOptions::parse("unknown").is_err());
-        assert!(EntityRepresentationOptions::parse("sysAttrs,sysAttrs").is_err());
-        assert!(EntityRepresentationOptions::parse("").is_err());
+        pretty_assertions::assert_eq!(
+            EntityRepresentationOptions::parse("normalized,concise"),
+            Err(UnsupportedRepresentation::ConflictingRepresentations)
+        );
+        pretty_assertions::assert_eq!(
+            EntityRepresentationOptions::parse("unknown"),
+            Err(UnsupportedRepresentation::UnknownOptionsToken)
+        );
+        pretty_assertions::assert_eq!(
+            EntityRepresentationOptions::parse("sysAttrs,sysAttrs"),
+            Err(UnsupportedRepresentation::DuplicateOptionsToken(OptionsToken::SysAttrs))
+        );
+        pretty_assertions::assert_eq!(
+            EntityRepresentationOptions::parse("keyValues,simplified"),
+            Err(UnsupportedRepresentation::DuplicateOptionsToken(OptionsToken::Simplified))
+        );
+        pretty_assertions::assert_eq!(EntityRepresentationOptions::parse(""), Err(UnsupportedRepresentation::EmptyOptionsToken));
+        pretty_assertions::assert_eq!(
+            EntityRepresentationOptions::parse("count"),
+            Err(UnsupportedRepresentation::UnsupportedOptionsToken(OptionsToken::Count))
+        );
     }
 
     /// Clause 6.3.20: an unsupported token anywhere in the list is refused,
@@ -262,7 +351,11 @@ mod tests {
     #[test]
     fn overwrite_options_accept_only_no_overwrite() {
         pretty_assertions::assert_eq!(OverwritePolicy::parse("noOverwrite"), Ok(OverwritePolicy::NoOverwrite));
-        assert!(OverwritePolicy::parse("overwrite").is_err());
+        pretty_assertions::assert_eq!(OverwritePolicy::parse("overwrite"), Err(UnsupportedRepresentation::UnknownOptionsToken));
+        pretty_assertions::assert_eq!(
+            OverwritePolicy::parse("replace"),
+            Err(UnsupportedRepresentation::UnsupportedOptionsToken(OptionsToken::Replace))
+        );
     }
 
     #[test]
@@ -288,7 +381,10 @@ mod tests {
         let options = ListOptions::parse("count,sysAttrs").expect("valid options");
         pretty_assertions::assert_eq!(options.count, CountPolicy::Emit);
         pretty_assertions::assert_eq!(options.sys_attrs, SysAttrsInclusion::Include);
-        assert!(ListOptions::parse("count,count").is_err());
+        pretty_assertions::assert_eq!(
+            ListOptions::parse("count,count"),
+            Err(UnsupportedRepresentation::DuplicateOptionsToken(OptionsToken::Count))
+        );
         assert!(ListOptions::parse("unknown").is_err());
         assert!(ListOptions::parse("").is_err());
     }

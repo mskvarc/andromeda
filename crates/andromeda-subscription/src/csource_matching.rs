@@ -147,7 +147,6 @@ mod tests {
         compilation::compile_geo_q,
         compiled::CompiledCsrSubscription,
         csource_matching::{csource_subscription_follows_registration_changes, csource_subscription_selects_registration, matching_information},
-        error::SubscriptionError,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{
@@ -168,13 +167,11 @@ mod tests {
         csource_subscription_follows_registration_changes(sub) && csource_subscription_selects_registration(sub, registration)
     }
 
-    fn subscription() -> Result<CompiledCsrSubscription, SubscriptionError> {
-        Ok(CompiledCsrSubscription {
-            id: "urn:ngsi-ld:Subscription:csource"
-                .parse()
-                .map_err(|error| SubscriptionError::internal(format!("{error}")))?,
+    fn subscription() -> CompiledCsrSubscription {
+        CompiledCsrSubscription {
+            id: "urn:ngsi-ld:Subscription:csource".parse().expect("a valid test fixture"),
             status: SubscriptionStatus::Active,
-            endpoint_uri: Url::parse("http://example.com/notify").map_err(|error| SubscriptionError::internal(format!("{error}")))?,
+            endpoint_uri: Url::parse("http://example.com/notify").expect("a valid test fixture"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_notifier_info: None,
@@ -190,7 +187,7 @@ mod tests {
             jsonld_context: None,
             expires_at: None,
             compiled_csf: None,
-        })
+        }
     }
 
     fn selector(raw_type: &str) -> EntitySelector {
@@ -226,27 +223,26 @@ mod tests {
     }
 
     #[test]
-    fn an_active_subscription_without_filters_matches_and_a_paused_or_interval_one_does_not() -> Result<(), SubscriptionError> {
+    fn an_active_subscription_without_filters_matches_and_a_paused_or_interval_one_does_not() {
         let registration = registration(&json!({}));
-        assert!(notified_of_change(&subscription()?, &registration));
-        let mut paused = subscription()?;
+        assert!(notified_of_change(&subscription(), &registration));
+        let mut paused = subscription();
         paused.status = SubscriptionStatus::Paused;
         assert!(!notified_of_change(&paused, &registration));
-        let mut periodic = subscription()?;
+        let mut periodic = subscription();
         periodic.time_interval_secs = Some(10.0);
         assert!(!notified_of_change(&periodic, &registration));
         assert!(
             csource_subscription_selects_registration(&periodic, &registration),
             "the periodic worker still asks whether the registration is selected"
         );
-        Ok(())
     }
 
     /// Clause 5.12: the selectors and the attribute identifiers match the
     /// registration's `information`.
     #[test]
-    fn entity_selectors_and_matching_attributes_are_matched_against_information() -> Result<(), SubscriptionError> {
-        let mut sub = subscription()?;
+    fn entity_selectors_and_matching_attributes_are_matched_against_information() {
+        let mut sub = subscription();
         sub.selectors = vec![selector(VEHICLE)];
         sub.matching_attrs = vec![name(SPEED)];
         assert!(notified_of_change(&sub, &registration(&json!({}))));
@@ -257,12 +253,11 @@ mod tests {
         assert!(!notified_of_change(&sub, &registration(&json!({}))));
         let entity_only = registration(&json!({"information": [{"entities": [{"type": VEHICLE}]}]}));
         assert!(notified_of_change(&sub, &entity_only), "only entities registered: any attribute may be held");
-        Ok(())
     }
 
     #[test]
-    fn matching_information_trims_to_the_elements_the_subscription_matches() -> Result<(), SubscriptionError> {
-        let mut sub = subscription()?;
+    fn matching_information_trims_to_the_elements_the_subscription_matches() {
+        let mut sub = subscription();
         sub.selectors = vec![selector(VEHICLE)];
         let registration = registration(&json!({"information": [
             {"entities": [{"type": VEHICLE}]},
@@ -270,37 +265,36 @@ mod tests {
         ]}));
         let kept = matching_information(&sub, &registration);
         pretty_assertions::assert_eq!(kept.len(), 1);
-        Ok(())
     }
 
     /// Clause 5.11.2.4: without a `temporalQ` only latest-information
     /// registrations are considered; with one only interval-bearing ones.
     #[test]
-    fn the_temporal_partition_table() -> Result<(), SubscriptionError> {
+    fn the_temporal_partition_table() {
         let latest = registration(&json!({}));
         let observed = registration(&json!({"observationInterval": {"startAt": "2020-01-01T00:00:00Z", "endAt": "2021-01-01T00:00:00Z"}}));
         let managed = registration(&json!({"managementInterval": {"startAt": "2020-01-01T00:00:00Z", "endAt": "2021-01-01T00:00:00Z"}}));
-        let without = subscription()?;
+        let without = subscription();
         assert!(notified_of_change(&without, &latest));
         assert!(!notified_of_change(&without, &observed));
         assert!(!notified_of_change(&without, &managed));
 
-        let mut after_observed = subscription()?;
+        let mut after_observed = subscription();
         after_observed.temporal_q = Some(temporal_q(TimeInterval::After(at("2020-06-01T00:00:00Z")), None));
         assert!(!notified_of_change(&after_observed, &latest));
         assert!(notified_of_change(&after_observed, &observed));
         assert!(!notified_of_change(&after_observed, &managed), "the relevant interval is absent");
 
-        let mut after_created = subscription()?;
+        let mut after_created = subscription();
         after_created.temporal_q = Some(temporal_q(TimeInterval::After(at("2020-06-01T00:00:00Z")), Some(TimeProp::Created)));
         assert!(notified_of_change(&after_created, &managed));
         assert!(!notified_of_change(&after_created, &observed));
 
-        let mut outside = subscription()?;
+        let mut outside = subscription();
         outside.temporal_q = Some(temporal_q(TimeInterval::After(at("2022-06-01T00:00:00Z")), None));
         assert!(!notified_of_change(&outside, &observed));
 
-        let mut overlapping = subscription()?;
+        let mut overlapping = subscription();
         overlapping.temporal_q = Some(temporal_q(
             TimeInterval::Between {
                 from: at("2020-06-01T00:00:00Z"),
@@ -309,14 +303,13 @@ mod tests {
             None,
         ));
         assert!(notified_of_change(&overlapping, &observed));
-        Ok(())
     }
 
     /// Clause 5.11.2.4: the geoquery is matched against `location` by default;
     /// a registration without one may still cover the area.
     #[test]
-    fn the_geoquery_is_matched_against_the_registration_location() -> Result<(), SubscriptionError> {
-        let mut sub = subscription()?;
+    fn the_geoquery_is_matched_against_the_registration_location() {
+        let mut sub = subscription();
         sub.geo_q = compile_geo_q(
             &json!({"georel": "near;maxDistance==3000", "geometry": "Point", "coordinates": [13.404, 52.520]}),
             "urn:ngsi-ld:Subscription:csource",
@@ -326,29 +319,26 @@ mod tests {
         assert!(notified_of_change(&sub, &berlin));
         assert!(!notified_of_change(&sub, &paris));
         assert!(notified_of_change(&sub, &registration(&json!({}))), "no location declared: possibly contains");
-        Ok(())
     }
 
     #[test]
-    fn the_scope_query_is_matched_against_the_registration_scope() -> Result<(), SubscriptionError> {
-        let mut sub = subscription()?;
-        sub.scope_q = Some(ScopeQuery::parse("/Madrid/#").map_err(|error| SubscriptionError::internal(format!("{error}")))?);
+    fn the_scope_query_is_matched_against_the_registration_scope() {
+        let mut sub = subscription();
+        sub.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("a valid test fixture"));
         assert!(notified_of_change(&sub, &registration(&json!({"scope": ["/Madrid/Gardens"]}))));
         assert!(!notified_of_change(&sub, &registration(&json!({"scope": ["/Berlin/Parks"]}))));
         assert!(!notified_of_change(&sub, &registration(&json!({}))));
-        Ok(())
     }
 
     /// Clause 4.9: `csf` reads the registration's Context Source Properties.
     #[test]
-    fn the_context_source_filter_is_matched_against_the_registration_properties() -> Result<(), SubscriptionError> {
-        let mut sub = subscription()?;
-        sub.compiled_csf = Some(parser::parse(&format!("\"{TIER}\"==\"gold\"")).map_err(|error| SubscriptionError::internal(format!("{error}")))?);
+    fn the_context_source_filter_is_matched_against_the_registration_properties() {
+        let mut sub = subscription();
+        sub.compiled_csf = Some(parser::parse(&format!("\"{TIER}\"==\"gold\"")).expect("a valid test fixture"));
         let gold = registration(&json!({TIER: {"type": "Property", "value": "gold"}}));
         let silver = registration(&json!({TIER: {"type": "Property", "value": "silver"}}));
         assert!(notified_of_change(&sub, &gold));
         assert!(!notified_of_change(&sub, &silver));
         assert!(!notified_of_change(&sub, &registration(&json!({}))));
-        Ok(())
     }
 }

@@ -10,6 +10,7 @@
 //! the lease lapses.
 
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 use std::time::SystemTime;
 use thiserror::Error;
@@ -19,13 +20,10 @@ use thiserror::Error;
 pub enum WakeScheduleError {
     /// The platform statement failed.
     ///
-    /// The detail is whatever the store reported; the schedule lives in the
-    /// platform database and this crate cannot name its dialect.
-    #[error("the tenant wake schedule could not be updated: {detail}")]
-    Store {
-        /// What the store reported.
-        detail: String,
-    },
+    /// The schedule lives in the platform database and this crate cannot name
+    /// its dialect, so the failure arrives classified.
+    #[error("the tenant wake schedule could not be updated: {0}")]
+    Store(#[source] PersistenceFailure),
 }
 
 /// The persistent schedule of tenant wakes, shared across replicas.

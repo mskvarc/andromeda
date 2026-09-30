@@ -54,7 +54,7 @@ impl ProtocolExtensions<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`ParameterError::FormatInvalid`] when the header names a
+    /// Returns [`ParameterError::ResponseFormatHeaderInvalid`] when the header names a
     /// rendering that is not one an entity has.
     pub fn apply_to_entity_get(&self, params: &mut GetEntityParams) -> Result<(), ParameterError> {
         self.apply_format(&mut params.format, params.options.as_ref())?;
@@ -67,7 +67,7 @@ impl ProtocolExtensions<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`ParameterError::FormatInvalid`] when the header names a
+    /// Returns [`ParameterError::ResponseFormatHeaderInvalid`] when the header names a
     /// rendering that is not one an entity has.
     pub fn apply_to_entity_query(&self, params: &mut EntityQueryParameters) -> Result<(), ParameterError> {
         if params.scope_q.is_none()
@@ -87,20 +87,20 @@ impl ProtocolExtensions<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`ParameterError::FormatInvalid`] when the header names a
+    /// Returns [`ParameterError::ResponseFormatHeaderInvalid`] when the header names a
     /// rendering that is not one a temporal representation has.
     pub fn apply_to_temporal_query(&self, params: &mut TemporalQueryParameters) -> Result<(), ParameterError> {
         if params.format.is_none()
             && let Some(response_format) = self.response_format
         {
             if !header_is_temporal_format(response_format) {
-                return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
+                return Err(ParameterError::ResponseFormatHeaderInvalid(response_format));
             }
             params.format = Some(WrittenValue::Supported(match response_format {
                 NgsiLdResponseFormat::TemporalValues => TemporalFormat::TemporalValues,
                 NgsiLdResponseFormat::AggregatedValues => TemporalFormat::AggregatedValues,
                 NgsiLdResponseFormat::Normalized | NgsiLdResponseFormat::KeyValues | NgsiLdResponseFormat::Simplified | NgsiLdResponseFormat::Concise => {
-                    return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
+                    return Err(ParameterError::ResponseFormatHeaderInvalid(response_format));
                 }
             }));
         }
@@ -129,14 +129,14 @@ impl ProtocolExtensions<'_> {
         };
         // An entity rendering is any of the four that are not temporal.
         if header_is_temporal_format(response_format) {
-            return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
+            return Err(ParameterError::ResponseFormatHeaderInvalid(response_format));
         }
         *format = Some(WrittenValue::Supported(match response_format {
             NgsiLdResponseFormat::Normalized => ResponseFormat::Normalized,
             NgsiLdResponseFormat::KeyValues | NgsiLdResponseFormat::Simplified => ResponseFormat::Simplified,
             NgsiLdResponseFormat::Concise => ResponseFormat::Concise,
             NgsiLdResponseFormat::TemporalValues | NgsiLdResponseFormat::AggregatedValues => {
-                return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
+                return Err(ParameterError::ResponseFormatHeaderInvalid(response_format));
             }
         }));
         Ok(())
@@ -293,7 +293,10 @@ mod tests {
         }
         .apply_to_entity_get(&mut entity)
         .expect_err("temporalValues is not an entity rendering");
-        assert!(matches!(entity_error, ParameterError::FormatInvalid(format) if format == "temporalValues"));
+        assert!(matches!(
+            entity_error,
+            ParameterError::ResponseFormatHeaderInvalid(NgsiLdResponseFormat::TemporalValues)
+        ));
 
         let mut temporal: TemporalQueryParameters = serde_urlencoded::from_str("").expect("query parses");
         let temporal_error = ProtocolExtensions {
@@ -302,6 +305,9 @@ mod tests {
         }
         .apply_to_temporal_query(&mut temporal)
         .expect_err("concise is not a temporal rendering");
-        assert!(matches!(temporal_error, ParameterError::FormatInvalid(format) if format == "concise"));
+        assert!(matches!(
+            temporal_error,
+            ParameterError::ResponseFormatHeaderInvalid(NgsiLdResponseFormat::Concise)
+        ));
     }
 }

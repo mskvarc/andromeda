@@ -18,6 +18,7 @@ andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-persistence-failure.workspace = true
 andromeda-postgresql-branch.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-collation.workspace = true
@@ -35,6 +36,7 @@ async-trait = "0.1.92"
 bigdecimal = "0.4.10"
 cefact-units = "0.1.2"
 chrono = { version = "0.4.45", features = ["serde"] }
+derive_more = { version = "2.1.1", features = ["as_ref", "display", "from"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }
 sea-query-sqlx = { version = "0.9.1", features = ["postgres-array", "runtime-tokio", "sqlx-postgres", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }

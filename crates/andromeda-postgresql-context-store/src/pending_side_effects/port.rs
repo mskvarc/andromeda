@@ -1,8 +1,11 @@
 //! Direct PostgreSQL implementation of the entity side-effect queue port.
 
-use crate::pending_side_effects::{
-    payload::{PersistedBatchSideEffectJob, PersistedChangeEvent},
-    repo::PendingSideEffectsRepository,
+use crate::{
+    pending_side_effects::{
+        payload::{PersistedBatchSideEffectJob, PersistedChangeEvent},
+        repo::PendingSideEffectsRepository,
+    },
+    store_fault::{persistence_failure, undecodable},
 };
 use andromeda_context_commit::{
     batch_side_effect_job::BatchSideEffectJob,
@@ -24,6 +27,7 @@ use andromeda_ngsi_ld_model::{
     expanded::{attribute_change::AttributeChange, instance_key::AttributeInstanceKey},
     notification::SysAttrsSnapshot,
 };
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use andromeda_postgresql_seaquery::interval::make_interval_secs;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
@@ -127,7 +131,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
 impl PendingSideEffectsRepository {
     /// Claim up to `limit` due rows for `owner` in one statement.
     async fn claim_rows(&self, owner: &LeaseHolder, limit: usize, lease_seconds: i32) -> Result<Vec<PgRow>, EntityError> {
-        let limit = u64::try_from(limit).map_err(|error| EntityError::internal(format!("side-effect claim width is out of range: {error}")))?;
+        let limit = u64::try_from(limit).map_err(|error| EntityError::from(PersistenceFailure::Unencodable.record(&error)))?;
         let (sql, values) = lease_batch_statement(*owner, limit, f64::from(lease_seconds)).build_sqlx(PostgresQueryBuilder);
         observe_statement(
             SIDE_EFFECT_CLAIM,
@@ -162,8 +166,7 @@ fn leased_effect(id: SideEffectJobId, row: &PgRow) -> Result<LeasedSideEffect, E
     let recorded_at: DateTime<Utc> = row.get("recorded_at");
     let record = WriteRecord::restored(write_id, recorded_at);
     let stored_base: i32 = row.get("base_ordinal");
-    let base_ordinal =
-        WriteOrdinal::try_from(stored_base).map_err(|error| EntityError::internal(format!("pending side-effect consequence base is unreadable: {error}")))?;
+    let base_ordinal = WriteOrdinal::try_from(stored_base).map_err(|error| EntityError::from(undecodable(&error)))?;
     Ok(LeasedSideEffect {
         id,
         attempts: row.get("attempt_count"),
@@ -174,8 +177,9 @@ fn leased_effect(id: SideEffectJobId, row: &PgRow) -> Result<LeasedSideEffect, E
 }
 
 /// Map a driver failure into the entity port's persistence category.
+#[track_caller]
 fn persistence(error: &sqlx::Error) -> EntityError {
-    EntityError::persistence(error.to_string())
+    EntityError::from(persistence_failure(error))
 }
 
 /// Claim a batch of due jobs for `owner`, returning each claimed row's payload.
@@ -330,7 +334,7 @@ fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
 
 /// Decode one persisted queue payload into the semantic side-effect job.
 fn decode_job(payload: &Value) -> Result<BatchSideEffectJob, EntityError> {
-    let persisted = PersistedBatchSideEffectJob::decode(payload).map_err(|error| EntityError::persistence(error.to_string()))?;
+    let persisted = PersistedBatchSideEffectJob::decode(payload).map_err(|error| EntityError::from(undecodable(&error)))?;
     Ok(persisted_to_domain(persisted))
 }
 

@@ -10,6 +10,7 @@
 //! the instant.
 
 use crate::database_name::TenantDatabaseName;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 use std::time::SystemTime;
 use thiserror::Error;
@@ -47,12 +48,13 @@ pub enum PendingWorkError {
         database: TenantDatabaseName,
     },
     /// The probe statement failed for a reason other than saturation.
-    #[error("the pending-work probe for {database} failed: {detail}")]
+    #[error("the pending-work probe for {database} failed: {cause}")]
     ProbeFailed {
         /// The database whose probe failed.
         database: TenantDatabaseName,
-        /// What the store reported.
-        detail: String,
+        /// How the store failed.
+        #[source]
+        cause: PersistenceFailure,
     },
     /// The tenant's database no longer exists.
     ///

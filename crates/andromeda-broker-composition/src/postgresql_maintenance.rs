@@ -7,7 +7,7 @@ use andromeda_postgresql_context_store::{
 use andromeda_postgresql_maintenance::{controller::MaintenanceController, error::MaintenanceError, policy::PolicyProfile};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
-    failure::TaskFailure,
+    failure::{FailureClass, TaskFailure},
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule, PeriodicScheduleError},
     registration::{TaskRegistration, TaskRegistrationError},
     restart_policy::RestartPolicy,
@@ -67,19 +67,17 @@ pub(crate) fn register_postgresql_maintenance(
 }
 
 /// Classify platform failures; per-tenant capability and action failures are pass outcomes.
-fn classify_failure(error: MaintenanceError) -> TaskFailure {
-    match error {
-        MaintenanceError::Database(error) => TaskFailure::transient(error.to_string()),
-        MaintenanceError::SchemaContract(error) => TaskFailure::invariant_violation(error.to_string()),
-        MaintenanceError::NegativeCatalogValue { field, value } => {
-            TaskFailure::invariant_violation(format!("negative PostgreSQL maintenance catalog value for {field}: {value}"))
-        }
-        MaintenanceError::CatalogValueOverflow { field, value } => {
-            TaskFailure::invariant_violation(format!("PostgreSQL maintenance catalog value overflow for {field}: {value}"))
-        }
-        MaintenanceError::Statement(error) => TaskFailure::invariant_violation(error.to_string()),
-        MaintenanceError::TenantName(error) => TaskFailure::invariant_violation(error.to_string()),
-        MaintenanceError::UnknownTarget(target) => TaskFailure::invariant_violation(format!("unknown PostgreSQL maintenance target {target:?}")),
-        MaintenanceError::UnreadableCode(_) | MaintenanceError::ProbeTargetNotAnIndex(_) => TaskFailure::invariant_violation(error.to_string()),
-    }
+const fn classify_failure(error: MaintenanceError) -> TaskFailure<MaintenanceError> {
+    let class = match &error {
+        MaintenanceError::Database(_) => FailureClass::Transient,
+        MaintenanceError::SchemaContract(_)
+        | MaintenanceError::NegativeCatalogValue { .. }
+        | MaintenanceError::CatalogValueOverflow { .. }
+        | MaintenanceError::Statement(_)
+        | MaintenanceError::TenantName(_)
+        | MaintenanceError::UnknownTarget(_)
+        | MaintenanceError::UnreadableCode(_)
+        | MaintenanceError::ProbeTargetNotAnIndex(_) => FailureClass::InvariantViolation,
+    };
+    TaskFailure::new(class, error)
 }

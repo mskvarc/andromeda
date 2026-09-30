@@ -18,7 +18,7 @@ use crate::{
     context_subtree::context_subtree,
     loader::{
         cache_lifetime::{CacheLifetime, ContextFreshness, response_freshness},
-        error::{LoaderError, LoaderErrorKind},
+        error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
     },
 };
 use andromeda_http_headers::json_ld_accept::JsonLdAccept;
@@ -28,7 +28,7 @@ use iri_rs::IriBuf;
 use mediatype::MediaTypeBuf;
 use reqwest::{Client, header::HeaderMap};
 use serde_json::Value;
-use std::{str::from_utf8, time::Duration};
+use std::{str::from_utf8, sync::Arc, time::Duration};
 use tracing::warn;
 
 /// A parsed remote context and the freshness its response granted it.
@@ -66,7 +66,7 @@ pub(crate) async fn fetch_and_parse(
     request_headers.typed_insert(JsonLdAccept);
     let response = client.get(url.as_str()).headers(request_headers).send().await.map_err(|error| LoaderError {
         url: url.clone(), // clone: the failure is reported under the URL that was requested
-        kind: LoaderErrorKind::Request(error.to_string()),
+        kind: LoaderErrorKind::Unavailable(ContextUnavailable::Request(Arc::new(error))),
     })?;
 
     if !response.status().is_success() {
@@ -76,12 +76,14 @@ pub(crate) async fn fetch_and_parse(
         });
     }
 
-    if let Some(content_type) = response.headers().typed_get::<headers::ContentType>()
-        && !is_json_like(&content_type.to_string())
+    if let Some(refusal) = response
+        .headers()
+        .typed_get::<headers::ContentType>()
+        .and_then(|content_type| content_type_refusal(&content_type))
     {
         return Err(LoaderError {
             url: url.clone(), // clone: the failure is reported under the URL that was requested
-            kind: LoaderErrorKind::Invalid(format!("Unsupported context content type: {content_type}")),
+            kind: LoaderErrorKind::Invalid(refusal),
         });
     }
 
@@ -101,7 +103,7 @@ pub(crate) async fn fetch_and_parse(
     let freshness = response_freshness(response.headers(), default_lifetime);
     let bytes = response.bytes().await.map_err(|error| LoaderError {
         url: url.clone(), // clone: the failure is reported under the URL that was requested
-        kind: LoaderErrorKind::Request(error.to_string()),
+        kind: LoaderErrorKind::Unavailable(ContextUnavailable::Request(Arc::new(error))),
     })?;
 
     if bytes.len() > max_bytes {
@@ -110,16 +112,16 @@ pub(crate) async fn fetch_and_parse(
 
     let text = from_utf8(&bytes).map_err(|error| LoaderError {
         url: url.clone(), // clone: the failure is reported under the URL that was requested
-        kind: LoaderErrorKind::Invalid(error.to_string()),
+        kind: LoaderErrorKind::Invalid(InvalidContextDocument::NotUtf8(error)),
     })?;
 
     let json = serde_json::from_str::<Value>(text).map_err(|error| LoaderError {
         url: url.clone(), // clone: the failure is reported under the URL that was requested
-        kind: LoaderErrorKind::Invalid(error.to_string()),
+        kind: LoaderErrorKind::Invalid(InvalidContextDocument::NotJson(Arc::new(error))),
     })?;
     let subtree = context_subtree(json).ok_or_else(|| LoaderError {
         url: url.clone(), // clone: the failure is reported under the URL that was requested
-        kind: LoaderErrorKind::Invalid("remote document has no usable top-level @context".to_owned()),
+        kind: LoaderErrorKind::Invalid(InvalidContextDocument::NoContext),
     })?;
     Ok(RemoteContextDocument {
         value: jsonld_syntax::Value::from_serde_json(subtree),
@@ -137,7 +139,7 @@ const TRANSPORT_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 
 /// [`fetch_and_parse`], retrying only a transport-level failure.
 ///
-/// A dropped or refused connection ([`LoaderErrorKind::Request`]) is transient
+/// A dropped or refused connection ([`ContextUnavailable::Request`]) is transient
 /// and worth another attempt; every other failure is deterministic -- an HTTP
 /// status, an oversized body, or an unparseable document fails identically on a
 /// retry -- and is returned at once, filtered by
@@ -171,21 +173,26 @@ pub(crate) async fn fetch_and_parse_retrying(
 /// disabled fetch, or a degraded durable cache are all deterministic given the
 /// same request, so retrying them only delays the inevitable report.
 const fn is_transient_transport_failure(error: &LoaderError) -> bool {
-    matches!(error.kind, LoaderErrorKind::Request(_))
+    matches!(error.kind, LoaderErrorKind::Unavailable(ContextUnavailable::Request(_)))
 }
 
-/// Whether a `Content-Type` names something a context can be parsed from.
-fn is_json_like(content_type: &str) -> bool {
-    match content_type.parse::<MediaTypeBuf>() {
-        Ok(media_type) => {
-            let subtype = media_type.subty().as_str();
-            subtype == "json"
-                || subtype == "ld+json"
-                || media_type.suffix().is_some_and(|suffix| suffix.as_str() == "json")
-                || (media_type.ty().as_str() == "text" && subtype == "plain")
-        }
-        Err(_) => false,
+/// Why a response's `Content-Type` names nothing a context can be parsed from,
+/// or `None` when it names something one can.
+fn content_type_refusal(content_type: &headers::ContentType) -> Option<InvalidContextDocument> {
+    match content_type.to_string().parse::<MediaTypeBuf>() {
+        Ok(media_type) if is_json_like(&media_type) => None,
+        Ok(media_type) => Some(InvalidContextDocument::UnsupportedContentType(Box::new(media_type))),
+        Err(source) => Some(InvalidContextDocument::MalformedContentType(source)),
     }
+}
+
+/// Whether a media type names something a context can be parsed from.
+fn is_json_like(media_type: &MediaTypeBuf) -> bool {
+    let subtype = media_type.subty().as_str();
+    subtype == "json"
+        || subtype == "ld+json"
+        || media_type.suffix().is_some_and(|suffix| suffix.as_str() == "json")
+        || (media_type.ty().as_str() == "text" && subtype == "plain")
 }
 
 /// The failure reported for a context past the configured size limit.
@@ -199,15 +206,19 @@ const fn too_large(url: IriBuf, size: usize, max: usize) -> LoaderError {
 #[cfg(test)]
 mod tests {
     use crate::{
+        context_cache::ContextCacheError,
         context_subtree::context_subtree,
         loader::{
-            error::{LoaderError, LoaderErrorKind},
+            error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
             remote_document::{is_json_like, is_transient_transport_failure, ld_json_media_type},
         },
     };
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use iri_rs::IriBuf;
-    use reqwest::StatusCode;
+    use mediatype::MediaTypeBuf;
+    use reqwest::{Client, StatusCode};
     use serde_json::json;
+    use std::sync::Arc;
 
     /// A loader error under a fixed URL, for the retry-classification test.
     fn error(kind: LoaderErrorKind) -> LoaderError {
@@ -220,15 +231,17 @@ mod tests {
     #[test]
     fn only_a_transport_failure_is_retried() {
         assert!(
-            is_transient_transport_failure(&error(LoaderErrorKind::Request("connection reset".to_owned()))),
+            is_transient_transport_failure(&error(LoaderErrorKind::Unavailable(ContextUnavailable::Request(Arc::new(
+                Client::new().get("not a url").build().expect_err("a malformed URL fails the request builder")
+            ))))),
             "a dropped or refused connection is transient and retried"
         );
         for deterministic in [
             LoaderErrorKind::Http(StatusCode::NOT_FOUND),
             LoaderErrorKind::TooLarge { size: 10, max: 5 },
-            LoaderErrorKind::Invalid("missing @context".to_owned()),
+            LoaderErrorKind::Invalid(InvalidContextDocument::NoContext),
             LoaderErrorKind::FetchDisabled,
-            LoaderErrorKind::Cache("database unavailable".to_owned()),
+            LoaderErrorKind::Unavailable(ContextUnavailable::Cache(ContextCacheError::Read(PersistenceFailure::Unavailable))),
         ] {
             assert!(!is_transient_transport_failure(&error(deterministic)), "a deterministic failure is not retried");
         }
@@ -255,10 +268,12 @@ mod tests {
     #[test]
     fn only_json_shaped_content_types_are_accepted_for_a_context() {
         for accepted in ["application/json", "application/ld+json", "application/vnd.example+json", "text/plain"] {
-            assert!(is_json_like(accepted), "{accepted} must be accepted");
+            let media_type: MediaTypeBuf = accepted.parse().expect("a media type");
+            assert!(is_json_like(&media_type), "{accepted} must be accepted");
         }
-        for rejected in ["text/html", "application/octet-stream", "not a media type"] {
-            assert!(!is_json_like(rejected), "{rejected} must be refused");
+        for rejected in ["text/html", "application/octet-stream"] {
+            let media_type: MediaTypeBuf = rejected.parse().expect("a media type");
+            assert!(!is_json_like(&media_type), "{rejected} must be refused");
         }
     }
 

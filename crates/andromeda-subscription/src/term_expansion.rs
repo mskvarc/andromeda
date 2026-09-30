@@ -8,7 +8,7 @@
 //! Context hosting is not handled here; the entity-subscription variant adds
 //! that on top.
 
-use crate::{error::SubscriptionError, fields::attribute_name_csv_member};
+use crate::{error::SubscriptionError, fields::attribute_name_csv_member, subscription_member::SubscriptionMember};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
@@ -105,8 +105,12 @@ fn rewrite_opt_in_member(payload: &mut Value, member: &str, names: &[AttributeNa
 /// Expand both opt-in lists and store them expanded, so the persisted member
 /// names the same IRIs the persisted `q` was expanded into.
 async fn expand_filter_opt_ins(payload: &mut Value, expander: &impl TermExpander) -> Result<FilterOptIns, SubscriptionError> {
-    let expand_values = expand_attribute_names(&attribute_name_csv_member(payload, "expandValues")?.unwrap_or_default(), expander).await?;
-    let json_keys = expand_attribute_names(&attribute_name_csv_member(payload, "jsonKeys")?.unwrap_or_default(), expander).await?;
+    let expand_values = expand_attribute_names(
+        &attribute_name_csv_member(payload, SubscriptionMember::ExpandValues)?.unwrap_or_default(),
+        expander,
+    )
+    .await?;
+    let json_keys = expand_attribute_names(&attribute_name_csv_member(payload, SubscriptionMember::JsonKeys)?.unwrap_or_default(), expander).await?;
     rewrite_opt_in_member(payload, "expandValues", &expand_values);
     rewrite_opt_in_member(payload, "jsonKeys", &json_keys);
     Ok(FilterOptIns {

@@ -5,8 +5,8 @@
 //! this broker minted, and that identifier is what selects the tenant.
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_subscription_forwarding::service::SubscriptionForwardingService;
-use andromeda_tenancy::runtime::lease::RuntimeLease;
+use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, service::SubscriptionForwardingService};
+use andromeda_tenancy::{error::TenancyError, runtime::lease::RuntimeLease};
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
@@ -35,12 +35,13 @@ pub enum ReceiverResolutionError {
         /// The identifier the notification named.
         subscription: Identifier,
     },
-    /// The tenant could not be resolved.
-    #[error("tenant resolution failed: {detail}")]
-    Tenant {
-        /// Diagnostic detail.
-        detail: String,
-    },
+    /// The route table naming the tenant that minted the identifier could not
+    /// be read.
+    #[error("subscription routing failed: {0}")]
+    Routing(#[source] SubscriptionForwardingError),
+    /// The tenant that minted the identifier could not be resolved.
+    #[error("tenant resolution failed: {0}")]
+    Tenant(#[source] TenancyError),
 }
 
 /// Resolves the forwarding service of the tenant that minted a subscription identifier.

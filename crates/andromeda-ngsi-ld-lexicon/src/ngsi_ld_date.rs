@@ -24,11 +24,12 @@ const CANONICAL_FORMAT: &str = "%Y-%m-%d";
 #[derive(Debug, Error)]
 pub enum NgsiLdDateError {
     /// The text is not an RFC 3339 `full-date`.
-    #[error("NGSI-LD Date value is not an RFC 3339 full-date: {value}")]
-    Malformed {
-        /// The rejected text.
-        value: String,
-    },
+    #[error("NGSI-LD Date value is not an RFC 3339 full-date: {0}")]
+    Malformed(#[source] chrono::ParseError),
+    /// The text names a calendar date but not in its canonical `YYYY-MM-DD`
+    /// spelling, which is the only one that sorts chronologically.
+    #[error("NGSI-LD Date value is not written in its canonical form {0}")]
+    NotCanonical(NgsiLdDate),
 }
 
 /// An NGSI-LD `Date` in canonical `YYYY-MM-DD` form.
@@ -65,10 +66,10 @@ impl FromStr for NgsiLdDate {
     type Err = NgsiLdDateError;
 
     fn from_str(value: &str) -> Result<NgsiLdDate, NgsiLdDateError> {
-        let parsed = NaiveDate::parse_from_str(value, CANONICAL_FORMAT).map_err(|_| NgsiLdDateError::Malformed { value: value.to_owned() })?;
+        let parsed = NaiveDate::parse_from_str(value, CANONICAL_FORMAT).map_err(NgsiLdDateError::Malformed)?;
         let date = NgsiLdDate(parsed);
         if date.to_string() != value {
-            return Err(NgsiLdDateError::Malformed { value: value.to_owned() });
+            return Err(NgsiLdDateError::NotCanonical(date));
         }
         Ok(date)
     }
@@ -106,7 +107,10 @@ mod tests {
     #[test]
     fn an_unpadded_spelling_is_refused_because_it_would_not_sort_chronologically() {
         let error = "2026-4-2".parse::<NgsiLdDate>().expect_err("the canonical form is zero-padded");
-        assert!(matches!(error, NgsiLdDateError::Malformed { .. }), "got {error:?}");
+        let NgsiLdDateError::NotCanonical(canonical) = error else {
+            panic!("got {error:?}");
+        };
+        pretty_assertions::assert_eq!(canonical.to_string(), "2026-04-02");
     }
 
     #[test]

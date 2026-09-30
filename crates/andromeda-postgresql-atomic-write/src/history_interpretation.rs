@@ -13,6 +13,7 @@
 use crate::commit_refusal::temporal;
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
+    commit_invariant::CommitInvariant,
     current_state_projection::CurrentStateProjection,
     error::CommitError,
     history_record::HistoryRecord,
@@ -74,15 +75,10 @@ pub(crate) fn interpret(
         let Some(intent) = TemporalAppendIntent::from_history(&write.entity_id, &entity_types, &write.history, *record, next).map_err(temporal)? else {
             continue;
         };
-        let advance = u32::try_from(intent.entries.len()).map_err(|error| CommitError::Invariant {
-            detail: format!(
-                "temporal intent for entity {} carries more entries than an ordinal can number: {error}",
-                write.entity_id
-            ),
-        })?;
-        next = next.advanced_by(advance).map_err(|error| CommitError::Invariant {
-            detail: format!("temporal consequence ordinal overflowed past entity {}: {error}", write.entity_id),
-        })?;
+        let advance = u32::try_from(intent.entries.len()).map_err(|error| CommitError::from(CommitInvariant::ConsequenceCount(error)))?;
+        next = next
+            .advanced_by(advance)
+            .map_err(|error| CommitError::from(CommitInvariant::OrdinalOverflow(error)))?;
         if matches!(write.projection, CurrentStateProjection::FromHistory) {
             interpreted.projected.push(ProjectedIntent::History(interpreted.intents.len()));
         }

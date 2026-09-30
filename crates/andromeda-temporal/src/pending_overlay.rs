@@ -18,6 +18,7 @@ use crate::{
         },
         pending_intent_reader::PendingTemporalIntentReader,
     },
+    temporal_invariant::TemporalInvariant,
     temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -235,7 +236,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         let stored = self.stored.query_entity_ids(target, &unpaged).await?;
         let (stored_ids, _) = stored
             .complete(unpaged.pagination)
-            .map_err(|error| TemporalError::internal(error.to_string()))?;
+            .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
         let mut identifiers = stored_ids;
         let mut seen: HashSet<Identifier> = identifiers.iter().cloned().collect();
         let selection = ResidualFilter::over(compiled.entities.clone());

@@ -17,15 +17,15 @@ use serde_json::Value;
 /// serialised to JSON.
 pub fn to_insert_params(snapshot: &Snapshot, query_context_json: Value) -> Result<InsertSnapshotParams<'_>, SnapshotError> {
     let receiver_info_json = match snapshot.receiver_info.as_ref() {
-        Some(v) => Some(to_value(v, "receiver_info")?),
+        Some(v) => Some(to_value(v)?),
         None => None,
     };
     let queries_details_json = match snapshot.queries_details.as_ref() {
-        Some(v) => Some(to_value(v, "queries_details")?),
+        Some(v) => Some(to_value(v)?),
         None => None,
     };
     let temporal_queries_details_json = match snapshot.temporal_queries_details.as_ref() {
-        Some(v) => Some(to_value(v, "temporal_queries_details")?),
+        Some(v) => Some(to_value(v)?),
         None => None,
     };
 
@@ -49,6 +49,6 @@ pub fn to_insert_params(snapshot: &Snapshot, query_context_json: Value) -> Resul
     })
 }
 
-fn to_value<T: serde::Serialize>(value: &T, column: &str) -> Result<Value, SnapshotError> {
-    serde_json::to_value(value).map_err(|e| SnapshotError::internal(format!("Failed to serialize {column}: {e}")))
+fn to_value<T: serde::Serialize>(value: &T) -> Result<Value, SnapshotError> {
+    serde_json::to_value(value).map_err(SnapshotError::Representation)
 }

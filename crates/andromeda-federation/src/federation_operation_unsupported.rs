@@ -3,8 +3,9 @@
 //! [`FederationError::OperationNotSupported`](crate::error::FederationError::OperationNotSupported)
 //! carries one of these (422; clause 5.6.8.4). A refusal this broker reasons
 //! about names its registration; a refusal the remote source declared carries
-//! that source's own problem detail, relayed verbatim.
+//! that source's own answer.
 
+use crate::remote_answer::RemoteAnswer;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use thiserror::Error;
 
@@ -20,11 +21,8 @@ pub enum FederationOperationUnsupported {
     },
     /// The single registered source itself refused the operation with an HTTP 422.
     ///
-    /// The detail is the source's own problem detail, relayed verbatim; it is
-    /// not broker-authored (clause 6.3.17 asks for the most informative error).
-    #[error("{detail}")]
-    RemoteUnsupported {
-        /// The remote source's relayed HTTP 422 detail. Opaque upstream text.
-        detail: String,
-    },
+    /// The answer carries the source's own problem document; clause 6.3.17
+    /// asks for the most informative error.
+    #[error(transparent)]
+    RemoteUnsupported(Box<RemoteAnswer>),
 }

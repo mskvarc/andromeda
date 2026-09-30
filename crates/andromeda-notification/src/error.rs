@@ -1,7 +1,9 @@
 //! Focused failures produced while evaluating or delivering notifications.
 
+use crate::notification_invariant::NotificationInvariant;
 use andromeda_entity::error::EntityError;
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_registration::error::RegistrationError;
 use andromeda_subscription::error::SubscriptionError;
 
@@ -21,38 +23,12 @@ pub enum NotificationError {
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),
     /// A notification value could not be represented.
-    #[error("notification representation failed: {detail}")]
-    Representation {
-        /// Sanitized diagnostic detail for internal logs.
-        detail: String,
-    },
+    #[error("notification representation failed: {0}")]
+    Representation(#[source] serde_json::Error),
     /// Durable notification persistence failed.
-    #[error("notification persistence failed: {detail}")]
-    Persistence {
-        /// Sanitized diagnostic detail for internal logs.
-        detail: String,
-    },
+    #[error("notification persistence failed: {0}")]
+    Persistence(#[from] PersistenceFailure),
     /// A policy invariant was violated.
-    #[error("notification invariant violated: {detail}")]
-    Invariant {
-        /// Sanitized diagnostic detail for internal logs.
-        detail: String,
-    },
-}
-
-impl NotificationError {
-    /// Construct a representation failure.
-    pub fn representation(detail: impl Into<String>) -> Self {
-        Self::Representation { detail: detail.into() }
-    }
-
-    /// Construct a persistence failure at an adapter boundary.
-    pub fn persistence(detail: impl Into<String>) -> Self {
-        Self::Persistence { detail: detail.into() }
-    }
-
-    /// Construct an invariant failure.
-    pub fn invariant(detail: impl Into<String>) -> Self {
-        Self::Invariant { detail: detail.into() }
-    }
+    #[error("notification invariant violated: {0}")]
+    Invariant(#[from] NotificationInvariant),
 }

@@ -9,15 +9,19 @@
 //! previous read's horizon therefore misses no change the previous read did not
 //! already hold, whichever broker process committed it.
 
-use crate::entity::{
-    mapper::{stored_type_name, stored_uri},
-    repo::EntityRepository,
+use crate::{
+    entity::{
+        mapper::{stored_type_name, stored_uri},
+        repo::EntityRepository,
+    },
+    store_fault::{contract_broken, persistence_failure, undecodable},
 };
 use andromeda_entity::{
     error::EntityError,
     port::spatial_snapshot::{ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead},
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_encoding::ewkb::Ewkb;
 use andromeda_postgresql_query::dictionary::names_in_key_order::type_names_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
@@ -87,15 +91,14 @@ impl EntityRepository {
         let rows = sqlx::query_as_with::<_, LocationRow, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.pool)
             .await
-            .map_err(|error| EntityError::persistence(format!("spatial location read failed: {error}")))?;
+            .map_err(|error| EntityError::from(persistence_failure(&error)))?;
 
         let mut horizon = None;
         let mut locations = Vec::with_capacity(rows.len());
         for row in rows {
             match row {
                 (Some(position), None, None, None) => {
-                    let position =
-                        u64::try_from(position).map_err(|error| EntityError::persistence(format!("negative snapshot horizon {position}: {error}")))?;
+                    let position = u64::try_from(position).map_err(|error| EntityError::from(undecodable(&error)))?;
                     horizon = Some(ChangeHorizon::new(position));
                 }
                 (None, Some(identifier), Some(entity_types), location) => {
@@ -103,14 +106,12 @@ impl EntityRepository {
                         locations.push(location);
                     }
                 }
-                (horizon_column, identifier, entity_types, _) => {
-                    return Err(EntityError::persistence(format!(
-                        "spatial location read returned a malformed row: horizon {horizon_column:?}, identifier {identifier:?}, types {entity_types:?}"
-                    )));
+                _malformed => {
+                    return Err(EntityError::from(contract_broken()));
                 }
             }
         }
-        let horizon = horizon.ok_or_else(|| EntityError::persistence("spatial location read returned no snapshot horizon"))?;
+        let horizon = horizon.ok_or_else(|| EntityError::from(contract_broken()))?;
         Ok(LocationRead { locations, horizon })
     }
 }
@@ -138,7 +139,7 @@ fn decode_location(identifier: &str, entity_types: &[String], location: Option<V
         .map(String::as_str)
         .map(stored_type_name)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| EntityError::persistence(error.to_string()))?;
+        .map_err(|error| EntityError::from(persistence_failure(&error)))?;
     Ok(Some(EntityLocation {
         entity_id,
         entity_types,
@@ -153,7 +154,7 @@ impl EntitySpatialSnapshotSource for EntityRepository {
     }
 
     async fn locations_changed_since(&self, horizon: ChangeHorizon) -> Result<LocationRead, EntityError> {
-        let position = i64::try_from(horizon.position()).map_err(|error| EntityError::internal(format!("snapshot horizon out of range: {error}")))?;
+        let position = i64::try_from(horizon.position()).map_err(|error| EntityError::from(PersistenceFailure::Unencodable.record(&error)))?;
         self.read_locations(LocationFilter::WrittenSince(position)).await
     }
 }

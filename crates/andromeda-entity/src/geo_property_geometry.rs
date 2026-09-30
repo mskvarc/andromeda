@@ -25,9 +25,9 @@
 
 use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_model::expanded::geo_property::validate_expanded_geo_node;
-use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, expanded_to_compact};
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
 use std::slice::from_ref;
 
@@ -148,11 +148,10 @@ fn validate_geojson_document(attribute_iri: &str, document: &Value) -> Result<()
 /// depends on the request's own `@context`, which validation does not hold, and
 /// an IRI the client can look up beats a guess it cannot.
 fn geo_property_error(attribute_iri: &str, cause: GeometryError) -> EntityError {
-    let name = expanded_to_compact(attribute_iri).unwrap_or(attribute_iri);
-    EntityError::Validation(EntityValidationReason::GeoProperty {
-        name: name.to_string(),
-        source: cause,
-    })
+    match attribute_iri.parse::<AttributeName>() {
+        Ok(attribute) => EntityError::Validation(EntityValidationReason::GeoProperty { attribute, source: cause }),
+        Err(source) => EntityError::Validation(EntityValidationReason::ExpandedAttributeName(source)),
+    }
 }
 
 #[cfg(test)]

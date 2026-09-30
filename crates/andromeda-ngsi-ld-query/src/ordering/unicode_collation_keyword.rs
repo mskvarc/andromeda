@@ -16,6 +16,8 @@
 //! unusable one outright rather than ignoring it, so nothing is gained by
 //! restating those two sets and a stale copy would refuse a valid request.
 
+use strum::{Display, IntoStaticStr};
+
 /// The BCP47 singleton that introduces the Unicode locale extension, `u`.
 ///
 /// IETF RFC 6067 defines this extension, and clause 4.23.3 spells its examples
@@ -39,10 +41,41 @@ const KEYWORD_KEY_LENGTH: usize = 2;
 /// so a tag spelling it declares a second keyword key rather than a type.
 const BOOLEAN_TYPES: &[&str] = &["true", "false", "yes"];
 
+/// A collation key of the Unicode locale extension, spelled as RFC 6067
+/// registers it.
+#[derive(Clone, Copy, Debug, Display, Eq, IntoStaticStr, PartialEq)]
+#[strum(serialize_all = "lowercase")]
+pub enum CollationKeyword {
+    /// Collation type.
+    Co,
+    /// Alternate handling.
+    Ka,
+    /// Backward second level.
+    Kb,
+    /// Case level.
+    Kc,
+    /// Case first.
+    Kf,
+    /// Hiragana quaternary.
+    Kh,
+    /// Normalisation.
+    Kk,
+    /// Numeric ordering.
+    Kn,
+    /// Reordering.
+    Kr,
+    /// Strength.
+    Ks,
+    /// Maximum variable.
+    Kv,
+    /// Variable top.
+    Vt,
+}
+
 /// One collation key of the Unicode locale extension and the types it admits.
 struct CollationKey {
-    /// The two-character key, as RFC 6067 registers it.
-    key: &'static str,
+    /// The two-character key.
+    key: CollationKeyword,
     /// The types registered for the key, or `None` where the registry admits an
     /// open-ended sequence that ICU itself refuses when it cannot be used.
     types: Option<&'static [&'static str]>,
@@ -61,50 +94,56 @@ struct CollationKey {
 /// tag never parses in the first place.
 const COLLATION_KEYS: [CollationKey; 12] = [
     CollationKey {
-        key: "co",
+        key: CollationKeyword::Co,
         types: Some(&[
             "big5han", "compat", "dict", "direct", "ducet", "emoji", "eor", "gb2312", "phonebk", "phonetic", "pinyin", "reformed", "search", "searchjl",
             "standard", "stroke", "trad", "unihan", "zhuyin",
         ]),
     },
     CollationKey {
-        key: "ka",
+        key: CollationKeyword::Ka,
         types: Some(&["noignore", "shifted"]),
     },
     CollationKey {
-        key: "kb",
+        key: CollationKeyword::Kb,
         types: Some(BOOLEAN_TYPES),
     },
     CollationKey {
-        key: "kc",
+        key: CollationKeyword::Kc,
         types: Some(BOOLEAN_TYPES),
     },
     CollationKey {
-        key: "kf",
+        key: CollationKeyword::Kf,
         types: Some(&["upper", "lower", "false"]),
     },
     CollationKey {
-        key: "kh",
+        key: CollationKeyword::Kh,
         types: Some(BOOLEAN_TYPES),
     },
     CollationKey {
-        key: "kk",
+        key: CollationKeyword::Kk,
         types: Some(BOOLEAN_TYPES),
     },
     CollationKey {
-        key: "kn",
+        key: CollationKeyword::Kn,
         types: Some(BOOLEAN_TYPES),
     },
-    CollationKey { key: "kr", types: None },
     CollationKey {
-        key: "ks",
+        key: CollationKeyword::Kr,
+        types: None,
+    },
+    CollationKey {
+        key: CollationKeyword::Ks,
         types: Some(&["level1", "level2", "level3", "level4", "identic", "primary", "tertiary"]),
     },
     CollationKey {
-        key: "kv",
+        key: CollationKeyword::Kv,
         types: Some(&["space", "punct", "symbol", "currency"]),
     },
-    CollationKey { key: "vt", types: None },
+    CollationKey {
+        key: CollationKeyword::Vt,
+        types: None,
+    },
 ];
 
 /// The registry entry for `key`, if it names a collation setting.
@@ -112,7 +151,7 @@ const COLLATION_KEYS: [CollationKey; 12] = [
 /// BCP47 subtags are case-insensitive, so a client that spells its keyword key
 /// in upper case names the same setting.
 fn collation_key(key: &str) -> Option<&'static CollationKey> {
-    COLLATION_KEYS.iter().find(|entry| key.eq_ignore_ascii_case(entry.key))
+    COLLATION_KEYS.iter().find(|entry| key.eq_ignore_ascii_case(<&'static str>::from(entry.key)))
 }
 
 /// What the Unicode extension of a tag says that RFC 6067 does not register.
@@ -126,7 +165,7 @@ pub enum UnregisteredKeyword<'a> {
     /// naming one would otherwise be answered with an order it did not ask for.
     Type {
         /// The collation key the type was written under.
-        key: &'a str,
+        key: CollationKeyword,
         /// The type the registry does not list.
         value: &'a str,
     },
@@ -148,7 +187,7 @@ pub enum UnregisteredKeyword<'a> {
 #[must_use]
 pub fn unregistered_collation_keyword(tag: &str) -> Option<UnregisteredKeyword<'_>> {
     let mut in_unicode_extension = false;
-    let mut current: Option<(&str, &'static CollationKey)> = None;
+    let mut current: Option<&'static CollationKey> = None;
     for subtag in tag.split('-') {
         if subtag.len() == SINGLETON_LENGTH {
             in_unicode_extension = subtag.eq_ignore_ascii_case(UNICODE_EXTENSION_SINGLETON);
@@ -157,13 +196,13 @@ pub fn unregistered_collation_keyword(tag: &str) -> Option<UnregisteredKeyword<'
             let Some(entry) = collation_key(subtag) else {
                 return Some(UnregisteredKeyword::Key(subtag));
             };
-            current = Some((subtag, entry));
+            current = Some(entry);
         } else if in_unicode_extension
-            && let Some((key, entry)) = current
+            && let Some(entry) = current
             && let Some(types) = entry.types
             && !types.iter().any(|registered| subtag.eq_ignore_ascii_case(registered))
         {
-            return Some(UnregisteredKeyword::Type { key, value: subtag });
+            return Some(UnregisteredKeyword::Type { key: entry.key, value: subtag });
         }
     }
     None
@@ -171,7 +210,7 @@ pub fn unregistered_collation_keyword(tag: &str) -> Option<UnregisteredKeyword<'
 
 #[cfg(test)]
 mod tests {
-    use crate::ordering::unicode_collation_keyword::{UnregisteredKeyword, unregistered_collation_keyword};
+    use crate::ordering::unicode_collation_keyword::{CollationKeyword, UnregisteredKeyword, unregistered_collation_keyword};
 
     /// Clause 4.23.3 EXAMPLE 6 and EXAMPLE 7 are the two collations the
     /// specification demonstrates the parameter with.
@@ -197,11 +236,17 @@ mod tests {
     fn a_collation_key_carrying_an_unregistered_type_is_reported() {
         pretty_assertions::assert_eq!(
             unregistered_collation_keyword("de-u-co-nonsense"),
-            Some(UnregisteredKeyword::Type { key: "co", value: "nonsense" })
+            Some(UnregisteredKeyword::Type {
+                key: CollationKeyword::Co,
+                value: "nonsense"
+            })
         );
         pretty_assertions::assert_eq!(
             unregistered_collation_keyword("de-u-ks-zzz"),
-            Some(UnregisteredKeyword::Type { key: "ks", value: "zzz" })
+            Some(UnregisteredKeyword::Type {
+                key: CollationKeyword::Ks,
+                value: "zzz"
+            })
         );
     }
 

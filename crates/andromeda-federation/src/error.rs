@@ -2,14 +2,15 @@
 
 use crate::{
     federation_conflict_reason::FederationConflictReason,
-    federation_diagnostic::FederationDiagnostic,
+    federation_invariant::FederationInvariant,
     federation_operation_unsupported::FederationOperationUnsupported,
+    gateway_failure::GatewayFailure,
 };
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_registration::error::RegistrationError;
-use std::{fmt::Display, time::Duration};
+use std::time::Duration;
 use thiserror::Error;
 
 /// A failure while selecting, contacting, or combining context sources.
@@ -48,16 +49,17 @@ pub enum FederationError {
         registration: Identifier,
     },
     /// The single forwarded request failed for any other reason (502).
-    #[error("registration {registration} could not complete the operation: {detail}")]
+    #[error("registration {registration} could not complete the operation: {cause}")]
     BadGateway {
         /// The failing registration.
         registration: Identifier,
-        /// The status the source answered with, when it answered at all.
-        status: Option<u16>,
-        /// The most informative detail available: the source's problem detail,
-        /// or the transport failure. Relayed verbatim from the source and not
-        /// broker-authored, so it stays an opaque `String` (clause 6.3.17).
-        detail: String,
+        /// The most informative cause available (clause 6.3.17): the source's
+        /// own answer, or the transport failure that left none.
+        ///
+        /// Boxed: the cause is the widest member, and inlining it would enlarge
+        /// every federation `Result`.
+        #[source]
+        cause: Box<GatewayFailure>,
     },
     /// Registration discovery failed.
     #[error(transparent)]
@@ -76,17 +78,17 @@ pub enum FederationError {
     #[error("the forwarded write payload could not be serialised: {0}")]
     ForwardedBody(#[source] serde_json::Error),
     /// An internal federation invariant could not be satisfied.
+    ///
+    /// Boxed: the invariants carry the widest members, and inlining them would
+    /// enlarge every federation `Result`. The [`From`] impl below keeps `?`
+    /// ergonomic.
     #[error("federation invariant failed: {0}")]
-    Internal(FederationDiagnostic),
+    Internal(Box<FederationInvariant>),
 }
 
-impl FederationError {
-    /// Construct an internal invariant error from its masked diagnostic source.
-    ///
-    /// The detail is captured for operators and masked before any client sees
-    /// it, so this takes `impl Display` — a typed source error is handed over
-    /// directly rather than pre-rendered to a string at the call site.
-    pub fn internal(source: impl Display) -> FederationError {
-        FederationError::Internal(FederationDiagnostic::new(source))
+/// Box the invariant, keeping `?` ergonomic while federation `Result`s stay small.
+impl From<FederationInvariant> for FederationError {
+    fn from(invariant: FederationInvariant) -> FederationError {
+        FederationError::Internal(Box::new(invariant))
     }
 }

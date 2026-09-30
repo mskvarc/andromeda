@@ -12,7 +12,7 @@ use crate::tenant_factory::BrokerTenantFactory;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
-    failure::TaskFailure,
+    failure::{FailureClass, TaskFailure},
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule, PeriodicScheduleError},
     registration::{TaskRegistration, TaskRegistrationError},
     restart_policy::RestartPolicy,
@@ -149,8 +149,9 @@ fn register_reconciliation(
 
 /// A wake-schedule store failure is transient: the leased claim re-fires and the
 /// next pass retries.
-fn classify_failure(error: WakeScheduleError) -> TaskFailure {
-    match error {
-        WakeScheduleError::Store { detail } => TaskFailure::transient(detail),
-    }
+const fn classify_failure(error: WakeScheduleError) -> TaskFailure<WakeScheduleError> {
+    let class = match &error {
+        WakeScheduleError::Store { .. } => FailureClass::Transient,
+    };
+    TaskFailure::new(class, error)
 }

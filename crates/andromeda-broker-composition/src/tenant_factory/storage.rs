@@ -2,7 +2,7 @@
 
 use crate::{
     context_hit_flush::ContextHitFlushWorker,
-    tenant_factory::{TenantFactoryConfig, error::TenantAssemblyError, spatial::initialize_spatial},
+    tenant_factory::{TenantFactoryConfig, assembly_invariant::AssemblyInvariant, error::TenantAssemblyError, spatial::initialize_spatial},
 };
 use andromeda_context_registry::{cached_context_invalidation::CachedContextInvalidation, hit_store::ContextHitStore};
 use andromeda_context_space::context_target::ContextTarget;
@@ -35,10 +35,7 @@ use andromeda_postgresql_context_store::{
     subscription::repo::SubscriptionRepository,
     tenant_migration::{TenantSchemaState, migrate_single_tenant_db, tenant_schema_state, upgrade_single_tenant_snapshot_branches},
 };
-use andromeda_postgresql_name_dictionary::{
-    name_cache::{NameCache, read_established_epoch},
-    name_lookup::NameLookup,
-};
+use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup, schema_epoch::read_established_epoch};
 use andromeda_postgresql_pool::configure_pool_options;
 use andromeda_postgresql_temporal_store::{
     bulk_write_mode::BulkWriteMode as TemporalBulkWriteMode,
@@ -297,7 +294,7 @@ pub(super) async fn initialize_storage(
 /// Returns [`TenantAssemblyError`] when the configuration names no valid
 /// policy or the reconciliation fails.
 async fn reconcile_temporal_storage(temporal_repo: &TemporalRepository, temporal: &TemporalConfig) -> Result<(), TenantAssemblyError> {
-    let policy = temporal.storage_policy().map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let policy = temporal.storage_policy().map_err(AssemblyInvariant::from)?;
     let outcome = temporal_repo.reconcile_storage_policy(&policy).await?;
     if !outcome.is_unchanged() {
         tracing::info!(outcome = ?outcome, event = "temporal_storage_policy_reconciled");

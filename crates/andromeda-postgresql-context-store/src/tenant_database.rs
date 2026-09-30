@@ -35,12 +35,12 @@ impl DatabaseUrl {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::Internal`] when the URL carries no path
-    /// segment, so it names no database.
+    /// Returns [`ContextStoreError::DatabaseUrlUnnamed`] when the URL carries no
+    /// path segment, so it names no database.
     pub fn database_name(&self) -> Result<TenantDatabaseName, ContextStoreError> {
         let path = self.0.path().trim_start_matches('/');
         if path.is_empty() {
-            return Err(ContextStoreError::Internal("Database URL must include database name".to_string()));
+            return Err(ContextStoreError::DatabaseUrlUnnamed);
         }
         Ok(TenantDatabaseName::from(path.to_string()))
     }

@@ -80,7 +80,7 @@ impl AtomicWrite {
                 .iter()
                 .find_map(|consequence| match consequence {
                     HistoryRecord::Observations(payload) | HistoryRecord::EvolutionInstances(payload) => {
-                        Some(extract_types(payload).map_err(CommitError::invariant))
+                        Some(extract_types(payload).map_err(|error| CommitError::Invariant(error.into())))
                     }
                     HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
                 })

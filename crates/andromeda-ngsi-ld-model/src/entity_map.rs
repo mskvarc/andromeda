@@ -1,7 +1,11 @@
 //! The `EntityMap` resource that pins a distributed query's result set (ETSI GS CIM 009 clauses 4.5.25 and 5.2.39).
 
 use crate::entity_map_fingerprint::RequestFingerprint;
-use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier, rfc3339};
+use andromeda_ngsi_ld_lexicon::{
+    constant_string,
+    identifier::{Identifier, IdentifierParseError},
+    rfc3339,
+};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -26,8 +30,8 @@ pub enum EntityMapSource {
 
 /// Why a string is not an [`EntityMapSource`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("entity map source must be @none or a registration URI, got {0}")]
-pub struct EntityMapSourceError(String);
+#[error("entity map source must be @none or a registration URI: {0}")]
+pub struct EntityMapSourceError(#[source] IdentifierParseError);
 
 impl TryFrom<String> for EntityMapSource {
     type Error = EntityMapSourceError;
@@ -36,9 +40,7 @@ impl TryFrom<String> for EntityMapSource {
         if raw == LOCAL_SOURCE_TOKEN {
             return Ok(EntityMapSource::Local);
         }
-        raw.parse::<Identifier>()
-            .map(EntityMapSource::Registration)
-            .map_err(|_| EntityMapSourceError(raw))
+        raw.parse::<Identifier>().map(EntityMapSource::Registration).map_err(EntityMapSourceError)
     }
 }
 

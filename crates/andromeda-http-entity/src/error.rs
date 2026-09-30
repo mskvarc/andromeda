@@ -38,7 +38,7 @@ impl EntityHttpClassify for EntityMapError {
             // the request that created the map are an invalid request.
             EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
             EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => {
+            EntityMapError::Persistence(_) | EntityMapError::Invariant(_) => {
                 ClassifiedReport::internal(self, InternalFailureSummary::new("the entity store is unavailable"))
             }
         }
@@ -61,7 +61,7 @@ impl EntityHttpClassify for FederationError {
             | FederationError::Registration(_)
             | FederationError::Representation(_)
             | FederationError::ForwardedBody(_)
-            | FederationError::Internal { .. } => classify_forwarding_error(self),
+            | FederationError::Internal(_) => classify_forwarding_error(self),
         }
     }
 }

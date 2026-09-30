@@ -9,6 +9,7 @@ use crate::{
         temporal_history_sink::TemporalHistorySink,
         temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
+    temporal_invariant::TemporalInvariant,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
@@ -110,8 +111,7 @@ impl TemporalIntentDrain {
     /// rescheduled and counted in the returned outcome.
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<TemporalIntentDrainOutcome, TemporalError> {
         let _execution = self.execution_gate.lock().await;
-        let lease_duration = TimeDelta::from_std(self.lease_duration)
-            .map_err(|error| TemporalError::internal(format!("temporal intent lease duration is out of range: {error}")))?;
+        let lease_duration = TimeDelta::from_std(self.lease_duration).map_err(|error| TemporalError::from(TemporalInvariant::LeaseOutOfRange(error)))?;
         let claimed = self.queue.claim(self.owner, self.batch_size, now + lease_duration).await?;
         self.process_claimed(claimed, now).await
     }
@@ -214,20 +214,17 @@ impl TemporalIntentDrain {
             return Ok(());
         }
         let now = Utc::now();
-        let lease_duration = TimeDelta::from_std(self.lease_duration)
-            .map_err(|error| TemporalError::internal(format!("temporal intent lease duration is out of range: {error}")))?;
+        let lease_duration = TimeDelta::from_std(self.lease_duration).map_err(|error| TemporalError::from(TemporalInvariant::LeaseOutOfRange(error)))?;
         let claimed = self
             .queue
             .claim_for_entity(self.owner, entity_id, self.batch_size, now + lease_duration)
             .await?;
         if claimed.is_empty() {
-            return Err(TemporalError::persistence("pending temporal history is leased by another delivery owner"));
+            return Err(TemporalInvariant::PendingHistoryLeasedElsewhere.into());
         }
         let outcome = self.process_claimed(claimed, now).await?;
         if outcome.retried > 0 || outcome.lease_lost > 0 || !self.pending.pending_for_entity(entity_id).await?.is_empty() {
-            return Err(TemporalError::persistence(
-                "pending temporal history remains after the bounded mutation barrier",
-            ));
+            return Err(TemporalInvariant::PendingHistoryRemains.into());
         }
         Ok(())
     }

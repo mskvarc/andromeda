@@ -5,6 +5,7 @@ use crate::{
     context_source_properties::compact_context_source_properties,
     error::RegistrationError,
     information_compaction::compact_information,
+    registration_invariant::RegistrationInvariant,
     registration_validation_reason::RegistrationValidationReason,
 };
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, term_expansion::ContextualExpander};
@@ -101,7 +102,7 @@ impl RegistrationService {
                 continue;
             };
             let additional_properties = registration.additional_properties.take();
-            let mut value = serde_json::to_value(registration).map_err(|error| RegistrationError::internal(format!("Failed to serialize CSR: {error}")))?;
+            let mut value = serde_json::to_value(registration).map_err(RegistrationError::Representation)?;
             if let Some(information) = value.get_mut("information") {
                 compact_information(&names, information).await;
             }
@@ -226,7 +227,7 @@ fn registration_matching_the_query(
         .map(|iri| {
             iri.as_str()
                 .parse::<EntityTypeName>()
-                .map_err(|error| RegistrationError::internal(format!("expanded entity type is not a type name: {error}")))
+                .map_err(|error| RegistrationError::from(RegistrationInvariant::ExpandedTypeName(error)))
         })
         .transpose()?
         .map(TypeExprRaw::Type);

@@ -6,7 +6,10 @@
 //! a lapsed row — so this reclaims storage and keeps clause 5.13.3's listing
 //! honest about what the broker still holds.
 
-use crate::jsonld_context::{repo::JsonLdContextRepository, statement::delete_expired_cached};
+use crate::{
+    jsonld_context::{repo::JsonLdContextRepository, statement::delete_expired_cached},
+    store_fault::persistence_failure,
+};
 use andromeda_context_registry::{
     cached_context_invalidation::{CachedContextInvalidation, CachedContextInvalidationFuture, InvalidatedContexts},
     error::ContextRegistryError,
@@ -21,7 +24,7 @@ impl CachedContextInvalidation for JsonLdContextRepository {
             let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(&self.pool)
                 .await
-                .map_err(|error| ContextRegistryError::Persistence { detail: error.to_string() })?;
+                .map_err(|error| ContextRegistryError::from(persistence_failure(&error)))?;
             Ok(InvalidatedContexts::reclaimed(result.rows_affected()))
         })
     }

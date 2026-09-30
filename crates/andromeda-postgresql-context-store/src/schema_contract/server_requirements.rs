@@ -1,6 +1,6 @@
 //! The server and extension versions the tenant schema depends on.
 
-use crate::schema_contract::error::SchemaContractError;
+use crate::schema_contract::{error::SchemaContractError, server_encoding::ServerEncoding};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     introspection::{current_setting, extension_version},
@@ -9,6 +9,7 @@ use andromeda_postgresql_seaquery::{
 use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
+use std::{num::ParseIntError, str::FromStr};
 
 /// The PostgreSQL version the tenant schema requires.
 ///
@@ -54,7 +55,7 @@ pub const REQUIRED_TIMESCALEDB_VERSION: ExtensionVersion = ExtensionVersion::new
 /// only when the server encoding is UTF-8; under another encoding a value the
 /// broker admitted could violate a check, or land in a column its placement
 /// did not choose.
-const REQUIRED_SERVER_ENCODING: &str = "UTF8";
+const REQUIRED_SERVER_ENCODING: ServerEncoding = ServerEncoding::Utf8;
 
 /// PostgreSQL's `server_version_num`: `major * 10000 + minor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
@@ -99,22 +100,26 @@ impl TryFrom<&str> for ExtensionVersion {
     /// no leading digit is refused rather than assumed to be zero, since a
     /// version that cannot be read cannot be shown to meet a floor.
     fn try_from(value: &str) -> Result<ExtensionVersion, ExtensionVersionError> {
-        let unreadable = || ExtensionVersionError::Unreadable { found: value.to_owned() };
         let mut components = value.split('.');
         let (Some(major), Some(minor)) = (components.next(), components.next()) else {
-            return Err(unreadable());
+            return Err(ExtensionVersionError::MissingMinor);
         };
         Ok(ExtensionVersion {
-            major: leading_number(major).ok_or_else(unreadable)?,
-            minor: leading_number(minor).ok_or_else(unreadable)?,
+            major: leading_number(major)?,
+            minor: leading_number(minor)?,
         })
     }
 }
 
 /// The number the leading ASCII-digit run of a version component spells.
-fn leading_number(component: &str) -> Option<u32> {
-    let digits: &str = component.split(|character: char| !character.is_ascii_digit()).next()?;
-    digits.parse().ok()
+///
+/// A component with no leading digit leaves an empty run, which does not parse.
+fn leading_number(component: &str) -> Result<u32, ParseIntError> {
+    component
+        .split(|character: char| !character.is_ascii_digit())
+        .next()
+        .unwrap_or_default()
+        .parse()
 }
 
 /// Whether a required extension is installed, and at what version.
@@ -144,12 +149,12 @@ impl TryFrom<Option<String>> for ExtensionPresence {
 /// What refuses a value the extension-version domain cannot hold.
 #[derive(Debug, thiserror::Error)]
 pub enum ExtensionVersionError {
-    /// The reported version has no readable `major.minor` prefix.
-    #[error("extension version '{found}' has no readable major.minor prefix")]
-    Unreadable {
-        /// The version the catalogue reports.
-        found: String,
-    },
+    /// The reported version has no `.` separating a minor component.
+    #[error("an extension version has no minor component")]
+    MissingMinor,
+    /// A `major.minor` component does not open with a number.
+    #[error("an extension version component is not a number: {0}")]
+    Component(#[from] ParseIntError),
 }
 
 /// Refuse a tenant whose server or extensions are below what the schema needs.
@@ -175,7 +180,7 @@ pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContr
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
 
     check_postgres(PostgresVersion::new(row.get("server_version_num")))?;
-    check_server_encoding(row.get("server_encoding"))?;
+    check_server_encoding(row.get::<&str, _>("server_encoding"))?;
     check_extension(
         REQUIRED_POSTGIS_VERSION,
         ExtensionPresence::try_from(row.get::<Option<String>, _>("postgis_version"))?,
@@ -218,7 +223,8 @@ fn check_postgres(found: PostgresVersion) -> Result<(), SchemaContractError> {
 }
 
 /// Refuse a server whose encoding is not UTF-8.
-fn check_server_encoding(found: String) -> Result<(), SchemaContractError> {
+fn check_server_encoding(reported: &str) -> Result<(), SchemaContractError> {
+    let found = ServerEncoding::from_str(reported).map_err(SchemaContractError::ServerEncodingUnreadable)?;
     if found == REQUIRED_SERVER_ENCODING {
         return Ok(());
     }
@@ -242,6 +248,7 @@ where
 mod tests {
     use crate::schema_contract::{
         error::SchemaContractError,
+        server_encoding::ServerEncoding,
         server_requirements::{
             ExtensionPresence,
             ExtensionVersion,
@@ -287,12 +294,20 @@ mod tests {
     /// measures in UTF-8 octets, which only a UTF-8 server agrees with.
     #[test]
     fn a_server_whose_encoding_is_not_utf8_is_refused_naming_it() {
-        assert!(check_server_encoding("UTF8".to_owned()).is_ok());
-        match check_server_encoding("LATIN1".to_owned()) {
-            Err(SchemaContractError::ServerEncodingNotUtf8 { found }) => pretty_assertions::assert_eq!(found, "LATIN1"),
+        assert!(check_server_encoding("UTF8").is_ok());
+        match check_server_encoding("LATIN1") {
+            Err(SchemaContractError::ServerEncodingNotUtf8 { found }) => pretty_assertions::assert_eq!(found, ServerEncoding::Latin1),
             Err(other) => panic!("unexpected refusal: {other}"),
             Ok(()) => panic!("a LATIN1 server measures octets differently"),
         }
+    }
+
+    #[test]
+    fn a_server_reporting_an_unknown_encoding_name_is_refused_as_unreadable() {
+        assert!(matches!(
+            check_server_encoding("KLINGON"),
+            Err(SchemaContractError::ServerEncodingUnreadable(_))
+        ));
     }
 
     #[test]
@@ -364,9 +379,19 @@ mod tests {
 
     #[test]
     fn an_unreadable_extension_version_is_refused_rather_than_assumed_to_be_zero() {
-        for raw in ["", "3", "x.y", "3.x"] {
+        for raw in ["x.y", "3.x", ".4"] {
             assert!(
-                matches!(ExtensionVersion::try_from(raw), Err(ExtensionVersionError::Unreadable { .. })),
+                matches!(ExtensionVersion::try_from(raw), Err(ExtensionVersionError::Component(_))),
+                "{raw:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn an_extension_version_without_a_minor_component_is_refused() {
+        for raw in ["", "3"] {
+            assert!(
+                matches!(ExtensionVersion::try_from(raw), Err(ExtensionVersionError::MissingMinor)),
                 "{raw:?} must be refused"
             );
         }

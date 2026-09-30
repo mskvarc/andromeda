@@ -18,11 +18,8 @@ use url::Url;
 #[derive(Debug, Error)]
 pub enum RequestOriginError {
     /// The header text cannot form an HTTP origin.
-    #[error("host header does not identify a valid origin: {detail}")]
-    InvalidOrigin {
-        /// URL parsing detail.
-        detail: String,
-    },
+    #[error("host header does not identify a valid origin: {0}")]
+    InvalidOrigin(#[source] url::ParseError),
 }
 
 /// The origin the broker mints its own absolute URLs against.
@@ -97,7 +94,7 @@ fn resolve_origin(parts: &Parts) -> Result<RequestOrigin, RequestOriginError> {
     let scheme = forwarded_scheme(parts).unwrap_or_else(|| listener_scheme(parts));
     Url::parse(&format!("{}://{host}", scheme.as_scheme()))
         .map(|origin| RequestOrigin(Some(origin)))
-        .map_err(|error| RequestOriginError::InvalidOrigin { detail: error.to_string() })
+        .map_err(RequestOriginError::InvalidOrigin)
 }
 
 impl<S> FromRequestParts<S> for RequestOrigin
@@ -113,7 +110,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::origin::RequestOrigin;
+    use crate::origin::{RequestOrigin, RequestOriginError, resolve_origin};
     use andromeda_http_headers::{api_root_scheme::ApiRootScheme, forwarded_header_trust::ForwardedHeaderTrust, listener_scheme::ListenerScheme};
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use axum::{
@@ -121,6 +118,7 @@ mod tests {
         http::{Request, request::Parts},
     };
     use std::error::Error;
+    use url::ParseError;
 
     /// The parts of a request carrying `fields`, optionally under a declared
     /// proxy trust.
@@ -259,6 +257,18 @@ mod tests {
                 "{authority} does not form an origin"
             );
         }
+        Ok(())
+    }
+
+    /// The rejection carries the URL parser's own typed reason as its source.
+    #[test]
+    fn an_origin_rejection_chains_the_url_parse_error() -> Result<(), Box<dyn Error>> {
+        let parts = parts(&[("host", "host:99999")], None)?;
+        let rejection = resolve_origin(&parts);
+        assert!(
+            matches!(rejection, Err(RequestOriginError::InvalidOrigin(ParseError::InvalidPort))),
+            "an out-of-range port is the URL parser's invalid-port error"
+        );
         Ok(())
     }
 

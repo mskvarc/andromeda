@@ -42,7 +42,7 @@ use andromeda_http_extraction::context_target;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range};
 use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
-use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate};
+use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate, temporal_invariant::TemporalInvariant};
 use axum::{Extension, http::Uri as RequestUri};
 
 pub async fn get(
@@ -210,7 +210,7 @@ async fn retrieval_payload(
         .await
         .with_instance(instance)?
         .warnings;
-    let payload = single_retrieval_payload(join, roots)
-        .ok_or_else(|| temporal_problem(&TemporalError::internal("the join left the retrieval without its root"), instance))?;
+    let payload =
+        single_retrieval_payload(join, roots).ok_or_else(|| temporal_problem(&TemporalError::from(TemporalInvariant::RetrievalWithoutRoot), instance))?;
     Ok((payload, warnings))
 }

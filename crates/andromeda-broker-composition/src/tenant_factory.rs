@@ -52,6 +52,7 @@ use std::{
 use tracing::debug;
 use url::Url;
 
+mod assembly_invariant;
 mod background_pacer;
 mod commit_consequence;
 mod error;
@@ -171,9 +172,12 @@ impl TenantStateFactory for BrokerTenantFactory {
             if error.is_saturation() {
                 TenancyError::Saturated { tenant: tenant.clone() } // clone: the error outlives this borrow
             } else {
-                TenancyError::RuntimeUnavailable {
-                    tenant: tenant.clone(), // clone: the error outlives this borrow
-                    detail: error.to_string(),
+                {
+                    tracing::error!(%tenant, %error, "the tenant runtime could not be built");
+                    TenancyError::RuntimeUnavailable {
+                        tenant: tenant.clone(), // clone: the error outlives this borrow
+                        cause: error.build_failure(),
+                    }
                 }
             }
         })?;

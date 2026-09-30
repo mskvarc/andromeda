@@ -41,8 +41,11 @@ pub enum ContextSourcePseudonymError {
     Empty,
     /// The token carried whitespace or a control character, so it could not be a
     /// single `received-by` token.
-    #[error("via pseudonym `{0}` contains whitespace or a control character")]
-    NotAToken(String),
+    #[error("via pseudonym contains the whitespace or control character {}", .offending.escape_unicode())]
+    NotAToken {
+        /// The first character that cannot appear in a `received-by` token.
+        offending: char,
+    },
 }
 
 impl ContextSourcePseudonym {
@@ -58,8 +61,8 @@ impl ContextSourcePseudonym {
         if token.is_empty() {
             return Err(ContextSourcePseudonymError::Empty);
         }
-        if token.chars().any(|character| character.is_whitespace() || character.is_control()) {
-            return Err(ContextSourcePseudonymError::NotAToken(token));
+        if let Some(offending) = token.chars().find(|character| character.is_whitespace() || character.is_control()) {
+            return Err(ContextSourcePseudonymError::NotAToken { offending });
         }
         Ok(ContextSourcePseudonym(token))
     }
@@ -164,18 +167,13 @@ mod tests {
 
     #[test]
     fn a_token_with_whitespace_or_a_control_character_is_rejected() {
-        assert!(matches!(
-            ContextSourcePseudonym::new("broker a"),
-            Err(ContextSourcePseudonymError::NotAToken(_))
-        ));
-        assert!(matches!(
-            ContextSourcePseudonym::new("broker\ta"),
-            Err(ContextSourcePseudonymError::NotAToken(_))
-        ));
-        assert!(matches!(
-            ContextSourcePseudonym::new("broker\u{0007}a"),
-            Err(ContextSourcePseudonymError::NotAToken(_))
-        ));
+        for (token, offending) in [("broker a", ' '), ("broker\ta", '\t'), ("broker\u{0007}a", '\u{0007}')] {
+            pretty_assertions::assert_eq!(
+                ContextSourcePseudonym::new(token),
+                Err(ContextSourcePseudonymError::NotAToken { offending }),
+                "{token:?} must name its first non-token character"
+            );
+        }
     }
 
     #[test]

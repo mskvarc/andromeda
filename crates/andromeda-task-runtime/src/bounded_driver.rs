@@ -2,7 +2,7 @@
 
 use crate::{
     driver_supervision::DriverSupervision,
-    failure::TaskFailure,
+    failure_report::FailureReport,
     lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
     task_observer::{DriverTerminal, emit},
 };
@@ -13,7 +13,7 @@ use tokio::time::{Instant, sleep};
 pub(crate) async fn execute<O, F, Fut>(supervision: &DriverSupervision, operation: F) -> Result<O, DriverTerminal>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = Result<O, TaskFailure>>,
+    Fut: Future<Output = Result<O, FailureReport>>,
 {
     let DriverSupervision {
         name,

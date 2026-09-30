@@ -15,10 +15,9 @@
 use crate::{
     error::ContextStoreError,
     migration_set::branch::{BranchSchemaVersion, current_branch_version},
-    snapshot::{branch_version::branch_is_current, record::status_is_preparing},
+    snapshot::{branch_version::branch_is_current, record::status_is_preparing, stored_snapshot_error::StoredSnapshotError},
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
@@ -34,7 +33,7 @@ use sqlx::{Row, postgres::PgPool};
 ///
 /// Returns [`ContextStoreError::Database`] when the Snapshot enumeration fails,
 /// [`ContextStoreError::BranchVersion`] when the embedded branch migration set
-/// has no version, or [`ContextStoreError::Internal`] when a stored Snapshot key or URI cannot
+/// has no version, or [`ContextStoreError::StoredSnapshot`] when a stored Snapshot key or URI cannot
 /// be read back as its domain type.
 pub(crate) async fn drainable_targets(pool: &PgPool) -> Result<Vec<ContextTarget>, ContextStoreError> {
     let (sql, values) = drainable_snapshots_statement(current_branch_version()?).build_sqlx(PostgresQueryBuilder);
@@ -45,10 +44,8 @@ pub(crate) async fn drainable_targets(pool: &PgPool) -> Result<Vec<ContextTarget
     for row in rows {
         let raw_key: i64 = row.try_get("snapshot_key")?;
         let raw_id: String = row.try_get("id")?;
-        let key = SnapshotKey::try_from(raw_key).map_err(|error| ContextStoreError::Internal(format!("snapshot branch key: {error}")))?;
-        let id = raw_id
-            .parse()
-            .map_err(|error: IdentifierParseError| ContextStoreError::Internal(format!("snapshot branch uri: {error}")))?;
+        let key = SnapshotKey::try_from(raw_key).map_err(StoredSnapshotError::Key)?;
+        let id = raw_id.parse().map_err(StoredSnapshotError::Id)?;
         targets.push(ContextTarget::Snapshot(SnapshotTarget::published(key, id)));
     }
     Ok(targets)

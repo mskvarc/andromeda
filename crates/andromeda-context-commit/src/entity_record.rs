@@ -64,7 +64,7 @@ impl SearchProjection {
         // The first occurrence keeps its place: the declaration order is what a
         // representation that carries one type only keeps the first of (Table
         // 4.3.6.8-1 note 1).
-        let declared = extract_types(payload).map_err(CommitError::invariant)?;
+        let declared = extract_types(payload).map_err(|error| CommitError::Invariant(error.into()))?;
         let mut types: Vec<EntityTypeName> = Vec::with_capacity(declared.len());
         for entity_type in declared {
             if !types.contains(&entity_type) {
@@ -73,7 +73,7 @@ impl SearchProjection {
         }
         let types = types;
         let mut attributes = ProjectedAttributes::default();
-        for name in extract_attribute_names(payload).map_err(CommitError::invariant)? {
+        for name in extract_attribute_names(payload).map_err(|error| CommitError::Invariant(error.into()))? {
             attributes.push(name, |name| member_instance_families(payload, name));
         }
         let attributes = attributes;

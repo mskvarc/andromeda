@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 mod context_source_properties;
 mod create;
+/// The members of a `ContextSourceRegistration` payload.
+pub mod csr_member;
 mod delete;
 /// The entity-store questions proxied-registration admission asks.
 pub mod entity_probe;
@@ -29,8 +31,8 @@ mod payload;
 pub mod query;
 /// The typed reasons a registration collides with existing context data.
 pub mod registration_conflict_reason;
-/// The masked operator diagnostic behind persistence and internal failures.
-pub mod registration_diagnostic;
+/// The invariants registration policy relies on.
+pub mod registration_invariant;
 /// The typed reasons a registration request is rejected as `BadRequestData`.
 pub mod registration_validation_reason;
 /// The distributed side of removing a registration, as a port.
@@ -100,6 +102,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-request",
+        "andromeda-persistence-failure",
     ],
     allow_workspace_dev_dependencies: [
     ],

@@ -8,7 +8,11 @@
 
 use crate::host_port::HostPort;
 use ip_network::{Ipv4Network, Ipv6Network};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::{
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    sync::Arc,
+};
 use tokio::net::lookup_host;
 
 /// Outcome of a private-IP guard lookup, cached short-term for hot endpoints.
@@ -23,8 +27,8 @@ pub enum PrivateIpCheck {
     },
     /// The host could not be resolved.
     DnsFailed {
-        /// What the resolver reported.
-        detail: String,
+        /// What the resolver reported, shared because the outcome is cached.
+        source: Arc<io::Error>,
     },
 }
 
@@ -39,7 +43,7 @@ pub async fn resolve_private_ip_outcome(authority: &HostPort) -> PrivateIpCheck 
             }
             PrivateIpCheck::Allowed
         }
-        Err(error) => PrivateIpCheck::DnsFailed { detail: error.to_string() },
+        Err(error) => PrivateIpCheck::DnsFailed { source: Arc::new(error) },
     }
 }
 

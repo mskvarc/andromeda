@@ -15,6 +15,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-request.workspace = true
+andromeda-persistence-failure.workspace = true
 chrono = { version = "0.4.45", features = ["serde"] }
 futures = "0.3.34"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
@@ -22,6 +23,7 @@ iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
 mediatype = "0.23.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 tracing = "0.1.44"
 typed-builder = "0.23.2"

@@ -35,15 +35,14 @@ pub fn parse_id_list(raw: &[String]) -> Result<Vec<Identifier>, QueryError> {
 ///
 /// The one place [`QueryError::ParamIdInvalid`] is minted: a caller that reads a
 /// single `id` — a path segment, a stored identifier read back — routes through
-/// here rather than re-parsing and re-mapping the fault, so the value the error
-/// carries is the identifier itself, not a parser's message.
+/// here rather than re-parsing and re-mapping the fault, so every caller
+/// reports the same typed parse failure.
 ///
 /// # Errors
 ///
 /// Returns [`QueryError::ParamIdInvalid`] when `raw` is not a clause 4.6.2 URI.
 pub fn parse_id(raw: &str) -> Result<Identifier, QueryError> {
-    raw.parse::<Identifier>()
-        .map_err(|source| QueryError::ParamIdInvalid { raw: raw.to_string(), source })
+    raw.parse::<Identifier>().map_err(QueryError::ParamIdInvalid)
 }
 
 #[cfg(test)]
@@ -77,12 +76,11 @@ mod tests {
     }
 
     #[test]
-    fn a_single_id_parses_or_reports_its_own_value_as_invalid() {
+    fn a_single_id_parses_or_reports_the_parse_failure() {
         assert_eq!(parse_id("urn:ngsi-ld:Vehicle:1").expect("parses").as_ref(), "urn:ngsi-ld:Vehicle:1");
-        // The fault carries the identifier itself, not a parser's message, so a
-        // caller that reads a single id gets the same error as the list parser.
+        // A caller that reads a single id gets the same error as the list parser.
         let error = parse_id("not a uri").expect_err("must reject");
-        assert!(matches!(&error, QueryError::ParamIdInvalid { raw, .. } if raw == "not a uri"), "got {error:?}");
+        assert!(matches!(&error, QueryError::ParamIdInvalid(_)), "got {error:?}");
     }
 
     /// An `id` too long to be an identifier is invalid, and the error says why
@@ -91,16 +89,7 @@ mod tests {
     fn an_over_long_id_parameter_is_invalid_with_its_reason() {
         let raw = format!("urn:ngsi-ld:Vehicle:{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
         let error = parse_id(&raw).expect_err("must reject");
-        assert!(
-            matches!(
-                &error,
-                QueryError::ParamIdInvalid {
-                    source: IdentifierParseError::TooLong(_),
-                    ..
-                }
-            ),
-            "got {error:?}"
-        );
+        assert!(matches!(&error, QueryError::ParamIdInvalid(IdentifierParseError::TooLong(_))), "got {error:?}");
         assert!(error.to_string().contains("bytes"), "{error}");
     }
 

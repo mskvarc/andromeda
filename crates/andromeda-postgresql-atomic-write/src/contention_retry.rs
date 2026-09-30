@@ -48,6 +48,7 @@ where
 mod tests {
     use crate::contention_retry::{CONTENDED_COMMIT_ATTEMPTS, rerun_while_contended};
     use andromeda_context_commit::error::CommitError;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use std::{
         cell::Cell,
         future::{Ready, ready},
@@ -92,12 +93,10 @@ mod tests {
     async fn a_failure_other_than_contention_is_never_run_again() {
         let runs = Cell::new(0);
         let outcome = rerun_while_contended(attempt_contended_for(0, &runs, || {
-            Err(CommitError::Persistence {
-                detail: "connection reset".to_string(),
-            })
+            Err(CommitError::Persistence(PersistenceFailure::Unavailable))
         }))
         .await;
-        assert!(matches!(outcome, Err(CommitError::Persistence { .. })), "{outcome:?}");
+        assert!(matches!(outcome, Err(CommitError::Persistence(_))), "{outcome:?}");
         pretty_assertions::assert_eq!(runs.get(), 1);
         let saturated = rerun_while_contended(|| ready(Err::<u32, CommitError>(CommitError::StoreSaturated))).await;
         assert!(matches!(saturated, Err(CommitError::StoreSaturated)), "{saturated:?}");

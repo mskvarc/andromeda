@@ -1,15 +1,18 @@
 //! Deterministic tenant-local Snapshot quota enforcement.
 
-use crate::snapshot::{
-    persistence_error,
-    reap::{delete_control_record, reap_branch},
-    record::victim_order,
+use crate::{
+    snapshot::{
+        persistence_error,
+        reap::{delete_control_record, reap_branch},
+        record::victim_order,
+    },
+    store_fault::undecodable,
 };
 use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::advisory_lock::advisory_xact_lock;
-use andromeda_snapshot::error::SnapshotError;
+use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
 use sea_query::{Expr, ExprTrait, Func, JoinType, LockBehavior, LockType, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Row, Transaction};
@@ -22,11 +25,11 @@ pub(crate) async fn enforce_snapshot_quotas(pool: &PgPool, count_quota: Option<u
     let count_quota = count_quota
         .map(i64::try_from)
         .transpose()
-        .map_err(|error| SnapshotError::internal(format!("Snapshot count quota is out of range: {error}")))?;
+        .map_err(|error| SnapshotError::from(undecodable(&error)))?;
     let byte_quota = byte_quota
         .map(i64::try_from)
         .transpose()
-        .map_err(|error| SnapshotError::internal(format!("Snapshot byte quota is out of range: {error}")))?;
+        .map_err(|error| SnapshotError::from(undecodable(&error)))?;
     let mut transaction = pool.begin().await.map_err(persistence_error)?;
     let lock = Query::select().expr(advisory_xact_lock(Expr::val("andromeda.snapshot.quota"))).to_owned();
     let (sql, values) = lock.build_sqlx(PostgresQueryBuilder);
@@ -67,17 +70,13 @@ pub(crate) async fn enforce_snapshot_quotas(pool: &PgPool, count_quota: Option<u
             .fetch_optional(&mut *transaction)
             .await
             .map_err(persistence_error)?
-            .ok_or_else(|| SnapshotError::internal("Snapshot quota was exceeded without an evictable Snapshot"))?;
+            .ok_or(SnapshotInvariant::QuotaWithoutEvictable)?;
         let raw_key: i64 = row.try_get("snapshot_key").map_err(persistence_error)?;
         let raw_id: String = row.try_get("id").map_err(persistence_error)?;
-        let snapshot_key = SnapshotKey::try_from(raw_key).map_err(|error| SnapshotError::internal(error.to_string()))?;
+        let snapshot_key = SnapshotKey::try_from(raw_key).map_err(|error| SnapshotError::from(undecodable(&error)))?;
         reap_branch(&mut transaction, snapshot_key).await?;
         delete_control_record(&mut transaction, snapshot_key).await?;
-        evicted.push(
-            raw_id
-                .parse()
-                .map_err(|error| SnapshotError::internal(format!("Invalid Snapshot URI selected for eviction: {error}")))?,
-        );
+        evicted.push(raw_id.parse().map_err(|error| SnapshotError::from(undecodable(&error)))?);
     }
     transaction.commit().await.map_err(persistence_error)?;
     Ok(evicted)

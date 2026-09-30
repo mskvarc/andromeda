@@ -103,7 +103,7 @@ mod tests {
     use url::Url;
 
     fn internal(error: &impl ToString) -> SubscriptionError {
-        SubscriptionError::internal(error.to_string())
+        panic!("invalid test fixture: {}", error.to_string())
     }
 
     fn selector(type_expression: &str, id: Option<&str>, id_pattern: Option<&str>) -> Result<EntitySelector, SubscriptionError> {

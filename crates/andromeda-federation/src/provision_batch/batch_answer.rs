@@ -57,7 +57,7 @@ mod tests {
         provision_batch::{batch_answer::batch_outcomes, registration_fixture::uri},
     };
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, time::Duration};
 
     #[test]
     fn a_forwarded_batch_answer_is_read_entity_by_entity() {
@@ -82,8 +82,8 @@ mod tests {
 
         let failed = batch_outcomes(
             &ids,
-            &ForwardedWriteOutcome::Transport(TransportFailure::Timeout {
-                detail: "no response".to_string(),
+            &ForwardedWriteOutcome::Transport(TransportFailure::TimedOut {
+                after: Duration::from_millis(1),
             }),
         );
         pretty_assertions::assert_eq!(failed.len(), 2);

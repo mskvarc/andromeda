@@ -43,6 +43,7 @@ pub mod context_cache;
 pub mod context_registry;
 pub mod context_spec;
 pub mod context_subtree;
+pub mod context_term;
 pub mod context_validation;
 pub mod core_context;
 pub mod core_context_precedence;
@@ -64,6 +65,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-persistence-failure",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-representation",

@@ -16,7 +16,7 @@
 //! becomes a one-entry language map and the clause 5.5.12 merge then replaces
 //! only that key.
 
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentation;
 use langtag::LangTagBuf;
 use serde_json::{Map, Value};
@@ -32,7 +32,7 @@ pub enum MergeFragmentError {
     #[error("attribute {attribute} is a {existing} on the target entity; a simplified merge cannot change it to a {declared}")]
     TypeChange {
         /// The fragment member.
-        attribute: String,
+        attribute: AttributeName,
         /// The type the target entity holds.
         existing: AttributeType,
         /// The type the fragment declared.
@@ -43,7 +43,7 @@ pub enum MergeFragmentError {
     #[error("attribute {attribute} is a LanguageProperty; merging a string into it requires the lang parameter")]
     LanguageKeyRequired {
         /// The fragment member.
-        attribute: String,
+        attribute: AttributeName,
     },
 }
 
@@ -79,7 +79,7 @@ pub fn existing_attribute_types(expanded_entity: &Map<String, Value>) -> HashMap
 /// different type; [`MergeFragmentError::LanguageKeyRequired`] when a string
 /// meets a `LanguageProperty` with no `lang`.
 pub fn adapt_member(
-    attribute: &str,
+    attribute: &AttributeName,
     member: &mut Value,
     existing: Option<AttributeType>,
     representation: MergeRepresentation,
@@ -99,7 +99,7 @@ pub fn adapt_member(
 
 /// A normalized `LanguageProperty` node whose `languageMap` is a bare string or
 /// string array takes `lang` as that string's key.
-fn adapt_language_member(attribute: &str, member: &mut Value, existing: AttributeType, lang: Option<&LangTagBuf>) -> Result<(), MergeFragmentError> {
+fn adapt_language_member(attribute: &AttributeName, member: &mut Value, existing: AttributeType, lang: Option<&LangTagBuf>) -> Result<(), MergeFragmentError> {
     if existing != AttributeType::LanguageProperty {
         return Ok(());
     }
@@ -110,7 +110,7 @@ fn adapt_language_member(attribute: &str, member: &mut Value, existing: Attribut
     if node.get(language_map_key).is_some_and(is_string_or_strings) {
         let Some(tag) = lang else {
             return Err(MergeFragmentError::LanguageKeyRequired {
-                attribute: attribute.to_string(),
+                attribute: attribute.clone(), // clone: the error owns the fragment member it names.
             });
         };
         if let Some(strings) = node.remove(language_map_key) {
@@ -122,11 +122,16 @@ fn adapt_language_member(attribute: &str, member: &mut Value, existing: Attribut
 
 /// A simplified member becomes an instance of the target's type; one that
 /// already declares a type must declare the target's.
-fn adapt_simplified_member(attribute: &str, member: &mut Value, existing: AttributeType, lang: Option<&LangTagBuf>) -> Result<(), MergeFragmentError> {
+fn adapt_simplified_member(
+    attribute: &AttributeName,
+    member: &mut Value,
+    existing: AttributeType,
+    lang: Option<&LangTagBuf>,
+) -> Result<(), MergeFragmentError> {
     if let Some(declared) = member.as_object().and_then(declared_attribute_type) {
         if declared != existing {
             return Err(MergeFragmentError::TypeChange {
-                attribute: attribute.to_string(),
+                attribute: attribute.clone(), // clone: the error owns the fragment member it names.
                 existing,
                 declared,
             });
@@ -138,7 +143,7 @@ fn adapt_simplified_member(attribute: &str, member: &mut Value, existing: Attrib
         AttributeType::LanguageProperty if is_string_or_strings(&bare) => {
             let Some(tag) = lang else {
                 return Err(MergeFragmentError::LanguageKeyRequired {
-                    attribute: attribute.to_string(),
+                    attribute: attribute.clone(), // clone: the error owns the fragment member it names.
                 });
             };
             language_map_entry(tag, bare)
@@ -184,10 +189,14 @@ fn language_map_entry(tag: &LangTagBuf, strings: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use crate::merge_fragment::{MergeFragmentError, adapt_member, existing_attribute_types};
-    use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
     use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentation;
     use langtag::LangTagBuf;
     use serde_json::{Value, json};
+
+    fn attr() -> AttributeName {
+        "attr".parse().expect("a valid attribute name")
+    }
 
     fn tag(raw: &str) -> LangTagBuf {
         LangTagBuf::new(raw.to_string()).expect("valid tag")
@@ -200,7 +209,7 @@ mod tests {
         lang: Option<&LangTagBuf>,
     ) -> Result<Value, MergeFragmentError> {
         let mut member = member;
-        adapt_member("attr", &mut member, existing, representation, lang)?;
+        adapt_member(&attr(), &mut member, existing, representation, lang)?;
         Ok(member)
     }
 
@@ -257,7 +266,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             error,
             MergeFragmentError::TypeChange {
-                attribute: "attr".to_string(),
+                attribute: attr(),
                 existing: AttributeType::Relationship,
                 declared: AttributeType::Property,
             }
@@ -286,7 +295,7 @@ mod tests {
         .expect("adapts");
         pretty_assertions::assert_eq!(normalized, json!({"type": "LanguageProperty", "languageMap": {"de": ["Tuer", "Tor"]}}));
         let missing = adapt(json!("Tuer"), Some(AttributeType::LanguageProperty), MergeRepresentation::Simplified, None).expect_err("lang is required");
-        pretty_assertions::assert_eq!(missing, MergeFragmentError::LanguageKeyRequired { attribute: "attr".to_string() });
+        pretty_assertions::assert_eq!(missing, MergeFragmentError::LanguageKeyRequired { attribute: attr() });
     }
 
     #[test]

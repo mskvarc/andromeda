@@ -168,6 +168,7 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_subscription::error::SubscriptionError;
     use chrono::Utc;
     use serde_json::{Value, json};
@@ -303,11 +304,11 @@ mod tests {
     #[test]
     fn a_subscription_the_store_cannot_read_back_retries_the_delivery() {
         let subscription_id = "urn:ngsi-ld:Subscription:1".parse().expect("valid subscription URI");
-        let disposition = unreadable_subscription(&subscription_id, &SubscriptionError::persistence("the subscription store is unreachable"));
+        let disposition = unreadable_subscription(&subscription_id, &SubscriptionError::from(PersistenceFailure::Unavailable));
         match disposition {
             DeliveryDisposition::RetryableFailure { detail } => {
                 assert!(detail.contains("urn:ngsi-ld:Subscription:1"), "{detail}");
-                assert!(detail.contains("the subscription store is unreachable"), "{detail}");
+                assert!(detail.contains("the store is unreachable"), "{detail}");
             }
             other @ (DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete | DeliveryDisposition::TerminalFailure { .. }) => {
                 panic!("an unreadable subscription must be retried, got {other:?}")

@@ -1,21 +1,24 @@
 //! Direct PostgreSQL implementation of the hosted-context persistence port.
 
-use crate::jsonld_context::{
-    kind_code::{created_kind, kind_of, stored_kind},
-    mapper::{row_to_identifier, row_to_metadata},
-    repo::JsonLdContextRepository,
-    rows::{ContextMetadataRow, ContextSummaryRow},
-    statement::{
-        delete_by_identifier,
-        hosted_insert,
-        metadata_by_identifier_query,
-        metadata_page_query,
-        payload_by_identifier_query,
-        record_access_update,
-        replace_payload_update,
-        stored_context_query,
-        summary_page_query,
+use crate::{
+    jsonld_context::{
+        kind_code::{created_kind, kind_of, stored_kind},
+        mapper::{row_to_identifier, row_to_metadata},
+        repo::JsonLdContextRepository,
+        rows::{ContextMetadataRow, ContextSummaryRow},
+        statement::{
+            delete_by_identifier,
+            hosted_insert,
+            metadata_by_identifier_query,
+            metadata_page_query,
+            payload_by_identifier_query,
+            record_access_update,
+            replace_payload_update,
+            stored_context_query,
+            summary_page_query,
+        },
     },
+    store_fault::{StoreFault, persistence_failure, undecodable},
 };
 use andromeda_context_registry::{
     creation_kind::ContextCreationKind,
@@ -30,14 +33,13 @@ use andromeda_context_registry::{
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
-use andromeda_postgresql_pool::is_pool_saturated;
 use iri_rs::IriBuf;
 use sea_query::PostgresQueryBuilder;
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::types::Json;
-use std::{any::Any, fmt::Display};
 use url::Url;
 use urn_rs::{Urn, UrnBuilder};
 use uuid::Uuid;
@@ -128,9 +130,10 @@ impl ContextRegistryStore for JsonLdContextRepository {
             row.map(|(identifier, kind, source_url)| {
                 let identifier = identifier.parse::<Identifier>().map_err(persistence_error)?;
                 let kind = kind_of(JsonldContextKindCode::try_from(kind).map_err(persistence_error)?);
-                let source_url = source_url.map(IriBuf::new).transpose().map_err(|error| ContextRegistryError::Persistence {
-                    detail: format!("stored Context URL is invalid: {}", error.0),
-                })?;
+                let source_url = source_url
+                    .map(IriBuf::new)
+                    .transpose()
+                    .map_err(|error| ContextRegistryError::from(undecodable(&error)))?;
                 Ok(StoredContext { identifier, kind, source_url })
             })
             .transpose()
@@ -169,9 +172,7 @@ async fn insert_context(
 ) -> Result<Urn, ContextRegistryError> {
     let local_id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4()))
         .build()
-        .map_err(|error| ContextRegistryError::Invariant {
-            detail: format!("failed to build hosted Context URN: {error}"),
-        })?;
+        .map_err(|error| ContextRegistryError::from(PersistenceFailure::ContractBroken.record(&error)))?;
     let serving_url = base_url.map(|base| {
         let mut serving = base.clone(); // clone: the caller retains its request origin while persistence owns the serving URL.
         serving.set_path(&format!("/ngsi-ld/v1/jsonldContexts/{local_id}"));
@@ -188,15 +189,11 @@ async fn insert_context(
 
 /// Collapse an implementation error into the policy's backend-neutral category.
 ///
-/// A `sqlx` pool-acquire timeout is backpressure, not a fault, so it becomes
-/// [`ContextRegistryError::StoreSaturated`] (a 503); every other failure stays a
-/// persistence fault. The concrete [`sqlx::Error`] is recovered by downcast
-/// because callers hand it in already erased behind `impl Display`.
-fn persistence_error(error: impl Display + Any) -> ContextRegistryError {
-    match (&error as &dyn Any).downcast_ref::<sqlx::Error>() {
-        Some(sqlx_error) if is_pool_saturated(sqlx_error) => ContextRegistryError::StoreSaturated,
-        Some(_) | None => ContextRegistryError::Persistence { detail: error.to_string() },
-    }
+/// Classify an adapter failure at the port boundary: backpressure keeps the
+/// port's retryable category and every fault becomes its persistence failure.
+#[track_caller]
+fn persistence_error(error: impl StoreFault) -> ContextRegistryError {
+    ContextRegistryError::from(persistence_failure(&error))
 }
 
 /// Convert affected-row counts into a named persistence outcome.

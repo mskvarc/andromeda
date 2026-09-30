@@ -12,6 +12,7 @@ use crate::{
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     delivery_store::DeliveryStore,
     error::NotificationError,
+    notification_invariant::NotificationInvariant,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, lease_pass_clock::LeasePassClock};
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
@@ -38,14 +39,14 @@ pub struct DeliveryDrainOutcome {
 /// another worker, which is now responsible for sending it, so the pass records
 /// the loss and moves on. A failed statement is a persistence failure the task
 /// supervisor must see.
-fn classify_acknowledgement(result: Result<(), DeliveryLeaseError>) -> Result<LeaseAcknowledgement, NotificationError> {
+fn classify_acknowledgement(result: &Result<(), DeliveryLeaseError>) -> Result<LeaseAcknowledgement, NotificationError> {
     match result {
         Ok(()) => Ok(LeaseAcknowledgement::Applied),
         Err(DeliveryLeaseError::LeaseLost { delivery, worker }) => {
             warn!(delivery_id = %delivery, worker_id = %worker, event = "notification_delivery_lease_lost");
             Ok(LeaseAcknowledgement::Lost)
         }
-        Err(DeliveryLeaseError::Persistence { detail }) => Err(NotificationError::persistence(detail)),
+        Err(DeliveryLeaseError::Persistence(failure)) => Err(NotificationError::Persistence(*failure)),
     }
 }
 
@@ -147,7 +148,7 @@ impl NotificationDeliveryDrain {
     ///
     /// # Errors
     ///
-    /// Returns [`NotificationError::Representation`] when the configured base
+    /// Returns [`NotificationError::Invariant`] when the configured base
     /// backoff does not fit a signed second count, and
     /// [`NotificationError::Invariant`] when the configured lease term, stored
     /// diagnostic bound, in-flight delivery bound, attempt ceiling or batch
@@ -158,24 +159,15 @@ impl NotificationDeliveryDrain {
         config: &DeliveryConfig,
     ) -> Result<NotificationDeliveryDrain, NotificationError> {
         let worker_id = LeaseHolder::mint();
-        let base_backoff_secs = i64::try_from(config.base_backoff.duration().as_secs())
-            .map_err(|error| NotificationError::representation(format!("notification delivery base backoff is out of range: {error}")))?;
-        let lease_term = config
-            .lease_term()
-            .map_err(|error| NotificationError::invariant(format!("notification delivery lease term is unusable: {error}")))?;
-        let error_bound = config
-            .error_bound()
-            .map_err(|error| NotificationError::invariant(format!("notification delivery error bound is unusable: {error}")))?;
-        let concurrency = config
-            .delivery_concurrency()
-            .map_err(|error| NotificationError::invariant(format!("notification delivery concurrency is unusable: {error}")))?;
-        let attempt_ceiling = config
-            .attempt_ceiling()
-            .map_err(|error| NotificationError::invariant(format!("notification delivery attempt ceiling is unusable: {error}")))?;
+        let base_backoff_secs = i64::try_from(config.base_backoff.duration().as_secs()).map_err(NotificationInvariant::BaseBackoff)?;
+        let lease_term = config.lease_term().map_err(NotificationInvariant::from)?;
+        let error_bound = config.error_bound().map_err(NotificationInvariant::from)?;
+        let concurrency = config.delivery_concurrency().map_err(NotificationInvariant::from)?;
+        let attempt_ceiling = config.attempt_ceiling().map_err(NotificationInvariant::from)?;
         let batch_size = usize::try_from(config.batch_size)
             .ok()
             .filter(|size| *size > 0)
-            .ok_or_else(|| NotificationError::invariant(format!("notification delivery batch size {} is not positive", config.batch_size)))?;
+            .ok_or(NotificationInvariant::BatchSizeNotPositive)?;
         Ok(NotificationDeliveryDrain {
             store,
             transport,
@@ -271,9 +263,7 @@ impl NotificationDeliveryDrain {
     async fn claim(&self, width: usize, clock: &LeasePassClock) -> SlotEvent {
         let claims = match i32::try_from(width) {
             Ok(claim_width) => self.store.claim_pending(&self.worker_id, self.lease_term, claim_width).await,
-            Err(error) => Err(NotificationError::invariant(format!(
-                "notification delivery claim width is out of range: {error}"
-            ))),
+            Err(error) => Err(NotificationInvariant::ClaimWidth(error).into()),
         };
         if let Ok(claimed) = &claims {
             debug!(
@@ -306,7 +296,7 @@ impl NotificationDeliveryDrain {
     async fn advance(&self, entry: &DeliveryEntry, clock: &LeasePassClock) -> Result<LeaseAcknowledgement, NotificationError> {
         let (acknowledgement, outcome) = match self.transport.deliver(entry).await {
             DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete => (
-                classify_acknowledgement(self.store.mark_delivered(entry.key, &self.worker_id, &entry.target).await)?,
+                classify_acknowledgement(&self.store.mark_delivered(entry.key, &self.worker_id, &entry.target).await)?,
                 QueueOutcome::Completed,
             ),
             DeliveryDisposition::RetryableFailure { detail } if !self.attempt_ceiling.is_final_attempt(entry.attempt_count) => {
@@ -314,14 +304,14 @@ impl NotificationDeliveryDrain {
                 let next_attempt = clock.now() + Duration::seconds(backoff);
                 let detail = self.error_bound.truncate(&detail);
                 (
-                    classify_acknowledgement(self.store.mark_failed(entry.key, &self.worker_id, &detail, next_attempt, &entry.target).await)?,
+                    classify_acknowledgement(&self.store.mark_failed(entry.key, &self.worker_id, &detail, next_attempt, &entry.target).await)?,
                     QueueOutcome::Retried,
                 )
             }
             DeliveryDisposition::RetryableFailure { detail } | DeliveryDisposition::TerminalFailure { detail } => {
                 let detail = self.error_bound.truncate(&detail);
                 (
-                    classify_acknowledgement(self.store.mark_terminal(entry.key, &self.worker_id, &detail, &entry.target).await)?,
+                    classify_acknowledgement(&self.store.mark_terminal(entry.key, &self.worker_id, &detail, &entry.target).await)?,
                     QueueOutcome::Exhausted,
                 )
             }
@@ -342,7 +332,7 @@ impl NotificationDeliveryDrain {
             event = "notification_delivery_unreadable"
         );
         let detail = self.error_bound.truncate(&unreadable.diagnostic);
-        let acknowledgement = classify_acknowledgement(self.store.mark_terminal(unreadable.key, &self.worker_id, &detail, &unreadable.target).await)?;
+        let acknowledgement = classify_acknowledgement(&self.store.mark_terminal(unreadable.key, &self.worker_id, &detail, &unreadable.target).await)?;
         Ok(record_outcome(acknowledgement, QueueOutcome::Exhausted))
     }
 
@@ -396,6 +386,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use async_trait::async_trait;
     use chrono::{DateTime, TimeDelta, Utc};
     use futures::{
@@ -497,53 +488,40 @@ mod tests {
             match self.lease_state {
                 LeaseState::Held => Ok(()),
                 LeaseState::Expired => Err(DeliveryLeaseError::lease_lost(key, worker_id)),
-                LeaseState::Unrecordable => Err(DeliveryLeaseError::persistence("the queue database is unreachable")),
+                LeaseState::Unrecordable => Err(DeliveryLeaseError::Persistence(PersistenceFailure::Unavailable)),
             }
         }
 
-        fn recorded_calls(&self) -> Result<Vec<StoreCall>, NotificationError> {
-            Ok(self
-                .calls
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("call record lock was poisoned: {error}")))?
-                .iter()
-                .copied()
-                .collect())
+        fn recorded_calls(&self) -> Vec<StoreCall> {
+            self.calls.lock().expect("the call record lock is not poisoned").iter().copied().collect()
         }
 
-        fn claim_widths(&self) -> Result<Vec<i32>, NotificationError> {
-            Ok(self
-                .recorded_calls()?
+        fn claim_widths(&self) -> Vec<i32> {
+            self.recorded_calls()
                 .into_iter()
                 .filter_map(|call| match call {
                     StoreCall::Claim(width) => Some(width),
                     StoreCall::Acknowledge(_) => None,
                 })
-                .collect())
+                .collect()
         }
     }
 
-    /// Map a poisoned recording lock into the port's persistence category.
+    /// A poisoned recording lock is a test bug, not a store outcome.
     fn poisoned(error: impl Display) -> DeliveryLeaseError {
-        DeliveryLeaseError::persistence(error.to_string())
+        panic!("a recording lock was poisoned: {error}")
     }
 
     #[async_trait]
     impl DeliveryStore for RecordingStore {
         async fn claim_pending(&self, _worker_id: &LeaseHolder, lease: LeaseTerm, batch_size: i32) -> Result<Vec<DeliveryClaim>, NotificationError> {
             if self.claim_state == ClaimState::Refused {
-                return Err(NotificationError::persistence("the queue database is unreachable"));
+                return Err(NotificationError::Persistence(PersistenceFailure::Unavailable));
             }
-            self.claimed_with
-                .lock()
-                .map_err(|error| NotificationError::persistence(error.to_string()))?
-                .push(lease);
-            self.calls
-                .lock()
-                .map_err(|error| NotificationError::persistence(error.to_string()))?
-                .push(StoreCall::Claim(batch_size));
-            let width = usize::try_from(batch_size).map_err(|error| NotificationError::invariant(error.to_string()))?;
-            let mut entries = self.entries.lock().map_err(|error| NotificationError::persistence(error.to_string()))?;
+            self.claimed_with.lock().expect("the test lock is not poisoned").push(lease);
+            self.calls.lock().expect("the test lock is not poisoned").push(StoreCall::Claim(batch_size));
+            let width = usize::try_from(batch_size).expect("a non-negative claim width");
+            let mut entries = self.entries.lock().expect("the test lock is not poisoned");
             let taken = width.min(entries.len());
             Ok(entries.drain(..taken).collect())
         }
@@ -663,11 +641,7 @@ mod tests {
     }
 
     fn entry() -> Result<DeliveryEntry, NotificationError> {
-        let parse = |value: &str| {
-            value
-                .parse::<Identifier>()
-                .map_err(|error| NotificationError::representation(error.to_string()))
-        };
+        let parse = |value: &str| Ok::<Identifier, NotificationError>(value.parse::<Identifier>().expect("a valid test identifier"));
         let event = NotificationEvent::builder()
             .key(NotificationEventKey::from(1))
             .write_id(WriteId::mint())
@@ -715,10 +689,7 @@ mod tests {
             let peak = transport.peak.load(Ordering::SeqCst);
             assert!(peak > 1, "deliveries were sent one at a time, peak {peak}");
             assert!(peak <= 4, "more deliveries in flight than configured, peak {peak}");
-            let delivered = store
-                .delivered
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("delivered result lock was poisoned: {error}")))?;
+            let delivered = store.delivered.lock().expect("the delivered result lock is not poisoned");
             pretty_assertions::assert_eq!(delivered.len(), 10);
             Ok(())
         })
@@ -730,10 +701,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
             let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(Utc::now()).await?;
             pretty_assertions::assert_eq!(outcome.claimed, 1);
-            let delivered = store
-                .delivered
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("delivered result lock was poisoned: {error}")))?;
+            let delivered = store.delivered.lock().expect("the delivered result lock is not poisoned");
             pretty_assertions::assert_eq!(delivered.as_slice(), &[DeliveryKey::from(1)]);
             Ok(())
         })
@@ -751,11 +719,7 @@ mod tests {
             )?
             .execute(Utc::now())
             .await?;
-            let failed_count = retry_store
-                .failed
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("retry result lock was poisoned: {error}")))?
-                .len();
+            let failed_count = retry_store.failed.lock().expect("the retry result lock is not poisoned").len();
             pretty_assertions::assert_eq!(failed_count, 1);
 
             let terminal_store = Arc::new(RecordingStore::with_entry(entry()?));
@@ -767,10 +731,7 @@ mod tests {
             )?
             .execute(Utc::now())
             .await?;
-            let terminal = terminal_store
-                .terminal
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("terminal result lock was poisoned: {error}")))?;
+            let terminal = terminal_store.terminal.lock().expect("the terminal result lock is not poisoned");
             pretty_assertions::assert_eq!(terminal.len(), 1);
             pretty_assertions::assert_eq!(terminal.first().map(|(id, _)| *id), Some(DeliveryKey::from(1)));
             Ok(())
@@ -791,16 +752,9 @@ mod tests {
             )?
             .execute(Utc::now())
             .await?;
-            let failed_count = store
-                .failed
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("retry result lock was poisoned: {error}")))?
-                .len();
+            let failed_count = store.failed.lock().expect("the retry result lock is not poisoned").len();
             pretty_assertions::assert_eq!(failed_count, 0, "the final attempt must not be rescheduled");
-            let terminal = store
-                .terminal
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("terminal result lock was poisoned: {error}")))?;
+            let terminal = store.terminal.lock().expect("the terminal result lock is not poisoned");
             pretty_assertions::assert_eq!(
                 terminal.first().map(|(id, detail)| (*id, detail.as_str())),
                 Some((DeliveryKey::from(1), "transien"))
@@ -823,17 +777,9 @@ mod tests {
             )?
             .execute(Utc::now())
             .await?;
-            let terminal_count = store
-                .terminal
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("terminal result lock was poisoned: {error}")))?
-                .len();
+            let terminal_count = store.terminal.lock().expect("the terminal result lock is not poisoned").len();
             pretty_assertions::assert_eq!(terminal_count, 0);
-            let failed_count = store
-                .failed
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("retry result lock was poisoned: {error}")))?
-                .len();
+            let failed_count = store.failed.lock().expect("the retry result lock is not poisoned").len();
             pretty_assertions::assert_eq!(failed_count, 1);
             Ok(())
         })
@@ -851,10 +797,7 @@ mod tests {
             )?
             .execute(Utc::now())
             .await?;
-            let failed = store
-                .failed
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("retry result lock was poisoned: {error}")))?;
+            let failed = store.failed.lock().expect("the retry result lock is not poisoned");
             pretty_assertions::assert_eq!(failed.first().map(|(_, detail, _)| detail.as_str()), Some("endpoint"));
             Ok(())
         })
@@ -865,11 +808,8 @@ mod tests {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
             drain(store.clone(), DeliveryDisposition::Delivered)?.execute(Utc::now()).await?;
-            let claimed_with = store
-                .claimed_with
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("claim record lock was poisoned: {error}")))?;
-            let expected = LeaseTerm::from_seconds(30).map_err(|error| NotificationError::invariant(error.to_string()))?;
+            let claimed_with = store.claimed_with.lock().expect("the claim record lock is not poisoned");
+            let expected = LeaseTerm::from_seconds(30).expect("a valid lease term");
             pretty_assertions::assert_eq!(claimed_with.as_slice(), &[expected]);
             Ok(())
         })
@@ -882,10 +822,7 @@ mod tests {
             let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(Utc::now()).await?;
             pretty_assertions::assert_eq!(outcome.claimed, 1);
             pretty_assertions::assert_eq!(outcome.lease_lost, 1);
-            let delivered = store
-                .delivered
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("delivered result lock was poisoned: {error}")))?;
+            let delivered = store.delivered.lock().expect("the delivered result lock is not poisoned");
             pretty_assertions::assert_eq!(delivered.is_empty(), true);
             Ok(())
         })
@@ -904,10 +841,7 @@ mod tests {
             .execute(Utc::now())
             .await?;
             pretty_assertions::assert_eq!(outcome.lease_lost, 1);
-            let failed = store
-                .failed
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("retry result lock was poisoned: {error}")))?;
+            let failed = store.failed.lock().expect("the retry result lock is not poisoned");
             pretty_assertions::assert_eq!(failed.is_empty(), true);
             Ok(())
         })
@@ -940,19 +874,13 @@ mod tests {
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 2);
             pretty_assertions::assert_eq!(outcome.lease_lost, 0);
-            let terminal = store
-                .terminal
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("terminal result lock was poisoned: {error}")))?;
+            let terminal = store.terminal.lock().expect("the terminal result lock is not poisoned");
             pretty_assertions::assert_eq!(
                 terminal.iter().map(|(key, detail)| (*key, detail.as_str())).collect::<Vec<_>>(),
                 vec![(DeliveryKey::from(2_i64), "notifica")],
                 "the unreadable row is retired with its reason, bounded like any other diagnostic"
             );
-            let delivered = store
-                .delivered
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("delivered result lock was poisoned: {error}")))?;
+            let delivered = store.delivered.lock().expect("the delivered result lock is not poisoned");
             pretty_assertions::assert_eq!(delivered.as_slice(), &[DeliveryKey::from(1_i64)]);
             Ok(())
         })
@@ -970,15 +898,9 @@ mod tests {
                 .execute(Utc::now())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 3);
-            let terminal = store
-                .terminal
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("terminal result lock was poisoned: {error}")))?;
+            let terminal = store.terminal.lock().expect("the terminal result lock is not poisoned");
             pretty_assertions::assert_eq!(terminal.iter().map(|(key, _)| *key).collect::<Vec<_>>(), vec![DeliveryKey::from(2_i64)]);
-            let delivered = store
-                .delivered
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("delivered result lock was poisoned: {error}")))?;
+            let delivered = store.delivered.lock().expect("the delivered result lock is not poisoned");
             pretty_assertions::assert_eq!(
                 delivered.iter().copied().collect::<BTreeSet<_>>(),
                 BTreeSet::from([DeliveryKey::from(1_i64), DeliveryKey::from(3_i64)])
@@ -1017,7 +939,7 @@ mod tests {
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 10);
             assert!(outcome.work_may_remain, "the pass stopped at its batch bound");
-            pretty_assertions::assert_eq!(store.claim_widths()?, vec![4, 1, 1, 1, 1, 1, 1]);
+            pretty_assertions::assert_eq!(store.claim_widths(), vec![4, 1, 1, 1, 1, 1, 1]);
             Ok(())
         })
     }
@@ -1039,7 +961,7 @@ mod tests {
                 .execute(Utc::now())
                 .await?;
             let mut outstanding = 0_i32;
-            for call in store.recorded_calls()? {
+            for call in store.recorded_calls() {
                 outstanding += match call {
                     StoreCall::Claim(width) => width,
                     StoreCall::Acknowledge(_) => -1,
@@ -1067,7 +989,7 @@ mod tests {
                 .execute(Utc::now())
                 .await?;
             let acknowledged: Vec<DeliveryKey> = store
-                .recorded_calls()?
+                .recorded_calls()
                 .into_iter()
                 .filter_map(|call| match call {
                     StoreCall::Acknowledge(key) => Some(key),
@@ -1101,7 +1023,7 @@ mod tests {
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 3);
             assert!(!outcome.work_may_remain, "a refill found the queue empty");
-            pretty_assertions::assert_eq!(store.claim_widths()?, vec![2, 1, 1]);
+            pretty_assertions::assert_eq!(store.claim_widths(), vec![2, 1, 1]);
             Ok(())
         })
     }
@@ -1125,8 +1047,8 @@ mod tests {
                 .await
         });
         assert!(matches!(outcome, Err(NotificationError::Persistence { .. })), "{outcome:?}");
-        pretty_assertions::assert_eq!(store.claim_widths()?, vec![2]);
-        pretty_assertions::assert_eq!(store.recorded_calls()?.len(), 3, "both claimed deliveries were still acknowledged");
+        pretty_assertions::assert_eq!(store.claim_widths(), vec![2]);
+        pretty_assertions::assert_eq!(store.recorded_calls().len(), 3, "both claimed deliveries were still acknowledged");
         Ok(())
     }
 
@@ -1142,13 +1064,8 @@ mod tests {
             NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowFailingTransport(delay)), &config())?
                 .execute(now)
                 .await?;
-            let failed = store
-                .failed
-                .lock()
-                .map_err(|error| NotificationError::invariant(format!("retry result lock was poisoned: {error}")))?;
-            let earliest = now
-                + TimeDelta::seconds(backoff_seconds(5, 0, 5))
-                + TimeDelta::from_std(delay).map_err(|error| NotificationError::invariant(error.to_string()))?;
+            let failed = store.failed.lock().expect("the retry result lock is not poisoned");
+            let earliest = now + TimeDelta::seconds(backoff_seconds(5, 0, 5)) + TimeDelta::from_std(delay).expect("a representable delay");
             let scheduled = failed.first().map(|(_, _, next_attempt_at)| *next_attempt_at);
             assert!(scheduled.is_some_and(|at| at >= earliest), "{scheduled:?} is earlier than {earliest}");
             Ok(())

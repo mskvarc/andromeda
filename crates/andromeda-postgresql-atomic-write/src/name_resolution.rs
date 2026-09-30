@@ -65,12 +65,12 @@ pub(crate) async fn resolve_write_names(
     let types = if types.is_empty() {
         HashMap::new()
     } else {
-        entity_type_names.resolve_or_create(tx, &types).await.map_err(name_lookup)?
+        entity_type_names.resolve_or_create(tx, &types).await.map_err(|error| name_lookup(&error))?
     };
     let attributes = if attributes.is_empty() {
         HashMap::new()
     } else {
-        attribute_names.resolve_or_create(tx, &attributes).await.map_err(name_lookup)?
+        attribute_names.resolve_or_create(tx, &attributes).await.map_err(|error| name_lookup(&error))?
     };
     Ok(ResolvedWriteNames { types, attributes })
 }
@@ -108,5 +108,5 @@ pub(crate) async fn resolve_attribute_names(
     if names.is_empty() {
         return Ok(HashMap::new());
     }
-    attribute_names.resolve_or_create(tx, &names).await.map_err(name_lookup)
+    attribute_names.resolve_or_create(tx, &names).await.map_err(|error| name_lookup(&error))
 }

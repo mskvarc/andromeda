@@ -204,6 +204,7 @@ mod tests {
         position::Position,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use chrono::Utc;
@@ -396,11 +397,7 @@ mod tests {
         struct FailingStore;
         impl ContextCommitter for FailingStore {
             fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-                Box::pin(async {
-                    Err(CommitError::Persistence {
-                        detail: "scripted failure".to_owned(),
-                    })
-                })
+                Box::pin(async { Err(CommitError::Persistence(PersistenceFailure::Unavailable)) })
             }
 
             fn commit_replayed(&self, target: &ContextTarget, _replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {

@@ -3,7 +3,7 @@
 //! binaries beside this manifest; `run` executes one prebuilt binary directly,
 //! so a matrix of stacks never recompiles the identical suites per leg.
 
-use crate::error::XtaskError;
+use crate::{error::XtaskError, stack::Suite};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -42,10 +42,16 @@ impl TestManifest {
     /// # Errors
     ///
     /// Returns [`XtaskError::TestManifestRead`] if the file cannot be read and
-    /// [`XtaskError::TestManifestSerde`] if its contents are not valid manifest JSON.
+    /// [`XtaskError::TestManifestParse`] if its contents are not valid manifest JSON.
     pub(crate) fn load(path: &Path) -> Result<TestManifest, XtaskError> {
-        let text = fs::read_to_string(path).map_err(|error| XtaskError::TestManifestRead(format!("{}: {error}", path.display())))?;
-        let mut manifest: TestManifest = serde_json::from_str(&text).map_err(|error| XtaskError::TestManifestSerde(format!("{}: {error}", path.display())))?;
+        let text = fs::read_to_string(path).map_err(|source| XtaskError::TestManifestRead {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let mut manifest: TestManifest = serde_json::from_str(&text).map_err(|source| XtaskError::TestManifestParse {
+            path: path.to_path_buf(),
+            source,
+        })?;
         manifest.base = path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
         Ok(manifest)
     }
@@ -54,10 +60,10 @@ impl TestManifest {
     ///
     /// # Errors
     ///
-    /// Returns [`XtaskError::TestManifestSerde`] if serialization fails and
+    /// Returns [`XtaskError::TestManifestSerialize`] if serialization fails and
     /// [`XtaskError::Io`] if the file cannot be written.
     pub(crate) fn write(&self, path: &Path) -> Result<(), XtaskError> {
-        let text = serde_json::to_string_pretty(self).map_err(|error| XtaskError::TestManifestSerde(format!("serialize: {error}")))?;
+        let text = serde_json::to_string_pretty(self).map_err(XtaskError::TestManifestSerialize)?;
         fs::write(path, text)?;
         Ok(())
     }
@@ -67,17 +73,17 @@ impl TestManifest {
     /// # Errors
     ///
     /// Returns [`XtaskError::SuiteBinaryMissing`] if the suite has no entry.
-    pub(crate) fn resolve(&self, suite: &str) -> Result<PathBuf, XtaskError> {
+    pub(crate) fn resolve(&self, suite: &'static Suite) -> Result<PathBuf, XtaskError> {
         self.binaries
-            .get(suite)
+            .get(suite.name)
             .map(|relative| self.base.join(relative))
-            .ok_or_else(|| XtaskError::SuiteBinaryMissing(suite.to_owned()))
+            .ok_or(XtaskError::SuiteBinaryMissing(suite))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::test_binaries::TestManifest;
+    use crate::{error::XtaskError, stack::stack_for_suite, test_binaries::TestManifest};
     use std::{collections::BTreeMap, env, fs, path::PathBuf, process};
 
     #[test]
@@ -91,9 +97,27 @@ mod tests {
         TestManifest::new(binaries).write(&manifest_path).expect("write");
 
         let loaded = TestManifest::load(&manifest_path).expect("load");
-        assert_eq!(loaded.resolve("entity").expect("entity resolves"), directory.join("bin/entity"));
-        assert!(loaded.resolve("absent").is_err());
+        let entity = stack_for_suite("entity").expect("entity is registered").suite;
+        let absent = stack_for_suite("geometry").expect("geometry is registered").suite;
+        assert_eq!(loaded.resolve(entity).expect("entity resolves"), directory.join("bin/entity"));
+        assert!(matches!(loaded.resolve(absent), Err(XtaskError::SuiteBinaryMissing(missing)) if missing.name == "geometry"));
 
         fs::remove_dir_all(&directory).expect("cleanup");
+    }
+
+    #[test]
+    fn an_unreadable_manifest_names_its_path() {
+        let path = env::temp_dir().join(format!("andromeda-xtask-manifest-absent-{}.json", process::id()));
+        let error = TestManifest::load(&path).expect_err("an absent manifest is rejected");
+        assert!(matches!(error, XtaskError::TestManifestRead { path: unread, .. } if unread == path));
+    }
+
+    #[test]
+    fn a_manifest_that_is_not_manifest_json_names_its_path() {
+        let path = env::temp_dir().join(format!("andromeda-xtask-manifest-malformed-{}.json", process::id()));
+        fs::write(&path, "[]").expect("write the malformed manifest");
+        let error = TestManifest::load(&path).expect_err("a malformed manifest is rejected");
+        fs::remove_file(&path).expect("clean up the malformed manifest");
+        assert!(matches!(error, XtaskError::TestManifestParse { path: parsed, .. } if parsed == path));
     }
 }

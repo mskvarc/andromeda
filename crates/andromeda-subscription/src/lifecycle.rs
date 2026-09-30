@@ -16,6 +16,7 @@ use crate::{
     merged_validation::validate_merged_subscription,
     status::compute_updated_status,
     store::{StatusUpdateFields, SubscriptionStore},
+    subscription_invariant::SubscriptionInvariant,
     subscription_validation_reason::SubscriptionValidationReason,
     validation,
     variant::SubscriptionVariant,
@@ -39,7 +40,7 @@ use uuid::Uuid;
 
 fn generate_id() -> Result<Identifier, SubscriptionError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4())).build()?;
-    Identifier::try_from(urn).map_err(SubscriptionError::internal)
+    Identifier::try_from(urn).map_err(|error| SubscriptionInvariant::MintedIdentifier(error).into())
 }
 
 /// Generic subscription service providing CRUD operations shared by entity and CSR subscriptions.

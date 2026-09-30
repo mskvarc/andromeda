@@ -31,6 +31,7 @@ pub mod error;
 pub mod filter;
 pub mod geo;
 pub mod identifier;
+pub mod non_posix_construct;
 pub mod ordering;
 pub mod page_window;
 pub mod pagination;

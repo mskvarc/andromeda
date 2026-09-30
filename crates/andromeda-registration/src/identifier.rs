@@ -1,7 +1,7 @@
 //! Registration identifiers: the one a client names and the one the broker
 //! assigns when it names none.
 
-use crate::{error::RegistrationError, registration_validation_reason::RegistrationValidationReason};
+use crate::{error::RegistrationError, registration_invariant::RegistrationInvariant, registration_validation_reason::RegistrationValidationReason};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
@@ -20,7 +20,7 @@ pub(crate) fn client_registration_id(raw: &str) -> Result<Identifier, Registrati
 /// Mint a broker-assigned registration identifier (clause 5.9.2.4).
 pub(crate) fn generate_registration_id() -> Result<Identifier, RegistrationError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("ContextSourceRegistration:{}", Uuid::new_v4())).build()?;
-    Identifier::try_from(urn).map_err(RegistrationError::internal)
+    Identifier::try_from(urn).map_err(|error| RegistrationInvariant::MintedIdentifier(error).into())
 }
 
 #[cfg(test)]

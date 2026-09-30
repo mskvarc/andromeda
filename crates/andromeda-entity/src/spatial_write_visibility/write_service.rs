@@ -19,6 +19,7 @@ use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use async_trait::async_trait;
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
@@ -37,7 +38,7 @@ struct UnusedBlockingExecutor;
 #[async_trait]
 impl BlockingExecutor for UnusedBlockingExecutor {
     async fn execute(&self, _tasks: Vec<Box<dyn BlockingTask>>, _concurrency: NonZeroUsize) -> Result<(), EntityError> {
-        Err(EntityError::internal("the spatial visibility tests never offload work"))
+        Err(EntityError::from(PersistenceFailure::Unavailable))
     }
 }
 

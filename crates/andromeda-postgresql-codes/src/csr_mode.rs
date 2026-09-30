@@ -1,6 +1,6 @@
 //! The persisted distributed-operation mode of one registration.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// The distributed-operation mode of a registration (clause 4.3.6, clause 5.2.9 `mode`).

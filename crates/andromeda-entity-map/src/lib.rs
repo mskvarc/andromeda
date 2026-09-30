@@ -5,6 +5,8 @@
 
 /// What one context source contributed to the Entity Map of a read.
 pub mod contribution;
+/// The invariants Entity Map policy relies on.
+pub mod entity_map_invariant;
 /// Failures reported by Entity Map policy and storage implementations.
 pub mod error;
 /// Bounded expiry of Entity Maps past their `expiresAt`.
@@ -31,6 +33,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-request",
+        "andromeda-persistence-failure",
     ],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: [],

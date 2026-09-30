@@ -40,8 +40,8 @@ const PATH_ENCODED_BYTE_LIMIT: usize = 3000;
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum ScopePathError {
     /// The string is outside the clause 4.18 scope grammar.
-    #[error("'{0}' does not satisfy the NGSI-LD scope grammar")]
-    Malformed(String),
+    #[error("value does not satisfy the NGSI-LD scope grammar")]
+    Malformed,
     /// The string is the NGSI-LD Null, which names a deleted scope rather than a place (ETSI GS CIM 009 clause 4.18).
     #[error("'{null}' is the NGSI-LD Null, which names only a deleted scope, not a scope path", null = NULL_URI.as_str())]
     NullSentinel,
@@ -107,7 +107,7 @@ impl FromStr for ScopePath {
         if raw == NULL_URI.as_str() {
             return Err(ScopePathError::NullSentinel);
         }
-        Scope::new(raw).map_err(|_| ScopePathError::Malformed(raw.to_owned()))?;
+        Scope::new(raw).map_err(|_| ScopePathError::Malformed)?;
         for level in levels_of(raw) {
             if let Some(characters) = level_characters_beyond_limit(level) {
                 return Err(ScopePathError::LevelTooLong(characters));
@@ -167,7 +167,7 @@ mod tests {
         for raw in ["", "/", "/A/B/", "/A//B", "/1Floor", "/_hidden", "/A/B-C", "/A B"] {
             pretty_assertions::assert_eq!(
                 raw.parse::<ScopePath>().expect_err(raw),
-                ScopePathError::Malformed(raw.to_owned()),
+                ScopePathError::Malformed,
                 "{raw} is outside the grammar"
             );
         }

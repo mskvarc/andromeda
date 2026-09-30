@@ -65,7 +65,7 @@ impl TemporalHttpClassify for EntityMapError {
             // the request that created the map are an invalid request.
             EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
             EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => {
+            EntityMapError::Persistence(_) | EntityMapError::Invariant(_) => {
                 ClassifiedReport::internal(self, InternalFailureSummary::new("the entity store is unavailable"))
             }
         }
@@ -147,14 +147,17 @@ where
 #[cfg(test)]
 mod tests {
     use crate::error::classify_temporal_error;
-    use andromeda_context_commit::error::CommitError;
+    use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
     use andromeda_http_response::declined_representation::single_source_declined;
     use andromeda_jsonld::error::JsonLdError;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_ngsi_ld_query::error::QueryError;
-    use andromeda_ngsi_ld_request::error::ParameterError;
+    use andromeda_ngsi_ld_render::temporal::values::TemporalValuesError;
+    use andromeda_ngsi_ld_request::{error::ParameterError, unsupported_representation::UnsupportedRepresentation};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_temporal::{
         error::TemporalError,
+        temporal_invariant::TemporalInvariant,
         temporal_not_found_reason::TemporalNotFoundReason,
         temporal_operation_unsupported::TemporalOperationUnsupported,
         temporal_validation_reason::TemporalValidationReason,
@@ -168,16 +171,14 @@ mod tests {
         for (name, error, expected, internal_disclosure) in [
             (
                 "Validation",
-                TemporalError::Validation(TemporalValidationReason::Store {
-                    detail: "invalid window".to_string(),
-                }),
+                TemporalError::Validation(TemporalValidationReason::EntityMissingId),
                 NgsiLdErrorType::BadRequestData,
                 None,
             ),
             (
                 "NotFound",
-                TemporalError::NotFound(TemporalNotFoundReason::Store {
-                    detail: "missing history".to_string(),
+                TemporalError::NotFound(TemporalNotFoundReason::Entity {
+                    id: "urn:ngsi-ld:Entity:missing".parse().expect("a valid identifier"),
                 }),
                 NgsiLdErrorType::ResourceNotFound,
                 None,
@@ -196,42 +197,40 @@ mod tests {
             ),
             (
                 "JsonLd",
-                TemporalError::JsonLd(JsonLdError::invalid_document("bad document")),
+                TemporalError::JsonLd(JsonLdError::DocumentShape),
                 NgsiLdErrorType::BadRequestData,
                 None,
             ),
             ("Query", TemporalError::Query(QueryError::QEmpty), NgsiLdErrorType::InvalidRequest, None),
             (
                 "Request",
-                TemporalError::Request(ParameterError::OptionsInvalid("bad".to_string())),
+                TemporalError::Request(ParameterError::OptionsInvalid(UnsupportedRepresentation::UnknownOptionsToken)),
                 NgsiLdErrorType::InvalidRequest,
                 None,
             ),
             (
                 "Commit",
-                TemporalError::Commit(CommitError::Persistence {
-                    detail: "db-7.internal".to_string(),
-                }),
+                TemporalError::Commit(CommitError::Persistence(PersistenceFailure::Unavailable)),
                 NgsiLdErrorType::InternalError,
-                Some(("failed to persist temporal history", "db-7.internal")),
+                Some(("failed to persist temporal history", "the store is unreachable")),
             ),
             (
                 "Persistence",
-                TemporalError::persistence("db-7.internal"),
+                TemporalError::Persistence(PersistenceFailure::Unavailable),
                 NgsiLdErrorType::InternalError,
-                Some(("the temporal store is unavailable", "db-7.internal")),
+                Some(("the temporal store is unavailable", "the store is unreachable")),
             ),
             (
                 "Rendering",
-                TemporalError::rendering("secret row"),
+                TemporalError::Rendering(TemporalValuesError::InvalidDatasetId),
                 NgsiLdErrorType::InternalError,
-                Some(("failed to render the temporal representation", "secret row")),
+                Some(("failed to render the temporal representation", "invalid datasetId")),
             ),
             (
                 "Internal",
-                TemporalError::internal("secret invariant"),
+                TemporalError::from(TemporalInvariant::RetrievalWithoutRoot),
                 NgsiLdErrorType::InternalError,
-                Some(("internal temporal error", "secret invariant")),
+                Some(("internal temporal error", "without its root")),
             ),
         ] {
             let report = classify_temporal_error(&error);
@@ -249,12 +248,10 @@ mod tests {
     /// policy conversion is what carries the refusal out of the commit port.
     #[test]
     fn a_commit_that_refused_the_submission_reports_bad_request_data() {
-        let error = TemporalError::from(CommitError::Submission {
-            detail: "'QQQ' is not a UN/CEFACT common code".to_string(),
-        });
+        let error = TemporalError::from(CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered));
         let report = classify_temporal_error(&error);
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::BadRequestData);
-        pretty_assertions::assert_eq!(report.detail(), "'QQQ' is not a UN/CEFACT common code");
+        pretty_assertions::assert_eq!(report.detail(), "'unitCode' is not a UN/CEFACT common code the unit catalog registers");
     }
 
     /// Table 6.4.3.2-3: the 501 of the one registered source holding the data
@@ -268,10 +265,8 @@ mod tests {
 
     #[test]
     fn temporal_public_detail_is_preserved() {
-        let report = classify_temporal_error(&TemporalError::Validation(TemporalValidationReason::Store {
-            detail: "missing timerel".to_string(),
-        }));
-        pretty_assertions::assert_eq!(report.detail(), "missing timerel");
+        let report = classify_temporal_error(&TemporalError::Validation(TemporalValidationReason::EntityMissingId));
+        pretty_assertions::assert_eq!(report.detail(), "entity is missing an id");
     }
 
     /// Clause 5.5.6: a temporal write every retry lost to a concurrent

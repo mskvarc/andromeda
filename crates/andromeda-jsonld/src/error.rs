@@ -8,10 +8,15 @@
 //! the loading variants carry the URL, the status and the reason separately
 //! rather than pre-rendered into one message.
 
-use crate::loader::error::LoaderError;
-use iri_rs::IriBuf;
+use crate::{
+    context_term::ContextTerm,
+    loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError},
+};
+use iri_rs::{InvalidIri, IriBuf};
 use jsonld::{CompactError, ContextLoadError, ExpandError, compaction, context_processing, expansion};
+use jsonld_syntax::{context::InvalidContext, parse};
 use reqwest::StatusCode;
+use std::{io, path::PathBuf};
 use thiserror::Error;
 
 /// A JSON-LD processing failure.
@@ -35,12 +40,13 @@ pub enum JsonLdError {
     },
 
     /// A remote JSON-LD context could not be loaded.
-    #[error("failed to load context from {url}: {message}")]
+    #[error("failed to load context from {url}: {source}")]
     ContextLoad {
         /// The URL that was requested.
         url: IriBuf,
-        /// Human-readable failure reason.
-        message: String,
+        /// Why the context could not be reached.
+        #[source]
+        source: ContextUnavailable,
     },
 
     /// The HTTP request returned a non-success status code.
@@ -63,22 +69,60 @@ pub enum JsonLdError {
         max: usize,
     },
 
-    /// The remote context could not be parsed as valid JSON-LD.
-    #[error("invalid JSON-LD context at {url}: {message}")]
+    /// The remote context was retrieved but is not a usable JSON-LD context.
+    #[error("invalid JSON-LD context at {url}: {source}")]
     ContextInvalid {
         /// The URL that was requested.
         url: IriBuf,
-        /// Parse / validation error message.
-        message: String,
+        /// What the retrieved document is missing.
+        #[source]
+        source: InvalidContextDocument,
     },
 
-    /// An embedded (inline) context could not be parsed.
-    #[error("embedded context is invalid: {0}")]
-    EmbeddedContextInvalid(String),
+    /// A context file configured for preloading could not be read.
+    #[error("the preloaded context file {} cannot be read: {source}", path.display())]
+    PreloadedContextUnreadable {
+        /// The configured file.
+        path: PathBuf,
+        /// The failed read.
+        #[source]
+        source: io::Error,
+    },
+
+    /// A context file configured for preloading is not JSON.
+    #[error("the preloaded context file {} is not JSON: {source}", path.display())]
+    PreloadedContextInvalid {
+        /// The configured file.
+        path: PathBuf,
+        /// The JSON parse failure.
+        #[source]
+        source: parse::Error,
+    },
+
+    /// A URL configured for preloading is not an IRI.
+    #[error("a preloaded context URL is not an IRI")]
+    PreloadedContextUrl(#[source] InvalidIri<String>),
+
+    /// A core context URL has no payload embedded in the broker.
+    #[error("no embedded payload exists for the context {url}")]
+    EmbeddedContextMissing {
+        /// The core context URL without a payload.
+        url: IriBuf,
+    },
+
+    /// A context embedded in the broker is not JSON.
+    #[error("the embedded context {url} is not JSON: {source}")]
+    EmbeddedContextInvalid {
+        /// The embedded context's URL.
+        url: IriBuf,
+        /// The JSON parse failure.
+        #[source]
+        source: parse::Error,
+    },
 
     /// An inline context could not be parsed as valid JSON-LD.
     #[error("inline context is invalid: {0}")]
-    InlineContextInvalid(String),
+    InlineContextInvalid(#[source] InvalidContext),
 
     /// A user `@context` declares a JSON-LD Scoped Context.
     ///
@@ -89,7 +133,7 @@ pub enum JsonLdError {
     #[error("the user @context defines the term {term} with a scoped @context, which is not allowed")]
     ScopedUserContext {
         /// The term whose definition carries the scoped `@context`.
-        term: String,
+        term: ContextTerm,
     },
 
     /// The HTTP client could not be constructed from the configured settings.
@@ -104,13 +148,37 @@ pub enum JsonLdError {
     #[error("failed to compact the document: {0}")]
     Compaction(#[source] Box<CompactError<LoaderError>>),
 
-    /// An IRI could not be parsed or resolved.
-    #[error("invalid IRI: {0}")]
-    InvalidIri(String),
+    /// An entity type term expands to nothing against the active context.
+    #[error("the entity type does not expand to an IRI against the active context")]
+    TypeNotExpanded,
 
-    /// The document structure is not a valid JSON-LD input.
-    #[error("invalid document: {0}")]
-    InvalidDocument(String),
+    /// An attribute term expands to nothing against the active context.
+    #[error("the term does not expand to an IRI against the active context")]
+    TermNotExpanded,
+
+    /// A term expanded to text that is not an absolute IRI.
+    #[error("the expanded term is not an absolute IRI")]
+    ExpandedTermNotIri(#[source] InvalidIri<String>),
+
+    /// A context URL handed to the resolver is not an IRI.
+    #[error("the context URL is not an IRI")]
+    ContextUrlNotIri(#[source] InvalidIri<String>),
+
+    /// The vocabulary generated into the broker holds an IRI that does not parse.
+    #[error("the generated NGSI-LD vocabulary holds a term whose IRI does not parse")]
+    GeneratedVocabularyIri(#[source] InvalidIri<String>),
+
+    /// A `jsonldContext` written as JSON text does not parse.
+    #[error("jsonldContext is not valid JSON: {0}")]
+    JsonLdContextText(#[source] serde_json::Error),
+
+    /// A `jsonldContext` value names no context in any form.
+    #[error("jsonldContext must be a valid URI or JSON-LD context")]
+    JsonLdContextShape,
+
+    /// A document to carry a `@context` is neither an object nor an array.
+    #[error("the document must be an object or an array")]
+    DocumentShape,
 
     /// JSON serialisation / deserialisation error.
     #[error("JSON processing failed: {0}")]
@@ -136,16 +204,6 @@ impl From<CompactError<LoaderError>> for JsonLdError {
 }
 
 impl JsonLdError {
-    /// Build an [`JsonLdError::InvalidIri`].
-    pub fn invalid_iri(message: impl Into<String>) -> JsonLdError {
-        JsonLdError::InvalidIri(message.into())
-    }
-
-    /// Build an [`JsonLdError::InvalidDocument`].
-    pub fn invalid_document(message: impl Into<String>) -> JsonLdError {
-        JsonLdError::InvalidDocument(message.into())
-    }
-
     /// Whether this is an explicit context-loading failure.
     ///
     /// These variants carry the URL, status and reason a clause 5.5.2
@@ -243,9 +301,12 @@ fn context_error_of_processing(error: &context_processing::Error<LoaderError>) -
 #[cfg(test)]
 mod tests {
     use crate::{
+        context_cache::ContextCacheError,
+        context_term::ContextTerm,
         error::{JsonLdError, context_error_of_compaction, context_error_of_expansion, context_error_of_processing, is_protected_term_redefinition},
-        loader::error::{LoaderError, LoaderErrorKind},
+        loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
     };
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use iri_rs::IriBuf;
     use jsonld::{CompactError, ContextLoadError, ExpandError, ExtractContextError, LoadError, compaction, context_processing, expansion};
     use reqwest::StatusCode;
@@ -257,7 +318,7 @@ mod tests {
     fn loader_error() -> LoaderError {
         LoaderError {
             url: url(),
-            kind: LoaderErrorKind::Request("connection refused".to_string()),
+            kind: LoaderErrorKind::Unavailable(ContextUnavailable::Cache(ContextCacheError::Read(PersistenceFailure::Unavailable))),
         }
     }
 
@@ -275,7 +336,7 @@ mod tests {
             },
             JsonLdError::ContextLoad {
                 url: url(),
-                message: "boom".to_string(),
+                source: ContextUnavailable::Cache(ContextCacheError::Read(PersistenceFailure::Unavailable)),
             },
             JsonLdError::ContextTooLarge { url: url(), size: 10, max: 5 },
         ];
@@ -286,13 +347,16 @@ mod tests {
         let internal = [
             JsonLdError::ContextInvalid {
                 url: url(),
-                message: "boom".to_string(),
+                source: InvalidContextDocument::NoContext,
             },
-            JsonLdError::EmbeddedContextInvalid("boom".to_string()),
-            JsonLdError::InlineContextInvalid("boom".to_string()),
-            JsonLdError::InvalidIri("boom".to_string()),
-            JsonLdError::InvalidDocument("boom".to_string()),
-            JsonLdError::ScopedUserContext { term: "speed".to_string() },
+            JsonLdError::EmbeddedContextMissing { url: url() },
+            JsonLdError::TermNotExpanded,
+            JsonLdError::TypeNotExpanded,
+            JsonLdError::JsonLdContextShape,
+            JsonLdError::DocumentShape,
+            JsonLdError::ScopedUserContext {
+                term: ContextTerm::new("speed"),
+            },
         ];
         for error in &internal {
             assert!(!error.is_context_not_available(), "{error} must not report as a loading failure");

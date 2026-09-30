@@ -40,7 +40,7 @@ impl NotificationReceiverResolver for BrokerNotificationReceiverResolver {
                 .router
                 .tenant_of(subscription)
                 .await
-                .map_err(|error| ReceiverResolutionError::Tenant { detail: error.to_string() })?
+                .map_err(ReceiverResolutionError::Routing)?
                 .ok_or_else(|| ReceiverResolutionError::Unknown {
                     subscription: subscription.clone(), // clone: the error owns the identifier
                 })?;
@@ -48,7 +48,7 @@ impl NotificationReceiverResolver for BrokerNotificationReceiverResolver {
                 .tenants
                 .resolve_state(&tenant, TenantCreationPolicy::MustExist)
                 .await
-                .map_err(|error| ReceiverResolutionError::Tenant { detail: error.to_string() })?;
+                .map_err(ReceiverResolutionError::Tenant)?;
             let service = state
                 .subscription_forwarding
                 .as_ref()

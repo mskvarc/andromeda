@@ -1,6 +1,6 @@
 //! The persisted policy decision of one maintenance target.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// The policy decision last recorded for a maintenance target.

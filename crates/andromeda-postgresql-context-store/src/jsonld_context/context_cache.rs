@@ -13,9 +13,12 @@
 //! that has stopped downloading new `@contexts` still has to invalidate the
 //! ones it holds.
 
-use crate::jsonld_context::{
-    repo::JsonLdContextRepository,
-    statement::{cached_upsert, fresh_cached_context_query},
+use crate::{
+    jsonld_context::{
+        repo::JsonLdContextRepository,
+        statement::{cached_upsert, fresh_cached_context_query},
+    },
+    store_fault::{StoreFault, persistence_failure},
 };
 use andromeda_jsonld::{
     context_cache::{CachedContext, ContextCache, ContextCacheError},
@@ -29,7 +32,6 @@ use sea_query::PostgresQueryBuilder;
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::types::Json;
-use std::fmt::Display;
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
@@ -40,7 +42,7 @@ impl ContextCache for JsonLdContextRepository {
         let row: Option<(Json<Value>, Option<DateTime<Utc>>, Option<String>, DateTime<Utc>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| ContextCacheError::Read(error.to_string()))?;
+            .map_err(|error| ContextCacheError::Read(persistence_failure(&error)))?;
         Ok(row.and_then(|(payload, expires_at, serving_url, read_at)| {
             residual_lifetime(expires_at, read_at).map(|residual| CachedContext {
                 payload: payload.0,
@@ -89,8 +91,9 @@ fn residual_lifetime(expires_at: Option<DateTime<Utc>>, read_at: DateTime<Utc>) 
 }
 
 /// Collapse a backend failure into the port's write category.
-fn write_failure(error: impl Display) -> ContextCacheError {
-    ContextCacheError::Write(error.to_string())
+#[track_caller]
+fn write_failure(error: impl StoreFault) -> ContextCacheError {
+    ContextCacheError::Write(persistence_failure(&error))
 }
 
 /// Mint the local identifier used for a newly cached remote Context.

@@ -50,37 +50,17 @@ const CANONICAL_FORMAT: &str = "%H:%M:%S%.6fZ";
 #[derive(Debug, Error)]
 pub enum NgsiLdTimeError {
     /// The text is not an RFC 3339 `full-time`.
-    #[error("NGSI-LD Time value is not an RFC 3339 full-time: {value}")]
-    Malformed {
-        /// The rejected text.
-        value: String,
-    },
+    #[error("NGSI-LD Time value is not an RFC 3339 full-time: {0}")]
+    Malformed(#[source] chrono::ParseError),
+    /// The text's fractional-seconds part breaks the clause 4.6.3 rule.
+    #[error("NGSI-LD Time {0}")]
+    FractionalSeconds(#[from] FractionalSecondsError),
     /// The time of day cannot be held at microsecond resolution.
-    #[error("NGSI-LD Time value cannot be held at microsecond resolution: {value}")]
-    OutOfRange {
-        /// The rejected text.
-        value: String,
-    },
+    #[error("NGSI-LD Time value cannot be held at microsecond resolution")]
+    OutOfRange,
     /// The text's trailing zone designator is not the literal `Z` character.
-    #[error("NGSI-LD Time value's trailing zone designator is not the literal character 'Z': {value}")]
-    ZoneDesignator {
-        /// The rejected text.
-        value: String,
-    },
-    /// The text carries more than six fractional-second digits.
-    #[error("NGSI-LD Time value carries more than six fractional-second digits: {value}")]
-    TooManyFractionalDigits {
-        /// The rejected text.
-        value: String,
-    },
-}
-
-/// Report a shared clause 4.6.3 fractional-seconds failure in this type's own vocabulary.
-fn clause_463_error(error: FractionalSecondsError, value: &str) -> NgsiLdTimeError {
-    match error {
-        FractionalSecondsError::AmbiguousSeparator => NgsiLdTimeError::Malformed { value: value.to_owned() },
-        FractionalSecondsError::TooManyDigits => NgsiLdTimeError::TooManyFractionalDigits { value: value.to_owned() },
-    }
+    #[error("NGSI-LD Time value's trailing zone designator is not the literal character 'Z'")]
+    ZoneDesignator,
 }
 
 /// An NGSI-LD `Time` resolved to UTC and truncated to microsecond resolution.
@@ -115,9 +95,7 @@ impl NgsiLdTime {
         let nanoseconds = time.nanosecond();
         time.with_nanosecond(nanoseconds - nanoseconds % NANOSECONDS_PER_MICROSECOND)
             .map(NgsiLdTime)
-            .ok_or_else(|| NgsiLdTimeError::OutOfRange {
-                value: time.format(CANONICAL_FORMAT).to_string(),
-            })
+            .ok_or(NgsiLdTimeError::OutOfRange)
     }
 }
 
@@ -129,13 +107,13 @@ impl FromStr for NgsiLdTime {
     type Err = NgsiLdTimeError;
 
     fn from_str(value: &str) -> Result<NgsiLdTime, NgsiLdTimeError> {
-        let candidate = accept_comma_decimal_separator(value).map_err(|error| clause_463_error(error, value))?;
-        reject_excess_fractional_digits(&candidate).map_err(|error| clause_463_error(error, value))?;
+        let candidate = accept_comma_decimal_separator(value)?;
+        reject_excess_fractional_digits(&candidate)?;
         // RFC 3339 defines `full-time` as `partial-time time-offset`, so the
         // offset is mandatory: without one the time of day would depend on
         // whichever zone the reader happened to assume.
         let anchored = format!("{TIME_ANCHOR_DATE}T{candidate}");
-        let resolved = DateTime::parse_from_rfc3339(&anchored).map_err(|_| NgsiLdTimeError::Malformed { value: value.to_owned() })?;
+        let resolved = DateTime::parse_from_rfc3339(&anchored).map_err(NgsiLdTimeError::Malformed)?;
         // Clause 4.6.3 gives the form `hh:mm:ssZ` and forbids "expressions of
         // the difference between local time and UTC", so the literal `Z` is the
         // only designator a value may end in. A numeric offset is the expression
@@ -143,9 +121,9 @@ impl FromStr for NgsiLdTime {
         // it names; both are refused here, and the refusal names the designator
         // because the second carries no offset at all.
         if !candidate.ends_with('Z') {
-            return Err(NgsiLdTimeError::ZoneDesignator { value: value.to_owned() });
+            return Err(NgsiLdTimeError::ZoneDesignator);
         }
-        NgsiLdTime::normalise(resolved.naive_utc().time()).map_err(|_| NgsiLdTimeError::OutOfRange { value: value.to_owned() })
+        NgsiLdTime::normalise(resolved.naive_utc().time())
     }
 }
 
@@ -170,7 +148,10 @@ impl From<NgsiLdTime> for String {
 
 #[cfg(test)]
 mod tests {
-    use crate::ngsi_ld_time::{NgsiLdTime, NgsiLdTimeError};
+    use crate::{
+        fractional_seconds::FractionalSecondsError,
+        ngsi_ld_time::{NgsiLdTime, NgsiLdTimeError},
+    };
     use chrono::{NaiveTime, Timelike};
 
     #[test]
@@ -189,7 +170,7 @@ mod tests {
     fn a_numeric_offset_is_refused_rather_than_resolved() {
         for value in ["13:00:00+01:00", "23:30:00-05:00", "12:00:00+00:00"] {
             let error = value.parse::<NgsiLdTime>().expect_err("a numeric offset is forbidden");
-            assert!(matches!(error, NgsiLdTimeError::ZoneDesignator { .. }), "{value}: got {error:?}");
+            assert!(matches!(error, NgsiLdTimeError::ZoneDesignator), "{value}: got {error:?}");
         }
     }
 
@@ -202,7 +183,7 @@ mod tests {
         let error = "12:00:00z"
             .parse::<NgsiLdTime>()
             .expect_err("lowercase z is not the character the clause writes");
-        assert!(matches!(error, NgsiLdTimeError::ZoneDesignator { .. }), "got {error:?}");
+        assert!(matches!(error, NgsiLdTimeError::ZoneDesignator), "got {error:?}");
         assert!(error.to_string().contains("literal character 'Z'"), "{error}");
     }
 
@@ -221,7 +202,10 @@ mod tests {
     #[test]
     fn a_fraction_beyond_six_digits_is_refused() {
         let error = "12:00:00.1234567Z".parse::<NgsiLdTime>().expect_err("seven digits exceeds the clause maximum");
-        assert!(matches!(error, NgsiLdTimeError::TooManyFractionalDigits { .. }), "got {error:?}");
+        assert!(
+            matches!(error, NgsiLdTimeError::FractionalSeconds(FractionalSecondsError::TooManyDigits)),
+            "got {error:?}"
+        );
     }
 
     #[test]

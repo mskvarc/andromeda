@@ -1,7 +1,7 @@
 //! How a rejected temporal append intent is rescheduled and when it is
 //! reported as stuck.
 
-use crate::error::TemporalError;
+use crate::{error::TemporalError, temporal_invariant::TemporalInvariant};
 use andromeda_context_commit::failure_summary::{FAILURE_SUMMARY_LIMIT, bounded_failure_summary};
 use chrono::{DateTime, TimeDelta, Utc};
 use std::{fmt::Display, num::NonZeroU32, time::Duration};
@@ -45,12 +45,12 @@ impl TemporalIntentRetryPolicy {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::internal`] when the delay cannot be expressed
+    /// Returns [`TemporalInvariant::RetryDelayOutOfRange`] when the delay cannot be expressed
     /// as a calendar duration.
     pub fn retry_at(&self, now: DateTime<Utc>, attempts: u32) -> Result<DateTime<Utc>, TemporalError> {
         let multiplier = attempts.saturating_add(1);
         let delay = self.base.saturating_mul(multiplier).min(self.ceiling);
-        let delay = TimeDelta::from_std(delay).map_err(|error| TemporalError::internal(format!("temporal intent retry delay is out of range: {error}")))?;
+        let delay = TimeDelta::from_std(delay).map_err(|error| TemporalError::from(TemporalInvariant::RetryDelayOutOfRange(error)))?;
         Ok(now + delay)
     }
 

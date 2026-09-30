@@ -3,10 +3,12 @@
 use crate::{
     action,
     candidate::{IndexTarget, MaintenanceTarget},
+    capability::{self, CapabilityStatus, MutationPrivilege},
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
-    inspection::{self, CapabilityStatus, HeapSample, IndexSize, InvalidIndex, MutationPrivilege},
+    inspection::{self, HeapSample, IndexSize, InvalidIndex},
     policy::{DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, decide, safety_deferral},
+    safety_gate_inspection,
     state::{
         self,
         RegisteredTenant,
@@ -166,7 +168,7 @@ impl MaintenanceController {
             MaintenanceMode::Disabled | MaintenanceMode::Observe => MutationPrivilege::NotRequired,
             MaintenanceMode::Automatic => MutationPrivilege::Required,
         };
-        let capability = inspection::validate_capabilities(&mut connection, mutation).await?;
+        let capability = capability::validate_capabilities(&mut connection, mutation).await?;
         if capability != CapabilityStatus::Ready {
             tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::of_capability(capability)).await?;
             warn!(tenant = tenant.log_name(), database = %tenant.database, capability = ?capability, decision = "capability-unavailable", "PostgreSQL maintenance pass deferred");
@@ -199,7 +201,7 @@ impl MaintenanceController {
             return Ok(outcome);
         };
         let target = MaintenanceTarget::Index(size.target);
-        let gates = inspection::safety_gates(&mut connection, target).await?;
+        let gates = safety_gate_inspection::safety_gates(&mut connection, target).await?;
         if let Some(reason) = safety_deferral(profile, gates) {
             info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance probe deferred");
             tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::Deferred).await?;

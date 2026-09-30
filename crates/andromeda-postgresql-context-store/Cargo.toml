@@ -30,6 +30,7 @@ andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-notification.workspace = true
+andromeda-persistence-failure.workspace = true
 andromeda-postgresql-branch.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-collation.workspace = true

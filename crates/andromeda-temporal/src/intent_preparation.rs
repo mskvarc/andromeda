@@ -5,9 +5,8 @@ use crate::{
     attribute_instance_value::{collect_metadata, extract_temporal_value},
     error::TemporalError,
     scope_observation::ScopeObservation,
-    temporal_validation_reason::TemporalValidationReason,
 };
-use andromeda_context_commit::{history_record::HistoryRecord, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_context_commit::{history_record::HistoryRecord, submission_refusal::SubmissionRefusal, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -100,12 +99,9 @@ fn append_payload_entries(expanded: &Value, recorded_at: DateTime<Utc>, entries:
         if raw_name.starts_with('@') {
             continue;
         }
-        let attribute_name = raw_name.parse::<AttributeName>().map_err(|source| {
-            TemporalError::Validation(TemporalValidationReason::ExpandedAttributeName {
-                name: raw_name.clone(),
-                source,
-            })
-        })?;
+        let attribute_name = raw_name
+            .parse::<AttributeName>()
+            .map_err(|source| TemporalError::from(SubmissionRefusal::ExpandedAttributeName(source)))?;
         if is_system_attribute(&attribute_name) {
             continue;
         }
@@ -291,7 +287,7 @@ fn extract_dataset_id(instance: &Value) -> Result<Option<Identifier>, TemporalEr
         .and_then(Value::as_str)
         .map(|raw| {
             raw.parse::<Identifier>()
-                .map_err(|source| TemporalError::Validation(TemporalValidationReason::DatasetId { raw: raw.to_string(), source }))
+                .map_err(|source| TemporalError::from(SubmissionRefusal::DatasetId(source)))
         })
         .transpose()
 }
@@ -312,7 +308,7 @@ fn extract_observed_at(instance: &Value) -> Result<Option<DateTime<Utc>>, Tempor
         .map(|raw| {
             raw.parse::<NgsiLdDateTime>()
                 .map(NgsiLdDateTime::get)
-                .map_err(|source| TemporalError::Validation(TemporalValidationReason::ObservedAt { raw: raw.to_string(), source }))
+                .map_err(|source| TemporalError::from(SubmissionRefusal::ObservedAt(source)))
         })
         .transpose()
 }
@@ -327,7 +323,7 @@ fn extract_instance_id(instance: &Value) -> Result<Option<Identifier>, TemporalE
         .and_then(Value::as_str)
         .map(|raw| {
             raw.parse::<Identifier>()
-                .map_err(|source| TemporalError::Validation(TemporalValidationReason::InstanceId { raw: raw.to_string(), source }))
+                .map_err(|source| TemporalError::from(SubmissionRefusal::InstanceId(source)))
         })
         .transpose()
 }

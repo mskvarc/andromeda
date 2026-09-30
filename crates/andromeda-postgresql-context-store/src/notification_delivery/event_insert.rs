@@ -54,7 +54,7 @@ use uuid::Uuid;
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Internal`] when an event ordinal is outside the
+/// Returns [`ContextStoreError::OrdinalOutOfRange`] when an event ordinal is outside the
 /// range storage represents, and [`ContextStoreError::Database`] when a
 /// statement fails.
 pub async fn insert_events_in_tx(
@@ -135,10 +135,7 @@ fn insert_events_statement(
         NotificationEvents::PreviousSnapshot,
     ]);
     for event in events {
-        let event_ordinal = event
-            .ordinal
-            .as_i32()
-            .map_err(|error| ContextStoreError::Internal(format!("notification event ordinal: {error}")))?;
+        let event_ordinal = event.ordinal.as_i32()?;
         let change_kinds: Vec<i16> = event.change.instances.iter().map(|instance| stored_change_kind(instance.kind).code()).collect();
         let change_attribute_name_keys: Vec<i32> = event.change_attribute_name_keys.iter().map(|id| id.get()).collect();
         let change_dataset_ids: Vec<Option<&str>> = event
@@ -147,25 +144,23 @@ fn insert_events_statement(
             .iter()
             .map(|instance| instance.key.dataset_id.as_ref().map(Identifier::as_str))
             .collect();
-        statement
-            .values([
-                recorded_at.into(),
-                Expr::val(write_id),
-                event_ordinal.into(),
-                stored_lifecycle(event.change.lifecycle).code().into(),
-                event.entity_id.as_str().into(),
-                Expr::val(change_kinds),
-                Expr::val(change_attribute_name_keys),
-                // A default instance's `datasetId` is a NULL element, which one
-                // bound array cannot carry.
-                nullable_text_array(&change_dataset_ids),
-                // The snapshot is bound by value because a bound parameter owns
-                // its data; the entity state cannot be borrowed into the wire
-                // buffer.
-                snapshot_value(event.entity_snapshot),
-                snapshot_value(event.previous_snapshot),
-            ])
-            .map_err(|error| ContextStoreError::Internal(format!("notification event row: {error}")))?;
+        statement.values([
+            recorded_at.into(),
+            Expr::val(write_id),
+            event_ordinal.into(),
+            stored_lifecycle(event.change.lifecycle).code().into(),
+            event.entity_id.as_str().into(),
+            Expr::val(change_kinds),
+            Expr::val(change_attribute_name_keys),
+            // A default instance's `datasetId` is a NULL element, which one
+            // bound array cannot carry.
+            nullable_text_array(&change_dataset_ids),
+            // The snapshot is bound by value because a bound parameter owns
+            // its data; the entity state cannot be borrowed into the wire
+            // buffer.
+            snapshot_value(event.entity_snapshot),
+            snapshot_value(event.previous_snapshot),
+        ])?;
     }
     statement
         .on_conflict(
@@ -250,8 +245,7 @@ fn insert_deliveries_statement(
             NotificationDeliveries::SubscriptionKey,
             NotificationDeliveries::NextAttemptAt,
         ])
-        .select_from(source)
-        .map_err(|error| ContextStoreError::Internal(format!("notification delivery insert: {error}")))?;
+        .select_from(source)?;
     Ok(statement.clone())
 }
 

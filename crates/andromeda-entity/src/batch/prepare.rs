@@ -9,6 +9,7 @@
 use crate::{
     EntityService,
     batch::execution::{BatchExecution, decide_batch_execution},
+    entity_invariant::EntityInvariant,
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     null_sentinel_admission::NullSentinelAdmission,
@@ -114,7 +115,7 @@ impl BlockingTask for FastPreparationTask {
             .collect::<Vec<_>>();
         self.outputs
             .lock()
-            .map_err(|error| EntityError::internal(format!("batch preparation output lock poisoned: {error}")))?
+            .map_err(|_poisoned| EntityError::from(EntityInvariant::BatchOutputPoisoned))?
             .extend(prepared);
         Ok(())
     }
@@ -147,10 +148,10 @@ fn process_fast_entry(entry: ClassifiedEntry, engine: &JsonLdEngine, handle: &Ba
 
 /// Attribute one chunk-level preparation failure to every entity the chunk
 /// owned. Clause 5.2.17 requires a real entity URI for each batch error.
-fn append_preparation_failures(outputs: &mut Vec<FastPoolOutput>, metadata: Vec<(usize, Identifier)>, detail: &str) {
+fn append_preparation_failures(outputs: &mut Vec<FastPoolOutput>, metadata: Vec<(usize, Identifier)>) {
     outputs.extend(metadata.into_iter().map(|(idx, id)| FastPoolOutput::Done {
         idx,
-        result: Box::new(Err(Box::new((id, EntityError::internal(detail))))),
+        result: Box::new(Err(Box::new((id, EntityInvariant::BatchPreparationFailed.into())))),
     }));
 }
 
@@ -228,7 +229,8 @@ impl EntityService {
                 }
                 if let Err(error) = self.blocking_executor.execute(tasks, fast_chunks).await {
                     let mut failures = Vec::new();
-                    append_preparation_failures(&mut failures, metadata, &error.to_string());
+                    tracing::error!(%error, "the batch preparation executor failed");
+                    append_preparation_failures(&mut failures, metadata);
                     return failures;
                 }
                 match outputs.lock() {

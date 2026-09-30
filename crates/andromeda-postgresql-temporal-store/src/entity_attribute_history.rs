@@ -4,6 +4,7 @@ use crate::repo::TemporalRepository;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{error::EntityError, port::attribute_history::AttributeDatasetHistory};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 
 #[async_trait]
@@ -16,7 +17,7 @@ impl AttributeDatasetHistory for TemporalRepository {
     ) -> Result<Vec<Option<Identifier>>, EntityError> {
         TemporalRepository::attribute_dataset_ids(self, target, entity, attribute)
             .await
-            .map_err(|error| EntityError::persistence(error.to_string()))
+            .map_err(|error| EntityError::from(error.failure_class().unwrap_or(PersistenceFailure::ContractBroken).record(&error)))
     }
 }
 

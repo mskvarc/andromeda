@@ -1,8 +1,9 @@
 //! Failures reported by the atomic context-commit boundary.
 
-use crate::side_effect_job_id::SideEffectJobId;
+use crate::{commit_invariant::CommitInvariant, side_effect_job_id::SideEffectJobId, submission_refusal::SubmissionRefusal};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use std::{fmt::Display, sync::Arc};
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use std::sync::Arc;
 use thiserror::Error;
 
 /// A semantic submission failure or an implementation failure hidden behind
@@ -23,17 +24,11 @@ pub enum CommitError {
     /// requires — as opposed to a fault of the broker. The distinction is the
     /// difference between `BadRequestData` and `InternalError` in clause 5.5.2,
     /// so it belongs on the commit port rather than in the message text.
-    #[error("atomic context commit refused the submission: {detail}")]
-    Submission {
-        /// Human-readable detail naming what about the submission is unusable.
-        detail: String,
-    },
+    #[error("atomic context commit refused the submission: {0}")]
+    Submission(#[from] SubmissionRefusal),
     /// An implementation could not persist or commit the write.
-    #[error("atomic context commit failed: {detail}")]
-    Persistence {
-        /// Human-readable implementation failure detail.
-        detail: String,
-    },
+    #[error("atomic context commit failed: {0}")]
+    Persistence(#[source] PersistenceFailure),
     /// A connection pool was saturated before the commit could run.
     ///
     /// Backpressure, not a fault: no backend became free within the acquire
@@ -63,11 +58,8 @@ pub enum CommitError {
         job: SideEffectJobId,
     },
     /// An implementation violated the commit protocol's invariants.
-    #[error("atomic context commit invariant failed: {detail}")]
-    Invariant {
-        /// Human-readable invariant failure detail.
-        detail: String,
-    },
+    #[error("atomic context commit invariant failed: {0}")]
+    Invariant(#[from] CommitInvariant),
     /// A caller that submitted a known number of writes received another
     /// number of outcomes.
     #[error("atomic context commit returned {actual} outcomes; expected {expected}")]
@@ -79,38 +71,54 @@ pub enum CommitError {
     },
 }
 
-impl CommitError {
-    /// Construct an invariant failure from the fault that broke it.
-    ///
-    /// Takes `impl Display` so a typed source is handed over directly rather
-    /// than pre-rendered at the call site.
-    pub fn invariant(source: impl Display) -> CommitError {
-        CommitError::Invariant { detail: source.to_string() }
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A saturated store and a transaction rolled back under contention are
+/// backpressure the client can retry, so each keeps its own retryable category;
+/// only a fault becomes [`CommitError::Persistence`].
+impl From<PersistenceFailure> for CommitError {
+    fn from(failure: PersistenceFailure) -> CommitError {
+        match failure {
+            PersistenceFailure::Saturated => CommitError::StoreSaturated,
+            PersistenceFailure::RolledBack => CommitError::TransactionContended,
+            fault @ (PersistenceFailure::Unavailable
+            | PersistenceFailure::ConstraintViolated
+            | PersistenceFailure::StatementRejected
+            | PersistenceFailure::RecordMissing
+            | PersistenceFailure::Undecodable
+            | PersistenceFailure::Unencodable
+            | PersistenceFailure::StatementUnbuildable
+            | PersistenceFailure::CapacityExceeded
+            | PersistenceFailure::SchemaMismatch
+            | PersistenceFailure::ContractBroken) => CommitError::Persistence(fault),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::error::CommitError;
+    use crate::{error::CommitError, submission_refusal::SubmissionRefusal};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 
     #[test]
     fn persistence_errors_remain_backend_neutral() {
-        let error = CommitError::Persistence {
-            detail: "connection closed".to_string(),
-        };
-        pretty_assertions::assert_eq!(error.to_string(), "atomic context commit failed: connection closed");
+        let error = CommitError::from(PersistenceFailure::Unavailable);
+        pretty_assertions::assert_eq!(error.to_string(), "atomic context commit failed: the store is unreachable");
+    }
+
+    #[test]
+    fn backpressure_keeps_its_retryable_categories() {
+        assert!(matches!(CommitError::from(PersistenceFailure::Saturated), CommitError::StoreSaturated));
+        assert!(matches!(CommitError::from(PersistenceFailure::RolledBack), CommitError::TransactionContended));
     }
 
     /// A refused submission reads as a statement about the request, so an
     /// operator cannot confuse it with a broker fault in a log line.
     #[test]
     fn refused_submissions_read_as_a_fault_of_the_request() {
-        let error = CommitError::Submission {
-            detail: "entity urn:ngsi-ld:A carries no type".to_string(),
-        };
+        let error = CommitError::from(SubmissionRefusal::UntypedEntityUnidentified);
         pretty_assertions::assert_eq!(
             error.to_string(),
-            "atomic context commit refused the submission: entity urn:ngsi-ld:A carries no type"
+            "atomic context commit refused the submission: an entity write carried no type, but at least one is required"
         );
     }
 }

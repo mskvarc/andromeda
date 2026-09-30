@@ -67,7 +67,7 @@ impl SubscriptionForwardingService {
             .registration_store()
             .get(registration)
             .await
-            .map_err(|error| SubscriptionForwardingError::persistence(error.to_string()))
+            .map_err(SubscriptionForwardingError::from)
     }
 
     /// Carry out one decision for `subscription` at `registration`.

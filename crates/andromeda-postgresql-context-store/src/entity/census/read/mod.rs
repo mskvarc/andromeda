@@ -12,7 +12,7 @@
 //! one statement, so the answer comes from one snapshot and can never pair a
 //! count with attributes from a different moment.
 
-use crate::error::ContextStoreError;
+use crate::{entity::stored_entity_error::StoredEntityError, error::ContextStoreError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_postgresql_branch::table_of;
@@ -126,11 +126,11 @@ pub(super) fn type_key_of(source: impl Iden + 'static) -> SimpleExpr {
 pub(super) fn stored_family(code: i16) -> Result<AttributeType, ContextStoreError> {
     AttributeKind::try_from(code)
         .map(attribute_type_of)
-        .map_err(|error| ContextStoreError::Internal(format!("stored attribute family is not a known code: {error}")))
+        .map_err(|error| StoredEntityError::CensusFamily(error).into())
 }
 
 /// A summed count read back as the unsigned count it is: a ledger never sums
 /// below zero, so a negative sum is a census that drifted from its Entities.
 pub(super) fn stored_count(sum: i64) -> Result<u64, ContextStoreError> {
-    u64::try_from(sum).map_err(|_| ContextStoreError::Internal(format!("the discovery census sums to {sum}, below zero")))
+    u64::try_from(sum).map_err(|_| StoredEntityError::CensusCount { sum }.into())
 }

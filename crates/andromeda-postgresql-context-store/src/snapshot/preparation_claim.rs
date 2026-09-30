@@ -10,6 +10,7 @@ use crate::{
         persistence_error,
         record::{snapshot_select, status_is_preparing},
     },
+    store_fault::undecodable,
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
@@ -120,13 +121,13 @@ pub(crate) async fn next_preparing_snapshot(
     };
     let snapshot = row_to_snapshot(&row).map_err(persistence_error)?;
     let snapshot_key =
-        SnapshotKey::try_from(row.try_get::<i64, _>("snapshot_key").map_err(persistence_error)?).map_err(|error| SnapshotError::internal(error.to_string()))?;
+        SnapshotKey::try_from(row.try_get::<i64, _>("snapshot_key").map_err(persistence_error)?).map_err(|error| SnapshotError::from(undecodable(&error)))?;
     let clone_source_id = row
         .try_get::<Option<String>, _>("clone_source_id")
         .map_err(persistence_error)?
         .map(|source| source.parse::<Identifier>())
         .transpose()
-        .map_err(|error| SnapshotError::internal(format!("Invalid clone source URI in snapshots table: {error}")))?;
+        .map_err(|error| SnapshotError::from(undecodable(&error)))?;
     let query_context = row.try_get::<serde_json::Value, _>("query_context").map_err(persistence_error)?;
     let (sql, values) = claim_statement(snapshot_key, claimed_by, lease_until).build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -207,7 +208,7 @@ pub(crate) async fn lock_claimed_preparation(
         .fetch_optional(&mut **transaction)
         .await
         .map_err(persistence_error)?
-        .map(|raw| SnapshotKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string())))
+        .map(|raw| SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error))))
         .transpose()
 }
 

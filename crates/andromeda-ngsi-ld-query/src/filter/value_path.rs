@@ -142,7 +142,7 @@ pub fn parse_attribute_path(text: &str) -> Result<AttrPath, QueryError> {
     if !cursor.is_exhausted() {
         return Err(QueryError::QUnexpectedToken {
             position: cursor.position(),
-            token: cursor.found_description(),
+            token: cursor.found(),
         });
     }
     Ok(path)

@@ -1,6 +1,6 @@
 //! The persisted lifecycle state of one stored subscription.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// The lifecycle state of a subscription (clause 5.2.12 `status`).

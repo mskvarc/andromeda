@@ -31,7 +31,7 @@ struct UnusedStore;
 /// The error a call into [`UnusedStore`] returns, naming the method so a test
 /// that unexpectedly reaches the store says which capability it wanted.
 fn unused(method: &str) -> EntityError {
-    EntityError::internal(format!("UnusedStore::{method} is not exercised by the read-path unit tests"))
+    panic!("UnusedStore::{method} is not exercised by the read-path unit tests")
 }
 
 #[async_trait]

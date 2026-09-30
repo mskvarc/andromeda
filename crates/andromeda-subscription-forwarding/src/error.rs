@@ -1,9 +1,12 @@
 //! Failures of the distributed subscription side.
 
+use crate::forwarding_invariant::ForwardingInvariant;
 use andromeda_entity::error::EntityError;
 use andromeda_federation::error::FederationError;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_registration::error::RegistrationError;
 use andromeda_subscription::error::SubscriptionError;
 use thiserror::Error;
 
@@ -16,6 +19,9 @@ pub enum SubscriptionForwardingError {
     /// A context source could not be selected or contacted.
     #[error(transparent)]
     Federation(#[from] FederationError),
+    /// The registration store could not be read.
+    #[error(transparent)]
+    Registration(#[from] RegistrationError),
     /// A local entity read failed during re-assembly.
     #[error(transparent)]
     Entity(#[from] EntityError),
@@ -32,11 +38,8 @@ pub enum SubscriptionForwardingError {
         subscription: Identifier,
     },
     /// The mapping store could not complete an operation.
-    #[error("subscription forwarding persistence failed: {detail}")]
-    Persistence {
-        /// Backend-neutral diagnostic.
-        detail: String,
-    },
+    #[error("subscription forwarding persistence failed: {0}")]
+    Persistence(#[source] PersistenceFailure),
     /// A connection pool was saturated before the operation could run.
     ///
     /// Backpressure, not a fault: no backend became free within the acquire
@@ -45,21 +48,28 @@ pub enum SubscriptionForwardingError {
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
     /// An internal invariant could not be satisfied.
-    #[error("subscription forwarding invariant failed: {detail}")]
-    Internal {
-        /// Diagnostic detail.
-        detail: String,
-    },
+    #[error("subscription forwarding invariant failed: {0}")]
+    Internal(#[from] ForwardingInvariant),
 }
 
-impl SubscriptionForwardingError {
-    /// Construct a persistence failure.
-    pub fn persistence(detail: impl Into<String>) -> SubscriptionForwardingError {
-        SubscriptionForwardingError::Persistence { detail: detail.into() }
-    }
-
-    /// Construct an internal invariant failure.
-    pub fn internal(detail: impl Into<String>) -> SubscriptionForwardingError {
-        SubscriptionForwardingError::Internal { detail: detail.into() }
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A saturated store is backpressure the client can retry, so it keeps its own
+/// retryable category; every other failure is a persistence fault.
+impl From<PersistenceFailure> for SubscriptionForwardingError {
+    fn from(failure: PersistenceFailure) -> SubscriptionForwardingError {
+        match failure {
+            PersistenceFailure::Saturated => SubscriptionForwardingError::StoreSaturated,
+            fault @ (PersistenceFailure::RolledBack
+            | PersistenceFailure::Unavailable
+            | PersistenceFailure::ConstraintViolated
+            | PersistenceFailure::StatementRejected
+            | PersistenceFailure::RecordMissing
+            | PersistenceFailure::Undecodable
+            | PersistenceFailure::Unencodable
+            | PersistenceFailure::StatementUnbuildable
+            | PersistenceFailure::CapacityExceeded
+            | PersistenceFailure::SchemaMismatch
+            | PersistenceFailure::ContractBroken) => SubscriptionForwardingError::Persistence(fault),
+        }
     }
 }

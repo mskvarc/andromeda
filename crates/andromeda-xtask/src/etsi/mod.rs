@@ -15,7 +15,7 @@ mod merge;
 mod patch;
 mod robot;
 mod run;
-mod suite;
+pub(crate) mod suite;
 mod venv;
 
 /// Arguments to `xtask etsi`.

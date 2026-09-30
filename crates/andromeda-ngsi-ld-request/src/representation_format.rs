@@ -5,10 +5,12 @@
 //! operation does not render `concise`, and an entity operation does not render
 //! `aggregatedValues`. Each therefore gets its own grammar, and a value outside
 //! it is the clause 6.3.20 failure [`crate::representation_parameter`] defers.
-//! The rejection carries the value as written, because that -- not a restated
-//! grammar -- is what the client has to correct.
+//! The rejection says the value names no rendering of the operation's own.
 
-use crate::representation_parameter::{RepresentationGrammar, RepresentationParameter};
+use crate::{
+    representation_parameter::{RepresentationGrammar, RepresentationParameter},
+    unsupported_representation::UnsupportedRepresentation,
+};
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 
@@ -17,12 +19,14 @@ use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 impl RepresentationGrammar for ResponseFormat {
     const PARAMETER: RepresentationParameter = RepresentationParameter::Format;
 
-    fn parse(written: &str) -> Result<ResponseFormat, String> {
+    fn parse(written: &str) -> Result<ResponseFormat, UnsupportedRepresentation> {
         match written {
             "keyValues" | "simplified" => Ok(ResponseFormat::Simplified),
             "concise" => Ok(ResponseFormat::Concise),
             "normalized" => Ok(ResponseFormat::Normalized),
-            other => Err(other.to_owned()),
+            // `&str` is unbounded, so a catch-all is the only way to close this
+            // match; anything else names no entity rendering.
+            _other => Err(UnsupportedRepresentation::UnknownFormat),
         }
     }
 }
@@ -33,7 +37,7 @@ impl RepresentationGrammar for ResponseFormat {
 impl RepresentationGrammar for TemporalFormat {
     const PARAMETER: RepresentationParameter = RepresentationParameter::Format;
 
-    fn parse(written: &str) -> Result<TemporalFormat, String> {
+    fn parse(written: &str) -> Result<TemporalFormat, UnsupportedRepresentation> {
         match written {
             "temporalValues" => Ok(TemporalFormat::TemporalValues),
             "aggregatedValues" => Ok(TemporalFormat::AggregatedValues),
@@ -42,7 +46,9 @@ impl RepresentationGrammar for TemporalFormat {
             // already refused it when the extension is disabled, so reaching
             // here means the broker serves it.
             "groupedValues" => Ok(TemporalFormat::GroupedValues),
-            other => Err(other.to_owned()),
+            // `&str` is unbounded, so a catch-all is the only way to close this
+            // match; anything else names no temporal rendering.
+            _other => Err(UnsupportedRepresentation::UnknownFormat),
         }
     }
 }

@@ -12,7 +12,10 @@
 use crate::{
     error::ContextStoreError,
     migration_set::branch::{BranchMigrationSet, BranchSchemaVersion, current_branch_version},
-    snapshot::branch_schema::{branch_search_path, steer_search_path},
+    snapshot::{
+        branch_schema::{branch_search_path, steer_search_path},
+        stored_snapshot_error::StoredSnapshotError,
+    },
 };
 use andromeda_context_commit::failure_summary::{FAILURE_SUMMARY_LIMIT, bounded_failure_summary};
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
@@ -85,7 +88,7 @@ pub async fn upgrade_snapshot_branches(pool: &PgPool, set: &BranchMigrationSet) 
     let mut connection = pool.acquire().await?.detach();
     let mut report = BranchUpgradeReport::default();
     for raw in behind {
-        let key = SnapshotKey::try_from(raw).map_err(|error| ContextStoreError::Internal(format!("snapshot branch key: {error}")))?;
+        let key = SnapshotKey::try_from(raw).map_err(StoredSnapshotError::Key)?;
         match upgrade_snapshot(&mut connection, set, key).await {
             Ok(()) => {
                 record(pool, upgraded_statement(key, current)).await?;

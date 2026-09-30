@@ -320,16 +320,12 @@ impl TemporalService {
         context: &ContextSpec,
     ) -> Result<(IndexMap<Identifier, Value>, Vec<TemporalLinkedCandidate>), TemporalError> {
         let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
-        let payloads = self
-            .entity_reader
-            .get_batch(target, &ids)
-            .await
-            .map_err(|error| TemporalError::persistence(error.to_string()))?;
+        let payloads = self.entity_reader.get_batch(target, &ids).await.map_err(TemporalError::from_entity_failure)?;
         // Every stored payload was admitted when it was written, so a type it
         // cannot be read back with is a broker fault, not a missing link.
         let types: HashMap<&Identifier, Vec<EntityTypeName>> = payloads
             .iter()
-            .map(|(id, payload)| Ok((id, extract_types(payload).map_err(TemporalError::internal)?)))
+            .map(|(id, payload)| Ok((id, extract_types(payload).map_err(|error| TemporalError::Internal(error.into()))?)))
             .collect::<Result<_, TemporalError>>()?;
 
         let name_compactor = NameCompactor::new(&self.engine, context);

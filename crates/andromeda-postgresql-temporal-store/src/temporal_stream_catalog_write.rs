@@ -16,6 +16,7 @@ use crate::{
     repo::TemporalRepository,
     resolved_evolutions::{EvolutionOrigin, ResolvedEvolutions},
     stream_grain_binds::{GrainColumns, GrainResolution, ResolvedStreams, StreamGrainBinds, StreamRow},
+    temporal_store_invariant::TemporalStoreInvariant,
     temporal_stream::TemporalCatalogUpsert,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -74,8 +75,8 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::NameLookup`] when a name dictionary cannot
-    /// resolve a name, [`TemporalStoreError::Query`] when the catalogue does not
-    /// return a requested grain, [`TemporalStoreError::Decode`] when it returns
+    /// resolve a name, [`TemporalStoreError::Invariant`] when the catalogue does
+    /// not return a requested grain, [`TemporalStoreError::StoredCatalog`] when it returns
     /// one the chunk did not request, and [`TemporalStoreError::Database`] when
     /// a statement fails.
     pub(crate) async fn resolve_stream_catalog_batch(
@@ -115,10 +116,8 @@ impl TemporalRepository {
             binds.resolve(&mut resolution, existing)?;
         }
         if let Some(missing) = binds.first_missing(&resolution) {
-            return Err(TemporalStoreError::Query(format!(
-                "temporal catalogue upsert returned no stream for attribute '{}'",
-                missing.attribute_name
-            )));
+            // clone: the invariant owns the attribute whose stream the catalogue failed to return.
+            return Err(TemporalStoreInvariant::StreamUnresolved(missing.attribute_name.clone()).into());
         }
         Ok(resolution.into_streams())
     }
@@ -196,7 +195,7 @@ fn stream_insert_batch_sql(target: &ContextTarget, origin: EvolutionOrigin) -> R
     ]);
     insert
         .select_from(select)
-        .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
+        .map_err(TemporalStoreError::StatementBuild)?
         .returning(Query::returning().columns(RETURNED_COLUMNS));
     match origin {
         EvolutionOrigin::Created => {}

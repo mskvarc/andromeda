@@ -31,8 +31,8 @@ pub mod entity_result;
 pub mod error;
 /// The concrete reasons a single forwarded write is reported as a conflict.
 pub mod federation_conflict_reason;
-/// A masked diagnostic for federation failures the client cannot act on.
-pub mod federation_diagnostic;
+/// The invariants federation relies on.
+pub mod federation_invariant;
 /// The concrete reasons a single registered source cannot serve an operation.
 pub mod federation_operation_unsupported;
 /// A fixed in-memory registration store for the forwarding tests.
@@ -48,6 +48,8 @@ pub mod forwarded_payload;
 pub mod forwarded_query;
 /// Forwarded URL construction.
 pub mod forwarding_url;
+/// Why a single forwarded request failed as a bad gateway.
+pub mod gateway_failure;
 /// Resolving a locally-held entity's type for federated-write coverage.
 pub mod local_entity_type;
 /// NGSI-LD operation capability matching.
@@ -70,6 +72,8 @@ pub mod read_binding;
 pub mod read_fan_out;
 /// Registration-information selection.
 pub mod registration_selection;
+/// What a context source answered a forwarded request with when it failed it.
+pub mod remote_answer;
 /// Typed forwarding inputs.
 pub mod request;
 /// Clause 6.3.17 single-source failure classification.
@@ -100,6 +104,7 @@ use crate::{
     config::{FederationConfig, SplitEntities, SplitEntitiesDefault},
     cooldown::CooldownRegistry,
     error::FederationError,
+    federation_invariant::FederationInvariant,
     local_entity_type::LocalEntityTypeResolver,
     outcome::TransportFailure,
 };
@@ -220,9 +225,8 @@ impl FederationService {
             .no_zstd()
             .connect_timeout(config.connect_timeout())
             .build()
-            .map_err(|e| FederationError::internal(format!("Failed to create HTTP client for context source forwarding: {e}")))?;
-        let received_protocol =
-            ReceivedProtocol::try_from("1.1").map_err(|error| FederationError::internal(format!("invalid forwarding protocol: {error}")))?;
+            .map_err(|error| FederationError::from(FederationInvariant::HttpClient(error)))?;
+        let received_protocol = ReceivedProtocol::try_from("1.1").map_err(|error| FederationError::from(FederationInvariant::ForwardingProtocol(error)))?;
         Ok(FederationService {
             http_client,
             csr_repo,
@@ -327,10 +331,10 @@ impl FederationService {
                         partial_range,
                         body: body.to_vec(),
                     }),
-                    Err(error) => Err(classify_transport_failure(&error, timeout)),
+                    Err(error) => Err(classify_transport_failure(error, timeout)),
                 }
             }
-            Err(error) => Err(classify_transport_failure(&error, timeout)),
+            Err(error) => Err(classify_transport_failure(error, timeout)),
         };
         let health = match &outcome {
             Ok(sent) if sent.status.is_success() || sent.status == reqwest::StatusCode::NOT_FOUND => ForwardingOutcome::Succeeded,
@@ -355,13 +359,11 @@ impl FederationService {
 }
 
 /// Sort a `reqwest` failure into the two clause 6.3.17 transport outcomes.
-fn classify_transport_failure(error: &reqwest::Error, timeout: Duration) -> TransportFailure {
+fn classify_transport_failure(error: reqwest::Error, timeout: Duration) -> TransportFailure {
     if error.is_timeout() {
-        TransportFailure::Timeout {
-            detail: format!("no response within {}ms", timeout.as_millis()),
-        }
+        TransportFailure::TimedOut { after: timeout }
     } else {
-        TransportFailure::Unreachable { detail: error.to_string() }
+        TransportFailure::Undelivered(Arc::new(error))
     }
 }
 

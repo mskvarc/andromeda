@@ -7,7 +7,7 @@
 //! 5.6.6 leaves the Temporal Evolution standing when the entity is deleted, so
 //! an answer taken from `entities` would report history that exists as absent.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_attribute_shape::StoredAttributeShape};
+use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_attribute_shape::StoredAttributeShape, stored_catalog_error::StoredCatalogError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
@@ -52,8 +52,8 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails and
-    /// [`TemporalStoreError::Decode`] when a stored identifier or type name is
-    /// not the validated shape the catalogue writes.
+    /// [`TemporalStoreError::StoredCatalog`] when a stored identifier or type
+    /// name is not the validated shape the catalogue writes.
     pub(crate) async fn temporal_entity_types(
         &self,
         target: &ContextTarget,
@@ -67,22 +67,13 @@ impl TemporalRepository {
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         let mut types_by_entity = HashMap::with_capacity(rows.len());
         for row in rows {
-            let raw_id: String = row
-                .try_get("id")
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.id: {error}")))?;
-            let entity_id = raw_id
-                .parse::<Identifier>()
-                .map_err(|error| TemporalStoreError::Decode(format!("temporal_entities.id '{raw_id}': {error}")))?;
-            let raw_types: Vec<String> = row
-                .try_get("types")
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.entity_type_name_keys names: {error}")))?;
+            let raw_id: String = row.try_get("id")?;
+            let entity_id = raw_id.parse::<Identifier>().map_err(StoredCatalogError::EntityId)?;
+            let raw_types: Vec<String> = row.try_get("types")?;
             let types = raw_types
                 .into_iter()
-                .map(|raw| {
-                    raw.parse::<EntityTypeName>()
-                        .map_err(|error| TemporalStoreError::Decode(format!("temporal_entities.entity_type_name_keys name '{raw}': {error}")))
-                })
-                .collect::<Result<Vec<EntityTypeName>, TemporalStoreError>>()?;
+                .map(|raw| raw.parse::<EntityTypeName>().map_err(StoredCatalogError::EntityTypeName))
+                .collect::<Result<Vec<EntityTypeName>, StoredCatalogError>>()?;
             types_by_entity.insert(entity_id, types);
         }
         Ok(types_by_entity)
@@ -104,7 +95,7 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails and
-    /// [`TemporalStoreError::Decode`] when a stored name, family code or
+    /// [`TemporalStoreError::StoredCatalog`] when a stored name, family code or
     /// projected shape code is not one the dictionary or the projection knows.
     pub(crate) async fn stored_attribute_shapes(
         &self,
@@ -119,20 +110,12 @@ impl TemporalRepository {
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         let mut shapes_by_attribute: HashMap<AttributeName, HashSet<StoredAttributeShape>> = HashMap::new();
         for row in rows {
-            let raw_name: String = row
-                .try_get("name")
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_names.name: {error}")))?;
-            let name = raw_name
-                .parse::<AttributeName>()
-                .map_err(|error| TemporalStoreError::Decode(format!("attribute_names.name '{raw_name}': {error}")))?;
-            let stored_kind: i16 = row
-                .try_get(Iden::to_string(&AttributeHistory::AttributeKind).as_str())
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.attribute_kind: {error}")))?;
-            let kind = AttributeKind::try_from(stored_kind).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
-            let code: i16 = row
-                .try_get(Iden::to_string(&RecordedShapeColumn).as_str())
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history recorded shape: {error}")))?;
-            let shape = RecordedShape::try_from(code).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
+            let raw_name: String = row.try_get("name")?;
+            let name = raw_name.parse::<AttributeName>().map_err(StoredCatalogError::AttributeName)?;
+            let stored_kind: i16 = row.try_get(Iden::to_string(&AttributeHistory::AttributeKind).as_str())?;
+            let kind = AttributeKind::try_from(stored_kind).map_err(StoredCatalogError::AttributeKind)?;
+            let code: i16 = row.try_get(Iden::to_string(&RecordedShapeColumn).as_str())?;
+            let shape = RecordedShape::try_from(code).map_err(StoredCatalogError::RecordedShape)?;
             shapes_by_attribute.entry(name).or_default().insert(StoredAttributeShape { kind, shape });
         }
         Ok(shapes_by_attribute)
@@ -160,7 +143,8 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails and
-    /// [`TemporalStoreError::Decode`] when a stored discriminator is not a URI.
+    /// [`TemporalStoreError::StoredCatalog`] when a stored discriminator is not a
+    /// URI.
     pub(crate) async fn attribute_dataset_ids(
         &self,
         target: &ContextTarget,
@@ -172,13 +156,10 @@ impl TemporalRepository {
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         rows.iter()
             .map(|row| {
-                row.try_get::<Option<String>, _>("dataset_id")
-                    .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_attribute_streams.dataset_id: {error}")))?
-                    .map(|raw| {
-                        raw.parse::<Identifier>()
-                            .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_attribute_streams.dataset_id '{raw}': {error}")))
-                    })
-                    .transpose()
+                Ok(row
+                    .try_get::<Option<String>, _>("dataset_id")?
+                    .map(|raw| raw.parse::<Identifier>().map_err(StoredCatalogError::StreamDatasetId))
+                    .transpose()?)
             })
             .collect()
     }
@@ -188,15 +169,15 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails and
-    /// [`TemporalStoreError::Decode`] when a stored name is not an attribute IRI.
+    /// [`TemporalStoreError::StoredCatalog`] when a stored name is not an
+    /// attribute IRI.
     pub(crate) async fn temporal_attribute_names(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<Vec<AttributeName>, TemporalStoreError> {
         let (sql, values) = temporal_attribute_names_query(schema_iden(target).as_ref(), entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
                 let raw: String = row.try_get("attribute_name")?;
-                raw.parse::<AttributeName>()
-                    .map_err(|error| TemporalStoreError::Decode(format!("Invalid attribute_names.name '{raw}': {error}")))
+                Ok(raw.parse::<AttributeName>().map_err(StoredCatalogError::AttributeName)?)
             })
             .collect()
     }

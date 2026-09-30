@@ -20,6 +20,7 @@ use crate::{
         temporal_history_sink::TemporalHistorySink,
         temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
+    temporal_not_found_reason::TemporalNotFoundReason,
     temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_commit::{
@@ -47,6 +48,7 @@ use andromeda_ngsi_ld_query::{
     temporal::{compiled::CompiledTemporalQuery, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use std::{
@@ -178,11 +180,37 @@ impl TemporalIntentQueue for RecordingQueue {
     }
 }
 
+/// How the recording sink refuses an append while it is told to.
+#[derive(Clone, Copy)]
+enum SinkRejection {
+    /// The history store is unreachable.
+    StoreUnavailable,
+    /// A refusal whose rendering runs past the failure-summary bound: three
+    /// identifiers near the identifier limit in one not-found reason.
+    LongDiagnostic,
+}
+
+impl SinkRejection {
+    fn error(self) -> TemporalError {
+        match self {
+            SinkRejection::StoreUnavailable => TemporalError::from(PersistenceFailure::Unavailable),
+            SinkRejection::LongDiagnostic => {
+                let long = |prefix: &str| format!("{prefix}{}", "x".repeat(1000));
+                TemporalError::NotFound(TemporalNotFoundReason::AttributeDatasetOnEntity {
+                    attribute: long("https://example.org/").parse().expect("a valid long attribute name"),
+                    dataset_id: Box::new(long("urn:ngsi-ld:Dataset:").parse().expect("a valid long dataset identifier")),
+                    entity: long("urn:ngsi-ld:Entity:").parse().expect("a valid long entity identifier"),
+                })
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 struct RecordingSinkState {
     observations: HashMap<WriteId, (Identifier, Vec<TemporalHistoryObservation>)>,
     /// The failure every append reports while set.
-    reject: Option<String>,
+    reject: Option<SinkRejection>,
 }
 
 #[derive(Default)]
@@ -192,11 +220,11 @@ struct RecordingSink {
 
 impl RecordingSink {
     async fn reject(&self) {
-        self.reject_with("recording sink rejected append".to_owned()).await;
+        self.reject_with(SinkRejection::StoreUnavailable).await;
     }
 
-    async fn reject_with(&self, detail: String) {
-        self.state.lock().await.reject = Some(detail);
+    async fn reject_with(&self, rejection: SinkRejection) {
+        self.state.lock().await.reject = Some(rejection);
     }
 
     async fn logical_effect_count(&self) -> usize {
@@ -208,8 +236,8 @@ impl RecordingSink {
 impl TemporalHistorySink for RecordingSink {
     async fn append(&self, _target: &ContextTarget, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
         let mut state = self.state.lock().await;
-        if let Some(detail) = &state.reject {
-            return Err(TemporalError::persistence(detail.clone())); // clone: the error owns its detail; the sink keeps rejecting.
+        if let Some(rejection) = state.reject {
+            return Err(rejection.error());
         }
         let observations = intent
             .history_entries()
@@ -568,7 +596,7 @@ async fn a_long_sink_failure_summary_is_cut_to_the_column_limit() {
     let sink = Arc::new(RecordingSink::default());
     let (pending, _entity_id) = fixture();
     queue.insert(pending).await;
-    sink.reject_with("x".repeat(5000)).await;
+    sink.reject_with(SinkRejection::LongDiagnostic).await;
     drain(Arc::clone(&queue), Arc::clone(&sink))
         .execute(instant())
         .await

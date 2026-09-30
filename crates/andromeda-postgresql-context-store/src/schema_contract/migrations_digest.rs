@@ -71,15 +71,9 @@ impl TryFrom<&str> for MigrationsDigest {
     /// two different texts stamp the same contract.
     fn try_from(value: &str) -> Result<MigrationsDigest, MigrationsDigestError> {
         let mut bytes = [0_u8; 32];
-        hex::decode_to_slice(value, &mut bytes).map_err(|error| MigrationsDigestError::Unreadable {
-            found: value.to_owned(),
-            detail: error.to_string(),
-        })?;
+        hex::decode_to_slice(value, &mut bytes).map_err(MigrationsDigestError::NotHexadecimal)?;
         if hex::encode(bytes) != value {
-            return Err(MigrationsDigestError::Unreadable {
-                found: value.to_owned(),
-                detail: "a migrations digest is stored as lowercase hexadecimal".to_owned(),
-            });
+            return Err(MigrationsDigestError::NotLowercase);
         }
         Ok(MigrationsDigest(bytes))
     }
@@ -88,14 +82,13 @@ impl TryFrom<&str> for MigrationsDigest {
 /// What refuses a stored value the digest domain cannot hold.
 #[derive(Debug, thiserror::Error)]
 pub enum MigrationsDigestError {
-    /// The stored text is not 64 lowercase hexadecimal digits.
-    #[error("migrations digest '{found}' is not 64 lowercase hexadecimal digits: {detail}")]
-    Unreadable {
-        /// The text the database holds.
-        found: String,
-        /// Why it could not be read.
-        detail: String,
-    },
+    /// The stored text is not 64 hexadecimal digits.
+    #[error("a stored migrations digest is not 64 hexadecimal digits: {0}")]
+    NotHexadecimal(#[source] hex::FromHexError),
+    /// The stored text spells the digest with uppercase hexadecimal digits,
+    /// which the stamp never writes.
+    #[error("a stored migrations digest is not written in lowercase hexadecimal")]
+    NotLowercase,
 }
 
 #[cfg(test)]
@@ -192,10 +185,16 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_digest_that_is_not_canonical_lowercase_hexadecimal_is_refused() {
-        for candidate in ["", "abc", &"A".repeat(64), &"z".repeat(64)] {
+    fn a_stored_digest_that_is_not_64_hexadecimal_digits_is_refused() {
+        for candidate in ["", "abc", &"z".repeat(64)] {
             let parsed = MigrationsDigest::try_from(candidate);
-            assert!(matches!(parsed, Err(MigrationsDigestError::Unreadable { .. })), "{candidate:?} must be refused");
+            assert!(matches!(parsed, Err(MigrationsDigestError::NotHexadecimal(_))), "{candidate:?} must be refused");
         }
+    }
+
+    #[test]
+    fn a_stored_digest_in_uppercase_hexadecimal_is_refused_as_non_canonical() {
+        let parsed = MigrationsDigest::try_from("A".repeat(64).as_str());
+        assert!(matches!(parsed, Err(MigrationsDigestError::NotLowercase)), "{parsed:?}");
     }
 }

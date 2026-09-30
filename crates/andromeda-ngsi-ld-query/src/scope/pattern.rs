@@ -1,6 +1,6 @@
 //! One scope path pattern of a `scopeQ` expression (clause 4.19).
 
-use crate::error::QueryError;
+use crate::{error::QueryError, scope::pattern_fault::ScopePatternFault};
 use andromeda_ngsi_ld_lexicon::scope::level::{ScopeLevel, ScopeLevelBuf, level_characters_beyond_limit};
 use std::fmt::{self, Write};
 
@@ -40,12 +40,12 @@ impl ScopeLabel {
     /// label the pattern is answered through can hold — which would otherwise
     /// reach PostgreSQL as an `lquery` cast and fail there.
     pub fn parse(raw: &str) -> Result<ScopeLabel, QueryError> {
-        if level_characters_beyond_limit(raw).is_some() {
-            return Err(QueryError::ScopePatternInvalid(raw.to_string()));
+        if let Some(characters) = level_characters_beyond_limit(raw) {
+            return Err(QueryError::ScopePatternInvalid(ScopePatternFault::LevelTooLong { characters }));
         }
         ScopeLevel::new(raw)
             .map(|level| ScopeLabel(level.to_owned()))
-            .map_err(|_| QueryError::ScopePatternInvalid(raw.to_string()))
+            .map_err(|_| QueryError::ScopePatternInvalid(ScopePatternFault::InvalidLevel))
     }
 
     /// The label as written.
@@ -77,7 +77,7 @@ impl ScopePattern {
         let trimmed = raw.trim();
         let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
         if trimmed.is_empty() {
-            return Err(QueryError::ScopePatternInvalid(raw.to_string()));
+            return Err(QueryError::ScopePatternInvalid(ScopePatternFault::Empty));
         }
 
         let mut segments = Vec::new();
@@ -86,7 +86,7 @@ impl ScopePattern {
             let segment = match part {
                 SINGLE_LEVEL_TOKEN => ScopeSegment::SingleLevel,
                 MULTI_LEVEL_TOKEN if parts.peek().is_none() => ScopeSegment::MultiLevel,
-                MULTI_LEVEL_TOKEN => return Err(QueryError::ScopePatternInvalid(raw.to_string())),
+                MULTI_LEVEL_TOKEN => return Err(QueryError::ScopePatternInvalid(ScopePatternFault::MultiLevelNotLast)),
                 // `&str` is unbounded, so a catch-all is the only way to close
                 // this match; anything that is not a wildcard is a level name.
                 label => ScopeSegment::Label(ScopeLabel::parse(label)?),
@@ -181,7 +181,10 @@ mod tests {
     fn a_label_beyond_the_character_bound_is_a_malformed_pattern() {
         let longest = "a".repeat(LEVEL_CHARACTER_LIMIT);
         assert!(ScopePattern::parse(&format!("/{longest}")).is_ok(), "the bound itself is admitted");
-        assert!(matches!(ScopePattern::parse(&format!("/{longest}a")), Err(QueryError::ScopePatternInvalid(_))));
+        assert!(matches!(
+            ScopePattern::parse(&format!("/{longest}a")),
+            Err(QueryError::ScopePatternInvalid(ScopePatternFault::LevelTooLong { characters: 1001 }))
+        ));
         assert!(matches!(
             ScopePattern::parse(&format!("/A/{longest}a/C")),
             Err(QueryError::ScopePatternInvalid(_))
@@ -255,7 +258,10 @@ mod tests {
     fn a_multi_level_wildcard_is_only_valid_last() {
         // `#` stands for the remainder of the path, so nothing can follow it.
         let error = ScopePattern::parse("/A/#/C").expect_err("must reject");
-        assert!(matches!(error, QueryError::ScopePatternInvalid(_)), "got {error:?}");
+        assert!(
+            matches!(error, QueryError::ScopePatternInvalid(ScopePatternFault::MultiLevelNotLast)),
+            "got {error:?}"
+        );
     }
 
     #[test]

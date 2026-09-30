@@ -18,6 +18,7 @@ use crate::{
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_consequence_publisher::CommitConsequencePublisher,
+    commit_invariant::CommitInvariant,
     commit_replay::CommitReplay,
     committer::{CommitFuture, ContextCommitter, consequences_land, validate_submission},
     deleted_entity::DeletedEntity,
@@ -125,11 +126,7 @@ impl PostgresAtomicCommitter {
         let outcomes = outcomes
             .into_iter()
             .enumerate()
-            .map(|(index, outcome)| {
-                outcome.ok_or_else(|| CommitError::Invariant {
-                    detail: format!("atomic write {index} produced no outcome"),
-                })
-            })
+            .map(|(index, outcome)| outcome.ok_or(CommitError::Invariant(CommitInvariant::MissingOutcome { index })))
             .collect::<Result<Vec<WriteOutcome>, CommitError>>()?;
         Ok(EntityMutations { outcomes, keys })
     }
@@ -297,7 +294,7 @@ impl PostgresAtomicCommitter {
             return Ok(Vec::new());
         }
         validate_submission(writes)?;
-        let mut tx = self.pool.begin().await.map_err(database)?;
+        let mut tx = self.pool.begin().await.map_err(|error| database(&error))?;
         // Every fallible phase below borrows this owned transaction. SQLx
         // rolls it back when an early `?` drops it, so no entity mutation
         // can survive a failed history, projection, notification or side-effect
@@ -306,7 +303,7 @@ impl PostgresAtomicCommitter {
             settle(&mut tx, lease).await?;
         }
         if writes.is_empty() {
-            tx.commit().await.map_err(database)?;
+            tx.commit().await.map_err(|error| database(&error))?;
             return Ok(Vec::new());
         }
         let EntityMutations { outcomes, keys } = self.apply_entities(&mut tx, target, writes).await?;
@@ -334,7 +331,7 @@ impl PostgresAtomicCommitter {
         let (next, notifications) = notification_events::apply(&mut tx, target, &landed, &record, next, self.attribute_names.as_ref()).await?;
         let side_effects = side_effects::apply(&mut tx, target, &landed, &record, next).await?;
 
-        tx.commit().await.map_err(database)?;
+        tx.commit().await.map_err(|error| database(&error))?;
         tracing::debug!(write_id = %record.write_id(), writes = writes.len(), "atomic context write committed");
         if !intents.is_empty()
             && let HistoryPlacement::Queued(publisher) = placement

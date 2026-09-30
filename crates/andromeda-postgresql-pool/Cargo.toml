@@ -9,7 +9,9 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-persistence-failure.workspace = true
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"

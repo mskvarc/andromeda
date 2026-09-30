@@ -1,11 +1,15 @@
 //! Composition of temporal intent policy with drain runtime mechanics.
 
-use crate::tenant_factory::{background_pacer::BackgroundPacer, error::TenantAssemblyError};
+use crate::tenant_factory::{
+    assembly_invariant::{AssemblyInvariant, CountSetting},
+    background_pacer::BackgroundPacer,
+    error::TenantAssemblyError,
+};
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
-    failure::TaskFailure,
+    failure::{FailureClass, TaskFailure},
     registration::TaskRegistration,
     restart_policy::RestartPolicy,
     shutdown_policy::ShutdownPolicy,
@@ -69,14 +73,14 @@ pub(super) fn register_temporal_intent_drain(
 ) -> Result<TemporalIntentRegistration, TenantAssemblyError> {
     let fallback_floor = config.intent_fallback.duration();
     let fallback_ceiling = config.intent_fallback_max.duration().max(config.intent_fallback.duration());
-    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(AssemblyInvariant::from)?;
     let batch_size = NonZeroU32::new(config.intent_batch_size)
         .map(TemporalIntentBatchSize::new)
-        .ok_or_else(|| TenantAssemblyError::invariant("temporal intent batch size must be non-zero"))?;
-    let stuck_after = NonZeroU32::new(config.intent_stuck_after_attempts)
-        .ok_or_else(|| TenantAssemblyError::invariant("temporal intent stuck threshold must be non-zero"))?;
-    let retry_policy = TemporalIntentRetryPolicy::new(config.intent_retry.duration(), config.intent_retry_max.duration(), stuck_after)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+        .ok_or(AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentBatchSize))?;
+    let stuck_after =
+        NonZeroU32::new(config.intent_stuck_after_attempts).ok_or(AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentStuckAfterAttempts))?;
+    let retry_policy =
+        TemporalIntentRetryPolicy::new(config.intent_retry.duration(), config.intent_retry_max.duration(), stuck_after).map_err(AssemblyInvariant::from)?;
     let drain = Arc::new(TemporalIntentDrain::new(
         queue,
         pending,
@@ -89,7 +93,7 @@ pub(super) fn register_temporal_intent_drain(
         },
     ));
     let scheduled_drain = Arc::clone(&drain);
-    let name = TaskName::try_from("temporal-intent-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from("temporal-intent-delivery").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
@@ -103,7 +107,7 @@ pub(super) fn register_temporal_intent_drain(
             pacer
                 .run_drain_pass(execution.cause(), async move {
                     let now = DateTime::<Utc>::from(execution.cutoff());
-                    let outcome = drain.execute(now).await.map_err(|error| classify_temporal_drain_failure(&error))?;
+                    let outcome = drain.execute(now).await.map_err(classify_temporal_drain_failure)?;
                     if outcome.work_may_remain {
                         Ok(DrainPassOutcome::WorkMayRemain)
                     } else {
@@ -114,9 +118,7 @@ pub(super) fn register_temporal_intent_drain(
         }
     });
     let (wake, receiver) = wake_channel();
-    supervisor
-        .register_drain(task, receiver)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    supervisor.register_drain(task, receiver).map_err(AssemblyInvariant::from)?;
     Ok(TemporalIntentRegistration {
         publisher: Arc::new(RuntimeTemporalIntentPublisher { wake }),
         mutation_barrier: drain,
@@ -124,13 +126,12 @@ pub(super) fn register_temporal_intent_drain(
 }
 
 /// Exhaustively classify temporal policy failures at composition.
-fn classify_temporal_drain_failure(error: &TemporalError) -> TaskFailure {
-    let summary = error.to_string();
-    match error {
+const fn classify_temporal_drain_failure(error: TemporalError) -> TaskFailure<TemporalError> {
+    let class = match &error {
         TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::StoreSaturated | TemporalError::TransactionContended => {
-            TaskFailure::transient(summary)
+            FailureClass::Transient
         }
-        TemporalError::Internal(_) => TaskFailure::invariant_violation(summary),
+        TemporalError::Internal(_) => FailureClass::InvariantViolation,
         TemporalError::Validation(_)
         | TemporalError::NotFound(_)
         | TemporalError::OperationNotSupported(_)
@@ -138,6 +139,7 @@ fn classify_temporal_drain_failure(error: &TemporalError) -> TaskFailure {
         | TemporalError::JsonLd(_)
         | TemporalError::Query(_)
         | TemporalError::Request(_)
-        | TemporalError::Rendering(_) => TaskFailure::permanent(summary),
-    }
+        | TemporalError::Rendering(_) => FailureClass::Permanent,
+    };
+    TaskFailure::new(class, error)
 }

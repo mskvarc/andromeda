@@ -23,7 +23,7 @@ use crate::engine::{
     context_url::{is_absolute_iri, is_full_iri},
     term_map::{resolved_term::ResolvedTerm, user_term::DeclaredTerm},
 };
-use iri_rs::IriBuf;
+use iri_rs::{InvalidIri, IriBuf};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
@@ -49,23 +49,19 @@ impl DeclaredIri {
 /// Every such context is handed to the JSON-LD processor instead, which is what
 /// keeps a shape the fastpath does not model from expanding differently on the
 /// two write paths.
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
-#[error("the term '{term}' declares the IRI '{declared}', which the active context resolves to no absolute IRI")]
-pub(crate) struct UnresolvableTermIri {
-    /// The term whose declaration could not be resolved.
-    term: Box<str>,
-    /// The IRI text that declaration wrote.
-    declared: Box<str>,
-}
-
-impl UnresolvableTermIri {
-    /// Report one declaration the active context cannot resolve.
-    fn new(term: &str, declared: &str) -> UnresolvableTermIri {
-        UnresolvableTermIri {
-            term: Box::<str>::from(term),
-            declared: Box::<str>::from(declared),
-        }
-    }
+#[derive(Debug, Error)]
+pub(crate) enum UnresolvableTermIri {
+    /// The declaration reaches itself through a chain of prefixes: the "cyclic
+    /// IRI mapping" of clause 4.1.2.
+    #[error("a term declaration reaches itself through a chain of prefixes")]
+    CyclicPrefix,
+    /// The declaration names neither an absolute IRI nor a compact IRI whose
+    /// prefix the active context defines.
+    #[error("a term declaration names neither an absolute IRI nor a defined prefix")]
+    NoExpansion,
+    /// The declaration's expansion does not parse as an IRI.
+    #[error("a term declaration expands to a malformed IRI")]
+    Malformed(#[source] InvalidIri<String>),
 }
 
 /// Resolve every declaration one parsed context document makes against the
@@ -113,9 +109,9 @@ fn resolve_one(
         return Ok(());
     };
     if !open.insert(Box::<str>::from(term)) {
-        return Err(UnresolvableTermIri::new(term, declaration.iri.as_str()));
+        return Err(UnresolvableTermIri::CyclicPrefix);
     }
-    let expansion = expand_declaration(term, declaration, declared, active, resolved, open);
+    let expansion = expand_declaration(declaration, declared, active, resolved, open);
     open.remove(term);
     let iri = expansion?;
     resolved.insert(
@@ -133,7 +129,6 @@ fn resolve_one(
 
 /// Expand one declaration's IRI text the way clause 4.1.3 expands it.
 fn expand_declaration(
-    term: &str,
     declaration: &DeclaredTerm,
     declared: &HashMap<Box<str>, DeclaredTerm>,
     active: &HashMap<Box<str>, ResolvedTerm>,
@@ -142,7 +137,7 @@ fn expand_declaration(
 ) -> Result<IriBuf, UnresolvableTermIri> {
     let text = declaration.iri.as_str();
     if is_full_iri(text) {
-        return iri_of(term, text);
+        return iri_of(text);
     }
     if let Some((prefix, suffix)) = text.split_once(':') {
         // Clause 4.1.3: `_` opens a blank node identifier and `//` opens an
@@ -151,17 +146,17 @@ fn expand_declaration(
         if prefix != "_" && !suffix.starts_with("//") {
             resolve_one(prefix, declared, active, resolved, open)?;
             if let Some(namespace) = prefix_namespace(prefix, active, resolved) {
-                return iri_of(term, &format!("{namespace}{suffix}"));
+                return iri_of(&format!("{namespace}{suffix}"));
             }
         }
         // No context defines the prefix, so the text is already an absolute IRI
         // and stands as written -- the reading the processor gives
         // `did:example:1`.
         if is_absolute_iri(text) {
-            return iri_of(term, text);
+            return iri_of(text);
         }
     }
-    Err(UnresolvableTermIri::new(term, text))
+    Err(UnresolvableTermIri::NoExpansion)
 }
 
 /// The namespace a prefix names, taking this document's own declarations ahead
@@ -176,15 +171,15 @@ fn prefix_namespace<'a>(prefix: &str, active: &'a HashMap<Box<str>, ResolvedTerm
     resolved.get(prefix).or_else(|| active.get(prefix)).and_then(ResolvedTerm::prefix_mapping)
 }
 
-/// Validate one expansion as an IRI, attributing a failure to its term.
-fn iri_of(term: &str, expansion: &str) -> Result<IriBuf, UnresolvableTermIri> {
-    IriBuf::new(expansion.to_owned()).map_err(|_malformed| UnresolvableTermIri::new(term, expansion))
+/// Validate one expansion as an IRI.
+fn iri_of(expansion: &str) -> Result<IriBuf, UnresolvableTermIri> {
+    IriBuf::new(expansion.to_owned()).map_err(UnresolvableTermIri::Malformed)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::engine::term_map::{
-        declared_iri::{DeclaredIri, resolve_term_declarations},
+        declared_iri::{DeclaredIri, UnresolvableTermIri, resolve_term_declarations},
         resolved_term::ResolvedTerm,
         user_term::DeclaredTerm,
     };
@@ -336,7 +331,7 @@ mod tests {
 
         let error = resolve_term_declarations(&declared, &HashMap::new()).expect_err("a bare term names no IRI");
 
-        assert!(error.to_string().contains("Place"), "{error}");
+        assert!(matches!(error, UnresolvableTermIri::NoExpansion), "{error}");
     }
 
     /// Clause 4.1.2's cyclic IRI mapping: two terms that name each other as a
@@ -345,7 +340,9 @@ mod tests {
     fn a_cycle_between_two_prefix_declarations_is_refused() {
         let declared = document(&[("alpha", simple("beta:a/")), ("beta", simple("alpha:b/"))]);
 
-        resolve_term_declarations(&declared, &HashMap::new()).expect_err("a prefix cycle resolves to nothing");
+        let error = resolve_term_declarations(&declared, &HashMap::new()).expect_err("a prefix cycle resolves to nothing");
+
+        assert!(matches!(error, UnresolvableTermIri::CyclicPrefix), "{error}");
     }
 
     /// A blank node identifier is not a compact IRI, and it is not an absolute
@@ -354,6 +351,8 @@ mod tests {
     fn a_blank_node_declaration_is_refused_rather_than_resolved_through_a_prefix() {
         let declared = document(&[("_", simple("http://example.org/")), ("Place", simple("_:Place"))]);
 
-        resolve_term_declarations(&declared, &HashMap::new()).expect_err("a blank node identifier is not a term IRI");
+        let error = resolve_term_declarations(&declared, &HashMap::new()).expect_err("a blank node identifier is not a term IRI");
+
+        assert!(matches!(error, UnresolvableTermIri::NoExpansion), "{error}");
     }
 }

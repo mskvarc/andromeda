@@ -10,7 +10,7 @@
 //! context URLs go into `Link` headers, and what the body looks like after the
 //! registration's `contextSourceInfo` has been applied.
 
-use crate::error::FederationError;
+use crate::{error::FederationError, federation_invariant::FederationInvariant};
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
@@ -120,9 +120,9 @@ pub(crate) async fn build_forwarded_payload(
 ) -> Result<ForwardedPayload, FederationError> {
     let configured = match (&info.jsonld_context, configured_context) {
         (Some(from_info), _) => Some(from_info.clone()), // clone: the payload owns the IRI
-        (None, Some(member)) => Some(
-            IriRefBuf::new(member.as_str().to_string()).map_err(|error| FederationError::internal(format!("invalid registration jsonldContext: {error}")))?,
-        ),
+        (None, Some(member)) => {
+            Some(IriRefBuf::new(member.as_str().to_string()).map_err(|error| FederationError::from(FederationInvariant::RegistrationJsonldContext(error)))?)
+        }
         (None, None) => None,
     };
     let target = target_context(inbound, configured.as_ref());

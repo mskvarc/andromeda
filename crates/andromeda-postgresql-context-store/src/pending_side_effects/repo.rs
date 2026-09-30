@@ -109,7 +109,7 @@ impl PendingSideEffectsRepository {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::Internal`] when the payload cannot be
+    /// Returns [`ContextStoreError::PayloadEncoding`] when the payload cannot be
     /// encoded as JSON, when the consequence base does not fit the column's
     /// signed range, or when the insert statement cannot be built, and
     /// [`ContextStoreError::Database`] when the insert fails.
@@ -119,19 +119,15 @@ impl PendingSideEffectsRepository {
         base_ordinal: WriteOrdinal,
         payload: &PersistedBatchSideEffectJob,
     ) -> Result<(), ContextStoreError> {
-        let payload_json =
-            serde_json::to_value(payload).map_err(|err| ContextStoreError::Internal(format!("failed to encode pending_side_effects payload: {err}")))?;
-        let base_ordinal = base_ordinal
-            .as_i32()
-            .map_err(|error| ContextStoreError::Internal(format!("pending side-effect consequence base is out of range: {error}")))?;
+        let payload_json = serde_json::to_value(payload).map_err(ContextStoreError::PayloadEncoding)?;
+        let base_ordinal = base_ordinal.as_i32()?;
         let statement = enqueue_statement(
             SideEffectJobId::mint().as_uuid(),
             record.write_id().as_uuid(),
             record.recorded_at(),
             base_ordinal,
             payload_json,
-        )
-        .map_err(|error| ContextStoreError::Internal(format!("failed to build pending_side_effects insert: {error}")))?;
+        )?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut **tx).await?;
         Ok(())

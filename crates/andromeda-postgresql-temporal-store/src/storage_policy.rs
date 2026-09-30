@@ -16,6 +16,7 @@ use crate::{
     error::TemporalStoreError,
     repo::TemporalRepository,
     schema_ddl::timescale_policy::{HypertableName, add_columnstore_policy, remove_columnstore_policy},
+    temporal_store_invariant::TemporalStoreInvariant,
 };
 use andromeda_postgresql_seaquery::timescale::{chunk_interval_statement, columnstore_policy_statement, set_chunk_time_interval};
 use andromeda_temporal::storage_policy::TemporalStoragePolicy;
@@ -102,7 +103,7 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when an information view cannot
-    /// be read or a policy statement fails, [`TemporalStoreError::Decode`] when
+    /// be read or a policy statement fails, [`TemporalStoreError::Invariant`] when
     /// a stored interval does not decode, and
     /// [`TemporalStoreError::ColumnstoreSettingsDrift`] when a hypertable
     /// already carries the columnstore under other settings.
@@ -159,7 +160,7 @@ const fn plan_columnstore_reconciliation(support: ColumnstoreSupport, configured
 async fn reconcile_chunk_interval(pool: &PgPool, hypertable: HypertableName, days: NonZeroU32) -> Result<PolicyReconciliation, TemporalStoreError> {
     let (sql, values) = chunk_interval_statement(hypertable.into()).build_sqlx(PostgresQueryBuilder);
     let stored: Option<PgInterval> = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_optional(pool).await?;
-    let stored = stored.ok_or_else(|| TemporalStoreError::Decode(format!("{hypertable} declares no time dimension to reconcile")))?;
+    let stored = stored.ok_or(TemporalStoreInvariant::NoTimeDimension(hypertable))?;
     if interval_seconds(&stored) == day_seconds(days) {
         return Ok(PolicyReconciliation::Unchanged);
     }

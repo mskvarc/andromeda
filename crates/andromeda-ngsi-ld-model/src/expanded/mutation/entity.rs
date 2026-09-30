@@ -204,7 +204,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
             if no_overwrite {
                 not_appended.push(
                     key.parse::<AttributeName>()
-                        .map_err(|_| ExpandedEntityError::InvalidAttributeName { name: key.clone() })?,
+                        .map_err(|source| ExpandedEntityError::InvalidAttributeName { source })?,
                 );
             } else {
                 // clone: both the key and the value are borrowed from the fragment and stored owned.
@@ -234,7 +234,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
             if any_skipped {
                 not_appended.push(
                     key.parse::<AttributeName>()
-                        .map_err(|_| ExpandedEntityError::InvalidAttributeName { name: key.clone() })?,
+                        .map_err(|source| ExpandedEntityError::InvalidAttributeName { source })?,
                 );
             }
         } else {
@@ -298,7 +298,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Attr
             if !entity_obj.contains_key(key) {
                 not_updated.push(
                     key.parse::<AttributeName>()
-                        .map_err(|_| ExpandedEntityError::InvalidAttributeName { name: key.clone() })?,
+                        .map_err(|source| ExpandedEntityError::InvalidAttributeName { source })?,
                 );
                 continue;
             }

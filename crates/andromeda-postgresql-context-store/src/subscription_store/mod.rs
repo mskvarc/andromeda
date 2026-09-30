@@ -3,6 +3,7 @@
 //! - [`rows`] — `SubscriptionRow` persistence struct.
 //! - [`params`] — borrowed input structs.
 //! - [`mapper`] — PgRow → row → domain conversion.
+//! - [`stored_subscription_error`] — a stored row that does not read back.
 //! - [`stored_kind`] — which family a statement addresses.
 //! - [`status_code`] — the number a lifecycle state is stored as.
 //! - [`interned_attributes`] — the dictionary keys of the attribute lists.
@@ -35,6 +36,8 @@ pub mod rows;
 pub(crate) mod status_code;
 /// Which subscription family a statement addresses.
 mod stored_kind;
+/// What a subscription row that no longer reads back as a subscription looks like.
+pub mod stored_subscription_error;
 /// The number a subscription's `notificationTrigger` list stores each trigger
 /// condition as.
 pub(crate) mod trigger_code;

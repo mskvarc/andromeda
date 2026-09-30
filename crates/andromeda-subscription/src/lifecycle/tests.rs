@@ -1,6 +1,7 @@
 use crate::{
     csource::CsrSubscriptionVariant,
     endpoint_admission::SubscriptionEndpointValidator,
+    endpoint_refusal::EndpointRefusal,
     error::SubscriptionError,
     forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook, SubscriptionTeardown},
     lifecycle::{SubscriptionService, generate_id},
@@ -57,7 +58,7 @@ struct DeletingStore {
 }
 
 fn unused(method: &str) -> SubscriptionError {
-    SubscriptionError::internal(format!("DeletingStore::{method} is not exercised by the deletion tests"))
+    panic!("{}", format!("DeletingStore::{method} is not exercised by the deletion tests"))
 }
 
 #[async_trait]
@@ -178,7 +179,7 @@ impl SubscriptionForwardingHook for RecordingHook {
 struct AcceptingEndpointValidator;
 
 impl SubscriptionEndpointValidator for AcceptingEndpointValidator {
-    fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>) -> Result<(), SubscriptionError> {
+    fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {
         Ok(())
     }
 }

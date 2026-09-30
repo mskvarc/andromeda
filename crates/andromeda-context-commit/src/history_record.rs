@@ -95,8 +95,8 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Identifier>, attribut
 /// carries an instance whose `datasetId` cannot be read, since neither its
 /// observation nor its tombstone would name an instance.
 pub fn mutation_history(addressed: AddressedInstances<'_>, previous: &Value, current: &Value) -> Result<Vec<HistoryRecord>, CommitError> {
-    let removed = removed_attribute_instances(previous, current).map_err(CommitError::invariant)?;
-    let observation = written_observation(addressed, previous, current).map_err(CommitError::invariant)?;
+    let removed = removed_attribute_instances(previous, current).map_err(|error| CommitError::Invariant(error.into()))?;
+    let observation = written_observation(addressed, previous, current).map_err(|error| CommitError::Invariant(error.into()))?;
     let mut history = Vec::with_capacity(removed.len() + 2);
     history.extend(observation.map(|observed| HistoryRecord::Observations(Arc::new(observed))));
     history.extend(removed.into_iter().map(HistoryRecord::Tombstone));
@@ -129,7 +129,7 @@ fn scope_was_cleared(previous: &Value, current: &Value) -> bool {
 /// `datasetId` cannot be read.
 pub fn deletion_history(previous: &Value) -> Result<Vec<HistoryRecord>, CommitError> {
     let mut removed = attribute_instance_families(previous)
-        .map_err(CommitError::invariant)?
+        .map_err(|error| CommitError::Invariant(error.into()))?
         .into_iter()
         .map(|(key, attribute_type)| RemovedAttributeInstance { key, attribute_type })
         .collect::<Vec<RemovedAttributeInstance>>();

@@ -3,7 +3,7 @@
 //! The canonical query resource validates member syntax while this module
 //! enforces which query family may occur in each snapshot collection.
 
-use crate::error::SnapshotError;
+use crate::{error::SnapshotError, snapshot_validation_reason::SnapshotValidationReason};
 use andromeda_ngsi_ld_model::query::body::Query;
 
 /// Reject requests that omit both collections and queries placed in the wrong collection.
@@ -15,21 +15,17 @@ use andromeda_ngsi_ld_model::query::body::Query;
 /// `snapshot_temporal_queries` omits its `temporalQ`.
 pub fn validate_snapshot_query_shapes(snapshot_queries: Option<&[Query]>, snapshot_temporal_queries: Option<&[Query]>) -> Result<(), SnapshotError> {
     if snapshot_queries.is_none() && snapshot_temporal_queries.is_none() {
-        return Err(SnapshotError::validation("At least one snapshot query collection is required"));
+        return Err(SnapshotValidationReason::QueryCollectionsMissing.into());
     }
     if let Some(queries) = snapshot_queries
         && let Some(index) = queries.iter().position(|query| query.temporal_q.is_some())
     {
-        return Err(SnapshotError::validation(format!(
-            "Invalid snapshotQueries[{index}]: temporalQ is not applicable"
-        )));
+        return Err(SnapshotValidationReason::TemporalQOnEntityQuery { index }.into());
     }
     if let Some(queries) = snapshot_temporal_queries
         && let Some(index) = queries.iter().position(|query| query.temporal_q.is_none())
     {
-        return Err(SnapshotError::validation(format!(
-            "Invalid snapshotTemporalQueries[{index}]: missing temporalQ"
-        )));
+        return Err(SnapshotValidationReason::TemporalQueryWithoutTemporalQ { index }.into());
     }
     Ok(())
 }

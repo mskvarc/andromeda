@@ -48,7 +48,7 @@ impl MqttVersion {
         match value {
             "mqtt5.0" => Ok(MqttVersion::V5),
             "mqtt3.1.1" => Ok(MqttVersion::V311),
-            other => Err(EndpointParseError::UnsupportedMqttVersion { value: other.to_string() }),
+            _unsupported => Err(EndpointParseError::UnsupportedMqttVersion),
         }
     }
 }
@@ -60,7 +60,7 @@ impl MqttQoS {
             "0" => Ok(MqttQoS::AtMost),
             "1" => Ok(MqttQoS::AtLeast),
             "2" => Ok(MqttQoS::Exactly),
-            other => Err(EndpointParseError::UnsupportedMqttQos { value: other.to_string() }),
+            _unsupported => Err(EndpointParseError::UnsupportedMqttQos),
         }
     }
 }
@@ -86,7 +86,7 @@ pub fn parse_endpoint_transport(uri: &Url, notifier_info: Option<&[KeyValuePair]
         "sse" => Ok(EndpointTransport::Sse),
         "ws" => Ok(EndpointTransport::WebSocket),
         "mqtt" | "mqtts" => Ok(EndpointTransport::Mqtt(parse_mqtt_endpoint(uri, notifier_info)?)),
-        other => Err(EndpointParseError::UnsupportedScheme { scheme: other.to_string() }),
+        _unsupported => Err(EndpointParseError::UnsupportedScheme),
     }
 }
 
@@ -266,7 +266,7 @@ mod tests {
     fn a_scheme_this_broker_cannot_deliver_over_is_rejected() {
         assert!(matches!(
             parse_endpoint_transport("ftp://example.com/path", None),
-            Err(EndpointParseError::UnsupportedScheme { .. })
+            Err(EndpointParseError::UnsupportedScheme)
         ));
     }
 
@@ -275,13 +275,13 @@ mod tests {
         let version = notifier_info(&[("MQTT-Version", "mqtt4.0")]);
         assert!(matches!(
             parse_endpoint_transport("mqtt://broker:1883/topic", Some(&version)),
-            Err(EndpointParseError::UnsupportedMqttVersion { .. })
+            Err(EndpointParseError::UnsupportedMqttVersion)
         ));
 
         let qos = notifier_info(&[("MQTT-QoS", "3")]);
         assert!(matches!(
             parse_endpoint_transport("mqtt://broker:1883/topic", Some(&qos)),
-            Err(EndpointParseError::UnsupportedMqttQos { .. })
+            Err(EndpointParseError::UnsupportedMqttQos)
         ));
     }
 
@@ -290,7 +290,7 @@ mod tests {
         let info = notifier_info(&[("MQTT-Version", "v5")]);
         assert!(matches!(
             parse_endpoint_transport("mqtt://broker:1883/topic", Some(&info)),
-            Err(EndpointParseError::UnsupportedMqttVersion { .. })
+            Err(EndpointParseError::UnsupportedMqttVersion)
         ));
     }
 

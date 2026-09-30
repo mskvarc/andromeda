@@ -11,7 +11,7 @@ use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use andromeda_notification::{delivery_backoff::backoff_seconds, delivery_config::DeliveryConfig, delivery_error_bound::DeliveryErrorBound};
 use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery, SnapshotStatusOutbox};
-use andromeda_snapshot::error::SnapshotError;
+use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
 use chrono::{DateTime, Duration, Utc};
 use futures::{StreamExt, stream};
 use std::sync::Arc;
@@ -49,13 +49,13 @@ impl SnapshotStatusDeliveryDrain {
             worker: LeaseHolder::mint(),
             lease: Duration::seconds(i64::try_from(config.lease.duration().as_secs()).unwrap_or(i64::MAX)),
             max_attempts: config.max_attempts.max(1),
-            base_backoff_secs: i64::try_from(config.base_backoff.duration().as_secs())
-                .map_err(|error| SnapshotError::internal(format!("Snapshot notification backoff is out of range: {error}")))?,
+            base_backoff_secs: i64::try_from(config.base_backoff.duration().as_secs()).map_err(SnapshotInvariant::NotificationBackoff)?,
             batch_size: config.batch_size.max(1),
             concurrency: usize::try_from(config.concurrency).unwrap_or(usize::MAX).max(1),
-            error_bound: config
-                .error_bound()
-                .map_err(|error| SnapshotError::internal(format!("Snapshot notification error bound is invalid: {error}")))?,
+            error_bound: config.error_bound().map_err(|error| {
+                tracing::error!(%error, "the configured Snapshot notification error bound is unusable");
+                SnapshotInvariant::NotificationErrorBound
+            })?,
             delivered_retention: Duration::seconds(i64::try_from(config.cleanup_after.duration().as_secs()).unwrap_or(i64::MAX)),
             dead_retention: Duration::seconds(i64::try_from(config.dead_letter_after.duration().as_secs()).unwrap_or(i64::MAX)),
         })
@@ -68,9 +68,7 @@ impl SnapshotStatusDeliveryDrain {
     /// ([`cleanup`](Self::cleanup)), so a wake-driven delivery pass issues no
     /// `DELETE`: it does only the work its wake announced.
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<usize, SnapshotError> {
-        let lease_until = now
-            .checked_add_signed(self.lease)
-            .ok_or_else(|| SnapshotError::internal("Snapshot notification lease deadline overflowed"))?;
+        let lease_until = now.checked_add_signed(self.lease).ok_or(SnapshotInvariant::LeaseDeadlineOverflow)?;
         let entries = self.outbox.claim(self.worker, lease_until, self.batch_size).await?;
         let claimed = entries.len();
         let results = stream::iter(entries)

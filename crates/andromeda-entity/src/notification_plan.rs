@@ -78,7 +78,7 @@ pub(crate) fn deletion(previous: &Value) -> Result<EntityChange, EntityError> {
 
 /// Classify the instance transitions between two states under `lifecycle`.
 fn classified(lifecycle: EntityLifecycle, previous: &Value, current: &Value) -> Result<EntityChange, EntityError> {
-    let instances = classify_attribute_changes(previous, current).map_err(EntityError::internal)?;
+    let instances = classify_attribute_changes(previous, current).map_err(|error| EntityError::Internal(error.into()))?;
     Ok(EntityChange::new(lifecycle, instances))
 }
 

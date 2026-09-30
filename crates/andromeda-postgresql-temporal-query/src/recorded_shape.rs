@@ -17,7 +17,7 @@
 //! that path wrote.
 
 use crate::alias::Ah;
-use andromeda_postgresql_codes::{registry::UnknownCompactCode, value_kind::ValueKind};
+use andromeda_postgresql_codes::{compact_code_domain::CompactCodeDomain, registry::UnknownCompactCode, value_kind::ValueKind};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -33,9 +33,6 @@ use strum::Display;
 #[derive(Iden, Clone, Copy)]
 #[iden = "recorded_shape"]
 pub struct RecordedShapeColumn;
-
-/// The registry name a rejected code is reported under.
-const REGISTRY: &str = "RecordedShape";
 
 /// The whole-value pattern the canonical `NgsiLdTime` rendering matches.
 ///
@@ -137,7 +134,7 @@ impl TryFrom<i16> for RecordedShape {
             8 => Ok(RecordedShape::Date),
             9 => Ok(RecordedShape::Time),
             10 => Ok(RecordedShape::Uri),
-            other => Err(UnknownCompactCode::new(REGISTRY, other)),
+            other => Err(UnknownCompactCode::new(CompactCodeDomain::RecordedShape, other)),
         }
     }
 }
@@ -192,7 +189,7 @@ pub fn recorded_shape() -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::recorded_shape::{CANONICAL_DATE_PATTERN, CANONICAL_TIME_PATTERN, RecordedShape, recorded_shape};
-    use andromeda_postgresql_codes::registry::UnknownCompactCode;
+    use andromeda_postgresql_codes::{compact_code_domain::CompactCodeDomain, registry::UnknownCompactCode};
     use sea_query::{PostgresQueryBuilder, Query};
 
     fn rendered() -> String {
@@ -223,7 +220,11 @@ mod tests {
     #[test]
     fn a_code_no_shape_carries_fails_to_decode() {
         for code in [0, 11, -1] {
-            pretty_assertions::assert_eq!(RecordedShape::try_from(code), Err(UnknownCompactCode::new("RecordedShape", code)), "{code}");
+            pretty_assertions::assert_eq!(
+                RecordedShape::try_from(code),
+                Err(UnknownCompactCode::new(CompactCodeDomain::RecordedShape, code)),
+                "{code}"
+            );
         }
     }
 

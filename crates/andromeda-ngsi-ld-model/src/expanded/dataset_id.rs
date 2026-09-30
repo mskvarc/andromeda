@@ -11,10 +11,8 @@ use thiserror::Error;
 /// unreadable one cannot be read as absent: that would retarget the default
 /// instance, a different instance than the one the payload named.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
-#[error("the datasetId '{raw}' is not a valid identifier: {source}")]
+#[error("the datasetId is not a valid identifier: {source}")]
 pub struct InstanceDatasetIdError {
-    /// The `datasetId` as the payload spells it.
-    pub raw: String,
     /// Why it is not an identifier.
     #[source]
     pub source: IdentifierParseError,
@@ -52,7 +50,7 @@ pub fn get_instance_dataset_id(instance: &Value) -> Result<Option<Identifier>, I
     let Some(raw) = dataset_id_spelling(instance) else {
         return Ok(None);
     };
-    raw.parse().map(Some).map_err(|source| InstanceDatasetIdError { raw: raw.to_owned(), source })
+    raw.parse().map(Some).map_err(|source| InstanceDatasetIdError { source })
 }
 
 /// The position of the first instance whose `datasetId` is `dataset`, where
@@ -132,7 +130,6 @@ mod tests {
     fn an_over_long_dataset_id_is_an_error_rather_than_the_default_instance() {
         let raw = format!("urn:ngsi-ld:Dataset:{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
         let error = get_instance_dataset_id(&tagged(&raw)).expect_err("an over-long datasetId");
-        pretty_assertions::assert_eq!(error.raw, raw);
         assert!(matches!(error.source, IdentifierParseError::TooLong(_)), "{error:?}");
         assert!(instance_has_dataset_id(&tagged(&raw)), "the instance still names a dataset");
     }

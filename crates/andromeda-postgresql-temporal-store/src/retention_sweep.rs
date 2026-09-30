@@ -125,7 +125,7 @@ impl TemporalRepository {
             TemporalRetention::Disabled => return Ok(TemporalRetentionOutcome::Disabled),
             TemporalRetention::Enabled { horizon } => horizon,
         };
-        let cutoff = horizon.cutoff(now).map_err(|error| TemporalStoreError::Validation(error.to_string()))?;
+        let cutoff = horizon.cutoff(now).map_err(TemporalStoreError::RetentionHorizon)?;
         let attribute_history_chunks = self.drop_chunks("attribute_history", cutoff).await?;
         let scope_history_chunks = self.drop_chunks("scope_history", cutoff).await?;
         let (streams_sql, streams_values) = collect_empty_streams().build_sqlx(PostgresQueryBuilder);

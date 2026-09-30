@@ -213,12 +213,12 @@ async fn notified_registration(
     registration: &ContextSourceRegistration,
     subscription: &CompiledCsrSubscription,
 ) -> Result<Value, NotificationError> {
-    let mut value = serde_json::to_value(registration).map_err(|error| NotificationError::representation(error.to_string()))?;
+    let mut value = serde_json::to_value(registration).map_err(NotificationError::Representation)?;
     let matching = matching_information(subscription, registration)
         .into_iter()
         .map(serde_json::to_value)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| NotificationError::representation(error.to_string()))?;
+        .map_err(NotificationError::Representation)?;
     if let Some(object) = value.as_object_mut() {
         object.insert("information".to_string(), Value::Array(matching));
     }

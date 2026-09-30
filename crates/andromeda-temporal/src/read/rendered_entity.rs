@@ -238,7 +238,7 @@ impl TemporalService {
             }
             TemporalValuesRenderer::new(compacted, compiled.window.timeproperty, emptied)
                 .render()
-                .map_err(|error| TemporalError::rendering(error.to_string()))?
+                .map_err(TemporalError::Rendering)?
         } else {
             compacted
         };

@@ -13,7 +13,7 @@
 //! their history rows land. The Entity API and the Temporal Evolution then
 //! disagree permanently, because nothing sweeps the difference away.
 
-use crate::{EntityService, error::EntityError};
+use crate::{EntityService, entity_invariant::EntityInvariant, error::EntityError};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     precondition::{AfterAttempt, Precondition, after_attempt},
@@ -114,6 +114,11 @@ impl EntityService {
         if landed.is_none() {
             return Err(EntityError::not_found(id));
         }
-        produced.ok_or_else(|| EntityError::internal(format!("read-modify-write for {id} landed without producing a result")))
+        produced.ok_or_else(|| {
+            EntityInvariant::ReadModifyWriteWithoutResult {
+                entity: id.clone(), // clone: the error owns the entity it names.
+            }
+            .into()
+        })
     }
 }

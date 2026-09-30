@@ -1,6 +1,5 @@
 //! Failure information classified by broker composition.
 
-use std::sync::Arc;
 use strum::IntoStaticStr;
 use thiserror::Error;
 
@@ -17,38 +16,39 @@ pub enum FailureClass {
 }
 
 /// Classified failure accepted by the task runtime boundary.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
-#[error("{summary}")]
-pub struct TaskFailure {
+///
+/// The class decides what the runtime does next; the cause is the typed error
+/// the operation failed with, rendered only when the runtime records the
+/// failure in health and lifecycle reporting.
+#[derive(Debug, Error)]
+#[error("{cause}")]
+pub struct TaskFailure<E> {
     /// Runtime classification supplied by composition.
     class: FailureClass,
-    /// Immutable diagnostic shared by health and lifecycle reporting.
-    summary: Arc<str>,
+    /// The typed error the operation failed with.
+    #[source]
+    cause: E,
 }
 
-impl TaskFailure {
-    /// Construct a transient failure with a human-readable summary.
-    pub fn transient(summary: impl Into<Arc<str>>) -> TaskFailure {
-        TaskFailure {
-            class: FailureClass::Transient,
-            summary: summary.into(),
-        }
+impl<E> TaskFailure<E> {
+    /// Construct a failure of the given class.
+    pub const fn new(class: FailureClass, cause: E) -> TaskFailure<E> {
+        TaskFailure { class, cause }
     }
 
-    /// Construct a permanent failure with a human-readable summary.
-    pub fn permanent(summary: impl Into<Arc<str>>) -> TaskFailure {
-        TaskFailure {
-            class: FailureClass::Permanent,
-            summary: summary.into(),
-        }
+    /// Construct a failure a later attempt may recover from.
+    pub const fn transient(cause: E) -> TaskFailure<E> {
+        TaskFailure::new(FailureClass::Transient, cause)
     }
 
-    /// Construct an invariant-violation failure with a human-readable summary.
-    pub fn invariant_violation(summary: impl Into<Arc<str>>) -> TaskFailure {
-        TaskFailure {
-            class: FailureClass::InvariantViolation,
-            summary: summary.into(),
-        }
+    /// Construct a failure that needs an external state change before a retry can succeed.
+    pub const fn permanent(cause: E) -> TaskFailure<E> {
+        TaskFailure::new(FailureClass::Permanent, cause)
+    }
+
+    /// Construct a failure that contradicts an internal correctness invariant.
+    pub const fn invariant_violation(cause: E) -> TaskFailure<E> {
+        TaskFailure::new(FailureClass::InvariantViolation, cause)
     }
 
     /// Return the runtime failure class.
@@ -57,15 +57,43 @@ impl TaskFailure {
         self.class
     }
 
-    /// Return the human-readable summary.
+    /// Return the typed cause.
     #[must_use]
-    pub fn summary(&self) -> &str {
-        &self.summary
+    pub const fn cause(&self) -> &E {
+        &self.cause
     }
 
-    /// Share the failure summary with lifecycle and health observers.
+    /// Keep the class and wrap the cause into the error type of a wider operation.
     #[must_use]
-    pub fn shared_summary(&self) -> Arc<str> {
-        Arc::clone(&self.summary) // clone: health and lifecycle events retain the same immutable summary.
+    pub fn map_cause<F>(self, wrap: impl FnOnce(E) -> F) -> TaskFailure<F> {
+        TaskFailure::new(self.class, wrap(self.cause))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        failure::{FailureClass, TaskFailure},
+        runtime_failure::RuntimeFailure,
+    };
+    use std::error::Error;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("wider operation failed")]
+    struct Wider(#[source] RuntimeFailure);
+
+    #[test]
+    fn a_failure_renders_and_chains_its_typed_cause() {
+        let failure = TaskFailure::permanent(RuntimeFailure::DuplicateStartupRegistration);
+        assert_eq!(failure.class(), FailureClass::Permanent);
+        assert_eq!(failure.to_string(), "duplicate startup task registration");
+        assert!(failure.source().is_some(), "the typed cause is the source");
+    }
+
+    #[test]
+    fn mapping_the_cause_keeps_the_class() {
+        let failure = TaskFailure::transient(RuntimeFailure::ResidentCompleted).map_cause(Wider);
+        assert_eq!(failure.class(), FailureClass::Transient);
+        assert!(matches!(failure.cause(), Wider(RuntimeFailure::ResidentCompleted)));
     }
 }

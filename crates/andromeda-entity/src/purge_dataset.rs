@@ -77,7 +77,7 @@ pub(crate) fn build_dataset_purge_write(
 
     // Every stored payload was admitted when it was written, so a `datasetId`
     // the diff cannot read is a broker fault rather than a routine miss.
-    let removed = removed_attribute_instances(previous, &purged).map_err(EntityError::internal)?;
+    let removed = removed_attribute_instances(previous, &purged).map_err(|error| EntityError::Internal(error.into()))?;
     if removed.is_empty() {
         return Ok(None);
     }

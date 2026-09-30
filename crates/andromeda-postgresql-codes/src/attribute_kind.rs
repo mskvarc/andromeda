@@ -1,6 +1,6 @@
 //! The persisted attribute family of one history row.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// The NGSI-LD attribute family a history row was written as (clause 5.2.4).

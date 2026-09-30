@@ -8,12 +8,12 @@
 use crate::{
     csource_registration::{registration_read, registration_write},
     error::violates_unique_constraint,
+    store_fault::{StoreFault, persistence_failure},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sqlx::postgres::PgPool;
-use std::{any::Any, fmt::Display, sync::Arc};
+use std::sync::Arc;
 
 /// The primary key migration 0012 declares on `context_source_registrations.id`,
 /// the registration identifier itself.
@@ -58,15 +58,11 @@ impl PostgresRegistrationStore {
 
 /// Erase an adapter-specific diagnostic at the policy error boundary.
 ///
-/// A `sqlx` pool-acquire timeout is backpressure, not a fault, so it becomes
-/// [`RegistrationError::StoreSaturated`] (a 503); every other failure stays a
-/// persistence fault. The concrete [`sqlx::Error`] is recovered by downcast
-/// because callers hand it in already erased behind `impl Display`.
-pub(super) fn persistence_error(error: impl Display + Any) -> RegistrationError {
-    match (&error as &dyn Any).downcast_ref::<sqlx::Error>() {
-        Some(sqlx_error) if is_pool_saturated(sqlx_error) => RegistrationError::StoreSaturated,
-        Some(_) | None => RegistrationError::persistence(error),
-    }
+/// Classify an adapter failure at the port boundary: backpressure keeps the
+/// port's retryable category and every fault becomes its persistence failure.
+#[track_caller]
+pub(super) fn persistence_error(error: impl StoreFault) -> RegistrationError {
+    RegistrationError::from(persistence_failure(&error))
 }
 
 /// Preserve a uniqueness race on the identifier as the registration identifier

@@ -21,6 +21,7 @@ use crate::{
 };
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_telemetry::tenancy::{EvictionReason, WakeOutcome};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -765,9 +766,7 @@ async fn a_registry_that_cannot_be_read_evicts_nothing_rather_than_everything() 
         }
 
         async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
-            Err(TenancyError::RegistryUnavailable {
-                detail: "connection refused".to_string(),
-            })
+            Err(TenancyError::RegistryUnavailable(PersistenceFailure::Unavailable))
         }
 
         async fn tenant_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError> {
@@ -781,9 +780,7 @@ async fn a_registry_that_cannot_be_read_evicts_nothing_rather_than_everything() 
         }
 
         async fn list_tenant_records(&self, _keyset: &TenantKeyset, _limit: i64) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
-            Err(TenancyError::RegistryUnavailable {
-                detail: "connection refused".to_string(),
-            })
+            Err(TenancyError::RegistryUnavailable(PersistenceFailure::Unavailable))
         }
 
         async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError> {

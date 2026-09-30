@@ -6,6 +6,7 @@
 //! module owns the mapping from an expanded JSON-LD instance to that column.
 
 use crate::error::TemporalStoreError;
+use andromeda_context_commit::submission_refusal::{RelationshipTargetMember, SubmissionRefusal};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
@@ -94,7 +95,7 @@ impl AttributeValue {
 ///
 /// # Errors
 ///
-/// Returns [`TemporalStoreError::Validation`] when the instance carries no
+/// Returns [`TemporalStoreError::Refused`] when the instance carries no
 /// member of the shape its declared type requires: a `Relationship` with no
 /// object node or an object that is not a valid URI, a `GeoProperty` whose
 /// value is not a `GeoJSON` geometry, a `VocabProperty`, `LanguageProperty`,
@@ -128,15 +129,15 @@ fn relationship_object(instance: &Value) -> Result<AttributeValue, TemporalStore
     let nodes = instance
         .get(expanded_properties::OBJECT.as_str())
         .and_then(|value| value.as_array())
-        .ok_or_else(|| TemporalStoreError::Validation("Relationship missing object".to_string()))?;
+        .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::RelationshipMissingObject))?;
     let mut targets = nodes
         .iter()
         .map(|node| {
             let raw = node
                 .get("@id")
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| TemporalStoreError::Validation("Relationship object names no target URI".to_string()))?;
-            parse_target(raw, "Relationship object")
+                .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::RelationshipObjectNoTarget))?;
+            parse_target(raw, RelationshipTargetMember::RelationshipObject)
         })
         .collect::<Result<Vec<Uri>, TemporalStoreError>>()?;
     match targets.pop() {
@@ -145,7 +146,7 @@ fn relationship_object(instance: &Value) -> Result<AttributeValue, TemporalStore
             targets.push(last);
             Ok(AttributeValue::Object(uri_array(&targets)))
         }
-        None => Err(TemporalStoreError::Validation("Relationship missing object".to_string())),
+        None => Err(TemporalStoreError::Refused(SubmissionRefusal::RelationshipMissingObject)),
     }
 }
 
@@ -154,8 +155,8 @@ fn relationship_object(instance: &Value) -> Result<AttributeValue, TemporalStore
 ///
 /// The same narrow rule the append path applies, so an instance replaced under
 /// clause 5.6.15 and one appended under clause 5.6.12 store the same target.
-fn parse_target(raw: &str, context: &str) -> Result<Uri, TemporalStoreError> {
-    relationship_target_uri(raw).map_err(|error| TemporalStoreError::Validation(format!("{context} is not a valid URI: {error}")))
+fn parse_target(raw: &str, member: RelationshipTargetMember) -> Result<Uri, TemporalStoreError> {
+    relationship_target_uri(raw).map_err(|source| TemporalStoreError::Refused(SubmissionRefusal::RelationshipTarget { member, source }))
 }
 
 /// The JSON array of bare target URIs a multi-target Relationship family is
@@ -170,7 +171,7 @@ fn geo_property_geometry(instance: &Value) -> Result<AttributeValue, TemporalSto
         .get(expanded_properties::VALUE.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
-        .ok_or_else(|| TemporalStoreError::Validation("GeoProperty missing value".to_string()))?;
+        .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyMissingValue))?;
 
     // Literal-`@value` form (string or already-compact object) keeps the
     // legacy decoding path. Expanded JSON-LD GeoJSON nodes go through the
@@ -178,12 +179,12 @@ fn geo_property_geometry(instance: &Value) -> Result<AttributeValue, TemporalSto
     // `extract_coordinates` clones that dominated the temporal hot path.
     let geometry = if let Some(val) = geo_node.get("@value") {
         let geo_value: Value = match val.as_str() {
-            Some(s) => serde_json::from_str(s).map_err(|error| TemporalStoreError::Validation(format!("Invalid GeoProperty GeoJSON string: {error}")))?,
+            Some(s) => serde_json::from_str(s).map_err(|error| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyGeoJson(error)))?,
             None => val.clone(), // clone: need owned Value for from_geojson_value
         };
-        Geometry::from_geojson_value(&geo_value).map_err(|error| TemporalStoreError::Validation(format!("Invalid GeoProperty geometry: {error}")))?
+        Geometry::from_geojson_value(&geo_value).map_err(|_not_a_geometry| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyGeometryInvalid))?
     } else {
-        expanded_geo_node_to_geometry(geo_node).ok_or_else(|| TemporalStoreError::Validation("Invalid expanded GeoProperty geometry".to_string()))?
+        expanded_geo_node_to_geometry(geo_node).ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyGeometryInvalid))?
     };
     Ok(AttributeValue::Geometry(geometry))
 }
@@ -193,7 +194,7 @@ fn vocab_property_value(instance: &Value) -> Result<AttributeValue, TemporalStor
     let arr = instance
         .get(expanded_properties::VOCAB.as_str())
         .and_then(|v| v.as_array())
-        .ok_or_else(|| TemporalStoreError::Validation("VocabProperty missing vocab value".to_string()))?;
+        .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::VocabPropertyMissingVocab))?;
     if arr.len() > 1 {
         let values: Vec<Value> = arr.iter().filter_map(|obj| obj.get("@id").or(obj.get("@value")).cloned()).collect(); // clone: need owned Values for collected Vec
         Ok(AttributeValue::Object(Value::Array(values)))
@@ -202,7 +203,7 @@ fn vocab_property_value(instance: &Value) -> Result<AttributeValue, TemporalStor
             .first()
             .and_then(|obj| obj.get("@id").or(obj.get("@value")))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| TemporalStoreError::Validation("VocabProperty missing vocab value".to_string()))?;
+            .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::VocabPropertyMissingVocab))?;
         Ok(AttributeValue::String(vocab_val.to_string()))
     }
 }
@@ -211,7 +212,7 @@ fn vocab_property_value(instance: &Value) -> Result<AttributeValue, TemporalStor
 fn language_property_map(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
     let lang_map = instance
         .get(expanded_properties::LANGUAGE_MAP.as_str())
-        .ok_or_else(|| TemporalStoreError::Validation("LanguageProperty missing languageMap".to_string()))?;
+        .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::LanguagePropertyMissingLanguageMap))?;
     Ok(AttributeValue::Object(lang_map.clone())) // clone: need owned Value for the enum payload; lang_map is borrowed from instance
 }
 
@@ -222,7 +223,7 @@ fn json_property_value(instance: &Value) -> Result<AttributeValue, TemporalStore
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@value"))
-        .ok_or_else(|| TemporalStoreError::Validation("JsonProperty missing json value".to_string()))?;
+        .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::JsonPropertyMissingJson))?;
     Ok(AttributeValue::Object(json_val.clone())) // clone: need owned Value for the enum payload; json_val is borrowed from instance
 }
 
@@ -233,7 +234,7 @@ fn list_property_value(instance: &Value) -> Result<AttributeValue, TemporalStore
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@list"))
-        .ok_or_else(|| TemporalStoreError::Validation("ListProperty missing valueList".to_string()))?;
+        .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::ListPropertyMissingValueList))?;
     Ok(AttributeValue::Object(list.clone())) // clone: need owned Value for the enum payload; list is borrowed from instance
 }
 
@@ -250,16 +251,15 @@ fn list_relationship_objects(instance: &Value) -> Result<AttributeValue, Tempora
         .and_then(|value| value.as_array())
         .and_then(|entries| entries.first())
         .and_then(|entry| entry.get("@list"))
-        .ok_or_else(|| TemporalStoreError::Validation("ListRelationship missing objectList".to_string()))?;
+        .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::ListRelationshipMissingObjectList))?;
     let entries = list
         .as_array()
-        .ok_or_else(|| TemporalStoreError::Validation("ListRelationship objectList is not a list".to_string()))?;
+        .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::ListRelationshipObjectListNotAList))?;
     let targets = entries
         .iter()
         .map(|entry| {
-            let raw = object_list_target_iri(entry)
-                .ok_or_else(|| TemporalStoreError::Validation("ListRelationship objectList entry carries no object URI".to_string()))?;
-            parse_target(raw, "ListRelationship objectList entry")
+            let raw = object_list_target_iri(entry).ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::ListRelationshipObjectListMemberNoTarget))?;
+            parse_target(raw, RelationshipTargetMember::ListRelationshipObjectListMember)
         })
         .collect::<Result<Vec<Uri>, TemporalStoreError>>()?;
     Ok(AttributeValue::Object(uri_array(&targets)))
@@ -271,7 +271,7 @@ fn property_value(instance: &Value) -> Result<AttributeValue, TemporalStoreError
         .get(expanded_properties::VALUE.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
-        .ok_or_else(|| TemporalStoreError::Validation("Property missing value".to_string()))?;
+        .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::PropertyMissingValue))?;
 
     let Some(value) = node.get("@value") else {
         // An expanded JSON-LD node with no `@value` is stored whole.
@@ -292,7 +292,7 @@ fn property_value(instance: &Value) -> Result<AttributeValue, TemporalStoreError
         // values a creation does.
         Value::Number(number) => JsonNumber::try_from(number)
             .map(AttributeValue::Number)
-            .map_err(|error| TemporalStoreError::Validation(error.to_string())),
+            .map_err(|error| TemporalStoreError::Refused(SubmissionRefusal::PropertyNumber(error))),
         Value::Bool(b) => Ok(AttributeValue::Boolean(*b)),
         Value::String(s) => Ok(AttributeValue::String(s.clone())), // clone: need owned String for the enum payload; s is borrowed from JSON
         Value::Object(_) | Value::Array(_) => Ok(AttributeValue::Object(value.clone())), // clone: need owned Value for the enum payload; value is borrowed from JSON
@@ -317,7 +317,7 @@ fn property_value(instance: &Value) -> Result<AttributeValue, TemporalStoreError
 /// orders `Time` and `Date` values chronologically, and byte-wise order over the
 /// string column is chronological order only for a fixed-width canonical form.
 fn temporal_attribute_value(type_hint: Option<&str>, raw: &str) -> Option<Result<AttributeValue, TemporalStoreError>> {
-    TimeValue::admitted(type_hint, raw).map(|admitted| admitted.map(recorded_time_value).map_err(|error| time_value_refusal(raw, error)))
+    TimeValue::admitted(type_hint, raw).map(|admitted| admitted.map(recorded_time_value).map_err(time_value_refusal))
 }
 
 /// Report a clause 4.6.3 refusal in the store's own vocabulary.
@@ -325,11 +325,11 @@ fn temporal_attribute_value(type_hint: Option<&str>, raw: &str) -> Option<Result
 /// A `DateTime` keeps its typed source: it is the one of the three whose
 /// storable range and microsecond resolution are the column's, so a caller
 /// distinguishing that refusal from any other malformed value still can.
-fn time_value_refusal(raw: &str, error: TimeValueError) -> TemporalStoreError {
+const fn time_value_refusal(error: TimeValueError) -> TemporalStoreError {
     match error {
         TimeValueError::DateTime(source) => TemporalStoreError::TimestampPrecision(source),
-        source @ (TimeValueError::Date(_) | TimeValueError::Time(_) | TimeValueError::NoTimeValueForm { .. }) => {
-            TemporalStoreError::Validation(format!("invalid time value property '{raw}': {source}"))
+        source @ (TimeValueError::Date(_) | TimeValueError::Time(_) | TimeValueError::NoTimeValueForm) => {
+            TemporalStoreError::Refused(SubmissionRefusal::TimeValueProperty(source))
         }
     }
 }
@@ -377,14 +377,14 @@ mod tests {
         // reach storage as a valid value.
         let error = extract_attribute_value(&typed_property(expanded_classes::TIME.as_str(), "13:00:00+01:00"), AttributeType::Property)
             .expect_err("a numeric offset is forbidden");
-        assert!(matches!(error, TemporalStoreError::Validation(_)), "got {error:?}");
+        assert!(matches!(error, TemporalStoreError::Refused(_)), "got {error:?}");
     }
 
     #[test]
     fn a_time_typed_property_that_is_not_a_full_time_is_refused() {
         let error = extract_attribute_value(&typed_property(expanded_classes::TIME.as_str(), "12:00:00"), AttributeType::Property)
             .expect_err("RFC 3339 full-time requires an offset");
-        assert!(matches!(error, TemporalStoreError::Validation(_)), "got {error:?}");
+        assert!(matches!(error, TemporalStoreError::Refused(_)), "got {error:?}");
     }
 
     #[test]
@@ -395,7 +395,7 @@ mod tests {
         pretty_assertions::assert_eq!(columns.value_string.as_deref(), Some("2026-04-12"));
         let error = extract_attribute_value(&typed_property(expanded_classes::DATE.as_str(), "2026-4-2"), AttributeType::Property)
             .expect_err("an unpadded spelling would not sort chronologically");
-        assert!(matches!(error, TemporalStoreError::Validation(_)), "got {error:?}");
+        assert!(matches!(error, TemporalStoreError::Refused(_)), "got {error:?}");
     }
 
     #[test]

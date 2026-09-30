@@ -112,11 +112,11 @@ impl MergeParams {
     ///
     /// # Errors
     ///
-    /// [`ParameterError::FormatInvalid`] for a representation Table 6.5.3.4-1
-    /// does not admit as a merge input (`concise`).
+    /// [`ParameterError::MergeFormatInvalid`] for a representation Table
+    /// 6.5.3.4-1 does not admit as a merge input (`concise`).
     pub fn representation(&self) -> Result<MergeRepresentation, ParameterError> {
         let format = resolve_representation(self.format.as_ref(), self.options.as_ref())?;
-        MergeRepresentation::try_from(format).map_err(|error| ParameterError::FormatInvalid(error.to_string()))
+        MergeRepresentation::try_from(format).map_err(ParameterError::MergeFormatInvalid)
     }
 }
 
@@ -455,7 +455,7 @@ mod tests {
         let both: MergeParams = serde_urlencoded::from_str("format=normalized&options=keyValues").expect("parses");
         pretty_assertions::assert_eq!(both.representation().expect("format wins"), MergeRepresentation::Normalized);
         let concise: MergeParams = serde_urlencoded::from_str("format=concise").expect("parses");
-        assert!(matches!(concise.representation(), Err(ParameterError::FormatInvalid(_))));
+        assert!(matches!(concise.representation(), Err(ParameterError::MergeFormatInvalid(_))));
         assert!(serde_urlencoded::from_str::<MergeParams>("observedAt=yesterday").is_err());
         assert!(serde_urlencoded::from_str::<MergeParams>("unknown=1").is_err());
     }

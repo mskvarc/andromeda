@@ -5,7 +5,9 @@ use crate::{
     control::ScheduledExecution,
     driver_supervision::DriverSupervision,
     failure::TaskFailure,
+    failure_report::FailureReport,
     periodic_trigger::PeriodicSchedule,
+    runtime_failure::RuntimeFailure,
     scheduled_task::ScheduledOperation,
     task_observer::DriverTerminal,
 };
@@ -29,7 +31,7 @@ pub(crate) async fn run(
             _ = interval.tick() => {}
             signal = run_now.recv() => {
                 if signal.is_none() {
-                    return DriverTerminal::Failed(TaskFailure::invariant_violation("scheduled run-now channel closed while task was active"));
+                    return DriverTerminal::Failed(FailureReport::of(&TaskFailure::invariant_violation(RuntimeFailure::RunNowChannelClosed)));
                 }
             }
         }

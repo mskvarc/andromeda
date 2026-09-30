@@ -1,6 +1,6 @@
 //! Current health and execution history for one named task.
 
-use crate::{failure::TaskFailure, task_name::TaskName};
+use crate::{failure_report::FailureReport, task_name::TaskName};
 use std::{
     sync::Arc,
     time::{Duration, SystemTime},
@@ -112,7 +112,7 @@ impl TaskHealth {
     }
 
     /// Record a failure before restart policy is evaluated.
-    pub(crate) fn failed_attempt(&mut self, now: SystemTime, failure: &TaskFailure) -> u32 {
+    pub(crate) fn failed_attempt(&mut self, now: SystemTime, failure: &FailureReport) -> u32 {
         self.snapshot.last_failure_at = Some(now);
         self.snapshot.last_failure_summary = Some(failure.shared_summary());
         self.snapshot.consecutive_failures = self.snapshot.consecutive_failures.saturating_add(1);

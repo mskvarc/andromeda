@@ -7,7 +7,10 @@ use crate::{
     error::XtaskError,
     etsi::{self, venv},
 };
-use std::{path::Path, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 /// The suite's own root under the checkout; a bare subtree resolves beneath it.
 const SUITE_ROOT: &str = "TP/NGSI-LD";
@@ -103,7 +106,7 @@ fn resolve_subtree(checkout: &Path, requested: &str) -> Result<String, XtaskErro
     } else if Path::new(requested).exists() {
         Ok(requested.to_owned())
     } else {
-        Err(XtaskError::UnknownSubtree(requested.to_owned()))
+        Err(XtaskError::UnknownSubtree(PathBuf::from(requested)))
     }
 }
 

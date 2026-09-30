@@ -21,7 +21,7 @@ impl RegistrationService {
             .as_ref()
             .map(serde_json::to_value)
             .transpose()
-            .map_err(|error| RegistrationError::internal(format!("Failed to serialize the deleted CSR: {error}")))?;
+            .map_err(RegistrationError::Representation)?;
         // Captured before the row goes: the store deletes the forwarding
         // records together with the registration.
         let teardown = match (self.removal_hook.as_deref(), existing.as_ref()) {

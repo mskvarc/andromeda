@@ -10,6 +10,7 @@
 
 use crate::delivery_entry::DeliveryKey;
 use andromeda_context_commit::lease_holder::LeaseHolder;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use chrono::{DateTime, Duration, Utc};
 use derive_more::Display;
 use std::num::NonZeroU32;
@@ -99,11 +100,8 @@ pub enum DeliveryLeaseError {
         worker: LeaseHolder,
     },
     /// The acknowledging statement itself failed.
-    #[error("notification delivery lease acknowledgement failed: {detail}")]
-    Persistence {
-        /// Sanitized diagnostic detail for internal logs.
-        detail: String,
-    },
+    #[error("notification delivery lease acknowledgement failed: {0}")]
+    Persistence(#[source] PersistenceFailure),
 }
 
 impl DeliveryLeaseError {
@@ -111,11 +109,6 @@ impl DeliveryLeaseError {
     #[must_use]
     pub const fn lease_lost(delivery: DeliveryKey, worker: &LeaseHolder) -> DeliveryLeaseError {
         DeliveryLeaseError::LeaseLost { delivery, worker: *worker }
-    }
-
-    /// Construct an adapter-boundary persistence failure.
-    pub fn persistence(detail: impl Into<String>) -> DeliveryLeaseError {
-        DeliveryLeaseError::Persistence { detail: detail.into() }
     }
 }
 

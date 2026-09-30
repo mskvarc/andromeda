@@ -15,9 +15,10 @@
 use crate::{
     error::QueryError,
     filter::{
+        expectation::{QExpectation, QFound},
         lexer::Token,
         quoting::Quoting,
-        token_cursor::{TokenCursor, attribute_name, describe},
+        token_cursor::{TokenCursor, attribute_name},
     },
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -81,8 +82,8 @@ fn parse_guard_name<'a>(cursor: &mut TokenCursor<'a>) -> Result<(&'a str, Quotin
         Some(Token::Ident(name)) => Ok((name.as_str(), Quoting::Bare)),
         Some(Token::QuotedStr(name)) => Ok((name.as_str(), Quoting::Quoted)),
         other => Err(QueryError::QExpected {
-            expected: "entity type".to_string(),
-            found: describe(other),
+            expected: QExpectation::EntityType,
+            found: QFound::of(other),
         }),
     }
 }
@@ -117,10 +118,7 @@ fn split_guard_terminator<'a>(cursor: &mut TokenCursor<'a>, name: &'a str, quoti
         && let Some((last, rest)) = name.split_once(':')
     {
         if rest.contains(':') {
-            return Err(QueryError::QExpected {
-                expected: "a quoted entity type, so the colon ending the type guard is unambiguous".to_string(),
-                found: name.to_string(),
-            });
+            return Err(QueryError::QAmbiguousTypeGuard);
         }
         let inner_leading = (!rest.is_empty()).then_some(rest);
         return Ok(Some((last, inner_leading)));
@@ -133,7 +131,7 @@ fn split_guard_terminator<'a>(cursor: &mut TokenCursor<'a>, name: &'a str, quoti
         return Ok(Some((name, inner_leading)));
     }
     Err(QueryError::QExpected {
-        expected: ":".to_string(),
-        found: cursor.found_description(),
+        expected: QExpectation::GuardTerminator,
+        found: cursor.found(),
     })
 }

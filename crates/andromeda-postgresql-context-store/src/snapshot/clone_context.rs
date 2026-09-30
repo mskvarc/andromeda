@@ -5,15 +5,18 @@
 //! schema and the preparation row leaves `preparing` -- and both run in a single
 //! transaction so the rename and the control-row update commit together.
 
-use crate::snapshot::{
-    branch_schema::{promote_staging_schema, publish_empty_branch},
-    branch_version::{condition_of, current_version},
-    clone::clone_branch,
-    persistence_error,
-    preparation_claim::lock_claimed_preparation,
-    record::status_is_preparing,
-    status_code::stored_status,
-    status_outbox::enqueue_terminal_notification,
+use crate::{
+    snapshot::{
+        branch_schema::{promote_staging_schema, publish_empty_branch},
+        branch_version::{condition_of, current_version},
+        clone::clone_branch,
+        persistence_error,
+        preparation_claim::lock_claimed_preparation,
+        record::status_is_preparing,
+        status_code::stored_status,
+        status_outbox::enqueue_terminal_notification,
+    },
+    store_fault::undecodable,
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
@@ -22,7 +25,7 @@ use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
 use andromeda_postgresql_branch::snapshot_schema_name;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::clock::now;
-use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError};
+use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError, snapshot_invariant::SnapshotInvariant};
 use sea_query::{Expr, ExprTrait, JoinType, Keyword, PostgresQueryBuilder, Query, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -70,9 +73,11 @@ pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Identifier,
 /// Resolve, and row-lock, the preparing preparation row of one Snapshot claimed
 /// by this replica, refusing a claim that is no longer held.
 async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Identifier, claimed_by: LeaseHolder) -> Result<SnapshotKey, SnapshotError> {
-    lock_claimed_preparation(transaction, id, claimed_by)
-        .await?
-        .ok_or_else(|| SnapshotError::internal(format!("Snapshot {id} is no longer preparing under this claim")))
+    lock_claimed_preparation(transaction, id, claimed_by).await?.ok_or_else(|| {
+        SnapshotError::from(SnapshotInvariant::ClaimLost {
+            snapshot: id.clone(), // clone: the error owns the Snapshot it names
+        })
+    })
 }
 
 /// Resolve a clone source's surrogate key by URI, refusing a quarantined source:
@@ -96,9 +101,13 @@ async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source
         .fetch_optional(&mut **transaction)
         .await
         .map_err(persistence_error)?
-        .ok_or_else(|| SnapshotError::internal(format!("Clone source {source_id} does not exist")))?;
+        .ok_or_else(|| {
+            SnapshotError::from(SnapshotInvariant::CloneSourceMissing {
+                source_snapshot: source_id.clone(), // clone: the error owns the Snapshot it names
+            })
+        })?;
     match condition_of(version, current) {
-        BranchCondition::Current => SnapshotKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string())),
+        BranchCondition::Current => SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error))),
         BranchCondition::Quarantined => Err(SnapshotError::quarantined(source_id)),
     }
 }
@@ -137,6 +146,6 @@ async fn finalize_preparation(
     if result.rows_affected() == 1 {
         Ok(())
     } else {
-        Err(SnapshotError::internal("Snapshot preparation row changed under the promotion"))
+        Err(SnapshotInvariant::PreparationChangedUnderPromotion.into())
     }
 }

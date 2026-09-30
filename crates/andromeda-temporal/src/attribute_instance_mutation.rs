@@ -14,7 +14,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_family::InstanceFamily, instance_identity::InstanceIdentity};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use serde_json::Value;
 
@@ -72,7 +72,7 @@ impl TemporalService {
 
         if !self.mutator.instance_exists(target, instance, entity_id, &attr_iri).await? {
             return Err(TemporalError::NotFound(TemporalNotFoundReason::AttributeInstance {
-                instance: instance.rendered(InstanceFamily::Attribute).to_string(),
+                instance: instance.clone(), // clone: the error owns the instance identity it names.
             }));
         }
 
@@ -131,7 +131,7 @@ impl TemporalService {
 
         if !self.mutator.instance_exists(target, instance, entity_id, &attr_iri).await? {
             return Err(TemporalError::NotFound(TemporalNotFoundReason::AttributeInstance {
-                instance: instance.rendered(InstanceFamily::Attribute).to_string(),
+                instance: instance.clone(), // clone: the error owns the instance identity it names.
             }));
         }
 

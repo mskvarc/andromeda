@@ -6,6 +6,7 @@ use crate::{
     event::registration_change_sink::BroadcastRegistrationChangeSink,
     tenant_factory::{
         TenantFactoryConfig,
+        assembly_invariant::AssemblyInvariant,
         background_pacer::BackgroundPacer,
         error::TenantAssemblyError,
         storage::TenantStorage,
@@ -29,7 +30,7 @@ use andromeda_registration::{RegistrationChangeSink, expiry::RegistrationExpiry,
 use andromeda_subscription::{expiry::SubscriptionExpiry, lifecycle::SubscriptionService, variant::SubscriptionVariant};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
-    failure::TaskFailure,
+    failure::{FailureClass, TaskFailure},
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule},
     registration::TaskRegistration,
     restart_policy::RestartPolicy,
@@ -39,7 +40,7 @@ use andromeda_task_runtime::{
     task_name::TaskName,
 };
 use chrono::{DateTime, Utc};
-use std::{sync::Arc, time::Duration};
+use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 
 /// Register every sweep that deletes a resource past its `expiresAt`, each
@@ -118,9 +119,9 @@ fn register_cached_context_invalidation(
     pacer: Arc<BackgroundPacer>,
     store: Arc<dyn CachedContextInvalidation>,
 ) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(CACHED_CONTEXT_INVALIDATION_INTERVAL, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("cached-context-invalidation").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule =
+        PeriodicSchedule::new(CACHED_CONTEXT_INVALIDATION_INTERVAL, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("cached-context-invalidation").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -134,7 +135,7 @@ fn register_cached_context_invalidation(
             pacer
                 .run(async move {
                     invalidate_once(store.as_ref()).await;
-                    Ok(())
+                    Ok::<(), TaskFailure<Infallible>>(())
                 })
                 .await
         }
@@ -142,7 +143,7 @@ fn register_cached_context_invalidation(
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 fn register_entity_expiry(
@@ -154,16 +155,15 @@ fn register_entity_expiry(
     cadence: Duration,
     expiry_batch_size: usize,
 ) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("entity-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("entity-expiry").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
         RestartPolicy::transient(u32::MAX, cadence, cadence),
         ShutdownPolicy::new(cadence),
     );
-    let expiry_batch_size = EntityExpiryBatchSize::try_from(expiry_batch_size).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let expiry_batch_size = EntityExpiryBatchSize::try_from(expiry_batch_size).map_err(AssemblyInvariant::from)?;
     let sweep = Arc::new(EntityExpirySweep::new(target, entity_policy, entity_expiry_source, expiry_batch_size));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let sweep = Arc::clone(&sweep); // clone: each scheduled future owns the shared policy operation for its duration.
@@ -175,7 +175,7 @@ fn register_entity_expiry(
                     let EntityExpiryOutcome {
                         expired_entities,
                         purged_attributes,
-                    } = sweep.execute(cutoff).await.map_err(|error| classify_entity_expiry_failure(&error))?;
+                    } = sweep.execute(cutoff).await.map_err(classify_entity_expiry_failure)?;
                     tracing::info!(expired_entities, purged_attributes, "entity expiry sweep completed");
                     Ok(())
                 })
@@ -185,7 +185,7 @@ fn register_entity_expiry(
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Register one subscription variant as an independent scheduled policy operation.
@@ -200,9 +200,8 @@ fn register_subscription_expiry<V>(
 where
     V: SubscriptionVariant + 'static,
 {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from(task_name).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from(task_name).map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -217,7 +216,7 @@ where
             pacer
                 .run(async move {
                     let cutoff = DateTime::<Utc>::from(execution.cutoff());
-                    let outcome = expiry.execute(cutoff).await.map_err(|error| classify_subscription_expiry_failure(&error))?;
+                    let outcome = expiry.execute(cutoff).await.map_err(classify_subscription_expiry_failure)?;
                     tracing::info!(expired = outcome.expired.len(), task = task_name, "subscription expiry completed");
                     Ok(())
                 })
@@ -227,7 +226,7 @@ where
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Register semantic registration deletion as its own scheduled operation.
@@ -249,9 +248,8 @@ fn register_registration_expiry(
     removal_hook: Option<Arc<dyn RegistrationRemovalHook>>,
     cadence: Duration,
 ) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("registration-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("registration-expiry").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -266,7 +264,7 @@ fn register_registration_expiry(
             pacer
                 .run(async move {
                     let cutoff = DateTime::<Utc>::from(execution.cutoff());
-                    let outcome = expiry.execute(cutoff).await.map_err(|error| classify_registration_expiry_failure(&error))?;
+                    let outcome = expiry.execute(cutoff).await.map_err(classify_registration_expiry_failure)?;
                     tracing::info!(expired = outcome.expired.len(), "registration expiry completed");
                     Ok(())
                 })
@@ -276,7 +274,7 @@ fn register_registration_expiry(
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 /// Register the sweep that removes Entity Maps past their `expiresAt`
@@ -288,9 +286,8 @@ fn register_entity_map_expiry(
     store: Arc<dyn EntityMapStore>,
     cadence: Duration,
 ) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("entity-map-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let name = TaskName::try_from("entity-map-expiry").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -305,7 +302,7 @@ fn register_entity_map_expiry(
             pacer
                 .run(async move {
                     let cutoff = DateTime::<Utc>::from(execution.cutoff());
-                    let expired = expiry.execute(cutoff).await.map_err(|error| classify_entity_map_failure(&error))?;
+                    let expired = expiry.execute(cutoff).await.map_err(classify_entity_map_failure)?;
                     tracing::info!(expired, "entity map expiry completed");
                     Ok(())
                 })
@@ -315,14 +312,14 @@ fn register_entity_map_expiry(
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
-fn classify_entity_map_failure(error: &EntityMapError) -> TaskFailure {
-    let summary = error.to_string();
-    match error {
-        EntityMapError::Persistence { .. } | EntityMapError::StoreSaturated => TaskFailure::transient(summary),
-        EntityMapError::Invariant { .. } => TaskFailure::invariant_violation(summary),
-        EntityMapError::NotFound { .. } | EntityMapError::RequestChanged { .. } => TaskFailure::permanent(summary),
-    }
+const fn classify_entity_map_failure(error: EntityMapError) -> TaskFailure<EntityMapError> {
+    let class = match &error {
+        EntityMapError::Persistence(_) | EntityMapError::StoreSaturated => FailureClass::Transient,
+        EntityMapError::Invariant(_) => FailureClass::InvariantViolation,
+        EntityMapError::NotFound { .. } | EntityMapError::RequestChanged { .. } => FailureClass::Permanent,
+    };
+    TaskFailure::new(class, error)
 }

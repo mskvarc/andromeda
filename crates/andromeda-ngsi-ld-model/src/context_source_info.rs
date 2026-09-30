@@ -9,15 +9,17 @@
 //! policy (validation) and forwarding (application) share.
 
 use crate::key_value_pair::KeyValuePair;
-use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
-use iri_rs::IriRefBuf;
+use andromeda_ngsi_ld_lexicon::spec_version::{SpecVersion, SpecVersionParseError};
+use iri_rs::{InvalidIri, IriRefBuf};
 use mediatype::{
     MediaType,
     MediaTypeBuf,
+    MediaTypeError,
     Name,
     names::{APPLICATION, JSON},
 };
 use std::str::FromStr;
+use strum::{Display, IntoStaticStr};
 use thiserror::Error;
 
 /// The `accept` key: the media type the source must answer in.
@@ -29,23 +31,43 @@ pub const JSONLD_CONTEXT_KEY: &str = "jsonldContext";
 /// The `ngsildConformance` key: the specification version the source understands.
 pub const NGSILD_CONFORMANCE_KEY: &str = "ngsildConformance";
 
+/// The two reserved keys whose value clause 4.3.6.6 restricts to a media type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
+pub enum MediaTypeKey {
+    /// The `accept` key.
+    #[strum(serialize = "accept")]
+    Accept,
+    /// The `contentType` key.
+    #[strum(serialize = "contentType")]
+    ContentType,
+}
+
 /// Why a `contextSourceInfo` array violates clause 4.3.6.6.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 pub enum ContextSourceInfoError {
-    /// `accept` or `contentType` is not one of the two media types the clause allows.
-    #[error("contextSourceInfo {key} must be application/json or application/ld+json, got {value}")]
+    /// `accept` or `contentType` is not a media type at all.
+    #[error("contextSourceInfo {key} is not a media type: {source}")]
+    MalformedMediaType {
+        /// Which of the two media-type keys carried the value.
+        key: MediaTypeKey,
+        /// Why the media-type grammar refused the value.
+        #[source]
+        source: MediaTypeError,
+    },
+    /// `accept` or `contentType` is a media type, but not one of the two the clause allows.
+    #[error("contextSourceInfo {key} must be application/json or application/ld+json, got {media_type}")]
     UnsupportedMediaType {
         /// Which of the two media-type keys carried the value.
-        key: &'static str,
-        /// The offending value.
-        value: String,
+        key: MediaTypeKey,
+        /// The media type the key named.
+        media_type: MediaTypeBuf,
     },
     /// `jsonldContext` is not a URL reference.
-    #[error("contextSourceInfo jsonldContext must be a URL reference, got {0}")]
-    InvalidJsonLdContext(String),
+    #[error("contextSourceInfo jsonldContext must be a URL reference")]
+    InvalidJsonLdContext(#[source] InvalidIri<String>),
     /// `ngsildConformance` is not of the form `major.minor`.
-    #[error("contextSourceInfo ngsildConformance must be of the form major.minor, got {0}")]
-    InvalidConformance(String),
+    #[error("contextSourceInfo ngsildConformance must be of the form major.minor")]
+    InvalidConformance(#[source] SpecVersionParseError),
 }
 
 /// The reserved keys of a `contextSourceInfo` array, read into their types, and
@@ -71,13 +93,13 @@ fn is_admitted_media_type(media_type: &MediaType<'_>) -> bool {
 }
 
 /// Parse one of the two media-type keys under the clause 4.3.6.6 restriction.
-fn parse_media_type(key: &'static str, value: &str) -> Result<MediaTypeBuf, ContextSourceInfoError> {
-    let unsupported = || ContextSourceInfoError::UnsupportedMediaType { key, value: value.to_string() };
-    let parsed = MediaType::parse(value).map_err(|_| unsupported())?;
-    if !is_admitted_media_type(&parsed) {
-        return Err(unsupported());
+fn parse_media_type(key: MediaTypeKey, value: &str) -> Result<MediaTypeBuf, ContextSourceInfoError> {
+    let parsed = MediaType::parse(value).map_err(|source| ContextSourceInfoError::MalformedMediaType { key, source })?;
+    let media_type = MediaTypeBuf::from(parsed);
+    if !is_admitted_media_type(&media_type.to_ref()) {
+        return Err(ContextSourceInfoError::UnsupportedMediaType { key, media_type });
     }
-    Ok(MediaTypeBuf::from(parsed))
+    Ok(media_type)
 }
 
 impl<'a> TryFrom<&'a [KeyValuePair]> for ContextSourceInfo<'a> {
@@ -87,15 +109,13 @@ impl<'a> TryFrom<&'a [KeyValuePair]> for ContextSourceInfo<'a> {
         let mut info = ContextSourceInfo::default();
         for pair in pairs {
             match pair.key.as_str() {
-                ACCEPT_KEY => info.accept = Some(parse_media_type(ACCEPT_KEY, &pair.value)?),
-                CONTENT_TYPE_KEY => info.content_type = Some(parse_media_type(CONTENT_TYPE_KEY, &pair.value)?),
+                ACCEPT_KEY => info.accept = Some(parse_media_type(MediaTypeKey::Accept, &pair.value)?),
+                CONTENT_TYPE_KEY => info.content_type = Some(parse_media_type(MediaTypeKey::ContentType, &pair.value)?),
                 JSONLD_CONTEXT_KEY => {
-                    info.jsonld_context =
-                        Some(IriRefBuf::new(pair.value.to_string()).map_err(|_| ContextSourceInfoError::InvalidJsonLdContext(pair.value.to_string()))?);
+                    info.jsonld_context = Some(IriRefBuf::new(pair.value.to_string()).map_err(ContextSourceInfoError::InvalidJsonLdContext)?);
                 }
                 NGSILD_CONFORMANCE_KEY => {
-                    info.ngsild_conformance =
-                        Some(SpecVersion::from_str(&pair.value).map_err(|_| ContextSourceInfoError::InvalidConformance(pair.value.to_string()))?);
+                    info.ngsild_conformance = Some(SpecVersion::from_str(&pair.value).map_err(ContextSourceInfoError::InvalidConformance)?);
                 }
                 _custom => info.custom.push(pair),
             }
@@ -107,7 +127,7 @@ impl<'a> TryFrom<&'a [KeyValuePair]> for ContextSourceInfo<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        context_source_info::{ContextSourceInfo, ContextSourceInfoError},
+        context_source_info::{ContextSourceInfo, ContextSourceInfoError, MediaTypeKey},
         key_value_pair::KeyValuePair,
     };
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
@@ -141,16 +161,27 @@ mod tests {
 
     #[test]
     fn a_media_type_outside_the_two_admitted_ones_is_rejected() {
-        for (key, value) in [("accept", "text/plain"), ("contentType", "application/xml"), ("accept", "not a media type")] {
+        for (key, value, expected_key) in [
+            ("accept", "text/plain", MediaTypeKey::Accept),
+            ("contentType", "application/xml", MediaTypeKey::ContentType),
+        ] {
             let pairs = [pair(key, value)];
-            assert!(
-                matches!(
-                    ContextSourceInfo::try_from(pairs.as_slice()),
-                    Err(ContextSourceInfoError::UnsupportedMediaType { .. })
-                ),
-                "{key}: {value} must be rejected"
-            );
+            let error = ContextSourceInfo::try_from(pairs.as_slice()).expect_err("an unadmitted media type is rejected");
+            let ContextSourceInfoError::UnsupportedMediaType { key: rejected_key, media_type } = error else {
+                panic!("{key}: {value} must be an unsupported media type, got {error:?}");
+            };
+            pretty_assertions::assert_eq!(rejected_key, expected_key);
+            pretty_assertions::assert_eq!(media_type.to_string(), value);
         }
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_media_type_names_the_key_that_carried_it() {
+        let pairs = [pair("accept", "not a media type")];
+        assert!(matches!(
+            ContextSourceInfo::try_from(pairs.as_slice()),
+            Err(ContextSourceInfoError::MalformedMediaType { key: MediaTypeKey::Accept, .. })
+        ));
     }
 
     #[test]

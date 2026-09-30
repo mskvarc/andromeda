@@ -144,10 +144,7 @@ impl<'a> Parser<'a> {
         if name.is_empty() {
             return Err(QueryError::ProjectionEmptyTerm { position: start });
         }
-        let name = name.parse::<AttributeName>().map_err(|source| QueryError::AttributeNameInvalid {
-            value: name.to_string(),
-            source,
-        })?;
+        let name = name.parse::<AttributeName>().map_err(QueryError::AttributeNameInvalid)?;
         let linked = if self.peek() == Some('{') {
             self.parse_linked_entity_term()?
         } else {

@@ -16,7 +16,7 @@ use crate::{
     engine::options::RemoteContextFetch,
     loader::{
         cache_lifetime::{CacheLifetime, ContextFreshness},
-        error::{LoaderError, LoaderErrorKind},
+        error::{ContextUnavailable, LoaderError, LoaderErrorKind},
         loaded_context::{ContextDurability, EntryLifetime, LoadedContext},
         pending_persistence::PendingPersistence,
         remote_document::fetch_and_parse_retrying,
@@ -43,7 +43,7 @@ use tracing::{trace, warn};
 ///
 /// # Errors
 ///
-/// Returns [`LoaderErrorKind::Cache`] when the durable read fails and remote
+/// Returns [`ContextUnavailable::Cache`] when the durable read fails and remote
 /// fetch is denied.
 pub(crate) async fn load_from_durable_cache(
     cache: &dyn ContextCache,
@@ -68,7 +68,7 @@ pub(crate) async fn load_from_durable_cache(
         }
         Err(unavailable) => Err(LoaderError {
             url: url.clone(), // clone: resolution continues to report under this URL
-            kind: LoaderErrorKind::Cache(unavailable.to_string()),
+            kind: LoaderErrorKind::Unavailable(ContextUnavailable::Cache(unavailable)),
         }),
     }
 }

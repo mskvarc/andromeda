@@ -25,8 +25,8 @@ pub struct SpecVersion {
 
 /// Why a token is not a [`SpecVersion`].
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("NGSI-LD version must be of the form major.minor, got {0}")]
-pub struct SpecVersionParseError(String);
+#[error("NGSI-LD version must be of the form major.minor")]
+pub struct SpecVersionParseError;
 
 impl SpecVersion {
     /// NGSI-LD v1.0.
@@ -99,10 +99,9 @@ impl FromStr for SpecVersion {
     type Err = SpecVersionParseError;
 
     fn from_str(token: &str) -> Result<SpecVersion, SpecVersionParseError> {
-        let invalid = || SpecVersionParseError(token.to_string());
-        let (major, minor) = token.split_once('.').ok_or_else(invalid)?;
-        let major = parse_component(major).ok_or_else(invalid)?;
-        let minor = parse_component(minor).ok_or_else(invalid)?;
+        let (major, minor) = token.split_once('.').ok_or(SpecVersionParseError)?;
+        let major = parse_component(major).ok_or(SpecVersionParseError)?;
+        let minor = parse_component(minor).ok_or(SpecVersionParseError)?;
         Ok(SpecVersion { major, minor })
     }
 }

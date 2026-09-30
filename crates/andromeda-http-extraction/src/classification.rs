@@ -29,7 +29,7 @@ pub fn classify_tenancy_error(error: &TenancyError) -> ClassifiedReport {
 #[must_use]
 pub fn classify_request_origin_error(error: &RequestOriginError) -> ClassifiedReport {
     match error {
-        RequestOriginError::InvalidOrigin { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
+        RequestOriginError::InvalidOrigin(_) => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
     }
 }
 
@@ -45,6 +45,8 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         // InvalidRequest failures, beside the standard ones (study §4.9).
         ParameterError::OptionsInvalid(_)
         | ParameterError::FormatInvalid(_)
+        | ParameterError::MergeFormatInvalid(_)
+        | ParameterError::ResponseFormatHeaderInvalid(_)
         | ParameterError::AggregationIneligible { .. }
         | ParameterError::AggrGroupByWithoutGroupedValues
         | ParameterError::AggrGroupByInvalid(_)
@@ -52,10 +54,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::LastNWithGrouping
         | ParameterError::WildcardTypeWithLocalFalse => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         ParameterError::IdPatternEmpty
-        | ParameterError::OrderByDirectionInvalid(_)
-        | ParameterError::OrderGeometryInvalid(_)
         | ParameterError::OrderGeometryCollection
-        | ParameterError::OrderFromInvalid { .. }
         | ParameterError::DropKeepExclusive
         | ParameterError::DatasetIdWithDeleteAll
         | ParameterError::Projection(_)
@@ -69,13 +68,9 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::PurgeNamesLinkedEntities(_)
         | ParameterError::InlineJoinWithoutInstances(_)
         | ParameterError::AttrsReservedMember(_)
-        | ParameterError::TimerelInvalid(_)
-        | ParameterError::TimePropertyInvalid(_)
         | ParameterError::TimerelTimeatRequired
-        | ParameterError::AggrMethodInvalid(_)
         | ParameterError::SelectorRequired(_)
         | ParameterError::AggrMethodsRequired
-        | ParameterError::RequestTypeInvalid(_)
         | ParameterError::EntityQueryTemporalMembers
         | ParameterError::TemporalQueryMissing
         | ParameterError::TemporalAggregationConflict
@@ -94,6 +89,7 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::QUnescapedControlCharacter { .. }
         | QueryError::QUnexpectedToken { .. }
         | QueryError::QExpected { .. }
+        | QueryError::QAmbiguousTypeGuard
         | QueryError::QUnexpectedChar { .. }
         | QueryError::QAttributePathTooDeep { .. }
         | QueryError::TypeExprEmpty
@@ -130,21 +126,14 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::ParamIdInvalid { .. }
         | QueryError::ParamIdListEmpty
         | QueryError::ParamTimerelTimeatPair
-        | QueryError::ParamAggrPeriodDurationInvalid(_)
+        | QueryError::ParamAggrPeriodDurationInvalid { .. }
         | QueryError::ParamDatasetIdInvalid { .. }
         | QueryError::ParamEndTimeAtRequired
-        | QueryError::ProjectionKeywordWithLinkedTerm { .. }
-        // A term that does not expand to an absolute IRI names nothing the
-        // broker can address. The term and the `@context` that failed to
-        // resolve it both come from the request, so this is input the operation
-        // cannot accept rather than a broker fault — and answering a malformed
-        // query parameter with `500 InternalError` told the client to retry
-        // something that can only ever fail.
-        | QueryError::TermNotAnIri { .. } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        | QueryError::ProjectionKeywordWithLinkedTerm { .. } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
         // The expander's own failure is the one arm that can still be a broker
         // fault: it carries whatever the JSON-LD processor raised, which
         // includes conditions no request text can provoke.
-        QueryError::TermExpansion { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to expand a query term against the context")),
+        QueryError::TermExpansion(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to expand a query term against the context")),
     }
 }
 
@@ -160,14 +149,24 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
         // Context "should result in an error of type BadRequestData".
         JsonLdError::ProtectedContextPreload { .. }
         | JsonLdError::ContextInvalid { .. }
-        | JsonLdError::EmbeddedContextInvalid(_)
+        | JsonLdError::PreloadedContextUnreadable { .. }
+        | JsonLdError::PreloadedContextInvalid { .. }
+        | JsonLdError::PreloadedContextUrl(_)
+        | JsonLdError::EmbeddedContextMissing { .. }
+        | JsonLdError::EmbeddedContextInvalid { .. }
         | JsonLdError::InlineContextInvalid(_)
         | JsonLdError::ScopedUserContext { .. }
         | JsonLdError::ClientBuild(_)
         | JsonLdError::Expansion(_)
         | JsonLdError::Compaction(_)
-        | JsonLdError::InvalidIri(_)
-        | JsonLdError::InvalidDocument(_)
+        | JsonLdError::TypeNotExpanded
+        | JsonLdError::TermNotExpanded
+        | JsonLdError::ExpandedTermNotIri(_)
+        | JsonLdError::ContextUrlNotIri(_)
+        | JsonLdError::GeneratedVocabularyIri(_)
+        | JsonLdError::JsonLdContextText(_)
+        | JsonLdError::JsonLdContextShape
+        | JsonLdError::DocumentShape
         | JsonLdError::Json(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }
 }
@@ -177,6 +176,7 @@ mod tests {
     use super::classify_jsonld_error;
     use andromeda_jsonld::error::JsonLdError;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_tenancy::runtime_build_failure::RuntimeBuildFailure;
 
     #[test]
     fn malformed_json_is_invalid_request() {
@@ -206,7 +206,7 @@ mod tests {
         // A genuine construction fault stays an internal 500, not backpressure.
         let fault = classify_tenancy_error(&TenancyError::RuntimeUnavailable {
             tenant,
-            detail: "boom".to_owned(),
+            cause: RuntimeBuildFailure::Invariant,
         });
         pretty_assertions::assert_eq!(fault.error_type(), NgsiLdErrorType::InternalError);
     }

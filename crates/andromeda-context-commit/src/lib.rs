@@ -16,6 +16,8 @@ pub mod batch_side_effect_job;
 pub mod change_event;
 /// Commit-time edge notification that deferred consequences are available.
 pub mod commit_consequence_publisher;
+/// The invariants an atomic commit relies on.
+pub mod commit_invariant;
 /// The record and ordinal base a replayed commit continues under.
 pub mod commit_replay;
 /// The atomic commit port and submission semantics.
@@ -49,6 +51,8 @@ pub mod precondition;
 pub mod projected_attributes;
 /// The identity of one durable side-effect job.
 pub mod side_effect_job_id;
+/// Why the content of a submission cannot be stored as written.
+pub mod submission_refusal;
 /// The narrow key a stored Subscription is referenced by.
 pub mod subscription_key;
 /// Subscriptions a committing write matched.
@@ -76,6 +80,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-number",
+        "andromeda-persistence-failure",
     ],
     allow_workspace_dev_dependencies: [
     ],

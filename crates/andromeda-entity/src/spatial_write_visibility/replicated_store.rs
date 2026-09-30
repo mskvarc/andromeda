@@ -5,6 +5,7 @@ use crate::{
     port::spatial_snapshot::{ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead},
     spatial_write_visibility::geo_query::{VEHICLE_TYPE, point, uri},
 };
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use futures::future::BoxFuture;
 use std::sync::Mutex;
 
@@ -32,7 +33,7 @@ impl ReplicatedStore {
 
     fn read(&self, since: u64) -> Result<LocationRead, EntityError> {
         if *self.unreachable.lock().expect("the reachability lock is not poisoned") {
-            return Err(EntityError::persistence("the store is unreachable"));
+            return Err(EntityError::from(PersistenceFailure::Unavailable));
         }
         let horizon = *self.clock.lock().expect("the clock lock is not poisoned") + 1;
         let locations = self

@@ -5,11 +5,14 @@
 //! vocabularies meet: the statements below it know nothing of the port, and the
 //! delivery worker above it knows nothing of the join.
 
-use crate::notification_delivery::{
-    acknowledge,
-    claim,
-    cleanup,
-    rows::{ClaimedDelivery, UnreadableClaimedDelivery},
+use crate::{
+    notification_delivery::{
+        acknowledge,
+        claim,
+        cleanup,
+        rows::{ClaimedDelivery, UnreadableClaimedDelivery},
+    },
+    store_fault::persistence_failure,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
@@ -45,14 +48,14 @@ impl DeliveryStore for NotificationDeliveryQueue {
     async fn claim_pending(&self, worker_id: &LeaseHolder, lease: LeaseTerm, batch_size: i32) -> Result<Vec<DeliveryClaim>, NotificationError> {
         let claimed = claim::claim_due(&self.pool, *worker_id, lease, batch_size)
             .await
-            .map_err(|error| NotificationError::persistence(error.to_string()))?;
+            .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))?;
         Ok(claimed.into_iter().map(delivery_claim).collect())
     }
 
     async fn mark_delivered(&self, key: DeliveryKey, worker_id: &LeaseHolder, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
         let outcome = acknowledge::mark_delivered(&self.pool, key.into_inner(), *worker_id, target)
             .await
-            .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
+            .map_err(|error| DeliveryLeaseError::Persistence(persistence_failure(&error)))?;
         held(outcome, key, worker_id)
     }
 
@@ -66,33 +69,33 @@ impl DeliveryStore for NotificationDeliveryQueue {
     ) -> Result<(), DeliveryLeaseError> {
         let outcome = acknowledge::mark_failed(&self.pool, key.into_inner(), *worker_id, failure, next_attempt_at, target)
             .await
-            .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
+            .map_err(|error| DeliveryLeaseError::Persistence(persistence_failure(&error)))?;
         held(outcome, key, worker_id)
     }
 
     async fn mark_terminal(&self, key: DeliveryKey, worker_id: &LeaseHolder, failure: &str, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
         let outcome = acknowledge::mark_exhausted(&self.pool, key.into_inner(), *worker_id, failure, target)
             .await
-            .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
+            .map_err(|error| DeliveryLeaseError::Persistence(persistence_failure(&error)))?;
         held(outcome, key, worker_id)
     }
 
     async fn delete_delivered_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
         cleanup::purge_delivered_before(&self.pool, cutoff)
             .await
-            .map_err(|error| NotificationError::persistence(error.to_string()))
+            .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))
     }
 
     async fn delete_exhausted_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
         cleanup::purge_exhausted_before(&self.pool, cutoff)
             .await
-            .map_err(|error| NotificationError::persistence(error.to_string()))
+            .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))
     }
 
     async fn delete_orphan_events_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
         cleanup::purge_orphan_events_before(&self.pool, cutoff)
             .await
-            .map_err(|error| NotificationError::persistence(error.to_string()))
+            .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))
     }
 }
 

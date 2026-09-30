@@ -147,10 +147,9 @@ impl<'a> Parser<'a> {
         if name.is_empty() {
             return Err(QueryError::TypeExprEmptyName(start));
         }
-        let name = name.parse::<EntityTypeName>().map_err(|_| QueryError::TypeExprInvalidName {
-            name: name.to_string(),
-            position: start,
-        })?;
+        let name = name
+            .parse::<EntityTypeName>()
+            .map_err(|source| QueryError::TypeExprInvalidName { position: start, source })?;
         Ok(TypeExprRaw::Type(name))
     }
 

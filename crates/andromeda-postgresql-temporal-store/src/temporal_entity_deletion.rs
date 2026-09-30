@@ -13,13 +13,14 @@
 //! reach this module: it leaves temporal state standing and records the
 //! tombstones the specification requires instead.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_named};
+use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_catalog_error::StoredCatalogError, write_record_release::release_named};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
 use andromeda_postgresql_seaquery::{aggregate::count_all, branch::qualified};
+use andromeda_temporal::temporal_not_found_reason::TemporalNotFoundReason;
 use sea_query::{
     DeleteStatement,
     DynIden,
@@ -111,7 +112,7 @@ impl TemporalRepository {
     ///
     /// Returns [`TemporalStoreError::NotFound`] when no temporal entity carries
     /// the identifier, [`TemporalStoreError::Database`] when a statement fails,
-    /// and [`TemporalStoreError::Decode`] when the stored temporal-entity key is
+    /// and [`TemporalStoreError::StoredCatalog`] when the stored temporal-entity key is
     /// outside the range the database assigns.
     pub async fn delete_temporal_evolution(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<TemporalEvolutionDeletion, TemporalStoreError> {
         let mut tx = self.pool.begin().await?;
@@ -147,8 +148,7 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the audit statement fails
-    /// and [`TemporalStoreError::Decode`] when a returned count does not carry
-    /// the expected type.
+    /// and when a returned count does not carry the expected type.
     pub async fn audit_orphaned_temporal_rows(&self) -> Result<OrphanedTemporalRows, TemporalStoreError> {
         let (sql, values) = audit_orphaned_statement().build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
@@ -160,10 +160,10 @@ impl TemporalRepository {
     }
 }
 
-/// Read one audit count, naming the column that failed to decode.
+/// Read one audit count; a column that does not decode is a `sqlx` failure
+/// naming it.
 fn count(row: &PgRow, column: &str) -> Result<i64, TemporalStoreError> {
-    row.try_get(column)
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal orphan audit count {column}: {error}")))
+    Ok(row.try_get(column)?)
 }
 
 /// Resolve and lock the temporal entity one deletion addresses.
@@ -175,24 +175,20 @@ async fn locate_temporal_entity(
     let (sql, values) = lock_temporal_entity_statement(schema, entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
     let located = sqlx::query_with(AssertSqlSafe(sql), values).fetch_optional(&mut **tx).await?;
     let Some(row) = located else {
-        return Err(TemporalStoreError::NotFound(format!("Temporal evolution of {entity_id} not found")));
+        return Err(TemporalStoreError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() })); // clone: the reason owns the entity it names
     };
-    let stored: i64 = row
-        .try_get("temporal_entity_key")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.temporal_entity_key: {error}")))?;
-    TemporalEntityKey::try_from(stored).map_err(|error| TemporalStoreError::Decode(error.to_string()))
+    let stored: i64 = row.try_get("temporal_entity_key")?;
+    Ok(TemporalEntityKey::try_from(stored).map_err(StoredCatalogError::EntityKey)?)
 }
 
 /// Run one deletion statement, collecting the write identity of every removed row.
 async fn delete_returning_write_ids(tx: &mut Transaction<'_, Postgres>, statement: DeleteStatement) -> Result<Vec<Uuid>, TemporalStoreError> {
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&mut **tx).await?;
-    rows.into_iter()
-        .map(|row| {
-            row.try_get("write_id")
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid history write_id: {error}")))
-        })
-        .collect()
+    Ok(rows
+        .into_iter()
+        .map(|row| row.try_get("write_id"))
+        .collect::<Result<Vec<Uuid>, sqlx::Error>>()?)
 }
 
 /// Lock the addressed temporal entity before anything is removed.

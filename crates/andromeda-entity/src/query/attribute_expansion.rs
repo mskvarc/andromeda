@@ -73,7 +73,7 @@ impl<'a> AttributeExpansions<'a> {
             // keys them by, so the name is validated once, on first sight.
             let key: AttributeName = name
                 .parse()
-                .map_err(|source| EntityError::Validation(EntityValidationReason::AttributeMemberName { name: name.to_owned(), source }))?;
+                .map_err(|source| EntityError::Validation(EntityValidationReason::AttributeMemberName(source)))?;
             let expanded = self.expander.expand_term(name).await?;
             self.index.insert(key, expanded);
         }

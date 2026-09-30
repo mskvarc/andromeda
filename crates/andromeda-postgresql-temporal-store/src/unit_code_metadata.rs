@@ -31,11 +31,14 @@ pub enum UnitCodeMetadataError {
     /// of a `BadRequestData` problem.
     #[error("'unitCode' shall be a single string holding a UN/CEFACT common code, not a reified attribute or a repeated member")]
     Malformed,
-    /// The code is not one the catalog has an identity for.
-    #[error("'{code}' is not a UN/CEFACT common code the unit catalog registers")]
+    /// The member names no UN/CEFACT common code at all.
+    #[error("'unitCode' is not a UN/CEFACT common code")]
+    NotACommonCode,
+    /// The code is a UN/CEFACT common code the catalog has no identity for.
+    #[error("the UN/CEFACT common code {code} is not one the unit catalog registers")]
     Unregistered {
-        /// The code exactly as the client wrote it.
-        code: String,
+        /// The common code the client wrote.
+        code: UnitCode,
     },
     /// A stored identity names no catalog registration.
     #[error("the stored unit-code identity {identity} names no catalog registration")]
@@ -142,10 +145,8 @@ fn identity_of(member: &Value) -> Result<UnitCodeId, UnitCodeMetadataError> {
         .and_then(|entry| entry.get(VALUE_KEYWORD))
         .and_then(Value::as_str)
         .ok_or(UnitCodeMetadataError::Malformed)?;
-    let code = UnitCode::from_code(raw).ok_or_else(|| UnitCodeMetadataError::Unregistered { code: raw.to_owned() })?;
-    registry()?
-        .id_of(code)
-        .map_err(|_| UnitCodeMetadataError::Unregistered { code: raw.to_owned() })
+    let code = UnitCode::from_code(raw).ok_or(UnitCodeMetadataError::NotACommonCode)?;
+    registry()?.id_of(code).map_err(|_| UnitCodeMetadataError::Unregistered { code })
 }
 
 #[cfg(test)]
@@ -206,12 +207,9 @@ mod tests {
     }
 
     #[test]
-    fn an_unregistered_code_refuses_the_write() {
+    fn a_code_outside_the_common_code_list_refuses_the_write() {
         let mut metadata = Some(metadata_with_unit("NOTACODE"));
-        pretty_assertions::assert_eq!(
-            take_unit_code(&mut metadata),
-            Err(UnitCodeMetadataError::Unregistered { code: "NOTACODE".to_owned() })
-        );
+        pretty_assertions::assert_eq!(take_unit_code(&mut metadata), Err(UnitCodeMetadataError::NotACommonCode));
     }
 
     #[test]
@@ -219,10 +217,7 @@ mod tests {
         // Recommendation 20 common codes are upper case; accepting `kgm` would
         // make two spellings of one unit collide on different identities.
         let mut metadata = Some(metadata_with_unit("kgm"));
-        pretty_assertions::assert_eq!(
-            take_unit_code(&mut metadata),
-            Err(UnitCodeMetadataError::Unregistered { code: "kgm".to_owned() })
-        );
+        pretty_assertions::assert_eq!(take_unit_code(&mut metadata), Err(UnitCodeMetadataError::NotACommonCode));
     }
 
     #[test]

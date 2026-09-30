@@ -60,7 +60,7 @@ impl TemporalRepository {
     /// Returns [`TemporalStoreError::NameLookup`] when a name dictionary cannot
     /// resolve a name, [`TemporalStoreError::NotFound`] when a typeless
     /// observation has no temporal evolution to extend,
-    /// [`TemporalStoreError::Query`] when the catalogue does not return a
+    /// [`TemporalStoreError::Invariant`] when the catalogue does not return a
     /// requested grain, and [`TemporalStoreError::Database`] when a statement
     /// fails.
     pub(crate) async fn upsert_temporal_catalog_batch_in_tx(

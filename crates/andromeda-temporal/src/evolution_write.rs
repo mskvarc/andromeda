@@ -15,7 +15,7 @@
 //! alone), so a change the fold makes owes the notifications a Core write
 //! making the same change would, committed with it; a backfill owes none.
 
-use crate::{error::TemporalError, service::TemporalService, temporal_validation_reason::TemporalValidationReason};
+use crate::{error::TemporalError, service::TemporalService, temporal_invariant::TemporalInvariant, temporal_validation_reason::TemporalValidationReason};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
@@ -24,6 +24,7 @@ use andromeda_context_commit::{
     entity_record::EntityRecord,
     history_record::HistoryRecord,
     precondition::{AfterAttempt, Precondition, after_attempt},
+    submission_refusal::SubmissionRefusal,
     write_outcome::single,
     write_retry::{WRITE_ATTEMPTS, backoff_after_lost_attempts},
 };
@@ -68,7 +69,7 @@ impl TemporalService {
                 .entity_reader
                 .get_snapshot(target, entity_id)
                 .await
-                .map_err(|error| TemporalError::persistence(error.to_string()))?;
+                .map_err(TemporalError::from_entity_failure)?;
             let EvolutionWrite { write, events } = evolution_write(&self.notifier, target, entity_id, Arc::clone(&evolution), current.as_ref())?; // clone: Arc ref-count bump
             let outcome = single(self.writes.commit(target, vec![write]).await?)?;
             match after_attempt(&outcome) {
@@ -106,9 +107,7 @@ fn evolution_write(
 ) -> Result<EvolutionWrite, TemporalError> {
     let now = Utc::now();
     let fold = fold_into_current_state(current.map(|snapshot| &snapshot.payload), &evolution, now).map_err(|error| match error {
-        CurrentStateFoldError::DatasetId(InstanceDatasetIdError { raw, source }) => {
-            TemporalError::Validation(TemporalValidationReason::DatasetId { raw, source })
-        }
+        CurrentStateFoldError::DatasetId(InstanceDatasetIdError { source }) => TemporalError::from(SubmissionRefusal::DatasetId(source)),
         CurrentStateFoldError::NotAnEntity => TemporalError::Validation(TemporalValidationReason::EntityNotObject),
     })?;
     let builder = AtomicWrite::builder()
@@ -132,14 +131,14 @@ fn evolution_write(
             // Clause 4.8: a standing instance takes the write instant as its
             // modifiedAt and keeps the createdAt it had; a new one takes both.
             let previous = current.map(|snapshot| &snapshot.payload);
-            stamp_attribute_instants(&mut document, previous.unwrap_or(&Value::Null), now).map_err(TemporalError::internal)?;
+            stamp_attribute_instants(&mut document, previous.unwrap_or(&Value::Null), now).map_err(|error| TemporalError::Internal(error.into()))?;
             let document = Arc::new(document);
             let record = EntityRecord::from_expanded(Arc::clone(&document))?; // clone: Arc ref-count bump; the document is also the notification's
             let change = match previous {
                 Some(previous) => modification(previous, &document),
                 None => creation(&document),
             }
-            .map_err(TemporalError::internal)?;
+            .map_err(TemporalError::from_entity_failure)?;
             let plan = notifier.plan(target, entity_id, &record.projection.types, change, Some(&document), previous);
             let projection = CurrentStateProjection::Restated {
                 observed: Arc::new(restated),
@@ -159,7 +158,7 @@ fn evolution_write(
                 events: plan.events,
             })
         }
-        (None, None) => Err(TemporalError::internal("folding a Temporal Evolution into no Entity created none")),
+        (None, None) => Err(TemporalInvariant::FoldCreatedNoEntity.into()),
     }
 }
 

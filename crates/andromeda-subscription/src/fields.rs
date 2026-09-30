@@ -1,6 +1,12 @@
 //! Typed subscription persistence values and update merging.
 
-use crate::{error::SubscriptionError, store::SubscriptionFields, subscription_validation_reason::SubscriptionValidationReason, variant::DatasetIdPolicy};
+use crate::{
+    error::SubscriptionError,
+    store::SubscriptionFields,
+    subscription_member::SubscriptionMember,
+    subscription_validation_reason::SubscriptionValidationReason,
+    variant::DatasetIdPolicy,
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     attribute_name_csv,
@@ -105,20 +111,17 @@ impl SubscriptionWriteValues {
     }
 }
 
-fn deserialize_member<T>(payload: &Value, member: &str) -> Result<Option<T>, SubscriptionError>
+fn deserialize_member<T>(payload: &Value, member: SubscriptionMember) -> Result<Option<T>, SubscriptionError>
 where
     T: DeserializeOwned,
 {
     payload
-        .get(member)
+        .get(member.key())
         .map(|value| {
             serde_json::from_value(value.clone()).map_err(|error| {
                 // clone: serde owns the selected JSON member while the request
                 // payload remains available to the other field parsers.
-                SubscriptionError::Validation(SubscriptionValidationReason::MemberValue {
-                    member: member.to_string(),
-                    source: error,
-                })
+                SubscriptionError::Validation(SubscriptionValidationReason::MemberValue { member, source: error })
             })
         })
         .transpose()
@@ -135,16 +138,11 @@ where
 ///
 /// Returns [`SubscriptionError::Validation`] when the member is not a string,
 /// or names something outside the NGSI-LD attribute-name grammar.
-pub(crate) fn attribute_name_csv_member(payload: &Value, member: &str) -> Result<Option<Vec<AttributeName>>, SubscriptionError> {
-    let Some(value) = payload.get(member) else {
+pub(crate) fn attribute_name_csv_member(payload: &Value, member: SubscriptionMember) -> Result<Option<Vec<AttributeName>>, SubscriptionError> {
+    let Some(value) = payload.get(member.key()) else {
         return Ok(None);
     };
-    attribute_name_csv::deserialize(value).map_err(|error| {
-        SubscriptionError::Validation(SubscriptionValidationReason::MemberValue {
-            member: member.to_string(),
-            source: error,
-        })
-    })
+    attribute_name_csv::deserialize(value).map_err(|error| SubscriptionError::Validation(SubscriptionValidationReason::MemberValue { member, source: error }))
 }
 
 /// Merge one comma-separated attribute-name member of an update fragment over
@@ -156,8 +154,12 @@ pub(crate) fn attribute_name_csv_member(payload: &Value, member: &str) -> Result
 /// way `geoQ` and `temporalQ` are removed -- and without it an opt-in list
 /// could be replaced but never cleared. Anything else replaces the stored list
 /// once [`attribute_name_csv_member`] has validated it.
-fn merged_attribute_name_csv(payload: &Value, member: &str, stored: Option<Vec<AttributeName>>) -> Result<Option<Vec<AttributeName>>, SubscriptionError> {
-    match payload.get(member) {
+fn merged_attribute_name_csv(
+    payload: &Value,
+    member: SubscriptionMember,
+    stored: Option<Vec<AttributeName>>,
+) -> Result<Option<Vec<AttributeName>>, SubscriptionError> {
+    match payload.get(member.key()) {
         None => Ok(stored),
         Some(Value::Null) => Ok(None),
         Some(Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => attribute_name_csv_member(payload, member),
@@ -171,12 +173,7 @@ fn expiration(payload: &Value) -> Result<Option<DateTime<Utc>>, SubscriptionErro
         .map(|raw| {
             DateTime::parse_from_rfc3339(raw)
                 .map(|date_time| date_time.with_timezone(&Utc))
-                .map_err(|error| {
-                    SubscriptionError::Validation(SubscriptionValidationReason::ExpiresAt {
-                        raw: raw.to_string(),
-                        source: error,
-                    })
-                })
+                .map_err(|error| SubscriptionError::Validation(SubscriptionValidationReason::ExpiresAt { source: error }))
         })
         .transpose()
 }
@@ -213,27 +210,27 @@ pub fn extract_create_fields(payload: &Value, dataset_id_policy: DatasetIdPolicy
     Ok(SubscriptionWriteValues {
         subscription_name: payload.get("subscriptionName").and_then(Value::as_str).map(String::from),
         description: payload.get("description").and_then(Value::as_str).map(String::from),
-        entities: deserialize_member(payload, "entities")?,
-        watched_attributes: deserialize_member(payload, "watchedAttributes")?,
-        notification_trigger: deserialize_member(payload, "notificationTrigger")?,
+        entities: deserialize_member(payload, SubscriptionMember::Entities)?,
+        watched_attributes: deserialize_member(payload, SubscriptionMember::WatchedAttributes)?,
+        notification_trigger: deserialize_member(payload, SubscriptionMember::NotificationTrigger)?,
         time_interval: payload.get("timeInterval").and_then(Value::as_f64),
-        q: deserialize_member(payload, "q")?,
+        q: deserialize_member(payload, SubscriptionMember::Q)?,
         geo_q: payload.get("geoQ").cloned(), // clone: the write values own request JSON across the database await.
-        scope_q: deserialize_member(payload, "scopeQ")?,
-        csf: deserialize_member(payload, "csf")?,
+        scope_q: deserialize_member(payload, SubscriptionMember::ScopeQ)?,
+        csf: deserialize_member(payload, SubscriptionMember::Csf)?,
         dataset_id: match dataset_id_policy {
-            DatasetIdPolicy::Retain => deserialize_member(payload, "datasetId")?,
+            DatasetIdPolicy::Retain => deserialize_member(payload, SubscriptionMember::DatasetId)?,
             DatasetIdPolicy::Discard => None,
         },
         is_active: payload.get("isActive").and_then(Value::as_bool).unwrap_or(true),
-        notification: deserialize_member(payload, "notification")?,
+        notification: deserialize_member(payload, SubscriptionMember::Notification)?,
         expires_at: expiration(payload)?,
         throttling: payload.get("throttling").and_then(Value::as_f64),
         temporal_q: payload.get("temporalQ").cloned(), // clone: the write values own request JSON across the database await.
-        expand_values: attribute_name_csv_member(payload, "expandValues")?,
-        json_keys: attribute_name_csv_member(payload, "jsonKeys")?,
-        lang: deserialize_member(payload, "lang")?,
-        jsonld_context: deserialize_member(payload, "jsonldContext")?,
+        expand_values: attribute_name_csv_member(payload, SubscriptionMember::ExpandValues)?,
+        json_keys: attribute_name_csv_member(payload, SubscriptionMember::JsonKeys)?,
+        lang: deserialize_member(payload, SubscriptionMember::Lang)?,
+        jsonld_context: deserialize_member(payload, SubscriptionMember::JsonldContext)?,
         local_only: payload.get("localOnly").and_then(Value::as_bool).unwrap_or(false),
         split_entities: payload.get("splitEntities").and_then(Value::as_bool),
         ngsild_conformance: ngsild_conformance(payload)?,
@@ -257,24 +254,24 @@ pub fn merge_update_fields(payload: &Value, existing: Subscription, dataset_id_p
     Ok(SubscriptionWriteValues {
         subscription_name: payload.get("subscriptionName").and_then(Value::as_str).map(String::from).or(subscription_name),
         description: payload.get("description").and_then(Value::as_str).map(String::from).or(description),
-        entities: deserialize_member(payload, "entities")?.or(selection.entities),
-        watched_attributes: deserialize_member(payload, "watchedAttributes")?.or(selection.watched_attributes),
-        notification_trigger: deserialize_member(payload, "notificationTrigger")?.or(selection.notification_trigger),
+        entities: deserialize_member(payload, SubscriptionMember::Entities)?.or(selection.entities),
+        watched_attributes: deserialize_member(payload, SubscriptionMember::WatchedAttributes)?.or(selection.watched_attributes),
+        notification_trigger: deserialize_member(payload, SubscriptionMember::NotificationTrigger)?.or(selection.notification_trigger),
         time_interval: payload.get("timeInterval").and_then(Value::as_f64).or(delivery.time_interval),
-        q: deserialize_member(payload, "q")?.or(filters.q),
+        q: deserialize_member(payload, SubscriptionMember::Q)?.or(filters.q),
         geo_q: payload
             .get("geoQ")
             .cloned() // clone: the merged values own a member borrowed from the update payload.
             .or(filters.geo_q)
             .filter(|value| !value.is_null()),
-        scope_q: deserialize_member(payload, "scopeQ")?.or(filters.scope_q),
-        csf: deserialize_member(payload, "csf")?.or(filters.csf),
+        scope_q: deserialize_member(payload, SubscriptionMember::ScopeQ)?.or(filters.scope_q),
+        csf: deserialize_member(payload, SubscriptionMember::Csf)?.or(filters.csf),
         dataset_id: match dataset_id_policy {
-            DatasetIdPolicy::Retain => deserialize_member(payload, "datasetId")?.or(filters.dataset_id),
+            DatasetIdPolicy::Retain => deserialize_member(payload, SubscriptionMember::DatasetId)?.or(filters.dataset_id),
             DatasetIdPolicy::Discard => None,
         },
         is_active: payload.get("isActive").and_then(Value::as_bool).or(lifecycle.is_active).unwrap_or(true),
-        notification: deserialize_member(payload, "notification")?.or(Some(notification)),
+        notification: deserialize_member(payload, SubscriptionMember::Notification)?.or(Some(notification)),
         expires_at: expiration(payload)?.or(lifecycle.expires_at),
         throttling: payload.get("throttling").and_then(Value::as_f64).or(delivery.throttling),
         temporal_q: payload
@@ -282,10 +279,10 @@ pub fn merge_update_fields(payload: &Value, existing: Subscription, dataset_id_p
             .cloned() // clone: the merged values own a member borrowed from the update payload.
             .or(filters.temporal_q)
             .filter(|value| !value.is_null()),
-        expand_values: merged_attribute_name_csv(payload, "expandValues", filters.expand_values)?,
-        json_keys: merged_attribute_name_csv(payload, "jsonKeys", filters.json_keys)?,
-        lang: deserialize_member(payload, "lang")?.or(delivery.lang),
-        jsonld_context: deserialize_member(payload, "jsonldContext")?.or(delivery.jsonld_context),
+        expand_values: merged_attribute_name_csv(payload, SubscriptionMember::ExpandValues, filters.expand_values)?,
+        json_keys: merged_attribute_name_csv(payload, SubscriptionMember::JsonKeys, filters.json_keys)?,
+        lang: deserialize_member(payload, SubscriptionMember::Lang)?.or(delivery.lang),
+        jsonld_context: deserialize_member(payload, SubscriptionMember::JsonldContext)?.or(delivery.jsonld_context),
         local_only: payload.get("localOnly").and_then(Value::as_bool).or(delivery.local_only).unwrap_or(false),
         split_entities: payload.get("splitEntities").and_then(Value::as_bool).or(delivery.split_entities),
         ngsild_conformance: ngsild_conformance(payload)?.or(delivery.ngsild_conformance),
@@ -297,6 +294,7 @@ mod tests {
     use crate::{
         error::SubscriptionError,
         fields::{extract_create_fields, merged_attribute_name_csv},
+        subscription_member::SubscriptionMember,
         variant::DatasetIdPolicy,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
@@ -338,7 +336,7 @@ mod tests {
     /// Subscription", so a member the fragment does not mention is left alone.
     #[test]
     fn an_update_that_names_no_opt_in_leaves_the_stored_lists_alone() -> Result<(), SubscriptionError> {
-        let merged = merged_attribute_name_csv(&serde_json::json!({}), "expandValues", Some(stored_names()))?;
+        let merged = merged_attribute_name_csv(&serde_json::json!({}), SubscriptionMember::ExpandValues, Some(stored_names()))?;
 
         pretty_assertions::assert_eq!(spelled(merged.as_deref()), vec!["status"]);
         Ok(())
@@ -349,7 +347,11 @@ mod tests {
     /// could be replaced but never cleared.
     #[test]
     fn an_explicit_null_clears_a_stored_opt_in_list() -> Result<(), SubscriptionError> {
-        let merged = merged_attribute_name_csv(&serde_json::json!({"expandValues": null}), "expandValues", Some(stored_names()))?;
+        let merged = merged_attribute_name_csv(
+            &serde_json::json!({"expandValues": null}),
+            SubscriptionMember::ExpandValues,
+            Some(stored_names()),
+        )?;
 
         assert!(merged.is_none(), "an explicit null removes the member");
         Ok(())
@@ -359,7 +361,11 @@ mod tests {
     /// Table 5.2.12-1 defines has been validated.
     #[test]
     fn a_named_list_replaces_the_stored_one() -> Result<(), SubscriptionError> {
-        let merged = merged_attribute_name_csv(&serde_json::json!({"jsonKeys": "payload,extra"}), "jsonKeys", Some(stored_names()))?;
+        let merged = merged_attribute_name_csv(
+            &serde_json::json!({"jsonKeys": "payload,extra"}),
+            SubscriptionMember::JsonKeys,
+            Some(stored_names()),
+        )?;
 
         pretty_assertions::assert_eq!(spelled(merged.as_deref()), vec!["payload", "extra"]);
         Ok(())

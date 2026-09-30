@@ -189,7 +189,7 @@ fn build_purge_write(
         obj.remove(key);
     }
 
-    let removed = removed_attribute_instances(previous, &purged).map_err(EntityError::internal)?;
+    let removed = removed_attribute_instances(previous, &purged).map_err(|error| EntityError::Internal(error.into()))?;
     let mut history = Vec::with_capacity(removed.len());
     for instance in removed {
         history.push(HistoryRecord::Tombstone(instance));

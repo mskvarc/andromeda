@@ -79,19 +79,15 @@ pub struct UnreadableClaimedDelivery {
 #[derive(Debug, Error)]
 pub enum ClaimedDeliveryError {
     /// The subscription identifier is not a URI permitted by clause 4.6.2.
-    #[error("references invalid subscription URI `{value}`")]
+    #[error("references an invalid subscription URI")]
     InvalidSubscriptionId {
-        /// Invalid stored value.
-        value: String,
         /// URI validation failure.
         #[source]
         source: IdentifierParseError,
     },
     /// The entity identifier is not a URI permitted by clause 4.6.2.
-    #[error("references invalid entity URI `{value}`")]
+    #[error("references an invalid entity URI")]
     InvalidEntityId {
-        /// Invalid stored value.
-        value: String,
         /// URI validation failure.
         #[source]
         source: IdentifierParseError,
@@ -130,19 +126,15 @@ pub enum ClaimedDeliveryError {
         source: WriteOrdinalOutOfRange,
     },
     /// One changed attribute is not a valid NGSI-LD attribute name.
-    #[error("references invalid attribute `{value}`")]
+    #[error("references an invalid attribute name")]
     InvalidAttributeName {
-        /// Invalid stored value.
-        value: String,
         /// Attribute-name validation failure.
         #[source]
         source: NgsiLdReferenceError,
     },
     /// The stored dataset discriminator is not a valid URI.
-    #[error("references invalid datasetId `{value}`")]
+    #[error("references an invalid datasetId")]
     InvalidDatasetId {
-        /// Invalid stored value.
-        value: String,
         /// URI validation failure.
         #[source]
         source: IdentifierParseError,
@@ -221,14 +213,11 @@ impl ClaimedDelivery {
 
     /// Validate every stored value of one claimed row.
     fn decode(row: RawClaimedDeliveryRow, target: &ContextTarget) -> Result<ClaimedDelivery, ClaimedDeliveryError> {
-        let subscription_id = row.subscription_id.parse().map_err(|source| ClaimedDeliveryError::InvalidSubscriptionId {
-            value: row.subscription_id,
-            source,
-        })?;
-        let entity_id = row
-            .entity_id
+        let subscription_id = row
+            .subscription_id
             .parse()
-            .map_err(|source| ClaimedDeliveryError::InvalidEntityId { value: row.entity_id, source })?;
+            .map_err(|source| ClaimedDeliveryError::InvalidSubscriptionId { source })?;
+        let entity_id = row.entity_id.parse().map_err(|source| ClaimedDeliveryError::InvalidEntityId { source })?;
         let event_ordinal = WriteOrdinal::try_from(row.event_ordinal).map_err(|source| ClaimedDeliveryError::InvalidEventOrdinal { source })?;
         let change = decode_change(row.lifecycle, row.change_kinds, row.change_attributes, row.change_dataset_ids)?;
         Ok(ClaimedDelivery {
@@ -270,11 +259,9 @@ fn decode_change(lifecycle: i16, kinds: Vec<i16>, attributes: Vec<String>, datas
             let kind = AttributeChangeKindCode::try_from(kind)
                 .map(change_kind_of)
                 .map_err(|source| ClaimedDeliveryError::UnknownChangeKind { source })?;
-            let attr: AttributeName = attribute
-                .parse()
-                .map_err(|source| ClaimedDeliveryError::InvalidAttributeName { value: attribute, source })?;
+            let attr: AttributeName = attribute.parse().map_err(|source| ClaimedDeliveryError::InvalidAttributeName { source })?;
             let dataset_id = dataset
-                .map(|value| value.parse().map_err(|source| ClaimedDeliveryError::InvalidDatasetId { value, source }))
+                .map(|value| value.parse().map_err(|source| ClaimedDeliveryError::InvalidDatasetId { source }))
                 .transpose()?;
             Ok(AttributeChange {
                 key: AttributeInstanceKey { attr, dataset_id },

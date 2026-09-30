@@ -3,9 +3,11 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-/// Typed, durable consequences for deferred temporal append.
+/// How the inputs of one aggregation group disagree in meaning.
+pub mod aggregation_conflict;
 /// Eligibility of attributes for aggregation methods (clause 5.7.4.4).
 pub mod aggregation_eligibility;
+/// Typed, durable consequences for deferred temporal append.
 pub mod append_intent;
 mod attribute_instance_mutation;
 /// The temporal value one expanded attribute instance carries.
@@ -42,7 +44,8 @@ pub mod scope_observation;
 pub mod service;
 /// The physical storage policy an operator sets for temporal history.
 pub mod storage_policy;
-pub mod temporal_diagnostic;
+/// The invariants temporal policy relies on.
+pub mod temporal_invariant;
 pub mod temporal_not_found_reason;
 pub mod temporal_operation_unsupported;
 pub mod temporal_validation_reason;
@@ -70,6 +73,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-persistence-failure",
         "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: ["andromeda-ngsi-ld-geometry"],

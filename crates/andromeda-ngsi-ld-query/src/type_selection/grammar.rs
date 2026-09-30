@@ -204,13 +204,11 @@ impl TypeExpr {
     pub fn into_raw(self) -> Result<TypeExprRaw, QueryError> {
         match self {
             TypeExpr::Wildcard => Ok(TypeExprRaw::Wildcard),
-            TypeExpr::Type(iri) => {
-                let value = iri.to_string();
-                value
-                    .parse()
-                    .map(TypeExprRaw::Type)
-                    .map_err(|_error| QueryError::TypeExprInvalidName { name: value, position: 0 })
-            }
+            TypeExpr::Type(iri) => iri
+                .as_str()
+                .parse()
+                .map(TypeExprRaw::Type)
+                .map_err(|source| QueryError::TypeExprInvalidName { position: 0, source }),
             TypeExpr::And(children) => children
                 .into_iter()
                 .map(TypeExpr::into_raw)

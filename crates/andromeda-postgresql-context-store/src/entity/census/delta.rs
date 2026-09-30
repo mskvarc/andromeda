@@ -157,7 +157,7 @@ impl CensusStatements {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::Internal`] if a ledger insert ever stops
+    /// Returns [`ContextStoreError::StatementBuild`] if a ledger insert ever stops
     /// matching its column list, which the fixed shapes here make unreachable.
     pub(crate) fn of(target: &ContextTarget, source: impl Iden + Copy + 'static, change: CensusChange) -> Result<CensusStatements, ContextStoreError> {
         let source = source.into_iden();
@@ -311,8 +311,7 @@ fn ledger_insert(
     insert
         .into_table(table_of(target, ledger))
         .columns(columns.iter().cloned()) // clone: the column list owns the idens it names.
-        .select_from(rows.take())
-        .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+        .select_from(rows.take())?;
     Ok(insert)
 }
 

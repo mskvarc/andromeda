@@ -68,7 +68,7 @@ impl PatchGuard {
             self.applied.push(patch);
             Ok(())
         } else {
-            Err(XtaskError::PatchApply(patch.display().to_string()))
+            Err(XtaskError::PatchApply(patch))
         }
     }
 }

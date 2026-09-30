@@ -21,7 +21,7 @@ use andromeda_entity_map::{
 };
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_temporal::error::TemporalError;
+use andromeda_temporal::{error::TemporalError, temporal_invariant::TemporalInvariant};
 use axum::http::Uri;
 use chrono::{DateTime, Utc};
 
@@ -66,7 +66,7 @@ pub(crate) async fn resolve_query_map(
             params.time_at = Some(
                 DateTime::parse_from_rfc3339("9999-12-31T23:59:59Z")
                     .map(|instant| instant.with_timezone(&Utc))
-                    .map_err(|source| TemporalError::internal(format!("entity-map temporal horizon constant failed to parse: {source}")))
+                    .map_err(|source| TemporalError::from(TemporalInvariant::EntityMapHorizon(source)))
                     .with_instance(instance)?,
             );
         }

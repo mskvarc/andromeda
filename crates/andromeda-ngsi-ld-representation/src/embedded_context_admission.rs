@@ -31,6 +31,7 @@
 //! decided by those paths: a payload a Context Source or another broker sent
 //! back is not a user `@context` and is never screened.
 
+use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, PathSegment};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::{Map, Value};
 use thiserror::Error;
@@ -58,14 +59,11 @@ const NATIVE_JSON_MEMBERS: &[&str] = &[
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum EmbeddedContextError {
     /// A `@context` stands below the top level of the document (ETSI GS CIM 009 v1.9.1 clause 5.5.7).
-    #[error(
-        "an @context is embedded under {}, but a user @context is admitted only at the top level of an NGSI-LD document",
-        .path.join("/")
-    )]
+    #[error("an @context is embedded at {path}, but a user @context is admitted only at the top level of an NGSI-LD document")]
     BelowTopLevel {
-        /// The member names leading from the document's top level down to the
-        /// object that carries the embedded `@context`.
-        path: Vec<String>,
+        /// Where the object that carries the embedded `@context` stands,
+        /// from the document's top level down.
+        path: JsonPointer,
     },
 }
 
@@ -79,7 +77,7 @@ pub enum EmbeddedContextError {
 /// # Errors
 ///
 /// Returns [`EmbeddedContextError::BelowTopLevel`] for the first `@context`
-/// found below the top level, naming the member path that reaches it.
+/// found below the top level, locating the object that carries it.
 pub fn reject_embedded_contexts_in_fragment(fragment: &Value) -> Result<(), EmbeddedContextError> {
     let mut path = Vec::new();
     reject_in_top_level_slot(fragment, &mut path)
@@ -97,57 +95,70 @@ pub fn reject_embedded_contexts_in_fragment(fragment: &Value) -> Result<(), Embe
 ///
 /// Returns [`EmbeddedContextError::BelowTopLevel`] on the same terms as
 /// [`reject_embedded_contexts_in_fragment`], with `attribute` heading the
-/// reported path.
+/// reported location.
 pub fn reject_embedded_contexts_in_attribute<'a>(attribute: &'a str, node: &'a Value) -> Result<(), EmbeddedContextError> {
-    let mut path = vec![attribute];
+    let mut path = vec![PathSegment::Member(attribute)];
     reject_in_top_level_slot(node, &mut path)
 }
 
 /// Walk one slot that stands at the document's top level: an object, or the
 /// instances of a multi-instance array.
-fn reject_in_top_level_slot<'a>(node: &'a Value, path: &mut Vec<&'a str>) -> Result<(), EmbeddedContextError> {
+fn reject_in_top_level_slot<'a>(node: &'a Value, path: &mut Vec<PathSegment<'a>>) -> Result<(), EmbeddedContextError> {
     match node {
         Value::Object(members) => reject_below_top_level(members, path),
-        Value::Array(instances) => instances.iter().try_for_each(|instance| reject_in_top_level_slot(instance, path)),
+        Value::Array(instances) => instances.iter().enumerate().try_for_each(|(index, instance)| {
+            path.push(PathSegment::Index(index));
+            let outcome = reject_in_top_level_slot(instance, path);
+            path.pop();
+            outcome
+        }),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(()),
     }
 }
 
 /// Walk the members of one top-level object, where a `@context` is the
 /// document's own and is admitted.
-fn reject_below_top_level<'a>(members: &'a Map<String, Value>, path: &mut Vec<&'a str>) -> Result<(), EmbeddedContextError> {
+fn reject_below_top_level<'a>(members: &'a Map<String, Value>, path: &mut Vec<PathSegment<'a>>) -> Result<(), EmbeddedContextError> {
     members
         .iter()
         .filter(|(member, _)| member.as_str() != CONTEXT_MEMBER && !is_native_json_member(member))
-        .try_for_each(|(member, value)| reject_in_slot(member, value, path))
+        .try_for_each(|(member, value)| reject_in_member(member, value, path))
 }
 
 /// Walk one member's value, at any depth below the top level.
-fn reject_in_slot<'a>(member: &'a str, value: &'a Value, path: &mut Vec<&'a str>) -> Result<(), EmbeddedContextError> {
+fn reject_in_member<'a>(member: &'a str, value: &'a Value, path: &mut Vec<PathSegment<'a>>) -> Result<(), EmbeddedContextError> {
+    path.push(PathSegment::Member(member));
+    let outcome = reject_in_slot(value, path);
+    path.pop();
+    outcome
+}
+
+/// Walk one value below the top level: an object, or every element of an array.
+fn reject_in_slot<'a>(value: &'a Value, path: &mut Vec<PathSegment<'a>>) -> Result<(), EmbeddedContextError> {
     match value {
-        Value::Object(members) => {
-            path.push(member);
-            let outcome = reject_in_object(members, path);
+        Value::Object(members) => reject_in_object(members, path),
+        Value::Array(items) => items.iter().enumerate().try_for_each(|(index, item)| {
+            path.push(PathSegment::Index(index));
+            let outcome = reject_in_slot(item, path);
             path.pop();
             outcome
-        }
-        Value::Array(items) => items.iter().try_for_each(|item| reject_in_slot(member, item, path)),
+        }),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(()),
     }
 }
 
 /// Refuse an object below the top level that carries a `@context`, and descend
 /// into everything it holds that is not a native JSON literal.
-fn reject_in_object<'a>(members: &'a Map<String, Value>, path: &mut Vec<&'a str>) -> Result<(), EmbeddedContextError> {
+fn reject_in_object<'a>(members: &'a Map<String, Value>, path: &mut Vec<PathSegment<'a>>) -> Result<(), EmbeddedContextError> {
     if members.contains_key(CONTEXT_MEMBER) {
         return Err(EmbeddedContextError::BelowTopLevel {
-            path: path.iter().map(|segment| (*segment).to_owned()).collect(),
+            path: JsonPointer::from_walk(path),
         });
     }
     members
         .iter()
         .filter(|(member, _)| !is_native_json_member(member))
-        .try_for_each(|(member, value)| reject_in_slot(member, value, path))
+        .try_for_each(|(member, value)| reject_in_member(member, value, path))
 }
 
 /// Whether a member's content is a native JSON literal the JSON-LD processor
@@ -161,10 +172,10 @@ mod tests {
     use crate::embedded_context_admission::{EmbeddedContextError, reject_embedded_contexts_in_attribute, reject_embedded_contexts_in_fragment};
     use serde_json::json;
 
-    /// The member path an error names, for comparison against the expected one.
-    fn refused_path(error: &EmbeddedContextError) -> &[String] {
+    /// The JSON Pointer an error names, for comparison against the expected one.
+    fn refused_path(error: &EmbeddedContextError) -> String {
         match error {
-            EmbeddedContextError::BelowTopLevel { path } => path,
+            EmbeddedContextError::BelowTopLevel { path } => path.to_string(),
         }
     }
 
@@ -190,7 +201,7 @@ mod tests {
             "speed": {"@context": {"speed": "https://example.org/speed"}, "type": "Property", "value": 42}
         });
         let error = reject_embedded_contexts_in_fragment(&fragment).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), ["speed".to_owned()]);
+        pretty_assertions::assert_eq!(refused_path(&error), "/speed");
     }
 
     #[test]
@@ -205,7 +216,7 @@ mod tests {
             }
         });
         let error = reject_embedded_contexts_in_fragment(&fragment).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), ["speed".to_owned(), "accuracy".to_owned()]);
+        pretty_assertions::assert_eq!(refused_path(&error), "/speed/accuracy");
     }
 
     /// A Property's `value` is expanded as JSON-LD, so a `@context` inside it
@@ -221,7 +232,7 @@ mod tests {
             "speed": {"type": "Property", "value": {"@context": {"x": "https://example.org/x"}, "x": 1}}
         });
         let error = reject_embedded_contexts_in_fragment(&fragment).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), ["speed".to_owned(), "value".to_owned()]);
+        pretty_assertions::assert_eq!(refused_path(&error), "/speed/value");
     }
 
     #[test]
@@ -292,7 +303,8 @@ mod tests {
                 {"type": "Property", "value": 2, "datasetId": "urn:ngsi-ld:Dataset:b", "@context": {}}
             ]
         });
-        assert!(reject_embedded_contexts_in_fragment(&fragment).is_err());
+        let error = reject_embedded_contexts_in_fragment(&fragment).expect_err("clause 5.5.7 refuses it");
+        pretty_assertions::assert_eq!(refused_path(&error), "/speed/1");
     }
 
     /// A batch payload is an array of documents, each with a top level of its
@@ -309,7 +321,8 @@ mod tests {
             {"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"},
             {"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle", "speed": {"type": "Property", "value": 1, "@context": {}}}
         ]);
-        assert!(reject_embedded_contexts_in_fragment(&refused).is_err());
+        let error = reject_embedded_contexts_in_fragment(&refused).expect_err("clause 5.5.7 refuses it");
+        pretty_assertions::assert_eq!(refused_path(&error), "/1/speed");
     }
 
     /// Clause 5.6.4 makes an Attribute Fragment the attribute node itself, so
@@ -325,10 +338,11 @@ mod tests {
     fn an_attribute_fragment_is_refused_for_a_context_below_its_top_level() {
         let fragment = json!({"type": "Property", "value": 42, "accuracy": {"type": "Property", "value": 0.5, "@context": {}}});
         let error = reject_embedded_contexts_in_attribute("speed", &fragment).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), ["speed".to_owned(), "accuracy".to_owned()]);
+        pretty_assertions::assert_eq!(refused_path(&error), "/speed/accuracy");
 
         let instances = json!([{"type": "Property", "value": 42, "unit": {"@context": {}}}]);
-        assert!(reject_embedded_contexts_in_attribute("speed", &instances).is_err());
+        let error = reject_embedded_contexts_in_attribute("speed", &instances).expect_err("clause 5.5.7 refuses it");
+        pretty_assertions::assert_eq!(refused_path(&error), "/speed/0/unit");
     }
 
     #[test]

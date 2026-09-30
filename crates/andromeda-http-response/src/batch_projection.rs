@@ -2,7 +2,7 @@
 //! clause 5.2.16 wire values.
 
 use crate::classified_report::ClassifiedReport;
-use andromeda_federation::outcome::{ForwardedWriteOutcome, TransportFailure};
+use andromeda_federation::{outcome::ForwardedWriteOutcome, remote_answer::describe_remote_answer};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::{
     batch_operation::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
@@ -10,7 +10,6 @@ use andromeda_ngsi_ld_problem_details::{
     problem_detail::ProblemClassification,
 };
 use serde::Deserialize;
-use serde_json::Value;
 
 /// Project one policy error through its binding-supplied exhaustive classifier.
 pub fn batch_entity_error<E>(entity_id: Identifier, error: &E, classify: impl FnOnce(&E) -> ClassifiedReport) -> BatchEntityError {
@@ -45,13 +44,19 @@ pub fn forwarded_write_error(entity_id: Identifier, registration_id: &Identifier
                 registration_id: None,
                 error: problem,
             },
-            None => BatchEntityError::from_classification(entity_id, classification_for_remote_status(*status), &remote_detail(*status, body.as_ref())),
+            None => BatchEntityError::from_classification(
+                entity_id,
+                classification_for_remote_status(*status),
+                &describe_remote_answer(*status, body.as_ref()),
+            ),
         },
-        ForwardedWriteOutcome::Transport(TransportFailure::Timeout { detail }) => {
-            BatchEntityError::from_classification(entity_id, ProblemClassification::GatewayTimeout, detail)
-        }
-        ForwardedWriteOutcome::Transport(TransportFailure::Unreachable { detail }) => {
-            BatchEntityError::from_classification(entity_id, ProblemClassification::BadGateway, detail)
+        ForwardedWriteOutcome::Transport(failure) => {
+            let classification = if failure.is_timeout() {
+                ProblemClassification::GatewayTimeout
+            } else {
+                ProblemClassification::BadGateway
+            };
+            BatchEntityError::from_classification(entity_id, classification, &failure.to_string())
         }
         ForwardedWriteOutcome::LoopDetected => BatchEntityError::from_classification(
             entity_id,
@@ -89,23 +94,13 @@ const fn classification_for_remote_status(status: u16) -> ProblemClassification 
     }
 }
 
-/// The most informative detail a remote error carries: its `detail`, its
-/// `title`, or the bare status.
-fn remote_detail(status: u16, body: Option<&Value>) -> String {
-    body.and_then(|body| body.get("detail").or_else(|| body.get("title")))
-        .and_then(Value::as_str)
-        .map_or_else(
-            || format!("context source answered HTTP {status}"),
-            |detail| format!("context source answered HTTP {status}: {detail}"),
-        )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_federation::{federation_invariant::FederationInvariant, outcome::TransportFailure};
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType};
     use serde_json::json;
-    use std::error::Error;
+    use std::{error::Error, time::Duration};
 
     fn uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
@@ -170,15 +165,18 @@ mod tests {
         let registration = uri("urn:ngsi-ld:ContextSourceRegistration:1");
         for (outcome, expected) in [
             (
-                ForwardedWriteOutcome::Transport(TransportFailure::Timeout {
-                    detail: "no response within 5000ms".to_string(),
+                ForwardedWriteOutcome::Transport(TransportFailure::TimedOut {
+                    after: Duration::from_millis(5000),
                 }),
                 ProblemClassification::GatewayTimeout,
             ),
             (
-                ForwardedWriteOutcome::Transport(TransportFailure::Unreachable {
-                    detail: "connection refused".to_string(),
-                }),
+                ForwardedWriteOutcome::Transport(TransportFailure::unprepared(
+                    FederationInvariant::EndpointCannotBeBase {
+                        endpoint: Box::new("data:text/plain,x".parse().expect("a valid URL")),
+                    }
+                    .into(),
+                )),
                 ProblemClassification::BadGateway,
             ),
             (ForwardedWriteOutcome::LoopDetected, ProblemClassification::LoopDetected),

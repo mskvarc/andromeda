@@ -18,7 +18,13 @@
 //! `deleteAll`, the clause 5.6.13 equivalent), and release the idempotency
 //! records the removed writes held.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_named};
+use crate::{
+    error::TemporalStoreError,
+    repo::TemporalRepository,
+    stored_catalog_error::StoredCatalogError,
+    temporal_store_invariant::TemporalStoreInvariant,
+    write_record_release::release_named,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
@@ -71,8 +77,8 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the count statement fails
-    /// and [`TemporalStoreError::Decode`] when the returned count is outside the
-    /// unsigned range a row count occupies.
+    /// and [`TemporalStoreError::StoredCatalog`] when the returned count is
+    /// outside the unsigned range a row count occupies.
     pub async fn count_windowed_history(
         &self,
         target: &ContextTarget,
@@ -85,10 +91,8 @@ impl TemporalRepository {
         let schema = schema_iden(target);
         let (sql, values) = windowed_count_statement(schema.as_ref(), entity_ids, scope).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
-        let matched: i64 = row
-            .try_get("matched")
-            .map_err(|error| TemporalStoreError::Decode(format!("invalid windowed history count: {error}")))?;
-        u64::try_from(matched).map_err(|error| TemporalStoreError::Decode(format!("windowed history count out of range: {error}")))
+        let matched: i64 = row.try_get("matched")?;
+        Ok(u64::try_from(matched).map_err(|_| StoredCatalogError::NegativeCount { count: matched })?)
     }
 
     /// Delete the history instances a windowed delete-by-query selects and
@@ -97,8 +101,8 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when a statement fails and
-    /// [`TemporalStoreError::Decode`] when a returned identifier does not carry
-    /// the expected type or the removed-row count is out of range.
+    /// [`TemporalStoreInvariant::CountOutOfRange`] when the removed-row count
+    /// is out of range.
     pub async fn delete_windowed_history(
         &self,
         target: &ContextTarget,
@@ -118,13 +122,11 @@ impl TemporalRepository {
 
         let (delete_sql, delete_values) = windowed_delete_statement(schema.as_ref(), entity_ids, scope).build_sqlx(PostgresQueryBuilder);
         let removed_rows = sqlx::query_with(AssertSqlSafe(delete_sql), delete_values).fetch_all(&mut *tx).await?;
-        let removed = u64::try_from(removed_rows.len()).map_err(|error| TemporalStoreError::Decode(format!("removed-row count out of range: {error}")))?;
+        let removed = u64::try_from(removed_rows.len()).map_err(TemporalStoreInvariant::CountOutOfRange)?;
 
         let mut write_ids = BTreeSet::new();
         for row in &removed_rows {
-            let write_id: Uuid = row
-                .try_get("write_id")
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid history write_id: {error}")))?;
+            let write_id: Uuid = row.try_get("write_id")?;
             write_ids.insert(write_id);
         }
 

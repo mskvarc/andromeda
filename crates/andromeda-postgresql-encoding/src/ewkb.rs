@@ -79,12 +79,10 @@ pub enum EwkbError {
         /// The SRID actually embedded in the buffer.
         srid: i32,
     },
-    /// The geometry carries dimensions the domain model cannot preserve.
-    #[error("EWKB geometry carries unsupported {dimension} coordinates")]
-    UnsupportedDimension {
-        /// The first unsupported coordinate dimension encoded by the buffer.
-        dimension: &'static str,
-    },
+    /// The geometry carries M (measure) coordinates, which `GeoJSON` has no
+    /// place for and the domain model therefore cannot preserve.
+    #[error("EWKB geometry carries unsupported M coordinates")]
+    MeasuredCoordinates,
 }
 
 /// Encode a geometry on its way to a SQL bind.
@@ -169,7 +167,7 @@ impl TryFrom<&[u8]> for Ewkb {
         // Z is accepted and carried; M is not, and a ZM buffer is refused for
         // the M it carries rather than for the Z it also carries.
         if type_word & EWKB_M_FLAG != 0 {
-            return Err(EwkbError::UnsupportedDimension { dimension: "M" });
+            return Err(EwkbError::MeasuredCoordinates);
         }
         let srid = i32::from_le_bytes([header[5], header[6], header[7], header[8]]);
         if srid != SRID_WGS84 {
@@ -423,10 +421,7 @@ mod tests {
             let word = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) | flag;
             bytes[1..5].copy_from_slice(&word.to_le_bytes());
             let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");
-            assert!(
-                matches!(error, EwkbError::UnsupportedDimension { dimension: "M" }),
-                "got {error:?} for flag {flag:#010x}"
-            );
+            assert!(matches!(error, EwkbError::MeasuredCoordinates), "got {error:?} for flag {flag:#010x}");
         }
     }
 }

@@ -8,10 +8,14 @@
 //! they are composed together.
 
 use crate::tenant_factory::{
+    assembly_invariant::AssemblyInvariant,
     background_pacer::BackgroundPacer,
     error::TenantAssemblyError,
     storage::TenantStorage,
-    tasks::notification_schedule::{classify_notification_failure, register_notification_schedule, register_periodic_wake},
+    tasks::{
+        notification_schedule::{register_notification_schedule, register_periodic_wake},
+        notification_worker_failure::{ChangeChannel, channel_closed, worker_notification_failure},
+    },
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
@@ -27,7 +31,6 @@ use andromeda_registration::store::RegistrationStore;
 use andromeda_subscription::{change::CsourceSubscriptionChange, store::SubscriptionStore};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
-    failure::TaskFailure,
     registration::TaskRegistration,
     resident_task::ResidentTask,
     restart_policy::RestartPolicy,
@@ -146,7 +149,7 @@ fn register_csource_notification_processor(
         tenant,
     } = ports;
     let restart_delay = Duration::from_secs(1);
-    let name = TaskName::try_from("csource-notification-events").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from("csource-notification-events").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
@@ -166,7 +169,7 @@ fn register_csource_notification_processor(
             tenant: tenant.clone(), // clone: each resident restart owns the same tenant partition.
         });
         async move {
-            processor.reload_cache().await.map_err(|error| classify_notification_failure(&error))?;
+            processor.reload_cache().await.map_err(worker_notification_failure)?;
             execution.mark_running();
             loop {
                 tokio::select! {
@@ -175,9 +178,9 @@ fn register_csource_notification_processor(
                         Ok(change) => processor.apply_subscription_change(change).await,
                         Err(RecvError::Lagged(skipped)) => {
                             tracing::debug!(skipped, "context-source subscription stream lagged; reloading policy cache");
-                            processor.reload_cache().await.map_err(|error| classify_notification_failure(&error))?;
+                            processor.reload_cache().await.map_err(worker_notification_failure)?;
                         }
-                        Err(RecvError::Closed) => return Err(TaskFailure::transient("context-source subscription channel closed")),
+                        Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::CsourceSubscription)),
                     },
                     received = registration_receiver.recv() => match received {
                         Ok(event) => {
@@ -186,7 +189,7 @@ fn register_csource_notification_processor(
                                     Ok(change) => processor.apply_subscription_change(change).await,
                                     Err(TryRecvError::Lagged(skipped)) => {
                                         tracing::debug!(skipped, "context-source subscription stream lagged before registration evaluation; reloading policy cache");
-                                        processor.reload_cache().await.map_err(|error| classify_notification_failure(&error))?;
+                                        processor.reload_cache().await.map_err(worker_notification_failure)?;
                                     }
                                     Err(TryRecvError::Empty | TryRecvError::Closed) => break,
                                 }
@@ -194,7 +197,7 @@ fn register_csource_notification_processor(
                             processor.apply_registration_change(event).await;
                         }
                         Err(RecvError::Lagged(skipped)) => tracing::debug!(skipped, "registration stream lagged"),
-                        Err(RecvError::Closed) => return Err(TaskFailure::transient("registration channel closed")),
+                        Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Registration)),
                     },
                 }
             }
@@ -203,7 +206,7 @@ fn register_csource_notification_processor(
     supervisor
         .register_resident(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+        .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
 fn register_csource_interval_notification(
@@ -222,12 +225,14 @@ fn register_csource_interval_notification(
         supervisor,
         "csource-notification-interval-registration-wake",
         interval_wake.clone(),
+        ChangeChannel::Registration,
         registration_changes,
     )?;
     register_periodic_wake(
         supervisor,
         "csource-notification-interval-subscription-wake",
         interval_wake,
+        ChangeChannel::CsourceSubscription,
         subscription_changes,
     )?;
     register_notification_schedule(

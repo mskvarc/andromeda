@@ -30,10 +30,10 @@ pub mod compiled_cache;
 pub mod config;
 /// Entity type and attribute discovery operations.
 pub mod discovery;
-/// A masked, operator-facing diagnostic for entity failures a client cannot act on.
-pub mod entity_diagnostic;
 /// Screening the identity members of an expanded entity payload.
 mod entity_identity_admission;
+/// The invariants entity policy relies on.
+pub mod entity_invariant;
 /// The concrete reasons an entity operation is unsupported by the storage backend.
 pub mod entity_operation_unsupported;
 /// Versioned entity snapshots used by optimistic writes.
@@ -239,6 +239,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-persistence-failure",
         "andromeda-spatial-index",
         "andromeda-subscription",
         "andromeda-telemetry",

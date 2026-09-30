@@ -5,7 +5,10 @@
 //! Snapshot schemas are deliberately excluded so the series count stays fixed no
 //! matter how many snapshots exist.
 
-use crate::error::MaintenanceError;
+use crate::{
+    catalog_counter::{CatalogCounter, non_negative},
+    error::MaintenanceError,
+};
 use andromeda_postgresql_seaquery::maintenance::{indexes_size, total_relation_size};
 use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
@@ -76,11 +79,11 @@ pub async fn table_sizes(connection: &mut PgConnection) -> Result<Vec<TableSize>
     rows.into_iter()
         .map(|row| {
             let name = row.try_get::<String, _>(SizeColumn::Relname.as_str())?;
-            let table = SizedTable::from_str(&name).map_err(|_| MaintenanceError::UnknownTarget(name))?;
+            let table = SizedTable::from_str(&name).map_err(MaintenanceError::UnknownTarget)?;
             Ok(TableSize {
                 table,
-                total_bytes: non_negative(row.try_get(SizeColumn::TotalBytes.as_str())?, "table total bytes")?,
-                index_bytes: non_negative(row.try_get(SizeColumn::IndexBytes.as_str())?, "table index bytes")?,
+                total_bytes: non_negative(row.try_get(SizeColumn::TotalBytes.as_str())?, CatalogCounter::TableTotalBytes)?,
+                index_bytes: non_negative(row.try_get(SizeColumn::IndexBytes.as_str())?, CatalogCounter::TableIndexBytes)?,
             })
         })
         .collect()
@@ -96,11 +99,6 @@ fn table_sizes_statement() -> SelectStatement {
         .and_where(Expr::col(Alias::new("schemaname")).eq("public"))
         .and_where(Expr::col(Alias::new("relname")).is_in(SizedTable::ALL.map(<&'static str>::from)))
         .to_owned()
-}
-
-/// Convert one PostgreSQL non-negative size counter.
-fn non_negative(value: i64, field: &'static str) -> Result<u64, MaintenanceError> {
-    u64::try_from(value).map_err(|_| MaintenanceError::NegativeCatalogValue { field, value })
 }
 
 /// Stable projected field names decoded from catalog rows.

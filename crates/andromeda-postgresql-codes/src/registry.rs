@@ -25,6 +25,7 @@
 //! because a row written by a newer release must be reported as unreadable
 //! rather than silently reinterpreted as some other member.
 
+use crate::compact_code_domain::CompactCodeDomain;
 use thiserror::Error;
 
 /// A stored number that the registry has never assigned.
@@ -36,7 +37,7 @@ use thiserror::Error;
 #[error("{registry} has no member with code {code}")]
 pub struct UnknownCompactCode {
     /// The registry that refused the number.
-    pub registry: &'static str,
+    pub registry: CompactCodeDomain,
     /// The number as it was read from storage.
     pub code: i16,
 }
@@ -44,7 +45,7 @@ pub struct UnknownCompactCode {
 impl UnknownCompactCode {
     /// Report that `registry` has no member numbered `code`.
     #[must_use]
-    pub const fn new(registry: &'static str, code: i16) -> UnknownCompactCode {
+    pub const fn new(registry: CompactCodeDomain, code: i16) -> UnknownCompactCode {
         UnknownCompactCode { registry, code }
     }
 }
@@ -102,8 +103,9 @@ const fn mix(hash: u64, byte: u8) -> u64 {
 /// non-empty labels, a code round trip through every member, a typed failure
 /// for an unassigned number, and the frozen-prefix digest.
 ///
-/// The invoking module must have [`UnknownCompactCode`] and
-/// [`frozen_prefix_digest`] in scope, and may declare only one registry, since
+/// The invoking module must have [`UnknownCompactCode`],
+/// [`CompactCodeDomain`] and [`frozen_prefix_digest`] in scope, `$name` must
+/// be a [`CompactCodeDomain`] variant, and may declare only one registry, since
 /// the generated test module has a fixed name.
 ///
 /// `frozen_prefix` is how many leading registrations a released migration has
@@ -183,7 +185,7 @@ macro_rules! compact_code_registry {
             fn try_from(stored: i16) -> Result<$name, UnknownCompactCode> {
                 match stored {
                     $($code => Ok($name::$member),)+
-                    unassigned => Err(UnknownCompactCode::new(stringify!($name), unassigned)),
+                    unassigned => Err(UnknownCompactCode::new(CompactCodeDomain::$name, unassigned)),
                 }
             }
         }
@@ -247,15 +249,18 @@ macro_rules! compact_code_registry {
 
 #[cfg(test)]
 mod tests {
-    use crate::registry::{UnknownCompactCode, frozen_prefix_digest};
+    use crate::{
+        compact_code_domain::CompactCodeDomain,
+        registry::{UnknownCompactCode, frozen_prefix_digest},
+    };
     use pretty_assertions::{assert_eq, assert_ne};
 
     #[test]
     fn an_unknown_code_names_the_registry_that_refused_it() {
-        let rejection = UnknownCompactCode::new("ValueKind", 42);
-        assert_eq!(rejection.registry, "ValueKind");
+        let rejection = UnknownCompactCode::new(CompactCodeDomain::ValueKind, 42);
+        assert_eq!(rejection.registry, CompactCodeDomain::ValueKind);
         assert_eq!(rejection.code, 42);
-        assert_eq!(rejection.to_string(), "ValueKind has no member with code 42");
+        assert_eq!(rejection.to_string(), "value-kind has no member with code 42");
     }
 
     #[test]

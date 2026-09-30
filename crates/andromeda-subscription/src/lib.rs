@@ -29,6 +29,8 @@ pub mod csource_matching;
 pub mod csource_notification_cadence;
 /// Admitting a subscription's notification endpoint.
 pub mod endpoint_admission;
+/// Why the delivery bindings refused a notification endpoint.
+pub mod endpoint_refusal;
 /// Entity subscription lifecycle policy.
 pub mod entity;
 /// Subscription policy failures.
@@ -64,8 +66,10 @@ pub mod status;
 pub mod store;
 /// A stored Subscription paired with its surrogate key.
 pub mod stored_subscription;
-/// The masked operator diagnostic carried by internal/persistence failures.
-pub mod subscription_diagnostic;
+/// The invariants subscription policy relies on.
+pub mod subscription_invariant;
+/// The typed members of a `Subscription` payload.
+pub mod subscription_member;
 /// The typed reasons a subscription request is rejected as `BadRequestData`.
 pub mod subscription_validation_reason;
 /// Counting a suppression window back from an instant.
@@ -91,6 +95,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-persistence-failure",
         "andromeda-spatial-index",
         "andromeda-telemetry",
         "andromeda-tenancy",

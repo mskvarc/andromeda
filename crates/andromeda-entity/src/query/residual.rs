@@ -6,6 +6,7 @@
 //! takes the clause 5.5.9 window.
 
 use crate::{
+    entity_invariant::EntityInvariant,
     error::EntityError,
     pagination_outcome::PaginationOutcome,
     query::EntityQueryService,
@@ -32,7 +33,7 @@ pub(super) struct FinishedPage {
 ///
 /// # Errors
 ///
-/// Returns [`EntityError::internal`] when a store reports both an applied
+/// Returns [`EntityInvariant::IncoherentResidual`] when a store reports both an applied
 /// window and an outstanding predicate. Those cannot both be true: a window
 /// taken over rows a later filter will thin leaves the page short and every
 /// subsequent page misaligned, so the combination is a broken store rather than
@@ -79,11 +80,7 @@ fn window(admitted: Vec<Value>, pagination: Pagination) -> FinishedPage {
 
 /// The error a store earns by reporting an applied window alongside a residual.
 fn incoherent(unapplied: &ResidualFilter) -> EntityError {
-    let kinds: Vec<String> = unapplied.kinds().iter().map(ToString::to_string).collect();
-    EntityError::internal(format!(
-        "store applied the result window but left {} unapplied; the page would be short and every later page misaligned",
-        kinds.join(", ")
-    ))
+    EntityInvariant::IncoherentResidual { unapplied: unapplied.kinds() }.into()
 }
 
 impl EntityQueryService {

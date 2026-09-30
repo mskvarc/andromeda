@@ -10,12 +10,28 @@
 
 use crate::http::{config::PrivateIpBlocking, private_ip::is_private_ip};
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
-use std::{error::Error, net::SocketAddr};
+use std::{
+    error::Error,
+    net::{IpAddr, SocketAddr},
+};
 use tokio::net::lookup_host;
 
 /// The result the `reqwest` DNS contract expects: resolved addresses, or a
 /// boxed error that fails the connection.
 type ResolveResult = Result<Addrs, Box<dyn Error + Send + Sync>>;
+
+/// A resolution the guard refused because it reached private or reserved
+/// address space.
+///
+/// Handed back to `reqwest` inside its boxed resolver error, which fails the
+/// connection; the host is the one `reqwest` asked to resolve and is named by
+/// the request error that wraps this one.
+#[derive(Debug, thiserror::Error)]
+#[error("resolution blocked: resolves to private/reserved IP {ip}")]
+struct PrivateAddressResolved {
+    /// The first resolved address that triggered the guard.
+    ip: IpAddr,
+}
 
 /// Resolver that blocks any resolution reaching private or reserved address
 /// space.
@@ -50,7 +66,7 @@ async fn vetted_addrs(host: String, blocking: PrivateIpBlocking) -> ResolveResul
     if blocking == PrivateIpBlocking::Enabled
         && let Some(private) = resolved.iter().find(|addr| is_private_ip(&addr.ip()))
     {
-        return Err(format!("delivery to {host} blocked: resolves to private/reserved IP {}", private.ip()).into());
+        return Err(Box::new(PrivateAddressResolved { ip: private.ip() }));
     }
 
     Ok(Box::new(resolved.into_iter()))
@@ -58,12 +74,18 @@ async fn vetted_addrs(host: String, blocking: PrivateIpBlocking) -> ResolveResul
 
 #[cfg(test)]
 mod tests {
-    use crate::http::{config::PrivateIpBlocking, resolver::vetted_addrs};
+    use crate::http::{
+        config::PrivateIpBlocking,
+        resolver::{PrivateAddressResolved, vetted_addrs},
+    };
 
     #[tokio::test]
     async fn a_loopback_resolution_is_refused_when_the_guard_is_armed() {
         let refused = vetted_addrs("localhost".to_string(), PrivateIpBlocking::Enabled).await;
-        assert!(refused.is_err(), "localhost resolves to loopback and must be refused");
+        let Err(error) = refused else {
+            panic!("localhost resolves to loopback and must be refused");
+        };
+        assert!(error.is::<PrivateAddressResolved>(), "the refusal is the typed guard error: {error}");
     }
 
     #[tokio::test]

@@ -7,7 +7,7 @@
 //! so only the bucket and value-in-effect keys read a projected `group_key_N`
 //! column. A column that is SQL NULL is the absent key (`@none`).
 
-use crate::{aggregation_row_decode::projected_column, error::TemporalStoreError};
+use crate::{aggregation_row_decode::projected_column, error::TemporalStoreError, stored_aggregation_error::StoredAggregationError};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::temporal::GroupKeyValue;
 use andromeda_ngsi_ld_query::temporal::grouping::{AggregationGrouping, bucket_term::BucketKind, entity_member::EntityMember, group_key::GroupKey};
@@ -20,9 +20,9 @@ use sqlx::postgres::PgRow;
 ///
 /// # Errors
 ///
-/// Returns [`TemporalStoreError::Decode`] when a projected group-key column is
-/// present but unreadable, or when a promoted `unitCode` identity is not in the
-/// unit registry.
+/// Returns [`TemporalStoreError::Database`] when a projected group-key column is
+/// present but unreadable, and [`TemporalStoreError::StoredAggregation`] when a
+/// promoted `unitCode` identity is not in the unit registry.
 pub(crate) fn decode_group_keys(
     row: &PgRow,
     grouping: &AggregationGrouping,
@@ -73,17 +73,15 @@ fn unit_group_value(units: ObservedUnits) -> Result<GroupKeyValue, TemporalStore
         ObservedUnits::Uniform(Some(id)) => Ok(GroupKeyValue::Value(unit_code_text(id)?)),
         // A promoted unit facet is uniform per group by construction; a
         // non-uniform span here is a corrupt result rather than a value.
-        ObservedUnits::Conflicting { .. } | ObservedUnits::UnitAndUnitless { .. } => Err(TemporalStoreError::Decode(
-            "a unitCode grouping key produced a non-uniform unit span".to_owned(),
-        )),
+        ObservedUnits::Conflicting { .. } | ObservedUnits::UnitAndUnitless { .. } => Err(StoredAggregationError::NonUniformGroupUnit.into()),
     }
 }
 
 /// The UN/CEFACT common code one unit identity renders to.
-fn unit_code_text(id: UnitCodeId) -> Result<String, TemporalStoreError> {
-    let registry = registry().map_err(|error| TemporalStoreError::Decode(format!("unit registry unavailable: {error}")))?;
+fn unit_code_text(identity: UnitCodeId) -> Result<String, StoredAggregationError> {
+    let registry = registry().map_err(StoredAggregationError::UnitCatalog)?;
     let code = registry
-        .unit_code_of(id)
-        .map_err(|error| TemporalStoreError::Decode(format!("unitCode grouping key {id}: {error}")))?;
+        .unit_code_of(identity)
+        .map_err(|source| StoredAggregationError::GroupUnitCode { identity, source })?;
     Ok(code.as_str().to_owned())
 }

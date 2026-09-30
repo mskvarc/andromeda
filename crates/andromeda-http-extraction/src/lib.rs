@@ -50,6 +50,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-request",
+        "andromeda-persistence-failure",
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [

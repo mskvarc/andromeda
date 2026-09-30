@@ -57,12 +57,9 @@ pub(crate) fn validate_attribute_envelopes(expanded: &Value) -> Result<(), Entit
             if key.starts_with('@') {
                 continue;
             }
-            let attribute_name = key.parse::<AttributeName>().map_err(|error| {
-                EntityError::Validation(EntityValidationReason::ExpandedAttributeName {
-                    name: key.clone(),
-                    source: error,
-                })
-            })?;
+            let attribute_name = key
+                .parse::<AttributeName>()
+                .map_err(|error| EntityError::Validation(EntityValidationReason::ExpandedAttributeName(error)))?;
             if is_reserved_member(&attribute_name) {
                 continue;
             }
@@ -108,7 +105,7 @@ fn validate_family_members(attribute: Option<&AttributeName>, node: &Value) -> R
                 continue;
             };
             if let Some(term) = expanded_to_compact(member) {
-                reject_forbidden_member(attribute, family, term)?;
+                reject_forbidden_member(attribute, family, &member_name, term)?;
                 if is_envelope_member(family, &member_name, term) {
                     continue;
                 }
@@ -146,7 +143,7 @@ fn declared_family(instance: &Map<String, Value>) -> Option<AttributeType> {
 }
 
 /// Report the compacted member `term` as invalid on `family`.
-fn reject_forbidden_member(attribute: Option<&AttributeName>, family: Option<AttributeType>, term: &str) -> Result<(), EntityError> {
+fn reject_forbidden_member(attribute: Option<&AttributeName>, family: Option<AttributeType>, member: &AttributeName, term: &str) -> Result<(), EntityError> {
     let Some(family) = family else {
         return Ok(());
     };
@@ -156,7 +153,7 @@ fn reject_forbidden_member(attribute: Option<&AttributeName>, family: Option<Att
     Err(EntityError::Validation(EntityValidationReason::MemberForbidden {
         attribute: attribute.cloned(),
         family: Some(family),
-        term: term.to_string(),
+        member: member.clone(), // clone: the error owns the member it names.
     }))
 }
 
@@ -272,7 +269,6 @@ fn validate_instance_id(attr_name: &AttributeName, instance: &Value) -> Result<(
     raw.parse::<Identifier>().map(drop).map_err(|source| {
         EntityError::Validation(EntityValidationReason::ExpandedInstanceId {
             attribute: attr_name.clone(),
-            raw: raw.to_owned(),
             source,
         })
     })

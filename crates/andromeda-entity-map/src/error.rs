@@ -1,6 +1,8 @@
 //! Failures reported by Entity Map policy and storage implementations.
 
+use crate::entity_map_invariant::EntityMapInvariant;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use thiserror::Error;
 
 /// A semantic Entity Map failure or an implementation-neutral storage failure.
@@ -20,11 +22,8 @@ pub enum EntityMapError {
         identifier: Identifier,
     },
     /// A storage implementation could not complete an operation.
-    #[error("entity map storage failed: {detail}")]
-    Persistence {
-        /// Human-readable backend-neutral failure detail.
-        detail: String,
-    },
+    #[error("entity map storage failed: {0}")]
+    Persistence(#[source] PersistenceFailure),
     /// A connection pool was saturated before the operation could run.
     ///
     /// Backpressure, not a fault: no backend became free within the acquire
@@ -33,25 +32,51 @@ pub enum EntityMapError {
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
     /// Policy generated a value that violated a domain invariant.
-    #[error("entity map invariant failed: {detail}")]
-    Invariant {
-        /// Human-readable invariant failure detail.
-        detail: String,
-    },
+    #[error("entity map invariant failed: {0}")]
+    Invariant(#[from] EntityMapInvariant),
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A saturated store is backpressure the client can retry, so it keeps its own
+/// retryable category; every other failure is a storage fault.
+impl From<PersistenceFailure> for EntityMapError {
+    fn from(failure: PersistenceFailure) -> EntityMapError {
+        match failure {
+            PersistenceFailure::Saturated => EntityMapError::StoreSaturated,
+            fault @ (PersistenceFailure::RolledBack
+            | PersistenceFailure::Unavailable
+            | PersistenceFailure::ConstraintViolated
+            | PersistenceFailure::StatementRejected
+            | PersistenceFailure::RecordMissing
+            | PersistenceFailure::Undecodable
+            | PersistenceFailure::Unencodable
+            | PersistenceFailure::StatementUnbuildable
+            | PersistenceFailure::CapacityExceeded
+            | PersistenceFailure::SchemaMismatch
+            | PersistenceFailure::ContractBroken) => EntityMapError::Persistence(fault),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::error::EntityMapError;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 
     #[test]
-    fn missing_map_error_names_its_identifier() -> Result<(), EntityMapError> {
-        let identifier = "urn:ngsi-ld:EntityMap:missing"
-            .parse::<Identifier>()
-            .map_err(|error| EntityMapError::Invariant { detail: error.to_string() })?;
+    fn missing_map_error_names_its_identifier() {
+        let identifier = "urn:ngsi-ld:EntityMap:missing".parse::<Identifier>().expect("a valid identifier");
         let error = EntityMapError::NotFound { identifier };
         pretty_assertions::assert_eq!(error.to_string(), "entity map urn:ngsi-ld:EntityMap:missing not found");
-        Ok(())
+    }
+
+    #[test]
+    fn a_saturated_store_keeps_its_retryable_category() {
+        assert!(matches!(EntityMapError::from(PersistenceFailure::Saturated), EntityMapError::StoreSaturated));
+        assert!(matches!(
+            EntityMapError::from(PersistenceFailure::Undecodable),
+            EntityMapError::Persistence(PersistenceFailure::Undecodable)
+        ));
     }
 }

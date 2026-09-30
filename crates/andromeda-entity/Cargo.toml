@@ -28,6 +28,7 @@ andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-persistence-failure.workspace = true
 andromeda-spatial-index.workspace = true
 andromeda-subscription.workspace = true
 andromeda-telemetry.workspace = true

@@ -1,6 +1,7 @@
 //! Tokio binding for CPU-bound policy tasks.
 
 use andromeda_entity::{
+    entity_invariant::EntityInvariant,
     error::EntityError,
     port::blocking_executor::{BlockingExecutor, BlockingTask},
 };
@@ -30,7 +31,10 @@ impl BlockingExecutor for TokioBlockingExecutor {
                 let error = match outcome {
                     Ok(Ok(())) => continue,
                     Ok(Err(error)) => error,
-                    Err(error) => EntityError::internal(format!("blocking entity policy task failed: {error}")),
+                    Err(error) => {
+                        tracing::error!(%error, "a blocking entity policy task did not complete");
+                        EntityInvariant::BlockingTaskFailed.into()
+                    }
                 };
                 if first_error.is_none() {
                     first_error = Some(error);

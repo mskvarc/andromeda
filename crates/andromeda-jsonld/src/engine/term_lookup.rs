@@ -222,8 +222,10 @@ impl JsonLdEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`JsonLdError::InvalidIri`] when the term does not expand, and
-    /// whatever expansion returns when a context does not resolve.
+    /// Returns [`JsonLdError::TypeNotExpanded`] when the term does not expand,
+    /// [`JsonLdError::ExpandedTermNotIri`] when it expands to something other
+    /// than an absolute IRI, and whatever expansion returns when a context does
+    /// not resolve.
     pub async fn expand_type(&self, type_term: &str, context: &PreparedTermContext) -> Result<IriBuf, JsonLdError> {
         if is_full_iri(type_term) {
             return iri_of(type_term);
@@ -240,7 +242,7 @@ impl JsonLdEngine {
             .and_then(|node| node.get("@type"))
             .and_then(|types| types.get(0))
             .and_then(Value::as_str)
-            .ok_or_else(|| JsonLdError::invalid_iri(format!("Failed to expand type: {type_term}")))
+            .ok_or(JsonLdError::TypeNotExpanded)
             .and_then(iri_of)?;
 
         tracing::trace!("Expanded type '{}' to '{}'", type_term, iri);
@@ -252,8 +254,10 @@ impl JsonLdEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`JsonLdError::InvalidIri`] when the term does not expand, and
-    /// whatever expansion returns when a context does not resolve.
+    /// Returns [`JsonLdError::TermNotExpanded`] when the term does not expand,
+    /// [`JsonLdError::ExpandedTermNotIri`] when it expands to something other
+    /// than an absolute IRI, and whatever expansion returns when a context does
+    /// not resolve.
     pub async fn expand_term(&self, term: &str, context: &PreparedTermContext) -> Result<IriBuf, JsonLdError> {
         if is_full_iri(term) {
             return iri_of(term);
@@ -269,7 +273,7 @@ impl JsonLdEngine {
             .get(0)
             .and_then(Value::as_object)
             .and_then(|node| node.keys().find(|key| *key != "@id" && *key != "@type").cloned()) // clone: the expansion is dropped below
-            .ok_or_else(|| JsonLdError::invalid_iri(format!("Failed to expand term: {term}")))?;
+            .ok_or(JsonLdError::TermNotExpanded)?;
         let iri = iri_of(&expanded_key)?;
 
         self.term_cache().insert(key.to_owned_key(context), iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
@@ -283,7 +287,7 @@ impl JsonLdEngine {
 /// well-formed one is an absolute IRI, and this is where that guarantee is
 /// enforced so every caller receives an [`IriBuf`] rather than re-parsing one.
 fn iri_of(candidate: &str) -> Result<IriBuf, JsonLdError> {
-    IriBuf::new(candidate.to_string()).map_err(|error| JsonLdError::invalid_iri(format!("expanded term is not an absolute IRI: {}", error.0)))
+    IriBuf::new(candidate.to_string()).map_err(JsonLdError::ExpandedTermNotIri)
 }
 
 #[cfg(test)]

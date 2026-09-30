@@ -15,7 +15,7 @@
 //! their grammar applied by the parameter set's `validate`, which fails with a
 //! typed [`ParameterError`] the classification reads directly.
 
-use crate::error::ParameterError;
+use crate::{error::ParameterError, unsupported_representation::UnsupportedRepresentation};
 use derive_more::Display;
 use serde::{Deserialize, Deserializer};
 
@@ -31,19 +31,19 @@ pub enum RepresentationParameter {
 }
 
 /// A value outside the grammar its operation defines for the parameter.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct UnsupportedValue {
     /// The parameter the value was written for.
     parameter: RepresentationParameter,
     /// Why the operation does not support it.
-    detail: String,
+    reason: UnsupportedRepresentation,
 }
 
 impl UnsupportedValue {
     /// Record a value the operation's grammar does not admit.
     #[must_use]
-    pub const fn new(parameter: RepresentationParameter, detail: String) -> UnsupportedValue {
-        UnsupportedValue { parameter, detail }
+    pub const fn new(parameter: RepresentationParameter, reason: UnsupportedRepresentation) -> UnsupportedValue {
+        UnsupportedValue { parameter, reason }
     }
 }
 
@@ -52,8 +52,8 @@ impl UnsupportedValue {
 impl From<UnsupportedValue> for ParameterError {
     fn from(value: UnsupportedValue) -> ParameterError {
         match value.parameter {
-            RepresentationParameter::Format => ParameterError::FormatInvalid(value.detail),
-            RepresentationParameter::Options => ParameterError::OptionsInvalid(value.detail),
+            RepresentationParameter::Format => ParameterError::FormatInvalid(value.reason),
+            RepresentationParameter::Options => ParameterError::OptionsInvalid(value.reason),
         }
     }
 }
@@ -70,9 +70,9 @@ pub trait RepresentationGrammar: Sized {
     ///
     /// # Errors
     ///
-    /// Returns the description of why the operation does not support the
-    /// value, which becomes the detail of the clause 6.3.20 rejection.
-    fn parse(written: &str) -> Result<Self, String>;
+    /// Returns why the operation does not support the value, which becomes
+    /// the cause of the clause 6.3.20 rejection.
+    fn parse(written: &str) -> Result<Self, UnsupportedRepresentation>;
 }
 
 /// A representation parameter as the request wrote it.
@@ -97,9 +97,7 @@ impl<T> WrittenValue<T> {
     pub fn supported(&self) -> Result<&T, ParameterError> {
         match self {
             WrittenValue::Supported(value) => Ok(value),
-            // clone: the rejection owns its detail and the parameter set is
-            // borrowed; this is the error path, taken once per failed request.
-            WrittenValue::Unsupported(unsupported) => Err(ParameterError::from(unsupported.as_ref().clone())),
+            WrittenValue::Unsupported(unsupported) => Err(ParameterError::from(**unsupported)),
         }
     }
 
@@ -138,7 +136,7 @@ impl<'de, T: RepresentationGrammar> Deserialize<'de> for WrittenValue<T> {
         let written = String::deserialize(deserializer)?;
         Ok(match T::parse(&written) {
             Ok(value) => WrittenValue::Supported(value),
-            Err(detail) => WrittenValue::Unsupported(Box::new(UnsupportedValue::new(T::PARAMETER, detail))),
+            Err(reason) => WrittenValue::Unsupported(Box::new(UnsupportedValue::new(T::PARAMETER, reason))),
         })
     }
 }
@@ -210,6 +208,7 @@ mod tests {
     use crate::{
         error::ParameterError,
         representation_parameter::{RepresentationGrammar, RepresentationParameter, WrittenValue, supported_option},
+        unsupported_representation::UnsupportedRepresentation,
     };
     use serde::Deserialize;
 
@@ -220,11 +219,11 @@ mod tests {
     impl RepresentationGrammar for OnlyToken {
         const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
 
-        fn parse(written: &str) -> Result<OnlyToken, String> {
+        fn parse(written: &str) -> Result<OnlyToken, UnsupportedRepresentation> {
             if written == "token" {
                 Ok(OnlyToken)
             } else {
-                Err(format!("unsupported options token '{written}'"))
+                Err(UnsupportedRepresentation::UnknownOptionsToken)
             }
         }
     }
@@ -247,8 +246,10 @@ mod tests {
     fn an_unsupported_value_survives_deserialisation_and_is_refused_by_name() {
         let wire: Wire = serde_urlencoded::from_str("options=nonsense").expect("deserialises");
         let refused = supported_option(wire.options.as_ref()).expect_err("refused");
-        assert!(matches!(refused, ParameterError::OptionsInvalid(_)), "{refused}");
-        assert!(refused.to_string().contains("nonsense"), "{refused}");
+        assert!(
+            matches!(refused, ParameterError::OptionsInvalid(UnsupportedRepresentation::UnknownOptionsToken)),
+            "{refused}"
+        );
     }
 
     /// An absent parameter names nothing and is no failure.
@@ -267,8 +268,8 @@ mod tests {
         impl RepresentationGrammar for OnlyFormat {
             const PARAMETER: RepresentationParameter = RepresentationParameter::Format;
 
-            fn parse(written: &str) -> Result<OnlyFormat, String> {
-                Err(format!("invalid format value: {written}"))
+            fn parse(_written: &str) -> Result<OnlyFormat, UnsupportedRepresentation> {
+                Err(UnsupportedRepresentation::UnknownFormat)
             }
         }
 

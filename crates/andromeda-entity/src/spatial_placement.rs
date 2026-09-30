@@ -8,7 +8,7 @@
 //! A geo query naming any other `GeoProperty` is never narrowed and is
 //! evaluated by the store in full.
 
-use crate::error::EntityError;
+use crate::{entity_invariant::EntityInvariant, error::EntityError};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
@@ -37,7 +37,7 @@ impl LocationPlacement {
         let location = expanded_properties::LOCATION
             .as_str()
             .parse()
-            .map_err(|error| EntityError::internal(format!("invalid default location attribute name: {error}")))?;
+            .map_err(|error| EntityError::from(EntityInvariant::DefaultLocationName(error)))?;
         Ok(LocationPlacement { tenant, location })
     }
 

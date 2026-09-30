@@ -13,7 +13,7 @@ mod reader;
 /// Typed entity spatial snapshots.
 mod spatial_snapshot;
 
-use crate::error::ContextStoreError;
+use crate::{error::ContextStoreError, store_fault::persistence_failure};
 use andromeda_entity::{entity_validation_reason::EntityValidationReason, error::EntityError};
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 
@@ -29,13 +29,11 @@ fn classify(error: &ContextStoreError) -> EntityError {
     match error {
         ContextStoreError::Collation(CollationProvisioningError::NotAnIcuCollation { collation, .. }) => {
             EntityError::Validation(EntityValidationReason::Collation {
-                collation: collation.to_string(),
+                collation: collation.clone(), // clone: the refusal owns the collation the client wrote
             })
         }
-        // Pool saturation is backpressure, not a fault: the request is shed and
-        // can be retried, so it is a 503, never a 500.
-        ContextStoreError::Saturated => EntityError::StoreSaturated,
         ContextStoreError::Collation(CollationProvisioningError::Statement { .. })
+        | ContextStoreError::Saturated
         | ContextStoreError::Database(_)
         | ContextStoreError::Encoding(_)
         | ContextStoreError::CopyField(_)
@@ -49,7 +47,17 @@ fn classify(error: &ContextStoreError) -> EntityError {
         | ContextStoreError::SchemaContract(_)
         | ContextStoreError::BranchVersion(_)
         | ContextStoreError::StoredRegistrationInformation(_)
-        | ContextStoreError::Internal(_) => EntityError::persistence(error.to_string()),
+        | ContextStoreError::StatementBuild(_)
+        | ContextStoreError::PayloadEncoding(_)
+        | ContextStoreError::OrdinalOutOfRange(_)
+        | ContextStoreError::StoredRegistration(_)
+        | ContextStoreError::StoredSubscription(_)
+        | ContextStoreError::StoredSnapshot(_)
+        | ContextStoreError::StoredEntity(_)
+        | ContextStoreError::StoredEntityMap(_)
+        | ContextStoreError::CatalogueIdentityGeneration(_)
+        | ContextStoreError::Invariant(_)
+        | ContextStoreError::DatabaseUrlUnnamed => EntityError::from(persistence_failure(error)),
     }
 }
 

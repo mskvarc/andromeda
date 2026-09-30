@@ -6,4 +6,5 @@
 //! that backend.
 
 pub mod pattern;
+pub mod pattern_fault;
 pub mod query;

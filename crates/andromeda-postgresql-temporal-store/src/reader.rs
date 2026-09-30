@@ -14,7 +14,9 @@ use crate::{
     repo::TemporalRepository,
     scope_history_read::decode_scope_history,
     stored_attribute_shape::StoredAttributeShape,
+    stored_catalog_error::StoredCatalogError,
     temporal_query_execution::TemporalStatement,
+    temporal_store_invariant::TemporalStoreInvariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
@@ -108,10 +110,7 @@ impl TemporalRepository {
             return Ok(Vec::new());
         }
         let statement = build_scope_history_query(schema_iden(target).as_ref(), entity_id, compiled);
-        let pg_rows = self
-            .execute_temporal_query(TemporalStatement::ScopeHistory, statement)
-            .await
-            .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        let pg_rows = self.execute_temporal_query(TemporalStatement::ScopeHistory, statement).await?;
         decode_scope_history(&pg_rows).map_err(TemporalError::from)
     }
 }
@@ -180,21 +179,17 @@ impl TemporalHistoryReader for TemporalRepository {
             self.collations.ensure(collation).await.map_err(TemporalStoreError::from)?;
         }
 
-        let stage1 = build_stage1_entity_ids(schema_iden(target).as_ref(), compiled, &names).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        let stage1 = build_stage1_entity_ids(schema_iden(target).as_ref(), compiled, &names).map_err(TemporalStoreError::Render)?;
 
-        let entity_id_rows = self
-            .execute_temporal_query(TemporalStatement::Stage1, stage1.select)
-            .await
-            .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        let entity_id_rows = self.execute_temporal_query(TemporalStatement::Stage1, stage1.select).await?;
 
         let mut entity_ids = entity_id_rows
             .into_iter()
             .map(|row| {
                 let raw: String = row.try_get("entity_id")?;
-                raw.parse::<Identifier>()
-                    .map_err(|error| TemporalStoreError::Decode(format!("Invalid temporal entity_id '{raw}': {error}")))
+                Ok(raw.parse::<Identifier>().map_err(StoredCatalogError::EntityId)?)
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, TemporalStoreError>>()?;
         // Clause 5.5.9.1: a backward or from-end keyset page was read descending
         // so one index scan could serve it; present it ascending, the order every
         // element page shows.
@@ -204,11 +199,10 @@ impl TemporalHistoryReader for TemporalRepository {
         let entity_ids = entity_ids;
 
         let total_count = if compiled.pagination.count == CountPolicy::Emit {
-            let count = stage1.count.ok_or_else(|| TemporalStoreError::Query("Count SQL not built".to_string()))?;
-            let count_rows = self
-                .execute_temporal_query(TemporalStatement::Stage1Count, count)
-                .await
-                .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+            let count = stage1
+                .count
+                .ok_or(TemporalStoreError::Invariant(TemporalStoreInvariant::CountStatementMissing))?;
+            let count_rows = self.execute_temporal_query(TemporalStatement::Stage1Count, count).await?;
             count_rows.first().and_then(|r| r.try_get::<i64, _>("count").ok())
         } else {
             None
@@ -234,10 +228,7 @@ impl TemporalHistoryReader for TemporalRepository {
         compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
         let stage2 = build_temporal_history_query(schema_iden(target).as_ref(), entity_id, compiled);
-        let pg_rows = self
-            .execute_temporal_query(TemporalStatement::History, stage2)
-            .await
-            .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        let pg_rows = self.execute_temporal_query(TemporalStatement::History, stage2).await?;
 
         // Clause 4.18 reifies the Scope in the temporal representation, and it
         // is stored apart from attribute history because clause 4.5.4 gives it
@@ -260,10 +251,7 @@ impl TemporalHistoryReader for TemporalRepository {
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         let stage2 = build_temporal_history_query(schema_iden(target).as_ref(), entity_id, compiled);
-        let pg_rows = self
-            .execute_temporal_query(TemporalStatement::Aggregation, stage2)
-            .await
-            .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        let pg_rows = self.execute_temporal_query(TemporalStatement::Aggregation, stage2).await?;
 
         // Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
         // period, so the statement groups on exactly those and each row is one

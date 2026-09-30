@@ -12,6 +12,7 @@ use crate::{
         },
     },
     error::ContextStoreError,
+    store_invariant::{GuardedEntityWrite, StoreInvariant},
 };
 use andromeda_context_commit::deleted_entity::DeletedEntity;
 use andromeda_context_space::context_target::ContextTarget;
@@ -74,7 +75,7 @@ struct Gone;
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Internal`] if a census ledger insert ever stops
+/// Returns [`ContextStoreError::StatementBuild`] if a census ledger insert ever stops
 /// matching its column list, which the fixed shapes make unreachable.
 pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = delete_staging_columns();
@@ -170,7 +171,7 @@ impl EntityRepository {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::Internal`] when the expectation slice is not
+    /// Returns [`ContextStoreError::Invariant`] when the expectation slice is not
     /// the same length as `ids`, a returned identifier is no longer a valid URI
     /// or the statement cannot be built, and [`ContextStoreError::Database`]
     /// when the delete fails.
@@ -184,11 +185,12 @@ impl EntityRepository {
             return Ok(Vec::new());
         }
         if expected_modified_at.len() != ids.len() {
-            return Err(ContextStoreError::Internal(format!(
-                "entity delete given {} expectations for {} rows",
-                expected_modified_at.len(),
-                ids.len()
-            )));
+            return Err(StoreInvariant::ExpectationCount {
+                write: GuardedEntityWrite::Delete,
+                expectations: expected_modified_at.len(),
+                rows: ids.len(),
+            }
+            .into());
         }
 
         let ids = ids.iter().map(Identifier::as_str).collect::<Vec<_>>();

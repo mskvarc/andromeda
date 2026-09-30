@@ -9,6 +9,7 @@
 
 use crate::{
     EntityService,
+    entity_invariant::EntityInvariant,
     error::EntityError,
     expanded_member::stored_entity_types,
     notification_fanout::{ChangedEntity, MutationSnapshots},
@@ -115,11 +116,11 @@ impl EntityService {
 
         let outcomes = self.writes.commit(target, writes).await?;
         if outcomes.len() != chunk.len() {
-            return Err(EntityError::internal(format!(
-                "delete chunk of {} entities produced {} outcomes",
-                chunk.len(),
-                outcomes.len()
-            )));
+            return Err(EntityInvariant::OutcomeCountMismatch {
+                submitted: chunk.len(),
+                returned: outcomes.len(),
+            }
+            .into());
         }
 
         let mut success = Vec::with_capacity(chunk.len());

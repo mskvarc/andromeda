@@ -1,14 +1,12 @@
 //! Typed failures raised while driving an integration-test stack.
 
-use std::io;
+use crate::{etsi::suite::PINNED_COMMIT, stack::Suite};
+use std::{io, path::PathBuf};
 use thiserror::Error;
 
 /// Every way the integration-test runner can fail.
 #[derive(Debug, Error)]
 pub(crate) enum XtaskError {
-    /// A named suite does not belong to any registered stack.
-    #[error("unknown suite '{0}'")]
-    UnknownSuite(String),
     /// The selected suites are owned by more than one stack, which would need more than one topology.
     #[error("the selected suites span multiple stacks; run one stack's suites per invocation")]
     SuitesSpanMultipleStacks,
@@ -38,16 +36,32 @@ pub(crate) enum XtaskError {
     TestCompile,
     /// A line of cargo's `--message-format=json` stream could not be parsed.
     #[error("failed to parse a cargo build message: {0}")]
-    BuildMessageParse(String),
+    BuildMessageParse(#[source] serde_json::Error),
     /// The prebuilt-test manifest could not be read from disk.
-    #[error("failed to read the prebuilt test manifest {0}")]
-    TestManifestRead(String),
-    /// The prebuilt-test manifest could not be (de)serialized.
-    #[error("failed to (de)serialize the prebuilt test manifest {0}")]
-    TestManifestSerde(String),
-    /// The manifest records no compiled binary for a requested suite.
-    #[error("the prebuilt test manifest has no binary for suite '{0}'")]
-    SuiteBinaryMissing(String),
+    #[error("failed to read the prebuilt test manifest {path}: {source}")]
+    TestManifestRead {
+        /// Where the manifest was expected.
+        path: PathBuf,
+        /// Why reading it failed.
+        #[source]
+        source: io::Error,
+    },
+    /// The prebuilt-test manifest on disk is not valid manifest JSON.
+    #[error("failed to parse the prebuilt test manifest {path}: {source}")]
+    TestManifestParse {
+        /// Where the manifest was read from.
+        path: PathBuf,
+        /// Why its contents were rejected.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// The prebuilt-test manifest could not be serialized for writing.
+    #[error("failed to serialize the prebuilt test manifest: {0}")]
+    TestManifestSerialize(#[source] serde_json::Error),
+    /// A registered suite has no compiled binary, either in the manifest or in
+    /// the build that was meant to produce one.
+    #[error("no compiled binary for suite '{}'", .0.name)]
+    SuiteBinaryMissing(&'static Suite),
     /// Generating a stack's test certificate material failed.
     #[error("openssl failed to generate the stack's test certificates")]
     CertGeneration,
@@ -58,8 +72,8 @@ pub(crate) enum XtaskError {
     #[error("git clone of the test suite failed")]
     SuiteClone,
     /// Resetting the ETSI checkout to its pinned commit failed.
-    #[error("git reset of the suite checkout to {0} failed")]
-    SuiteReset(String),
+    #[error("git reset of the suite checkout to {commit} failed", commit = PINNED_COMMIT)]
+    SuiteReset,
     /// Fetching the pinned commit into an existing checkout failed.
     #[error("git fetch of the test suite failed")]
     SuiteFetch,
@@ -74,10 +88,10 @@ pub(crate) enum XtaskError {
     PipInstall,
     /// A patch did not apply cleanly to the pristine checkout.
     #[error("patch did not apply cleanly to the suite checkout: {0}")]
-    PatchApply(String),
+    PatchApply(PathBuf),
     /// A requested suite subtree exists nowhere under the checkout.
     #[error("no such suite subtree under the checkout: {0}")]
-    UnknownSubtree(String),
+    UnknownSubtree(PathBuf),
     /// The broker process exited while the runner was waiting for readiness.
     #[error("the broker exited during startup; see broker.log in the output directory")]
     BrokerStartupExit,
@@ -89,10 +103,16 @@ pub(crate) enum XtaskError {
     RebotFailed,
     /// A run's `output.xml` is absent, so a diff has nothing to read.
     #[error("robot output.xml not found at {0}")]
-    OutputXmlMissing(String),
+    OutputXmlMissing(PathBuf),
     /// A run's `output.xml` could not be parsed as XML.
-    #[error("failed to parse {0}: {1}")]
-    OutputXmlParse(String, String),
+    #[error("failed to parse {path}: {source}")]
+    OutputXmlParse {
+        /// The `output.xml` that was read.
+        path: PathBuf,
+        /// Why its text is not well-formed XML.
+        #[source]
+        source: roxmltree::Error,
+    },
     /// A diff found test cases that pass in the baseline but fail in the candidate.
     #[error("{0} test case(s) newly failing since the baseline")]
     NewlyFailing(usize),

@@ -1,9 +1,11 @@
 //! Focused failures owned by snapshot policy and persistence ports.
 
+use crate::{snapshot_invariant::SnapshotInvariant, snapshot_validation_reason::SnapshotValidationReason};
 use andromeda_entity::error::EntityError;
 use andromeda_federation::error::FederationError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_request::error::ParameterError;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_temporal::error::TemporalError;
 use thiserror::Error;
 
@@ -11,11 +13,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum SnapshotError {
     /// The request violates snapshot semantics.
-    #[error("invalid snapshot: {detail}")]
-    Validation {
-        /// Human-readable validation detail.
-        detail: String,
-    },
+    #[error("invalid snapshot: {0}")]
+    Validation(#[from] SnapshotValidationReason),
     /// The requested snapshot is absent or not queryable.
     #[error("snapshot not found: {identifier}")]
     NotFound {
@@ -62,11 +61,8 @@ pub enum SnapshotError {
     #[error(transparent)]
     Representation(#[from] serde_json::Error),
     /// Persistence could not complete the operation.
-    #[error("snapshot persistence failed: {detail}")]
-    Persistence {
-        /// Backend-neutral diagnostic detail.
-        detail: String,
-    },
+    #[error("snapshot persistence failed: {0}")]
+    Persistence(#[source] PersistenceFailure),
     /// A connection pool was saturated before the operation could run.
     ///
     /// Backpressure, not a fault: no backend became free within the acquire
@@ -85,11 +81,31 @@ pub enum SnapshotError {
     #[error("the snapshot store transaction was rolled back by contention; retry shortly")]
     Contended,
     /// Policy produced an invalid internal value or transition.
-    #[error("snapshot invariant failed: {detail}")]
-    Internal {
-        /// Internal invariant diagnostic.
-        detail: String,
-    },
+    #[error("snapshot invariant failed: {0}")]
+    Internal(#[from] SnapshotInvariant),
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A saturated store and a transaction rolled back under contention are
+/// backpressure the client can retry, so each keeps its own retryable category;
+/// only a fault becomes [`SnapshotError::Persistence`].
+impl From<PersistenceFailure> for SnapshotError {
+    fn from(failure: PersistenceFailure) -> SnapshotError {
+        match failure {
+            PersistenceFailure::Saturated => SnapshotError::StoreSaturated,
+            PersistenceFailure::RolledBack => SnapshotError::Contended,
+            fault @ (PersistenceFailure::Unavailable
+            | PersistenceFailure::ConstraintViolated
+            | PersistenceFailure::StatementRejected
+            | PersistenceFailure::RecordMissing
+            | PersistenceFailure::Undecodable
+            | PersistenceFailure::Unencodable
+            | PersistenceFailure::StatementUnbuildable
+            | PersistenceFailure::CapacityExceeded
+            | PersistenceFailure::SchemaMismatch
+            | PersistenceFailure::ContractBroken) => SnapshotError::Persistence(fault),
+        }
+    }
 }
 
 /// Whether a fresh attempt at a failed operation could succeed.
@@ -127,11 +143,6 @@ impl From<FederationError> for SnapshotError {
 }
 
 impl SnapshotError {
-    /// Construct a semantic validation failure.
-    pub fn validation(detail: impl Into<String>) -> SnapshotError {
-        SnapshotError::Validation { detail: detail.into() }
-    }
-
     /// Construct a missing snapshot failure from a validated identifier.
     #[must_use]
     pub fn not_found(identifier: &Identifier) -> SnapshotError {
@@ -164,16 +175,6 @@ impl SnapshotError {
         }
     }
 
-    /// Construct a backend-neutral persistence failure.
-    pub fn persistence(detail: impl Into<String>) -> SnapshotError {
-        SnapshotError::Persistence { detail: detail.into() }
-    }
-
-    /// Construct an invariant failure.
-    pub fn internal(detail: impl Into<String>) -> SnapshotError {
-        SnapshotError::Internal { detail: detail.into() }
-    }
-
     /// Whether a fresh attempt at the operation that failed could succeed.
     ///
     /// A lost deadlock or serialization race, a saturated pool and a store
@@ -184,10 +185,10 @@ impl SnapshotError {
     #[must_use]
     pub const fn recurrence(&self) -> Recurrence {
         match self {
-            SnapshotError::Contended | SnapshotError::StoreSaturated | SnapshotError::Persistence { .. } => Recurrence::Transient,
+            SnapshotError::Contended | SnapshotError::StoreSaturated | SnapshotError::Persistence(_) => Recurrence::Transient,
             SnapshotError::Entity(error) => entity_recurrence(error),
             SnapshotError::Temporal(error) => temporal_recurrence(error),
-            SnapshotError::Validation { .. }
+            SnapshotError::Validation(_)
             | SnapshotError::NotFound { .. }
             | SnapshotError::AlreadyExists { .. }
             | SnapshotError::PreparationTimeout { .. }
@@ -195,7 +196,7 @@ impl SnapshotError {
             | SnapshotError::Federation(_)
             | SnapshotError::Request(_)
             | SnapshotError::Representation(_)
-            | SnapshotError::Internal { .. } => Recurrence::Persistent,
+            | SnapshotError::Internal(_) => Recurrence::Persistent,
         }
     }
 }
@@ -222,9 +223,14 @@ pub(crate) const fn temporal_recurrence(error: &TemporalError) -> Recurrence {
 
 #[cfg(test)]
 mod tests {
-    use crate::error::{Recurrence, SnapshotError};
-    use andromeda_entity::error::EntityError;
-    use andromeda_temporal::error::TemporalError;
+    use crate::{
+        error::{Recurrence, SnapshotError},
+        snapshot_invariant::SnapshotInvariant,
+        snapshot_validation_reason::SnapshotValidationReason,
+    };
+    use andromeda_entity::{entity_invariant::EntityInvariant, error::EntityError};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use andromeda_temporal::{error::TemporalError, temporal_invariant::TemporalInvariant};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -232,7 +238,7 @@ mod tests {
         for error in [
             SnapshotError::Contended,
             SnapshotError::StoreSaturated,
-            SnapshotError::persistence("connection reset"),
+            SnapshotError::from(PersistenceFailure::Unavailable),
             SnapshotError::from(EntityError::TransactionContended),
             SnapshotError::from(EntityError::StoreSaturated),
             SnapshotError::from(TemporalError::TransactionContended),
@@ -245,10 +251,10 @@ mod tests {
     #[test]
     fn invalid_transitions_and_broken_invariants_are_persistent() {
         for error in [
-            SnapshotError::validation("Invalid status transition"),
-            SnapshotError::internal("no staging branch"),
-            SnapshotError::from(EntityError::internal("broken invariant")),
-            SnapshotError::from(TemporalError::internal("broken invariant")),
+            SnapshotError::from(SnapshotValidationReason::IdImmutable),
+            SnapshotError::from(SnapshotInvariant::LeaseDeadlineOverflow),
+            SnapshotError::from(EntityError::from(EntityInvariant::BatchPreparationFailed)),
+            SnapshotError::from(TemporalError::from(TemporalInvariant::FoldCreatedNoEntity)),
         ] {
             assert_eq!(error.recurrence(), Recurrence::Persistent, "{error}");
         }

@@ -188,7 +188,7 @@ impl JsonLdEngine {
     ///
     /// Returns a context-loading variant when the URL does not resolve.
     pub async fn resolve_context(&self, url: impl AsRef<str>) -> Result<Value, JsonLdError> {
-        let url = IriBuf::new(url.as_ref().to_owned()).map_err(|error| JsonLdError::invalid_iri(format!("context URL is not an IRI: {}", error.0)))?;
+        let url = IriBuf::new(url.as_ref().to_owned()).map_err(JsonLdError::ContextUrlNotIri)?;
         let value = self.loader.load_value(&url).await?;
         Ok(jsonld_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
     }

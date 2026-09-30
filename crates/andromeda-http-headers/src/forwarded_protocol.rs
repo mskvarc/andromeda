@@ -15,6 +15,7 @@
 
 use crate::api_root_scheme::ApiRootScheme;
 use http::{HeaderMap, HeaderName};
+use rfc7239::RfcError;
 use thiserror::Error;
 
 /// The RFC 7239 field carrying what a proxy forwarded.
@@ -24,20 +25,17 @@ static FORWARDED: HeaderName = HeaderName::from_static("forwarded");
 static X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto");
 
 /// Why a forwarded-protocol field could not name a protocol.
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[derive(Debug, Error)]
 pub enum ForwardedProtocolError {
     /// The `Forwarded` field value does not parse as RFC 7239 syntax.
-    #[error("forwarded field value is not RFC 7239 syntax: {detail}")]
-    ForwardedSyntax {
-        /// What the RFC 7239 parser reported.
-        detail: String,
-    },
+    #[error("forwarded field value is not RFC 7239 syntax")]
+    ForwardedSyntax(#[source] RfcError),
     /// The field named no protocol at all.
     #[error("forwarded field carries no protocol")]
     NoProtocol,
     /// The named protocol is not one clause 6.2 admits in an `apiRoot`.
-    #[error("forwarded protocol `{0}` is neither http nor https")]
-    UnsupportedProtocol(String),
+    #[error("forwarded protocol is neither http nor https")]
+    UnsupportedProtocol(#[source] strum::ParseError),
 }
 
 /// The protocol an RFC 7239 `Forwarded` field value names.
@@ -62,7 +60,7 @@ pub fn from_forwarded(value: &str) -> Result<ApiRootScheme, ForwardedProtocolErr
         return Err(ForwardedProtocolError::NoProtocol);
     }
     let leftmost = rfc7239::parse(value).next().ok_or(ForwardedProtocolError::NoProtocol)?;
-    let element = leftmost.map_err(|error| ForwardedProtocolError::ForwardedSyntax { detail: error.to_string() })?;
+    let element = leftmost.map_err(ForwardedProtocolError::ForwardedSyntax)?;
     let protocol = element.protocol.ok_or(ForwardedProtocolError::NoProtocol)?;
     parse_protocol(protocol)
 }
@@ -91,7 +89,7 @@ fn parse_protocol(raw: &str) -> Result<ApiRootScheme, ForwardedProtocolError> {
     if token.is_empty() {
         return Err(ForwardedProtocolError::NoProtocol);
     }
-    token.parse().map_err(|_| ForwardedProtocolError::UnsupportedProtocol(token.to_owned()))
+    token.parse().map_err(ForwardedProtocolError::UnsupportedProtocol)
 }
 
 /// The protocol the request's forwarded fields name, if any of them do.
@@ -150,42 +148,42 @@ mod tests {
 
     #[test]
     fn an_rfc_7239_element_names_its_protocol() {
-        pretty_assertions::assert_eq!(from_forwarded("proto=https"), Ok(ApiRootScheme::Https));
-        pretty_assertions::assert_eq!(from_forwarded("for=192.0.2.60;proto=https;by=203.0.113.43"), Ok(ApiRootScheme::Https));
+        assert!(matches!(from_forwarded("proto=https"), Ok(ApiRootScheme::Https)));
+        assert!(matches!(from_forwarded("for=192.0.2.60;proto=https;by=203.0.113.43"), Ok(ApiRootScheme::Https)));
     }
 
     /// RFC 7239 clause 4 permits a quoted string wherever it permits a token.
     #[test]
     fn a_quoted_rfc_7239_protocol_is_read_as_its_token() {
-        pretty_assertions::assert_eq!(from_forwarded("proto=\"https\""), Ok(ApiRootScheme::Https));
+        assert!(matches!(from_forwarded("proto=\"https\""), Ok(ApiRootScheme::Https)));
     }
 
     /// RFC 7239 makes the parameter names case-insensitive and the protocol a
     /// scheme, which RFC 3986 clause 3.1 also makes case-insensitive.
     #[test]
     fn rfc_7239_parameter_and_protocol_casing_do_not_change_the_answer() {
-        pretty_assertions::assert_eq!(from_forwarded("Proto=HTTPS"), Ok(ApiRootScheme::Https));
+        assert!(matches!(from_forwarded("Proto=HTTPS"), Ok(ApiRootScheme::Https)));
     }
 
     /// RFC 7239 clause 4 orders the elements from the client outward, so the
     /// leftmost is the public edge whose scheme a minted URL must carry.
     #[test]
     fn the_leftmost_rfc_7239_element_decides_the_protocol() {
-        pretty_assertions::assert_eq!(from_forwarded("proto=https,proto=http"), Ok(ApiRootScheme::Https));
-        pretty_assertions::assert_eq!(from_forwarded("proto=http,proto=https"), Ok(ApiRootScheme::Http));
+        assert!(matches!(from_forwarded("proto=https,proto=http"), Ok(ApiRootScheme::Https)));
+        assert!(matches!(from_forwarded("proto=http,proto=https"), Ok(ApiRootScheme::Http)));
     }
 
     #[test]
     fn an_rfc_7239_element_with_no_protocol_names_none() {
-        pretty_assertions::assert_eq!(from_forwarded("for=192.0.2.60"), Err(ForwardedProtocolError::NoProtocol));
-        pretty_assertions::assert_eq!(from_forwarded(""), Err(ForwardedProtocolError::NoProtocol));
+        assert!(matches!(from_forwarded("for=192.0.2.60"), Err(ForwardedProtocolError::NoProtocol)));
+        assert!(matches!(from_forwarded(""), Err(ForwardedProtocolError::NoProtocol)));
     }
 
     #[test]
     fn a_malformed_rfc_7239_element_is_a_syntax_failure_rather_than_a_protocol() {
         assert!(matches!(
             from_forwarded("this is not a forwarded element"),
-            Err(ForwardedProtocolError::ForwardedSyntax { .. })
+            Err(ForwardedProtocolError::ForwardedSyntax(_))
         ));
     }
 
@@ -193,27 +191,24 @@ mod tests {
     /// rather than minted into an `apiRoot`.
     #[test]
     fn a_protocol_clause_6_2_does_not_admit_is_refused() {
-        pretty_assertions::assert_eq!(
-            from_forwarded("proto=gopher"),
-            Err(ForwardedProtocolError::UnsupportedProtocol("gopher".to_owned()))
-        );
-        pretty_assertions::assert_eq!(from_x_forwarded_proto("ws"), Err(ForwardedProtocolError::UnsupportedProtocol("ws".to_owned())));
+        assert!(matches!(from_forwarded("proto=gopher"), Err(ForwardedProtocolError::UnsupportedProtocol(_))));
+        assert!(matches!(from_x_forwarded_proto("ws"), Err(ForwardedProtocolError::UnsupportedProtocol(_))));
     }
 
     #[test]
     fn an_x_forwarded_proto_value_names_its_protocol() {
-        pretty_assertions::assert_eq!(from_x_forwarded_proto("https"), Ok(ApiRootScheme::Https));
-        pretty_assertions::assert_eq!(from_x_forwarded_proto(" HTTP "), Ok(ApiRootScheme::Http));
+        assert!(matches!(from_x_forwarded_proto("https"), Ok(ApiRootScheme::Https)));
+        assert!(matches!(from_x_forwarded_proto(" HTTP "), Ok(ApiRootScheme::Http)));
     }
 
     #[test]
     fn the_leftmost_x_forwarded_proto_value_decides_the_protocol() {
-        pretty_assertions::assert_eq!(from_x_forwarded_proto("https, http"), Ok(ApiRootScheme::Https));
+        assert!(matches!(from_x_forwarded_proto("https, http"), Ok(ApiRootScheme::Https)));
     }
 
     #[test]
     fn an_empty_x_forwarded_proto_value_names_no_protocol() {
-        pretty_assertions::assert_eq!(from_x_forwarded_proto(""), Err(ForwardedProtocolError::NoProtocol));
+        assert!(matches!(from_x_forwarded_proto(""), Err(ForwardedProtocolError::NoProtocol)));
     }
 
     /// RFC 7239 clause 1: `Forwarded` is the standards-track field the

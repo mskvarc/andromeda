@@ -1,10 +1,10 @@
 //! Errors produced by subscription policy and persistence.
 
-use crate::{subscription_diagnostic::SubscriptionDiagnostic, subscription_validation_reason::SubscriptionValidationReason};
+use crate::{subscription_invariant::SubscriptionInvariant, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
-use std::fmt::Display;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use thiserror::Error;
 
 /// A failure while validating, applying, compiling, or persisting a subscription.
@@ -39,7 +39,7 @@ pub enum SubscriptionError {
     Identifier(#[from] urn_rs::Error),
     /// The persistence adapter could not complete the operation.
     #[error("subscription persistence failed: {0}")]
-    Persistence(SubscriptionDiagnostic),
+    Persistence(#[source] PersistenceFailure),
     /// A connection pool was saturated before the operation could run.
     ///
     /// Backpressure, not a fault: no backend became free within the acquire
@@ -49,7 +49,29 @@ pub enum SubscriptionError {
     StoreSaturated,
     /// An internal subscription invariant could not be satisfied.
     #[error("subscription invariant failed: {0}")]
-    Internal(SubscriptionDiagnostic),
+    Internal(#[from] SubscriptionInvariant),
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A saturated store is backpressure the client can retry, so it keeps its own
+/// retryable category; every other failure is a persistence fault.
+impl From<PersistenceFailure> for SubscriptionError {
+    fn from(failure: PersistenceFailure) -> SubscriptionError {
+        match failure {
+            PersistenceFailure::Saturated => SubscriptionError::StoreSaturated,
+            fault @ (PersistenceFailure::RolledBack
+            | PersistenceFailure::Unavailable
+            | PersistenceFailure::ConstraintViolated
+            | PersistenceFailure::StatementRejected
+            | PersistenceFailure::RecordMissing
+            | PersistenceFailure::Undecodable
+            | PersistenceFailure::Unencodable
+            | PersistenceFailure::StatementUnbuildable
+            | PersistenceFailure::CapacityExceeded
+            | PersistenceFailure::SchemaMismatch
+            | PersistenceFailure::ContractBroken) => SubscriptionError::Persistence(fault),
+        }
+    }
 }
 
 impl SubscriptionError {
@@ -67,19 +89,5 @@ impl SubscriptionError {
         SubscriptionError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
         }
-    }
-
-    /// Construct a persistence-adapter failure from its masked diagnostic source.
-    ///
-    /// The detail is captured for operators and masked before any client sees
-    /// it, so this takes `impl Display` — a typed adapter error is handed over
-    /// directly rather than pre-rendered to a string at the call site.
-    pub fn persistence(source: impl Display) -> SubscriptionError {
-        SubscriptionError::Persistence(SubscriptionDiagnostic::new(source))
-    }
-
-    /// Construct an internal-invariant failure from its masked diagnostic source.
-    pub fn internal(source: impl Display) -> SubscriptionError {
-        SubscriptionError::Internal(SubscriptionDiagnostic::new(source))
     }
 }

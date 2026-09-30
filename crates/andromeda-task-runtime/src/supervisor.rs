@@ -3,9 +3,11 @@
 use crate::{
     criticality::TaskCriticality,
     failure::TaskFailure,
+    failure_report::FailureReport,
     lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
     registration::{TaskRegistration, TaskRegistrationError},
-    startup_task::{StartupTask, StartupTaskError},
+    runtime_failure::RuntimeFailure,
+    startup_task::{StartupFailure, StartupTask, StartupTaskError},
     task_health::{TaskHealth, TaskHealthSnapshot, TaskHealthState},
     task_name::TaskName,
     task_observer::{DriverTerminal, TerminatedTask, apply_criticality, emit, join_failure, observe_terminal},
@@ -13,6 +15,7 @@ use crate::{
 use andromeda_telemetry::task_failure::record_task_failure;
 use dashmap::{DashMap, mapref::entry::Entry};
 use std::{
+    error::Error,
     sync::{
         Arc,
         Weak,
@@ -183,11 +186,14 @@ impl TaskSupervisor {
     /// # Errors
     ///
     /// Returns [`StartupTaskError`] when the task name is already reserved by this supervisor, when the operation reports a [`TaskFailure`], or when the spawned operation panics or is aborted.
-    pub async fn run_startup(&self, task: StartupTask) -> Result<(), StartupTaskError> {
+    pub async fn run_startup<E>(&self, task: StartupTask<E>) -> Result<(), StartupTaskError<E>>
+    where
+        E: Error + Send + 'static,
+    {
         let (registration, operation) = task.into_parts();
         let health = self.reserve(&registration).map_err(|error| StartupTaskError {
             name: error.name,
-            failure: TaskFailure::permanent("duplicate startup task registration"),
+            failure: StartupFailure::Runtime(TaskFailure::permanent(RuntimeFailure::DuplicateStartupRegistration)),
         })?;
         let name = registration.name().clone(); // clone: health, lifecycle and the returned error each identify the task independently.
         health.write().await.running(SystemTime::now());
@@ -201,13 +207,21 @@ impl TaskSupervisor {
                 Ok(())
             }
             Ok(Err(failure)) => {
-                self.finish_startup_failure(&health, &name, registration.criticality(), &failure).await;
-                Err(StartupTaskError { name, failure })
+                self.finish_startup_failure(&health, &name, registration.criticality(), &FailureReport::of(&failure))
+                    .await;
+                Err(StartupTaskError {
+                    name,
+                    failure: StartupFailure::Operation(failure),
+                })
             }
             Err(join_error) => {
-                let failure = join_failure(&join_error);
-                self.finish_startup_failure(&health, &name, registration.criticality(), &failure).await;
-                Err(StartupTaskError { name, failure })
+                let failure = join_failure(join_error);
+                self.finish_startup_failure(&health, &name, registration.criticality(), &FailureReport::of(&failure))
+                    .await;
+                Err(StartupTaskError {
+                    name,
+                    failure: StartupFailure::Runtime(failure),
+                })
             }
         }
     }
@@ -280,7 +294,7 @@ impl TaskSupervisor {
         let observer = self.inner.host.spawn(async move {
             let terminal = match driver.await {
                 Ok(terminal) => terminal,
-                Err(error) => DriverTerminal::Failed(join_failure(&error)),
+                Err(error) => DriverTerminal::Failed(FailureReport::of(&join_failure(error))),
             };
             if let Some(inner) = Weak::upgrade(&inner) {
                 observe_terminal(
@@ -317,7 +331,7 @@ impl TaskSupervisor {
     }
 
     /// Record and escalate a failed startup operation.
-    async fn finish_startup_failure(&self, health: &RwLock<TaskHealth>, name: &TaskName, criticality: TaskCriticality, failure: &TaskFailure) {
+    async fn finish_startup_failure(&self, health: &RwLock<TaskHealth>, name: &TaskName, criticality: TaskCriticality, failure: &FailureReport) {
         let mut health = health.write().await;
         health.failed_attempt(SystemTime::now(), failure);
         health.terminal(TaskHealthState::Failed);

@@ -276,7 +276,7 @@ fn claim_verbatim_instances_sql(target: &ContextTarget) -> Result<String, Tempor
         AttributeHistoryInstanceClaims::AttributeNameKey,
         AttributeHistoryInstanceClaims::VerbatimInstanceId,
     ]);
-    insert.select_from(select).map_err(|error| TemporalStoreError::Validation(error.to_string()))?;
+    insert.select_from(select).map_err(TemporalStoreError::StatementBuild)?;
     let sql = insert.to_string(PostgresQueryBuilder);
     Ok(apply_column_alias(sql, &D, &dedup_staging_columns()))
 }

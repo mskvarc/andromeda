@@ -31,7 +31,7 @@ impl AggregationPeriod {
         if trimmed.is_empty() {
             return Ok(None);
         }
-        let duration = Duration::parse(trimmed).map_err(|_| QueryError::ParamAggrPeriodDurationInvalid(trimmed.to_string()))?;
+        let duration = Duration::parse(trimmed).map_err(|error| QueryError::ParamAggrPeriodDurationInvalid { position: error.position })?;
         if is_zero(&duration) {
             return Ok(None);
         }
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn a_value_that_is_not_an_iso_8601_duration_is_rejected() {
         let error = AggregationPeriod::parse("one hour").expect_err("must reject");
-        assert!(matches!(error, QueryError::ParamAggrPeriodDurationInvalid(_)), "got {error:?}");
+        assert!(matches!(error, QueryError::ParamAggrPeriodDurationInvalid { .. }), "got {error:?}");
     }
 
     #[test]

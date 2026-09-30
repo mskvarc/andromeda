@@ -47,29 +47,17 @@ const JULIAN_DAY_ZERO: (i32, u32, u32) = (-4713, 11, 24);
 #[derive(Debug, Error)]
 pub enum NgsiLdDateTimeError {
     /// The text is not an RFC 3339 timestamp.
-    #[error("NGSI-LD DateTime value is not an RFC 3339 timestamp: {value}")]
-    Malformed {
-        /// The rejected text.
-        value: String,
-    },
+    #[error("NGSI-LD DateTime value is not an RFC 3339 timestamp: {0}")]
+    Malformed(#[source] chrono::ParseError),
+    /// The text's fractional-seconds part breaks the clause 4.6.3 rule.
+    #[error("NGSI-LD DateTime {0}")]
+    FractionalSeconds(#[from] FractionalSecondsError),
     /// The text names an instant outside the range the broker can store.
-    #[error("NGSI-LD DateTime value names an instant outside the storable range: {value}")]
-    OutOfRange {
-        /// The rejected text.
-        value: String,
-    },
+    #[error("NGSI-LD DateTime value names an instant outside the storable range")]
+    OutOfRange,
     /// The text's trailing zone designator is not the literal `Z` character.
-    #[error("NGSI-LD DateTime value's trailing zone designator is not the literal character 'Z': {value}")]
-    ZoneDesignator {
-        /// The rejected text.
-        value: String,
-    },
-    /// The text carries more than six fractional-second digits.
-    #[error("NGSI-LD DateTime value carries more than six fractional-second digits: {value}")]
-    TooManyFractionalDigits {
-        /// The rejected text.
-        value: String,
-    },
+    #[error("NGSI-LD DateTime value's trailing zone designator is not the literal character 'Z'")]
+    ZoneDesignator,
 }
 
 /// An NGSI-LD `DateTime` accepted under the broker's strict clause 4.6.3 policy.
@@ -104,16 +92,16 @@ impl NgsiLdDateTime {
     /// yield a representable instant.
     pub fn normalise(instant: DateTime<Utc>) -> Result<NgsiLdDateTime, NgsiLdDateTimeError> {
         let Some(truncated) = truncate_to_microseconds(instant) else {
-            return Err(NgsiLdDateTimeError::OutOfRange { value: instant.to_rfc3339() });
+            return Err(NgsiLdDateTimeError::OutOfRange);
         };
         let Some(floor) = storable_floor() else {
             // `JULIAN_DAY_ZERO` is a fixed valid calendar date, so this branch is
             // unreachable; refusing rather than skipping the check keeps an
             // unconstructible floor from silently widening the accepted range.
-            return Err(NgsiLdDateTimeError::OutOfRange { value: instant.to_rfc3339() });
+            return Err(NgsiLdDateTimeError::OutOfRange);
         };
         if truncated < floor {
-            return Err(NgsiLdDateTimeError::OutOfRange { value: instant.to_rfc3339() });
+            return Err(NgsiLdDateTimeError::OutOfRange);
         }
         Ok(NgsiLdDateTime(truncated))
     }
@@ -128,16 +116,16 @@ impl FromStr for NgsiLdDateTime {
     type Err = NgsiLdDateTimeError;
 
     fn from_str(value: &str) -> Result<NgsiLdDateTime, NgsiLdDateTimeError> {
-        let candidate = accept_comma_decimal_separator(value).map_err(|error| clause_463_error(error, value))?;
-        reject_excess_fractional_digits(&candidate).map_err(|error| clause_463_error(error, value))?;
+        let candidate = accept_comma_decimal_separator(value)?;
+        reject_excess_fractional_digits(&candidate)?;
         // `chrono` refuses a year beyond its own ceiling as a parse failure, so a
         // lexically valid timestamp that overflows is reported as out of range
         // rather than as malformed text.
         let parsed = DateTime::parse_from_rfc3339(&candidate).map_err(|error| {
             if error.kind() == ParseErrorKind::OutOfRange {
-                NgsiLdDateTimeError::OutOfRange { value: value.to_string() }
+                NgsiLdDateTimeError::OutOfRange
             } else {
-                NgsiLdDateTimeError::Malformed { value: value.to_string() }
+                NgsiLdDateTimeError::Malformed(error)
             }
         })?;
         // Clause 4.6.3: the trailing component "shall always be equal to the
@@ -146,9 +134,9 @@ impl FromStr for NgsiLdDateTime {
         // character, so the refusal names the designator rather than an offset
         // the value may not carry at all.
         if !candidate.ends_with('Z') {
-            return Err(NgsiLdDateTimeError::ZoneDesignator { value: value.to_string() });
+            return Err(NgsiLdDateTimeError::ZoneDesignator);
         }
-        NgsiLdDateTime::normalise(parsed.with_timezone(&Utc)).map_err(|_| NgsiLdDateTimeError::OutOfRange { value: value.to_string() })
+        NgsiLdDateTime::normalise(parsed.with_timezone(&Utc))
     }
 }
 
@@ -159,14 +147,6 @@ impl TryFrom<String> for NgsiLdDateTime {
 
     fn try_from(value: String) -> Result<NgsiLdDateTime, NgsiLdDateTimeError> {
         value.parse()
-    }
-}
-
-/// Report a shared clause 4.6.3 fractional-seconds failure in this type's own vocabulary.
-fn clause_463_error(error: FractionalSecondsError, value: &str) -> NgsiLdDateTimeError {
-    match error {
-        FractionalSecondsError::AmbiguousSeparator => NgsiLdDateTimeError::Malformed { value: value.to_string() },
-        FractionalSecondsError::TooManyDigits => NgsiLdDateTimeError::TooManyFractionalDigits { value: value.to_string() },
     }
 }
 
@@ -202,7 +182,10 @@ pub fn latest_storable_year() -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use crate::ngsi_ld_date_time::{NgsiLdDateTime, NgsiLdDateTimeError, earliest_storable_year, latest_storable_year};
+    use crate::{
+        fractional_seconds::FractionalSecondsError,
+        ngsi_ld_date_time::{NgsiLdDateTime, NgsiLdDateTimeError, earliest_storable_year, latest_storable_year},
+    };
     use chrono::{DateTime, NaiveDate, NaiveTime, Timelike, Utc};
 
     /// Midnight UTC on a calendar date the RFC 3339 grammar cannot spell.
@@ -227,7 +210,10 @@ mod tests {
         let error = "2026-07-25T10:00:00.1234569Z"
             .parse::<NgsiLdDateTime>()
             .expect_err("seven fractional digits exceed clause 4.6.3");
-        assert!(matches!(error, NgsiLdDateTimeError::TooManyFractionalDigits { .. }), "got {error:?}");
+        assert!(
+            matches!(error, NgsiLdDateTimeError::FractionalSeconds(FractionalSecondsError::TooManyDigits)),
+            "got {error:?}"
+        );
     }
 
     #[test]
@@ -235,7 +221,10 @@ mod tests {
         let error = "1970-01-01T00:00:00.999999999Z"
             .parse::<NgsiLdDateTime>()
             .expect_err("nine fractional digits exceed clause 4.6.3");
-        assert!(matches!(error, NgsiLdDateTimeError::TooManyFractionalDigits { .. }), "got {error:?}");
+        assert!(
+            matches!(error, NgsiLdDateTimeError::FractionalSeconds(FractionalSecondsError::TooManyDigits)),
+            "got {error:?}"
+        );
     }
 
     #[test]
@@ -243,7 +232,10 @@ mod tests {
         let error = "1969-12-31T23:59:59.0000005Z"
             .parse::<NgsiLdDateTime>()
             .expect_err("seven fractional digits exceed clause 4.6.3 regardless of sign");
-        assert!(matches!(error, NgsiLdDateTimeError::TooManyFractionalDigits { .. }), "got {error:?}");
+        assert!(
+            matches!(error, NgsiLdDateTimeError::FractionalSeconds(FractionalSecondsError::TooManyDigits)),
+            "got {error:?}"
+        );
     }
 
     #[test]
@@ -265,14 +257,14 @@ mod tests {
         // syntax error, an out-of-range one is a well-formed value the broker
         // cannot store.
         let error = "2026-13-01T00:00:00Z".parse::<NgsiLdDateTime>().expect_err("month 13 is out of range");
-        assert!(matches!(error, NgsiLdDateTimeError::OutOfRange { .. }), "got {error:?}");
+        assert!(matches!(error, NgsiLdDateTimeError::OutOfRange), "got {error:?}");
     }
 
     #[test]
     fn an_instant_before_the_storable_floor_is_refused() {
         let before_floor = utc_at(-262_143, 1, 1);
         let error = NgsiLdDateTime::normalise(before_floor).expect_err("the instant precedes the storable floor");
-        assert!(matches!(error, NgsiLdDateTimeError::OutOfRange { .. }), "got {error:?}");
+        assert!(matches!(error, NgsiLdDateTimeError::OutOfRange), "got {error:?}");
     }
 
     #[test]
@@ -284,7 +276,7 @@ mod tests {
     #[test]
     fn the_day_before_the_storable_floor_is_refused() {
         let error = NgsiLdDateTime::normalise(utc_at(-4713, 11, 23)).expect_err("one day before the floor is not storable");
-        assert!(matches!(error, NgsiLdDateTimeError::OutOfRange { .. }), "got {error:?}");
+        assert!(matches!(error, NgsiLdDateTimeError::OutOfRange), "got {error:?}");
     }
 
     #[test]
@@ -307,7 +299,7 @@ mod tests {
         // character 'Z'". A numeric offset names a valid RFC 3339 instant but
         // is not that character, so it is refused rather than normalised.
         let error = "2026-07-25T12:00:00.5+02:00".parse::<NgsiLdDateTime>().expect_err("a non-Z offset is rejected");
-        assert!(matches!(error, NgsiLdDateTimeError::ZoneDesignator { .. }), "got {error:?}");
+        assert!(matches!(error, NgsiLdDateTimeError::ZoneDesignator), "got {error:?}");
     }
 
     #[test]
@@ -317,7 +309,7 @@ mod tests {
         let error = "2026-07-25T12:00:00+00:00"
             .parse::<NgsiLdDateTime>()
             .expect_err("+00:00 is not the literal Z designator");
-        assert!(matches!(error, NgsiLdDateTimeError::ZoneDesignator { .. }), "got {error:?}");
+        assert!(matches!(error, NgsiLdDateTimeError::ZoneDesignator), "got {error:?}");
     }
 
     /// Clause 4.6.3 spells the designator "the character 'Z'" and requires the
@@ -330,7 +322,7 @@ mod tests {
         let error = "2026-07-25T12:00:00z"
             .parse::<NgsiLdDateTime>()
             .expect_err("lowercase z is not the character the clause mandates");
-        assert!(matches!(error, NgsiLdDateTimeError::ZoneDesignator { .. }), "got {error:?}");
+        assert!(matches!(error, NgsiLdDateTimeError::ZoneDesignator), "got {error:?}");
         assert!(error.to_string().contains("literal character 'Z'"), "{error}");
     }
 
@@ -349,15 +341,21 @@ mod tests {
         let error = "2026-07-25T10:00:00,1234567Z"
             .parse::<NgsiLdDateTime>()
             .expect_err("seven digits exceed clause 4.6.3 whichever separator was used");
-        assert!(matches!(error, NgsiLdDateTimeError::TooManyFractionalDigits { .. }), "got {error:?}");
+        assert!(
+            matches!(error, NgsiLdDateTimeError::FractionalSeconds(FractionalSecondsError::TooManyDigits)),
+            "got {error:?}"
+        );
     }
 
     #[test]
-    fn more_than_one_comma_is_malformed() {
+    fn more_than_one_comma_is_an_ambiguous_separator() {
         let error = "2026-07-25T10:00:00,12,3456Z"
             .parse::<NgsiLdDateTime>()
             .expect_err("two commas cannot spell one decimal separator");
-        assert!(matches!(error, NgsiLdDateTimeError::Malformed { .. }), "got {error:?}");
+        assert!(
+            matches!(error, NgsiLdDateTimeError::FractionalSeconds(FractionalSecondsError::AmbiguousSeparator)),
+            "got {error:?}"
+        );
     }
 
     #[test]

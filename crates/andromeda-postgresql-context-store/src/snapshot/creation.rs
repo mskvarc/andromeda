@@ -4,6 +4,7 @@
 use crate::{
     error::violates_unique_constraint,
     snapshot::{branch_schema::create_branch_schema, branch_version::current_version, persistence_error, status_code::stored_status},
+    store_fault::undecodable,
 };
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -87,7 +88,7 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
         .fetch_one(&mut *tx)
         .await
         .map_err(|error| snapshot_create_error(error, params.id))?;
-    let snapshot_key = SnapshotKey::try_from(snapshot_key_raw).map_err(|error| SnapshotError::internal(error.to_string()))?;
+    let snapshot_key = SnapshotKey::try_from(snapshot_key_raw).map_err(|error| SnapshotError::from(undecodable(&error)))?;
     let preparation_sql = preparation_insert_sql()?;
     sqlx::query(sqlx::AssertSqlSafe(preparation_sql.as_str()))
         .bind(snapshot_key.as_i64())

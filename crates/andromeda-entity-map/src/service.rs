@@ -1,6 +1,7 @@
 //! Entity Map lifecycle against its store (clauses 5.5.14 and 5.14).
 
 use crate::{
+    entity_map_invariant::EntityMapInvariant,
     error::EntityMapError,
     pruning::PageCheck,
     reuse::{EntityMapFlag, EntityMapUse},
@@ -56,9 +57,7 @@ impl EntityMapService {
     ) -> Result<EntityMap, EntityMapError> {
         let identifier = build_entity_map_identifier()?;
         let lifetime = lifetime.copied().unwrap_or_else(default_lifetime);
-        let expires_at = expiry(Utc::now(), &lifetime).ok_or_else(|| EntityMapError::Invariant {
-            detail: "entity map lifetime is outside the representable time range".to_owned(),
-        })?;
+        let expires_at = expiry(Utc::now(), &lifetime).ok_or(EntityMapInvariant::LifetimeOutOfRange)?;
         let mut map = EntityMap::local(identifier, expires_at, entity_ids);
         map.request_fingerprint = Some(fingerprint);
         Ok(map)
@@ -244,9 +243,7 @@ fn default_lifetime() -> Iso8601Duration {
 fn build_entity_map_identifier() -> Result<Identifier, EntityMapError> {
     format!("urn:ngsi-ld:EntityMap:{}", Uuid::new_v4())
         .parse()
-        .map_err(|error| EntityMapError::Invariant {
-            detail: format!("generated Entity Map identifier is invalid: {error}"),
-        })
+        .map_err(|error| EntityMapInvariant::MintedIdentifier(error).into())
 }
 
 #[cfg(test)]
@@ -276,7 +273,7 @@ mod tests {
     impl EntityMapStore for VecStore {
         fn insert<'a>(&'a self, map: &'a EntityMap) -> EntityMapStoreFuture<'a, ()> {
             Box::pin(async move {
-                let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
+                let mut maps = self.0.lock().expect("the test store lock is not poisoned");
                 maps.retain(|stored| stored.id != map.id);
                 maps.push(map.clone()); // clone: the fake owns what it stores
                 Ok(())
@@ -285,14 +282,14 @@ mod tests {
 
         fn get<'a>(&'a self, identifier: &'a Identifier) -> EntityMapStoreFuture<'a, Option<EntityMap>> {
             Box::pin(async move {
-                let maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
+                let maps = self.0.lock().expect("the test store lock is not poisoned");
                 Ok(maps.iter().find(|map| &map.id == identifier && !map.is_expired()).cloned()) // clone: the caller owns the returned map
             })
         }
 
         fn update<'a>(&'a self, identifier: &'a Identifier, expires_at: DateTime<Utc>) -> EntityMapStoreFuture<'a, EntityMapMutation> {
             Box::pin(async move {
-                let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
+                let mut maps = self.0.lock().expect("the test store lock is not poisoned");
                 match maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
                     Some(map) => {
                         map.expires_at = expires_at;
@@ -310,7 +307,7 @@ mod tests {
             linked_map: &'a Identifier,
         ) -> EntityMapStoreFuture<'a, EntityMapMutation> {
             Box::pin(async move {
-                let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
+                let mut maps = self.0.lock().expect("the test store lock is not poisoned");
                 match maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
                     Some(map) => {
                         map.link(registration.clone(), linked_map.clone()); // clone: the fake owns what it stores
@@ -323,7 +320,7 @@ mod tests {
 
         fn prune<'a>(&'a self, identifier: &'a Identifier, entity_ids: &'a [Identifier]) -> EntityMapStoreFuture<'a, ()> {
             Box::pin(async move {
-                let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
+                let mut maps = self.0.lock().expect("the test store lock is not poisoned");
                 if let Some(map) = maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
                     map.entity_map.retain(|entity_id, _| !entity_ids.contains(entity_id));
                 }
@@ -333,7 +330,7 @@ mod tests {
 
         fn delete<'a>(&'a self, identifier: &'a Identifier) -> EntityMapStoreFuture<'a, EntityMapMutation> {
             Box::pin(async move {
-                let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
+                let mut maps = self.0.lock().expect("the test store lock is not poisoned");
                 let before = maps.len();
                 maps.retain(|map| &map.id != identifier || map.is_expired());
                 Ok(if maps.len() < before {
@@ -346,7 +343,7 @@ mod tests {
 
         fn delete_expired(&self, cutoff: DateTime<Utc>) -> EntityMapStoreFuture<'_, u64> {
             Box::pin(async move {
-                let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
+                let mut maps = self.0.lock().expect("the test store lock is not poisoned");
                 let before = maps.len();
                 maps.retain(|map| map.expires_at > cutoff);
                 Ok((before - maps.len()) as u64)
@@ -354,10 +351,8 @@ mod tests {
         }
     }
 
-    fn identifier(value: &str) -> Result<Identifier, EntityMapError> {
-        value
-            .parse::<Identifier>()
-            .map_err(|error| EntityMapError::Invariant { detail: error.to_string() })
+    fn identifier(value: &str) -> Identifier {
+        value.parse::<Identifier>().expect("a valid test identifier")
     }
 
     fn service() -> EntityMapService {
@@ -365,7 +360,7 @@ mod tests {
     }
 
     fn query(raw: &str) -> Result<RequestFingerprint, EntityMapError> {
-        let params: EntityQueryParameters = serde_urlencoded::from_str(raw).map_err(|error| EntityMapError::Invariant { detail: error.to_string() })?;
+        let params: EntityQueryParameters = serde_urlencoded::from_str(raw).expect("a valid test fixture");
         fingerprint_of(FingerprintedRequest::QueryEntities(&params))
     }
 
@@ -393,10 +388,10 @@ mod tests {
     #[tokio::test]
     async fn a_referenced_map_that_is_missing_is_an_outcome_not_an_error() -> Result<(), EntityMapError> {
         let service = service();
-        let map = stored_map(&service, vec![identifier("urn:a")?], any_fingerprint()).await?;
+        let map = stored_map(&service, vec![identifier("urn:a")], any_fingerprint()).await?;
         assert!(matches!(service.referenced(&map.id).await?, ReferencedEntityMap::Live(_)));
         assert!(matches!(
-            service.referenced(&identifier("urn:ngsi-ld:EntityMap:missing")?).await?,
+            service.referenced(&identifier("urn:ngsi-ld:EntityMap:missing")).await?,
             ReferencedEntityMap::Unavailable
         ));
         Ok(())
@@ -404,7 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn deleting_an_absent_map_reports_not_found() -> Result<(), EntityMapError> {
-        let result = service().delete(&identifier("urn:ngsi-ld:EntityMap:missing")?).await;
+        let result = service().delete(&identifier("urn:ngsi-ld:EntityMap:missing")).await;
         assert!(matches!(result, Err(EntityMapError::NotFound { .. })));
         Ok(())
     }
@@ -412,9 +407,9 @@ mod tests {
     #[tokio::test]
     async fn a_stored_composed_map_is_retrieved_with_its_links() -> Result<(), EntityMapError> {
         let service = service();
-        let mut map = service.local_map(vec![identifier("urn:a")?], None, any_fingerprint())?;
-        let registration = identifier("urn:ngsi-ld:ContextSourceRegistration:b")?;
-        map.add_remote_entities(&registration, vec![identifier("urn:b")?]);
+        let mut map = service.local_map(vec![identifier("urn:a")], None, any_fingerprint())?;
+        let registration = identifier("urn:ngsi-ld:ContextSourceRegistration:b");
+        map.add_remote_entities(&registration, vec![identifier("urn:b")]);
         service.store(&map).await?;
         let stored = service.retrieve(&map.id).await?;
         pretty_assertions::assert_eq!(stored.registrations().collect::<Vec<_>>(), vec![&registration]);
@@ -426,7 +421,7 @@ mod tests {
     #[tokio::test]
     async fn a_reused_map_holds_the_follow_up_to_the_creating_parameters() -> Result<(), EntityMapError> {
         let service = service();
-        let map = stored_map(&service, vec![identifier("urn:a")?], query("type=Vehicle")?).await?;
+        let map = stored_map(&service, vec![identifier("urn:a")], query("type=Vehicle")?).await?;
 
         let reused = service
             .resolve_use(Some(&map.id), EntityMapFlag::NotRequested, &query("type=Vehicle&limit=1&id=urn:a")?, None)
@@ -450,13 +445,13 @@ mod tests {
     #[tokio::test]
     async fn a_reuse_only_reference_never_mints_a_replacement() -> Result<(), EntityMapError> {
         let service = service();
-        let map = stored_map(&service, vec![identifier("urn:a")?], query("type=Vehicle")?).await?;
+        let map = stored_map(&service, vec![identifier("urn:a")], query("type=Vehicle")?).await?;
 
         let live = service.resolve_reuse(&map.id, &query("type=Vehicle&id=urn:a")?).await?;
         assert!(matches!(&live, ReferencedEntityMap::Live(stored) if stored.id == map.id));
 
         let missing = service
-            .resolve_reuse(&identifier("urn:ngsi-ld:EntityMap:missing")?, &query("type=Vehicle")?)
+            .resolve_reuse(&identifier("urn:ngsi-ld:EntityMap:missing"), &query("type=Vehicle")?)
             .await?;
         assert!(matches!(missing, ReferencedEntityMap::Unavailable));
 
@@ -469,7 +464,7 @@ mod tests {
     async fn an_unavailable_reference_or_the_flag_alone_mints_a_map() -> Result<(), EntityMapError> {
         let service = service();
         let fingerprint = query("type=Vehicle")?;
-        let bogus = identifier("urn:ngsi-ld:EntityMap:bogus")?;
+        let bogus = identifier("urn:ngsi-ld:EntityMap:bogus");
         assert!(
             service
                 .resolve_use(Some(&bogus), EntityMapFlag::NotRequested, &fingerprint, None)
@@ -477,9 +472,7 @@ mod tests {
                 .mints()
         );
         let minted = service.resolve_use(None, EntityMapFlag::Requested, &fingerprint, None).await?;
-        let shell = minted.minting().ok_or_else(|| EntityMapError::Invariant {
-            detail: "a map is minted".into(),
-        })?;
+        let shell = minted.minting().expect("a map is minted");
         assert!(shell.entity_map.is_empty());
         pretty_assertions::assert_eq!(shell.request_fingerprint, Some(fingerprint));
         assert!(matches!(
@@ -495,20 +488,15 @@ mod tests {
     #[tokio::test]
     async fn a_page_preparation_sheds_the_entities_it_found_no_longer_matching() -> Result<(), EntityMapError> {
         let service = service();
-        let map = stored_map(
-            &service,
-            vec![identifier("urn:a")?, identifier("urn:b")?, identifier("urn:c")?],
-            any_fingerprint(),
-        )
-        .await?;
+        let map = stored_map(&service, vec![identifier("urn:a"), identifier("urn:b"), identifier("urn:c")], any_fingerprint()).await?;
 
-        let check = PageCheck::new([identifier("urn:a")?, identifier("urn:c")?], Vec::new());
+        let check = PageCheck::new([identifier("urn:a"), identifier("urn:c")], Vec::new());
         let shed = service.prune_unmatched(&map, &check).await?;
-        pretty_assertions::assert_eq!(shed, vec![identifier("urn:b")?]);
+        pretty_assertions::assert_eq!(shed, vec![identifier("urn:b")]);
 
         let stored = service.retrieve(&map.id).await?;
-        pretty_assertions::assert_eq!(stored.entity_ids().collect::<Vec<_>>(), vec![&identifier("urn:a")?, &identifier("urn:c")?]);
-        pretty_assertions::assert_eq!(scope_query_ids(&stored, None), vec![identifier("urn:a")?, identifier("urn:c")?]);
+        pretty_assertions::assert_eq!(stored.entity_ids().collect::<Vec<_>>(), vec![&identifier("urn:a"), &identifier("urn:c")]);
+        pretty_assertions::assert_eq!(scope_query_ids(&stored, None), vec![identifier("urn:a"), identifier("urn:c")]);
         Ok(())
     }
 
@@ -517,8 +505,8 @@ mod tests {
     #[tokio::test]
     async fn a_preparation_that_matched_everything_sheds_nothing() -> Result<(), EntityMapError> {
         let service = service();
-        let map = stored_map(&service, vec![identifier("urn:a")?], any_fingerprint()).await?;
-        let check = PageCheck::new([identifier("urn:a")?], Vec::new());
+        let map = stored_map(&service, vec![identifier("urn:a")], any_fingerprint()).await?;
+        let check = PageCheck::new([identifier("urn:a")], Vec::new());
         pretty_assertions::assert_eq!(service.prune_unmatched(&map, &check).await?, Vec::<Identifier>::new());
         pretty_assertions::assert_eq!(service.retrieve(&map.id).await?.entity_ids().count(), 1);
         Ok(())
@@ -527,9 +515,9 @@ mod tests {
     #[tokio::test]
     async fn linked_maps_are_recorded_on_the_stored_map() -> Result<(), EntityMapError> {
         let service = service();
-        let map = stored_map(&service, vec![identifier("urn:a")?], any_fingerprint()).await?;
-        let registration = identifier("urn:ngsi-ld:ContextSourceRegistration:b")?;
-        let linked = identifier("urn:ngsi-ld:EntityMap:peer")?;
+        let map = stored_map(&service, vec![identifier("urn:a")], any_fingerprint()).await?;
+        let registration = identifier("urn:ngsi-ld:ContextSourceRegistration:b");
+        let linked = identifier("urn:ngsi-ld:EntityMap:peer");
         service.record_linked_maps(&map.id, [(&registration, &linked)]).await?;
         let stored = service.retrieve(&map.id).await?;
         pretty_assertions::assert_eq!(stored.linked_map_for(&registration), Some(&linked));

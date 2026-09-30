@@ -5,6 +5,7 @@ use crate::{
     SentResponse,
     cache::{CacheKey, Cacheability, ForwardedGetCache},
     error::FederationError,
+    federation_invariant::FederationInvariant,
     forwarded_payload::{ForwardedPayload, build_forwarded_payload},
     forwarding_url::with_local_scope,
     outcome::{ForwardGetOutcome, ForwardedResponse, TransportFailure},
@@ -57,8 +58,13 @@ pub(crate) struct ForwardedRequest<'a> {
 /// invariant violation rather than a request error.
 fn context_source_info(registration: &ContextSourceRegistration) -> Result<ContextSourceInfo<'_>, FederationError> {
     let pairs = registration.access.context_source_info.as_deref().unwrap_or_default();
-    ContextSourceInfo::try_from(pairs)
-        .map_err(|error| FederationError::internal(format!("registration {} carries an invalid contextSourceInfo: {error}", registration.id)))
+    ContextSourceInfo::try_from(pairs).map_err(|source| {
+        FederationInvariant::ContextSourceInfo {
+            registration: registration.id.clone(), // clone: the error owns the registration it names
+            source,
+        }
+        .into()
+    })
 }
 
 impl FederationService {
@@ -95,11 +101,11 @@ impl FederationService {
         }
         let url = match url {
             Ok(url) => url,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::Unreachable { detail: error.to_string() }),
+            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
         let payload = match self.payload_for(registration, inbound, None).await {
             Ok(payload) => payload,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::Unreachable { detail: error.to_string() }),
+            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
         let cache_duration = match cacheability {
             Cacheability::Cacheable => ForwardedGetCache::duration_of(registration),
@@ -114,9 +120,7 @@ impl FederationService {
         if let Some(remaining) = self.cooldowns.remaining(registration) {
             // Clause 5.2.34: a request inside the cooldown window is answered
             // with a timeout for the registration, without contacting it.
-            return ForwardGetOutcome::Transport(TransportFailure::Timeout {
-                detail: format!("registration is cooling down for another {}ms after a failure", remaining.as_millis()),
-            });
+            return ForwardGetOutcome::Transport(TransportFailure::CoolingDown { remaining });
         }
         debug!("CS forwarding GET {}", url);
 
@@ -130,7 +134,7 @@ impl FederationService {
             linked_map,
         }) {
             Ok(request) => request,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::Unreachable { detail: error.to_string() }),
+            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
 
         let sent = match self.send_request(registration, request).await {
@@ -166,18 +170,16 @@ impl FederationService {
         }
         let url = match url {
             Ok(url) => url,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::Unreachable { detail: error.to_string() }),
+            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
         let payload = match self.payload_for(registration, inbound, Some(&body)).await {
             Ok(payload) => payload,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::Unreachable { detail: error.to_string() }),
+            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
         if let Some(remaining) = self.cooldowns.remaining(registration) {
             // Clause 5.2.34: a request inside the cooldown window is answered
             // with a timeout for the registration, without contacting it.
-            return ForwardGetOutcome::Transport(TransportFailure::Timeout {
-                detail: format!("registration is cooling down for another {}ms after a failure", remaining.as_millis()),
-            });
+            return ForwardGetOutcome::Transport(TransportFailure::CoolingDown { remaining });
         }
         debug!("CS forwarding POST {}", url);
 
@@ -191,7 +193,7 @@ impl FederationService {
             linked_map,
         }) {
             Ok(request) => request,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::Unreachable { detail: error.to_string() }),
+            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
 
         let sent = match self.send_request(registration, request).await {
@@ -341,7 +343,7 @@ fn interpret_read_response(registration: &ContextSourceRegistration, answered: &
         }),
         Err(e) => {
             warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);
-            ForwardGetOutcome::InvalidPayload(format!("Failed to parse context source response as JSON: {e}"))
+            ForwardGetOutcome::InvalidPayload(e)
         }
     }
 }
@@ -367,7 +369,7 @@ fn apply_custom_headers(
         if protected_header(key) {
             continue;
         }
-        let name = HeaderName::from_str(key).map_err(|error| FederationError::internal(format!("invalid contextSourceInfo header name '{key}': {error}")))?;
+        let name = HeaderName::from_str(key).map_err(|error| FederationError::from(FederationInvariant::ContextSourceInfoHeaderName(error)))?;
         if pair.value == FROM_TRIGGERING_REQUEST.as_str() {
             let Some(value) = incoming.and_then(|headers| headers.get(&name)) else {
                 continue;
@@ -375,8 +377,8 @@ fn apply_custom_headers(
             request = request.header(name, value.clone()); // clone: the forwarded request owns its header value
             continue;
         }
-        let value = HeaderValue::from_str(pair.value.as_str())
-            .map_err(|error| FederationError::internal(format!("invalid contextSourceInfo value for '{key}': {error}")))?;
+        let value =
+            HeaderValue::from_str(pair.value.as_str()).map_err(|error| FederationError::from(FederationInvariant::ContextSourceInfoHeaderValue(error)))?;
         request = request.header(name, value);
     }
     Ok(request)

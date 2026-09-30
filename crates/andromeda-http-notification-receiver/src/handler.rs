@@ -41,11 +41,8 @@ enum ReceivedError {
     #[error("missing `type`")]
     MissingType,
     /// `type` names neither notification kind.
-    #[error("unsupported type `{type_}`")]
-    UnsupportedType {
-        /// The offending value.
-        type_: String,
-    },
+    #[error("unsupported type; expected `Notification` or `ContextSourceNotification`")]
+    UnsupportedType,
     /// The members do not form the named notification.
     #[error("{0}")]
     Shape(#[from] serde_json::Error),
@@ -61,7 +58,7 @@ impl TryFrom<Value> for Received {
         match type_ {
             "Notification" => Ok(Received::Notification(serde_json::from_value(document)?)),
             "ContextSourceNotification" => Ok(Received::ContextSourceNotification(serde_json::from_value(document)?)),
-            other => Err(ReceivedError::UnsupportedType { type_: other.to_owned() }),
+            _unsupported => Err(ReceivedError::UnsupportedType),
         }
     }
 }
@@ -112,4 +109,22 @@ pub(crate) async fn receive(
         response.headers_mut().typed_insert(tenant);
     }
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::handler::{Received, ReceivedError};
+    use serde_json::json;
+
+    #[test]
+    fn a_document_typed_as_neither_notification_kind_is_an_unsupported_type() {
+        let received = Received::try_from(json!({"type": "Entity", "id": "urn:a"}));
+        assert!(matches!(received, Err(ReceivedError::UnsupportedType)), "{received:?}");
+    }
+
+    #[test]
+    fn a_document_without_a_type_is_missing_its_type() {
+        let received = Received::try_from(json!({"id": "urn:a"}));
+        assert!(matches!(received, Err(ReceivedError::MissingType)), "{received:?}");
+    }
 }

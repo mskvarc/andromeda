@@ -82,10 +82,10 @@ impl PreparedEntityColumns {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::Internal`] when the payload cannot be
+    /// Returns [`ContextStoreError::PayloadEncoding`] when the payload cannot be
     /// serialised to JSON text.
     pub fn push_payload(&mut self, payload: &Value) -> Result<(), ContextStoreError> {
-        let json = serde_json::to_string(payload).map_err(|error| ContextStoreError::Internal(format!("serialise entity payload: {error}")))?;
+        let json = serde_json::to_string(payload).map_err(ContextStoreError::PayloadEncoding)?;
         self.payload_json.push(json);
         Ok(())
     }

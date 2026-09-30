@@ -3,9 +3,10 @@
 //! [`FederationError::Conflict`](crate::error::FederationError::Conflict) carries
 //! one of these. A conflict this broker reasons about names its registration
 //! with a typed identifier; a conflict the remote source declared carries that
-//! source's own problem detail, relayed verbatim. The clauses (5.6.1.4, 6.3.17)
+//! source's own answer. The clauses (5.6.1.4, 6.3.17)
 //! stay in doc comments.
 
+use crate::remote_answer::RemoteAnswer;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use thiserror::Error;
 
@@ -21,11 +22,8 @@ pub enum FederationConflictReason {
     },
     /// The single registered source itself refused the write with an HTTP 409.
     ///
-    /// The detail is the source's own problem detail, relayed verbatim; it is
-    /// not broker-authored (clause 6.3.17 asks for the most informative error).
-    #[error("{detail}")]
-    RemoteRejected {
-        /// The remote source's relayed HTTP 409 detail. Opaque upstream text.
-        detail: String,
-    },
+    /// The answer carries the source's own problem document; clause 6.3.17
+    /// asks for the most informative error.
+    #[error(transparent)]
+    RemoteRejected(Box<RemoteAnswer>),
 }

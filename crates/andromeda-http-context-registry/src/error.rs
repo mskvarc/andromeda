@@ -50,12 +50,11 @@ mod tests {
     use andromeda_context_registry::{error::ContextRegistryError, identifier::ContextIdentifier};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 
     #[test]
-    fn focused_context_registry_categories_and_disclosure_are_stable() -> Result<(), ContextRegistryError> {
-        let identifier = "urn:ngsi-ld:Context:1"
-            .parse::<Identifier>()
-            .map_err(|error| ContextRegistryError::Invariant { detail: error.to_string() })?;
+    fn focused_context_registry_categories_and_disclosure_are_stable() {
+        let identifier = "urn:ngsi-ld:Context:1".parse::<Identifier>().expect("a valid test identifier");
         for (error, expected) in [
             (ContextRegistryError::MissingTopLevelContext, NgsiLdErrorType::InvalidRequest),
             (
@@ -66,9 +65,7 @@ mod tests {
             ),
             (ContextRegistryError::CoreContextDeletion, NgsiLdErrorType::BadRequestData),
             (
-                ContextRegistryError::Persistence {
-                    detail: "database host".to_string(),
-                },
+                ContextRegistryError::Persistence(PersistenceFailure::Unavailable),
                 NgsiLdErrorType::InternalError,
             ),
         ] {
@@ -76,9 +73,12 @@ mod tests {
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
                 pretty_assertions::assert_eq!(report.detail(), "internal context-registry error");
-                assert!(!report.detail().contains("database host"), "the raw cause leaked: {}", report.detail());
+                assert!(
+                    !report.detail().contains(&PersistenceFailure::Unavailable.to_string()),
+                    "the raw cause leaked: {}",
+                    report.detail()
+                );
             }
         }
-        Ok(())
     }
 }

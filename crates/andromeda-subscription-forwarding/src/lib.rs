@@ -17,6 +17,8 @@ pub mod companion;
 pub mod error;
 /// Placing, updating and removing reduced copies at context sources.
 pub mod forwarder;
+/// The invariants the distributed subscription side relies on.
+pub mod forwarding_invariant;
 /// The identifier mappings the distributed side keeps.
 pub mod mapping;
 /// The identifier this broker mints for a subscription it hands to a peer.
@@ -45,6 +47,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
+        "andromeda-persistence-failure",
         "andromeda-registration",
         "andromeda-subscription",
         "andromeda-tenancy",

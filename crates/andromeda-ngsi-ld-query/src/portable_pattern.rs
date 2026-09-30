@@ -38,7 +38,7 @@
 //! and `pg_unicode_fast`), so the restatement means the same whatever collation
 //! the operand it is applied to carries.
 
-use crate::error::QueryError;
+use crate::{error::QueryError, non_posix_construct::NonPosixConstruct};
 use regex_syntax::hir::{Class, ClassUnicode, ClassUnicodeRange, Hir, HirKind, Look, Repetition};
 use std::str;
 
@@ -101,12 +101,12 @@ fn write_node(hir: &Hir, out: &mut String) -> Result<(), QueryError> {
     match hir.kind() {
         HirKind::Empty => Ok(()),
         HirKind::Literal(literal) => {
-            let text = str::from_utf8(&literal.0).map_err(|_| unrenderable(NON_UTF8_LITERAL))?;
+            let text = str::from_utf8(&literal.0).map_err(|_| unrenderable(NonPosixConstruct::NonUtf8Literal))?;
             text.chars().for_each(|character| push_outside_bracket(character, out));
             Ok(())
         }
         HirKind::Class(Class::Unicode(class)) => write_class(class, out),
-        HirKind::Class(Class::Bytes(_)) => Err(unrenderable(BYTE_CLASS)),
+        HirKind::Class(Class::Bytes(_)) => Err(unrenderable(NonPosixConstruct::ByteClass)),
         HirKind::Look(look) => write_look(*look, out),
         HirKind::Repetition(repetition) => write_repetition(repetition, out),
         // An alternation groups itself, so a capture around one adds nothing.
@@ -226,7 +226,7 @@ fn write_look(look: Look, out: &mut String) -> Result<(), QueryError> {
         | Look::WordStartHalfAscii
         | Look::WordEndHalfAscii
         | Look::WordStartHalfUnicode
-        | Look::WordEndHalfUnicode => return Err(unrenderable(UNRENDERABLE_ASSERTION)),
+        | Look::WordEndHalfUnicode => return Err(unrenderable(NonPosixConstruct::UnrenderableAssertion)),
     }
     Ok(())
 }
@@ -239,7 +239,7 @@ fn write_look(look: Look, out: &mut String) -> Result<(), QueryError> {
 /// which PostgreSQL's default newline-insensitive mode lets match anything.
 fn write_class(class: &ClassUnicode, out: &mut String) -> Result<(), QueryError> {
     let Some(first) = class.ranges().first() else {
-        return Err(unrenderable(EMPTY_CLASS));
+        return Err(unrenderable(NonPosixConstruct::EmptyClass));
     };
     if first.start() != '\0' {
         out.push('[');
@@ -299,21 +299,9 @@ fn push_inside_bracket(character: char, out: &mut String) {
 }
 
 /// Name the node in the rejection a client receives.
-const fn unrenderable(construct: &'static str) -> QueryError {
+const fn unrenderable(construct: NonPosixConstruct) -> QueryError {
     QueryError::PatternNonPosixConstruct { construct }
 }
-
-/// How the rejection names a literal that is not UTF-8.
-const NON_UTF8_LITERAL: &str = "a literal that is not UTF-8";
-
-/// How the rejection names a class over bytes.
-const BYTE_CLASS: &str = "a class over bytes rather than characters";
-
-/// How the rejection names an assertion with no portable spelling.
-const UNRENDERABLE_ASSERTION: &str = "a word-boundary or CRLF-aware assertion";
-
-/// How the rejection names a class that admits no character.
-const EMPTY_CLASS: &str = "a class that matches no character";
 
 #[cfg(test)]
 mod tests {

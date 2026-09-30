@@ -52,7 +52,7 @@ struct Carried;
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Internal`] if the projection ever stops
+/// Returns [`ContextStoreError::StatementBuild`] if the projection ever stops
 /// matching the column list, which the fixed shape here makes unreachable.
 fn membership_insert(
     target: &ContextTarget,
@@ -71,8 +71,7 @@ fn membership_insert(
     insert
         .into_table(table_of(target, EntityTypeMembers::Table))
         .columns([EntityTypeMembers::EntityKey, EntityTypeMembers::EntityTypeNameKey, EntityTypeMembers::Id])
-        .select_from(rows)
-        .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+        .select_from(rows)?;
     Ok(insert)
 }
 

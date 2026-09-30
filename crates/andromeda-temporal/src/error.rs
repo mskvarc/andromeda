@@ -1,16 +1,18 @@
 //! Failures produced by temporal policy and its storage ports.
 
 use crate::{
-    temporal_diagnostic::TemporalDiagnostic,
+    temporal_invariant::TemporalInvariant,
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_operation_unsupported::TemporalOperationUnsupported,
     temporal_validation_reason::TemporalValidationReason,
 };
-use andromeda_context_commit::error::CommitError;
+use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
+use andromeda_entity::error::EntityError;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_render::temporal::values::TemporalValuesError;
 use andromeda_ngsi_ld_request::error::ParameterError;
-use std::fmt::Display;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use thiserror::Error;
 
 /// A failure while compiling, reading, rendering, or mutating temporal history.
@@ -59,7 +61,7 @@ pub enum TemporalError {
     Commit(CommitError),
     /// A persistence adapter could not complete the operation.
     #[error("temporal persistence failed: {0}")]
-    Persistence(TemporalDiagnostic),
+    Persistence(#[source] PersistenceFailure),
     /// A connection pool was saturated before the operation could run.
     ///
     /// Backpressure, not a fault: no backend became free within the acquire
@@ -77,10 +79,10 @@ pub enum TemporalError {
     TransactionContended,
     /// Temporal representation construction failed.
     #[error("temporal rendering failed: {0}")]
-    Rendering(TemporalDiagnostic),
+    Rendering(#[source] TemporalValuesError),
     /// An internal temporal invariant could not be satisfied.
     #[error("temporal invariant failed: {0}")]
-    Internal(TemporalDiagnostic),
+    Internal(#[from] TemporalInvariant),
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
@@ -90,21 +92,49 @@ pub enum TemporalError {
 impl From<CommitError> for TemporalError {
     fn from(error: CommitError) -> TemporalError {
         match error {
-            // The commit port cannot depend on this crate's error types without a
-            // cycle, so a refused submission arrives as opaque prose relayed into
-            // the typed validation reason rather than as a typed cause.
-            CommitError::Submission { detail } => TemporalError::Validation(TemporalValidationReason::CommitRefused { detail }),
+            CommitError::Submission(refusal) => TemporalError::Validation(TemporalValidationReason::Refused(refusal)),
             // Saturation is backpressure the client can retry, so it keeps its
             // own category rather than being folded into the internal-fault
             // `Commit` variant.
             CommitError::StoreSaturated => TemporalError::StoreSaturated,
             CommitError::TransactionContended => TemporalError::TransactionContended,
             failure @ (CommitError::DuplicateEntity { .. }
-            | CommitError::Persistence { .. }
-            | CommitError::Invariant { .. }
+            | CommitError::Persistence(_)
+            | CommitError::Invariant(_)
             | CommitError::ReplayLeaseLost { .. }
             | CommitError::UnexpectedOutcomeCount { .. }) => TemporalError::Commit(failure),
         }
+    }
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A saturated store and a transaction rolled back under contention are
+/// backpressure the client can retry, so each keeps its own retryable category;
+/// only a fault becomes [`TemporalError::Persistence`].
+impl From<PersistenceFailure> for TemporalError {
+    fn from(failure: PersistenceFailure) -> TemporalError {
+        match failure {
+            PersistenceFailure::Saturated => TemporalError::StoreSaturated,
+            PersistenceFailure::RolledBack => TemporalError::TransactionContended,
+            fault @ (PersistenceFailure::Unavailable
+            | PersistenceFailure::ConstraintViolated
+            | PersistenceFailure::StatementRejected
+            | PersistenceFailure::RecordMissing
+            | PersistenceFailure::Undecodable
+            | PersistenceFailure::Unencodable
+            | PersistenceFailure::StatementUnbuildable
+            | PersistenceFailure::CapacityExceeded
+            | PersistenceFailure::SchemaMismatch
+            | PersistenceFailure::ContractBroken) => TemporalError::Persistence(fault),
+        }
+    }
+}
+
+/// Manual rather than `#[from]`: a refused submission is a validation failure,
+/// two layers down from the error it becomes.
+impl From<SubmissionRefusal> for TemporalError {
+    fn from(refusal: SubmissionRefusal) -> TemporalError {
+        TemporalError::Validation(TemporalValidationReason::Refused(refusal))
     }
 }
 
@@ -115,23 +145,38 @@ impl TemporalError {
         TemporalError::TooManyResults { matched, maximum }
     }
 
-    /// Construct a persistence failure from its masked diagnostic source.
+    /// Classify a failed entity operation a temporal operation depends on.
     ///
-    /// The detail is captured for operators and masked before any client sees
-    /// it, so this takes `impl Display` — a typed adapter error is handed over
-    /// directly rather than pre-rendered to a string at the call site.
-    pub fn persistence(source: impl Display) -> TemporalError {
-        TemporalError::Persistence(TemporalDiagnostic::new(source))
-    }
-
-    /// Construct an internal rendering failure from its masked diagnostic source.
-    pub fn rendering(source: impl Display) -> TemporalError {
-        TemporalError::Rendering(TemporalDiagnostic::new(source))
-    }
-
-    /// Construct an internal invariant failure from its masked diagnostic source.
-    pub fn internal(source: impl Display) -> TemporalError {
-        TemporalError::Internal(TemporalDiagnostic::new(source))
+    /// Backpressure and a store fault keep their own categories; any other
+    /// entity failure is recorded for operators and reported as the broken
+    /// invariant it is, since the broker itself drove the entity operation.
+    #[must_use]
+    pub fn from_entity_failure(error: EntityError) -> TemporalError {
+        match error {
+            EntityError::StoreSaturated => TemporalError::StoreSaturated,
+            EntityError::TransactionContended => TemporalError::TransactionContended,
+            EntityError::Persistence(failure) => TemporalError::Persistence(failure),
+            other @ (EntityError::Validation(_)
+            | EntityError::NotFound { .. }
+            | EntityError::TypeNotFound { .. }
+            | EntityError::AttributeNotFound { .. }
+            | EntityError::MemberNotFound(_)
+            | EntityError::AlreadyExists { .. }
+            | EntityError::Contention { .. }
+            | EntityError::OperationNotSupported(_)
+            | EntityError::JsonLd(_)
+            | EntityError::Query(_)
+            | EntityError::Request(_)
+            | EntityError::Representation(_)
+            | EntityError::Identifier(_)
+            | EntityError::EntityTypeListIdentifier(_)
+            | EntityError::AttributeListIdentifier(_)
+            | EntityError::Commit(_)
+            | EntityError::Internal(_)) => {
+                tracing::error!(error = %other, "an entity operation a temporal operation depends on failed");
+                TemporalInvariant::EntityOperation.into()
+            }
+        }
     }
 
     /// Whether this failure deliberately reports a missing temporal resource.

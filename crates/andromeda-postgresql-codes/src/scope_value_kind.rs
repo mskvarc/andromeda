@@ -1,6 +1,6 @@
 //! The persisted value shape of one scope-history row.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// Which value a scope-history row carries.

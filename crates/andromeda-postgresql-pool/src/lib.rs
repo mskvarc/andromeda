@@ -11,6 +11,12 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+/// A database error the tests can construct without a live driver connection.
+#[cfg(test)]
+mod fake_database_error;
+/// How a `sqlx` error is classified into the failure a port carries.
+pub mod persistence_classification;
+
 use sqlx::{error::DatabaseError, postgres::PgPoolOptions};
 use std::{
     io::{Error as IoError, ErrorKind},
@@ -150,7 +156,7 @@ fn is_connection_resource_exhausted(error: &IoError) -> bool {
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: [],
+    allow_workspace_dependencies: ["andromeda-persistence-failure"],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["sqlx"],
 }
@@ -160,67 +166,23 @@ andromeda_architecture_checks::forbid_sql!();
 
 #[cfg(test)]
 mod tests {
-    use crate::{POOL_IDLE_TIMEOUT, POOLER_QUERY_WAIT_TIMEOUT, configure_pool_options, is_pool_saturated, is_pooler_backpressure, is_transaction_rolled_back};
-    use sqlx::error::{DatabaseError, ErrorKind as SqlxErrorKind};
+    use crate::{
+        POOL_IDLE_TIMEOUT,
+        POOLER_QUERY_WAIT_TIMEOUT,
+        configure_pool_options,
+        fake_database_error::FakeDatabaseError,
+        is_pool_saturated,
+        is_pooler_backpressure,
+        is_transaction_rolled_back,
+    };
     use std::{
-        borrow::Cow,
-        error::Error as StdError,
-        fmt,
         io::{Error as IoError, ErrorKind},
         time::Duration,
     };
 
-    /// A minimal [`DatabaseError`] carrying a fixed message and SQLSTATE, so the
-    /// pooler-backpressure classification can be exercised without a live driver
-    /// connection (a real `PgDatabaseError` cannot be constructed without one).
-    #[derive(Debug)]
-    struct FakeDatabaseError {
-        /// The error message the classifier inspects.
-        message: String,
-        /// The SQLSTATE the error reports.
-        code: String,
-    }
-
-    impl fmt::Display for FakeDatabaseError {
-        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(formatter, "{}: {}", self.code, self.message)
-        }
-    }
-
-    impl StdError for FakeDatabaseError {}
-
-    impl DatabaseError for FakeDatabaseError {
-        fn message(&self) -> &str {
-            &self.message
-        }
-
-        fn code(&self) -> Option<Cow<'_, str>> {
-            Some(Cow::Borrowed(&self.code))
-        }
-
-        fn as_error(&self) -> &(dyn StdError + Send + Sync + 'static) {
-            self
-        }
-
-        fn as_error_mut(&mut self) -> &mut (dyn StdError + Send + Sync + 'static) {
-            self
-        }
-
-        fn into_error(self: Box<Self>) -> Box<dyn StdError + Send + Sync + 'static> {
-            self
-        }
-
-        fn kind(&self) -> SqlxErrorKind {
-            SqlxErrorKind::Other
-        }
-    }
-
     /// A PgBouncer-shaped database error: SQLSTATE `08P01` with the given message.
     fn pgbouncer_error(message: &str) -> sqlx::Error {
-        sqlx::Error::Database(Box::new(FakeDatabaseError {
-            message: message.to_string(),
-            code: "08P01".to_string(),
-        }))
+        FakeDatabaseError::new(message, "08P01").into_sqlx()
     }
 
     #[test]
@@ -242,10 +204,7 @@ mod tests {
         // PgBouncer closes a client it queued past query_wait_timeout with this
         // message under SQLSTATE 08P01: pooled-mode pool exhaustion, answered 503,
         // not the 500 an unrecognised database error would produce.
-        let error = FakeDatabaseError {
-            message: POOLER_QUERY_WAIT_TIMEOUT.to_string(),
-            code: "08P01".to_string(),
-        };
+        let error = FakeDatabaseError::new(POOLER_QUERY_WAIT_TIMEOUT, "08P01");
         assert!(is_pooler_backpressure(&error));
         assert!(is_pool_saturated(&pgbouncer_error(POOLER_QUERY_WAIT_TIMEOUT)));
     }
@@ -284,10 +243,7 @@ mod tests {
 
     /// A database error reporting the given SQLSTATE.
     fn database_error(code: &str) -> sqlx::Error {
-        sqlx::Error::Database(Box::new(FakeDatabaseError {
-            message: "contended".to_string(),
-            code: code.to_string(),
-        }))
+        FakeDatabaseError::new("contended", code).into_sqlx()
     }
 
     #[test]

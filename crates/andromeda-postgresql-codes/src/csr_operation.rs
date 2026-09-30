@@ -1,6 +1,6 @@
 //! The persisted operation set of one context-source registration.
 
-use crate::{compact_code_registry, registry::UnknownCompactCode};
+use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
     /// One operation a context source declares it serves (clauses 4.20 and 5.2.9).

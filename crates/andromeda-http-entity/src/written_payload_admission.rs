@@ -225,8 +225,9 @@ fn render_and_validate(entity: &Entity) -> Result<Value, WrittenPayloadRefusal> 
 
 #[cfg(test)]
 mod tests {
-    use crate::written_payload_admission::render_and_validate;
+    use crate::written_payload_admission::{WrittenPayloadRefusal, render_and_validate};
     use andromeda_ngsi_ld_model::entity::Entity;
+    use andromeda_ngsi_ld_representation::attribute_type_validation::AttributeTypeError;
     use serde_json::{Value, json};
 
     /// The entity a written payload decodes into, as the extractor produces it.
@@ -310,6 +311,10 @@ mod tests {
             "temperature": {"type": "NotAnAttributeType", "value": 21.5}
         });
         let refusal = render_and_validate(&entity(&payload)).expect_err("an unknown attribute type is refused");
-        assert!(refusal.to_string().contains("NotAnAttributeType"), "{refusal}");
+        assert!(
+            matches!(refusal, WrittenPayloadRefusal::AttributeType(AttributeTypeError::NotAnAttributeType { .. })),
+            "{refusal:?}"
+        );
+        assert!(refusal.to_string().contains("/temperature"), "{refusal}");
     }
 }

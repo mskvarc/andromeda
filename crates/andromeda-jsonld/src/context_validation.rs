@@ -20,8 +20,9 @@ use std::str::FromStr;
 ///
 /// # Errors
 ///
-/// Returns [`JsonLdError::InvalidDocument`] when the value is not a context
-/// in any of those forms, and a context-loading variant when it is one that
+/// Returns [`JsonLdError::JsonLdContextText`] when a string that opens as
+/// JSON does not parse, [`JsonLdError::JsonLdContextShape`] when the value is
+/// not a context in any of those forms, and a context-loading variant when it is one that
 /// does not resolve.
 pub async fn validate_jsonld_context_value(engine: &JsonLdEngine, value: &Value) -> Result<(), JsonLdError> {
     let context = as_context_value(value)?;
@@ -65,21 +66,16 @@ fn as_context_value(value: &Value) -> Result<Value, JsonLdError> {
         Value::String(text) => {
             let trimmed = text.trim();
             if trimmed.starts_with('{') || trimmed.starts_with('[') {
-                serde_json::from_str::<Value>(trimmed).map_err(|error| JsonLdError::invalid_document(format!("Invalid jsonldContext JSON: {error}")))
+                serde_json::from_str::<Value>(trimmed).map_err(JsonLdError::JsonLdContextText)
             } else if Identifier::from_str(trimmed).is_ok() {
                 Ok(Value::String(trimmed.to_string()))
             } else {
-                Err(not_a_context())
+                Err(JsonLdError::JsonLdContextShape)
             }
         }
         Value::Array(_) | Value::Object(_) => Ok(value.clone()), // clone: the caller's payload stays valid
-        Value::Null | Value::Bool(_) | Value::Number(_) => Err(not_a_context()),
+        Value::Null | Value::Bool(_) | Value::Number(_) => Err(JsonLdError::JsonLdContextShape),
     }
-}
-
-/// The failure reported for a value that names no context.
-fn not_a_context() -> JsonLdError {
-    JsonLdError::invalid_document("jsonldContext must be a valid URI or JSON-LD context")
 }
 
 #[cfg(test)]
@@ -125,8 +121,8 @@ mod tests {
         for rejected in [json!(null), json!(true), json!(42), json!("not a uri")] {
             let error = validate_jsonld_context_value(&engine, &rejected).await.expect_err("not a context");
             assert!(
-                matches!(error, JsonLdError::InvalidDocument(_)),
-                "expected InvalidDocument for {rejected}, got {error}"
+                matches!(error, JsonLdError::JsonLdContextShape),
+                "expected JsonLdContextShape for {rejected}, got {error}"
             );
         }
     }
@@ -137,7 +133,7 @@ mod tests {
             .await
             .expect_err("not parseable");
 
-        assert!(matches!(error, JsonLdError::InvalidDocument(_)), "got {error}");
+        assert!(matches!(error, JsonLdError::JsonLdContextText(_)), "got {error}");
     }
 
     #[tokio::test]

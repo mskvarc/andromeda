@@ -13,7 +13,7 @@ use crate::subscription_store::failure::persistence_error;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
-use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields};
+use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields, subscription_invariant::SubscriptionInvariant};
 use sqlx::PgConnection;
 use std::collections::HashMap;
 
@@ -62,7 +62,7 @@ fn keys_of(list: Option<&[AttributeName]>, keys: &HashMap<AttributeName, Attribu
             .map(|name| {
                 keys.get(name)
                     .map(|key| key.get())
-                    .ok_or_else(|| SubscriptionError::internal(format!("attribute name {name} was not interned by the dictionary")))
+                    .ok_or_else(|| SubscriptionError::from(SubscriptionInvariant::AttributeNotInterned))
             })
             .collect()
     })

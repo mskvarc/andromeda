@@ -55,6 +55,7 @@ use andromeda_temporal::{
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,
     service::{TemporalQueryWarning, TemporalRange},
+    temporal_invariant::TemporalInvariant,
 };
 use axum::{
     Extension,
@@ -430,7 +431,7 @@ fn log_query_warnings(warnings: &[TemporalQueryWarning]) {
 /// counting rows cannot produce.
 fn local_match_count(total: Option<i64>) -> Result<Option<usize>, TemporalError> {
     total
-        .map(|count| usize::try_from(count).map_err(|_| TemporalError::internal("the local temporal read reported a negative match count")))
+        .map(|count| usize::try_from(count).map_err(|_negative| TemporalError::from(TemporalInvariant::NegativeMatchCount)))
         .transpose()
 }
 
