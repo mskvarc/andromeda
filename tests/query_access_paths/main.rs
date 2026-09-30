@@ -3,8 +3,8 @@
 //! Covers typed `q` predicates, queries on an arbitrary `GeoProperty`, entity
 //! access-path plans, identifier collation, the object GIN operator class,
 //! extended statistics, the physical column layout, semantic-time plans,
-//! temporal access-path plans, write-record release plans and registration
-//! routing plans.
+//! temporal access-path plans, write-record release plans, registration
+//! routing plans and Entity Map read plans.
 //!
 //! The measurement-shaped properties run as SQL checks with a pass/fail
 //! assertion — `EXPLAIN (ANALYZE, BUFFERS)`, `pg_attribute` offsets,
@@ -16,6 +16,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod column_layout;
+mod entity_map_reads;
 mod entity_plans;
 mod extended_statistics;
 mod geoproperty;

@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_lexicon::{
     rfc3339,
 };
 use chrono::{DateTime, Utc};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use typed_builder::TypedBuilder;
@@ -81,11 +81,14 @@ pub struct EntityMap {
     #[serde(with = "rfc3339::datetime")]
     pub expires_at: DateTime<Utc>,
     /// Every entity the originating query matched, in order, each with the
-    /// sources that hold it: `@none` for this broker, otherwise the registration
-    /// whose context source returned it.
+    /// sources that hold it, in the order they were found: `@none` for this
+    /// broker, otherwise the registration whose context source returned it.
+    ///
+    /// Table 5.2.39-2 lists each holder of an entity once, so a source named
+    /// twice for one entity, as a peer's map may do, is kept once.
     #[serde(default)]
     #[builder(default = Default::default())]
-    pub entity_map: IndexMap<Identifier, Vec<EntityMapSource>>,
+    pub entity_map: IndexMap<Identifier, IndexSet<EntityMapSource>>,
     /// The `EntityMap` each contributing context source created for the same
     /// query, keyed by the registration that named the source.
     #[serde(default)]
@@ -102,7 +105,10 @@ pub struct EntityMap {
 impl EntityMap {
     /// A map over entities this broker holds itself.
     pub fn local(id: Identifier, expires_at: DateTime<Utc>, entity_ids: impl IntoIterator<Item = Identifier>) -> EntityMap {
-        let entity_map = entity_ids.into_iter().map(|entity_id| (entity_id, vec![EntityMapSource::Local])).collect();
+        let entity_map = entity_ids
+            .into_iter()
+            .map(|entity_id| (entity_id, IndexSet::from([EntityMapSource::Local])))
+            .collect();
         EntityMap::builder().id(id).expires_at(expires_at).entity_map(entity_map).build()
     }
 
@@ -143,12 +149,10 @@ impl EntityMap {
         self.linked_maps.get(registration)
     }
 
-    /// Record that `registration` holds `entity_id`.
+    /// Record that `source` holds `entity_id`; a holder already recorded for
+    /// the entity keeps its place.
     fn add_source(&mut self, entity_id: Identifier, source: EntityMapSource) {
-        let sources = self.entity_map.entry(entity_id).or_default();
-        if !sources.contains(&source) {
-            sources.push(source);
-        }
+        self.entity_map.entry(entity_id).or_default().insert(source);
     }
 
     /// Record that this broker holds `entity_ids` (clause 5.2.39 `@none`).
@@ -211,6 +215,11 @@ mod tests {
         raw.parse().expect("valid URI")
     }
 
+    /// The sources recorded for `entity_id`, in the order the map keeps them.
+    fn sources_of<'m>(map: &'m EntityMap, entity_id: &str) -> Vec<&'m EntityMapSource> {
+        map.entity_map.get(&uri(entity_id)).map(|sources| sources.iter().collect()).unwrap_or_default()
+    }
+
     fn local_map() -> EntityMap {
         EntityMap::local(
             uri("urn:ngsi-ld:EntityMap:1"),
@@ -247,13 +256,13 @@ mod tests {
         map.add_remote(&registration, &remote);
         pretty_assertions::assert_eq!(map.linked_map_for(&registration), Some(&uri("urn:ngsi-ld:EntityMap:remote")));
         pretty_assertions::assert_eq!(
-            map.entity_map.get(&uri("urn:ngsi-ld:Vehicle:2")),
-            Some(&vec![EntityMapSource::Local, EntityMapSource::Registration(registration.clone())]) // clone: compared below
+            sources_of(&map, "urn:ngsi-ld:Vehicle:2"),
+            vec![&EntityMapSource::Local, &EntityMapSource::Registration(registration.clone())] // clone: compared below
         );
         pretty_assertions::assert_eq!(
-            map.entity_map.get(&uri("urn:ngsi-ld:Vehicle:3")),
-            Some(&vec![EntityMapSource::Registration(registration.clone())])
-        ); // clone: compared below
+            sources_of(&map, "urn:ngsi-ld:Vehicle:3"),
+            vec![&EntityMapSource::Registration(registration.clone())] // clone: compared below
+        );
         pretty_assertions::assert_eq!(map.registrations().collect::<Vec<_>>(), vec![&registration]);
         pretty_assertions::assert_eq!(map.entity_ids().count(), 3);
     }
@@ -263,7 +272,11 @@ mod tests {
         let mut map = local_map();
         let registration = uri("urn:ngsi-ld:ContextSourceRegistration:b");
         map.add_remote_entities(&registration, [uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:1")]);
-        pretty_assertions::assert_eq!(map.entity_map.get(&uri("urn:ngsi-ld:Vehicle:1")).map(Vec::len), Some(2));
+        map.add_local_entities([uri("urn:ngsi-ld:Vehicle:1")]);
+        pretty_assertions::assert_eq!(
+            sources_of(&map, "urn:ngsi-ld:Vehicle:1"),
+            vec![&EntityMapSource::Local, &EntityMapSource::Registration(registration.clone())] // clone: compared below
+        );
     }
 
     #[test]
@@ -273,8 +286,8 @@ mod tests {
         map.add_contribution(&registration, [uri("urn:ngsi-ld:Vehicle:3")], Some(uri("urn:ngsi-ld:EntityMap:b")));
         pretty_assertions::assert_eq!(map.linked_map_for(&registration), Some(&uri("urn:ngsi-ld:EntityMap:b")));
         pretty_assertions::assert_eq!(
-            map.entity_map.get(&uri("urn:ngsi-ld:Vehicle:3")),
-            Some(&vec![EntityMapSource::Registration(registration.clone())]) // clone: compared below
+            sources_of(&map, "urn:ngsi-ld:Vehicle:3"),
+            vec![&EntityMapSource::Registration(registration.clone())] // clone: compared below
         );
         let other = uri("urn:ngsi-ld:ContextSourceRegistration:c");
         map.add_contribution(&other, [uri("urn:ngsi-ld:Vehicle:1")], None);
@@ -303,13 +316,37 @@ mod tests {
         }))
         .expect("parses");
         pretty_assertions::assert_eq!(
-            map.entity_map.get(&uri("urn:ngsi-ld:Vehicle:9")),
-            Some(&vec![
-                EntityMapSource::Local,
-                EntityMapSource::Registration(uri("urn:ngsi-ld:ContextSourceRegistration:c"))
-            ])
+            sources_of(&map, "urn:ngsi-ld:Vehicle:9"),
+            vec![
+                &EntityMapSource::Local,
+                &EntityMapSource::Registration(uri("urn:ngsi-ld:ContextSourceRegistration:c"))
+            ]
         );
         assert!(serde_json::from_value::<EntityMapSource>(json!("not a uri")).is_err());
+    }
+
+    /// Table 5.2.39-2 lists each holder of an entity once: a peer's map naming
+    /// one twice is read as naming it once, at its first place.
+    #[test]
+    fn a_peer_map_naming_a_holder_twice_for_one_entity_keeps_it_once_at_its_first_place() {
+        let map: EntityMap = serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:EntityMap:peer",
+            "type": "EntityMap",
+            "expiresAt": "2030-01-01T00:00:00Z",
+            "entityMap": {"urn:ngsi-ld:Vehicle:9": ["urn:ngsi-ld:ContextSourceRegistration:c", "@none", "urn:ngsi-ld:ContextSourceRegistration:c"]}
+        }))
+        .expect("parses");
+        pretty_assertions::assert_eq!(
+            sources_of(&map, "urn:ngsi-ld:Vehicle:9"),
+            vec![
+                &EntityMapSource::Registration(uri("urn:ngsi-ld:ContextSourceRegistration:c")),
+                &EntityMapSource::Local
+            ]
+        );
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&map).expect("serialises")["entityMap"],
+            json!({"urn:ngsi-ld:Vehicle:9": ["urn:ngsi-ld:ContextSourceRegistration:c", "@none"]})
+        );
     }
 
     #[test]

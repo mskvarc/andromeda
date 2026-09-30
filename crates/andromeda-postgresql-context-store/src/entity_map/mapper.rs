@@ -6,7 +6,7 @@ use andromeda_ngsi_ld_model::{
     entity_map::{EntityMap, EntityMapSource, EntityMapSourceError},
     entity_map_fingerprint::{RequestFingerprint, RequestFingerprintError},
 };
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use thiserror::Error;
 
 /// A stored Entity Map column that does not parse back into its domain type.
@@ -44,11 +44,11 @@ pub(crate) fn rows_to_entity_map(
         .as_deref()
         .map(|stored| stored.parse::<RequestFingerprint>().map_err(StoredEntityMapError::RequestFingerprint))
         .transpose()?;
-    let mut entity_map: IndexMap<Identifier, Vec<EntityMapSource>> = IndexMap::new();
+    let mut entity_map: IndexMap<Identifier, IndexSet<EntityMapSource>> = IndexMap::new();
     for (entity_id, source) in entries {
         let entity_id = entity_id.parse::<Identifier>().map_err(StoredEntityMapError::EntryId)?;
         let source = EntityMapSource::try_from(source).map_err(StoredEntityMapError::EntrySource)?;
-        entity_map.entry(entity_id).or_default().push(source);
+        entity_map.entry(entity_id).or_default().insert(source);
     }
     let mut linked_maps = IndexMap::new();
     for (registration_id, linked_map_id) in links {
@@ -99,10 +99,12 @@ mod tests {
         let ids: Vec<&str> = map.entity_ids().map(Identifier::as_str).collect();
         pretty_assertions::assert_eq!(ids, vec!["urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:1"]);
         pretty_assertions::assert_eq!(
-            map.entity_map.get(&"urn:ngsi-ld:Vehicle:2".parse::<Identifier>().expect("valid URI")),
-            Some(&vec![
-                EntityMapSource::Local,
-                EntityMapSource::Registration("urn:ngsi-ld:csr:b".parse().expect("valid URI"))
+            map.entity_map
+                .get(&"urn:ngsi-ld:Vehicle:2".parse::<Identifier>().expect("valid URI"))
+                .map(|sources| sources.iter().collect::<Vec<_>>()),
+            Some(vec![
+                &EntityMapSource::Local,
+                &EntityMapSource::Registration("urn:ngsi-ld:csr:b".parse().expect("valid URI"))
             ])
         );
         pretty_assertions::assert_eq!(map.linked_maps.len(), 1);

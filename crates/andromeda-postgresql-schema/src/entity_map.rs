@@ -34,7 +34,8 @@ pub enum EntityMapEntries {
     Table,
     /// Foreign key to the owning `entity_maps` row's surrogate.
     EntityMapKey,
-    /// The order the query produced the pair in.
+    /// The order the query produced the pair in, which keys the pair within
+    /// its map.
     Position,
     /// The matched entity's URI identifier.
     EntityId,

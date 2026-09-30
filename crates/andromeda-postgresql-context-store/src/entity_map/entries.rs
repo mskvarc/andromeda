@@ -212,7 +212,8 @@ pub(crate) async fn prune_entries(pool: &PgPool, id: &Identifier, entity_ids: &[
     Ok(())
 }
 
-/// A map's `(entity_id, source)` pairs in the order they were produced.
+/// A map's `(entity_id, source)` pairs in the order they were produced, which
+/// is the order of the table's key, so the read needs no sort.
 pub(crate) async fn read_entries(pool: &PgPool, id: &Identifier) -> Result<Vec<(String, String)>, EntityMapError> {
     let (sql, values) = Query::select()
         .column(EntityMapEntries::EntityId)

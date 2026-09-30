@@ -18,7 +18,8 @@
 -- test case is entitled to use -- and relying on a cascade to reclaim it makes
 -- that depend on a foreign key rather than on this list. The same holds for
 -- `registration_delivery_state`, `subscription_companions`, `forwarded_subscriptions`,
--- `subscription_notified_registrations` and `snapshot_notification_outbox`:
+-- `subscription_notified_registrations`, `snapshot_notification_outbox`,
+-- `entity_map_entries` and `entity_map_links`:
 -- each is also reclaimed by a cascade from
 -- the row it hangs off, and each is named here so the reset does not depend on
 -- that edge.
@@ -71,6 +72,9 @@ DECLARE
         'entity_search',
         'entity_documents',
         'entities',
+        'entity_map_links',
+        'entity_map_entries',
+        'entity_maps',
         'jsonld_contexts'
     ]::regclass[];
     locked text;

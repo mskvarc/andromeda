@@ -262,6 +262,9 @@ mod tests {
             "pending_side_effects",
             "temporal_append_intents",
             "write_records",
+            "entity_maps",
+            "entity_map_entries",
+            "entity_map_links",
         ] {
             assert!(truncated_relations().contains(table), "reset SQL must cover {table}");
         }

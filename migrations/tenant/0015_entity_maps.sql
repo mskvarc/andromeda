@@ -28,20 +28,29 @@ CREATE TABLE entity_maps (
 CREATE INDEX idx_entity_maps_expires_at ON entity_maps (expires_at);
 
 -- One row per (entity, source) pair of Table 5.2.39-2 `entityMap`.
+--
+-- Every page that references a map reads the whole map in the order the
+-- query produced it, so the key is that order: the read walks the key with
+-- no sort. The pairs are written once, when the map is created, and the
+-- broker never produces the same pair twice for one map.
 CREATE TABLE entity_map_entries (
     entity_map_key BIGINT NOT NULL,
-    -- The order in which the query produced the pair.
+    -- The order in which the query produced the pair, unique within the map.
     position INTEGER NOT NULL,
     entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     -- `@none` for an entity this broker holds, otherwise the registration
     -- whose context source returned it.
     source TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_entity_map_entries PRIMARY KEY (entity_map_key, entity_id, source),
+    CONSTRAINT pk_entity_map_entries PRIMARY KEY (entity_map_key, position),
     CONSTRAINT fk_entity_map_entries_entity_map FOREIGN KEY (entity_map_key)
         REFERENCES entity_maps(entity_map_key) ON DELETE CASCADE,
     CONSTRAINT chk_entity_map_entries_entity_id_length CHECK (octet_length(entity_id) <= 1024),
     CONSTRAINT chk_entity_map_entries_source_length CHECK (octet_length(source) <= 1024)
 );
+
+-- A page that finds entities no longer matching sheds them from the map
+-- (clauses 4.3.6.7 and 5.5.14), naming them by identifier.
+CREATE INDEX idx_entity_map_entries_entity_id ON entity_map_entries (entity_map_key, entity_id);
 
 -- The EntityMap each contributing context source created for the same query
 -- (Table 5.2.39-2 `linkedMaps`).
