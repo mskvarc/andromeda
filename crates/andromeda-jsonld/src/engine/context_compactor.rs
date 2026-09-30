@@ -7,6 +7,7 @@
 //! the compaction walk and nothing else.
 
 use crate::{
+    context_graph::check_syntax_document_contexts,
     context_spec::ContextSpec,
     engine::{
         compaction_context::{CompactionContext, CompactionContextError, ContextEmbedding},
@@ -146,6 +147,7 @@ impl<'a> ContextCompactor<'a> {
     /// own form, normalizing it: a lone value becomes an array, and a member
     /// whose key is not an absolute IRI is dropped.
     async fn expand(&self, document: jsonld_syntax::Value) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
+        check_syntax_document_contexts(self.engine.loader(), &document).await?;
         let remote: RemoteDocument<IriBuf> = RemoteDocument::new(None, None, document);
         JsonLdProcessor::expand_full(&remote, no_vocabulary_mut(), self.engine.loader(), Options::default(), ())
             .await
@@ -243,7 +245,7 @@ fn document_id(document: &ExpandedDocument<IriBuf, BlankIdBuf>) -> &str {
 #[cfg(test)]
 mod tests {
     use crate::{
-        context_spec::{ContextSpec, CoreContextPolicy},
+        context_spec::ContextSpec,
         core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
         engine::{
             expanded_input::ExpandedInput,
@@ -252,8 +254,7 @@ mod tests {
         },
         error::JsonLdError,
     };
-    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-    use iri_rs::IriRefBuf;
+    use iri_rs::IriBuf;
     use jsonld::{
         JsonLdProcessor,
         RemoteContextReference,
@@ -299,12 +300,12 @@ mod tests {
     /// The request context of clause C.2.4, carried in the body so the test
     /// needs no network.
     fn example_body_context() -> ContextSpec {
-        ContextSpec::none().with_body_context(Some(json!({
+        ContextSpec::from_body(json!({
             "Vehicle": "http://example.org/vehicle/Vehicle",
             "brandName": "http://example.org/vehicle/brandName",
             "speed": "http://example.org/vehicle/speed",
             "isParked": {"@type": "@id", "@id": "http://example.org/common/isParked"}
-        })))
+        }))
     }
 
     /// Compaction as the engine performed it before contexts were prepared
@@ -335,8 +336,8 @@ mod tests {
         compacted
     }
 
-    fn iri_ref(url: &str) -> IriRefBuf {
-        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    fn iri_ref(url: &str) -> IriBuf {
+        IriBuf::new(url.to_owned()).expect("a valid IRI")
     }
 
     #[tokio::test]
@@ -430,7 +431,7 @@ mod tests {
         let engine = offline_engine();
         let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
         let none = ContextSpec::none();
-        let versioned = ContextSpec::from_links(vec![iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL.as_str())]);
+        let versioned = ContextSpec::from_link(iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()));
         let first = engine.compactor(&none);
         let second = engine.compactor(&versioned);
 
@@ -465,7 +466,7 @@ mod tests {
     #[tokio::test]
     async fn a_compactor_that_compacts_nothing_never_resolves_its_context() {
         let engine = offline_engine();
-        let spec = ContextSpec::from_links(vec![iri_ref("https://example.com/unreachable.jsonld")]);
+        let spec = ContextSpec::from_link(iri_ref("https://example.com/unreachable.jsonld"));
         let compactor = engine.compactor(&spec);
 
         assert!(compactor.prepared.get().is_none());
@@ -474,7 +475,7 @@ mod tests {
     #[tokio::test]
     async fn an_unresolvable_context_fails_every_document_and_is_never_remembered() {
         let engine = offline_engine();
-        let spec = ContextSpec::from_links(vec![iri_ref("https://example.com/unreachable.jsonld")]);
+        let spec = ContextSpec::from_link(iri_ref("https://example.com/unreachable.jsonld"));
         let compactor = engine.compactor(&spec);
         let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
 
@@ -486,15 +487,17 @@ mod tests {
         assert!(compactor.prepared.get().is_none());
     }
 
-    /// A context that redefines a protected core term after the core context
-    /// fails while it is processed, so every document of the operation is
-    /// compacted against the core context alone.
+    /// A context that redefines a term an earlier context of the request
+    /// protected fails while it is processed (JSON-LD 1.1 section 4.1.11), so
+    /// every document of the operation is compacted against the core context
+    /// alone.
     #[tokio::test]
     async fn a_context_redefining_a_protected_term_compacts_every_document_against_the_core_context() {
         let engine = offline_engine();
-        let spec = ContextSpec::none()
-            .with_body_context(Some(json!([NGSI_LD_CORE_CONTEXT_URL.as_str(), {"type": "http://example.org/redefined/type"}])))
-            .with_core_policy(CoreContextPolicy::Omit);
+        let spec = ContextSpec::from_body(json!([
+            {"@protected": true, "speed": "http://example.org/protected/speed"},
+            {"speed": "http://example.org/redefined/speed"}
+        ]));
         let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
 
         let compacted = engine
@@ -513,10 +516,10 @@ mod tests {
     #[tokio::test]
     async fn a_type_scoped_protected_term_redefinition_falls_back_for_that_document_alone() {
         let engine = offline_engine();
-        let spec = ContextSpec::none().with_body_context(Some(json!({
+        let spec = ContextSpec::from_body(json!({
             "Vehicle": {"@id": "http://example.org/vehicle/Vehicle", "@context": {"type": "http://example.org/redefined/type"}},
             "speed": "http://example.org/vehicle/speed"
-        })));
+        }));
         let compactor = engine.compactor(&spec);
         let vehicle = engine
             .expand(
@@ -633,13 +636,14 @@ mod tests {
             .expand(without_system_times(every_family_entity()), &ContextSpec::none())
             .await
             .expect("expansion succeeds");
-        let type_scoped = ContextSpec::none().with_body_context(Some(json!({
+        let type_scoped = ContextSpec::from_body(json!({
             "Vehicle": {"@id": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle", "@context": {"speed": "http://example.org/scoped/speed"}},
             "speed": "https://uri.etsi.org/ngsi-ld/default-context/speed"
-        })));
-        let protected_term_redefinition = ContextSpec::none()
-            .with_body_context(Some(json!([NGSI_LD_CORE_CONTEXT_URL.as_str(), {"type": "http://example.org/redefined/type"}])))
-            .with_core_policy(CoreContextPolicy::Omit);
+        }));
+        let protected_term_redefinition = ContextSpec::from_body(json!([
+            {"@protected": true, "speed": "http://example.org/protected/speed"},
+            {"speed": "http://example.org/redefined/speed"}
+        ]));
         let specs = [
             ContextSpec::none(),
             ContextSpec::core_only(),

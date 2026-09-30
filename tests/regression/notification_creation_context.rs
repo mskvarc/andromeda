@@ -21,6 +21,7 @@ use crate::notification_adapter::NotificationAdapter;
 use andromeda_test_client::{header::jsonld_link_header, test_client::TestClient};
 use andromeda_test_fixtures::context::{COMPOUND_CONTEXT, CORE_CONTEXT, TEST_SUITE_CONTEXT};
 use andromeda_test_harness::environment::TestEnvironment;
+use iri_rs::Iri;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -54,38 +55,12 @@ fn subscription(id: &str, entity_id: &str, endpoint: &str) -> Value {
     })
 }
 
-/// Create the subscription, supplying its `@context` only through the `Link`
-/// header (clause 6.3.5, the `application/json` case).
-async fn subscribe_with_link_context(client: &TestClient, body: &Value) {
+/// Create the subscription, supplying its `@context` only through one `Link`
+/// header naming `context` (clause 6.3.5, the `application/json` case).
+async fn subscribe_with_link_context(client: &TestClient, body: &Value, context: &Iri<&'static str>) {
     let created = client
         .raw(Method::POST, "/ngsi-ld/v1/subscriptions")
-        .header("Link", jsonld_link_header(TEST_SUITE_CONTEXT).expect("test-suite context Link must be valid"))
-        .json(body)
-        .send()
-        .await
-        .expect("create subscription request failed");
-    assert_eq!(created.status, StatusCode::CREATED, "create subscription: {:?}", created.body);
-}
-
-/// One `Link` header naming two contexts (clause 6.3.5 admits several
-/// comma-separated link values), so the applicable creation `@context` is a
-/// compound of both and cannot reduce to a single URI.
-fn two_context_link_header() -> String {
-    let first = jsonld_link_header(TEST_SUITE_CONTEXT).expect("test-suite context Link must be valid");
-    let second = jsonld_link_header(COMPOUND_CONTEXT).expect("compound context Link must be valid");
-    format!(
-        "{}, {}",
-        first.to_str().expect("a context Link is valid header text"),
-        second.to_str().expect("a context Link is valid header text")
-    )
-}
-
-/// Create the subscription, supplying two contexts through the `Link` header, so
-/// the applicable creation `@context` is compound.
-async fn subscribe_with_two_link_contexts(client: &TestClient, body: &Value) {
-    let created = client
-        .raw(Method::POST, "/ngsi-ld/v1/subscriptions")
-        .header("Link", two_context_link_header().as_str())
+        .header("Link", jsonld_link_header(context).expect("a context Link must be valid"))
         .json(body)
         .send()
         .await
@@ -95,7 +70,8 @@ async fn subscribe_with_two_link_contexts(client: &TestClient, body: &Value) {
 
 /// Clause 5.8.2.4: the subscription's `jsonldContext` is initialized with the
 /// creation `@context` when the request named none, so a later retrieval shows
-/// the creation context, not core.
+/// the creation context, not core. The compound context ends with the core
+/// context, so it names itself and is stored as it stands.
 #[tokio::test]
 async fn regression_notification_creation_context_initializes_jsonld_context_from_the_link_header() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -106,7 +82,7 @@ async fn regression_notification_creation_context_initializes_jsonld_context_fro
 
     let create_entity = client.post_entity(&building(&entity_id)).send().await.expect("create entity request");
     assert_eq!(create_entity.status, StatusCode::CREATED, "create entity: {:?}", create_entity.body);
-    subscribe_with_link_context(client, &subscription(&subscription_id, &entity_id, &receiver.endpoint_url())).await;
+    subscribe_with_link_context(client, &subscription(&subscription_id, &entity_id, &receiver.endpoint_url()), COMPOUND_CONTEXT).await;
 
     let retrieved = client
         .retrieve_subscription(&subscription_id, Some(CORE_CONTEXT))
@@ -116,7 +92,7 @@ async fn regression_notification_creation_context_initializes_jsonld_context_fro
     let subscription = retrieved.json_value().expect("a subscription retrieval answers JSON");
     assert_eq!(
         subscription["jsonldContext"],
-        json!(TEST_SUITE_CONTEXT.as_str()),
+        json!(COMPOUND_CONTEXT.as_str()),
         "jsonldContext is initialized with the creation context: {subscription}"
     );
 
@@ -138,7 +114,7 @@ async fn regression_notification_creation_context_notifies_under_the_creation_co
 
     let create_entity = client.post_entity(&building(&entity_id)).send().await.expect("create entity request");
     assert_eq!(create_entity.status, StatusCode::CREATED, "create entity: {:?}", create_entity.body);
-    subscribe_with_link_context(client, &subscription(&subscription_id, &entity_id, &receiver.endpoint_url())).await;
+    subscribe_with_link_context(client, &subscription(&subscription_id, &entity_id, &receiver.endpoint_url()), COMPOUND_CONTEXT).await;
 
     let updated = client
         .append_entity_attrs(
@@ -157,7 +133,7 @@ async fn regression_notification_creation_context_notifies_under_the_creation_co
         .to_str()
         .expect("the Link header is valid text");
     assert!(
-        link.contains(TEST_SUITE_CONTEXT.as_str()),
+        link.contains(COMPOUND_CONTEXT.as_str()),
         "the notification advertises the creation context, not core alone: {link}"
     );
 
@@ -166,13 +142,13 @@ async fn regression_notification_creation_context_notifies_under_the_creation_co
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.8.2.4 with Table 5.2.12-1: when the applicable creation `@context`
-/// names several contexts it cannot reduce to the single dereferenceable URI
-/// the `jsonldContext` field holds, so the broker materialises a compound
-/// Context of its own (clause 5.13.1) and initializes `jsonldContext` with the
-/// URL it serves that Context under, rather than falling to the core context.
+/// Clause 5.8.2.4 with Table 5.2.12-1: a creation `@context` that does not end
+/// with the core context is applicable as that context followed by the core
+/// context (clauses 5.2.3 and 4.4), which no single URI names, so the broker
+/// hosts it as an `ImplicitlyCreated` Context (clause 5.13.1, Annex C.8) and
+/// initializes `jsonldContext` with the URL it serves that Context under.
 #[tokio::test]
-async fn regression_notification_creation_context_hosts_a_compound_context_from_several_link_headers() {
+async fn regression_notification_creation_context_hosts_a_user_context_that_does_not_end_with_the_core() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let receiver = NotificationAdapter::start().await;
@@ -181,7 +157,12 @@ async fn regression_notification_creation_context_hosts_a_compound_context_from_
 
     let create_entity = client.post_entity(&building(&entity_id)).send().await.expect("create entity request");
     assert_eq!(create_entity.status, StatusCode::CREATED, "create entity: {:?}", create_entity.body);
-    subscribe_with_two_link_contexts(client, &subscription(&subscription_id, &entity_id, &receiver.endpoint_url())).await;
+    subscribe_with_link_context(
+        client,
+        &subscription(&subscription_id, &entity_id, &receiver.endpoint_url()),
+        TEST_SUITE_CONTEXT,
+    )
+    .await;
 
     let retrieved = client
         .retrieve_subscription(&subscription_id, Some(CORE_CONTEXT))
@@ -191,10 +172,10 @@ async fn regression_notification_creation_context_hosts_a_compound_context_from_
     let subscription = retrieved.json_value().expect("a subscription retrieval answers JSON");
     let stored = subscription["jsonldContext"]
         .as_str()
-        .expect("a compound creation context is stored as a served URL");
+        .expect("a hosted creation context is stored as a served URL");
     assert!(
         stored.contains(HOSTED_CONTEXT_PATH),
-        "several creation contexts are hosted as a broker-served Context, not dropped to core: {subscription}"
+        "the creation context is hosted as a broker-served Context, not dropped to core: {subscription}"
     );
 
     client.delete_subscription(&subscription_id).await.expect("delete subscription");
@@ -202,11 +183,11 @@ async fn regression_notification_creation_context_hosts_a_compound_context_from_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The compound-context subscription's notifications advertise the broker-served
+/// The hosted-context subscription's notifications advertise the broker-served
 /// Context in their `Link` header (clause 5.8.6) and compact their attribute
 /// terms against it, rather than advertising core alone and expanding terms.
 #[tokio::test]
-async fn regression_notification_creation_context_notifies_under_the_hosted_compound_context() {
+async fn regression_notification_creation_context_notifies_under_the_hosted_context() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let receiver = NotificationAdapter::start().await;
@@ -215,7 +196,12 @@ async fn regression_notification_creation_context_notifies_under_the_hosted_comp
 
     let create_entity = client.post_entity(&building(&entity_id)).send().await.expect("create entity request");
     assert_eq!(create_entity.status, StatusCode::CREATED, "create entity: {:?}", create_entity.body);
-    subscribe_with_two_link_contexts(client, &subscription(&subscription_id, &entity_id, &receiver.endpoint_url())).await;
+    subscribe_with_link_context(
+        client,
+        &subscription(&subscription_id, &entity_id, &receiver.endpoint_url()),
+        TEST_SUITE_CONTEXT,
+    )
+    .await;
 
     let updated = client
         .append_entity_attrs(
@@ -235,7 +221,7 @@ async fn regression_notification_creation_context_notifies_under_the_hosted_comp
         .expect("the Link header is valid text");
     assert!(
         link.contains(HOSTED_CONTEXT_PATH),
-        "the notification advertises the broker-served compound context, not core alone: {link}"
+        "the notification advertises the broker-served context, not core alone: {link}"
     );
 
     client.delete_subscription(&subscription_id).await.expect("delete subscription");

@@ -205,10 +205,7 @@ fn preferred(candidate: &str, current: &str) -> bool {
 /// processor's own context processing. The core context is not walked: its
 /// declarations are the ones vocabulary-position compaction already answers.
 async fn declared_names(engine: &JsonLdEngine, context: &ContextSpec) -> BTreeSet<Box<str>> {
-    let mut pending: Vec<Value> = context.link_contexts().iter().map(|url| Value::String(url.to_string())).collect();
-    if let Some(body) = context.body_context() {
-        pending.push(body.clone()); // clone: the walk owns the values it descends into
-    }
+    let mut pending: Vec<Value> = context.request_context().entries();
 
     let mut visited: HashSet<String> = HashSet::new();
     let mut names: BTreeSet<Box<str>> = BTreeSet::new();
@@ -269,12 +266,12 @@ mod tests {
     /// The clause C.2.4 vocabulary, carried in the request body so the test
     /// needs no network.
     fn example_context() -> ContextSpec {
-        ContextSpec::none().with_body_context(Some(json!({
+        ContextSpec::from_body(json!({
             "Vehicle": "http://example.org/vehicle/Vehicle",
             "brandName": "http://example.org/vehicle/brandName",
             "isParked": {"@type": "@id", "@id": "http://example.org/common/isParked"},
             "testedAt": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"}
-        })))
+        }))
     }
 
     #[tokio::test]
@@ -370,10 +367,10 @@ mod tests {
     #[tokio::test]
     async fn the_shortest_declaration_of_one_iri_is_the_name_rendered() {
         let engine = offline_engine();
-        let context = ContextSpec::none().with_body_context(Some(json!({
+        let context = ContextSpec::from_body(json!({
             "zz": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"},
             "aaa": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"}
-        })));
+        }));
 
         pretty_assertions::assert_eq!(
             NameCompactor::new(&engine, &context).compact_attr_iri("http://example.org/test/testedAt").await,

@@ -15,11 +15,11 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
+use iri_rs::IriBuf;
 use langtag::LangTagBuf;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::str::FromStr;
-use url::Url;
 
 /// Owned, validated values for one subscription persistence write.
 ///
@@ -69,7 +69,7 @@ pub struct SubscriptionWriteValues {
     /// Validated preferred language.
     pub lang: Option<LangTagBuf>,
     /// Validated JSON-LD context URL.
-    pub jsonld_context: Option<Url>,
+    pub jsonld_context: Option<IriBuf>,
     /// Whether the subscription applies only to local entities.
     pub local_only: bool,
     /// Whether entities are assumed split across sources; `None` defers to
@@ -201,9 +201,9 @@ fn ngsild_conformance(payload: &Value) -> Result<Option<SpecVersion>, Subscripti
 
 /// Parse a create payload into validated persistence values.
 ///
-/// The `jsonldContext` member is read as-is: a subscription whose request named
-/// no context of its own has already had the member initialised from the
-/// `@context` applicable at creation (clause 5.8.2.4) by
+/// The `jsonldContext` member is read as-is: a subscription created without
+/// one has already had the member initialised from the `@context` applicable
+/// at creation (clause 5.8.1.4) by
 /// [`crate::notification_context::initialize_notification_context`], run before
 /// this parse.
 pub fn extract_create_fields(payload: &Value, dataset_id_policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {

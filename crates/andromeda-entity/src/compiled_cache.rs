@@ -10,7 +10,7 @@
 //! scoped to a single tenant, so tenant identity is implicit in the cache owner
 //! and does not need to be part of the key.
 
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -234,15 +234,20 @@ fn push_field(buffer: &mut String, value: Option<&str>) {
 
 /// Hash the JSON-LD context configuration into a 64-bit fingerprint.
 ///
-/// Covers every dimension that affects term expansion: the list of link
-/// contexts (order preserved) and the inline body context if any.
+/// Covers every dimension that affects term expansion: where the request named
+/// its context and what it named there, and the core-context policy.
 fn context_digest(context: &ContextSpec) -> u64 {
     let mut hasher = DefaultHasher::new();
-    for url in context.link_contexts() {
-        url.hash(&mut hasher);
-    }
-    if let Some(body) = context.body_context() {
-        body.to_string().hash(&mut hasher);
+    match context.request_context() {
+        RequestContext::Default => 0_u8.hash(&mut hasher),
+        RequestContext::Link(url) => {
+            1_u8.hash(&mut hasher);
+            url.hash(&mut hasher);
+        }
+        RequestContext::Body(body) => {
+            2_u8.hash(&mut hasher);
+            body.to_string().hash(&mut hasher);
+        }
     }
     context.core_policy().hash(&mut hasher);
     hasher.finish()
@@ -300,8 +305,12 @@ impl Default for CompiledQueryCache {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::compiled_cache::{CompiledQueryKey, LimitCap, context_digest};
+    use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+    use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
+    use serde_json::json;
 
     fn params(query: &str) -> EntityQueryParameters {
         serde_urlencoded::from_str(query).expect("valid query string")
@@ -349,5 +358,47 @@ mod tests {
             key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Aa", LimitCap::Capped),
             key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Ab", LimitCap::Capped)
         );
+    }
+
+    fn context_iri(url: &str) -> IriBuf {
+        IriBuf::new(url.to_owned()).expect("a valid context IRI")
+    }
+
+    /// The same context named by no carrier, by a `Link` header and by the
+    /// body is three different requests (clause 6.3.5), so each compiles to its
+    /// own entry.
+    #[test]
+    fn where_the_request_named_its_context_is_part_of_the_digest() {
+        let url = "https://example.com/context.jsonld";
+        let default = context_digest(&ContextSpec::none());
+        let link = context_digest(&ContextSpec::from_link(context_iri(url)));
+        let body = context_digest(&ContextSpec::from_body(json!(url)));
+
+        assert_ne!(default, link);
+        assert_ne!(default, body);
+        assert_ne!(link, body);
+    }
+
+    /// JSON-LD processes an `@context` array in order, repeats included, so
+    /// `[A, B, A]` leaves A's definitions in force where `[A, B]` leaves B's.
+    #[test]
+    fn a_repeated_context_is_part_of_the_digest() {
+        let repeated = ContextSpec::from_body(json!([
+            "https://example.com/a.jsonld",
+            "https://example.com/b.jsonld",
+            "https://example.com/a.jsonld"
+        ]));
+        let once = ContextSpec::from_body(json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld"]));
+
+        assert_ne!(context_digest(&repeated), context_digest(&once));
+    }
+
+    #[test]
+    fn equal_contexts_have_equal_digests() {
+        let first = ContextSpec::from_link(context_iri("https://example.com/context.jsonld"));
+        let second = ContextSpec::from_link(context_iri("https://example.com/context.jsonld"));
+
+        assert_eq!(context_digest(&first), context_digest(&second));
+        assert_eq!(context_digest(&ContextSpec::none()), context_digest(&ContextSpec::none()));
     }
 }

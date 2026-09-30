@@ -349,7 +349,7 @@ mod tests {
         http::{StatusCode, Uri, header::LINK},
         response::{IntoResponse, Response},
     };
-    use iri_rs::IriRefBuf;
+    use iri_rs::IriBuf;
 
     fn ngsi_ld_uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
@@ -509,8 +509,8 @@ mod tests {
     #[test]
     fn existing_context_link_header_survives_pagination_links() {
         let mut response = empty_response();
-        let context = IriRefBuf::new("https://example.com/ctx.jsonld".to_string()).expect("IRI reference");
-        Link::insert_jsonld_contexts(response.headers_mut(), [context]);
+        let context = IriBuf::new("https://example.com/ctx.jsonld".to_string()).expect("an absolute IRI");
+        Link::insert_jsonld_context(response.headers_mut(), context);
         let uri = parse_uri("/subscriptions?limit=1&offset=1");
         append_pagination_links(&mut response, &uri, 1, offset(1, PageExtent::Total(3)), ResponseMediaType::JsonLd);
 

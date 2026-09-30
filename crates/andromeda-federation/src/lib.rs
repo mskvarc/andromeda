@@ -2,6 +2,8 @@
 
 #![deny(missing_docs)]
 
+/// Reading a source answer back in the client terms.
+mod answer_vocabulary;
 /// The clause 4.5.5 merge of attribute instances from several sources.
 pub mod attribute_instance_merge;
 /// The POST body of a forwarded batch entity query (clause 6.23).
@@ -42,12 +44,18 @@ pub mod federation_operation_unsupported;
 mod fixed_registration_store;
 /// The payload a forwarded write is built from, serialised on demand.
 pub mod forwarded_body;
+/// Spelling the names a forwarded request carries in its forwarding context.
+mod forwarded_names;
 /// The parameter vocabulary of a forwarded read request.
 pub mod forwarded_parameter;
 /// The representation a forwarded request carries.
 pub mod forwarded_payload;
 /// Per-registration narrowing of a client's query parameters.
 pub mod forwarded_query;
+/// Sending forwarded writes and classifying their answers.
+mod forwarded_write;
+/// The one context a forwarded request is expressed against.
+mod forwarding_context;
 /// Forwarded URL construction.
 pub mod forwarding_url;
 /// Why a single forwarded request failed as a bad gateway.
@@ -72,6 +80,10 @@ pub mod query_forwarding_error;
 pub mod read_binding;
 /// Registration selection and fan-out shared by forwarded reads.
 pub mod read_fan_out;
+/// The forwarded queries one registration receives.
+mod registration_narrowing;
+/// The context and representation one registration receives.
+mod registration_payload;
 /// Registration-information selection.
 pub mod registration_selection;
 /// What a context source answered a forwarded request with when it failed it.
@@ -82,6 +94,8 @@ pub mod request;
 pub mod single_source_failure;
 /// Where a source's answer to a forwarded read continues.
 mod source_continuation;
+/// Reads forwarded to one registration and how their answers are read back.
+mod source_read;
 /// Walking every page of a source's answer to a forwarded query.
 pub mod source_walk;
 /// Subscription forwarding to registered context sources (clause 5.8).
@@ -94,12 +108,14 @@ pub mod temporal_instances;
 pub mod temporal_last_n;
 /// Temporal response merging.
 pub mod temporal_result;
-/// Expanding and compacting NGSI-LD names against one operation's `@context`.
+/// Expanding NGSI-LD names against one operation's inbound `@context`.
 mod term_resolver;
 /// The clause 4.5.5.2 differentiation of conflicting transient entities.
 mod transient_entity_conflict;
 /// Shared forwarding HTTP transport.
 pub mod transport;
+/// Reading what a context source answered a forwarded write with.
+mod write_answer;
 
 use crate::{
     cache::ForwardedGetCache,

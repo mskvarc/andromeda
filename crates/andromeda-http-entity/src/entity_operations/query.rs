@@ -17,6 +17,7 @@ use crate::{
     },
     entity_operations::{
         AcceptFormat,
+        ApiRoot,
         EntityQueryParameters,
         EntityResultExt,
         EntityTenantState,
@@ -35,35 +36,29 @@ use andromeda_http_extraction::context_target;
 pub(crate) async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: EntityTenantState,
     accept: AcceptFormat,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via: _,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,
+    api_root: ApiRoot,
     protocol: NgsiLdProtocolHeaders,
     ValidatedQuery(url_params): ValidatedQuery<PostQueryParams>,
-    JsonLd {
-        value: request,
-        context: body_context,
-    }: JsonLd<Query>,
+    JsonLd { value: request, context }: JsonLd<Query>,
 ) -> Result<Response, ProblemResponse> {
-    // Clause 6.3.5: a POST query carries its `@context` in the body as well as
-    // in the `Link` headers, and the operation reads both.
-    let context = context.merge(body_context);
+    // Clause 6.3.5: the query is read against the one context the body
+    // extractor resolved -- the body's own `@context` for `application/ld+json`,
+    // the `Link` context for `application/json`.
     let mut query = EntityQueryParameters::try_from(request).with_entity_instance(&uri)?;
     apply_url_parameters(&mut query, url_params);
-    run(EntityQueryRequest {
-        services,
-        target,
-        accept,
-        protocol,
-        uri,
-        headers,
-        context,
-        query,
-        binding: QueryBinding::PostedBody,
-    })
+    run(EntityQueryRequest::builder()
+        .services(services)
+        .target(target)
+        .accept(accept)
+        .protocol(protocol)
+        .uri(uri)
+        .api_root(api_root)
+        .headers(headers)
+        .context(context)
+        .query(query)
+        .binding(QueryBinding::PostedBody)
+        .build())
     .await
 }
 

@@ -9,12 +9,15 @@
 use crate::{
     FederationService,
     error::FederationError,
+    forwarded_write::PlannedWrite,
+    forwarding_context::BodyPresence,
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
-    provision::{PlannedWrite, is_proxied, proxied_mode},
+    provision::{is_proxied, proxied_mode},
     registration_selection::information_matches_entity,
     request::{EntityMapInUse, TriggeringRequest},
+    term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -128,9 +131,9 @@ impl FederationService {
             debug!("Loop detected in Via header chain, skipping purge forwarding");
             return Ok(Vec::new());
         }
-        let prepared_context = self.engine.prepare_term_context(request.context);
+        let resolver = TermResolver::new(&self.engine, request.context);
         let expanded_type = match request.entity_type_compact.and_then(TypeExprRaw::as_single_type) {
-            Some(name) => Some(self.engine.expand_type(name.as_str(), &prepared_context).await?),
+            Some(name) => Some(resolver.expand_type(name.as_str()).await?),
             None => None,
         };
         let first_id = request.entity_ids.and_then(|ids| ids.first());
@@ -153,7 +156,15 @@ impl FederationService {
         for csr in csrs.into_iter().filter(|csr| csr.access.mode != Some(ForwardingMode::Auxiliary)) {
             let ids = reported_ids(&csr, request.local_ids);
             if ForwardingOperation::PurgeEntity.matches(&csr) {
-                let url = forwarding_url(csr.access.endpoint.url(), &["entities"], &query_string);
+                // Clause 4.3.6.6: the purge selection's names are spelled in the
+                // registration's forwarding context.
+                let url = match self
+                    .spelled_query_string(&csr, request.context, &resolver, &query_string, BodyPresence::Absent)
+                    .await
+                {
+                    Ok(spelled) => forwarding_url(csr.access.endpoint.url(), &["entities"], Some(&spelled)),
+                    Err(error) => Err(error),
+                };
                 // Clause 5.5.14: the source is told the map it is linked to under
                 // the map in use, so it joins the same unitary sequence the query
                 // that built the map did.

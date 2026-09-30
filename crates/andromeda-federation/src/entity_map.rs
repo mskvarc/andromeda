@@ -9,14 +9,18 @@
 
 use crate::{
     FederationService,
+    answer_vocabulary::AnswerVocabulary,
     cache::Cacheability,
     entity_read::mode_admitted,
     error::FederationError,
+    forwarding_context::BodyPresence,
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome},
     read_fan_out::{SourceAnswer, read_outcome},
     request::{CsrModeFilter, TriggeringRequest},
+    source_read::SourceRead,
+    term_resolver::TermResolver,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -128,11 +132,27 @@ impl FederationService {
             return Ok(ForwardReadOutcome::empty());
         }
         let matched = registrations.len();
+        let resolver = TermResolver::new(&self.engine, context);
+        let resolver = &resolver;
         let answers = stream::iter(registrations)
             .map(|registration| async move {
-                let url = forwarding_url(registration.access.endpoint.url(), kind.path(), query_string);
+                // Clause 4.3.6.6: the query's names are spelled in the
+                // registration's forwarding context.
+                let url = match self
+                    .spelled_query_string(&registration, context, resolver, query_string, BodyPresence::Absent)
+                    .await
+                {
+                    Ok(spelled) => forwarding_url(registration.access.endpoint.url(), kind.path(), Some(&spelled)),
+                    Err(error) => Err(error),
+                };
+                let read = SourceRead::builder()
+                    .registration(&registration)
+                    .inbound(context)
+                    .triggering(triggering)
+                    .vocabulary(AnswerVocabulary::Opaque)
+                    .build();
                 // Clause 6.3.17 allows caching for `/entities` only.
-                let outcome = self.forward_get(&registration, url, context, triggering, Cacheability::Uncacheable, None).await;
+                let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;
                 let error_status = outcome.error_status();
                 let (map, warnings) = match outcome {
                     ForwardGetOutcome::Success(response) => match serde_json::from_value::<EntityMap>(response.body) {
@@ -150,6 +170,7 @@ impl FederationService {
                     // A source that declines to create a map is not abnormal (clause 5.5.14).
                     ForwardGetOutcome::NotFound(_) => (None, Vec::new()),
                     other @ (ForwardGetOutcome::InvalidPayload(_)
+                    | ForwardGetOutcome::UnreadableNames(_)
                     | ForwardGetOutcome::ErrorStatus(_)
                     | ForwardGetOutcome::Transport(_)
                     | ForwardGetOutcome::LoopDetected) => (None, other.warning(&registration.id).into_iter().collect()),

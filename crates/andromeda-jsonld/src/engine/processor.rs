@@ -5,6 +5,8 @@
 //! [`crate::engine::context_compactor`]'s.
 
 use crate::{
+    context_cache::DownloadedContext,
+    context_graph::check_document_contexts,
     context_spec::{ContextSpec, CoreContextPolicy},
     document_context::apply_context,
     engine::{
@@ -16,7 +18,8 @@ use crate::{
     },
     error::JsonLdError,
     hit_counter::HitCounter,
-    loader::http::HttpContextLoader,
+    loader::{cache_lifetime::CacheLifetime, http::HttpContextLoader},
+    presented_context::{PresentedContext, notification_body_context},
 };
 use contextual::WithContext;
 use iri_rs::IriBuf;
@@ -38,12 +41,6 @@ pub struct JsonLdEngine {
     user_term_tables: Arc<UserTermTableCache>,
     /// Processed compaction contexts built only from embedded documents.
     compaction_contexts: CompactionContextCache,
-    /// The released core context a versionless reference expands against
-    /// (clause 4.4). The fastpath term table is derived from this version,
-    /// so two engines built with different pins expand a versionless request
-    /// differently, and this is where that decision lives rather than in a
-    /// process-global.
-    default_core_url: IriBuf,
     /// Generated vocabulary IRIs validated once during engine construction.
     core_vocabulary: Arc<CoreVocabulary>,
 }
@@ -54,7 +51,6 @@ impl JsonLdEngine {
         loader: HttpContextLoader,
         term_cache: TermCache,
         hit_counter: Option<Arc<HitCounter>>,
-        default_core_url: IriBuf,
         core_vocabulary: CoreVocabulary,
     ) -> JsonLdEngine {
         JsonLdEngine {
@@ -63,7 +59,6 @@ impl JsonLdEngine {
             hit_counter,
             user_term_tables: Arc::new(UserTermTableCache::default()),
             compaction_contexts: CompactionContextCache::new(),
-            default_core_url,
             core_vocabulary: Arc::new(core_vocabulary),
         }
     }
@@ -72,16 +67,6 @@ impl JsonLdEngine {
     #[must_use]
     pub fn builder() -> JsonLdEngineBuilder {
         JsonLdEngineBuilder::new()
-    }
-
-    /// The released core context a versionless reference expands against.
-    ///
-    /// The version this deployment pinned (clause 4.4); the fastpath term
-    /// table is built from it. Defaults to the versionless core context when no
-    /// pin was configured.
-    #[must_use]
-    pub const fn default_core_url(&self) -> &IriBuf {
-        &self.default_core_url
     }
 
     /// The generated vocabulary after construction-time IRI validation.
@@ -102,6 +87,17 @@ impl JsonLdEngine {
     /// The context loader, for the batch term table.
     pub(crate) fn loader(&self) -> &HttpContextLoader {
         &self.loader
+    }
+
+    /// How long this engine uses its copy of an `@context` the broker stores
+    /// itself (clause 5.13.1 `"Hosted"` and `"ImplicitlyCreated"`) before
+    /// reading the stored row again.
+    ///
+    /// The Serve operation advertises the same span as the `max-age` of such a
+    /// document, so a remote party caching it is held to what this process is.
+    #[must_use]
+    pub fn hosted_context_revalidation(&self) -> CacheLifetime {
+        self.loader.hosted_context_revalidation()
     }
 
     /// The processed compaction contexts kept on this engine.
@@ -152,7 +148,8 @@ impl JsonLdEngine {
     /// Returns [`JsonLdError::Expansion`] on an expansion failure, or a
     /// context-loading variant when a context did not resolve.
     pub(crate) async fn expand_prepared(&self, mut document: Value, core_policy: CoreContextPolicy) -> Result<Value, JsonLdError> {
-        resolve_relative_context_urls(&mut document);
+        resolve_relative_context_urls(&mut document, self.loader.hosted_contexts());
+        check_document_contexts(&self.loader, &document).await?;
 
         // The diagnostic needs the document's `@context` and the conversion
         // below consumes the document, so the context alone is kept — the
@@ -182,6 +179,32 @@ impl JsonLdEngine {
         ))
     }
 
+    /// The `@context` a response to a request that supplied `context` names
+    /// (clauses 5.2.3, 4.4 and 5.5.7).
+    ///
+    /// Reads what the documents the request named leave in force last through
+    /// the same loading pipeline processing reads them through; see
+    /// [`PresentedContext`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`JsonLdError`] a named document cannot be loaded with.
+    pub async fn presented_context(&self, context: &ContextSpec) -> Result<PresentedContext, JsonLdError> {
+        PresentedContext::resolve(context, self.loader.as_ref()).await
+    }
+
+    /// The `@context` an `application/ld+json` or `application/geo+json`
+    /// notification body names for a subscription's `jsonldContext`
+    /// (clauses 5.8.1.4, 5.8.6 and 5.2.3).
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`JsonLdError`] the `jsonldContext` document cannot be
+    /// loaded with.
+    pub async fn notification_body_context(&self, jsonld_context: Option<&IriBuf>) -> Result<Value, JsonLdError> {
+        notification_body_context(jsonld_context, self.loader.as_ref()).await
+    }
+
     /// Resolve a context URL to its payload through the full pipeline.
     ///
     /// # Errors
@@ -196,14 +219,14 @@ impl JsonLdEngine {
     /// Fetch a context from its source, bypassing every cache.
     ///
     /// Used when the caller needs to know the source is still reachable, as
-    /// delete-with-reload does.
+    /// delete-with-reload does. The answer is the document as downloaded and
+    /// the URL it was finally read from, which is what a "Cached" row stores.
     ///
     /// # Errors
     ///
     /// Returns a context-loading variant when the fetch fails.
-    pub async fn fetch_remote_context(&self, url: &IriBuf) -> Result<Value, JsonLdError> {
-        let value = self.loader.fetch_remote_value(url).await.map_err(|error| JsonLdError::from(&error))?;
-        Ok(jsonld_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
+    pub async fn fetch_remote_context(&self, url: &IriBuf) -> Result<DownloadedContext, JsonLdError> {
+        self.loader.fetch_remote_value(url).await.map_err(|error| JsonLdError::from(&error))
     }
 }
 
@@ -212,10 +235,11 @@ mod tests {
     use crate::{
         context_spec::ContextSpec,
         core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
-        engine::{expanded_input::ExpandedInput, options::CompactOptions, processor::JsonLdEngine},
+        engine::{expanded_input::ExpandedInput, options::CompactOptions, preloaded_engine::engine_preloading, processor::JsonLdEngine},
+        loader::test_origin::{TestOrigin, ok, redirect},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     /// An engine that resolves only what is embedded, never the network.
     fn offline_engine() -> JsonLdEngine {
@@ -291,6 +315,89 @@ mod tests {
         let iri = engine.expand_type("http://example.com/Type", &context).await.expect("an IRI needs no context");
 
         pretty_assertions::assert_eq!(iri.as_str(), "http://example.com/Type");
+    }
+
+    /// The first of two contexts that both define `speed`.
+    const REPEATED_A: &str = "https://example.org/repeated-a.jsonld";
+    /// The second of two contexts that both define `speed`.
+    const REPEATED_B: &str = "https://example.org/repeated-b.jsonld";
+
+    /// An engine preloading two contexts that define `speed` differently.
+    fn engine_with_two_speeds() -> JsonLdEngine {
+        engine_preloading(&[
+            (REPEATED_A.to_owned(), json!({ "@context": { "speed": "https://example.org/a#speed" } })),
+            (REPEATED_B.to_owned(), json!({ "@context": { "speed": "https://example.org/b#speed" } })),
+        ])
+    }
+
+    /// A vehicle carrying one `speed` Property.
+    fn vehicle_with_speed() -> Value {
+        json!({ "id": "urn:ngsi-ld:Vehicle:repeated", "type": "Vehicle", "speed": { "type": "Property", "value": 1 } })
+    }
+
+    /// Clause 5.5.7 processes the context the call provided, and JSON-LD 1.1
+    /// API section 4.1.2 step 5.2.2 skips a repeated context only while a
+    /// scoped context is validated: `[A, B, A]` processes A again after B, so
+    /// a term both define expands to A's IRI.
+    #[tokio::test]
+    async fn a_context_repeated_in_the_request_leaves_its_last_occurrence_in_force() {
+        let engine = engine_with_two_speeds();
+        let context = ContextSpec::from_body(json!([REPEATED_A, REPEATED_B, REPEATED_A]));
+
+        let expanded = engine.expand(vehicle_with_speed(), &context).await.expect("expansion succeeds");
+
+        assert!(expanded[0].get("https://example.org/a#speed").is_some(), "{expanded}");
+        assert!(expanded[0].get("https://example.org/b#speed").is_none(), "{expanded}");
+    }
+
+    /// The context a response presents for `[A, B, A]` keeps every entry the
+    /// request named, repeat included, with the core context last (clause 4.4),
+    /// and a client processing that presented context reads `speed` exactly
+    /// as the broker did: as A's term.
+    #[tokio::test]
+    async fn a_repeated_context_is_presented_as_named_and_processed_under_its_last_occurrence() {
+        let engine = engine_with_two_speeds();
+        let context = ContextSpec::from_body(json!([REPEATED_A, REPEATED_B, REPEATED_A]));
+
+        let presented = engine.presented_context(&context).await.expect("the context is presented").into_value();
+        pretty_assertions::assert_eq!(presented, json!([REPEATED_A, REPEATED_B, REPEATED_A, NGSI_LD_CORE_CONTEXT_URL]));
+
+        let expanded = engine
+            .expand(vehicle_with_speed(), &ContextSpec::from_body(presented))
+            .await
+            .expect("expansion under the presented context succeeds");
+        assert!(expanded[0].get("https://example.org/a#speed").is_some(), "{expanded}");
+        assert!(expanded[0].get("https://example.org/b#speed").is_none(), "{expanded}");
+    }
+
+    /// JSON-LD 1.1 API section 4.1.2 step 5.2.6 processes a remote context
+    /// against "the documentUrl of context document", its final URL: a
+    /// context reached through a redirect finds the document its relative
+    /// reference names beside where it was read from, which the requested
+    /// directory does not hold.
+    #[tokio::test]
+    async fn a_relative_reference_in_a_redirected_context_is_processed_against_the_final_url() {
+        let origin = TestOrigin::start().await;
+        origin.stage("/moved.jsonld", redirect("/contexts/v2/wrapper.jsonld")).await;
+        origin
+            .stage("/contexts/v2/wrapper.jsonld", ok("application/ld+json", r#"{"@context": "terms.jsonld"}"#, &[]))
+            .await;
+        origin
+            .stage(
+                "/contexts/v2/terms.jsonld",
+                ok("application/ld+json", r#"{"@context": {"speed": "https://example.org/v2#speed"}}"#, &[]),
+            )
+            .await;
+        let engine = JsonLdEngine::builder().allow_remote(true).build().expect("engine builds");
+
+        let expanded = engine
+            .expand(vehicle_with_speed(), &ContextSpec::from_link(origin.url("/moved.jsonld")))
+            .await
+            .expect("expansion succeeds");
+
+        assert!(expanded[0].get("https://example.org/v2#speed").is_some(), "{expanded}");
+        pretty_assertions::assert_eq!(origin.requests("/terms.jsonld"), 0);
+        pretty_assertions::assert_eq!(origin.requests("/contexts/v2/terms.jsonld"), 1);
     }
 
     #[tokio::test]

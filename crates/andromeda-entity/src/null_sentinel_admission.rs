@@ -510,7 +510,7 @@ mod tests {
     async fn a_batch_creation_refuses_the_sentinel_against_the_entity_that_carried_it() {
         let (service, _recorded) = recording_service().await;
         let entities = vec![written_entity("category", &json!({"type": "Property", "value": "urn:ngsi-ld:null"}))];
-        let (admitted, refused) = service.admit_batch_write(BatchCreate, rendered(entities), &ContextSpec::core_only()).await;
+        let (admitted, refused) = service.admit_batch_write(BatchCreate, rendered(entities, &ContextSpec::core_only())).await;
         assert!(admitted.is_empty(), "nothing may be created");
         pretty_assertions::assert_eq!(refused.len(), 1);
         pretty_assertions::assert_eq!(refused[0].0.as_str(), ENTITY_ID);
@@ -525,7 +525,7 @@ mod tests {
         let entities = vec![written_entity("category", &json!({"type": "Property", "value": "urn:ngsi-ld:null"}))];
         let admitted = admitted_batch(&service, BatchMerge, entities, &ContextSpec::core_only()).await;
         let batch = service
-            .batch_merge(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
+            .batch_merge(SideEffectPlacement::Inline(&live_target()), admitted)
             .await
             .expect("the batch itself completes");
         assert!(

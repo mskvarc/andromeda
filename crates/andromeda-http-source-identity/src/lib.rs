@@ -5,6 +5,8 @@
 
 /// Context Source identity configuration.
 pub mod config;
+/// The default tenant's context resolution and hosting.
+pub mod default_tenant_contexts;
 pub mod error;
 pub mod handler;
 pub mod routes;
@@ -14,15 +16,18 @@ pub mod state;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-extensions",
+        "andromeda-http-context-registry",
         "andromeda-http-extraction",
         "andromeda-http-response",
+        "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-render",
+        "andromeda-ngsi-ld-request",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: [],
+    allow_workspace_dev_dependencies: ["andromeda-context-registry", "andromeda-test-harness"],
     allow_production_dependencies: ["axum"],
 }
 

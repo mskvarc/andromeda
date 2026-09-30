@@ -19,6 +19,8 @@
 //!   links, included in HTTP notification POST requests.
 //! - **Version profile links** (clause 6.3.21): `rel="profile"` or a `profile` attribute
 //!   naming `https://uri.etsi.org/ngsi-ld/profile/<major>.<minor>`.
+//! - **JSON-LD alternates** (JSON-LD 1.1 section 6.2): `rel="alternate"` with
+//!   `type="application/ld+json"` on a non-JSON response a context was requested from.
 //!
 //! Only the `rel`, `type` and `profile` link-param attributes are supported. Other
 //! RFC 8288 parameters (`anchor`, `rev`, `hreflang`, `media`, `title`, `title*`) are not

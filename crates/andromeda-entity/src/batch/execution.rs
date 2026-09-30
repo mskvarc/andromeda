@@ -1,17 +1,15 @@
 //! How much of a batch runs where.
 //!
-//! Small batches stay on the calling task. Large ones split their preparation
-//! across a blocking pool for the synchronous fast path and a future pool for
-//! the asynchronous one, because JSON-LD expansion is CPU-bound for a document
-//! whose `@context` is already resolved and IO-bound for one that is not.
+//! Small batches stay on the calling task. Large ones spread the synchronous
+//! fast path of their preparation across a blocking pool, because JSON-LD
+//! expansion of a document whose `@context` is already resolved is CPU-bound;
+//! the asynchronous path expands a group in one bulk call and needs no pool.
 
 use std::num::NonZeroUsize;
 
 /// Runtime tuning for batch entity execution paths.
 #[derive(Clone, Debug)]
 pub struct BatchExecutionConfig {
-    /// Maximum number of concurrent entity preparations.
-    pub concurrency: usize,
     /// Maximum number of chunks dispatched in parallel during large-batch processing.
     /// Sizes the fastpath preparation blocking-pool semaphore (CPU-bound work).
     pub chunk_concurrency: usize,
@@ -44,7 +42,6 @@ impl BatchExecutionConfig {
     #[must_use]
     pub(crate) fn clamped_to_usable_limits(self) -> BatchExecutionConfig {
         BatchExecutionConfig {
-            concurrency: self.concurrency.max(1),
             chunk_concurrency: self.chunk_concurrency.max(1),
             chunk_write_concurrency: self.chunk_write_concurrency.max(1),
             chunk_size: self.chunk_size.max(1),
@@ -60,63 +57,41 @@ impl BatchExecutionConfig {
 pub(super) enum BatchExecution {
     /// Process everything inline in the current task.
     Inline,
-    /// Offload preparation to dedicated pools.
+    /// Offload the fast path's preparation to the blocking pool.
     Offload {
         /// Maximum number of concurrent fastpath blocking tasks.
         fast_chunks: NonZeroUsize,
-        /// Maximum number of concurrent slow-path async tasks.
-        slow_concurrency: NonZeroUsize,
     },
 }
 
 /// Choose an execution mode for a batch of `len` entities.
-pub(super) fn decide_batch_execution(
-    len: usize,
-    _fast_count: usize,
-    _slow_count: usize,
-    blocking_threshold: usize,
-    fast_chunk_concurrency: usize,
-    slow_concurrency: usize,
-) -> BatchExecution {
+pub(super) fn decide_batch_execution(len: usize, blocking_threshold: usize, fast_chunk_concurrency: usize) -> BatchExecution {
     if len < blocking_threshold {
         return BatchExecution::Inline;
     }
     let fast_chunks = NonZeroUsize::new(fast_chunk_concurrency.max(1)).unwrap_or(NonZeroUsize::MIN);
-    let slow_concurrency = NonZeroUsize::new(slow_concurrency.max(1)).unwrap_or(NonZeroUsize::MIN);
-    BatchExecution::Offload { fast_chunks, slow_concurrency }
+    BatchExecution::Offload { fast_chunks }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BatchExecution, decide_batch_execution};
+    use crate::batch::execution::{BatchExecution, decide_batch_execution};
 
     #[test]
     fn decide_batch_execution_below_threshold_returns_inline() {
-        let exec = decide_batch_execution(64, 64, 0, 128, 4, 8);
+        let exec = decide_batch_execution(64, 128, 4);
         assert!(matches!(exec, BatchExecution::Inline));
     }
 
     #[test]
     fn decide_batch_execution_above_threshold_returns_offload() {
-        let exec = decide_batch_execution(1024, 1000, 24, 128, 4, 8);
-        match exec {
-            BatchExecution::Offload { fast_chunks, slow_concurrency } => {
-                pretty_assertions::assert_eq!(fast_chunks.get(), 4);
-                pretty_assertions::assert_eq!(slow_concurrency.get(), 8);
-            }
-            BatchExecution::Inline => panic!("expected Offload"),
-        }
+        let exec = decide_batch_execution(1024, 128, 4);
+        assert!(matches!(exec, BatchExecution::Offload { fast_chunks } if fast_chunks.get() == 4));
     }
 
     #[test]
     fn decide_batch_execution_clamps_zero_concurrency_to_one() {
-        let exec = decide_batch_execution(1024, 1024, 0, 128, 0, 0);
-        match exec {
-            BatchExecution::Offload { fast_chunks, slow_concurrency } => {
-                pretty_assertions::assert_eq!(fast_chunks.get(), 1);
-                pretty_assertions::assert_eq!(slow_concurrency.get(), 1);
-            }
-            BatchExecution::Inline => panic!("expected Offload"),
-        }
+        let exec = decide_batch_execution(1024, 128, 0);
+        assert!(matches!(exec, BatchExecution::Offload { fast_chunks } if fast_chunks.get() == 1));
     }
 }

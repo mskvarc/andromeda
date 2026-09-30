@@ -32,6 +32,9 @@ use crate::temporal::{
 use andromeda_http_extraction::context_target;
 
 pub async fn delete_attr_instance(
+    // Clause 6.3.20: the parameters are read first, before the tenant is
+    // resolved, so an undefined one is an `InvalidRequest` on any tenant.
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     context_target::ExistingTargetedTenantState {
         services: state,
         target,
@@ -40,7 +43,6 @@ pub async fn delete_attr_instance(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id, instance_id)): TypedPath<(Identifier, AttributeName, Identifier)>,
-    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {

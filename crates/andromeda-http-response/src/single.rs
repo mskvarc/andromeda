@@ -19,7 +19,9 @@ use headers::HeaderMapExt;
 /// Constructed from a [`RenderedOutput`] produced by the rendering pipeline:
 ///
 /// ```ignore
-/// let rendered = start_rendering(media_type, &context, prefer, format)
+/// let host = context_hosting.for_request(&api_root);
+/// let rendered = start_rendering(media_type, engine.presented_context(&context).await?, &host, prefer, format)
+///     .await?
 ///     .with_payload(ResponsePayload::Single(entity_value))
 ///     .render()?;
 /// NgsiLdResponse::ok(rendered)
@@ -108,13 +110,12 @@ impl IntoResponse for NgsiLdResponse {
 
         apply_common_headers(
             &mut headers,
-            &self.rendered.context_links,
+            self.rendered.context_link,
             &CommonHeadersOptions {
                 location: self.location.as_deref(),
                 entity_map_uri: self.entity_map_uri.as_ref(),
                 snapshot_uri: self.snapshot_uri.as_ref(),
                 warnings: &self.warnings,
-                context_location: self.rendered.context_location,
             },
         );
 

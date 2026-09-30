@@ -7,7 +7,7 @@ use crate::{
     reuse::{EntityMapFlag, EntityMapUse},
     store::{EntityMapMutation, EntityMapStore},
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::EntityMapId};
 use andromeda_ngsi_ld_model::{
     entity_map::EntityMap,
     entity_map_fingerprint::{RequestComparison, RequestFingerprint},
@@ -16,7 +16,6 @@ use andromeda_ngsi_ld_model::{
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Manages NGSI-LD Entity Maps independently of their storage backend.
 pub struct EntityMapService {
@@ -241,8 +240,8 @@ fn default_lifetime() -> Iso8601Duration {
 
 /// Mint a new Entity Map identifier in the NGSI-LD URN namespace.
 fn build_entity_map_identifier() -> Result<Identifier, EntityMapError> {
-    format!("urn:ngsi-ld:EntityMap:{}", Uuid::new_v4())
-        .parse()
+    EntityMapId::mint()
+        .map(Identifier::from)
         .map_err(|error| EntityMapInvariant::MintedIdentifier(error).into())
 }
 

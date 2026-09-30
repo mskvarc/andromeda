@@ -75,12 +75,18 @@ fn cached_kind() -> SimpleExpr {
 /// and it can only do that if the read says how much of the granted span is
 /// left. Both instants come from this one statement, so the residual span is
 /// measured on a single clock rather than across two.
+///
+/// The kind and the URL a download was finally read from are projected too: a
+/// downloaded document's relative references resolve against that URL, not
+/// against the one the row is keyed by.
 #[must_use]
 pub fn fresh_cached_context_query(identifier: &str) -> SelectStatement {
     Query::select()
         .column(JsonldContexts::Payload)
         .column(JsonldContexts::ExpiresAt)
         .column(JsonldContexts::Url)
+        .column(JsonldContexts::Kind)
+        .column(JsonldContexts::DocumentUrl)
         .expr_as(Expr::current_timestamp(), Alias::new("read_at"))
         .from(JsonldContexts::Table)
         .cond_where(Condition::all().add(identity_matches(identifier)).add(unexpired()))
@@ -94,7 +100,9 @@ pub fn fresh_cached_context_query(identifier: &str) -> SelectStatement {
 /// alongside the locally unique identifier; a re-download after the previous
 /// copy lapsed replaces all three, so the `createdAt` a client inspects reports
 /// the age of the content actually held rather than of a copy long since
-/// discarded. The local identifier is left as it was, since clients hold it, and
+/// discarded. The URL the content was finally read from, `document_url`, is
+/// replaced with it, since the source may redirect elsewhere than it did before.
+/// The local identifier is left as it was, since clients hold it, and
 /// `number_of_hits` is left to the clause 5.13.3.5 flush.
 ///
 /// The refresh is confined to rows of kind `Cached`: a Hosted Context served
@@ -103,14 +111,15 @@ pub fn fresh_cached_context_query(identifier: &str) -> SelectStatement {
 /// # Errors
 ///
 /// Returns [`SeaQueryError`] when the bound value list stops matching the
-/// eight-wide column list, which the fixed shape here makes unreachable.
-pub fn cached_upsert(local_id: &str, url: &str, payload: Value, lifetime_seconds: f64) -> Result<InsertStatement, SeaQueryError> {
+/// nine-wide column list, which the fixed shape here makes unreachable.
+pub fn cached_upsert(local_id: &str, url: &str, document_url: &str, payload: Value, lifetime_seconds: f64) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(JsonldContexts::Table)
         .columns([
             JsonldContexts::Id,
             JsonldContexts::Url,
+            JsonldContexts::DocumentUrl,
             JsonldContexts::Kind,
             JsonldContexts::Payload,
             JsonldContexts::CreatedAt,
@@ -121,6 +130,7 @@ pub fn cached_upsert(local_id: &str, url: &str, payload: Value, lifetime_seconds
         .values([
             local_id.into(),
             url.into(),
+            document_url.into(),
             cached_kind(),
             payload.into(),
             Expr::current_timestamp(),
@@ -131,6 +141,7 @@ pub fn cached_upsert(local_id: &str, url: &str, payload: Value, lifetime_seconds
         .on_conflict(
             OnConflict::column(JsonldContexts::Url)
                 .update_columns([
+                    JsonldContexts::DocumentUrl,
                     JsonldContexts::Payload,
                     JsonldContexts::CreatedAt,
                     JsonldContexts::LastUsage,
@@ -264,31 +275,43 @@ pub fn delete_by_identifier(identifier: &str) -> DeleteStatement {
         .to_owned()
 }
 
-/// Replace a Context's payload, re-dating the stored copy.
+/// Replace a `Cached` Context's document with a new download of it, re-dating
+/// the stored copy (clause 5.13.5.4).
 ///
-/// Matched by local id alone: a replacement addresses the Context this broker
-/// hosts, not one it merely cached under a source URL.
+/// Matched by local id and confined to the `Cached` kind: a reload replaces a
+/// download, and only a download has a URL it was finally read from. That URL is
+/// replaced with the document, since the source may redirect elsewhere than it
+/// did at the first download.
 ///
 /// Clause 5.13.1 tags an entry with the instant its content was stored, so a
 /// re-download re-dates it. The expiry moves with it by the span the origin
 /// server last granted — clause 6.3.16 fixed that span when the document was
 /// first downloaded, and a reload (clause 5.13.5) fetches the same resource from
-/// the same server without observing a new one. An entry with no expiry keeps
-/// none, since `NULL` propagates through the arithmetic.
+/// the same server without observing a new one.
 #[must_use]
-pub fn replace_payload_update(local_id: &str, payload: Value) -> UpdateStatement {
+pub fn replace_download_update(local_id: &str, document_url: &str, payload: Value) -> UpdateStatement {
     let granted_lifetime = Expr::col(JsonldContexts::ExpiresAt).sub(Expr::col(JsonldContexts::CreatedAt));
     Query::update()
         .table(JsonldContexts::Table)
         .value(JsonldContexts::Payload, payload)
+        .value(JsonldContexts::DocumentUrl, document_url)
         .value(JsonldContexts::CreatedAt, Expr::current_timestamp())
         .value(JsonldContexts::LastUsage, Expr::current_timestamp())
         .value(JsonldContexts::ExpiresAt, Expr::current_timestamp().add(granted_lifetime))
         .and_where(Expr::col(JsonldContexts::Id).eq(local_id))
+        .and_where(Expr::col(JsonldContexts::Kind).eq(cached_kind()))
         .to_owned()
 }
 
-/// Insert a hosted or implicitly-created Context under an exact kind.
+/// Insert a hosted or implicitly-created Context under an exact kind, unless a
+/// row already holds `local_id`.
+///
+/// Registry policy chooses the identifier, and an `ImplicitlyCreated` one is
+/// derived from the content, so the same document arrives under the same
+/// identifier again. The insert therefore does nothing on an identifier
+/// conflict, and the affected-row count tells the caller whether the
+/// identifier was free; deciding what an occupied identifier means is left to
+/// that caller, which compares the entry holding it.
 ///
 /// # Errors
 ///
@@ -315,7 +338,8 @@ pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind: JsonldCont
             Expr::current_timestamp(),
             Expr::current_timestamp(),
             0_i64.into(),
-        ])?;
+        ])?
+        .on_conflict(OnConflict::column(JsonldContexts::Id).do_nothing().to_owned());
     Ok(statement.clone())
 }
 
@@ -325,9 +349,10 @@ mod tests {
         cached_upsert,
         delete_expired_cached,
         fresh_cached_context_query,
+        hosted_insert,
         metadata_page_query,
         payload_by_identifier_query,
-        replace_payload_update,
+        replace_download_update,
         stored_context_query,
         summary_page_query,
     };
@@ -400,7 +425,14 @@ mod tests {
     /// counted from the write rather than baked into the statement text.
     #[test]
     fn a_cached_write_dates_the_row_by_the_granted_lifetime() -> Result<(), SeaQueryError> {
-        let (sql, values) = cached_upsert("urn:ngsi-ld:Context:1", "https://example.com/c.jsonld", json!({"@context": {}}), 60.0)?.build(PostgresQueryBuilder);
+        let (sql, values) = cached_upsert(
+            "urn:ngsi-ld:JsonLdContext:1",
+            "https://example.com/c.jsonld",
+            "https://example.com/c.jsonld",
+            json!({"@context": {}}),
+            60.0,
+        )?
+        .build(PostgresQueryBuilder);
 
         assert!(sql.contains("CURRENT_TIMESTAMP + (make_interval(secs =>"), "{sql}");
         assert!(
@@ -415,10 +447,17 @@ mod tests {
     /// clause 5.13.3.5 flush owns, untouched.
     #[test]
     fn a_cached_write_refreshes_an_entry_already_held_under_the_same_url() -> Result<(), SeaQueryError> {
-        let sql = cached_upsert("urn:ngsi-ld:Context:1", "https://example.com/c.jsonld", json!({"@context": {}}), 60.0)?.to_string(PostgresQueryBuilder);
+        let sql = cached_upsert(
+            "urn:ngsi-ld:JsonLdContext:1",
+            "https://example.com/c.jsonld",
+            "https://example.com/c.jsonld",
+            json!({"@context": {}}),
+            60.0,
+        )?
+        .to_string(PostgresQueryBuilder);
 
         assert!(sql.contains("ON CONFLICT (\"url\") DO UPDATE"), "{sql}");
-        for refreshed in ["\"payload\"", "\"created_at\"", "\"last_usage\"", "\"expires_at\""] {
+        for refreshed in ["\"document_url\"", "\"payload\"", "\"created_at\"", "\"last_usage\"", "\"expires_at\""] {
             assert!(sql.contains(&format!("{refreshed} = ")), "{refreshed} must be refreshed: {sql}");
         }
         assert!(
@@ -436,12 +475,85 @@ mod tests {
     /// that has already passed.
     #[test]
     fn a_reload_carries_the_granted_lifetime_forward() {
-        let sql = replace_payload_update("urn:ngsi-ld:Context:1", json!({"@context": {}})).to_string(PostgresQueryBuilder);
+        let sql =
+            replace_download_update("urn:ngsi-ld:JsonLdContext:1", "https://example.com/c.jsonld", json!({"@context": {}})).to_string(PostgresQueryBuilder);
 
         assert!(sql.contains("\"created_at\" = CURRENT_TIMESTAMP"), "{sql}");
         assert!(
             sql.contains("\"expires_at\" = CURRENT_TIMESTAMP + (\"expires_at\" - \"created_at\")"),
             "the previous span must be parenthesised, or the timestamps would be added: {sql}"
+        );
+    }
+
+    /// A content-derived identifier arrives again with the same document, so
+    /// the insert of a hosted or implicitly created Context does nothing on an
+    /// identifier conflict and leaves the entry already there untouched.
+    #[test]
+    fn a_hosted_insert_does_nothing_on_an_identifier_conflict() -> Result<(), SeaQueryError> {
+        let sql = hosted_insert(
+            "urn:ngsi-ld:JsonLdContext:1",
+            None,
+            JsonldContextKindCode::ImplicitlyCreated,
+            json!({"@context": []}),
+        )?
+        .to_string(PostgresQueryBuilder);
+
+        assert!(sql.contains("ON CONFLICT (\"id\") DO NOTHING"), "{sql}");
+        Ok(())
+    }
+
+    /// A download is stored with the URL it was finally read from, bound as a
+    /// value beside the URL the row is keyed by, so a redirected document's
+    /// relative references resolve against the same base when the row is read
+    /// back.
+    #[test]
+    fn a_cached_write_stores_the_url_the_document_was_finally_read_from() -> Result<(), SeaQueryError> {
+        let (sql, values) = cached_upsert(
+            "urn:ngsi-ld:JsonLdContext:1",
+            "https://example.com/c.jsonld",
+            "https://mirror.example.com/v2/c.jsonld",
+            json!({"@context": {}}),
+            60.0,
+        )?
+        .build(PostgresQueryBuilder);
+
+        assert!(sql.contains("\"url\", \"document_url\", \"kind\""), "{sql}");
+        assert!(
+            values
+                .0
+                .iter()
+                .any(|value| format!("{value:?}").contains("https://mirror.example.com/v2/c.jsonld")),
+            "the document URL is bound: {sql}"
+        );
+        Ok(())
+    }
+
+    /// The resolver's read reports the kind and the URL a download was finally
+    /// read from, so the port can tell a download from a document the broker
+    /// stores itself and hand back the base its references resolve against.
+    #[test]
+    fn the_resolver_read_reports_where_a_download_was_read_from() {
+        let sql = fresh_cached_context_query("https://example.com/c.jsonld").to_string(PostgresQueryBuilder);
+
+        assert!(sql.contains("\"kind\""), "{sql}");
+        assert!(sql.contains("\"document_url\""), "{sql}");
+    }
+
+    /// Clause 5.13.5.4: a reload replaces the download and where it was read
+    /// from, and only for a `"Cached"` entry.
+    #[test]
+    fn a_reload_replaces_the_document_url_of_a_cached_entry_only() {
+        let (sql, values) = replace_download_update("urn:ngsi-ld:JsonLdContext:1", "https://mirror.example.com/v3/c.jsonld", json!({"@context": {}}))
+            .build(PostgresQueryBuilder);
+
+        assert!(sql.contains("\"document_url\" = "), "{sql}");
+        assert!(sql.contains("\"kind\" = "), "a reload is confined to a Cached row: {sql}");
+        assert!(
+            values
+                .0
+                .iter()
+                .any(|value| format!("{value:?}").contains("https://mirror.example.com/v3/c.jsonld")),
+            "the document URL is bound: {sql}"
         );
     }
 

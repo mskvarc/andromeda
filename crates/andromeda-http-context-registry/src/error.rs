@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn focused_context_registry_categories_and_disclosure_are_stable() {
-        let identifier = "urn:ngsi-ld:Context:1".parse::<Identifier>().expect("a valid test identifier");
+        let identifier = "urn:ngsi-ld:JsonLdContext:1".parse::<Identifier>().expect("a valid test identifier");
         for (error, expected) in [
             (ContextRegistryError::MissingTopLevelContext, NgsiLdErrorType::InvalidRequest),
             (

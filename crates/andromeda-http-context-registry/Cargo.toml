@@ -11,18 +11,32 @@ workspace = true
 [dependencies]
 andromeda-context-registry.workspace = true
 andromeda-http-extraction.workspace = true
+andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
+andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
+andromeda-ngsi-ld-render.workspace = true
+andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
+andromeda-persistence-failure.workspace = true
 andromeda-tenancy.workspace = true
 axum = "0.8.9"
+derive_more = { version = "2.1.1", features = ["debug"] }
 futures = "0.3.34"
+headers = "0.4.1"
+hex = "0.4.3"
+iri-rs = { version = "3.4.1", features = ["serde", "static"] }
+percent-encoding = "2.3.2"
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+sha2 = "0.11.0"
+thiserror = "2.0.21"
+url = { version = "2.5.8", features = ["serde"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-andromeda-persistence-failure.workspace = true
+andromeda-ngsi-ld-model.workspace = true
+andromeda-test-harness.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }

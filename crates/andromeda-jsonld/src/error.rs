@@ -9,6 +9,7 @@
 //! rather than pre-rendered into one message.
 
 use crate::{
+    context_graph::ContextGraphError,
     context_term::ContextTerm,
     loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError},
 };
@@ -180,6 +181,14 @@ pub enum JsonLdError {
     #[error("the document must be an object or an array")]
     DocumentShape,
 
+    /// A `@context`'s references form a cycle or nest too deep.
+    ///
+    /// Clause 5.5.6 makes an invalid remote `@context` a `BadRequestData`, and
+    /// one the processor could only overflow on is invalid (JSON-LD 1.1 API
+    /// section 4.1.2 step 5.2.3).
+    #[error("invalid @context: {0}")]
+    ContextGraph(#[from] ContextGraphError),
+
     /// JSON serialisation / deserialisation error.
     #[error("JSON processing failed: {0}")]
     Json(#[from] serde_json::Error),
@@ -284,15 +293,25 @@ fn context_error_of_compaction(error: &CompactError<LoaderError>) -> Option<Json
     }
 }
 
-/// The loader failure a context-processing error wraps, if it wraps one.
+/// The loader failure a context-processing error wraps, if it wraps one, or
+/// the invalid reference graph it reports.
 ///
-/// Written as an `if let` rather than an exhaustive match because
+/// A `context overflow` or a `recursive context inclusion` is a `@context`
+/// whose references cycle or run on, which clause 5.5.6 answers with
+/// `BadRequestData` exactly as [`crate::context_graph`] refuses it.
+///
+/// Written as `if let` rather than an exhaustive match because
 /// `context_processing::Error` is a foreign enum of twenty-odd grammar
-/// violations, none of which carries a loader failure, and enumerating them
-/// here would only restate that list.
+/// violations, none of which carries a loader failure or a reference-graph
+/// fault, and enumerating them here would only restate that list.
 fn context_error_of_processing(error: &context_processing::Error<LoaderError>) -> Option<JsonLdError> {
     if let context_processing::Error::ContextLoadingFailed(load) = error {
         Some(JsonLdError::from(&load.source))
+    } else if matches!(
+        error,
+        context_processing::Error::ContextOverflow | context_processing::Error::RecursiveContextInclusion
+    ) {
+        Some(ContextGraphError::ProcessorOverflow.into())
     } else {
         None
     }
@@ -302,6 +321,7 @@ fn context_error_of_processing(error: &context_processing::Error<LoaderError>) -
 mod tests {
     use crate::{
         context_cache::ContextCacheError,
+        context_graph::ContextGraphError,
         context_term::ContextTerm,
         error::{JsonLdError, context_error_of_compaction, context_error_of_expansion, context_error_of_processing, is_protected_term_redefinition},
         loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
@@ -438,6 +458,29 @@ mod tests {
             context_error_of_expansion(&ExpandError::Expansion(expansion::Error::InvalidTypeValue)).is_none(),
             "a pure expansion defect is not a context error"
         );
+    }
+
+    /// Clause 5.5.6: a `@context` the processor overflows on is invalid, so
+    /// wherever the processor reports it, it becomes the typed reference-graph
+    /// refusal rather than an opaque expansion or compaction failure.
+    #[test]
+    fn a_processor_overflow_or_recursive_inclusion_is_a_context_graph_refusal() {
+        let refusals: [fn() -> context_processing::Error<LoaderError>; 2] = [
+            || context_processing::Error::ContextOverflow,
+            || context_processing::Error::RecursiveContextInclusion,
+        ];
+        for refusal in refusals {
+            let expanded = JsonLdError::from(ExpandError::ContextProcessing(refusal()));
+            assert!(
+                matches!(expanded, JsonLdError::ContextGraph(ContextGraphError::ProcessorOverflow)),
+                "{expanded}"
+            );
+            let compacted = JsonLdError::from(CompactError::ContextProcessing(refusal()));
+            assert!(
+                matches!(compacted, JsonLdError::ContextGraph(ContextGraphError::ProcessorOverflow)),
+                "{compacted}"
+            );
+        }
     }
 
     #[test]

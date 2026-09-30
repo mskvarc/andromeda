@@ -7,13 +7,12 @@
 
 use crate::{
     error::temporal_problem,
-    grouping_gate::reject_grouping_when_disabled,
+    grouping_gate::GroupingGate,
     history_read::TemporalHistoryRead,
     join::{apply_temporal_join, single_retrieval_payload},
     request_context_admission::admit_request_context,
     temporal::{
         AcceptFormatNoGeo,
-        ContextSpec,
         Identifier,
         IntoResponse,
         NgsiLdProtocolHeaders,
@@ -21,29 +20,26 @@ use crate::{
         NgsiLdResponse,
         ProblemResponse,
         Response,
+        ResponseContextSource,
         ResponsePayload,
         ResultInstanceExt,
         StatusCode,
-        TemporalQueryParameters,
         TemporalSimplifyPayload,
         TemporalSimplifyRenderer,
         TenantState,
         TypedPath,
-        ValidatedQuery,
         Value,
         retrieve_forwarding::{RetrievalSources, RetrievedHistory, distributed_retrieval, resolve_retrieve_map},
-        start_rendering_temporal,
     },
 };
 use andromeda_entity_map::reuse::EntityMapUse;
-use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{admitted_temporal_query::AdmittedTemporalQuery, context_target, response_context_request::ResponseContextRequest};
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range};
 use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate, temporal_invariant::TemporalInvariant};
-use axum::{Extension, http::Uri as RequestUri};
+use axum::http::Uri as RequestUri;
 
 pub async fn get(
     context_target::ExistingTargetedTenantState {
@@ -52,22 +48,13 @@ pub async fn get(
         snapshot: _,
     }: TenantState,
     accept: AcceptFormatNoGeo,
-    Extension(enabled): Extension<EnabledExtensions>,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    ResponseContextRequest { context, api_root }: ResponseContextRequest,
     protocol: NgsiLdProtocolHeaders,
     TypedPath(id): TypedPath<Identifier>,
-    ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
+    AdmittedTemporalQuery { mut params, .. }: AdmittedTemporalQuery<GroupingGate>,
 ) -> Result<Response, ProblemResponse> {
-    // The grouped extension is refused upstream when it is disabled
-    // (extension-strategy 5.2).
-    reject_grouping_when_disabled(&params, enabled, &uri)?;
     let service = &state.temporal;
-    let context: ContextSpec = context.into_inner();
     // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
     // refused on the temporal history read path before anything is forwarded or
     // expanded against it.
@@ -145,7 +132,10 @@ pub async fn get(
     // Table 6.19.3.1-2 carries the 203 row and clause 6.3.6 the
     // `Preference-Applied` echo, so the preference the request expressed is the
     // one that renders; `NgsiLdResponse` turns the outcome into both.
-    let rendered = start_rendering_temporal(accept.media_type(), &context, protocol.prefer.rendering_preferences(), params.selected_format())
+    let rendered = ResponseContextSource::new(state.temporal.engine(), &context, &state.context_hosting, &api_root)
+        .start_rendering_temporal(accept.media_type(), protocol.prefer.rendering_preferences(), params.selected_format())
+        .await
+        .with_instance(&uri)?
         .with_payload(payload)
         .render()
         .with_instance(&uri)?;

@@ -1,23 +1,22 @@
 //! The identifier this broker mints for a subscription it hands to a peer.
 
 use crate::{error::SubscriptionForwardingError, forwarding_invariant::ForwardingInvariant};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
-use urn_rs::UrnBuilder;
-use uuid::Uuid;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SubscriptionId};
 
 /// Mint an identifier for a subscription this broker hands to a peer: a
-/// companion or a forwarded copy. Clause 5.2.12 lets the creator choose the
-/// identifier, so the broker chooses one it can route back.
+/// companion or a forwarded copy, `urn:ngsi-ld:Subscription:forwarded-<uuid>`.
+/// Clause 5.2.12 lets the creator choose the identifier. The broker routes a
+/// peer's notifications back by its route and mapping records, keyed by the
+/// whole identifier, never by parsing the `forwarded-` marker, which only tells
+/// a human reading the peer's subscription list where the copy came from.
 ///
 /// # Errors
 ///
-/// Returns [`ForwardingInvariant::MintedUrn`] or
-/// [`ForwardingInvariant::MintedIdentifier`] when the minted
-/// namespace-specific string is not a valid URN component or the minted URN is
-/// past the identifier bound.
+/// Returns [`ForwardingInvariant::MintedSubscriptionId`] when the minted
+/// identifier does not parse back, which a hyphenated UUID under the
+/// `Subscription` kind never fails to do.
 pub(crate) fn mint_subscription_id() -> Result<Identifier, SubscriptionForwardingError> {
-    let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:forwarded:{}", Uuid::new_v4()))
-        .build()
-        .map_err(ForwardingInvariant::MintedUrn)?;
-    Identifier::try_from(urn).map_err(|error| ForwardingInvariant::MintedIdentifier(error).into())
+    SubscriptionId::mint_forwarded()
+        .map(Identifier::from)
+        .map_err(|error| ForwardingInvariant::MintedSubscriptionId(error).into())
 }

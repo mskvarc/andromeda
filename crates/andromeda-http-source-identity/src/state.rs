@@ -1,5 +1,6 @@
 //! Focused immutable state for context source identity retrieval.
 
+use crate::default_tenant_contexts::DefaultTenantContextsResolver;
 use andromeda_extensions::{advertisement::enabled_extension_extras, enabled::EnabledExtensions};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType, uptime_duration};
@@ -20,6 +21,9 @@ use std::{sync::Arc, time::Duration};
 pub struct SourceIdentityState {
     /// The configured identity, shared by every request.
     configured: Arc<ConfiguredIdentity>,
+    /// The default tenant's contexts, which the response is resolved and
+    /// hosted with (clause 4.14).
+    contexts: Arc<dyn DefaultTenantContextsResolver>,
 }
 
 /// The operator-configured part of the identity.
@@ -56,6 +60,7 @@ impl SourceIdentityState {
         started_at: DateTime<Utc>,
         extras: Option<Value>,
         enabled: EnabledExtensions,
+        contexts: Arc<dyn DefaultTenantContextsResolver>,
     ) -> SourceIdentityState {
         SourceIdentityState {
             configured: Arc::new(ConfiguredIdentity {
@@ -65,7 +70,15 @@ impl SourceIdentityState {
                 extras,
                 enabled,
             }),
+            contexts,
         }
+    }
+
+    /// The default tenant's contexts, which the response is resolved and
+    /// hosted with.
+    #[must_use]
+    pub fn contexts(&self) -> &dyn DefaultTenantContextsResolver {
+        self.contexts.as_ref()
     }
 
     /// The identity document `tenant` observes at `now`.
@@ -92,12 +105,26 @@ impl SourceIdentityState {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::SourceIdentityState;
+    use crate::{
+        default_tenant_contexts::{DefaultTenantContexts, DefaultTenantContextsResolver},
+        state::SourceIdentityState,
+    };
     use andromeda_extensions::{advertisement::EXTENSION_KEY, enabled::EnabledExtensions};
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, tenant::TenantName};
-    use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
+    use andromeda_tenancy::{context_source_alias::ContextSourceAliases, error::TenancyError, tenant_ref::TenantRef};
     use chrono::{Duration, Utc};
-    use std::error::Error;
+    use futures::future::BoxFuture;
+    use std::{error::Error, sync::Arc};
+
+    /// A broker whose default tenant is never reached: the identity document
+    /// itself needs none.
+    struct NoDefaultTenant;
+
+    impl DefaultTenantContextsResolver for NoDefaultTenant {
+        fn resolve(&self) -> BoxFuture<'_, Result<DefaultTenantContexts, TenancyError>> {
+            Box::pin(async { Err(TenancyError::MultiTenancyDisabled) })
+        }
+    }
 
     fn state() -> Result<SourceIdentityState, Box<dyn Error>> {
         state_with(EnabledExtensions::none())
@@ -110,6 +137,7 @@ mod tests {
             Utc::now() - Duration::hours(2),
             Some(serde_json::json!({"node": 1})),
             enabled,
+            Arc::new(NoDefaultTenant),
         ))
     }
 

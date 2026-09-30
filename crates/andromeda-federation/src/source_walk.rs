@@ -37,8 +37,10 @@ use crate::{
     outcome::ForwardGetOutcome,
     read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer},
     source_continuation::SourceContinuation,
+    source_read::SourceRead,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use futures::{StreamExt, stream};
 use serde_json::Value;
@@ -65,7 +67,7 @@ pub(crate) trait WalkedAnswer: Sized {
     fn warnings(&mut self) -> &mut Vec<NgsiLdWarning>;
 
     /// The identifier of the entity an element stands for, when it names one.
-    fn identifier(element: &Self::Element) -> Option<&str>;
+    fn identifier(element: &Self::Element) -> Option<Identifier>;
 
     /// Take over what a later page of the same answer reported beside its
     /// elements, once the walk has taken the elements themselves.
@@ -108,6 +110,16 @@ enum Fetch {
     Post(Result<Url, FederationError>, Vec<u8>),
 }
 
+/// One page a walk requested: the page a `next` pointer named, or the page of
+/// a batch query starting at an offset.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum RequestedPage {
+    /// The page a source's `next` pointer names.
+    Pointer(Url),
+    /// The page of a batch query starting after this many elements.
+    Offset(u64),
+}
+
 /// How far into a source's answer the walk has read, counted in the elements
 /// the source sent -- including any the broker then discards, such as an
 /// expired entity (clause 5.7.2.4) -- because that is what the source's own
@@ -118,11 +130,11 @@ struct AnswerPosition {
     elements: u64,
     /// The pages already requested, so a source pointing back at one of them
     /// cannot keep the walk going forever.
-    requested: HashSet<String>,
+    requested: HashSet<RequestedPage>,
     /// The identifiers gathered so far, so an offset walk over a source that
     /// ignores `offset` -- answering the same entities again -- ends instead of
     /// gathering them forever.
-    gathered: HashSet<String>,
+    gathered: HashSet<Identifier>,
 }
 
 impl AnswerPosition {
@@ -138,18 +150,18 @@ impl AnswerPosition {
     fn fresh<A: WalkedAnswer>(&mut self, elements: Vec<A::Element>) -> Vec<A::Element> {
         elements
             .into_iter()
-            .filter(|element| A::identifier(element).is_none_or(|id| self.gathered.insert(id.to_owned())))
+            .filter(|element| A::identifier(element).is_none_or(|id| self.gathered.insert(id)))
             .collect()
     }
 
     /// Record `request`, answering `false` when it names a page already
     /// requested.
     fn first_request_of(&mut self, request: &NextPage) -> bool {
-        let key = match request {
-            NextPage::Pointer(url) => url.as_str().to_owned(),
-            NextPage::Offset { .. } => format!("offset={}", self.elements),
+        let page = match request {
+            NextPage::Pointer(url) => RequestedPage::Pointer(url.clone()), // clone: the set remembers the page the request still sends
+            NextPage::Offset { .. } => RequestedPage::Offset(self.elements),
         };
-        self.requested.insert(key)
+        self.requested.insert(page)
     }
 }
 
@@ -254,6 +266,7 @@ impl FederationService {
                     break;
                 }
                 failure @ (ForwardGetOutcome::InvalidPayload(_)
+                | ForwardGetOutcome::UnreadableNames(_)
                 | ForwardGetOutcome::ErrorStatus(_)
                 | ForwardGetOutcome::Transport(_)
                 | ForwardGetOutcome::LoopDetected) => {
@@ -294,23 +307,16 @@ impl FederationService {
     /// Fetch one page, telling the source the location of the map in use
     /// (clause 5.5.14).
     async fn fetch_page(&self, registration: &ContextSourceRegistration, fetch: Fetch, conditions: ForwardedGetConditions<'_>) -> ForwardGetOutcome {
-        let linked_map = conditions.entity_map.location_for(&registration.id);
+        let read = SourceRead::builder()
+            .registration(registration)
+            .inbound(conditions.context)
+            .triggering(conditions.triggering)
+            .linked_map(conditions.entity_map.location_for(&registration.id))
+            .vocabulary(conditions.vocabulary)
+            .build();
         match fetch {
-            Fetch::Get(url) => {
-                self.forward_get(
-                    registration,
-                    url,
-                    conditions.context,
-                    conditions.triggering,
-                    conditions.cacheability,
-                    linked_map,
-                )
-                .await
-            }
-            Fetch::Post(url, body) => {
-                self.forward_post_query(registration, url, body, conditions.context, conditions.triggering, linked_map)
-                    .await
-            }
+            Fetch::Get(url) => self.forward_get(read, url, conditions.cacheability).await,
+            Fetch::Post(url, body) => self.forward_post_query(read, url, &body).await,
         }
     }
 }
@@ -326,6 +332,7 @@ const fn elements_sent(outcome: &ForwardGetOutcome) -> usize {
         },
         ForwardGetOutcome::NotFound(_)
         | ForwardGetOutcome::InvalidPayload(_)
+        | ForwardGetOutcome::UnreadableNames(_)
         | ForwardGetOutcome::ErrorStatus(_)
         | ForwardGetOutcome::Transport(_)
         | ForwardGetOutcome::LoopDetected => 0,
@@ -343,6 +350,7 @@ fn pointer_continuation(registration: &ContextSourceRegistration, outcome: &Forw
         },
         ForwardGetOutcome::NotFound(_)
         | ForwardGetOutcome::InvalidPayload(_)
+        | ForwardGetOutcome::UnreadableNames(_)
         | ForwardGetOutcome::ErrorStatus(_)
         | ForwardGetOutcome::Transport(_)
         | ForwardGetOutcome::LoopDetected => PageEnd::Stop(None),

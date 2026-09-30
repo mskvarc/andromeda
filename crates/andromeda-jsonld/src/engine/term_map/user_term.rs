@@ -60,22 +60,49 @@ pub(crate) struct UserTermTable {
 }
 
 /// Parsed request contexts cached by context URL.
+///
+/// A table is a copy derived from the document the loader holds, so it is only
+/// as fresh as that document: once the loader's entry lapses (clause 6.3.16
+/// for a download, the revalidation span for a document the broker stores
+/// itself) and the document is read again, a table parsed from the old copy is
+/// stale. Each table therefore remembers the document it was parsed from, and
+/// is reused only while the loader still holds that same document.
 #[derive(Debug, Default)]
 pub(crate) struct UserTermTableCache {
     /// Parsed term tables indexed by their context IRI.
-    tables: DashMap<IriBuf, Arc<UserTermTable>>,
+    tables: DashMap<IriBuf, ParsedTermTable>,
+}
+
+/// One parsed table and the document it was parsed from.
+#[derive(Debug)]
+struct ParsedTermTable {
+    /// The loader's document the table was parsed from, compared by identity.
+    source: Arc<jsonld_syntax::Value>,
+    /// The parsed table.
+    table: Arc<UserTermTable>,
 }
 
 impl UserTermTableCache {
-    /// Resolve and parse a context URL on its first use.
+    /// Resolve and parse a context URL, reusing the table parsed earlier while
+    /// the loader still holds the document it was parsed from.
     pub(crate) async fn get_or_load(&self, loader: &HttpContextLoader, url: &IriBuf) -> Result<Arc<UserTermTable>, JsonLdError> {
-        if let Some(cached) = self.tables.get(url) {
-            return Ok(Arc::clone(cached.value()));
+        let held = loader.held_document(url).await?;
+        if let Some(held) = held.as_ref()
+            && let Some(cached) = self.tables.get(url)
+            && Arc::ptr_eq(&cached.source, held)
+        {
+            return Ok(Arc::clone(&cached.table));
         }
         let value = loader.load_value(url).await?;
         let serde_value = jsonld_syntax::Value::into_serde_json((*value).clone()); // clone: the loader retains its cached document
         let table = Arc::new(parse_user_context(&serde_value));
-        self.tables.insert(url.clone(), Arc::clone(&table));
+        self.tables.insert(
+            url.clone(), // clone: the map owns its key while the caller keeps the URL
+            ParsedTermTable {
+                source: value,
+                table: Arc::clone(&table),
+            },
+        );
         Ok(table)
     }
 
@@ -204,9 +231,111 @@ fn iri_from_context(value: &str) -> Option<IriBuf> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{context_term::ContextTerm, engine::term_map::user_term::parse_user_context};
-    use iri_rs::IriBuf;
-    use serde_json::json;
+    use crate::{
+        context_cache::{CachedContext, ContextCache, ContextCacheError, StoredDocumentSource},
+        context_registry::ContextRegistry,
+        context_term::ContextTerm,
+        engine::term_map::user_term::{UserTermTableCache, parse_user_context},
+        hosted_context_recognizer::{HostedContextRecognizer, HostedReference, NoHostedContexts},
+        loader::{
+            cache_lifetime::{CacheLifetime, ResidualLifetime},
+            http::HttpContextLoader,
+            loader_settings::LoaderSettings,
+        },
+    };
+    use iri_rs::{IriBuf, IriRefBuf};
+    use serde_json::{Value, json};
+    use std::sync::{Arc, RwLock};
+
+    /// A durable cache holding one broker-stored row whose document a test can
+    /// replace, as another broker process sharing the database could.
+    #[derive(Debug)]
+    struct ReplaceableRow {
+        /// The document the row holds now.
+        payload: RwLock<Value>,
+    }
+
+    #[async_trait::async_trait]
+    impl ContextCache for ReplaceableRow {
+        async fn get(&self, _url: &IriBuf) -> Result<Option<CachedContext>, ContextCacheError> {
+            Ok(Some(CachedContext {
+                payload: self.payload.read().expect("the row lock").clone(), // clone: the row keeps its document for the next read
+                residual: ResidualLifetime::Unbounded,
+                canonical_url: None,
+                source: StoredDocumentSource::Broker,
+            }))
+        }
+
+        async fn put(&self, _url: &IriBuf, _document_url: &IriBuf, _payload: &Value, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
+            Ok(())
+        }
+    }
+
+    /// A table parsed from a document is stale once the loader has read that
+    /// document again (its in-process entry lapsed and the row changed), so the
+    /// next lookup parses the document the loader holds now rather than
+    /// returning the table parsed from the old one.
+    #[tokio::test]
+    async fn a_table_is_parsed_again_once_the_loader_reads_its_document_again() {
+        let row = Arc::new(ReplaceableRow {
+            payload: RwLock::new(json!({ "@context": { "speed": "https://example.org/speed" } })),
+        });
+        let loader = HttpContextLoader::new(Arc::new(ContextRegistry::new()), LoaderSettings::offline(), Arc::new(NoHostedContexts))
+            .expect("the loader builds")
+            .with_l2_cache(Arc::clone(&row) as Arc<dyn ContextCache>);
+        let tables = UserTermTableCache::default();
+        let url = IriBuf::new("urn:ngsi-ld:JsonLdContext:hosted".to_owned()).expect("a valid identifier");
+
+        let first = tables.get_or_load(&loader, &url).await.expect("the first table");
+        let again = tables.get_or_load(&loader, &url).await.expect("the same table");
+        assert!(Arc::ptr_eq(&first, &again), "an unchanged document keeps its parsed table");
+
+        *row.payload.write().expect("the row lock") = json!({ "@context": { "velocity": "https://example.org/velocity" } });
+        // The in-process entry lapsing is what the revalidation span does; the
+        // parsed tables are deliberately left alone here.
+        loader.invalidate(&url).await;
+
+        let reread = tables.get_or_load(&loader, &url).await.expect("the table of the document read again");
+        assert!(reread.terms.contains_key("velocity"), "{:?}", reread.terms.keys().collect::<Vec<_>>());
+        assert!(!reread.terms.contains_key("speed"));
+    }
+
+    /// The identifier every reference below names.
+    const OWN: &str = "urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b";
+
+    /// Recognises the stored-context path of [`OWN`] on any origin.
+    #[derive(Debug)]
+    struct OwnPath;
+
+    impl HostedContextRecognizer for OwnPath {
+        fn recognize(&self, reference: &IriRefBuf) -> HostedReference {
+            if reference.as_str().ends_with(&format!("/ngsi-ld/v1/jsonldContexts/{OWN}")) {
+                HostedReference::Own(OWN.parse().expect("a stored identifier"))
+            } else {
+                HostedReference::Unrelated
+            }
+        }
+    }
+
+    /// A stored `@context` named by its URL is held under its identifier, so
+    /// the table parsed from it is reused while the loader still holds that
+    /// document, like the table of any other context.
+    #[tokio::test]
+    async fn the_table_of_an_own_context_named_by_its_url_is_reused() {
+        let row = Arc::new(ReplaceableRow {
+            payload: RwLock::new(json!({ "@context": { "speed": "https://example.org/speed" } })),
+        });
+        let loader = HttpContextLoader::new(Arc::new(ContextRegistry::new()), LoaderSettings::offline(), Arc::new(OwnPath))
+            .expect("the loader builds")
+            .with_l2_cache(Arc::clone(&row) as Arc<dyn ContextCache>);
+        let tables = UserTermTableCache::default();
+        let url = IriBuf::new(format!("http://127.0.0.1:1056/ngsi-ld/v1/jsonldContexts/{OWN}")).expect("a valid URL");
+
+        let first = tables.get_or_load(&loader, &url).await.expect("the first table");
+        let again = tables.get_or_load(&loader, &url).await.expect("the same table");
+
+        assert!(Arc::ptr_eq(&first, &again), "an own context's parsed table is reused");
+    }
 
     #[test]
     fn a_context_of_plain_terms_declares_no_scoped_context_and_names_no_nested_reference() {

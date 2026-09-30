@@ -15,7 +15,9 @@
 
 use crate::{
     jsonld_context::{
+        mapper::{ContextMapperError, row_document_source},
         repo::JsonLdContextRepository,
+        rows::FreshContextRow,
         statement::{cached_upsert, fresh_cached_context_query},
     },
     store_fault::{StoreFault, persistence_failure},
@@ -24,42 +26,51 @@ use andromeda_jsonld::{
     context_cache::{CachedContext, ContextCache, ContextCacheError},
     loader::cache_lifetime::{CacheLifetime, ResidualLifetime},
 };
-use andromeda_ngsi_ld_lexicon::uri::NGSI_LD_URN_NID;
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sea_query::PostgresQueryBuilder;
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
-use sqlx::types::Json;
-use urn_rs::UrnBuilder;
-use uuid::Uuid;
 
 #[async_trait]
 impl ContextCache for JsonLdContextRepository {
     async fn get(&self, url: &IriBuf) -> Result<Option<CachedContext>, ContextCacheError> {
         let (sql, values) = fresh_cached_context_query(url.as_str()).build_sqlx(PostgresQueryBuilder);
-        let row: Option<(Json<Value>, Option<DateTime<Utc>>, Option<String>, DateTime<Utc>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let row: Option<FreshContextRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| ContextCacheError::Read(persistence_failure(&error)))?;
-        Ok(row.and_then(|(payload, expires_at, serving_url, read_at)| {
-            residual_lifetime(expires_at, read_at).map(|residual| CachedContext {
-                payload: payload.0,
-                residual,
-                // Clause 5.13.3.5 keys `numberOfHits` on the stored URL; a row
-                // reached by its local id carries the serving URL here so the
-                // access is attributed to the same key the metadata reports.
-                canonical_url: serving_url.and_then(|url| IriBuf::new(url).ok()),
-            })
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let Some(residual) = residual_lifetime(row.expires_at, row.read_at) else {
+            return Ok(None);
+        };
+        let source = row_document_source(row.kind, row.document_url).map_err(|error| ContextCacheError::Read(persistence_failure(&error)))?;
+        // Clause 5.13.3.5 keys `numberOfHits` on the stored URL; a row reached
+        // by its local id carries the serving URL here so the access is
+        // attributed to the same key the metadata reports.
+        let canonical_url = row
+            .url
+            .map(|url| IriBuf::new(url).map_err(ContextMapperError::ServingIri))
+            .transpose()
+            .map_err(|error| ContextCacheError::Read(persistence_failure(&error)))?;
+        Ok(Some(CachedContext {
+            payload: row.payload.0,
+            residual,
+            canonical_url,
+            source,
         }))
     }
 
-    async fn put(&self, url: &IriBuf, payload: &Value, lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
+    async fn put(&self, url: &IriBuf, document_url: &IriBuf, payload: &Value, lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
         let local_id = cached_context_identifier()?;
         let statement = cached_upsert(
-            &local_id,
+            local_id.as_ref(),
             url.as_str(),
+            document_url.as_str(),
             payload.clone(), // clone: the bound value owns the JSON for the round trip
             lifetime.as_seconds(),
         )
@@ -97,11 +108,13 @@ fn write_failure(error: impl StoreFault) -> ContextCacheError {
 }
 
 /// Mint the local identifier used for a newly cached remote Context.
-fn cached_context_identifier() -> Result<String, ContextCacheError> {
-    UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4()))
-        .build()
-        .map(|identifier| identifier.to_string())
-        .map_err(write_failure)
+///
+/// A random one: the original URL is already a second, stable identity clients
+/// may address the entry by (Table 6.30.2-1), so deriving the local identifier
+/// from it would add nothing. A refresh of the same URL keeps the identifier
+/// the first download minted, since the upsert leaves the `id` column alone.
+fn cached_context_identifier() -> Result<JsonLdContextId, ContextCacheError> {
+    JsonLdContextId::mint().map_err(write_failure)
 }
 
 #[cfg(test)]
@@ -114,8 +127,8 @@ mod tests {
     use chrono::{TimeDelta, Utc};
 
     #[test]
-    fn cached_context_identifier_uses_the_ngsi_ld_namespace() -> Result<(), ContextCacheError> {
-        assert!(cached_context_identifier()?.starts_with("urn:ngsi-ld:Context:"));
+    fn cached_context_identifier_is_a_json_ld_context_identifier() -> Result<(), ContextCacheError> {
+        assert!(cached_context_identifier()?.to_string().starts_with("urn:ngsi-ld:JsonLdContext:"));
         Ok(())
     }
 

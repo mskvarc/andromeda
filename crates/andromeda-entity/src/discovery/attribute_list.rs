@@ -9,16 +9,15 @@ use crate::{
         rendered_names::{compacted_attribute_name, compacted_attribute_names, compacted_type_names},
         stored_names::parse_discovery_iri,
     },
+    entity_invariant::EntityInvariant,
     error::EntityError,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, ngsi_ld_urn::AttributeListId, uri::NGSI_LD_URN_NID};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, ngsi_ld_urn::AttributeListId};
 use andromeda_ngsi_ld_model::attribute_list::{AttributeInfo, AttributeList, AttributeListType, AttributeResourceType};
 use serde_json::Value;
 use std::collections::HashMap;
-use urn_rs::UrnBuilder;
-use uuid::Uuid;
 
 /// The entity types an attribute is known to belong to, across the local
 /// store and the registry.
@@ -34,10 +33,8 @@ impl EntityDiscoveryService {
     /// # Errors
     ///
     /// Reports [`EntityError::Persistence`] when the store or the registry
-    /// could not be read, [`EntityError::Identifier`] or
-    /// [`EntityError::AttributeListIdentifier`] when the generated list
-    /// identifier is not a well-formed NGSI-LD URN, and
-    /// [`EntityError::Internal`] when a stored name does not read back as one.
+    /// could not be read, and [`EntityError::Internal`] when a stored name does
+    /// not read back as one or the minted list identifier is not one.
     pub async fn attributes(
         &self,
         target: &ContextTarget,
@@ -97,8 +94,7 @@ async fn attribute_name_list(attr_iris: impl IntoIterator<Item = AttributeName>,
     compacted_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     let compacted_names = compacted_names;
 
-    let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("AttributeList:{}", Uuid::new_v4())).build()?;
-    let id = AttributeListId::try_from(id)?;
+    let id = AttributeListId::mint().map_err(EntityInvariant::MintedAttributeListId)?;
 
     let list = AttributeList {
         id,

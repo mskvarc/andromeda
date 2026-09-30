@@ -1,16 +1,13 @@
-//! HTTP execution and header construction for federated requests.
+//! Header construction for federated requests (clauses 6.3.18, 6.3.19).
 
 use crate::{
     FederationService,
-    SentResponse,
-    cache::{CacheKey, Cacheability, ForwardedGetCache},
     error::FederationError,
     federation_invariant::FederationInvariant,
-    forwarded_payload::{ForwardedPayload, build_forwarded_payload},
+    forwarded_payload::ForwardedPayload,
     forwarding_url::with_local_scope,
-    outcome::{ForwardGetOutcome, ForwardedResponse, TransportFailure},
+    registration_payload::context_source_info,
     request::TriggeringRequest,
-    source_continuation::SourceContinuation,
 };
 use andromeda_http_headers::{
     accept::Accept,
@@ -18,19 +15,15 @@ use andromeda_http_headers::{
     media_type::ResponseMediaType,
     ngsild_entity_map::NgsiLdEntityMap,
     ngsild_tenant::NgsiLdTenant,
-    ngsild_warning::NgsiLdWarning,
     prefer::Prefer,
     via::Via,
-    warning::Warning,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{dereferenceable_uri::DereferenceableUri, identifier::Identifier, spec_version::SpecVersion};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, registration::ContextSourceRegistration, registration_management::LocalScope};
 use headers::{Header, HeaderMapExt};
 use http::{HeaderMap, HeaderName, HeaderValue};
 use iri_rs::{Iri, iri};
 use std::{iter, str::FromStr};
-use tracing::{debug, warn};
 use url::Url;
 
 /// The value of a `contextSourceInfo` pair that is copied from the triggering request (clause 6.3.19).
@@ -53,158 +46,9 @@ pub(crate) struct ForwardedRequest<'a> {
     pub(crate) linked_map: Option<&'a Identifier>,
 }
 
-/// Read a registration's `contextSourceInfo`; stored registrations passed the
-/// clause 4.3.6.6 restrictions at registration time, so a failure here is an
-/// invariant violation rather than a request error.
-fn context_source_info(registration: &ContextSourceRegistration) -> Result<ContextSourceInfo<'_>, FederationError> {
-    let pairs = registration.access.context_source_info.as_deref().unwrap_or_default();
-    ContextSourceInfo::try_from(pairs).map_err(|source| {
-        FederationInvariant::ContextSourceInfo {
-            registration: registration.id.clone(), // clone: the error owns the registration it names
-            source,
-        }
-        .into()
-    })
-}
-
 impl FederationService {
-    /// Decide the representation one forwarded request carries for `registration`.
-    pub(crate) async fn payload_for(
-        &self,
-        registration: &ContextSourceRegistration,
-        inbound: &ContextSpec,
-        body: Option<&[u8]>,
-    ) -> Result<ForwardedPayload, FederationError> {
-        let info = context_source_info(registration)?;
-        build_forwarded_payload(
-            &self.engine,
-            inbound,
-            body,
-            &info,
-            registration.access.jsonld_context.as_ref().map(DereferenceableUri::url),
-        )
-        .await
-    }
-
-    /// Make a GET request to a context source endpoint.
-    pub(crate) async fn forward_get(
-        &self,
-        registration: &ContextSourceRegistration,
-        url: Result<Url, FederationError>,
-        inbound: &ContextSpec,
-        triggering: TriggeringRequest<'_>,
-        cacheability: Cacheability,
-        linked_map: Option<&Identifier>,
-    ) -> ForwardGetOutcome {
-        if self.registration_loops(registration, triggering.via) {
-            return ForwardGetOutcome::LoopDetected;
-        }
-        let url = match url {
-            Ok(url) => url,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
-        };
-        let payload = match self.payload_for(registration, inbound, None).await {
-            Ok(payload) => payload,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
-        };
-        let cache_duration = match cacheability {
-            Cacheability::Cacheable => ForwardedGetCache::duration_of(registration),
-            Cacheability::Uncacheable => None,
-        };
-        let cache_key = cache_duration.map(|_| CacheKey::new(registration, &url, &payload.link_contexts));
-        if let Some(key) = &cache_key
-            && let Some(response) = self.cache.lookup(key)
-        {
-            return ForwardGetOutcome::Success(response);
-        }
-        if let Some(remaining) = self.cooldowns.remaining(registration) {
-            // Clause 5.2.34: a request inside the cooldown window is answered
-            // with a timeout for the registration, without contacting it.
-            return ForwardGetOutcome::Transport(TransportFailure::CoolingDown { remaining });
-        }
-        debug!("CS forwarding GET {}", url);
-
-        let answered = url.clone(); // clone: the next-page pointer resolves against the URL the request consumes
-        let request = match self.build_request(ForwardedRequest {
-            method: reqwest::Method::GET,
-            url,
-            payload: &payload,
-            registration,
-            triggering,
-            linked_map,
-        }) {
-            Ok(request) => request,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
-        };
-
-        let sent = match self.send_request(registration, request).await {
-            Ok(sent) => sent,
-            Err(failure) => return ForwardGetOutcome::Transport(failure),
-        };
-
-        let outcome = interpret_read_response(registration, &answered, sent);
-        if let ForwardGetOutcome::Success(response) = &outcome
-            && let (Some(key), Some(duration)) = (cache_key, cache_duration)
-        {
-            self.cache.store(key, response, duration);
-        }
-        outcome
-    }
-
-    /// Make a POST batch query (`/entityOperations/query`) to a context source
-    /// (clause 6.23), sent when a registration advertises `queryBatch` but not a
-    /// direct retrieve/query (clause 4.3.6.1). The batch query is not among the
-    /// cacheable GET resources of clause 6.3.17, so no cache is consulted, and its
-    /// array answer is read exactly as a forwarded query's (clause 5.7.2.4).
-    pub(crate) async fn forward_post_query(
-        &self,
-        registration: &ContextSourceRegistration,
-        url: Result<Url, FederationError>,
-        body: Vec<u8>,
-        inbound: &ContextSpec,
-        triggering: TriggeringRequest<'_>,
-        linked_map: Option<&Identifier>,
-    ) -> ForwardGetOutcome {
-        if self.registration_loops(registration, triggering.via) {
-            return ForwardGetOutcome::LoopDetected;
-        }
-        let url = match url {
-            Ok(url) => url,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
-        };
-        let payload = match self.payload_for(registration, inbound, Some(&body)).await {
-            Ok(payload) => payload,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
-        };
-        if let Some(remaining) = self.cooldowns.remaining(registration) {
-            // Clause 5.2.34: a request inside the cooldown window is answered
-            // with a timeout for the registration, without contacting it.
-            return ForwardGetOutcome::Transport(TransportFailure::CoolingDown { remaining });
-        }
-        debug!("CS forwarding POST {}", url);
-
-        let answered = url.clone(); // clone: the next-page pointer resolves against the URL the request consumes
-        let request = match self.build_request(ForwardedRequest {
-            method: reqwest::Method::POST,
-            url,
-            payload: &payload,
-            registration,
-            triggering,
-            linked_map,
-        }) {
-            Ok(request) => request,
-            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
-        };
-
-        let sent = match self.send_request(registration, request).await {
-            Ok(sent) => sent,
-            Err(failure) => return ForwardGetOutcome::Transport(failure),
-        };
-        interpret_read_response(registration, &answered, sent)
-    }
-
     /// Build a request with every header clause 6.3.19 and clause 6.3.18 call
-    /// for: the context `Link`s, `Accept`, the body with its `Content-Type`,
+    /// for: the one context `Link`, `Accept`, the body with its `Content-Type`,
     /// the `contextSourceInfo` custom headers, `NGSILD-Tenant` and `Via`.
     pub(crate) fn build_request(&self, forwarded: ForwardedRequest<'_>) -> Result<reqwest::RequestBuilder, FederationError> {
         let ForwardedRequest {
@@ -227,11 +71,10 @@ impl FederationService {
 
         let mut typed_headers = HeaderMap::new();
         typed_headers.typed_insert(headers::Connection::close());
-        for context in &payload.link_contexts {
-            let link = Link::jsonld_context(context.clone()); // clone: the header owns the IRI reference.
-            if let Some(value) = link.to_header_value() {
-                typed_headers.append(Link::name().clone(), value);
-            }
+        // JSON-LD 1.1 section 6.1 admits one context link, and a source that
+        // follows the JSON-LD 1.1 API refuses a request naming several.
+        if let Some(context) = &payload.link_context {
+            Link::insert_jsonld_context(&mut typed_headers, context.clone()); // clone: the header owns the context IRI while the payload is sent again for the next registration.
         }
 
         let accept = info
@@ -249,11 +92,13 @@ impl FederationService {
         if method == reqwest::Method::GET {
             typed_headers.typed_insert(conformance_preference(&info));
         }
-        // Clause 6.3.19 maps the registration's `contentType` instruction to
-        // the forwarded request header independently of whether this
-        // operation carries a body. Context sources can use that declared
-        // representation contract for body-less consumption requests too.
-        typed_headers.typed_insert(payload.media_type);
+        // Clause 6.3.19 sets `Content-Type` "whenever a payload body is
+        // present": a body-less request carries none, which also keeps an
+        // `application/ld+json` media type from travelling beside a context
+        // `Link` a source must refuse under clause 6.3.5.
+        if payload.body.is_some() {
+            typed_headers.typed_insert(payload.media_type);
+        }
 
         let mut request = self.http_client.request(method, url).headers(typed_headers);
         request = apply_custom_headers(request, &info, triggering.headers)?;
@@ -293,58 +138,6 @@ impl FederationService {
         request = request.headers(via_headers);
 
         Ok(request)
-    }
-}
-
-/// Read a forwarded read response into its clause 6.3.17 outcome: a 404 that
-/// contributes nothing, an error status, a stale/relayed warning set, or the
-/// parsed entities. The GET and the POST batch-query bindings answer the same
-/// way (clause 5.7.2.4), so both interpret their response here. `answered` is
-/// the URL the request was sent to, which the source's `next` pointer resolves
-/// against (clause 6.3.10).
-fn interpret_read_response(registration: &ContextSourceRegistration, answered: &Url, sent: SentResponse) -> ForwardGetOutcome {
-    let registration_id = &registration.id;
-    if sent.status == reqwest::StatusCode::NOT_FOUND {
-        return ForwardGetOutcome::NotFound(sent.ngsild_warnings);
-    }
-    if !sent.status.is_success() {
-        return ForwardGetOutcome::ErrorStatus(sent.status.as_u16());
-    }
-    if let Some(version) = sent.returned_version {
-        // Clause 4.3.6.8: the version the source says its payload conforms
-        // to is recorded; the payload is read as the entity data it is.
-        debug!(registration = %registration_id, %version, "context source answered with its conformant version");
-    }
-    // Propagate IANA Warning 110 (Response is Stale) from the context source (clause 6.3.17).
-    let mut warnings = Vec::new();
-    if let Some(Warning { code: 110, text, .. }) = sent.warning {
-        warnings.push(NgsiLdWarning::ResponseIsStale(text));
-    }
-    // Clause 6.3.17 applies along the whole chain: what the source could not
-    // reach behind it is as missing from this response as from its own.
-    warnings.extend(sent.ngsild_warnings);
-    // Clause 6.3.10: a 206 says where the answer was cut short. One that does
-    // not say it cannot be combined with the rest of the result, so the
-    // client is told the source's part may be incomplete.
-    if sent.status == reqwest::StatusCode::PARTIAL_CONTENT && sent.partial_range.is_none() {
-        warnings.push(NgsiLdWarning::MiscellaneousWarning(format!(
-            "Context source {registration_id} answered 206 without a readable Content-Range; its part of the history may be incomplete"
-        )));
-    }
-
-    let text = String::from_utf8_lossy(&sent.body);
-    match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(body) => ForwardGetOutcome::Success(ForwardedResponse {
-            body,
-            warnings,
-            entity_map: sent.entity_map,
-            continuation: SourceContinuation::of(sent.next_page.as_ref(), answered, registration.access.endpoint.url()),
-            partial_range: sent.partial_range,
-        }),
-        Err(e) => {
-            warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);
-            ForwardGetOutcome::InvalidPayload(e)
-        }
     }
 }
 
@@ -409,6 +202,7 @@ mod tests {
     use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, key_value_pair::KeyValuePair, registration::ContextSourceRegistration};
     use headers::Header;
     use http::{HeaderMap, HeaderValue};
+    use iri_rs::IriBuf;
     use serde_json::json;
     use std::sync::Arc;
     use url::Url;
@@ -442,6 +236,25 @@ mod tests {
         serde_json::from_value(document).expect("valid registration")
     }
 
+    /// The headers of `payload` forwarded with `method` to `registration`, when
+    /// the triggering request carried `incoming`.
+    fn forwarded_headers(registration: &ContextSourceRegistration, method: reqwest::Method, payload: &ForwardedPayload, incoming: &HeaderMap) -> HeaderMap {
+        let request = service()
+            .build_request(ForwardedRequest {
+                method,
+                url: Url::parse("https://peer.example.org/ngsi-ld/v1/entities").expect("valid URL"),
+                payload,
+                registration,
+                triggering: TriggeringRequest {
+                    via: None,
+                    headers: Some(incoming),
+                },
+                linked_map: None,
+            })
+            .expect("the request builds");
+        headers_of(request)
+    }
+
     /// The `NGSILD-Tenant` a request forwarded to `registration` carries when
     /// the triggering request ran in the tenant `triggering_tenant`.
     fn forwarded_tenant(registration: &ContextSourceRegistration, triggering_tenant: Option<&'static str>) -> Option<String> {
@@ -451,25 +264,75 @@ mod tests {
         }
         let payload = ForwardedPayload {
             media_type: ResponseMediaType::Json,
-            link_contexts: Vec::new(),
+            link_context: None,
             body: None,
         };
-        let request = service()
-            .build_request(ForwardedRequest {
-                method: reqwest::Method::GET,
-                url: Url::parse("https://peer.example.org/ngsi-ld/v1/entities").expect("valid URL"),
-                payload: &payload,
-                registration,
-                triggering: TriggeringRequest {
-                    via: None,
-                    headers: Some(&incoming),
-                },
-                linked_map: None,
-            })
-            .expect("the request builds");
-        headers_of(request)
+        forwarded_headers(registration, reqwest::Method::GET, &payload, &incoming)
             .get("ngsild-tenant")
             .map(|value| value.to_str().expect("a valid header value").to_owned())
+    }
+
+    /// Every JSON-LD context link-value across all `Link` field lines.
+    fn context_link_values(headers: &HeaderMap) -> Vec<String> {
+        headers
+            .get_all("link")
+            .iter()
+            .flat_map(|line| line.to_str().expect("an ASCII Link header").split(',').map(str::to_owned).collect::<Vec<_>>())
+            .filter(|value| value.contains("http://www.w3.org/ns/json-ld#context"))
+            .collect()
+    }
+
+    /// JSON-LD 1.1 section 6.1: a forwarded request names exactly one context
+    /// link-value when its payload has a context `Link`, and none otherwise.
+    #[test]
+    fn a_forwarded_request_carries_exactly_the_one_context_link_of_its_payload() {
+        let registration = registration(None);
+        let with_link = ForwardedPayload {
+            media_type: ResponseMediaType::Json,
+            link_context: Some(IriBuf::new("https://example.org/user.jsonld".to_owned()).expect("valid IRI")),
+            body: None,
+        };
+        let values = context_link_values(&forwarded_headers(&registration, reqwest::Method::GET, &with_link, &HeaderMap::new()));
+        pretty_assertions::assert_eq!(values.len(), 1, "{values:?}");
+        assert!(values[0].contains("<https://example.org/user.jsonld>"), "{values:?}");
+
+        let without_link = ForwardedPayload {
+            media_type: ResponseMediaType::Json,
+            link_context: None,
+            body: None,
+        };
+        pretty_assertions::assert_eq!(
+            context_link_values(&forwarded_headers(&registration, reqwest::Method::GET, &without_link, &HeaderMap::new())),
+            Vec::<String>::new()
+        );
+    }
+
+    /// Clause 6.3.19 sets `Content-Type` "whenever a payload body is present":
+    /// a body-less request carries none, even when the registration's
+    /// `contentType` is `application/ld+json`.
+    #[test]
+    fn content_type_is_sent_only_with_a_body() {
+        let registration = registration(None);
+        let body_less = ForwardedPayload {
+            media_type: ResponseMediaType::JsonLd,
+            link_context: None,
+            body: None,
+        };
+        for method in [reqwest::Method::GET, reqwest::Method::DELETE] {
+            assert!(
+                forwarded_headers(&registration, method, &body_less, &HeaderMap::new())
+                    .get("content-type")
+                    .is_none()
+            );
+        }
+
+        let with_body = ForwardedPayload {
+            media_type: ResponseMediaType::JsonLd,
+            link_context: None,
+            body: Some(b"{}".to_vec()),
+        };
+        let headers = forwarded_headers(&registration, reqwest::Method::POST, &with_body, &HeaderMap::new());
+        pretty_assertions::assert_eq!(headers.get("content-type").map(HeaderValue::as_bytes), Some(b"application/ld+json".as_slice()));
     }
 
     /// Clause 4.14 and Table 5.2.9-1: the forwarded request targets the tenant

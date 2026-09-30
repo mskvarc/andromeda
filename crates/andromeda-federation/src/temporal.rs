@@ -2,23 +2,27 @@
 
 use crate::{
     FederationService,
+    answer_vocabulary::AnswerVocabulary,
     cache::Cacheability,
     config::SplitEntities,
     entity_read::own_loop_warning,
     entity_revalidation::retain_admissible,
     error::FederationError,
-    forwarded_query::{ForwardedQuery, client_query::ClientQuery},
+    forwarded_query::client_query::ClientQuery,
+    forwarding_context::BodyPresence,
     forwarding_url::{build_temporal_query_url, build_temporal_retrieve_url},
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedResponse, ForwardedTemporalEntities, MatchedSources},
     query_forwarding_error::QueryForwardingError,
     read_fan_out::{ForwardedGetConditions, ForwardedRead, ReadSelection, ReadServing, expand_registration_targets, read_outcome},
+    registration_narrowing::Narrowing,
     request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest, SourcePaging},
     source_walk::WalkedAnswer,
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use serde_json::Value;
 use std::slice::from_ref;
@@ -41,8 +45,10 @@ impl WalkedAnswer for ForwardedTemporalEntities {
         &mut self.warnings
     }
 
-    fn identifier(element: &Value) -> Option<&str> {
-        element.get("id").and_then(Value::as_str)
+    /// A temporal entity whose `id` is absent or no identifier names no entity
+    /// and is kept by the walk as it is.
+    fn identifier(element: &Value) -> Option<Identifier> {
+        element.get("id").and_then(Value::as_str).and_then(|raw| raw.parse().ok())
     }
 
     fn absorb(&mut self, page: ForwardedTemporalEntities) {
@@ -121,6 +127,7 @@ impl FederationService {
             // source reported about the sources behind it still travel.
             ForwardGetOutcome::NotFound(cs_warnings) => (!cs_warnings.is_empty()).then(|| answered(Vec::new(), cs_warnings, None, None)).flatten(),
             other @ (ForwardGetOutcome::InvalidPayload(_)
+            | ForwardGetOutcome::UnreadableNames(_)
             | ForwardGetOutcome::ErrorStatus(_)
             | ForwardGetOutcome::Transport(_)
             | ForwardGetOutcome::LoopDetected) => {
@@ -190,12 +197,19 @@ impl FederationService {
         // is a forwarded request of its own.
         let mut targets = Vec::with_capacity(registrations.len());
         let resolver = TermResolver::new(&self.engine, context);
+        let narrowing = Narrowing::builder()
+            .client(client)
+            .inbound(context)
+            .resolver(&resolver)
+            .split(split)
+            .source_page(paging.explicit_page())
+            .presence(BodyPresence::Absent)
+            .build();
         for registration in registrations {
-            let queries = ForwardedQuery::for_registration_on_page(client, &registration, split, paging.explicit_page(), &resolver).await?;
-            let reads = queries
-                .iter()
-                .map(|query| ForwardedRead::Get(build_temporal_query_url(registration.access.endpoint.url(), &query.to_query_string())))
-                .collect();
+            let reads = self
+                .registration_queries(&registration, &narrowing)
+                .await?
+                .into_reads(|query| ForwardedRead::Get(build_temporal_query_url(registration.access.endpoint.url(), &query.to_query_string())));
             expand_registration_targets(registration, reads, &mut targets);
         }
         if targets.is_empty() {
@@ -208,6 +222,7 @@ impl FederationService {
             triggering,
             cacheability: Cacheability::Uncacheable,
             entity_map,
+            vocabulary: AnswerVocabulary::Entities,
         };
         let answers = match paging {
             SourcePaging::Walk(budget) => self.fan_out_walk(targets, conditions, budget).await?,
@@ -266,24 +281,37 @@ impl FederationService {
         // constraint.
         let mut targets = Vec::with_capacity(registrations.len());
         let resolver = TermResolver::new(&self.engine, context);
+        let narrowing = Narrowing::builder()
+            .client(client_query)
+            .inbound(context)
+            .resolver(&resolver)
+            .split(SplitEntities::Complete)
+            .presence(BodyPresence::Absent)
+            .build();
         for registration in registrations {
-            let queries = ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete, &resolver).await?;
-            expand_registration_targets(registration, queries, &mut targets);
+            let reads = self.registration_queries(&registration, &narrowing).await?.into_reads(|query| {
+                ForwardedRead::Get(build_temporal_retrieve_url(
+                    registration.access.endpoint.url(),
+                    entity_id,
+                    &query.to_query_string(),
+                ))
+            });
+            expand_registration_targets(registration, reads, &mut targets);
         }
         if targets.is_empty() {
             return Ok(ForwardReadOutcome::empty());
         }
         let matched = targets.len();
         let answers = self
-            .fan_out_get(
+            .fan_out_read(
                 targets,
-                |registration, query| build_temporal_retrieve_url(registration.access.endpoint.url(), entity_id, &query.to_query_string()),
                 FederationService::temporal_entities_of,
                 ForwardedGetConditions {
                     context,
                     triggering,
                     cacheability: Cacheability::Uncacheable,
                     entity_map,
+                    vocabulary: AnswerVocabulary::Entities,
                 },
             )
             .await;

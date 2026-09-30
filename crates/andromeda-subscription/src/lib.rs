@@ -68,6 +68,8 @@ pub mod status;
 pub mod store;
 /// A stored Subscription paired with its surrogate key.
 pub mod stored_subscription;
+/// The `@context` a subscription is created or updated under.
+pub mod subscription_context;
 /// The invariants subscription policy relies on.
 pub mod subscription_invariant;
 /// The typed members of a `Subscription` payload.
@@ -89,7 +91,6 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-context-space",
         "andromeda-context-commit",
-        "andromeda-context-registry",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",

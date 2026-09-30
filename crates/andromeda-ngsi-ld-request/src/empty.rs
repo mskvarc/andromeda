@@ -4,9 +4,10 @@ use serde::Deserialize;
 
 /// Query parameters for endpoints that accept none.
 ///
-/// Used by subscription creation, context source subscription creation and
-/// temporal entity creation. `deny_unknown_fields` is the point of the type:
-/// a parameter the endpoint does not define is rejected rather than ignored.
+/// Every operation that defines no query parameter extracts it, so a
+/// parameter the operation does not define, the vendor `andromedaTenant` of
+/// Serve @context included, is the clause 6.3.20 `InvalidRequest` rather than
+/// ignored. `deny_unknown_fields` is the point of the type.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyParams {}

@@ -1,7 +1,7 @@
 //! Errors produced by subscription policy and persistence.
 
 use crate::{subscription_invariant::SubscriptionInvariant, subscription_validation_reason::SubscriptionValidationReason};
-use andromeda_jsonld::error::JsonLdError;
+use andromeda_jsonld::{compound_context_host::ContextHostingError, error::JsonLdError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -28,15 +28,16 @@ pub enum SubscriptionError {
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),
+    /// The `@context` applicable at creation could not be hosted, so no
+    /// `jsonldContext` can name it (clause 5.8.1.4).
+    #[error("the subscription's applicable @context could not be hosted: {0}")]
+    ContextHosting(#[from] ContextHostingError),
     /// Query parsing or expansion failed.
     #[error(transparent)]
     Query(#[from] QueryError),
     /// JSON representation processing failed.
     #[error(transparent)]
     Representation(#[from] serde_json::Error),
-    /// Subscription identifier generation failed.
-    #[error(transparent)]
-    Identifier(#[from] urn_rs::Error),
     /// The persistence adapter could not complete the operation.
     #[error("subscription persistence failed: {0}")]
     Persistence(#[source] PersistenceFailure),

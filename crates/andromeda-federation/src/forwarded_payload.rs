@@ -1,27 +1,31 @@
 //! The representation a forwarded request carries (clauses 4.3.6.6, 4.3.6.8, 6.3.5, 6.3.19).
 //!
 //! A request arriving at this broker carries its `@context` in one of the two
-//! ways clause 6.3.5 allows — `Link` headers with `application/json`, or an
-//! inline `@context` with `application/ld+json` — and a registered source
-//! enforces the same rule on what it receives. Mixing them, as forwarding an
-//! `application/ld+json` body alongside a context `Link`, is a
-//! `BadRequestData` at the receiver. This module decides, once, how one
-//! forwarded request carries its context: which media type it is sent as, which
-//! context URLs go into `Link` headers, and what the body looks like after the
-//! registration's `contextSourceInfo` has been applied.
+//! ways clause 6.3.5 allows -- a `Link` header with `application/json`, or an
+//! inline `@context` with `application/ld+json` -- and a registered source
+//! enforces the same rule on what it receives. [`crate::forwarding_context`]
+//! decides once, per registration, which single context a forwarded request is
+//! expressed against; this module writes the request that way: which context
+//! URL goes into its one `Link` header, and what the body looks like once it is
+//! spelled in that context and the registration's `contextSourceInfo` has been
+//! applied.
 
-use crate::{error::FederationError, federation_invariant::FederationInvariant};
+use crate::{
+    error::FederationError,
+    forwarded_names::ForwardedNames,
+    forwarding_context::{ForwardingContext, ForwardingDecision, Rewording},
+    term_resolver::TermResolver,
+};
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_jsonld::{
+    batch_contexts::BatchContext,
     context_spec::ContextSpec,
     engine::{expanded_input::ExpandedInput, options::CompactOptions, processor::JsonLdEngine},
 };
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfo;
 use andromeda_ngsi_ld_render::version::renderer::VersionRenderer;
-use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-use iri_rs::IriRefBuf;
+use iri_rs::IriBuf;
 use serde_json::Value;
-use url::Url;
 
 /// The representation one forwarded request is sent in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,57 +33,27 @@ pub struct ForwardedPayload {
     /// The media type of the forwarded body, which also decides how the
     /// context is carried (clause 6.3.5).
     pub media_type: ResponseMediaType,
-    /// Context URLs placed in `Link` headers; empty for `application/ld+json`,
-    /// whose context travels inline, and for a request that names none.
-    pub link_contexts: Vec<IriRefBuf>,
+    /// The context IRI placed in the one `Link` header; absent for
+    /// `application/ld+json`, whose context travels inline, and for a request
+    /// that names the default context. A forwarded request never names two
+    /// (JSON-LD 1.1 section 6.1).
+    pub link_context: Option<IriBuf>,
     /// The forwarded body, absent for a body-less request.
     pub body: Option<Vec<u8>>,
 }
 
-/// The context a forwarded request is expressed against.
-enum TargetContext {
-    /// The registration's `jsonldContext`: compaction against it is mandatory.
-    Configured(IriRefBuf),
-    /// The inbound request's own context, a list of URLs.
-    InboundUrls(Vec<IriRefBuf>),
-    /// The inbound request's own context, an inline object or an array that
-    /// carries one, which no `Link` header can name.
-    InboundInline(Value),
-}
-
-/// Whether the `@context` a request carried can be named in a `Link` header.
-fn as_context_urls(context: &Value) -> Option<Vec<IriRefBuf>> {
-    match context {
-        Value::String(url) => IriRefBuf::new(url.clone()).ok().map(|url| vec![url]), // clone: the header owns its IRI
-        Value::Array(items) => items
-            .iter()
-            .map(|item| item.as_str().and_then(|url| IriRefBuf::new(url.to_string()).ok()))
-            .collect(),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => None,
-    }
-}
-
-/// Decide which context the forwarded request is expressed against.
-fn target_context(inbound: &ContextSpec, configured: Option<&IriRefBuf>) -> TargetContext {
-    if let Some(configured) = configured {
-        return TargetContext::Configured(configured.clone()); // clone: the payload owns the configured IRI
-    }
-    let mut urls = inbound.link_contexts().to_vec(); // clone: the payload owns its Link IRIs
-    match inbound.body_context() {
-        Some(inline) => match as_context_urls(inline) {
-            Some(inline_urls) => {
-                urls.extend(inline_urls);
-                TargetContext::InboundUrls(urls)
-            }
-            None => TargetContext::InboundInline(inline.clone()), // clone: the inline context is re-embedded or expanded against
-        },
-        None => TargetContext::InboundUrls(urls),
-    }
-}
-
-/// The context URL reference of the core context.
-fn core_context_url() -> IriRefBuf {
-    IriRefBuf::from(NGSI_LD_CORE_CONTEXT_URL.as_iri_ref().to_owned())
+/// The body one forwarded request carries, and whose terms it is written in.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum OutgoingBody<'a> {
+    /// A client's document, or its narrowing to one registration, written in
+    /// the inbound context's terms.
+    Document(&'a [u8]),
+    /// A reduced subscription (clause 5.8.1.4), written in the inbound
+    /// context's terms.
+    Subscription(&'a [u8]),
+    /// A document this broker wrote in the forwarding context's terms already,
+    /// such as the `Query` of a forwarded batch query (clause 6.23).
+    Expressed(&'a [u8]),
 }
 
 /// Strip an inline `@context` from every object of a body.
@@ -106,131 +80,212 @@ fn embed_inline_context(body: &mut Value, context: &Value) {
 
 /// Build the payload of one forwarded request.
 ///
-/// `inbound` is the context the triggering request resolved to; `body` is the
-/// request body without its inline `@context`; `info` is the registration's
-/// `contextSourceInfo`; `configured_context` is the registration's
-/// `jsonldContext`, whether it came from `contextSourceInfo` or from the
-/// registration member of the same name.
+/// `inbound` is the context the triggering request resolved to; `decision` is
+/// the registration's forwarding decision; `body` is the request body without
+/// its inline `@context`; `info` is the registration's `contextSourceInfo`.
+///
+/// # Errors
+///
+/// Returns [`FederationError::Representation`] when the body is not JSON, and
+/// [`FederationError::JsonLd`] or [`FederationError::Query`] when it cannot be
+/// spelled in the forwarding context.
 pub(crate) async fn build_forwarded_payload(
     engine: &JsonLdEngine,
     inbound: &ContextSpec,
-    body: Option<&[u8]>,
+    decision: &ForwardingDecision,
+    body: Option<OutgoingBody<'_>>,
     info: &ContextSourceInfo<'_>,
-    configured_context: Option<&Url>,
 ) -> Result<ForwardedPayload, FederationError> {
-    let configured = match (&info.jsonld_context, configured_context) {
-        (Some(from_info), _) => Some(from_info.clone()), // clone: the payload owns the IRI
-        (None, Some(member)) => {
-            Some(IriRefBuf::new(member.as_str().to_string()).map_err(|error| FederationError::from(FederationInvariant::RegistrationJsonldContext(error)))?)
-        }
-        (None, None) => None,
-    };
-    let target = target_context(inbound, configured.as_ref());
-    // Clause 6.3.19: a configured `jsonldContext` forces `application/json`
-    // whenever a body is present; otherwise `contentType` decides and the
-    // default is `application/json`, the one form that can name any URL
-    // context in a `Link` header (clause 6.3.5).
-    let media_type = match (&target, &info.content_type) {
-        (TargetContext::Configured(_), Some(_) | None) | (TargetContext::InboundUrls(_) | TargetContext::InboundInline(_), None) => ResponseMediaType::Json,
-        (TargetContext::InboundUrls(_) | TargetContext::InboundInline(_), Some(content_type)) => {
-            let parsed: mediatype::MediaType<'_> = content_type.into();
-            ResponseMediaType::from_media_type(&parsed).unwrap_or_default()
-        }
-    };
-
+    let media_type = decision.media_type;
+    let link_context = decision.context.link();
     let Some(body) = body else {
-        let link_contexts = match target {
-            TargetContext::Configured(url) => vec![url],
-            TargetContext::InboundUrls(urls) => urls,
-            // A body-less request cannot carry an inline context; the peer
-            // expands against the core context, which is what the inline
-            // context resolved to for the inbound request's own terms only.
-            TargetContext::InboundInline(_) => vec![core_context_url()],
-        };
         return Ok(ForwardedPayload {
             media_type,
-            link_contexts,
+            link_context,
             body: None,
         });
     };
 
-    let mut value: Value = serde_json::from_slice(body)?;
-    remove_inline_context(&mut value);
-
-    let (link_contexts, mut value) = match target {
-        TargetContext::Configured(url) => {
-            // Clause 4.3.6.6: compaction against the configured context is
-            // mandatory, and the forwarded body carries no `@context` member.
-            let expanded = engine.expand(value, inbound).await?;
-            let configured = ContextSpec::from_links(vec![url.clone()]); // clone: the Link header names the same IRI
-            let compacted = engine
-                .compactor(&configured)
-                .compact(ExpandedInput::Canonical(expanded), CompactOptions::default())
-                .await?;
-            (vec![url], compacted)
-        }
-        TargetContext::InboundUrls(urls) => (urls, value),
-        TargetContext::InboundInline(inline) => match media_type {
-            // The inline context travels with the body, as it arrived.
-            ResponseMediaType::JsonLd => (Vec::new(), {
-                embed_inline_context(&mut value, &inline);
-                value
-            }),
-            // No `Link` header can name an inline context, so the body is
-            // forwarded in expanded form: full IRIs need no context beyond the
-            // core one to be read back.
-            ResponseMediaType::Json | ResponseMediaType::GeoJson => {
-                let expanded = engine.expand(value, inbound).await?;
-                (vec![core_context_url()], expanded)
-            }
-        },
-    };
-
-    if let Some(version) = info.ngsild_conformance {
-        // Clause 4.3.6.6 `ngsildConformance`: the forwarded payload conforms
-        // to the version the source understands (clause 4.3.6.8).
-        value = VersionRenderer::new(version).with_payload(value).render().0;
+    let mut value = conformant(spelled_body(engine, inbound, &decision.context, body).await?, info);
+    // Clause 6.3.5: `application/ld+json` carries its context inline and never
+    // beside a context `Link`.
+    if let Some(context) = decision.context.inline_for(inbound) {
+        embed_inline_context(&mut value, &context);
     }
-
-    let (link_contexts, value) = match media_type {
-        ResponseMediaType::JsonLd => {
-            // Clause 6.3.5: `application/ld+json` carries its context inline
-            // and never beside a context `Link`.
-            if !link_contexts.is_empty() {
-                let inline = match link_contexts.as_slice() {
-                    [single] => Value::String(single.to_string()),
-                    many => Value::Array(many.iter().map(|url| Value::String(url.to_string())).collect()),
-                };
-                embed_inline_context(&mut value, &inline);
-            } else if value.get("@context").is_none() && value.is_object() {
-                embed_inline_context(&mut value, &Value::String(NGSI_LD_CORE_CONTEXT_URL.to_string()));
-            }
-            (Vec::new(), value)
-        }
-        ResponseMediaType::Json | ResponseMediaType::GeoJson => (link_contexts, value),
-    };
-
     Ok(ForwardedPayload {
         media_type,
-        link_contexts,
+        link_context,
         body: Some(serde_json::to_vec(&value)?),
     })
 }
 
+/// One entity of a forwarded batch array, and the context it was submitted
+/// under: JSON-LD applies a top-level node's `@context` to that node alone, so
+/// each entity of an `application/ld+json` batch is read under its own.
+#[derive(Debug)]
+pub(crate) struct ItemBody<'a> {
+    /// The entity, or the bare identifier a batch deletion carries.
+    pub(crate) body: Value,
+    /// The context the entity was submitted under.
+    pub(crate) context: &'a BatchContext,
+}
+
+/// Build the payload of one forwarded batch array, each entity spelled from
+/// its own context into the one `decision` names.
+///
+/// # Errors
+///
+/// Returns [`FederationError::JsonLd`] when an entity cannot be spelled in the
+/// forwarding context, and [`FederationError::Representation`] when the array
+/// cannot be serialised.
+pub(crate) async fn build_items_payload(
+    engine: &JsonLdEngine,
+    decision: &ForwardingDecision,
+    items: &[ItemBody<'_>],
+    info: &ContextSourceInfo<'_>,
+) -> Result<ForwardedPayload, FederationError> {
+    let mut array = Vec::with_capacity(items.len());
+    for item in items {
+        let mut value = item.body.clone(); // clone: the forwarded array owns its items, and a later fallback re-reads them
+        remove_inline_context(&mut value);
+        // A batch deletion carries bare identifiers, which name no term.
+        if !value.is_object() {
+            array.push(value);
+            continue;
+        }
+        let mut value = match decision.context.rewording() {
+            Rewording::AsInbound => value,
+            Rewording::Reword => recompacted(engine, item.context.spec(), &decision.context.naming(item.context.spec()), value).await?,
+        };
+        value = conformant(value, info);
+        if let Some(context) = decision.context.inline_for(item.context.spec()) {
+            embed_inline_context(&mut value, &context);
+        }
+        array.push(value);
+    }
+    Ok(ForwardedPayload {
+        media_type: decision.media_type,
+        link_context: decision.context.link(),
+        body: Some(serde_json::to_vec(&Value::Array(array))?),
+    })
+}
+
+/// The payload conforming to the version the registration's
+/// `ngsildConformance` says its source understands (clauses 4.3.6.6 and
+/// 4.3.6.8), or unchanged when it names none.
+fn conformant(value: Value, info: &ContextSourceInfo<'_>) -> Value {
+    match info.ngsild_conformance {
+        Some(version) => VersionRenderer::new(version).with_payload(value).render().0,
+        None => value,
+    }
+}
+
+/// The body spelled in the forwarding context, without an inline `@context`.
+async fn spelled_body(engine: &JsonLdEngine, inbound: &ContextSpec, context: &ForwardingContext, body: OutgoingBody<'_>) -> Result<Value, FederationError> {
+    let (OutgoingBody::Document(bytes) | OutgoingBody::Subscription(bytes) | OutgoingBody::Expressed(bytes)) = body;
+    let mut value: Value = serde_json::from_slice(bytes)?;
+    remove_inline_context(&mut value);
+    match (context.rewording(), body) {
+        (Rewording::AsInbound, _) | (Rewording::Reword, OutgoingBody::Expressed(_)) => Ok(value),
+        (Rewording::Reword, OutgoingBody::Document(_)) => {
+            // Clause 4.3.6.6: the document is compacted against the forwarding
+            // context, and carries no `@context` member of its own.
+            let naming = context.naming(inbound);
+            match value {
+                Value::Array(items) => {
+                    let mut compacted = Vec::with_capacity(items.len());
+                    for item in items {
+                        compacted.push(recompacted(engine, inbound, &naming, item).await?);
+                    }
+                    Ok(Value::Array(compacted))
+                }
+                document @ (Value::Object(_) | Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => {
+                    recompacted(engine, inbound, &naming, document).await
+                }
+            }
+        }
+        (Rewording::Reword, OutgoingBody::Subscription(_)) => {
+            let naming = context.naming(inbound);
+            let resolver = TermResolver::new(engine, inbound);
+            ForwardedNames::new(engine, &resolver, &naming, Rewording::Reword)
+                .subscription_document(value)
+                .await
+        }
+    }
+}
+
+/// One document expanded against the inbound context and compacted against
+/// `naming`.
+async fn recompacted(engine: &JsonLdEngine, inbound: &ContextSpec, naming: &ContextSpec, document: Value) -> Result<Value, FederationError> {
+    let expanded = engine.expand(document, inbound).await?;
+    Ok(engine
+        .compactor(naming)
+        .compact(ExpandedInput::Canonical(expanded), CompactOptions::default())
+        .await?)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::forwarded_payload::build_forwarded_payload;
+    use crate::{
+        forwarded_payload::{ForwardedPayload, ItemBody, OutgoingBody, build_forwarded_payload, build_items_payload},
+        forwarding_context::{BodyPresence, ForwardingContext, Rewording, decide, decide_for_items},
+    };
     use andromeda_http_headers::media_type::ResponseMediaType;
-    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, key_value_pair::KeyValuePair};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-    use iri_rs::IriRefBuf;
+    use iri_rs::IriBuf;
     use serde_json::{Value, json};
+    use std::{
+        collections::HashMap,
+        env,
+        fs,
+        process,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+    use url::Url;
+
+    /// Makes every temporary context file name unique, so tests running in
+    /// parallel never write or remove each other's files.
+    static CONTEXT_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     const USER_CONTEXT: &str = "https://example.org/user-context.jsonld";
+    const OTHER_CONTEXT: &str = "https://example.org/other-context.jsonld";
+    const CONFIGURED_CONTEXT: &str = "https://example.org/configured-context.jsonld";
 
+    /// An engine that resolves the three fixture contexts from temporary files
+    /// and never the network. `speed` is `https://example.org/speed` in the
+    /// user context and `velocity` in the configured one.
     fn engine() -> JsonLdEngine {
-        JsonLdEngine::builder().allow_remote(false).build().expect("offline engine")
+        let documents = [
+            (
+                USER_CONTEXT,
+                json!({"@context": {"speed": "https://example.org/speed", "Vehicle": "https://example.org/Vehicle"}}),
+            ),
+            (OTHER_CONTEXT, json!({"@context": {"brand": "https://example.org/brand"}})),
+            (
+                CONFIGURED_CONTEXT,
+                json!({"@context": {"velocity": "https://example.org/speed", "Car": "https://example.org/Vehicle"}}),
+            ),
+        ];
+        let mut preloads = HashMap::new();
+        let mut paths = Vec::new();
+        for (url, document) in &documents {
+            let sequence = CONTEXT_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = env::temp_dir().join(format!("andromeda-forwarded-payload-{}-{sequence}.jsonld", process::id()));
+            fs::write(&path, document.to_string()).expect("the temporary directory is writable");
+            preloads.insert(Url::parse(url).expect("a valid URL"), path.clone()); // clone: removed below
+            paths.push(path);
+        }
+        let engine = JsonLdEngine::builder()
+            .allow_remote(false)
+            .preload_contexts(preloads)
+            .build()
+            .expect("offline engine");
+        for path in paths {
+            fs::remove_file(&path).expect("the temporary context is removable");
+        }
+        engine
     }
 
     fn pairs(entries: &[(&str, &str)]) -> Vec<KeyValuePair> {
@@ -243,8 +298,8 @@ mod tests {
             .collect()
     }
 
-    fn link_spec(urls: &[&str]) -> ContextSpec {
-        ContextSpec::from_links(urls.iter().map(|url| IriRefBuf::new((*url).to_string()).expect("valid IRI")).collect())
+    fn link_spec(url: &str) -> ContextSpec {
+        ContextSpec::from_link(IriBuf::new(url.to_owned()).expect("valid IRI"))
     }
 
     fn body() -> Vec<u8> {
@@ -255,122 +310,289 @@ mod tests {
         serde_json::from_slice::<Value>(payload_body).expect("JSON body").get("@context").cloned()
     }
 
+    async fn payload(inbound: &ContextSpec, entries: &[(&str, &str)], body: Option<OutgoingBody<'_>>) -> ForwardedPayload {
+        let raw = pairs(entries);
+        let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
+        let presence = if body.is_some() { BodyPresence::Present } else { BodyPresence::Absent };
+        let decision = decide(inbound, &info, None, presence).expect("decides");
+        build_forwarded_payload(&engine(), inbound, &decision, body, &info)
+            .await
+            .expect("payload builds")
+    }
+
     #[tokio::test]
     async fn a_link_context_is_forwarded_as_application_json_with_the_same_link_and_no_inline_context() {
-        let info_pairs = pairs(&[]);
-        let info = ContextSourceInfo::try_from(info_pairs.as_slice()).expect("valid info");
-        let payload = build_forwarded_payload(&engine(), &link_spec(&[USER_CONTEXT]), Some(&body()), &info, None)
-            .await
-            .expect("payload builds");
+        let bytes = body();
+        let payload = payload(&link_spec(USER_CONTEXT), &[], Some(OutgoingBody::Document(&bytes))).await;
         pretty_assertions::assert_eq!(payload.media_type, ResponseMediaType::Json);
-        pretty_assertions::assert_eq!(
-            payload.link_contexts.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            vec![USER_CONTEXT.to_string()]
-        );
-        assert!(body_context(payload.body.as_deref().expect("body")).is_none());
+        pretty_assertions::assert_eq!(payload.link_context.as_ref().map(IriBuf::as_str), Some(USER_CONTEXT));
+        let forwarded: Value = serde_json::from_slice(payload.body.as_deref().expect("body")).expect("JSON");
+        assert!(forwarded.get("@context").is_none());
+        assert!(forwarded.get("speed").is_some(), "the client's terms travel unchanged: {forwarded}");
     }
 
     #[tokio::test]
     async fn a_content_type_of_ld_json_inlines_the_context_and_sends_no_link() {
-        let info_pairs = pairs(&[("contentType", "application/ld+json")]);
-        let info = ContextSourceInfo::try_from(info_pairs.as_slice()).expect("valid info");
-        let payload = build_forwarded_payload(&engine(), &link_spec(&[USER_CONTEXT]), Some(&body()), &info, None)
-            .await
-            .expect("payload builds");
+        let bytes = body();
+        let payload = payload(
+            &link_spec(USER_CONTEXT),
+            &[("contentType", "application/ld+json")],
+            Some(OutgoingBody::Document(&bytes)),
+        )
+        .await;
         pretty_assertions::assert_eq!(payload.media_type, ResponseMediaType::JsonLd);
-        assert_eq!(payload.link_contexts, [] as [iri_rs::IriRef<String>; 0]);
+        assert!(payload.link_context.is_none());
         pretty_assertions::assert_eq!(body_context(payload.body.as_deref().expect("body")), Some(json!(USER_CONTEXT)));
     }
 
     #[tokio::test]
     async fn an_inline_url_context_travels_as_a_link_under_application_json() {
-        let info_pairs = pairs(&[]);
-        let info = ContextSourceInfo::try_from(info_pairs.as_slice()).expect("valid info");
-        let inbound = ContextSpec::none().with_body_context(Some(json!(USER_CONTEXT)));
-        let payload = build_forwarded_payload(&engine(), &inbound, Some(&body()), &info, None)
-            .await
-            .expect("payload builds");
+        let bytes = body();
+        let payload = payload(&ContextSpec::from_body(json!(USER_CONTEXT)), &[], Some(OutgoingBody::Document(&bytes))).await;
         pretty_assertions::assert_eq!(payload.media_type, ResponseMediaType::Json);
-        pretty_assertions::assert_eq!(
-            payload.link_contexts.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            vec![USER_CONTEXT.to_string()]
-        );
+        pretty_assertions::assert_eq!(payload.link_context.as_ref().map(IriBuf::as_str), Some(USER_CONTEXT));
         assert!(body_context(payload.body.as_deref().expect("body")).is_none());
     }
 
+    /// JSON-LD 1.1 section 6.1: several inbound context URLs are never
+    /// forwarded as several context links. Under `application/json` the body
+    /// is compacted against the one core context link, which writes a user term
+    /// as its full IRI; under `application/ld+json` the URLs travel inline.
     #[tokio::test]
-    async fn an_inline_object_context_is_re_inlined_for_ld_json_and_expanded_under_the_core_link_for_json() {
-        let inline = json!({"speed": "https://example.org/speed"});
-        let inbound = ContextSpec::none().with_body_context(Some(inline.clone())); // clone: compared below
+    async fn several_inbound_urls_are_forwarded_under_one_core_link_with_full_names() {
+        let bytes = body();
+        let inbound = ContextSpec::from_body(json!([USER_CONTEXT, OTHER_CONTEXT]));
+        let as_json = payload(&inbound, &[], Some(OutgoingBody::Document(&bytes))).await;
+        pretty_assertions::assert_eq!(as_json.link_context.as_ref().map(IriBuf::as_str), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        let forwarded: Value = serde_json::from_slice(as_json.body.as_deref().expect("body")).expect("JSON");
+        assert!(forwarded.get("@context").is_none());
+        pretty_assertions::assert_eq!(forwarded["type"], json!("https://example.org/Vehicle"));
+        pretty_assertions::assert_eq!(forwarded["https://example.org/speed"]["value"], json!(10));
+        pretty_assertions::assert_eq!(forwarded["id"], json!("urn:ngsi-ld:Vehicle:1"));
 
-        let ld_pairs = pairs(&[("contentType", "application/ld+json")]);
-        let ld_info = ContextSourceInfo::try_from(ld_pairs.as_slice()).expect("valid info");
-        let as_ld = build_forwarded_payload(&engine(), &inbound, Some(&body()), &ld_info, None)
-            .await
-            .expect("payload builds");
+        let as_ld = payload(&inbound, &[("contentType", "application/ld+json")], Some(OutgoingBody::Document(&bytes))).await;
+        assert!(as_ld.link_context.is_none());
+        pretty_assertions::assert_eq!(body_context(as_ld.body.as_deref().expect("body")), Some(json!([USER_CONTEXT, OTHER_CONTEXT])));
+    }
+
+    #[tokio::test]
+    async fn an_inline_object_context_is_re_inlined_for_ld_json_and_compacted_under_the_core_link_for_json() {
+        let bytes = body();
+        let inline = json!({"speed": "https://example.org/speed", "Vehicle": "https://example.org/Vehicle"});
+        let inbound = ContextSpec::from_body(inline.clone()); // clone: compared below
+
+        let as_ld = payload(&inbound, &[("contentType", "application/ld+json")], Some(OutgoingBody::Document(&bytes))).await;
         pretty_assertions::assert_eq!(as_ld.media_type, ResponseMediaType::JsonLd);
-        assert_eq!(as_ld.link_contexts, [] as [iri_rs::IriRef<String>; 0]);
+        assert!(as_ld.link_context.is_none());
         pretty_assertions::assert_eq!(body_context(as_ld.body.as_deref().expect("body")), Some(inline));
 
-        let json_pairs = pairs(&[]);
-        let json_info = ContextSourceInfo::try_from(json_pairs.as_slice()).expect("valid info");
-        let as_json = build_forwarded_payload(&engine(), &inbound, Some(&body()), &json_info, None)
-            .await
-            .expect("payload builds");
-        pretty_assertions::assert_eq!(as_json.media_type, ResponseMediaType::Json);
-        pretty_assertions::assert_eq!(
-            as_json.link_contexts.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            vec![NGSI_LD_CORE_CONTEXT_URL.to_string()]
-        );
+        let as_json = payload(&inbound, &[], Some(OutgoingBody::Document(&bytes))).await;
+        pretty_assertions::assert_eq!(as_json.link_context.as_ref().map(IriBuf::as_str), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
         let forwarded: Value = serde_json::from_slice(as_json.body.as_deref().expect("body")).expect("JSON body");
-        let expanded = forwarded.as_array().and_then(|items| items.first()).expect("expanded document is an array");
-        assert!(
-            expanded.get("https://example.org/speed").is_some(),
-            "the inline term is expanded to its IRI: {forwarded}"
-        );
-        assert!(expanded.get("@context").is_none());
+        pretty_assertions::assert_eq!(forwarded["https://example.org/speed"]["type"], json!("Property"));
+        assert!(forwarded.get("@context").is_none());
     }
 
+    /// Clause 4.3.6.6: a configured `jsonldContext` forces `application/json`,
+    /// names that context in the one `Link`, and the body is compacted against
+    /// it -- `speed` becomes `velocity` and `Vehicle` becomes `Car`, which only
+    /// the configured context spells that way.
     #[tokio::test]
     async fn a_configured_jsonld_context_forces_application_json_and_compacts_against_it() {
-        let core = NGSI_LD_CORE_CONTEXT_URL.to_string();
-        let info_pairs = pairs(&[("jsonldContext", &core), ("contentType", "application/ld+json")]);
-        let info = ContextSourceInfo::try_from(info_pairs.as_slice()).expect("valid info");
-        // The inbound request names no context of its own, so expansion and
-        // compaction both resolve offline against the embedded core context.
-        let payload = build_forwarded_payload(&engine(), &ContextSpec::none(), Some(&body()), &info, None)
-            .await
-            .expect("payload builds");
+        let bytes = body();
+        let payload = payload(
+            &link_spec(USER_CONTEXT),
+            &[("jsonldContext", CONFIGURED_CONTEXT), ("contentType", "application/ld+json")],
+            Some(OutgoingBody::Document(&bytes)),
+        )
+        .await;
         pretty_assertions::assert_eq!(payload.media_type, ResponseMediaType::Json);
-        pretty_assertions::assert_eq!(payload.link_contexts.iter().map(ToString::to_string).collect::<Vec<_>>(), vec![core]);
+        pretty_assertions::assert_eq!(payload.link_context.as_ref().map(IriBuf::as_str), Some(CONFIGURED_CONTEXT));
         let forwarded: Value = serde_json::from_slice(payload.body.as_deref().expect("body")).expect("JSON body");
         assert!(forwarded.get("@context").is_none());
-        assert!(forwarded.get("id").is_some(), "compacted against the core context: {forwarded}");
+        pretty_assertions::assert_eq!(forwarded["type"], json!("Car"));
+        pretty_assertions::assert_eq!(forwarded["velocity"]["value"], json!(10));
+        assert!(forwarded.get("speed").is_none(), "{forwarded}");
+    }
+
+    /// A body this broker already wrote in the forwarding context is sent as
+    /// written.
+    #[tokio::test]
+    async fn an_expressed_body_is_never_respelled() {
+        let query = serde_json::to_vec(&json!({"type": "Query", "entities": [{"type": "Car"}], "attrs": ["velocity"]})).expect("serialises");
+        let payload = payload(
+            &link_spec(USER_CONTEXT),
+            &[("jsonldContext", CONFIGURED_CONTEXT)],
+            Some(OutgoingBody::Expressed(&query)),
+        )
+        .await;
+        let forwarded: Value = serde_json::from_slice(payload.body.as_deref().expect("body")).expect("JSON body");
+        pretty_assertions::assert_eq!(forwarded, json!({"type": "Query", "entities": [{"type": "Car"}], "attrs": ["velocity"]}));
+    }
+
+    /// A reduced subscription is respelled member by member rather than
+    /// through a JSON-LD round trip, so its shape survives.
+    #[tokio::test]
+    async fn a_subscription_body_is_respelled_member_by_member() {
+        let subscription = serde_json::to_vec(&json!({
+            "id": "urn:ngsi-ld:Subscription:forwarded-1",
+            "type": "Subscription",
+            "entities": [{"type": "Vehicle"}],
+            "watchedAttributes": ["speed"],
+            "q": "speed>1",
+            "notification": {"endpoint": {"uri": "http://receiver.example.org/"}}
+        }))
+        .expect("serialises");
+        let payload = payload(
+            &link_spec(USER_CONTEXT),
+            &[("jsonldContext", CONFIGURED_CONTEXT)],
+            Some(OutgoingBody::Subscription(&subscription)),
+        )
+        .await;
+        let forwarded: Value = serde_json::from_slice(payload.body.as_deref().expect("body")).expect("JSON body");
+        pretty_assertions::assert_eq!(forwarded["entities"], json!([{"type": "Car"}]));
+        pretty_assertions::assert_eq!(forwarded["watchedAttributes"], json!(["velocity"]));
+        pretty_assertions::assert_eq!(forwarded["q"], json!("velocity>1"));
+    }
+
+    /// Review change 17: a relative reference is never forwarded. An inline
+    /// context holding one -- as an entry, or as an `@import` -- would resolve
+    /// against the source's URL rather than this broker's request, so the
+    /// `application/ld+json` body is written inline against the core context
+    /// instead, every user term as its full IRI.
+    #[tokio::test]
+    async fn an_inline_context_holding_a_relative_reference_is_never_forwarded() {
+        let query = serde_json::to_vec(&json!({"type": "Query", "entities": [{"type": "https://example.org/Vehicle"}]})).expect("serialises");
+        let ld = [("contentType", "application/ld+json")];
+        for relative in [
+            json!(["ctx.jsonld", USER_CONTEXT]),
+            json!("/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:1"),
+            json!([USER_CONTEXT, {"@import": "shared/terms.jsonld", "brand": "https://example.org/brand"}]),
+        ] {
+            let inbound = ContextSpec::from_body(relative);
+            let raw = pairs(&ld);
+            let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
+            let decision = decide(&inbound, &info, None, BodyPresence::Present).expect("decides");
+            pretty_assertions::assert_eq!(decision.context, ForwardingContext::InlineCore);
+            pretty_assertions::assert_eq!(decision.context.rewording(), Rewording::Reword);
+            pretty_assertions::assert_eq!(decision.context.naming(&inbound), ContextSpec::none());
+
+            let forwarded = payload(&inbound, &ld, Some(OutgoingBody::Expressed(&query))).await;
+            pretty_assertions::assert_eq!(forwarded.media_type, ResponseMediaType::JsonLd);
+            assert!(forwarded.link_context.is_none());
+            pretty_assertions::assert_eq!(
+                body_context(forwarded.body.as_deref().expect("body")),
+                Some(json!(NGSI_LD_CORE_CONTEXT_URL.as_str()))
+            );
+        }
+    }
+
+    /// An inline context whose every reference is absolute travels as written,
+    /// including an absolute `@import`.
+    #[tokio::test]
+    async fn an_inline_context_of_absolute_references_travels_as_written() {
+        let bytes = body();
+        let absolute = json!([USER_CONTEXT, {"@import": OTHER_CONTEXT, "colour": "https://example.org/colour"}]);
+        let inbound = ContextSpec::from_body(absolute.clone()); // clone: compared below
+        let forwarded = payload(&inbound, &[("contentType", "application/ld+json")], Some(OutgoingBody::Document(&bytes))).await;
+        pretty_assertions::assert_eq!(body_context(forwarded.body.as_deref().expect("body")), Some(absolute));
+    }
+
+    /// The batch payload of one registration, each item under its own context.
+    async fn items_payload(entries: &[(&str, &str)], items: &[ItemBody<'_>]) -> ForwardedPayload {
+        let raw = pairs(entries);
+        let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
+        let decision = decide_for_items(items.iter().map(|item| item.context), &info, None).expect("decides");
+        build_items_payload(&engine(), &decision, items, &info).await.expect("payload builds")
+    }
+
+    /// Items submitted under different contexts have no single context a `Link`
+    /// can name: under `application/json` the batch names the core context
+    /// once, and each item is spelled from its own context as full IRIs.
+    #[tokio::test]
+    async fn items_under_different_contexts_are_forwarded_under_one_core_link_each_from_its_own_context() {
+        let mut contexts = BatchContexts::per_entity();
+        let user = contexts.context_of(Some(json!(USER_CONTEXT)));
+        let configured = contexts.context_of(Some(json!(CONFIGURED_CONTEXT)));
+        let items = [
+            ItemBody {
+                body: json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 1}}),
+                context: &user,
+            },
+            ItemBody {
+                body: json!({"id": "urn:ngsi-ld:Vehicle:2", "type": "Car", "velocity": {"type": "Property", "value": 2}}),
+                context: &configured,
+            },
+        ];
+        let forwarded = items_payload(&[], &items).await;
+        pretty_assertions::assert_eq!(forwarded.media_type, ResponseMediaType::Json);
+        pretty_assertions::assert_eq!(forwarded.link_context.as_ref().map(IriBuf::as_str), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        let body: Value = serde_json::from_slice(forwarded.body.as_deref().expect("body")).expect("JSON body");
+        for (index, value) in [(0, 1), (1, 2)] {
+            pretty_assertions::assert_eq!(body[index]["type"], json!("https://example.org/Vehicle"), "{body}");
+            pretty_assertions::assert_eq!(body[index]["https://example.org/speed"]["value"], json!(value), "{body}");
+            assert!(body[index].get("@context").is_none(), "{body}");
+        }
+    }
+
+    /// Under `application/ld+json` each item carries its own context inline,
+    /// and the batch names no context `Link` (clause 6.3.5).
+    #[tokio::test]
+    async fn items_under_different_contexts_carry_each_its_own_inline_context_under_ld_json() {
+        let mut contexts = BatchContexts::per_entity();
+        let user = contexts.context_of(Some(json!(USER_CONTEXT)));
+        let configured = contexts.context_of(Some(json!(CONFIGURED_CONTEXT)));
+        let items = [
+            ItemBody {
+                body: json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}),
+                context: &user,
+            },
+            ItemBody {
+                body: json!({"id": "urn:ngsi-ld:Vehicle:2", "type": "Car"}),
+                context: &configured,
+            },
+        ];
+        let forwarded = items_payload(&[("contentType", "application/ld+json")], &items).await;
+        assert!(forwarded.link_context.is_none());
+        let body: Value = serde_json::from_slice(forwarded.body.as_deref().expect("body")).expect("JSON body");
+        pretty_assertions::assert_eq!(body[0]["@context"], json!(USER_CONTEXT));
+        pretty_assertions::assert_eq!(body[1]["@context"], json!(CONFIGURED_CONTEXT));
+        pretty_assertions::assert_eq!(body[0]["type"], json!("Vehicle"));
+        pretty_assertions::assert_eq!(body[1]["type"], json!("Car"));
+    }
+
+    /// An item whose own context holds a relative reference cannot travel
+    /// inline, so the whole batch is written inline against the core context.
+    #[test]
+    fn items_under_ld_json_with_a_relative_reference_fall_back_to_the_inline_core_context() {
+        let mut contexts = BatchContexts::per_entity();
+        let user = contexts.context_of(Some(json!(USER_CONTEXT)));
+        let relative = contexts.context_of(Some(json!(["relative.jsonld", USER_CONTEXT])));
+        let other = contexts.context_of(Some(json!(OTHER_CONTEXT)));
+        let raw = pairs(&[("contentType", "application/ld+json")]);
+        let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
+
+        let decision = decide_for_items([&user, &relative], &info, None).expect("decides");
+        pretty_assertions::assert_eq!(decision.context, ForwardingContext::InlineCore);
+        pretty_assertions::assert_eq!(decision.context.inline_for(user.spec()), Some(json!(NGSI_LD_CORE_CONTEXT_URL.as_str())));
+        pretty_assertions::assert_eq!(decision.context.naming(relative.spec()), ContextSpec::none());
+
+        let absolute_only = decide_for_items([&user, &other], &info, None).expect("decides");
+        pretty_assertions::assert_eq!(absolute_only.context, ForwardingContext::InlinePerItem);
     }
 
     #[tokio::test]
-    async fn a_body_less_request_carries_only_the_link_contexts() {
-        let info_pairs = pairs(&[]);
-        let info = ContextSourceInfo::try_from(info_pairs.as_slice()).expect("valid info");
-        let payload = build_forwarded_payload(&engine(), &link_spec(&[USER_CONTEXT]), None, &info, None)
-            .await
-            .expect("payload builds");
-        assert!(payload.body.is_none());
-        pretty_assertions::assert_eq!(
-            payload.link_contexts.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            vec![USER_CONTEXT.to_string()]
-        );
+    async fn a_body_less_request_carries_only_its_one_link() {
+        let payload_with_link = payload(&link_spec(USER_CONTEXT), &[], None).await;
+        assert!(payload_with_link.body.is_none());
+        pretty_assertions::assert_eq!(payload_with_link.link_context.as_ref().map(IriBuf::as_str), Some(USER_CONTEXT));
 
-        let none = build_forwarded_payload(&engine(), &ContextSpec::none(), None, &info, None)
-            .await
-            .expect("payload builds");
-        assert_eq!(none.link_contexts, [] as [iri_rs::IriRef<String>; 0]);
+        let none = payload(&ContextSpec::none(), &[], None).await;
+        assert!(none.link_context.is_none());
     }
 
     #[tokio::test]
     async fn an_ngsild_conformance_applies_the_clause_4_3_6_8_fallbacks() {
-        let info_pairs = pairs(&[("ngsildConformance", "1.0")]);
-        let info = ContextSourceInfo::try_from(info_pairs.as_slice()).expect("valid info");
         let versioned = serde_json::to_vec(&json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",
@@ -378,9 +600,12 @@ mod tests {
             "speed": {"type": "Property", "value": 10, "observedAt": "2024-01-01T00:00:00Z"}
         }))
         .expect("serialises");
-        let payload = build_forwarded_payload(&engine(), &link_spec(&[USER_CONTEXT]), Some(&versioned), &info, None)
-            .await
-            .expect("payload builds");
+        let payload = payload(
+            &link_spec(USER_CONTEXT),
+            &[("ngsildConformance", "1.0")],
+            Some(OutgoingBody::Document(&versioned)),
+        )
+        .await;
         let forwarded: Value = serde_json::from_slice(payload.body.as_deref().expect("body")).expect("JSON body");
         assert!(forwarded.get("scope").is_none(), "scope was introduced in 1.4: {forwarded}");
         assert!(forwarded["speed"].get("observedAt").is_none(), "observedAt was introduced in 1.3: {forwarded}");

@@ -35,12 +35,12 @@ use andromeda_postgresql_codes::{notification_trigger::NotificationTriggerCode, 
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
 use andromeda_subscription::stored_subscription::StoredSubscription;
 use chrono::{DateTime, Utc};
+use iri_rs::IriBuf;
 use langtag::LangTagBuf;
 use sea_query::Iden;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
 use std::{num::NonZeroU32, str::FromStr};
-use url::Url;
 
 /// Parse a subscription identifier read from PostgreSQL.
 ///
@@ -143,7 +143,7 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
     let lang = lang_raw.map(LangTagBuf::new).transpose().map_err(StoredSubscriptionError::Lang)?;
     let jsonld_context_raw: Option<String> = row.try_get(Subscriptions::JsonldContext.unquoted())?;
     let jsonld_context = jsonld_context_raw
-        .map(|raw| Url::parse(&raw).map_err(StoredSubscriptionError::JsonldContext))
+        .map(|raw| IriBuf::new(raw).map_err(StoredSubscriptionError::JsonldContext))
         .transpose()?;
     let status = SubscriptionStatusCode::try_from(row.try_get::<i16, _>(Subscriptions::Status.unquoted())?)
         .map(status_of)

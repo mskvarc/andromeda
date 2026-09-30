@@ -3,6 +3,7 @@
 use crate::{
     entity_operations::{
         AcceptFormatNoGeo,
+        ApiRoot,
         BatchBody,
         BatchOperationResult,
         BatchProvisionOperation,
@@ -11,6 +12,7 @@ use crate::{
         ForwardedBatch,
         IntoResponse,
         NgsiLdRequestEnvelope,
+        ParsedBatch,
         PreferHeader,
         ProblemResponse,
         Response,
@@ -35,6 +37,7 @@ use crate::{
     written_payload_admission::admitted_batch_entities,
 };
 use andromeda_entity::write_kind::BatchUpsert;
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::context_target;
 
 pub(crate) async fn batch_upsert(
@@ -44,16 +47,19 @@ pub(crate) async fn batch_upsert(
         snapshot: _,
     }: EntityTenantState,
     accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope {
-        uri, context, incoming_via, ..
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, .. }: NgsiLdRequestEnvelope,
+    api_root: ApiRoot,
     prefer: PreferHeader,
     ValidatedQuery(params): ValidatedQuery<UpsertParams>,
     batch_body: BatchBody,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
 
-    let (entities, context, mut entity_errors) = parse_batch_entities(&batch_body, &context, &uri)?;
+    let ParsedBatch {
+        items,
+        context,
+        errors: mut entity_errors,
+    } = parse_batch_entities(&batch_body, &uri)?;
     // Clause 5.6.8.4 runs clause 5.6.1, or clause 5.6.2 and a replacement where
     // the Entity already exists, "for each of the NGSI-LD Entities included in
     // the input Array": every entity answers for itself, so the clause 5.5.4
@@ -66,7 +72,7 @@ pub(crate) async fn batch_upsert(
     };
     // Which NGSI-LD Nulls the payload may carry is the requested mode's answer
     // (clause 5.6.8.4), so the mode is read before the screening.
-    let mut admitted = admitted_batch_entities(service, BatchUpsert(upsert_policy), entities, &context, &mut entity_errors)
+    let mut admitted = admitted_batch_entities(service, BatchUpsert(upsert_policy), items, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
 
@@ -84,7 +90,6 @@ pub(crate) async fn batch_upsert(
             triggering,
         },
         &admitted,
-        &context,
         &uri,
     )
     .await?;
@@ -93,7 +98,7 @@ pub(crate) async fn batch_upsert(
     // registrations left.
     local_remainder(&mut admitted, &forwarded);
     let placement = service.side_effect_placement(&target, async_preference(prefer), admitted.len());
-    let (batch, mut created) = service.batch_upsert(placement, admitted, &context).await.with_entity_instance(&uri)?;
+    let (batch, mut created) = service.batch_upsert(placement, admitted).await.with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     result.errors.append(&mut entity_errors);
     merge_forwarded(&mut result, &forwarded);
@@ -102,10 +107,17 @@ pub(crate) async fn batch_upsert(
     // Clause 5.6.8.5: nothing when every entity already existed, the created
     // identifiers when some were created, the full result on any failure.
     if !result.errors.is_empty() {
-        multi_status_response(&result, &context, &uri, placement)
+        multi_status_response(&result, &uri, placement)
     } else if created.is_empty() {
         Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), placement))
     } else {
-        created_response(&created, accept, &context, &uri, placement)
+        created_response(
+            &created,
+            accept,
+            ResponseContextSource::new(state.entity_query.engine(), &context, &state.context_hosting, &api_root),
+            &uri,
+            placement,
+        )
+        .await
     }
 }

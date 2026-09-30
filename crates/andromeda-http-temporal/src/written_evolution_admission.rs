@@ -246,9 +246,9 @@ mod tests {
     /// Contexts", whichever operation carries it.
     #[tokio::test]
     async fn a_scoped_user_context_is_refused_on_the_temporal_write_path() {
-        let context = ContextSpec::none().with_body_context(Some(json!({
+        let context = ContextSpec::from_body(json!({
             "speed": {"@id": "https://example.org/speed", "@context": {"observedAt": "https://example.org/rewritten"}}
-        })));
+        }));
         let payload = json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",

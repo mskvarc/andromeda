@@ -2,7 +2,6 @@
 
 use crate::{
     temporal::{
-        ContextUrl,
         CreateOrUpdateResult,
         ForwardProvisionRequest,
         ForwardingOperation,
@@ -48,23 +47,20 @@ fn success_response(result: &Result<CreateOrUpdateResult, TemporalError>) -> Res
 }
 
 pub async fn create_or_update(
+    // Clause 6.3.20: the parameters are read first, before the tenant is
+    // resolved, so an undefined one is an `InvalidRequest` on any tenant.
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     context_target::ProvisionableTargetedTenantState {
         services: state,
         target,
         snapshot: _,
     }: TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
-    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
-    JsonLdDocument {
-        document: payload,
-        context: body_context,
-    }: JsonLdDocument,
+    JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
-    let context = context.merge(body_context);
     // Clause 5.6.11.4 opens with the clause 5.5.4 validation and forwards only
     // afterwards.
     admit_written_evolution(service.engine(), &payload, &context, &uri).await?;

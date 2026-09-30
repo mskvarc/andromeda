@@ -1,9 +1,9 @@
 //! Assembly of named state-complete fragments under the public API root.
 
 use crate::{management::ManagementRoutes, routes::ApiRoutes};
-use andromeda_http_extraction::operation_hit_scope::scope_operation_hits;
+use andromeda_http_extraction::{api_root::AdvertisedApiRoot, operation_hit_scope::scope_operation_hits, request_links::validate_request_links};
 use andromeda_http_stack::stack::HttpStack;
-use axum::{Router, middleware::from_fn};
+use axum::{Extension, Router, middleware::from_fn};
 use tower_http::normalize_path::NormalizePath;
 
 /// Fully assembled, state-complete public HTTP API.
@@ -39,11 +39,7 @@ impl HttpApi {
             .merge(routes.tenancy.into_router())
             .merge(routes.health.into_router())
             .merge(routes.component_report.into_router());
-        // Clause 5.13.3.5: one NGSI-LD request resolves the same `@context`
-        // several times internally (write screening, then the write itself);
-        // an operation scope makes those internal resolutions count as one use.
-        let ngsi = ngsi.layer(from_fn(scope_operation_hits));
-        let mut api_root = Router::new().nest("/ngsi-ld/v1", stack.apply_api(ngsi));
+        let mut api_root = Router::new().nest("/ngsi-ld/v1", stack.apply_api(ngsi_request_layers(ngsi, routes.advertised_api_root)));
         // Merged mode mounts the management endpoints as root siblings of the
         // NGSI-LD nest, outside the operation-hit scope, so a metrics scrape is
         // never counted as an NGSI-LD operation.
@@ -78,9 +74,32 @@ impl HttpApi {
     }
 }
 
+/// The layers every NGSI-LD request passes before any route.
+fn ngsi_request_layers(ngsi: Router, advertised_api_root: Option<AdvertisedApiRoot>) -> Router {
+    // Clause 5.13.3.5: one NGSI-LD request resolves the same `@context`
+    // several times internally (write screening, then the write itself);
+    // an operation scope makes those internal resolutions count as one use.
+    let ngsi = ngsi.layer(from_fn(scope_operation_hits));
+    // Clauses 5.5.4 and 6.3.5: every NGSI-LD request's `Link` headers are
+    // read once, before any route, so a malformed `Link` or several
+    // context links are refused for every verb and no extractor parses
+    // the header again.
+    let ngsi = ngsi.layer(from_fn(validate_request_links));
+    // Clause 6.2: a configured `apiRoot`, prefix included, is the one every
+    // route builds on.
+    match advertised_api_root {
+        Some(advertised) => ngsi.layer(Extension(advertised)),
+        None => ngsi,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{api::HttpApi, management::ManagementRoutes, routes::ApiRoutes};
+    use crate::{
+        api::{HttpApi, ngsi_request_layers},
+        management::ManagementRoutes,
+        routes::ApiRoutes,
+    };
     use andromeda_component_report::{ComponentReport, ComponentVersion};
     use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_health::aggregate::Health;
@@ -97,6 +116,7 @@ mod tests {
         routes::EntityMapRoutes,
         state::{EntityMapRouteServices, EntityMapStateResolver},
     };
+    use andromeda_http_extraction::api_root::{AdvertisedApiRoot, ApiRoot};
     use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
     use andromeda_http_health::routes::HealthRoutes;
     use andromeda_http_notification_receiver::{
@@ -111,7 +131,11 @@ mod tests {
         routes::SnapshotRoutes,
         state::{SnapshotRouteServices, SnapshotStateResolver},
     };
-    use andromeda_http_source_identity::{routes::SourceIdentityRoutes, state::SourceIdentityState};
+    use andromeda_http_source_identity::{
+        default_tenant_contexts::{DefaultTenantContexts, DefaultTenantContextsResolver},
+        routes::SourceIdentityRoutes,
+        state::SourceIdentityState,
+    };
     use andromeda_http_stack::{
         config::{
             HttpStackConfig,
@@ -153,14 +177,19 @@ mod tests {
     };
     use async_trait::async_trait;
     use axum::{
-        body::Body,
+        Router,
+        body::{Body, to_bytes},
         http,
         http::{Method, Request, StatusCode},
+        response::Response,
+        routing::get,
     };
     use chrono::Utc;
     use futures::future::BoxFuture;
+    use serde_json::Value;
     use std::{error::Error, sync::Arc};
     use tower::ServiceExt;
+    use url::Url;
 
     macro_rules! rejecting_resolver {
         ($name:ident, $resolver:ident, $services:ident) => {
@@ -185,6 +214,14 @@ mod tests {
     rejecting_resolver!(RejectSubscription, SubscriptionStateResolver, SubscriptionRouteServices);
     rejecting_resolver!(RejectEntityMap, EntityMapStateResolver, EntityMapRouteServices);
     rejecting_resolver!(RejectSnapshot, SnapshotStateResolver, SnapshotRouteServices);
+
+    struct RejectDefaultTenant;
+
+    impl DefaultTenantContextsResolver for RejectDefaultTenant {
+        fn resolve(&self) -> BoxFuture<'_, Result<DefaultTenantContexts, TenancyError>> {
+            Box::pin(async { Err(TenancyError::MultiTenancyDisabled) })
+        }
+    }
 
     struct RejectReceiver;
 
@@ -258,6 +295,7 @@ mod tests {
                 Utc::now(),
                 None,
                 EnabledExtensions::none(),
+                Arc::new(RejectDefaultTenant),
             )))
             .notification_receiver(NotificationReceiverRoutes::new(Arc::new(RejectReceiver)))
             .tenancy(TenancyRoutes::new(administration, usage, TenantManagement::Enabled))
@@ -265,6 +303,7 @@ mod tests {
             .component_report(ComponentReportRoutes::new(vec![ComponentReport::PostgreSql {
                 version: ComponentVersion::from("16.2".to_owned()),
             }]))
+            .advertised_api_root(None)
             .build())
     }
 
@@ -457,6 +496,97 @@ mod tests {
         let router = test_api()?.h3_router();
         let response = router.oneshot(request(Method::GET, "/ngsi-ld/v1/health/")?).await?;
         assert_ne!(response.status(), StatusCode::NOT_FOUND, "trailing slash was not trimmed for HTTP/3");
+        Ok(())
+    }
+
+    /// A request under `/ngsi-ld/v1` with `headers` and, for a body-taking
+    /// method, an empty JSON object with its declared length.
+    fn ngsi_request(method: &Method, path: &str, headers: &[(&str, &str)]) -> Result<Request<Body>, http::Error> {
+        let mut request = Request::builder().method(method.clone()).uri(path).header("host", "broker.example"); // clone: the builder owns its method
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        if [Method::POST, Method::PATCH, Method::PUT].contains(method) {
+            request = request.header("content-type", "application/json").header("content-length", "2");
+            return request.body(Body::from("{}"));
+        }
+        request.body(Body::empty())
+    }
+
+    /// The `ProblemDetails` `type` of a response, by its last segment.
+    async fn problem_type(response: Response) -> Result<String, Box<dyn Error>> {
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let problem: Value = serde_json::from_slice(&body)?;
+        Ok(problem["type"].as_str().and_then(|uri| uri.rsplit('/').next()).unwrap_or_default().to_owned())
+    }
+
+    /// One operation of every route family.
+    const FAMILY_OPERATIONS: [(Method, &str); 10] = [
+        (Method::PATCH, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1/attrs"),
+        (Method::POST, "/ngsi-ld/v1/entityOperations/create"),
+        (Method::POST, "/ngsi-ld/v1/temporal/entities"),
+        (Method::POST, "/ngsi-ld/v1/jsonldContexts"),
+        (Method::DELETE, "/ngsi-ld/v1/csourceRegistrations/urn:ngsi-ld:ContextSourceRegistration:1"),
+        (Method::POST, "/ngsi-ld/v1/subscriptions"),
+        (Method::POST, "/ngsi-ld/v1/csourceSubscriptions"),
+        (Method::DELETE, "/ngsi-ld/v1/entityMaps/urn:ngsi-ld:EntityMap:1"),
+        (Method::DELETE, "/ngsi-ld/v1/snapshots/urn:ngsi-ld:Snapshot:1"),
+        (Method::GET, "/ngsi-ld/v1/info/sourceIdentity"),
+    ];
+
+    /// Clause 6.3.20: the vendor `andromedaTenant` parameter belongs to Serve
+    /// @context alone, so every other family refuses it as undefined, before
+    /// any tenant is resolved.
+    #[tokio::test]
+    async fn every_family_refuses_the_vendor_tenant_parameter_as_invalid_request() -> Result<(), Box<dyn Error>> {
+        let service = test_api()?.into_service();
+        for (method, path) in FAMILY_OPERATIONS {
+            let response = service
+                .clone()
+                .oneshot(ngsi_request(&method, &format!("{path}?andromedaTenant=x"), &[])?)
+                .await?; // clone: the method labels the assertion
+            pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{method} {path}");
+            pretty_assertions::assert_eq!(problem_type(response).await?, "InvalidRequest", "{method} {path}");
+        }
+        Ok(())
+    }
+
+    /// Clause 6.3.5 and JSON-LD 1.1 API section 9.4.1: two context links are
+    /// `BadRequestData` on every family, whatever the verb.
+    #[tokio::test]
+    async fn every_family_refuses_two_context_links_as_bad_request_data() -> Result<(), Box<dyn Error>> {
+        let service = test_api()?.into_service();
+        let links = [
+            ("link", "<https://contexts.example/a.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\""),
+            ("link", "<https://contexts.example/b.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\""),
+        ];
+        for (method, path) in FAMILY_OPERATIONS {
+            let response = service.clone().oneshot(ngsi_request(&method, path, &links)?).await?;
+            pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{method} {path}");
+            pretty_assertions::assert_eq!(problem_type(response).await?, "BadRequestData", "{method} {path}");
+        }
+        Ok(())
+    }
+
+    /// Clause 6.2: a configured `apiRoot` is what every NGSI-LD route reads,
+    /// its path prefix included, whatever authority the request named.
+    #[tokio::test]
+    async fn a_configured_api_root_is_the_one_an_ngsi_ld_route_reads() -> Result<(), Box<dyn Error>> {
+        let configured = Url::parse("https://proxy.example/broker/")?;
+        let probe = Router::new().route(
+            "/probe",
+            get(|api_root: ApiRoot| async move { api_root.url().map(Url::to_string).unwrap_or_default() }),
+        );
+        let routed = Router::new().nest(
+            "/ngsi-ld/v1",
+            test_stack()?.apply_api(ngsi_request_layers(probe, Some(AdvertisedApiRoot::new(configured.clone())))), // clone: the expectation keeps the URL
+        );
+
+        let response = routed.oneshot(ngsi_request(&Method::GET, "/ngsi-ld/v1/probe", &[])?).await?;
+
+        pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        pretty_assertions::assert_eq!(String::from_utf8(body.to_vec())?, configured.to_string());
         Ok(())
     }
 }

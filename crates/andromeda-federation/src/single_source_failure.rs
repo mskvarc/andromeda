@@ -44,10 +44,12 @@ pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<Federat
                 timeout: *timeout,
             })
         }
-        ForwardedWriteOutcome::Transport(failure @ (TransportFailure::Unprepared(_) | TransportFailure::Undelivered(_))) => Some(FederationError::BadGateway {
-            registration,
-            cause: Box::new(GatewayFailure::Transport(failure.clone())), // clone: the error owns the failure the result keeps reporting
-        }),
+        ForwardedWriteOutcome::Transport(failure @ (TransportFailure::Unprepared(_) | TransportFailure::Undelivered(_) | TransportFailure::Unreadable(_))) => {
+            Some(FederationError::BadGateway {
+                registration,
+                cause: Box::new(GatewayFailure::Transport(failure.clone())), // clone: the error owns the failure the result keeps reporting
+            })
+        }
         ForwardedWriteOutcome::RemoteHttpFailure { status: 404, .. } => Some(FederationError::RemoteNotFound { registration }),
         ForwardedWriteOutcome::RemoteHttpFailure { status, body } => {
             let answer = Box::new(RemoteAnswer {

@@ -196,7 +196,7 @@ mod tests {
     use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::forwarding_mode::ForwardingMode};
 
     fn remote() -> Identifier {
-        "urn:ngsi-ld:Subscription:forwarded:1".parse().expect("valid URI")
+        "urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI")
     }
 
     #[test]

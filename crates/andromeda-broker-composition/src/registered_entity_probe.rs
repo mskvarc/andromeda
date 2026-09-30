@@ -94,9 +94,6 @@ fn probe_error(error: &EntityError) -> RegistrationError {
         | EntityError::Query(_)
         | EntityError::Request(_)
         | EntityError::Representation(_)
-        | EntityError::Identifier(_)
-        | EntityError::EntityTypeListIdentifier(_)
-        | EntityError::AttributeListIdentifier(_)
         | EntityError::Commit(_)
         | EntityError::Internal(_)) => {
             tracing::error!(error = %other, "the entity store could not answer a registration admission check");

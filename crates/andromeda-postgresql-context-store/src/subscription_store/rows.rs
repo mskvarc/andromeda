@@ -15,9 +15,9 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
+use iri_rs::IriBuf;
 use langtag::LangTagBuf;
 use serde_json::Value;
-use url::Url;
 
 /// A subscription row read from the `subscriptions` table. Column presence
 /// matches the macro-generated projection list; optional/nullable columns
@@ -67,7 +67,7 @@ pub struct SubscriptionRow {
     /// Preferred language.
     pub lang: Option<LangTagBuf>,
     /// Associated JSON-LD context URI.
-    pub jsonld_context: Option<Url>,
+    pub jsonld_context: Option<IriBuf>,
     /// Local-only scope flag.
     pub local_only: bool,
     /// Whether entities are assumed split across sources (`NULL` defers to the deployment default).

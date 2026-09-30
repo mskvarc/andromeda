@@ -3,12 +3,7 @@
 use crate::{entity_invariant::EntityInvariant, entity_operation_unsupported::EntityOperationUnsupported, entity_validation_reason::EntityValidationReason};
 use andromeda_context_commit::error::CommitError;
 use andromeda_jsonld::error::JsonLdError;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    identifier::Identifier,
-    ngsi_ld_urn::{AttributeListIdParseError, EntityTypeListIdParseError},
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::mutation::error::ExpandedEntityError;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_request::error::ParameterError;
@@ -76,15 +71,6 @@ pub enum EntityError {
     /// JSON representation processing failed.
     #[error(transparent)]
     Representation(#[from] serde_json::Error),
-    /// Identifier generation failed.
-    #[error(transparent)]
-    Identifier(#[from] urn_rs::Error),
-    /// An entity-type-list identifier has invalid NGSI-LD URN form.
-    #[error(transparent)]
-    EntityTypeListIdentifier(#[from] EntityTypeListIdParseError),
-    /// An attribute-list identifier has invalid NGSI-LD URN form.
-    #[error(transparent)]
-    AttributeListIdentifier(#[from] AttributeListIdParseError),
     /// An atomic context write failed for a reason the client cannot act on.
     ///
     /// A commit that refused the submitted content never reaches this variant:

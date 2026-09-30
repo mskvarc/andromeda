@@ -66,23 +66,6 @@ pub fn fixup_default_notification_trigger(value: &mut Value) {
     }
 }
 
-/// Parse stringified jsonldContext back to structured JSON.
-pub fn fixup_jsonld_context(value: &mut Value) {
-    let parsed = value.get("jsonldContext").and_then(|v| v.as_str()).and_then(|s| {
-        let trimmed = s.trim();
-        if trimmed.starts_with('[') || trimmed.starts_with('{') {
-            serde_json::from_str::<Value>(trimmed).ok()
-        } else {
-            None
-        }
-    });
-    if let Some(parsed) = parsed
-        && let Some(obj) = value.as_object_mut()
-    {
-        obj.insert("jsonldContext".to_string(), parsed);
-    }
-}
-
 /// Report the clause 5.2.12 `status` as `expired` once `expiresAt` has passed.
 ///
 /// Clause 5.8.1.4 has the status change "automatically" when the expiration

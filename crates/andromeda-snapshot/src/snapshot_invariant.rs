@@ -1,6 +1,6 @@
 //! The invariants Snapshot policy relies on, and how each one broke.
 
-use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SnapshotIdParseError};
 use chrono::OutOfRangeError;
 use std::num::TryFromIntError;
 use thiserror::Error;
@@ -17,7 +17,7 @@ pub enum SnapshotInvariant {
     RequestContextUnmaterialized,
     /// A freshly minted Snapshot identifier is not an identifier.
     #[error("a minted Snapshot identifier is invalid: {0}")]
-    MintedIdentifier(#[source] IdentifierParseError),
+    MintedIdentifier(#[source] SnapshotIdParseError),
     /// The configured maximum lifetime cannot be expressed as a calendar duration.
     #[error("the configured maximum Snapshot lifetime is out of range: {0}")]
     MaximumLifetime(#[source] OutOfRangeError),

@@ -1,6 +1,14 @@
-//! Reconstruction of the broker origin from an incoming request.
+//! The `apiRoot` the broker mints its own absolute URLs under.
+//!
+//! Clause 6.2: "The apiRoot includes the scheme ("http" or "https"), host and
+//! optional port, and an optional prefix string." A broker behind a reverse
+//! proxy that mounts it under a prefix cannot learn that prefix from the
+//! request, so an operator who configures the URL peers reach the broker at
+//! (`[identity] advertised_url`) configures the `apiRoot` itself, path included,
+//! and every URL the broker mints is built on it. Without one, the origin the
+//! request reveals is the `apiRoot`, with no prefix.
 
-use crate::{addressed_uri::addressed_uri, classification::classify_request_origin_error};
+use crate::{addressed_uri::addressed_uri, classification::classify_api_root_error};
 use andromeda_http_headers::{
     api_root_scheme::ApiRootScheme,
     forwarded_header_trust::ForwardedHeaderTrust,
@@ -16,25 +24,50 @@ use url::Url;
 
 /// A request authority that cannot identify the broker origin.
 #[derive(Debug, Error)]
-pub enum RequestOriginError {
+pub enum ApiRootError {
     /// The header text cannot form an HTTP origin.
     #[error("host header does not identify a valid origin: {0}")]
     InvalidOrigin(#[source] url::ParseError),
 }
 
-/// The origin the broker mints its own absolute URLs against.
-///
-/// Clause 6.2 makes the `apiRoot` "the scheme (`http` or `https`), host and
-/// optional port": this is that origin as the request reveals it. It is `None`
-/// for a request naming no authority, and the resources that would embed
-/// an origin are then stored without one.
-pub struct RequestOrigin(pub Option<Url>);
+/// The configured `apiRoot`, installed as a request extension by the API
+/// assembly when `[identity] advertised_url` is set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdvertisedApiRoot(Url);
 
-impl RequestOrigin {
-    /// Consume the extractor and return the optional origin.
+impl AdvertisedApiRoot {
+    /// The configured `apiRoot`, path prefix included.
     #[must_use]
-    pub fn into_inner(self) -> Option<Url> {
-        self.0
+    pub const fn new(url: Url) -> AdvertisedApiRoot {
+        AdvertisedApiRoot(url)
+    }
+
+    /// The configured `apiRoot`.
+    #[must_use]
+    pub const fn url(&self) -> &Url {
+        &self.0
+    }
+}
+
+/// The `apiRoot` the broker mints its own absolute URLs under.
+///
+/// The configured [`AdvertisedApiRoot`] when one is installed; otherwise the
+/// origin the request reveals, or `None` for a request naming no authority,
+/// under which nothing can be given an absolute URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiRoot(Option<Url>);
+
+impl ApiRoot {
+    /// The `apiRoot` `url` names, path prefix included.
+    #[must_use]
+    pub const fn new(url: Option<Url>) -> ApiRoot {
+        ApiRoot(url)
+    }
+
+    /// The `apiRoot`, when one is known.
+    #[must_use]
+    pub const fn url(&self) -> Option<&Url> {
+        self.0.as_ref()
     }
 }
 
@@ -87,30 +120,48 @@ fn request_authority(parts: &Parts) -> Option<headers::Host> {
 /// Reconstruct the origin from the authority the request addresses and, when
 /// the edge is trusted, from the protocol it forwarded; otherwise from the
 /// scheme of the listener the request arrived on.
-fn resolve_origin(parts: &Parts) -> Result<RequestOrigin, RequestOriginError> {
+///
+/// This is the origin the request itself reveals, whatever `apiRoot` is
+/// configured: a relative reference the request carries resolves against the
+/// URI the client addressed (IETF RFC 8288 section 3.1), not against the name
+/// the broker advertises for itself.
+///
+/// # Errors
+///
+/// Returns [`ApiRootError::InvalidOrigin`] for an authority no origin can be
+/// built from.
+pub(crate) fn request_origin(parts: &Parts) -> Result<Option<Url>, ApiRootError> {
     let Some(host) = request_authority(parts) else {
-        return Ok(RequestOrigin(None));
+        return Ok(None);
     };
     let scheme = forwarded_scheme(parts).unwrap_or_else(|| listener_scheme(parts));
     Url::parse(&format!("{}://{host}", scheme.as_scheme()))
-        .map(|origin| RequestOrigin(Some(origin)))
-        .map_err(RequestOriginError::InvalidOrigin)
+        .map(Some)
+        .map_err(ApiRootError::InvalidOrigin)
 }
 
-impl<S> FromRequestParts<S> for RequestOrigin
+/// The configured `apiRoot` when one is installed, else the request's origin.
+fn resolve_api_root(parts: &Parts) -> Result<ApiRoot, ApiRootError> {
+    match parts.extensions.get::<AdvertisedApiRoot>() {
+        Some(advertised) => Ok(ApiRoot(Some(advertised.url().clone()))), // clone: the extension stays installed for the rest of the request
+        None => request_origin(parts).map(ApiRoot),
+    }
+}
+
+impl<S> FromRequestParts<S> for ApiRoot
 where
     S: Send + Sync,
 {
     type Rejection = ExtractorRejection;
 
     fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
-        ready(resolve_origin(parts).map_err(|error| ExtractorRejection::Classified(classify_request_origin_error(&error).with_instance(addressed_uri(parts)))))
+        ready(resolve_api_root(parts).map_err(|error| ExtractorRejection::Classified(classify_api_root_error(&error).with_instance(addressed_uri(parts)))))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::origin::{RequestOrigin, RequestOriginError, resolve_origin};
+    use crate::api_root::{AdvertisedApiRoot, ApiRoot, ApiRootError, resolve_api_root};
     use andromeda_http_headers::{api_root_scheme::ApiRootScheme, forwarded_header_trust::ForwardedHeaderTrust, listener_scheme::ListenerScheme};
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use axum::{
@@ -118,7 +169,7 @@ mod tests {
         http::{Request, request::Parts},
     };
     use std::error::Error;
-    use url::ParseError;
+    use url::{ParseError, Url};
 
     /// The parts of a request carrying `fields`, optionally under a declared
     /// proxy trust.
@@ -136,8 +187,8 @@ mod tests {
 
     /// The origin the extractor reconstructs from `parts`, as wire text.
     async fn origin_from(mut parts: Parts) -> Result<Option<String>, Box<dyn Error>> {
-        let origin = RequestOrigin::from_request_parts(&mut parts, &()).await.map_err(|_| "origin rejected")?;
-        Ok(origin.into_inner().map(|url| url.to_string()))
+        let api_root = ApiRoot::from_request_parts(&mut parts, &()).await.map_err(|_| "origin rejected")?;
+        Ok(api_root.url().map(Url::to_string))
     }
 
     /// The origin the extractor reconstructs, as wire text.
@@ -251,7 +302,7 @@ mod tests {
     async fn a_host_field_that_cannot_form_an_origin_is_rejected() -> Result<(), Box<dyn Error>> {
         for authority in ["host:99999", ":80", "[]", "[fe80::1%25eth0]:80"] {
             let mut parts = parts(&[("host", authority)], None)?;
-            let rejection = RequestOrigin::from_request_parts(&mut parts, &()).await;
+            let rejection = ApiRoot::from_request_parts(&mut parts, &()).await;
             assert!(
                 matches!(rejection, Err(ExtractorRejection::Classified(_))),
                 "{authority} does not form an origin"
@@ -264,9 +315,9 @@ mod tests {
     #[test]
     fn an_origin_rejection_chains_the_url_parse_error() -> Result<(), Box<dyn Error>> {
         let parts = parts(&[("host", "host:99999")], None)?;
-        let rejection = resolve_origin(&parts);
+        let rejection = resolve_api_root(&parts);
         assert!(
-            matches!(rejection, Err(RequestOriginError::InvalidOrigin(ParseError::InvalidPort))),
+            matches!(rejection, Err(ApiRootError::InvalidOrigin(ParseError::InvalidPort))),
             "an out-of-range port is the URL parser's invalid-port error"
         );
         Ok(())
@@ -339,6 +390,25 @@ mod tests {
             .body(())?
             .into_parts();
         pretty_assertions::assert_eq!(origin_from(parts).await?, Some("http://broker.example/".to_owned()));
+        Ok(())
+    }
+
+    /// Clause 6.2: a configured `apiRoot` is the one URLs are minted under,
+    /// its path prefix included, whatever authority the request addressed.
+    #[tokio::test]
+    async fn a_configured_api_root_outranks_the_request_origin_and_keeps_its_prefix() -> Result<(), Box<dyn Error>> {
+        let mut parts = parts(&[("host", "internal.example:1026")], None)?;
+        parts.extensions.insert(AdvertisedApiRoot::new(Url::parse("https://public.example/broker")?));
+        pretty_assertions::assert_eq!(origin_from(parts).await?, Some("https://public.example/broker".to_owned()));
+        Ok(())
+    }
+
+    /// A configured `apiRoot` needs no authority from the request at all.
+    #[tokio::test]
+    async fn a_configured_api_root_serves_a_request_naming_no_authority() -> Result<(), Box<dyn Error>> {
+        let mut parts = parts(&[], None)?;
+        parts.extensions.insert(AdvertisedApiRoot::new(Url::parse("https://public.example/")?));
+        pretty_assertions::assert_eq!(origin_from(parts).await?, Some("https://public.example/".to_owned()));
         Ok(())
     }
 }

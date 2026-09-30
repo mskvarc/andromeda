@@ -3,13 +3,10 @@
 //! The persistence-port implementation lives beside this repository in the
 //! shared subscription-store module.
 
-use crate::{error::ContextStoreError, store_invariant::StoreInvariant};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, uri::NGSI_LD_URN_NID};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
-use urn_rs::UrnBuilder;
-use uuid::Uuid;
 
 /// PostgreSQL-backed repository for NGSI-LD entity subscriptions.
 #[derive(Debug)]
@@ -22,20 +19,6 @@ pub struct SubscriptionRepository {
 }
 
 impl SubscriptionRepository {
-    /// Generates a new unique URN identifier for an entity subscription.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ContextStoreError::Invariant`] when the generated namespace
-    /// specific string is refused by the URN builder, or the minted URN is past
-    /// the identifier bound.
-    pub fn generate_id() -> Result<Identifier, ContextStoreError> {
-        let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4()))
-            .build()
-            .map_err(StoreInvariant::MintedUrn)?;
-        Ok(Identifier::try_from(urn).map_err(StoreInvariant::MintedIdentifier)?)
-    }
-
     /// Creates a new repository backed by the given connection pool and the
     /// tenant's shared attribute-name dictionary.
     #[must_use]

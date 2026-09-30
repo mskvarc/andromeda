@@ -32,7 +32,19 @@ impl InstanceIdentity {
     /// Mint an identifier for an instance the client did not name.
     ///
     /// The UUID is version 7, so minted identifiers sort by the instant they
-    /// were minted and cluster in the index that carries them.
+    /// were minted and cluster in the index that carries them. That is why this
+    /// client-visible identifier departs from the version 4 every other
+    /// broker-minted resource URN carries ([`crate::ngsi_ld_urn`]): one is
+    /// written per history row, the index locality is worth more than hiding
+    /// the mint time, and the instance already carries its own `createdAt` and
+    /// `observedAt`.
+    ///
+    /// The rendered identifier (`urn:ngsi-ld:attribute:instance:<uuid>` and
+    /// its scope twin) is also the one deliberate exception to the
+    /// `urn:ngsi-ld:<Kind>:<id>` shape: its kind is lowercase and two segments
+    /// deep. The exception is permanent. The [`InstanceFamily`] templates must
+    /// keep rendering an identifier already handed to a client byte for byte,
+    /// so they are never "fixed" to the `PascalCase`, single-segment shape.
     #[must_use]
     pub fn generate() -> InstanceIdentity {
         InstanceIdentity::Generated(Uuid::now_v7())

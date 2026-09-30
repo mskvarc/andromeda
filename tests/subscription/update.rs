@@ -25,7 +25,8 @@ use crate::helpers::{
     vehicle_entities_fragment,
     watched_attributes_subscription,
 };
-use andromeda_test_harness::environment::TestEnvironment;
+use andromeda_test_fixtures::context::{CORE_CONTEXT, TEST_SUITE_CONTEXT};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE, environment::TestEnvironment};
 
 #[tokio::test]
 async fn subscription_update_missing_id_path_returns_method_not_allowed() {
@@ -346,5 +347,40 @@ async fn subscription_an_empty_notification_trigger_is_bad_request_data() {
     kept.sort_unstable();
     let kept = kept;
     pretty_assertions::assert_eq!(kept, ["entityCreated", "entityUpdated"], "the refused update changed nothing: {stored}");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clauses 5.8.2.4 and 5.5.8: an update keeps every member its fragment does
+/// not name, and the `jsonldContext` is initialised from the request's
+/// `@context` only when the subscription is created (clause 5.8.1.4). A PATCH
+/// whose `Link` header names another context changes the terms the fragment
+/// is read with, never the stored `jsonldContext`.
+#[tokio::test]
+async fn subscription_update_under_another_link_context_keeps_the_stored_jsonld_context() {
+    let http_client = client();
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-keeps-jsonld-context");
+    let mut payload = default_subscription(&subscription_id);
+    payload["jsonldContext"] = json!(CORE_CONTEXT.as_str());
+
+    let (status, _, _) = create_subscription(&http_client, &payload).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let response = http_client
+        .patch(format!("{RUNTIME_BROKER_BASE}/subscriptions/{}", urlencoding::encode(&subscription_id)))
+        .header("Content-Type", "application/json")
+        .header(
+            "Link",
+            format!("<{TEST_SUITE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\""),
+        )
+        .json(&update_fragment())
+        .send()
+        .await
+        .expect("update subscription request failed");
+    pretty_assertions::assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["jsonldContext"], json!(CORE_CONTEXT.as_str()), "{body}");
     scope.finish().await.expect("cleanup failed");
 }

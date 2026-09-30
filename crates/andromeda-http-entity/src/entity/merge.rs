@@ -38,21 +38,12 @@ pub(crate) async fn merge(
         target,
         snapshot: _,
     }: EntityTenantState,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<MergeParams>,
-    JsonLd {
-        value: patch,
-        context: body_context,
-    }: JsonLd<EntityPatch>,
+    JsonLd { value: patch, context }: JsonLd<EntityPatch>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
-    let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
     let representation = params.representation().with_entity_instance(&uri)?;
     let options = MergeOptions {

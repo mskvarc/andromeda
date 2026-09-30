@@ -7,6 +7,7 @@
 //! The embedded payloads are compiled into the binary via [`include_str!`] so
 //! they are available without any network access.
 
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, iri};
 use std::ptr;
 
@@ -40,17 +41,18 @@ pub const NGSI_LD_CORE_CONTEXT_V18_URL: Iri<&'static str> = iri!("https://uri.et
 /// Core Context v1.8 embedded payload.
 pub const NGSI_LD_CORE_CONTEXT_V18: &str = include_str!("context/ngsi-ld-core-context-v1.8.jsonld");
 
-/// NGSI-LD Core Context URL — latest supported version (v1.9).
-pub const NGSI_LD_CORE_CONTEXT_V19_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld");
-/// Core Context v1.9 embedded payload.
+/// Core Context v1.9 embedded payload, served under the v1.9 URL clause 4.4
+/// names ([`NGSI_LD_CORE_CONTEXT_URL`], the one constant for it).
 pub const NGSI_LD_CORE_CONTEXT_V19: &str = include_str!("context/ngsi-ld-core-context-v1.9.jsonld");
 
-/// The version-less core context alias Andromeda accepts on inbound documents.
+/// The version-less core context spelling Andromeda accepts on inbound
+/// documents.
 ///
-/// Clause 4.4 lets a document name the core `@context` by the version-less
-/// `ngsi-ld-core-context.jsonld` URL. Andromeda now emits the versioned v1.9
-/// URL ([`andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL`]) but keeps
-/// recognising this alias, which resolves to the v1.9 payload.
+/// No clause of ETSI GS CIM 009 v1.9.1 names this URL: clause 4.4 names only
+/// the versioned v1.9 one, which Andromeda emits ([`NGSI_LD_CORE_CONTEXT_URL`]).
+/// Clients and earlier releases still write the version-less spelling, so it is
+/// accepted as a non-normative alias of the core context and resolves to the
+/// v1.9 payload; it is never emitted.
 pub const NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
 
 /// All known NGSI-LD core context URLs (aliases + versioned).
@@ -62,7 +64,7 @@ pub const NGSI_LD_CORE_CONTEXT_URL_LIST: [Iri<&'static str>; 8] = [
     NGSI_LD_CORE_CONTEXT_V16_URL,
     NGSI_LD_CORE_CONTEXT_V17_URL,
     NGSI_LD_CORE_CONTEXT_V18_URL,
-    NGSI_LD_CORE_CONTEXT_V19_URL,
+    NGSI_LD_CORE_CONTEXT_URL,
 ];
 
 /// Lookup table from core context URL to its embedded JSON payload.
@@ -76,7 +78,7 @@ pub const NGSI_LD_CORE_CONTEXT_MAP: [(Iri<&'static str>, &str); 8] = [
     (NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V16),
     (NGSI_LD_CORE_CONTEXT_V17_URL, NGSI_LD_CORE_CONTEXT_V17),
     (NGSI_LD_CORE_CONTEXT_V18_URL, NGSI_LD_CORE_CONTEXT_V18),
-    (NGSI_LD_CORE_CONTEXT_V19_URL, NGSI_LD_CORE_CONTEXT_V19),
+    (NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19),
     (NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V19),
 ];
 
@@ -117,7 +119,7 @@ mod tests {
 
     #[test]
     fn recognises_latest_core_context() {
-        assert!(is_ngsi_ld_core_context_url(NGSI_LD_CORE_CONTEXT_V19_URL.as_ref()));
+        assert!(is_ngsi_ld_core_context_url(NGSI_LD_CORE_CONTEXT_URL.as_ref()));
     }
 
     #[test]

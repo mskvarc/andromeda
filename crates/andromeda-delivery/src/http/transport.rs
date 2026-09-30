@@ -318,11 +318,13 @@ mod tests {
             config::HttpTransportConfig,
             transport::{HttpTransport, chain_indicates_tls, error_chain_text},
         },
+        notification_context::NotificationContext,
         outcome::DeliveryOutcome,
         request::NotificationDelivery,
         transport::NotificationTransport,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
     use std::{
         io::{Error, ErrorKind},
@@ -390,18 +392,14 @@ mod tests {
 
     async fn deliver(transport: &HttpTransport, endpoint: &Url) -> DeliveryOutcome {
         let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
-        let request = NotificationDelivery {
-            payload: &json!({"id": "urn:ngsi-ld:Notification:1"}),
-            endpoint_uri: endpoint,
-            accept: None,
-            receiver_info: None,
-            jsonld_context: None,
-            tenant: None,
-            snapshot: None,
-            timeout: None,
-            subscription_id: &subscription,
-        }
-        .assemble();
+        let context = NotificationContext::stated(None, json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        let request = NotificationDelivery::builder()
+            .payload(&json!({"id": "urn:ngsi-ld:Notification:1"}))
+            .endpoint_uri(endpoint)
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .assemble();
         transport.deliver(&request).await.expect("the notification is delivered")
     }
 

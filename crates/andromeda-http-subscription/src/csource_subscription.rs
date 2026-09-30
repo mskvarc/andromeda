@@ -4,8 +4,10 @@ use crate::{
     error::{SubscriptionResultExt, internal_problem, public_problem},
     state::{CsourceSubscriptionTenantState, CsourceSubscriptionTenantStateOrCreate},
 };
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
+    api_root::ApiRoot,
     context::ContextUrl,
     jsonld::JsonLdDocument,
     prefer::PreferHeader,
@@ -21,15 +23,13 @@ use andromeda_http_response::{
     internal_failure_summary::InternalFailureSummary,
     pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links},
     problem_response::ProblemResponse,
-    render::start_rendering_normalized,
     single::NgsiLdResponse,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_query::{cursor::PageCursor, pagination::CountPolicy};
 use andromeda_ngsi_ld_render::{response::ResponsePayload, subscription::SubscriptionRenderer};
 use andromeda_ngsi_ld_request::{csource_subscription::ListParams, empty::EmptyParams, pagination_cursor::decode_cursor};
-use andromeda_subscription::keyset_listing::KeysetListing;
+use andromeda_subscription::{keyset_listing::KeysetListing, subscription_context::SubscriptionContext};
 use axum::{
     extract::OriginalUri,
     http::StatusCode,
@@ -38,24 +38,30 @@ use axum::{
 
 /// POST /ngsi-ld/v1/csourceSubscriptions -- Create a context source subscription.
 pub async fn create(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ProvisionableTenantState(state): CsourceSubscriptionTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
+    api_root: ApiRoot,
     IncomingVia(incoming_via): IncomingVia,
-    ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
-    JsonLdDocument {
-        document: payload,
-        context: body_context,
-    }: JsonLdDocument,
+    JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
-    let context = context.merge(body_context);
     // Table 6.3.18-2: the created subscription must not forward a companion copy
     // back to any context source its request already passed through.
     let encountered_sources: Vec<ContextSourcePseudonym> = incoming_via.iter().flat_map(Via::pseudonyms).cloned().collect();
 
     let id = service
-        .create(&state.live_target, payload, &context, None, &encountered_sources)
+        .create(
+            &state.live_target,
+            payload,
+            SubscriptionContext::Request {
+                context: &context,
+                host: &state.context_hosting.for_request(&api_root),
+            },
+            &encountered_sources,
+        )
         .await
         .with_subscription_instance(&uri)?;
 
@@ -71,13 +77,13 @@ pub async fn create(
 pub async fn get(
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
+    api_root: ApiRoot,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
+    ContextUrl(context): ContextUrl,
     TypedPath(subscription_id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
-    let context: ContextSpec = context.into_inner();
     let options = params.list_options().with_subscription_instance(&uri)?;
 
     let subscription = service
@@ -87,7 +93,10 @@ pub async fn get(
 
     let subscription = SubscriptionRenderer::new(subscription).with_sys_attrs(options.sys_attrs).render();
 
-    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = ResponseContextSource::new(&state.engine, &context, &state.context_hosting, &api_root)
+        .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
+        .await
+        .with_subscription_instance(&uri)?
         .with_payload(ResponsePayload::Single(subscription))
         .render()
         .with_subscription_instance(&uri)?;
@@ -99,12 +108,12 @@ pub async fn get(
 pub async fn query(
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
+    api_root: ApiRoot,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
+    ContextUrl(context): ContextUrl,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
-    let context: ContextSpec = context.into_inner();
     let options = params.list_options().with_subscription_instance(&uri)?;
     // Clause 5.5.9.1: the opaque cursor is decoded here so a malformed one is a
     // BadRequestData rather than surfacing from the store; its exclusion with
@@ -147,7 +156,10 @@ pub async fn query(
         .map(|sub| SubscriptionRenderer::new(sub).with_sys_attrs(options.sys_attrs).render())
         .collect::<Vec<_>>();
 
-    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = ResponseContextSource::new(&state.engine, &context, &state.context_hosting, &api_root)
+        .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
+        .await
+        .with_subscription_instance(&uri)?
         .with_payload(ResponsePayload::Collection(subscriptions))
         .render()
         .with_subscription_instance(&uri)?;
@@ -186,18 +198,13 @@ fn keyset_page_links(incoming: Option<&PageCursor>, boundary: Option<(Identifier
 pub async fn update(
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
     TypedPath(subscription_id): TypedPath<Identifier>,
-    JsonLdDocument {
-        document: payload,
-        context: body_context,
-    }: JsonLdDocument,
+    JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
-    let context = context.merge(body_context);
 
     service
-        .update(&state.live_target, &subscription_id, payload, &context, None)
+        .update(&state.live_target, &subscription_id, payload, &context)
         .await
         .with_subscription_instance(&uri)?;
 

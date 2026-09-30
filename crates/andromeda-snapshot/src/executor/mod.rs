@@ -23,7 +23,7 @@ use crate::{
 };
 use andromeda_context_commit::{committer::ContextCommitter, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::{ContextSpec, CoreContextPolicy};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::snapshot::Snapshot;
 use chrono::Utc;
 use futures::future::BoxFuture;
@@ -76,10 +76,7 @@ impl SnapshotExecutor {
                 snapshot: snapshot.id.clone(), // clone: the error owns the Snapshot it names.
             })?;
         let mut aggregate = status::ExecutionAggregate::default();
-        let context = ContextSpec::none()
-            // clone: a restarted preparation executes against the same persisted context again.
-            .with_body_context(Some(query_context.clone()))
-            .with_core_policy(CoreContextPolicy::Omit);
+        let context = persisted_query_context(query_context);
 
         let mut materialized_entities = HashSet::new();
         for (index, query) in snapshot.snapshot_queries.iter().flatten().enumerate() {
@@ -104,6 +101,18 @@ impl SnapshotExecutor {
             .promote_capture(&snapshot.id, claimed_by, final_status, query_details, temporal_query_details)
             .await
     }
+}
+
+/// The context a Snapshot's persisted queries run under.
+///
+/// The persisted context is the one the Create Snapshot request resolved, which
+/// already ends with the v1.9 core context. It is read like any request context
+/// all the same, so a core reference it holds of another release is processed
+/// as the v1.9 core context, last (clause 4.4), rather than as the release it
+/// names.
+fn persisted_query_context(query_context: &Value) -> ContextSpec {
+    // clone: a restarted preparation executes against the same persisted context again.
+    ContextSpec::from_body(query_context.clone())
 }
 
 /// Outcome of one bounded preparation sweep.
@@ -273,4 +282,35 @@ fn lease_deadline(lease: Duration) -> Result<chrono::DateTime<Utc>, SnapshotErro
     Utc::now()
         .checked_add_signed(lease)
         .ok_or_else(|| SnapshotInvariant::LeaseDeadlineOverflow.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::executor::persisted_query_context;
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use serde_json::json;
+
+    /// Clause 4.4: a persisted context naming an older core context is
+    /// processed as the v1.9 core context, last, like any request context.
+    #[test]
+    fn a_persisted_older_core_reference_is_processed_as_the_current_core_context_last() {
+        let persisted = json!([
+            "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.6.jsonld",
+            "https://example.com/user.jsonld"
+        ]);
+
+        pretty_assertions::assert_eq!(
+            persisted_query_context(&persisted).to_context_value(),
+            Some(json!(["https://example.com/user.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()]))
+        );
+    }
+
+    /// The context the Create Snapshot request persisted already ends with the
+    /// v1.9 core context, and is processed unchanged.
+    #[test]
+    fn a_persisted_context_ending_with_the_current_core_context_is_processed_unchanged() {
+        let persisted = json!(["https://example.com/user.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()]);
+
+        pretty_assertions::assert_eq!(persisted_query_context(&persisted).to_context_value(), Some(persisted));
+    }
 }

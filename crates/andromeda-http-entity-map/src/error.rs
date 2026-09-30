@@ -3,8 +3,10 @@
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
+use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
 use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
+use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
@@ -48,9 +50,6 @@ impl EntityMapHttpClassify for EntityError {
             EntityError::Query(source) => classify_query_error(source),
             EntityError::Request(source) => classify_parameter_error(source),
             EntityError::Representation(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-            EntityError::Identifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-            EntityError::EntityTypeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-            EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             EntityError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
             EntityError::TransactionContended => ClassifiedReport::transaction_contended(self.to_string()),
             EntityError::Commit(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("failed to commit the entity write")),
@@ -63,6 +62,18 @@ impl EntityMapHttpClassify for EntityError {
 impl EntityMapHttpClassify for ParameterError {
     fn classify_for_entity_map_http(&self) -> ClassifiedReport {
         classify_parameter_error(self)
+    }
+}
+
+impl EntityMapHttpClassify for JsonLdError {
+    fn classify_for_entity_map_http(&self) -> ClassifiedReport {
+        classify_jsonld_error(self)
+    }
+}
+
+impl EntityMapHttpClassify for ResponseContextError {
+    fn classify_for_entity_map_http(&self) -> ClassifiedReport {
+        classify_response_context_error(self)
     }
 }
 
@@ -144,7 +155,7 @@ pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSu
 
 #[cfg(test)]
 mod tests {
-    use super::EntityMapHttpClassify;
+    use crate::error::EntityMapHttpClassify;
     use andromeda_entity_map::{entity_map_invariant::EntityMapInvariant, error::EntityMapError};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;

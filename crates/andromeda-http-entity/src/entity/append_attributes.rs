@@ -44,21 +44,12 @@ pub(crate) async fn append_attrs(
         target,
         snapshot: _,
     }: EntityTenantState,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<AppendParams>,
-    JsonLdDocument {
-        document: fragment,
-        context: body_context,
-    }: JsonLdDocument,
+    JsonLdDocument { document: fragment, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
-    let context = context.merge(body_context);
     // Clause 5.6.3.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
     // append left with nothing local is still validated.

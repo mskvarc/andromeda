@@ -9,30 +9,30 @@ use crate::{
 };
 use andromeda_entity_map::fingerprint::{FingerprintedRequest, fingerprint_of};
 use andromeda_federation::{entity_map::EntityMapQueryKind, request::TriggeringRequest};
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
+    api_root::ApiRoot,
     context::ContextUrl,
     entity_query::EntityQuery,
     json_payload::JsonPayload,
     jsonld::JsonLd,
     prefer::PreferHeader,
+    query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
+    response_context_request::ResponseContextRequest,
     temporal_query::TemporalQuery,
     tenant_state,
     typed_path::TypedPath,
 };
-use andromeda_http_response::{
-    internal_failure_summary::InternalFailureSummary,
-    problem_response::ProblemResponse,
-    render::start_rendering_normalized,
-    single::NgsiLdResponse,
-};
+use andromeda_http_response::{internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse, single::NgsiLdResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{
     body::entity_map::UpdateEntityMapBody,
+    empty::EmptyParams,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
 };
 use andromeda_temporal::requested_identifiers::RequestedIdentifiers;
@@ -45,19 +45,23 @@ use std::sync::Arc;
 
 /// GET /ngsi-ld/v1/entityMaps/{entityMapId} -- Retrieve an entity map (section 5.14.1).
 pub async fn get(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
+    ResponseContextRequest { context, api_root }: ResponseContextRequest,
     prefer: PreferHeader,
     TypedPath(entity_map_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
-    let context: ContextSpec = context.into_inner();
-
     let map = state.entity_maps.retrieve(&entity_map_id).await.with_entity_map_instance(&uri)?;
 
     let value = serde_json::to_value(&map).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
-    let rendered = start_rendering_normalized(accept.media_type(), &context, prefer.rendering_preferences())
+    let rendered = ResponseContextSource::new(state.entity_query.engine(), &context, &state.context_hosting, &api_root)
+        .start_rendering_normalized(accept.media_type(), prefer.rendering_preferences())
+        .await
+        .with_entity_map_instance(&uri)?
         .with_payload(ResponsePayload::Single(value))
         .render()
         .with_entity_map_instance(&uri)?;
@@ -66,6 +70,9 @@ pub async fn get(
 
 /// PATCH /ngsi-ld/v1/entityMaps/{entityMapId} -- Update an entity map (section 5.14.2).
 pub async fn update(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(entity_map_id): TypedPath<Identifier>,
@@ -84,6 +91,9 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/entityMaps/{entityMapId} -- Delete an entity map (section 5.14.3).
 pub async fn delete(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(entity_map_id): TypedPath<Identifier>,
@@ -187,29 +197,26 @@ async fn create_from_temporal_query(
 pub async fn create_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    ContextUrl(context): ContextUrl,
+    api_root: ApiRoot,
     prefer: PreferHeader,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     validate_entity_map_query(&query, &uri)?;
-    let context: ContextSpec = context.into_inner();
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = forwarded_query_string(&uri, filters);
     create_from_entity_query(
         &state,
         &mut query,
         forwarded_query,
-        &CreationRendering {
-            context: &context,
-            accept,
-            prefer,
-            uri: &uri,
-        },
+        &CreationRendering::builder()
+            .context(&context)
+            .accept(accept)
+            .prefer(prefer)
+            .uri(&uri)
+            .api_root(&api_root)
+            .build(),
         TriggeringRequest {
             via: incoming_via.as_ref(),
             headers: Some(&headers),
@@ -222,20 +229,13 @@ pub async fn create_from_query(
 pub async fn create_from_query_post(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    api_root: ApiRoot,
     prefer: PreferHeader,
-    JsonLd {
-        value: body,
-        context: body_context,
-    }: JsonLd<Query>,
+    JsonLd { value: body, context }: JsonLd<Query>,
 ) -> Result<Response, ProblemResponse> {
-    // Clause 6.3.5: the body's `@context` and the `Link` context make one.
-    let context = context.merge(body_context);
+    // Clause 6.3.5: the query is read against the one context the body
+    // extractor resolved.
     let mut query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     validate_entity_map_query(&query, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
@@ -244,12 +244,13 @@ pub async fn create_from_query_post(
         &state,
         &mut query,
         forwarded_query,
-        &CreationRendering {
-            context: &context,
-            accept,
-            prefer,
-            uri: &uri,
-        },
+        &CreationRendering::builder()
+            .context(&context)
+            .accept(accept)
+            .prefer(prefer)
+            .uri(&uri)
+            .api_root(&api_root)
+            .build(),
         TriggeringRequest {
             via: incoming_via.as_ref(),
             headers: Some(&headers),
@@ -262,28 +263,25 @@ pub async fn create_from_query_post(
 pub async fn create_temporal_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    ContextUrl(context): ContextUrl,
+    api_root: ApiRoot,
     prefer: PreferHeader,
     TemporalQuery(params): TemporalQuery,
 ) -> Result<Response, ProblemResponse> {
-    let context: ContextSpec = context.into_inner();
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
     let forwarded_query = forwarded_temporal_query_string(&uri, filters);
     create_from_temporal_query(
         &state,
         &params,
         forwarded_query,
-        &CreationRendering {
-            context: &context,
-            accept,
-            prefer,
-            uri: &uri,
-        },
+        &CreationRendering::builder()
+            .context(&context)
+            .accept(accept)
+            .prefer(prefer)
+            .uri(&uri)
+            .api_root(&api_root)
+            .build(),
         TriggeringRequest {
             via: incoming_via.as_ref(),
             headers: Some(&headers),
@@ -296,20 +294,13 @@ pub async fn create_temporal_from_query(
 pub async fn create_temporal_from_query_post(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    api_root: ApiRoot,
     prefer: PreferHeader,
-    JsonLd {
-        value: body,
-        context: body_context,
-    }: JsonLd<Query>,
+    JsonLd { value: body, context }: JsonLd<Query>,
 ) -> Result<Response, ProblemResponse> {
-    // Clause 6.3.5: the body's `@context` and the `Link` context make one.
-    let context = context.merge(body_context);
+    // Clause 6.3.5: the query is read against the one context the body
+    // extractor resolved.
     let params = TemporalQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     // Clause 5.14.5.4: a temporal query and one selection criterion are mandatory.
     params.validate(true).with_entity_map_instance(&uri)?;
@@ -319,12 +310,13 @@ pub async fn create_temporal_from_query_post(
         &state,
         &params,
         forwarded_query,
-        &CreationRendering {
-            context: &context,
-            accept,
-            prefer,
-            uri: &uri,
-        },
+        &CreationRendering::builder()
+            .context(&context)
+            .accept(accept)
+            .prefer(prefer)
+            .uri(&uri)
+            .api_root(&api_root)
+            .build(),
         TriggeringRequest {
             via: incoming_via.as_ref(),
             headers: Some(&headers),

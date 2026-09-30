@@ -55,10 +55,10 @@ mod tests {
     use serde_json::json;
 
     fn context() -> ContextSpec {
-        ContextSpec::none().with_body_context(Some(json!({
+        ContextSpec::from_body(json!({
             "hasA": "https://example.com/hasA",
             "temperature": "https://example.com/temperature",
-        })))
+        }))
     }
 
     fn raw(name: &str, linked: Vec<RawProjectionTerm>) -> RawProjectionTerm {

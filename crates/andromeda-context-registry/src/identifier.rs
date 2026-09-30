@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn both_spellings_the_clause_admits_address_a_stored_row() {
         for written in [
-            "urn:ngsi-ld:Context:2fc7f63e-9213-4821-8720-65b9a404df6f",
+            "urn:ngsi-ld:JsonLdContext:2fc7f63e-9213-4821-8720-65b9a404df6f",
             "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld",
         ] {
             let identifier = ContextIdentifier::from(written);
@@ -97,7 +97,7 @@ mod tests {
     /// A key the broker already holds addresses itself.
     #[test]
     fn a_stored_key_addresses_itself() {
-        let key: Identifier = "urn:ngsi-ld:Context:1".parse().expect("a valid URI");
+        let key: Identifier = "urn:ngsi-ld:JsonLdContext:1".parse().expect("a valid URI");
         let identifier = ContextIdentifier::from(key.clone());
         pretty_assertions::assert_eq!(identifier.stored(), Some(&key));
     }

@@ -72,8 +72,10 @@ mod tests {
     use crate::{
         batch_query_body::{QuerySelector, build_batch_query_body, selectors_from_query},
         config::SplitEntities,
+        forwarded_names::ForwardedNames,
         forwarded_parameter::ForwardedParameter,
         forwarded_query::{ForwardedQuery, client_query::ClientQuery},
+        forwarding_context::Rewording,
         term_resolver::TermResolver,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -104,7 +106,8 @@ mod tests {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
         let context = ContextSpec::none();
         let resolver = TermResolver::new(&engine, &context);
-        let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&params), &by_type, SplitEntities::Complete, &resolver)
+        let names = ForwardedNames::new(&engine, &resolver, &context, Rewording::AsInbound);
+        let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&params), &by_type, SplitEntities::Complete, None, &names)
             .await
             .expect("narrowing succeeds");
         let forwarded = forwarded.first().expect("covered");

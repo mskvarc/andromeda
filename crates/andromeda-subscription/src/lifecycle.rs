@@ -14,8 +14,10 @@ use crate::{
     fields,
     forwarding_hook::SubscriptionForwardingHook,
     merged_validation::validate_merged_subscription,
+    notification_context,
     status::compute_updated_status,
     store::{StatusUpdateFields, SubscriptionStore},
+    subscription_context::SubscriptionContext,
     subscription_invariant::SubscriptionInvariant,
     subscription_validation_reason::SubscriptionValidationReason,
     validation,
@@ -27,20 +29,20 @@ use andromeda_jsonld::{
     context_validation::{validate_context_spec, validate_jsonld_context_value},
     engine::processor::JsonLdEngine,
 };
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, uri::NGSI_LD_URN_NID};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, ngsi_ld_urn::SubscriptionId};
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_telemetry::subscription_ops::{self, SubscriptionOperation};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use serde_json::Value;
 use std::sync::Arc;
-use url::Url;
-use urn_rs::UrnBuilder;
-use uuid::Uuid;
 
+/// Mint the identifier of a subscription whose client named none (clause
+/// 5.8.1.4).
 fn generate_id() -> Result<Identifier, SubscriptionError> {
-    let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4())).build()?;
-    Identifier::try_from(urn).map_err(|error| SubscriptionInvariant::MintedIdentifier(error).into())
+    SubscriptionId::mint()
+        .map(Identifier::from)
+        .map_err(|error| SubscriptionInvariant::MintedIdentifier(error).into())
 }
 
 /// Generic subscription service providing CRUD operations shared by entity and CSR subscriptions.
@@ -122,17 +124,19 @@ where
     /// [`SubscriptionError::AlreadyExists`] when the requested `id` is taken;
     /// [`SubscriptionError::JsonLd`] when the request `@context` or the
     /// subscription's own `jsonldContext` cannot be resolved or the terms
-    /// cannot be expanded; [`SubscriptionError::Persistence`] when the store
-    /// rejects the write. A failing forwarding hook is logged rather than
+    /// cannot be expanded; [`SubscriptionError::ContextHosting`] when the
+    /// `@context` applicable to the request needs a hosted wrapper that cannot
+    /// be stored (clause 5.8.1.4); [`SubscriptionError::Persistence`] when the
+    /// store rejects the write. A failing forwarding hook is logged rather than
     /// returned: the local subscription is created either way.
     pub async fn create(
         &self,
         target: &ContextTarget,
         mut payload: Value,
-        context: &ContextSpec,
-        base_url: Option<&Url>,
+        subscription_context: SubscriptionContext<'_>,
         encountered_sources: &[ContextSourcePseudonym],
     ) -> Result<Identifier, SubscriptionError> {
+        let context = subscription_context.spec();
         let result: Result<Identifier, SubscriptionError> = async {
             validation::validate_create_payload(&payload)?;
 
@@ -156,10 +160,12 @@ where
             }
             validate_context_spec(&self.engine, context).await?;
 
-            // Clause 5.8.2.4: `expand_terms` initialises `jsonldContext` from the
-            // `@context` applicable at creation when the request named none itself,
-            // so by the time the payload is parsed the member reflects that fallback.
-            self.variant.expand_terms(&mut payload, context, base_url).await?;
+            // Clause 5.8.1.4 (and clause 5.11.2.4 "as described in clause
+            // 5.8.1.4"): a subscription created without `jsonldContext` has the
+            // member initialised from the `@context` applicable to it, so by the
+            // time the payload is parsed the member reflects that initialisation.
+            notification_context::initialize_notification_context(&mut payload, subscription_context, &self.engine).await?;
+            self.variant.expand_terms(&mut payload, context).await?;
 
             let values = fields::extract_create_fields(&payload, self.variant.dataset_id_policy())?;
             let fields = values.to_fields();
@@ -186,7 +192,14 @@ where
         result
     }
 
-    /// Update an existing subscription with the given fragment payload.
+    /// Update an existing subscription with the given fragment payload, whose
+    /// terms are expanded under `context`.
+    ///
+    /// The stored `jsonldContext` changes only when the fragment names one
+    /// (clauses 5.8.2.4 and 5.5.8): initialising it from the applicable
+    /// `@context` is a clause 5.8.1.4 creation step, so an update whose request
+    /// merely names a context leaves the subscriber's choice in place and hosts
+    /// nothing.
     ///
     /// # Errors
     ///
@@ -198,14 +211,7 @@ where
     /// or the terms cannot be expanded; [`SubscriptionError::Persistence`]
     /// when the store rejects the write. A failing forwarding hook is logged
     /// rather than returned: the local subscription is updated either way.
-    pub async fn update(
-        &self,
-        target: &ContextTarget,
-        id: &Identifier,
-        mut payload: Value,
-        context: &ContextSpec,
-        base_url: Option<&Url>,
-    ) -> Result<(), SubscriptionError> {
+    pub async fn update(&self, target: &ContextTarget, id: &Identifier, mut payload: Value, context: &ContextSpec) -> Result<(), SubscriptionError> {
         let result: Result<(), SubscriptionError> = async {
             validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
 
@@ -218,7 +224,7 @@ where
             }
             validate_context_spec(&self.engine, context).await?;
 
-            self.variant.expand_terms(&mut payload, context, base_url).await?;
+            self.variant.expand_terms(&mut payload, context).await?;
 
             let existing = self.get(target, id).await?;
             let existing_status = existing.lifecycle.status;

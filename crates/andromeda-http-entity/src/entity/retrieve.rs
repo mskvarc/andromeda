@@ -3,7 +3,6 @@
 use crate::{
     entity::{
         AcceptFormat,
-        ContextSpec,
         Entity,
         EntityResultExt,
         EntityTenantState,
@@ -21,6 +20,7 @@ use crate::{
         ProblemResponse,
         ResolvedJoin,
         Response,
+        ResponseContextSource,
         ResponsePayload,
         RetrievalNarrowing,
         RetrievingJoin,
@@ -30,7 +30,6 @@ use crate::{
         public_error,
         request_entity_map::{LocalEntitySource, record_map_use, resolve_retrieval_map_use},
         retrieve_forwarding::RetrieveForwarding,
-        start_rendering,
         with_linked_resolution_warnings,
     },
     read_rendering::{EntityRepresentation, apply_representation_names, render_entity, render_joined_entities},
@@ -38,7 +37,7 @@ use crate::{
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::request::{EntityMapInUse, TriggeringRequest};
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{context_target, response_context_request::ResponseContextRequest};
 use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
 use andromeda_ngsi_ld_render::response::ResponseRenderer;
 use std::slice::{from_mut, from_ref};
@@ -134,18 +133,13 @@ pub(crate) async fn get(
         snapshot: _,
     }: EntityTenantState,
     accept: AcceptFormat,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    ResponseContextRequest { context, api_root }: ResponseContextRequest,
     TypedPath(id): TypedPath<Identifier>,
     ValidatedQuery(mut params): ValidatedQuery<GetEntityParams>,
     protocol: NgsiLdProtocolHeaders,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_query;
-    let context: ContextSpec = context.into_inner();
     // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
     // refused on the read path exactly as on the write path, before anything is
     // expanded against it.
@@ -251,9 +245,14 @@ pub(crate) async fn get(
         None => RetrievedPayload::Single(render_entity(&entity, None, &representation, &uri)?),
     };
 
-    let rendering = start_rendering(accept.media_type(), &context, prefer.rendering_preferences(), representation.mode).with_geometry_selection(
-        GeometrySelection::new(params.geometry_property.as_ref(), params.dataset_id.as_deref().unwrap_or_default()),
-    );
+    let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
+        .start_rendering(accept.media_type(), prefer.rendering_preferences(), representation.mode)
+        .await
+        .with_entity_instance(&uri)?
+        .with_geometry_selection(GeometrySelection::new(
+            params.geometry_property.as_ref(),
+            params.dataset_id.as_deref().unwrap_or_default(),
+        ));
     retrieval_response(payload, rendering, warnings, entity_map_uri, &uri)
 }
 

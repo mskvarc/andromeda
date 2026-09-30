@@ -224,10 +224,23 @@ pub struct ForwardRetrieveRequest<'a> {
     pub entity_map: EntityMapInUse<'a>,
 }
 
+/// What one forwarded discovery query addresses (clauses 5.7.5 to 5.7.10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscoveryTarget<'a> {
+    /// `/types`: the available entity types (clauses 5.7.5 and 5.7.6).
+    Types,
+    /// `/types/{type}`: one entity type (clause 5.7.7).
+    Type(&'a EntityTypeName),
+    /// `/attributes`: the available attributes (clauses 5.7.8 and 5.7.9).
+    Attributes,
+    /// `/attributes/{attrId}`: one attribute (clause 5.7.10).
+    Attribute(&'a AttributeName),
+}
+
 /// Parameters for forwarding a type or attribute discovery query.
 pub struct ForwardDiscoveryRequest<'a> {
-    /// The discovery resource path below the API base, such as `/types`.
-    pub path: &'a str,
+    /// The discovery resource the query addresses.
+    pub target: DiscoveryTarget<'a>,
     /// The query string of the triggering request.
     pub query_string: &'a str,
     /// The JSON-LD context the triggering request resolved to.

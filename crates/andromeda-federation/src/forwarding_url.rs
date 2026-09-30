@@ -26,7 +26,9 @@ fn ends_with_api_base(endpoint: &Url) -> bool {
 ///
 /// `path` is the resource path below the API base, so the caller never spells
 /// `ngsi-ld/v1` and an endpoint already carrying it is joined without doubling.
-pub(crate) fn forwarding_url(endpoint: &Url, path: &[&str], query_string: &str) -> Result<Url, FederationError> {
+/// `query_string` is absent for a request that carries no query; a present one
+/// holding no pair adds none either, so no URL ends in a bare `?`.
+pub(crate) fn forwarding_url(endpoint: &Url, path: &[&str], query_string: Option<&str>) -> Result<Url, FederationError> {
     let mut url = endpoint.clone(); // clone: a forwarding target owns a mutated URL while the registration remains reusable
     let has_base = ends_with_api_base(endpoint);
     {
@@ -41,7 +43,7 @@ pub(crate) fn forwarding_url(endpoint: &Url, path: &[&str], query_string: &str) 
         }
         segments.extend(path.iter().copied());
     }
-    if !query_string.is_empty() {
+    if let Some(query_string) = query_string.filter(|query_string| !query_string.is_empty()) {
         url.query_pairs_mut().extend_pairs(form_urlencoded::parse(query_string.as_bytes()));
     }
     Ok(url)
@@ -86,34 +88,36 @@ pub(crate) fn with_offset(url: &Url, offset: u64) -> Url {
 
 /// Build a forwarding URL for entity queries.
 pub(crate) fn build_query_url(endpoint: &Url, query_string: &str) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["entities"], query_string)
+    forwarding_url(endpoint, &["entities"], Some(query_string))
 }
 
 /// Build a forwarding URL for entity retrieval by ID.
 pub(crate) fn build_retrieve_url(endpoint: &Url, entity_id: &Identifier, query_string: &str) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["entities", entity_id.as_str()], query_string)
+    forwarding_url(endpoint, &["entities", entity_id.as_str()], Some(query_string))
 }
 
 /// Build a forwarding URL for a batch entity query (clause 6.23: POST
 /// `/entityOperations/query`), carrying the page parameters of `query_string`.
 pub(crate) fn build_batch_query_url(endpoint: &Url, query_string: &str) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["entityOperations", "query"], query_string)
+    forwarding_url(endpoint, &["entityOperations", "query"], Some(query_string))
 }
 
-/// Build a forwarding URL for discovery queries (types, attributes).
-pub(crate) fn build_discovery_url(endpoint: &Url, path: &str, query_string: &str) -> Result<Url, FederationError> {
-    let segments = path.split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
-    forwarding_url(endpoint, &segments, query_string)
+/// Build a forwarding URL for discovery queries (types, attributes), whose
+/// path is `segments`: the collection and, when one is addressed, the type
+/// or attribute name, which the URL encoder keeps one segment even when it is
+/// a full IRI.
+pub(crate) fn build_discovery_url(endpoint: &Url, segments: &[&str], query_string: &str) -> Result<Url, FederationError> {
+    forwarding_url(endpoint, segments, Some(query_string))
 }
 
 /// Build a forwarding URL for temporal entity queries.
 pub(crate) fn build_temporal_query_url(endpoint: &Url, query_string: &str) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["temporal", "entities"], query_string)
+    forwarding_url(endpoint, &["temporal", "entities"], Some(query_string))
 }
 
 /// Build a forwarding URL for temporal entity retrieval by ID.
 pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &Identifier, query_string: &str) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["temporal", "entities", entity_id.as_str()], query_string)
+    forwarding_url(endpoint, &["temporal", "entities", entity_id.as_str()], Some(query_string))
 }
 
 #[cfg(test)]
@@ -129,7 +133,7 @@ mod tests {
     fn an_endpoint_without_the_api_base_gets_it_appended() {
         for endpoint in ["http://peer", "http://peer/"] {
             pretty_assertions::assert_eq!(
-                forwarding_url(&url(endpoint), &["entities"], "").expect("joins").as_str(),
+                forwarding_url(&url(endpoint), &["entities"], None).expect("joins").as_str(),
                 "http://peer/ngsi-ld/v1/entities",
                 "{endpoint}"
             );
@@ -140,13 +144,13 @@ mod tests {
     fn an_endpoint_already_ending_in_the_api_base_is_not_doubled() {
         for endpoint in ["http://peer/ngsi-ld/v1", "http://peer/ngsi-ld/v1/"] {
             pretty_assertions::assert_eq!(
-                forwarding_url(&url(endpoint), &["entities"], "").expect("joins").as_str(),
+                forwarding_url(&url(endpoint), &["entities"], None).expect("joins").as_str(),
                 "http://peer/ngsi-ld/v1/entities",
                 "{endpoint}"
             );
         }
         pretty_assertions::assert_eq!(
-            forwarding_url(&url("http://peer/prefix/ngsi-ld/v1"), &["entities"], "")
+            forwarding_url(&url("http://peer/prefix/ngsi-ld/v1"), &["entities"], None)
                 .expect("joins")
                 .as_str(),
             "http://peer/prefix/ngsi-ld/v1/entities"
@@ -156,7 +160,7 @@ mod tests {
     #[test]
     fn a_prefixed_endpoint_keeps_its_prefix_below_the_base() {
         pretty_assertions::assert_eq!(
-            forwarding_url(&url("http://peer/prefix"), &["entities"], "").expect("joins").as_str(),
+            forwarding_url(&url("http://peer/prefix"), &["entities"], None).expect("joins").as_str(),
             "http://peer/prefix/ngsi-ld/v1/entities"
         );
     }
@@ -176,7 +180,7 @@ mod tests {
 
     #[test]
     fn the_local_scope_parameter_is_appended_after_the_forwarded_query() {
-        let built = forwarding_url(&url("http://peer"), &["entities"], "type=Vehicle").expect("joins");
+        let built = forwarding_url(&url("http://peer"), &["entities"], Some("type=Vehicle")).expect("joins");
         pretty_assertions::assert_eq!(with_local_scope(built).as_str(), "http://peer/ngsi-ld/v1/entities?type=Vehicle&local=true");
     }
 

@@ -34,6 +34,7 @@ pub mod inline_join;
 pub mod language_negotiation;
 pub mod nested_projection;
 pub mod notification_conformance;
+pub mod notification_data;
 pub mod object_list;
 pub mod registration;
 pub mod relationship_targets;

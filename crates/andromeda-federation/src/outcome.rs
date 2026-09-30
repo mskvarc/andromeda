@@ -35,6 +35,11 @@ pub enum TransportFailure {
     /// TLS failure.
     #[error("the forwarded request could not be delivered: {0}")]
     Undelivered(Arc<reqwest::Error>),
+    /// The source answered, but names in its answer do not expand against the
+    /// context the request was written in, so the answer cannot be read in
+    /// Fully Qualified Names (clauses 4.3.6.6 and 6.3.6).
+    #[error("the context source's answer could not be read: {0}")]
+    Unreadable(Arc<FederationError>),
 }
 
 impl TransportFailure {
@@ -81,6 +86,10 @@ pub(crate) enum ForwardGetOutcome {
     NotFound(Vec<NgsiLdWarning>),
     /// Successful HTTP response whose body is not JSON.
     InvalidPayload(serde_json::Error),
+    /// Successful JSON response written in a forwarding context other than the
+    /// client's, one of whose names does not expand against that context, so
+    /// the answer cannot be read back in the client's terms (clause 4.3.6.6).
+    UnreadableNames(Arc<FederationError>),
     /// Non-success HTTP status other than 404.
     ErrorStatus(u16),
     /// No HTTP response arrived.
@@ -103,6 +112,7 @@ impl ForwardGetOutcome {
             ForwardGetOutcome::Success(_)
             | ForwardGetOutcome::NotFound(_)
             | ForwardGetOutcome::InvalidPayload(_)
+            | ForwardGetOutcome::UnreadableNames(_)
             | ForwardGetOutcome::Transport(_)
             | ForwardGetOutcome::LoopDetected => None,
         }
@@ -115,6 +125,9 @@ impl ForwardGetOutcome {
             ForwardGetOutcome::Success(_) | ForwardGetOutcome::NotFound(_) => None,
             ForwardGetOutcome::InvalidPayload(detail) => Some(NgsiLdWarning::RevalidationFailed(format!(
                 "Context source {registration} returned a payload that is not JSON: {detail}"
+            ))),
+            ForwardGetOutcome::UnreadableNames(detail) => Some(NgsiLdWarning::RevalidationFailed(format!(
+                "Context source {registration} returned names its forwarding context does not define: {detail}"
             ))),
             ForwardGetOutcome::ErrorStatus(status) => Some(NgsiLdWarning::MiscellaneousPersistentWarning(format!(
                 "Context source {registration} returned HTTP {status}"
@@ -299,7 +312,7 @@ impl ForwardedWriteResult {
         match &self.outcome {
             ForwardedWriteOutcome::Completed { status, .. } | ForwardedWriteOutcome::RemoteHttpFailure { status, .. } => *status,
             ForwardedWriteOutcome::Transport(TransportFailure::TimedOut { .. } | TransportFailure::CoolingDown { .. }) => 504,
-            ForwardedWriteOutcome::Transport(TransportFailure::Unprepared(_) | TransportFailure::Undelivered(_)) => 502,
+            ForwardedWriteOutcome::Transport(TransportFailure::Unprepared(_) | TransportFailure::Undelivered(_) | TransportFailure::Unreadable(_)) => 502,
             ForwardedWriteOutcome::LoopDetected => 508,
             ForwardedWriteOutcome::NotAdvertised => 409,
             ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => 422,

@@ -2,6 +2,7 @@
 
 use crate::{
     FederationService,
+    answer_vocabulary::AnswerVocabulary,
     batch_query_body::{build_batch_query_body, selectors_from_query},
     cache::Cacheability,
     config::SplitEntities,
@@ -9,18 +10,21 @@ use crate::{
     error::FederationError,
     forwarded_parameter::ForwardedParameter,
     forwarded_query::ForwardedQuery,
+    forwarding_context::BodyPresence,
     forwarding_url::{build_batch_query_url, build_query_url, build_retrieve_url},
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedEntities, ForwardedResponse, MatchedSources},
     query_forwarding_error::QueryForwardingError,
     read_binding::{ReadBinding, ReadIntent, read_binding_for},
     read_fan_out::{ForwardedGetConditions, ForwardedRead, ReadSelection, ReadServing, expand_registration_targets, read_outcome},
+    registration_narrowing::Narrowing,
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
     source_walk::{SOURCE_PAGE_SIZE, WalkedAnswer},
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
@@ -78,8 +82,8 @@ impl WalkedAnswer for ForwardedEntities {
         &mut self.warnings
     }
 
-    fn identifier(element: &Entity) -> Option<&str> {
-        Some(element.id.as_str())
+    fn identifier(element: &Entity) -> Option<Identifier> {
+        Some(element.id.clone()) // clone: the walk remembers the identifier after the entity moves into the answer
     }
 
     fn absorb(&mut self, page: ForwardedEntities) {
@@ -146,6 +150,7 @@ impl FederationService {
             // source reported about the sources behind it still travel.
             ForwardGetOutcome::NotFound(cs_warnings) => (!cs_warnings.is_empty()).then(|| with_warnings(Vec::new(), cs_warnings, None)).flatten(),
             other @ (ForwardGetOutcome::InvalidPayload(_)
+            | ForwardGetOutcome::UnreadableNames(_)
             | ForwardGetOutcome::ErrorStatus(_)
             | ForwardGetOutcome::Transport(_)
             | ForwardGetOutcome::LoopDetected) => {
@@ -226,11 +231,23 @@ impl FederationService {
                 let Some(binding) = read_binding_for(intent, &registration) else {
                     continue;
                 };
-                let reads = ForwardedQuery::for_registration(client_query, &registration, split, &resolver)
+                // Clause 6.23 carries a batch query in its body, whose media
+                // type decides how its context travels (clause 6.3.5).
+                let presence = match binding {
+                    ReadBinding::Query => BodyPresence::Absent,
+                    ReadBinding::BatchQuery => BodyPresence::Present,
+                };
+                let narrowing = Narrowing::builder()
+                    .client(client_query)
+                    .inbound(context)
+                    .resolver(&resolver)
+                    .split(split)
+                    .presence(presence)
+                    .build();
+                let reads = self
+                    .registration_queries(&registration, &narrowing)
                     .await?
-                    .iter()
-                    .map(|query| query_read(&registration, query, binding))
-                    .collect::<Vec<_>>();
+                    .into_reads(|query| query_read(&registration, query, binding));
                 expand_registration_targets(registration, reads, &mut targets);
             }
             if targets.is_empty() {
@@ -245,6 +262,7 @@ impl FederationService {
                         triggering,
                         cacheability: Cacheability::Cacheable,
                         entity_map,
+                        vocabulary: AnswerVocabulary::Entities,
                     },
                     budget,
                 )
@@ -313,12 +331,18 @@ impl FederationService {
             // own attribute constraint.
             let mut targets = Vec::with_capacity(registrations.len());
             let resolver = TermResolver::new(&self.engine, context);
+            let narrowing = Narrowing::builder()
+                .client(client_query)
+                .inbound(context)
+                .resolver(&resolver)
+                .split(SplitEntities::Complete)
+                .presence(BodyPresence::Absent)
+                .build();
             for registration in registrations {
-                let reads = ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete, &resolver)
+                let reads = self
+                    .registration_queries(&registration, &narrowing)
                     .await?
-                    .iter()
-                    .map(|query| ForwardedRead::Get(build_retrieve_url(registration.access.endpoint.url(), entity_id, &query.to_query_string())))
-                    .collect::<Vec<_>>();
+                    .into_reads(|query| ForwardedRead::Get(build_retrieve_url(registration.access.endpoint.url(), entity_id, &query.to_query_string())));
                 expand_registration_targets(registration, reads, &mut targets);
             }
             if targets.is_empty() {
@@ -334,6 +358,7 @@ impl FederationService {
                         triggering,
                         cacheability: Cacheability::Cacheable,
                         entity_map,
+                        vocabulary: AnswerVocabulary::Entities,
                     },
                 )
                 .await;

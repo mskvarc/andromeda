@@ -1,8 +1,10 @@
 //! Turning a batch of request entities into expanded, validated payloads.
 //!
-//! Entities whose `@context` matches the batch's resolved handle take a
-//! synchronous fast path; the rest are expanded through the JSON-LD engine,
-//! in bulk where they share the handle and one at a time where they do not.
+//! The entries prepared together all name one context (the batch groups them
+//! by it before they reach here), so the context's resolved handle alone
+//! decides their path: a handle the synchronous fast path can expand under
+//! takes every entry there, and any other expands them in one bulk call
+//! through the JSON-LD engine, as does an entry the fast path hands back.
 //! Every entry carries its input index so per-entity errors line up with the
 //! caller's order regardless of which pool produced them.
 
@@ -28,7 +30,6 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use chrono::{DateTime, Utc};
-use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::{
     mem::{replace, take},
@@ -122,18 +123,23 @@ impl BlockingTask for FastPreparationTask {
 }
 
 /// Split entries by whether the fast path can expand them.
-pub(super) fn classify_batch(entries: Vec<ClassifiedEntry>, handle: &BatchContextHandle, engine: &JsonLdEngine) -> ClassifiedBatch {
-    let mut fast = Vec::new();
-    let mut slow = Vec::new();
-    let handle_eligible = handle.fast_eligible();
-    for entry in entries {
-        if handle_eligible && engine.entity_context_matches_handle(&entry.value, handle) {
-            fast.push(entry);
-        } else {
-            slow.push(entry);
+///
+/// The entries carry no `@context` of their own -- the batch holds each
+/// entity's context beside it and prepares the entries naming one context
+/// together -- so whether the fast path applies is a property of the handle
+/// alone, and the entries go to one pool or the other as a whole.
+pub(super) fn classify_batch(entries: Vec<ClassifiedEntry>, handle: &BatchContextHandle) -> ClassifiedBatch {
+    if handle.fast_eligible() {
+        ClassifiedBatch {
+            fast: entries,
+            slow: Vec::new(),
+        }
+    } else {
+        ClassifiedBatch {
+            fast: Vec::new(),
+            slow: entries,
         }
     }
-    ClassifiedBatch { fast, slow }
 }
 
 fn process_fast_entry(entry: ClassifiedEntry, engine: &JsonLdEngine, handle: &BatchContextHandle, admission: NullSentinelAdmission) -> FastPoolOutput {
@@ -156,15 +162,8 @@ fn append_preparation_failures(outputs: &mut Vec<FastPoolOutput>, metadata: Vec<
 }
 
 impl EntityService {
-    pub(super) fn batch_execution(&self, len: usize, fast_count: usize, slow_count: usize) -> BatchExecution {
-        decide_batch_execution(
-            len,
-            fast_count,
-            slow_count,
-            self.batch_execution.prepare_blocking_threshold,
-            self.batch_execution.chunk_concurrency,
-            self.batch_execution.concurrency,
-        )
+    pub(super) fn batch_execution(&self, len: usize) -> BatchExecution {
+        decide_batch_execution(len, self.batch_execution.prepare_blocking_threshold, self.batch_execution.chunk_concurrency)
     }
 
     fn build_prepared_entity(id: Identifier, expanded: Value, admission: NullSentinelAdmission) -> PreparedSlot {
@@ -202,7 +201,7 @@ impl EntityService {
                 .into_iter()
                 .map(|entry| process_fast_entry(entry, &self.engine, handle, admission))
                 .collect(),
-            BatchExecution::Offload { fast_chunks, .. } => {
+            BatchExecution::Offload { fast_chunks } => {
                 let chunk_size = self.batch_execution.chunk_size.max(1);
                 let outputs = Arc::new(Mutex::new(Vec::new()));
                 let mut tasks: Vec<Box<dyn BlockingTask>> = Vec::new();
@@ -241,73 +240,38 @@ impl EntityService {
         }
     }
 
-    async fn run_slow_pool(
-        &self,
-        slow: Vec<ClassifiedEntry>,
-        handle: &BatchContextHandle,
-        execution: BatchExecution,
-        admission: NullSentinelAdmission,
-    ) -> Vec<IndexedPrepared> {
+    async fn run_slow_pool(&self, slow: Vec<ClassifiedEntry>, handle: &BatchContextHandle, admission: NullSentinelAdmission) -> Vec<IndexedPrepared> {
         if slow.is_empty() {
             return Vec::new();
         }
 
-        // Pre-process every slow entry: NGSI-LD normalize then apply the
-        // batch handle's `@context`. Entries whose inline `@context`
-        // diverges from the handle keep their own context and require
-        // per-entity expansion; the rest can ride a single bulk expand call.
-        let mut hit_pending: Vec<(usize, Identifier, Value)> = Vec::new();
-        let mut miss_pending: Vec<(usize, Identifier, Value)> = Vec::new();
+        // NGSI-LD normalize every entry and give it the handle's `@context`,
+        // so the whole group rides one bulk expansion.
+        let mut pending: Vec<(usize, Identifier, Value)> = Vec::with_capacity(slow.len());
         for ClassifiedEntry { idx, id, mut value } in slow {
             normalize_entity_attributes(&mut value);
-            if self.engine.entity_context_matches_handle(&value, handle) {
-                if let Some(obj) = value.as_object_mut()
-                    && !obj.contains_key("@context")
-                    && let Some(resolved) = handle.spec().to_context_value()
-                {
-                    obj.insert("@context".to_string(), resolved);
-                }
-                hit_pending.push((idx, id, value));
-            } else {
-                miss_pending.push((idx, id, value));
+            if let Some(obj) = value.as_object_mut()
+                && !obj.contains_key("@context")
+                && let Some(resolved) = handle.spec().to_context_value()
+            {
+                obj.insert("@context".to_string(), resolved);
             }
+            pending.push((idx, id, value));
         }
 
-        let mut results: Vec<IndexedPrepared> = Vec::new();
-
-        if !hit_pending.is_empty() {
-            let docs: Vec<Value> = hit_pending.iter().map(|(_, _, v)| v.clone()).collect(); // clone: bulk path needs originals for retry
-            let bulk = self.engine.expand_prepared_array(docs, handle.spec().core_policy()).await;
-            for ((idx, id, _), expanded) in hit_pending.into_iter().zip(bulk) {
+        let docs: Vec<Value> = pending.iter().map(|(_, _, v)| v.clone()).collect(); // clone: bulk path needs originals for retry
+        let bulk = self.engine.expand_prepared_array(docs, handle.spec().core_policy()).await;
+        pending
+            .into_iter()
+            .zip(bulk)
+            .map(|((idx, id, _), expanded)| {
                 let result = match expanded {
                     Ok(v) => Self::build_prepared_entity(id, v, admission),
                     Err(error) => Err(Box::new((id, error.into()))),
                 };
-                results.push((idx, result));
-            }
-        }
-
-        // Entries whose `@context` diverges still need per-entity expand.
-        if !miss_pending.is_empty() {
-            let concurrency = match execution {
-                BatchExecution::Inline => 1,
-                BatchExecution::Offload { slow_concurrency, .. } => slow_concurrency.get(),
-            };
-            let miss_results: Vec<IndexedPrepared> = stream::iter(miss_pending)
-                .map(|(idx, id, value)| async move {
-                    let expanded = match self.engine.expand(value, handle.spec()).await {
-                        Ok(v) => v,
-                        Err(error) => return (idx, Err(Box::new((id, error.into())))),
-                    };
-                    (idx, Self::build_prepared_entity(id, expanded, admission))
-                })
-                .buffered(concurrency)
-                .collect()
-                .await;
-            results.extend(miss_results);
-        }
-
-        results
+                (idx, result)
+            })
+            .collect()
     }
 
     /// Expand and screen rendered batch entities, answering one slot per
@@ -327,8 +291,8 @@ impl EntityService {
         let handle = self.engine.batch_context_handle(context).await;
         let mut errors: Vec<(Identifier, EntityError)> = Vec::new();
 
-        let classified = classify_batch(entries, &handle, &self.engine);
-        let execution = self.batch_execution(slot_count, classified.fast.len(), classified.slow.len());
+        let classified = classify_batch(entries, &handle);
+        let execution = self.batch_execution(slot_count);
 
         // Process the fast bucket; collect demotions for the slow pool.
         let fast_outputs = self.run_fast_pool(classified.fast, &handle, execution, admission).await;
@@ -352,7 +316,7 @@ impl EntityService {
         }
 
         let slow_inputs: Vec<ClassifiedEntry> = classified.slow.into_iter().chain(demoted).collect();
-        let slow_outputs = self.run_slow_pool(slow_inputs, &handle, execution, admission).await;
+        let slow_outputs = self.run_slow_pool(slow_inputs, &handle, admission).await;
         for (idx, result) in slow_outputs {
             indexed_results[idx] = Some(result);
         }
@@ -372,27 +336,24 @@ impl EntityService {
     }
 }
 
-/// Render decoded batch entities to the compact JSON their preparation
-/// expands, one entry per entity at its position.
+/// Render one decoded batch entity, at position `idx`, to the compact JSON its
+/// preparation expands.
 ///
-/// An entity that cannot be rendered is reported against its identifier and
-/// leaves its position without an entry, so the rest of the batch proceeds.
-pub(super) fn render_entries<'entities>(entities: impl IntoIterator<Item = &'entities Entity>) -> (Vec<ClassifiedEntry>, Vec<(Identifier, EntityError)>) {
-    let mut entries = Vec::new();
-    let mut errors = Vec::new();
-    for (idx, entity) in entities.into_iter().enumerate() {
-        let id = entity.id.clone(); // clone: owned identifier for the classified entry
-        match serde_json::to_value(entity) {
-            Ok(value) => entries.push(ClassifiedEntry { idx, id, value }),
-            Err(error) => errors.push((id, EntityError::Validation(EntityValidationReason::EntityPayload(error)))),
-        }
+/// # Errors
+///
+/// An entity that cannot be rendered is answered against its identifier, and
+/// its position is left without an entry, so the rest of the batch proceeds.
+pub(super) fn render_entry(idx: usize, entity: &Entity) -> Result<ClassifiedEntry, Box<(Identifier, EntityError)>> {
+    let id = entity.id.clone(); // clone: owned identifier for the classified entry
+    match serde_json::to_value(entity) {
+        Ok(value) => Ok(ClassifiedEntry { idx, id, value }),
+        Err(error) => Err(Box::new((id, EntityError::Validation(EntityValidationReason::EntityPayload(error))))),
     }
-    (entries, errors)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ClassifiedEntry, classify_batch};
+    use crate::batch::prepare::{ClassifiedEntry, classify_batch};
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use serde_json::json;
 
@@ -400,68 +361,34 @@ mod tests {
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine")
     }
 
-    fn entry(idx: usize, value: serde_json::Value) -> ClassifiedEntry {
+    fn entry(idx: usize) -> ClassifiedEntry {
         ClassifiedEntry {
             idx,
             id: format!("urn:test:{idx}").parse().expect("valid test uri"),
-            value,
+            value: json!({"id": format!("urn:test:{idx}"), "type": "T", "speed": idx}),
         }
     }
 
-    fn fast_doc(idx: usize) -> serde_json::Value {
-        json!({"id": format!("urn:test:{idx}"), "type": "T", "speed": idx})
-    }
-
-    fn slow_doc_with_user_context(idx: usize) -> serde_json::Value {
-        // Inline @context that diverges from any core handle.
-        json!({
-            "@context": {"@vocab": "https://example.com/vocab#"},
-            "id": format!("urn:test:{idx}"),
-            "type": "T"
-        })
-    }
-
     #[tokio::test]
-    async fn classify_pure_fast_routes_all_to_fast() {
+    async fn an_eligible_handle_routes_every_entry_to_the_fast_path_in_order() {
         let engine = test_engine();
         let handle = engine.batch_context_handle(&ContextSpec::core_only()).await;
-        let entries: Vec<ClassifiedEntry> = (0..100).map(|i| entry(i, fast_doc(i))).collect();
-        let classified = classify_batch(entries, &handle, &engine);
-        pretty_assertions::assert_eq!(classified.fast.len(), 100);
+        let entries: Vec<ClassifiedEntry> = (0..100).map(entry).collect();
+        let classified = classify_batch(entries, &handle);
+        pretty_assertions::assert_eq!(classified.fast.iter().map(|entry| entry.idx).collect::<Vec<_>>(), (0..100).collect::<Vec<_>>());
         assert!(classified.slow.is_empty());
     }
 
     #[tokio::test]
-    async fn classify_pure_slow_routes_all_to_slow() {
+    async fn an_ineligible_handle_routes_every_entry_to_the_slow_path() {
         let engine = test_engine();
         // A body context that overrides a core term marks the handle
         // ineligible, so all entries route to the slow pool.
-        let spec = ContextSpec::none().with_body_context(Some(json!({"observedAt": "https://example.com/own/observedAt"})));
+        let spec = ContextSpec::from_body(json!({"observedAt": "https://example.com/own/observedAt"}));
         let handle = engine.batch_context_handle(&spec).await;
-        let entries: Vec<ClassifiedEntry> = (0..100).map(|i| entry(i, fast_doc(i))).collect();
-        let classified = classify_batch(entries, &handle, &engine);
+        let entries: Vec<ClassifiedEntry> = (0..100).map(entry).collect();
+        let classified = classify_batch(entries, &handle);
         assert!(classified.fast.is_empty());
         pretty_assertions::assert_eq!(classified.slow.len(), 100);
-    }
-
-    #[tokio::test]
-    async fn classify_mixed_preserves_indices() {
-        let engine = test_engine();
-        let handle = engine.batch_context_handle(&ContextSpec::core_only()).await;
-        let entries: Vec<ClassifiedEntry> = (0usize..10)
-            .map(|i| {
-                if i.is_multiple_of(2) {
-                    entry(i, fast_doc(i))
-                } else {
-                    entry(i, slow_doc_with_user_context(i))
-                }
-            })
-            .collect();
-        let classified = classify_batch(entries, &handle, &engine);
-
-        let fast_indices: Vec<usize> = classified.fast.iter().map(|e| e.idx).collect();
-        let slow_indices: Vec<usize> = classified.slow.iter().map(|e| e.idx).collect();
-        pretty_assertions::assert_eq!(fast_indices, vec![0, 2, 4, 6, 8]);
-        pretty_assertions::assert_eq!(slow_indices, vec![1, 3, 5, 7, 9]);
     }
 }

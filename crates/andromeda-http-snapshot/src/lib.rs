@@ -14,7 +14,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-federation",
         "andromeda-http-extraction",
         "andromeda-http-response",
-        "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-problem-details",

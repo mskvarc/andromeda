@@ -17,7 +17,6 @@ use strum::{Display as StrumDisplay, EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
 use typed_builder::TypedBuilder;
 use url::Url;
-use uuid::Uuid;
 
 constant_string!(SnapshotNotificationType, "SnapshotNotification");
 constant_string!(SnapshotType, "Snapshot");
@@ -226,7 +225,7 @@ impl Snapshot {
     /// Build a [`SnapshotNotification`] from the snapshot state.
     #[must_use]
     pub fn build_notification(&self) -> SnapshotNotification {
-        let id = SnapshotNotificationId::from_uuid(Uuid::new_v4());
+        let id = SnapshotNotificationId::mint();
         // clone: the notification owns its copy of the snapshot's id and
         // execution details, and the snapshot itself is only borrowed here.
         SnapshotNotification::builder()

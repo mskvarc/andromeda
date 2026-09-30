@@ -8,62 +8,43 @@
 //! bindings hand it the same [`TemporalQueryRequest`].
 
 use crate::{
-    grouping_gate::reject_grouping_when_disabled,
     history_read::TemporalHistoryRead,
     join::apply_temporal_join,
     request_context_admission::admit_request_context,
-    state::TemporalRouteServices,
     temporal::{
-        AcceptFormatNoGeo,
-        ContextSpec,
-        NgsiLdProtocolHeaders,
-        NgsiLdRequestEnvelope,
         ProblemResponse,
         Response,
         ResultInstanceExt,
         StatusCode,
-        TemporalQueryParameters,
-        TenantState,
-        ValidatedQuery,
         query::{
+            admission::{AdmittedQuery, admit_request},
             complete_history::HistoryCompleteness,
             forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
             merged_history::merge_forwarded_history,
             merged_page::{MergedPageCut, cut_merged_page, defer_split_filters, hold_page_until_merge},
             page::QueriedPage,
-            request_entity_map::{record_query_map, resolve_query_map},
+            request::TemporalQueryRequest,
+            request_entity_map::record_query_map,
             response::{TemporalCollectionMetadata, query_response, simplified_collection},
         },
     },
 };
-use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity_map::reuse::EntityMapUse;
-use andromeda_extensions::enabled::EnabledExtensions;
-use andromeda_federation::{
-    FederationService,
-    forwarded_query::client_query::ClientQuery,
-    operation::ForwardingOperation,
-    ordering_admission::{OrderedRead, OrderingAdmission},
-    request::{EntityMapInUse, TriggeringRequest},
-};
-use andromeda_http_extraction::{context_target, prefer::PreferHeader};
-use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
-use andromeda_http_response::pagination::PagePointers;
+use andromeda_federation::request::TriggeringRequest;
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
+use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_request::{error::ParameterError, join_traversal::RetrievingJoin, pagination_cursor::decode_cursor};
+use andromeda_ngsi_ld_request::{join_traversal::RetrievingJoin, pagination_cursor::decode_cursor};
 use andromeda_temporal::{
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,
     service::{TemporalQueryWarning, TemporalRange},
     temporal_invariant::TemporalInvariant,
 };
-use axum::{
-    Extension,
-    http::{HeaderMap, Uri},
-};
+use axum::http::Uri;
 use serde_json::Value;
-use std::sync::Arc;
 
+/// Admitting a decoded query before it runs.
+mod admission;
 /// How far the merged history is complete (clause 6.3.10).
 mod complete_history;
 /// Asking the registered context sources for their part of the history.
@@ -74,169 +55,12 @@ mod merged_history;
 mod merged_page;
 /// The clause 6.3.10 element page the response points around.
 mod page;
+/// The query-string binding, and the request both bindings hand the operation.
+pub(crate) mod request;
 /// The `EntityMap` the query runs under.
 mod request_entity_map;
 /// Rendering the collection the query answers with.
 mod response;
-
-/// One "Query Temporal Evolution of Entities" as its binding decoded it.
-///
-/// Everything here is what the operation needs and nothing is specific to the
-/// binding that supplied it: the query string binding of clause 6.18.3.2 fills
-/// [`TemporalQueryRequest::params`] from the URL, the POST binding of clause
-/// 6.24.3.1 fills it from the clause 5.2.23 body, and from there on the two are
-/// the same request.
-pub(crate) struct TemporalQueryRequest {
-    /// The tenant-scoped capabilities the query runs against.
-    pub(crate) services: Arc<TemporalRouteServices>,
-    /// The context branch the query reads.
-    pub(crate) target: ContextTarget,
-    /// The representation the response was negotiated to (clause 6.3.4).
-    pub(crate) accept: AcceptFormatNoGeo,
-    /// The clause 6.3.x protocol headers: the `NGSILD-EntityMap` the request
-    /// runs under, the `Via` chain it arrived with, and the extension headers
-    /// that add to the query.
-    pub(crate) protocol: NgsiLdProtocolHeaders,
-    /// The URI the client addressed, which names the `instance` of every
-    /// problem the operation reports and anchors its pagination links.
-    pub(crate) uri: Uri,
-    /// The request's headers, replayed onto every forwarded copy so a
-    /// registration's `contextSourceInfo` can pass one of them through
-    /// (clause 6.3.19).
-    pub(crate) headers: HeaderMap,
-    /// The JSON-LD context the query's terms expand under (clause 6.3.5).
-    pub(crate) context: ContextSpec,
-    /// The query itself, in the raw form the binding decoded it to.
-    pub(crate) params: TemporalQueryParameters,
-    /// Whether the binding's own request URI can carry the clause 6.3.10
-    /// pointers to the neighbouring pages, which the query-string binding's
-    /// can and the POST binding's cannot.
-    pub(crate) pointers: PagePointers,
-}
-
-pub async fn query(
-    context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: TenantState,
-    accept: AcceptFormatNoGeo,
-    Extension(enabled): Extension<EnabledExtensions>,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via: _,
-        headers,
-    }: NgsiLdRequestEnvelope,
-    protocol: NgsiLdProtocolHeaders,
-    ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
-) -> Result<Response, ProblemResponse> {
-    // The grouped extension is refused upstream when it is disabled, so a
-    // conformant broker rejects `aggrGroupBy`/`groupedValues` before the query
-    // is admitted (extension-strategy 5.2).
-    reject_grouping_when_disabled(&params, enabled, &uri)?;
-    // Boxed: a temporal query parameter set is wide enough that the operation's
-    // future overflows the task-local budget the `large_futures` lint guards.
-    Box::pin(run(TemporalQueryRequest {
-        services,
-        target,
-        accept,
-        protocol,
-        uri,
-        headers,
-        context: context.into_inner(),
-        params,
-        // Clause 6.18.3.2 carries the whole query in the request URI, so a
-        // pointer built from it retrieves the next page on its own.
-        pointers: PagePointers::OverRequestUri,
-    }))
-    .await
-}
-
-/// One temporal query, decoded and admitted: what the protocol headers
-/// contributed to it, and the Entity Map it runs under.
-struct AdmittedQuery {
-    /// The `Prefer` header the response honours (clause 6.3.21).
-    prefer: PreferHeader,
-    /// The `Via` chain the request arrived with, replayed onto every forwarded
-    /// copy so a forwarding loop is detected rather than followed.
-    incoming_via: Option<Via>,
-    /// The Entity Map the query runs under (clause 5.5.14).
-    map_use: EntityMapUse,
-}
-
-/// Decode `protocol` into the query, hold the query to every rule that can be
-/// decided before it runs, and resolve the Entity Map it runs under.
-///
-/// The extension headers add to the query before it is validated, so a value a
-/// header supplied is held to the same rules as one the query string carried.
-/// A branch that cannot federate is confined to the local scope first: clause
-/// 5.5.15 makes a Snapshot "implicitly limited to a local scope ... overriding
-/// setting a local scope to false".
-///
-/// # Errors
-///
-/// The classified failure of an extension header the query cannot take, of
-/// resolving the Entity Map, of the clause 5.7.4.4 validation, and of the
-/// clause 5.7.4.4 ordering rule.
-async fn admit_request(
-    state: &TemporalRouteServices,
-    target: &ContextTarget,
-    context: &ContextSpec,
-    protocol: NgsiLdProtocolHeaders,
-    params: &mut TemporalQueryParameters,
-    instance: &Uri,
-) -> Result<AdmittedQuery, ProblemResponse> {
-    protocol.extensions().apply_to_temporal_query(params).with_instance(instance)?;
-    let map_use = resolve_query_map(&state.entity_maps, target, params, protocol.entity_map.as_ref(), instance).await?;
-    if !target.permits_federation() {
-        params.local = Some(true);
-    }
-    params.validate(true).with_instance(instance)?;
-    refuse_inadmissible_ordering(&state.forwarding, target, context, params, EntityMapInUse::from(&map_use), instance).await?;
-    Ok(AdmittedQuery {
-        prefer: protocol.prefer,
-        incoming_via: protocol.incoming_via,
-        map_use,
-    })
-}
-
-/// Refuse an ordering clause 5.7.4.4 does not admit.
-///
-/// The bullet raises `BadRequestData` for an `orderBy` on a query "not limited
-/// to the local scope", which `andromeda_federation::ordering_admission` reads
-/// as an answer a registered Context Source takes part in assembling. That is a
-/// question for the Context Registry rather than for the parameters, so it is
-/// asked here rather than during validation. Which member may order a temporal
-/// query is a separate rule the parameters do settle, and validation keeps it.
-///
-/// # Errors
-///
-/// The classified failure of reading the registrations that would take part,
-/// and the clause 5.7.4.4 refusal itself when one of them does.
-async fn refuse_inadmissible_ordering(
-    forwarding: &FederationService,
-    target: &ContextTarget,
-    context: &ContextSpec,
-    params: &TemporalQueryParameters,
-    entity_map: EntityMapInUse<'_>,
-    instance: &Uri,
-) -> Result<(), ProblemResponse> {
-    let admission = forwarding
-        .admit_ordering(
-            target,
-            context,
-            OrderedRead {
-                ordering: &params.ordering,
-                requested_scope: params.execution_scope(),
-                client_query: ClientQuery::Temporal(params),
-                operation: ForwardingOperation::QueryTemporalEntity,
-                entity_map,
-            },
-        )
-        .await
-        .with_instance(instance)?;
-    match admission {
-        OrderingAdmission::Admitted => Ok(()),
-        OrderingAdmission::Refused => Err(ParameterError::OrderingWithParticipatingSource).with_instance(instance),
-    }
-}
 
 /// Run "Query Temporal Evolution of Entities" (clause 5.7.4) over a decoded
 /// request, whichever binding decoded it.
@@ -255,6 +79,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         accept,
         protocol,
         uri,
+        api_root,
         headers,
         context,
         mut params,
@@ -368,12 +193,17 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // Table 6.18.3.2-2 carries the 203 row and clause 6.3.6 the
     // `Preference-Applied` echo, so the preference the request expressed is
     // what renders; clause 6.3.12's representation is what decides how clause
-    // 4.3.6.8 reads an Attribute of the answer.
+    // 4.3.6.8 reads an Attribute of the answer. Table 6.24.3.1-1 prints no 203
+    // row for the POST form, but clause 6.24.3.1 gives it the clause 5.7.4
+    // behaviour of the GET and clause 6.3.6 ties the echo to any response
+    // carrying a payload body, so both bindings answer the same way.
+    let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
+        .start_rendering_temporal(accept.media_type(), prefer.rendering_preferences(), params.selected_format())
+        .await
+        .with_instance(&uri)?;
     query_response(
         accept,
-        prefer,
-        params.selected_format(),
-        &context,
+        rendering,
         values,
         TemporalCollectionMetadata {
             status,

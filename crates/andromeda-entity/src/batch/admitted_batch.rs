@@ -12,12 +12,12 @@
 
 use crate::{
     EntityService,
-    batch::prepare::{ClassifiedEntry, PreparedBatch, PreparedEntity, render_entries},
+    batch::prepare::{ClassifiedEntry, PreparedBatch, PreparedEntity, render_entry},
     error::EntityError,
     null_sentinel_admission::NullSentinelAdmission,
     write_kind::BatchWriteKind,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::batch_contexts::{BatchContext, ContextGroups};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity};
 use serde_json::Value;
@@ -29,6 +29,10 @@ pub struct RenderedEntity {
     pub entity: Entity,
     /// The entity rendered back to compact JSON.
     pub representation: Value,
+    /// The context the entity is read against: its own `@context` in an
+    /// `application/ld+json` batch, the request's `Link` context otherwise
+    /// (clause 5.5.7). Entities naming the same context share one identity.
+    pub context: BatchContext,
 }
 
 /// Where an admitted entity's local write payload comes from.
@@ -50,6 +54,9 @@ pub(super) struct AdmittedBatchEntity {
     entity: Entity,
     /// Its local write payload.
     preparation: Preparation,
+    /// The context the entity was submitted with, which a narrowed entity is
+    /// prepared again under.
+    context: BatchContext,
 }
 
 impl AdmittedBatchEntity {
@@ -91,9 +98,11 @@ impl<W: BatchWriteKind> AdmittedBatch<W> {
         self.entities.len()
     }
 
-    /// The admitted entities, as the forwarding phase sends them.
-    pub fn entities(&self) -> impl Iterator<Item = &Entity> {
-        self.entities.iter().map(|admitted| &admitted.entity)
+    /// The admitted entities, as the forwarding phase sends them, each with
+    /// the context it was submitted under (a top-level node's `@context`
+    /// applies to that node alone).
+    pub fn entities(&self) -> impl Iterator<Item = (&Entity, &BatchContext)> {
+        self.entities.iter().map(|admitted| (&admitted.entity, &admitted.context))
     }
 
     /// Keep what the local phase processes once proxied registrations took
@@ -137,38 +146,39 @@ impl EntityService {
     /// `BatchEntityError` [...] containing the failed Entity ID and the related
     /// `ProblemDetails`" rather than failing the request. An identifier that
     /// fails is refused for every entity carrying it.
-    pub async fn admit_batch_write<W: BatchWriteKind>(
-        &self,
-        kind: W,
-        rendered: Vec<RenderedEntity>,
-        context: &ContextSpec,
-    ) -> (AdmittedBatch<W>, Vec<(Identifier, EntityError)>) {
+    pub async fn admit_batch_write<W: BatchWriteKind>(&self, kind: W, rendered: Vec<RenderedEntity>) -> (AdmittedBatch<W>, Vec<(Identifier, EntityError)>) {
         let slot_count = rendered.len();
-        let (entities, entries): (Vec<Entity>, Vec<ClassifiedEntry>) = rendered
-            .into_iter()
-            .enumerate()
-            .map(|(idx, RenderedEntity { entity, representation })| {
-                let id = entity.id.clone(); // clone: the classified entry owns the identifier its failure is reported against
-                (
-                    entity,
-                    ClassifiedEntry {
-                        idx,
-                        id,
-                        value: representation,
-                    },
-                )
-            })
-            .unzip();
-        let PreparedBatch { slots, errors } = self
-            .prepare_payloads(slot_count, entries, context, kind.write().null_sentinel_admission())
-            .await;
+        let mut groups = ContextGroups::default();
+        let mut entities = Vec::with_capacity(slot_count);
+        for (
+            idx,
+            RenderedEntity {
+                entity,
+                representation,
+                context,
+            },
+        ) in rendered.into_iter().enumerate()
+        {
+            let id = entity.id.clone(); // clone: the classified entry owns the identifier its failure is reported against
+            groups.push(
+                &context,
+                ClassifiedEntry {
+                    idx,
+                    id,
+                    value: representation,
+                },
+            );
+            entities.push((entity, context));
+        }
+        let PreparedBatch { slots, errors } = self.prepare_grouped(slot_count, groups, kind.write().null_sentinel_admission()).await;
         let mut admitted = entities
             .into_iter()
             .zip(slots)
-            .filter_map(|(entity, slot)| {
+            .filter_map(|((entity, context), slot)| {
                 slot.map(|prepared| AdmittedBatchEntity {
                     entity,
                     preparation: Preparation::Prepared(Box::new(prepared)),
+                    context,
                 })
             })
             .collect::<Vec<_>>();
@@ -183,33 +193,37 @@ impl EntityService {
     ///
     /// An entity the forwarding phase left untouched is written as the
     /// admission prepared it; a narrowed one is rendered and prepared again
-    /// under `admission`, and a failure of that is reported against its
-    /// identifier.
+    /// under `admission`, against the context it was submitted with, and a
+    /// failure of that is reported against its identifier.
     pub(super) async fn prepare_admitted_chunk(
         &self,
         chunk: Vec<AdmittedBatchEntity>,
-        context: &ContextSpec,
         admission: NullSentinelAdmission,
     ) -> (Vec<PreparedEntity>, Vec<(Identifier, EntityError)>) {
         let mut slots: Vec<Option<PreparedEntity>> = Vec::with_capacity(chunk.len());
-        let mut narrowed: Vec<Entity> = Vec::new();
-        for AdmittedBatchEntity { entity, preparation } in chunk {
+        let mut groups = ContextGroups::default();
+        let mut narrowed = 0;
+        let mut errors = Vec::new();
+        for AdmittedBatchEntity { entity, preparation, context } in chunk {
             match preparation {
                 Preparation::Prepared(prepared) => slots.push(Some(*prepared)),
                 Preparation::Narrowed => {
                     slots.push(None);
-                    narrowed.push(entity);
+                    match render_entry(narrowed, &entity) {
+                        Ok(entry) => groups.push(&context, entry),
+                        Err(failure) => errors.push(*failure),
+                    }
+                    narrowed += 1;
                 }
             }
         }
-        if narrowed.is_empty() {
-            return (slots.into_iter().flatten().collect(), Vec::new());
+        if narrowed == 0 {
+            return (slots.into_iter().flatten().collect(), errors);
         }
-        let (entries, mut errors) = render_entries(&narrowed);
         let PreparedBatch {
             slots: fresh,
             errors: preparation_errors,
-        } = self.prepare_payloads(narrowed.len(), entries, context, admission).await;
+        } = self.prepare_grouped(narrowed, groups, admission).await;
         errors.extend(preparation_errors);
         let mut fresh = fresh.into_iter();
         let prepared = slots
@@ -230,7 +244,7 @@ mod tests {
         admission_fixture::{admitted_batch, rendered},
         batch::{
             UpsertPolicy,
-            admitted_batch::{AdmittedBatch, Preparation},
+            admitted_batch::{AdmittedBatch, Preparation, RenderedEntity},
         },
         error::EntityError,
         notification_recording_harness::recording_service,
@@ -238,7 +252,10 @@ mod tests {
         write_admission::BatchWrite,
         write_kind::{BatchCreate, BatchUpsert},
     };
-    use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_jsonld::{
+        batch_contexts::{BatchContext, BatchContexts},
+        context_spec::ContextSpec,
+    };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::entity::Entity;
     use serde_json::{Value, json};
@@ -325,9 +342,7 @@ mod tests {
     async fn a_chunk_is_prepared_in_submission_order_with_the_narrowed_entity_reduced_to_what_remains() {
         let (service, admitted) = narrowed_batch().await;
         let (_, entities) = admitted.into_parts();
-        let (prepared, errors) = service
-            .prepare_admitted_chunk(entities, &ContextSpec::core_only(), BatchWrite::Create.null_sentinel_admission())
-            .await;
+        let (prepared, errors) = service.prepare_admitted_chunk(entities, BatchWrite::Create.null_sentinel_admission()).await;
         assert!(errors.is_empty(), "{errors:?}");
         pretty_assertions::assert_eq!(
             prepared.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
@@ -362,15 +377,121 @@ mod tests {
             }
         });
         let (_, entities) = admitted.into_parts();
-        let (prepared, errors) = service
-            .prepare_admitted_chunk(entities, &ContextSpec::core_only(), NullSentinelAdmission::Refused)
-            .await;
+        let (prepared, errors) = service.prepare_admitted_chunk(entities, NullSentinelAdmission::Refused).await;
         pretty_assertions::assert_eq!(
             prepared.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:2"]
         );
         pretty_assertions::assert_eq!(errors.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>(), vec!["urn:ngsi-ld:Vehicle:1"]);
         assert!(matches!(errors[0].1, EntityError::Validation(_)), "{}", errors[0].1);
+    }
+
+    /// A context mapping `term` to `iri`, as an item of an
+    /// `application/ld+json` batch carries it, interned in `contexts`.
+    fn term_context(contexts: &mut BatchContexts, term: &str, iri: &str) -> BatchContext {
+        contexts.context_of(Some(json!({ term: iri })))
+    }
+
+    /// The expanded payloads the admission prepared, by identifier.
+    fn expanded_by_id(admitted: AdmittedBatch<BatchCreate>) -> Vec<(String, String)> {
+        let (_, entities) = admitted.into_parts();
+        entities
+            .into_iter()
+            .map(|admitted| match admitted.preparation {
+                Preparation::Prepared(prepared) => (prepared.id.to_string(), prepared.expanded.to_string()),
+                Preparation::Narrowed => (admitted.entity.id.to_string(), String::new()),
+            })
+            .collect()
+    }
+
+    /// JSON-LD applies a top-level node's `@context` to that node alone: two
+    /// entities of one batch naming `speed` through different contexts store
+    /// two different attribute IRIs, and neither reads the other's definition.
+    #[tokio::test]
+    async fn each_entity_of_a_batch_is_expanded_under_its_own_context() {
+        let (service, _recorded) = recording_service().await;
+        let mut contexts = BatchContexts::per_entity();
+        let first = term_context(&mut contexts, "speed", "https://a.example/speed");
+        let second = term_context(&mut contexts, "speed", "https://b.example/speed");
+        let rendered = [
+            ("urn:ngsi-ld:Vehicle:1", &first),
+            ("urn:ngsi-ld:Vehicle:2", &second),
+            ("urn:ngsi-ld:Vehicle:3", &first),
+        ]
+        .into_iter()
+        .map(|(id, context)| {
+            let entity = vehicle(id);
+            let representation = serde_json::to_value(&entity).expect("the entity renders");
+            RenderedEntity {
+                entity,
+                representation,
+                context: context.clone(), // clone: each entity holds the shared handle
+            }
+        })
+        .collect();
+
+        let (admitted, refused) = service.admit_batch_write(BatchCreate, rendered).await;
+
+        assert!(refused.is_empty(), "{refused:?}");
+        let expanded = expanded_by_id(admitted);
+        pretty_assertions::assert_eq!(
+            expanded.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:3"],
+            "entities keep their submission order across contexts"
+        );
+        assert!(
+            expanded[0].1.contains("https://a.example/speed") && !expanded[0].1.contains("https://b.example/speed"),
+            "{}",
+            expanded[0].1
+        );
+        assert!(
+            expanded[1].1.contains("https://b.example/speed") && !expanded[1].1.contains("https://a.example/speed"),
+            "{}",
+            expanded[1].1
+        );
+        assert!(expanded[2].1.contains("https://a.example/speed"), "{}", expanded[2].1);
+    }
+
+    /// A narrowed entity is prepared again under the context it was submitted
+    /// with, not under another entity's.
+    #[tokio::test]
+    async fn a_narrowed_entity_is_prepared_again_under_its_own_context() {
+        let (service, _recorded) = recording_service().await;
+        let mut contexts = BatchContexts::per_entity();
+        let own = term_context(&mut contexts, "brandName", "https://a.example/brandName");
+        let other = term_context(&mut contexts, "brandName", "https://b.example/brandName");
+        let rendered = [("urn:ngsi-ld:Vehicle:1", &own), ("urn:ngsi-ld:Vehicle:2", &other)]
+            .into_iter()
+            .map(|(id, context)| {
+                let entity = vehicle(id);
+                let representation = serde_json::to_value(&entity).expect("the entity renders");
+                RenderedEntity {
+                    entity,
+                    representation,
+                    context: context.clone(), // clone: each entity holds the shared handle
+                }
+            })
+            .collect();
+        let (mut admitted, refused) = service.admit_batch_write(BatchCreate, rendered).await;
+        assert!(refused.is_empty(), "{refused:?}");
+        admitted.retain_local(|id| {
+            if id.as_str() == "urn:ngsi-ld:Vehicle:1" {
+                names(&["speed"])
+            } else {
+                Vec::new()
+            }
+        });
+
+        let (_, entities) = admitted.into_parts();
+        let (prepared, errors) = service.prepare_admitted_chunk(entities, BatchWrite::Create.null_sentinel_admission()).await;
+
+        assert!(errors.is_empty(), "{errors:?}");
+        let narrowed = prepared[0].expanded.to_string();
+        assert!(
+            narrowed.contains("https://a.example/brandName") && !narrowed.contains("https://b.example/brandName"),
+            "{narrowed}"
+        );
+        assert!(prepared[1].expanded.to_string().contains("https://b.example/brandName"));
     }
 
     /// An identifier the screening refuses is refused for every entity carrying
@@ -384,10 +505,10 @@ mod tests {
             entity(&json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": "urn:ngsi-ld:null"}})),
             vehicle("urn:ngsi-ld:Vehicle:2"),
         ];
-        let (admitted, refused) = service.admit_batch_write(BatchCreate, rendered(entities), &ContextSpec::core_only()).await;
+        let (admitted, refused) = service.admit_batch_write(BatchCreate, rendered(entities, &ContextSpec::core_only())).await;
         pretty_assertions::assert_eq!(refused.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>(), vec!["urn:ngsi-ld:Vehicle:1"]);
         pretty_assertions::assert_eq!(
-            admitted.entities().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
+            admitted.entities().map(|(entity, _)| entity.id.to_string()).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:2"]
         );
     }

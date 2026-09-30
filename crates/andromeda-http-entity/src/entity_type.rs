@@ -5,18 +5,20 @@ use andromeda_entity::discovery::DiscoveryScope;
 use andromeda_federation::{
     discovery_result::{collect_discovery_warnings, merge_type_info_results, merge_types_results},
     operation::ForwardingOperation,
-    request::{ForwardDiscoveryRequest, TriggeringRequest},
+    request::{DiscoveryTarget, ForwardDiscoveryRequest, TriggeringRequest},
 };
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
+    api_root::ApiRoot,
+    context::ContextUrl,
     context_target,
     prefer::PreferHeader,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
     typed_path::TypedPath,
 };
-use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering_normalized, single::NgsiLdResponse};
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_http_response::{problem_response::ProblemResponse, single::NgsiLdResponse};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{discovery::DiscoveryListParams, local::LocalOnlyParams};
@@ -37,16 +39,12 @@ pub async fn query(
         snapshot,
     }: EntityTenantState,
     accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    ContextUrl(context): ContextUrl,
+    api_root: ApiRoot,
     ValidatedQuery(params): ValidatedQuery<DiscoveryListParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_discovery;
-    let context: ContextSpec = context.into_inner();
 
     let is_local = !target.permits_federation() || params.local.unwrap_or(false);
     let scope = if target.permits_federation() {
@@ -67,7 +65,7 @@ pub async fn query(
                 .forward_discovery_query(
                     &target,
                     ForwardDiscoveryRequest {
-                        path: "/types",
+                        target: DiscoveryTarget::Types,
                         query_string,
                         context: &context,
                         operation: ForwardingOperation::RetrieveEntityTypeDetails,
@@ -83,7 +81,10 @@ pub async fn query(
             (merged, warnings)
         };
 
-        let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+        let rendered = ResponseContextSource::new(state.entity_query.engine(), &context, &state.context_hosting, &api_root)
+            .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
+            .await
+            .with_entity_instance(&uri)?
             .with_payload(ResponsePayload::Single(result))
             .render()
             .with_entity_instance(&uri)?;
@@ -105,7 +106,7 @@ pub async fn query(
                 .forward_discovery_query(
                     &target,
                     ForwardDiscoveryRequest {
-                        path: "/types",
+                        target: DiscoveryTarget::Types,
                         query_string,
                         context: &context,
                         operation: ForwardingOperation::RetrieveEntityTypes,
@@ -121,7 +122,10 @@ pub async fn query(
             (merged, warnings)
         };
 
-        let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+        let rendered = ResponseContextSource::new(state.entity_query.engine(), &context, &state.context_hosting, &api_root)
+            .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
+            .await
+            .with_entity_instance(&uri)?
             .with_payload(ResponsePayload::Single(result))
             .render()
             .with_entity_instance(&uri)?;
@@ -147,17 +151,13 @@ pub async fn get(
         snapshot,
     }: EntityTenantState,
     accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    ContextUrl(context): ContextUrl,
+    api_root: ApiRoot,
     TypedPath(type_): TypedPath<EntityTypeName>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_discovery;
-    let context: ContextSpec = context.into_inner();
 
     let is_local = !target.permits_federation() || params.local.unwrap_or(false);
     let scope = if target.permits_federation() {
@@ -172,13 +172,12 @@ pub async fn get(
         (local_result, Vec::new())
     } else {
         let query_string = uri.query().unwrap_or("");
-        let path = format!("/types/{type_}");
         let forwarded = state
             .forwarding
             .forward_discovery_query(
                 &target,
                 ForwardDiscoveryRequest {
-                    path: &path,
+                    target: DiscoveryTarget::Type(&type_),
                     query_string,
                     context: &context,
                     operation: ForwardingOperation::RetrieveEntityTypeInfo,
@@ -194,7 +193,10 @@ pub async fn get(
         (merged, warnings)
     };
 
-    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = ResponseContextSource::new(state.entity_query.engine(), &context, &state.context_hosting, &api_root)
+        .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
+        .await
+        .with_entity_instance(&uri)?
         .with_payload(ResponsePayload::Single(result))
         .render()
         .with_entity_instance(&uri)?;

@@ -44,6 +44,7 @@ pub fn build_envelope(request: &DeliveryRequest) -> Vec<u8> {
 mod tests {
     use crate::{
         mqtt::envelope::build_envelope,
+        notification_context::NotificationContext,
         request::{DeliveryRequest, NotificationDelivery},
     };
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
@@ -55,21 +56,58 @@ mod tests {
     use url::Url;
 
     fn request(accept: &str, receiver_info: Option<&[KeyValuePair]>, tenant: Option<&TenantName>) -> DeliveryRequest {
+        notification(
+            &json!({"id": "urn:ngsi-ld:Notification:1", "type": "Notification"}),
+            accept,
+            receiver_info,
+            tenant,
+        )
+    }
+
+    /// The MQTT delivery of the notification `payload` to an endpoint whose
+    /// `accept` is `accept`.
+    fn notification(payload: &Value, accept: &str, receiver_info: Option<&[KeyValuePair]>, tenant: Option<&TenantName>) -> DeliveryRequest {
         let media = MediaTypeBuf::from_str(accept).expect("a well-formed media type");
         let endpoint = Url::parse("mqtt://broker:1883/topic").expect("a well-formed endpoint URI");
         let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
-        NotificationDelivery {
-            payload: &json!({"id": "urn:ngsi-ld:Notification:1", "type": "Notification"}),
-            endpoint_uri: &endpoint,
-            accept: Some(&media),
-            receiver_info,
-            jsonld_context: None,
-            tenant,
-            snapshot: None,
-            timeout: None,
-            subscription_id: &subscription,
+        let context = NotificationContext::stated(None, json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        NotificationDelivery::builder()
+            .payload(payload)
+            .endpoint_uri(&endpoint)
+            .accept(Some(&media))
+            .receiver_info(receiver_info)
+            .context(&context)
+            .tenant(tenant)
+            .subscription_id(&subscription)
+            .build()
+            .assemble()
+    }
+
+    /// Table 5.3.1-1 over MQTT (clause 7.2): an `application/geo+json`
+    /// notification's body is the same document an HTTP delivery sends, its
+    /// `data` one `FeatureCollection` naming the context once and no Feature
+    /// naming one, and the metadata carries no `Link`.
+    #[test]
+    fn a_geo_json_notification_body_carries_the_feature_collection_the_http_delivery_does() {
+        let payload = json!({
+            "id": "urn:ngsi-ld:Notification:1",
+            "type": "Notification",
+            "data": {
+                "type": "FeatureCollection",
+                "features": [{"type": "Feature", "id": "urn:ngsi-ld:Building:1", "geometry": null, "properties": {"type": "Building"}}]
+            }
+        });
+
+        let rendered = envelope(&notification(&payload, "application/geo+json", None, None));
+
+        pretty_assertions::assert_eq!(rendered["metadata"]["Content-Type"], json!("application/geo+json"));
+        pretty_assertions::assert_eq!(rendered["body"]["data"]["type"], json!("FeatureCollection"));
+        pretty_assertions::assert_eq!(rendered["body"]["data"]["@context"], json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        pretty_assertions::assert_eq!(rendered["body"]["@context"], json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        for feature in rendered["body"]["data"]["features"].as_array().expect("the features survive") {
+            assert!(feature.get("@context").is_none(), "{feature}");
         }
-        .assemble()
+        assert!(rendered["metadata"].get("Link").is_none());
     }
 
     fn envelope(request: &DeliveryRequest) -> Value {

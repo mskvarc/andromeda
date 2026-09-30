@@ -2,12 +2,14 @@
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
+use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_http_extraction::{
     classification::classify_tenancy_error,
     context_target::{ContextTargetProvider, ExistingTargetedTenantState, ProvisionableTargetedTenantState, SnapshotTargetResolver},
     tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver},
 };
 use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_subscription::{csource::CsrSubscriptionVariant, entity::EntitySubscriptionVariant, lifecycle::SubscriptionService};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
 use axum::http::Uri;
@@ -29,6 +31,12 @@ pub struct SubscriptionRouteServices {
     pub subscriptions: Arc<SubscriptionService<EntitySubscriptionVariant>>,
     /// Context-source-subscription lifecycle policy.
     pub csource_subscriptions: Arc<SubscriptionService<CsrSubscriptionVariant>>,
+    /// The tenant's JSON-LD processor, which resolves the `@context` a
+    /// subscription response names (clause 5.2.3).
+    pub engine: JsonLdEngine,
+    /// The tenant's host of the contexts its responses and subscriptions name
+    /// when no single URL names them (Annex C.8, clause 5.8.1.4).
+    pub context_hosting: TenantContextHosting,
     /// Live SSE connections.
     pub sse_registry: Arc<ConnectionRegistry<SseNotificationEvent>>,
     /// Per-connection SSE channel capacity.

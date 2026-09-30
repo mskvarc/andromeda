@@ -93,11 +93,7 @@ where
             Ok(p) => p,
             Err(never) => match never {},
         };
-        // PayloadProfile is infallible, so unwrap via match.
-        let payload_profile = match PayloadProfile::from_request_parts(parts, state).await {
-            Ok(profile) => profile,
-            Err(never) => match never {},
-        };
+        let payload_profile = PayloadProfile::from_request_parts(parts, state).await?;
         let snapshot = SnapshotHeader::from_request_parts(parts, state).await?;
         // IncomingVia is infallible, so unwrap via match.
         let incoming_via = match IncomingVia::from_request_parts(parts, state).await {
@@ -147,9 +143,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::protocol::NgsiLdProtocolHeaders;
+    use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
-    use axum::http::Request;
+    use axum::{extract::FromRequestParts, http::Request};
 
     #[tokio::test]
     async fn extracts_defaults_with_no_headers() {

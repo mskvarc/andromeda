@@ -1,6 +1,6 @@
 //! The invariants subscription policy relies on, and how each one broke.
 
-use andromeda_ngsi_ld_lexicon::identifier_length::IdentifierTooLong;
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SubscriptionIdParseError;
 use thiserror::Error;
 
 /// A subscription policy invariant that did not hold.
@@ -15,7 +15,7 @@ pub enum SubscriptionInvariant {
     DistributedSide,
     /// A freshly minted subscription identifier is not an identifier.
     #[error("a minted subscription identifier is invalid: {0}")]
-    MintedIdentifier(#[source] IdentifierTooLong),
+    MintedIdentifier(#[source] SubscriptionIdParseError),
     /// An attribute name the dictionary was asked to intern came back without a
     /// key.
     #[error("an attribute name was not interned by the name dictionary")]

@@ -2,7 +2,6 @@
 
 use crate::{
     entity::{
-        ContextUrl,
         Entity,
         EntityResultExt,
         EntityTenantStateOrCreate,
@@ -40,16 +39,11 @@ pub(crate) async fn create(
     }: EntityTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
-    JsonLd {
-        value: entity,
-        context: body_context,
-    }: JsonLd<Entity>,
+    JsonLd { value: entity, context }: JsonLd<Entity>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
-    let context = context.merge(body_context);
     // Clause 5.6.1.4 opens with the clause 5.5.4 validation and forwards only
     // afterwards, so the whole screening runs here: a representation this
     // broker refuses reaches no context source, and a create whose attributes

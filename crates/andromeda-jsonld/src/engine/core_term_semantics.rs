@@ -124,12 +124,13 @@ pub(crate) fn container_of(declared_container: Option<&str>) -> Option<TermConta
 #[cfg(test)]
 mod tests {
     use crate::{
-        core_context::{NGSI_LD_CORE_CONTEXT_V19, NGSI_LD_CORE_CONTEXT_V19_URL},
+        core_context::NGSI_LD_CORE_CONTEXT_V19,
         engine::{
             core_term_semantics::core_term_semantics,
             term_map::coercion::{TermCoercion, TermContainer},
         },
     };
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
 
     /// The derivation reads the real v1.9 declarations, not a hand-written copy.
@@ -142,7 +143,7 @@ mod tests {
     /// (`valueList`).
     #[test]
     fn the_table_reflects_the_v1_9_context_declarations() {
-        let semantics = core_term_semantics(&IriBuf::new(NGSI_LD_CORE_CONTEXT_V19_URL.to_string()).expect("valid core URL"));
+        let semantics = core_term_semantics(&IriBuf::new(NGSI_LD_CORE_CONTEXT_URL.to_string()).expect("valid core URL"));
 
         assert!(matches!(
             semantics.get("objectType").and_then(|s| s.coercion.as_ref()),
@@ -163,7 +164,7 @@ mod tests {
     /// released core context, so the derivation records nothing for them.
     #[test]
     fn terms_no_context_declares_are_absent() {
-        let semantics = core_term_semantics(&IriBuf::new(NGSI_LD_CORE_CONTEXT_V19_URL.to_string()).expect("valid core URL"));
+        let semantics = core_term_semantics(&IriBuf::new(NGSI_LD_CORE_CONTEXT_URL.to_string()).expect("valid core URL"));
         for phantom in ["instanceTimeAt", "previousTime", "timestamp"] {
             assert!(semantics.get(phantom).is_none(), "{phantom} is declared by no context");
         }
@@ -176,7 +177,7 @@ mod tests {
     fn every_annotated_v1_9_term_is_derived() {
         let document: serde_json::Value = serde_json::from_str(NGSI_LD_CORE_CONTEXT_V19).expect("embedded v1.9 context parses");
         let context = document.get("@context").and_then(serde_json::Value::as_object).expect("a context object");
-        let semantics = core_term_semantics(&IriBuf::new(NGSI_LD_CORE_CONTEXT_V19_URL.to_string()).expect("valid core URL"));
+        let semantics = core_term_semantics(&IriBuf::new(NGSI_LD_CORE_CONTEXT_URL.to_string()).expect("valid core URL"));
 
         for (term, declaration) in context {
             if term.starts_with('@') {

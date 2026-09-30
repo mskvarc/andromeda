@@ -2,14 +2,13 @@
 
 use crate::{
     discovery::{DiscoveryScope, EntityDiscoveryService, registry_union::extend_without_repetition, rendered_names::compacted_type_names},
+    entity_invariant::EntityInvariant,
     error::EntityError,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::EntityTypeListId, uri::NGSI_LD_URN_NID};
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::EntityTypeListId;
 use andromeda_ngsi_ld_model::entity_type_list::{EntityTypeList, EntityTypeListType};
-use urn_rs::UrnBuilder;
-use uuid::Uuid;
 
 impl EntityDiscoveryService {
     /// List the entity types for which instances exist, or possibly exist in
@@ -17,17 +16,11 @@ impl EntityDiscoveryService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::Identifier`] or
-    /// [`EntityError::EntityTypeListIdentifier`] when the generated list
-    /// identifier is not a well-formed NGSI-LD URN,
-    /// [`EntityError::Persistence`] when the store or the registry could not be
-    /// consulted, and [`EntityError::Internal`] when a stored type name does
-    /// not read back as one.
+    /// Reports [`EntityError::Persistence`] when the store or the registry
+    /// could not be consulted, and [`EntityError::Internal`] when a stored type
+    /// name does not read back as one or the minted list identifier is not one.
     pub async fn types(&self, target: &ContextTarget, scope: DiscoveryScope, context: &ContextSpec) -> Result<EntityTypeList, EntityError> {
-        const TYPE: &str = "EntityTypeList";
-
-        let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("{}:{}", TYPE, Uuid::new_v4())).build()?;
-        let id = EntityTypeListId::try_from(id)?;
+        let id = EntityTypeListId::mint().map_err(EntityInvariant::MintedEntityTypeListId)?;
 
         let mut type_iris = self.store.types(target).await?;
         extend_without_repetition(

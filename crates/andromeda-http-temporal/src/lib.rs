@@ -20,6 +20,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-entity-map",
         "andromeda-extensions",
         "andromeda-federation",
+        "andromeda-http-context-registry",
         "andromeda-http-extraction",
         "andromeda-http-headers",
         "andromeda-http-response",

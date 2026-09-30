@@ -11,13 +11,12 @@ use crate::{
     entity::{
         AcceptFormat,
         ContextSpec,
-        ContextUrl,
         EntityQuery,
         EntityResultExt,
         EntityTenantState,
         GeometrySelection,
         NgsiLdProtocolHeaders,
-        OriginalUri,
+        NgsiLdRequestEnvelope,
         ProblemResponse,
         RequestProjection,
         ResolvedJoin,
@@ -31,7 +30,6 @@ use crate::{
         query_response::{QueryCollectionMetadata, query_response},
         query_split_filters::retain_matching,
         request_entity_map::{LocalEntitySource, record_map_use},
-        start_rendering,
         with_linked_resolution_warnings,
     },
     error::public_error,
@@ -45,7 +43,8 @@ use andromeda_federation::{
     config::SplitEntities,
     request::{EntityMapInUse, TriggeringRequest},
 };
-use andromeda_http_extraction::context_target;
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
+use andromeda_http_extraction::{api_root::ApiRoot, context::ContextUrl, context_target};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -56,7 +55,9 @@ use andromeda_ngsi_ld_request::{
     query::entity::parameters::EntityQueryParameters,
 };
 use axum::http::{HeaderMap, Uri as HttpUri};
+use futures::future::OptionFuture;
 use std::sync::Arc;
+use typed_builder::TypedBuilder;
 
 /// One "Query Entities" as its binding decoded it.
 ///
@@ -65,6 +66,7 @@ use std::sync::Arc;
 /// [`EntityQueryRequest::query`] from the URL, the POST binding of clause
 /// 6.23.3.1 fills it from the clause 5.2.23 body, and from there on the two are
 /// the same request.
+#[derive(TypedBuilder)]
 pub(crate) struct EntityQueryRequest {
     /// The tenant-scoped capabilities the query runs against.
     pub(crate) services: Arc<EntityRouteServices>,
@@ -79,6 +81,8 @@ pub(crate) struct EntityQueryRequest {
     /// The URI the client addressed, which names the `instance` of every
     /// problem the operation reports and anchors its pagination links.
     pub(crate) uri: HttpUri,
+    /// The `apiRoot` a wrapper the response `Link` names is served under.
+    pub(crate) api_root: ApiRoot,
     /// The request's headers, replayed onto every forwarded copy so a
     /// registration's `contextSourceInfo` can pass one of them through
     /// (clause 6.3.19).
@@ -94,24 +98,25 @@ pub(crate) struct EntityQueryRequest {
 
 pub(crate) async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
-    context: ContextUrl,
+    NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,
+    ContextUrl(context): ContextUrl,
+    api_root: ApiRoot,
     protocol: NgsiLdProtocolHeaders,
-    headers: HeaderMap,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
-    run(EntityQueryRequest {
-        services,
-        target,
-        accept,
-        protocol,
-        uri,
-        headers,
-        context: context.into_inner(),
-        query,
-        binding: QueryBinding::QueryString,
-    })
+    run(EntityQueryRequest::builder()
+        .services(services)
+        .target(target)
+        .accept(accept)
+        .protocol(protocol)
+        .uri(uri)
+        .api_root(api_root)
+        .headers(headers)
+        .context(context)
+        .query(query)
+        .binding(QueryBinding::QueryString)
+        .build())
     .await
 }
 
@@ -132,6 +137,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         accept,
         protocol,
         uri,
+        api_root,
         headers,
         context,
         mut query,
@@ -162,26 +168,22 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // local=true. Forwarding reads the query as the client wrote it, so it
         // runs before the split-entities filters are held back from the local
         // query below.
-        let forwarded = if is_local || considers_nothing {
-            None
-        } else {
-            let forwarding = QueryForwarding {
-                forwarding: &state.forwarding,
-                target: &target,
-                engine: service.engine(),
-                uri: &uri,
-                query: &query,
-                split,
-                context: &context,
-                triggering: TriggeringRequest {
-                    via: incoming_via.as_ref(),
-                    headers: Some(&headers),
-                },
-                entity_map: EntityMapInUse::from(&map_use),
-                delivery: binding.delivery(),
-            };
-            Some(forwarding.run().await?)
-        };
+        let forwarding = (!is_local && !considers_nothing).then(|| QueryForwarding {
+            forwarding: &state.forwarding,
+            target: &target,
+            engine: service.engine(),
+            uri: &uri,
+            query: &query,
+            split,
+            context: &context,
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
+            entity_map: EntityMapInUse::from(&map_use),
+            delivery: binding.delivery(),
+        });
+        let forwarded = OptionFuture::from(forwarding.as_ref().map(QueryForwarding::run)).await.transpose()?;
 
         // Clause 5.7.2.4: with `splitEntities`, `q`, the geoquery and `scopeQ`
         // are decided on the merged entities rather than by any one source.
@@ -241,9 +243,11 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             Some(resolved) => render_joined_entities(&entities, resolved, &representation, &uri)?,
             None => render_entities(&entities, &representation, &uri)?,
         };
-        let geometry = GeometrySelection::new(query.geometry_property.as_ref(), query.dataset_id.as_deref().unwrap_or_default());
-        let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences(), opts.render_mode)
-            .with_geometry_selection(geometry)
+        let rendered = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
+            .start_rendering(accept.media_type(), prefer.rendering_preferences(), opts.render_mode)
+            .await
+            .with_entity_instance(&uri)?
+            .with_geometry_selection(geometry_selection(&query))
             .with_payload(ResponsePayload::Collection(payload))
             .render()
             .with_entity_instance(&uri)?;
@@ -263,6 +267,13 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         ))
     })
     .await
+}
+
+/// The clause 4.5.16.1 rule a `GeoJSON` answer to `query` selects its geometry
+/// by: the `geometryProperty` it named and the `datasetId` values it narrowed
+/// the instances to.
+fn geometry_selection(query: &EntityQueryParameters) -> GeometrySelection<'_> {
+    GeometrySelection::new(query.geometry_property.as_ref(), query.dataset_id.as_deref().unwrap_or_default())
 }
 
 /// Fold what the context sources contributed onto the entities this broker

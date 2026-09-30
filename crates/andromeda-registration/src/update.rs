@@ -92,7 +92,7 @@ mod tests {
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use iri_rs::IriRefBuf;
+    use iri_rs::IriBuf;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -129,10 +129,10 @@ mod tests {
     async fn shorthand_names_in_the_fragment_expand_under_the_request_context() {
         let store = baseline_store();
         let service = service(&store);
-        let context = ContextSpec::none().with_body_context(Some(json!({
+        let context = ContextSpec::from_body(json!({
             "Vehicle": "https://example.org/Vehicle",
             "speed": "https://example.org/speed"
-        })));
+        }));
         let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle" } ], "propertyNames": ["speed"] } ] });
 
         service.update(&registration_id(), fragment, &context).await.expect("the fragment applies");
@@ -157,9 +157,7 @@ mod tests {
     async fn an_unloadable_request_context_is_reported_rather_than_replaced_by_the_core_context() {
         let store = baseline_store();
         let service = service(&store);
-        let context = ContextSpec::from_links(vec![
-            IriRefBuf::new("https://contexts.example.org/unreachable.jsonld").expect("valid IRI reference"),
-        ]);
+        let context = ContextSpec::from_link(IriBuf::new("https://contexts.example.org/unreachable.jsonld".to_owned()).expect("valid IRI"));
         let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle" } ], "propertyNames": ["speed"] } ] });
 
         let error = service

@@ -2,7 +2,6 @@ use crate::{
     change::{CsourceSubscriptionChange, UpsertKind},
     error::SubscriptionError,
     normalization,
-    notification_context,
     term_expansion,
     variant::{DatasetIdPolicy, SubscriptionVariant},
 };
@@ -12,7 +11,6 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use async_trait::async_trait;
 use serde_json::Value;
-use url::Url;
 
 /// CSR-subscription-specific behaviour.
 pub struct CsrSubscriptionVariant {
@@ -31,15 +29,7 @@ impl CsrSubscriptionVariant {
 impl SubscriptionVariant for CsrSubscriptionVariant {
     type Change = CsourceSubscriptionChange;
 
-    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, base_url: Option<&Url>) -> Result<(), SubscriptionError> {
-        // Clause 5.8.2.4: initialise `jsonldContext` from the `@context`
-        // applicable at creation when the request named none itself. A Context
-        // Source Registration Subscription hosts no compound Context (`None`
-        // host), so a request naming several contexts, or one inline, that
-        // cannot reduce to a single URI falls to the core context (clause 5.5.5)
-        // rather than storing an undereferenceable value.
-        notification_context::initialize_notification_context(payload, context, base_url, None).await;
-
+    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec) -> Result<(), SubscriptionError> {
         term_expansion::expand_common_subscription_terms(&self.engine, payload, context).await
     }
 

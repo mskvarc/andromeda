@@ -4,6 +4,7 @@ mod compression_layer;
 mod cors_layer;
 pub mod csrf_layer;
 mod decompression_layer;
+mod encoded_entity_tag;
 mod helmet_layer;
 mod metric_layer;
 mod server_timing;
@@ -15,6 +16,7 @@ use crate::{
         cors_layer::build_cors_layer,
         csrf_layer::{CsrfLayerError, build_csrf_layer},
         decompression_layer::build_decompression_layer,
+        encoded_entity_tag::EncodedEntityTags,
         helmet_layer::build_helmet_layer,
         metric_layer::http_metric_layer,
         server_timing::apply_server_timing,
@@ -27,7 +29,7 @@ use axum::{
     Extension,
     Router,
     extract::{DefaultBodyLimit, MatchedPath, Request},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     middleware,
     response::Response,
 };
@@ -81,6 +83,8 @@ pub struct HttpStack {
     cors: Option<CorsLayer>,
     /// The prebuilt response-compression layer, absent when disabled.
     compression: Option<CompressionLayer>,
+    /// The validator rewrite matching the codings the compression layer applies.
+    encoded_entity_tags: EncodedEntityTags,
     /// The prebuilt request-decompression layer, absent when disabled.
     decompression: Option<RequestDecompressionLayer>,
     /// The prebuilt CSRF layer, absent when disabled.
@@ -106,6 +110,7 @@ impl HttpStack {
             helmet: build_helmet_layer(config.helmet)?,
             cors: build_cors_layer(&config.cors),
             compression: build_compression_layer(&config.compression),
+            encoded_entity_tags: EncodedEntityTags::new(config.compression.algorithms),
             decompression: build_decompression_layer(&config.decompression),
             csrf: build_csrf_layer(&config.csrf)?,
             server_timing: config.server_timing,
@@ -200,7 +205,16 @@ impl HttpStack {
         let mut router = router.layer(middleware::from_fn(echo_tenant_header));
         router = apply_server_timing(router, &self.server_timing);
         if let Some(compression) = &self.compression {
-            router = router.layer(compression.clone());
+            // Wrapped around the compression layer, so it sees the response as
+            // encoded and weakens a strong tag the handler computed over the
+            // unencoded bytes (RFC 7232 section 2.3.3), and gives a 304 the
+            // validators of the encoded 200 it stands for (section 4.1).
+            let tags = self.encoded_entity_tags;
+            router = router
+                .layer(compression.clone())
+                .layer(middleware::map_response(move |request_headers: HeaderMap, response: Response| async move {
+                    tags.revalidated(&request_headers, response)
+                }));
         }
         if let Some(decompression) = &self.decompression {
             router = router.layer(decompression.clone());
@@ -232,6 +246,9 @@ impl HttpStack {
         NormalizePathLayer::trim_trailing_slash().layer(router)
     }
 }
+
+#[cfg(test)]
+mod revalidation_tests;
 
 #[cfg(test)]
 mod tests {

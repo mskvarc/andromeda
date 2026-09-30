@@ -133,7 +133,7 @@ mod tests {
     }
 
     fn context() -> ContextSpec {
-        ContextSpec::none().with_body_context(Some(json!({ "speed": "https://example.com/speed" })))
+        ContextSpec::from_body(json!({ "speed": "https://example.com/speed" }))
     }
 
     fn name(value: &str) -> AttributeName {

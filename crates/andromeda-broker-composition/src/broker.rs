@@ -17,6 +17,7 @@ use crate::{
         notification_receiver::BrokerNotificationReceiverResolver,
         registration::BrokerRegistrationStateResolver,
         snapshot::BrokerSnapshotStateResolver,
+        source_identity::source_identity_routes,
         subscription::BrokerSubscriptionStateResolver,
         temporal::BrokerTemporalStateResolver,
     },
@@ -37,11 +38,11 @@ use andromeda_http_component_report::routes::ComponentReportRoutes;
 use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
 use andromeda_http_entity_map::routes::EntityMapRoutes;
+use andromeda_http_extraction::api_root::AdvertisedApiRoot;
 use andromeda_http_health::routes::HealthRoutes;
 use andromeda_http_notification_receiver::routes::NotificationReceiverRoutes;
 use andromeda_http_registration::routes::RegistrationRoutes;
 use andromeda_http_snapshot::routes::SnapshotRoutes;
-use andromeda_http_source_identity::{routes::SourceIdentityRoutes, state::SourceIdentityState};
 use andromeda_http_stack::stack::{HttpStack, HttpStackBuildError};
 use andromeda_http_subscription::routes::SubscriptionRoutes;
 use andromeda_http_telemetry::{error::TelemetryHttpError, routes::TelemetryRoutes};
@@ -63,7 +64,6 @@ use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_telemetry::{error::TelemetryError, recorder::TelemetryRecorder};
 use andromeda_tenancy::{
     administration::TenantAdministration,
-    context_source_alias::ContextSourceAliases,
     creation_policy::TenantCreationPolicy,
     error::TenancyError,
     pending_work::PendingWorkProbe,
@@ -336,15 +336,7 @@ async fn construct(
         .subscription(subscription_routes)
         .entity_map(entity_map_routes)
         .snapshot(snapshot_routes)
-        .source_identity(SourceIdentityRoutes::new(SourceIdentityState::new(
-            config.identity.source_id.clone(), // clone: configuration and immutable route state own the identifier
-            // Table 5.2.40-1: the configured alias is the default tenant's, and
-            // every other tenant's is derived from it.
-            ContextSourceAliases::new(config.identity.source_alias.clone()), // clone: configuration and the alias family own the configured alias
-            started_at,
-            config.identity.source_extras.clone(), // clone: configuration and immutable route state own the raw extras
-            enabled_extensions,
-        )))
+        .source_identity(source_identity_routes(&config.identity, started_at, enabled_extensions, &tenants))
         .notification_receiver(NotificationReceiverRoutes::new(Arc::new(BrokerNotificationReceiverResolver::new(
             Arc::clone(&tenants),
             forwarded_subscription_router,
@@ -352,6 +344,7 @@ async fn construct(
         .tenancy(TenancyRoutes::new(tenant_administration, tenant_usage_probe, tenant_management))
         .health(HealthRoutes::new(health.clone())) // clone: the data plane and the management plane each own a health-route fragment over the same indicators
         .component_report(ComponentReportRoutes::new(component_reports))
+        .advertised_api_root(config.identity.advertised_url.clone().map(AdvertisedApiRoot::new)) // clone: clause 6.2, the configured apiRoot every minted URL is built on
         .build();
     let stack = HttpStack::new(config.http.clone())?; // clone: the assembled stack owns its process-wide configuration
     let (api, management) = assemble_planes(config.management.mode, routes, health, telemetry_routes, &stack);

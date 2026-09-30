@@ -8,7 +8,7 @@
 //! downcast.
 
 use crate::{error::ContextStoreError, jsonld_context::mapper::ContextMapperError};
-use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
+use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, ngsi_ld_urn::JsonLdContextIdParseError};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::registry::UnknownCompactCode;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
@@ -78,8 +78,8 @@ store_fault_class! {
     // A statement the adapter could not assemble.
     RenderError => StatementUnbuildable,
     SeaQueryError => StatementUnbuildable,
-    // An identifier the adapter minted that the URN grammar refuses.
-    urn_rs::Error => ContractBroken,
+    // An identifier the adapter minted that its own typed identifier refuses.
+    JsonLdContextIdParseError => ContractBroken,
 }
 
 /// Classify an adapter failure and record it for operators at the caller's

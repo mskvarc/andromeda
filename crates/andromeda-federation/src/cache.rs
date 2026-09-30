@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use iri_rs::IriRefBuf;
+use iri_rs::IriBuf;
 use std::time::{Duration, Instant};
 use url::Url;
 
@@ -38,18 +38,18 @@ pub(crate) struct CacheKey {
     modified_at: DateTime<Utc>,
     /// The forwarded URL, query included.
     url: Url,
-    /// The context URLs the request named.
-    contexts: Vec<IriRefBuf>,
+    /// The context URL the request named in its one context `Link`.
+    context: Option<IriBuf>,
 }
 
 impl CacheKey {
     /// The key of one forwarded GET.
-    pub(crate) fn new(registration: &ContextSourceRegistration, url: &Url, contexts: &[IriRefBuf]) -> CacheKey {
+    pub(crate) fn new(registration: &ContextSourceRegistration, url: &Url, context: Option<&IriBuf>) -> CacheKey {
         CacheKey {
             registration: registration.id.clone(), // clone: the key owns its parts
             modified_at: registration.lifecycle.modified_at,
-            url: url.clone(),            // clone: same
-            contexts: contexts.to_vec(), // clone: same
+            url: url.clone(),          // clone: same
+            context: context.cloned(), // clone: same
         }
     }
 }
@@ -168,7 +168,7 @@ mod tests {
     fn a_hit_within_the_duration_carries_the_110_warning() {
         let cache = ForwardedGetCache::new(8);
         let registration = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
-        let key = CacheKey::new(&registration, &url(), &[]);
+        let key = CacheKey::new(&registration, &url(), None);
         assert!(cache.lookup(&key).is_none());
         cache.store(key.clone(), &response(json!([{"id": "urn:ngsi-ld:Vehicle:1"}])), Duration::from_secs(10)); // clone: looked up below
         let hit = cache.lookup(&key).expect("hit");
@@ -180,7 +180,7 @@ mod tests {
     fn an_expired_entry_is_a_miss_and_is_evicted() {
         let cache = ForwardedGetCache::new(8);
         let registration = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
-        let key = CacheKey::new(&registration, &url(), &[]);
+        let key = CacheKey::new(&registration, &url(), None);
         cache.store(key.clone(), &response(json!([])), Duration::ZERO); // clone: looked up below
         assert!(cache.lookup(&key).is_none());
         assert!(cache.entries.is_empty());
@@ -191,19 +191,19 @@ mod tests {
         let cache = ForwardedGetCache::new(8);
         let before = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
         let after = registration(Some("PT10S"), "2024-06-01T00:00:00Z");
-        cache.store(CacheKey::new(&before, &url(), &[]), &response(json!([])), Duration::from_secs(10));
-        assert!(cache.lookup(&CacheKey::new(&after, &url(), &[])).is_none());
+        cache.store(CacheKey::new(&before, &url(), None), &response(json!([])), Duration::from_secs(10));
+        assert!(cache.lookup(&CacheKey::new(&after, &url(), None)).is_none());
     }
 
     #[test]
     fn a_full_cache_stops_admitting_rather_than_growing() {
         let cache = ForwardedGetCache::new(1);
         let registration = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
-        let first = CacheKey::new(&registration, &url(), &[]);
+        let first = CacheKey::new(&registration, &url(), None);
         let second = CacheKey::new(
             &registration,
             &Url::parse("https://peer.example.org/ngsi-ld/v1/entities?type=Car").expect("valid URL"),
-            &[],
+            None,
         );
         cache.store(first, &response(json!([])), Duration::from_secs(10));
         cache.store(second.clone(), &response(json!([])), Duration::from_secs(10)); // clone: looked up below

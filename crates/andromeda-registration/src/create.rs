@@ -26,8 +26,8 @@ impl RegistrationService {
     /// when a proxied footprint overlaps an existing registration or context
     /// data the broker already holds (clause 5.9.2.4),
     /// [`RegistrationError::JsonLd`] when the request context cannot be loaded
-    /// or the payload cannot be expanded, [`RegistrationError::Identifier`]
-    /// when no identifier could be generated for an anonymous registration,
+    /// or the payload cannot be expanded, [`RegistrationError::Internal`]
+    /// when no identifier could be minted for an anonymous registration,
     /// and [`RegistrationError::Persistence`] when the store rejects the
     /// write.
     pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<Identifier, RegistrationError> {

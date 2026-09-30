@@ -25,9 +25,6 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::Query(source) => classify_query_error(source),
         EntityError::Request(source) => classify_parameter_error(source),
         EntityError::Representation(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-        EntityError::Identifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-        EntityError::EntityTypeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-        EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
         EntityError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         // Nothing of the write persisted and it can be sent again unchanged:
@@ -50,7 +47,11 @@ mod tests {
         residual_predicate::ResidualPredicate,
     };
     use andromeda_http_response::batch_projection::batch_entity_error;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        identifier::Identifier,
+        ngsi_ld_urn::{AttributeListId, EntityTypeListId},
+    };
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use axum::http::StatusCode;
@@ -122,6 +123,23 @@ mod tests {
             pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
             pretty_assertions::assert_eq!(report.detail(), expected_detail);
             assert!(!report.detail().contains(secret), "the raw cause leaked: {}", report.detail());
+        }
+    }
+
+    /// A list identifier is minted by the broker, never sent by the client, so
+    /// a mint that fails is a broken invariant answered as `InternalError`
+    /// rather than a `BadRequestData` the client could not have caused.
+    #[test]
+    fn a_failed_list_identifier_mint_is_an_internal_error() {
+        let type_list = "urn:ngsi-ld:Other:1".parse::<EntityTypeListId>().expect_err("another kind");
+        let attribute_list = "urn:ngsi-ld:Other:1".parse::<AttributeListId>().expect_err("another kind");
+        for error in [
+            EntityError::from(EntityInvariant::MintedEntityTypeListId(type_list)),
+            EntityError::from(EntityInvariant::MintedAttributeListId(attribute_list)),
+        ] {
+            let report = classify_entity_error(&error);
+            pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError, "{error}");
+            pretty_assertions::assert_eq!(report.detail(), "internal entity error");
         }
     }
 

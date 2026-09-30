@@ -4,20 +4,27 @@ use crate::{
     error::{SnapshotResultExt, internal_problem, project_purge_failure},
     state::SnapshotTenantState,
 };
-use andromeda_http_extraction::{accept::AcceptFormatNoGeo, jsonld::JsonLd, snapshot_purge::SnapshotPurgeQ, tenant_state, typed_path::TypedPath};
+use andromeda_http_extraction::{
+    accept::AcceptFormatNoGeo,
+    jsonld::JsonLd,
+    query::ValidatedQuery,
+    snapshot_purge::SnapshotPurgeQ,
+    tenant_state,
+    typed_path::TypedPath,
+};
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
     headers::with_location,
     internal_failure_summary::InternalFailureSummary,
     problem_response::ProblemResponse,
-    render::{RenderingPreferences, start_rendering_normalized},
+    render::{RenderingPreferences, start_rendering_core},
     single::NgsiLdResponse,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{snapshot_clone::SnapshotCloneInput, snapshot_input::SnapshotInput, snapshot_patch::SnapshotPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_render::response::ResponsePayload;
+use andromeda_ngsi_ld_request::empty::EmptyParams;
 use andromeda_snapshot::service::purge::PurgeOutcome;
 use axum::{
     Json,
@@ -33,6 +40,9 @@ use axum::{
 /// Snapshot members are read. The snapshot stores its queries as written, so
 /// the context is not needed beyond that.
 pub async fn create(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     JsonLd { value: input, context }: JsonLd<SnapshotInput>,
@@ -47,6 +57,9 @@ pub async fn create(
 
 /// GET /ngsi-ld/v1/snapshots/{snapshot_id} -- Retrieve snapshot status.
 pub async fn get(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
@@ -55,7 +68,7 @@ pub async fn get(
     let snapshot = state.snapshots.get(&snapshot_id).await.with_snapshot_instance(&uri)?;
 
     let body = serde_json::to_value(&snapshot).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
-    let rendered = start_rendering_normalized(accept.media_type(), &ContextSpec::none(), RenderingPreferences::default())
+    let rendered = start_rendering_core(accept.media_type(), RenderingPreferences::default())
         .with_payload(ResponsePayload::Single(body))
         .render()
         .map_err(|error| internal_problem(&error, InternalFailureSummary::new("failed to render the snapshot"), &uri))?;
@@ -64,6 +77,9 @@ pub async fn get(
 
 /// PATCH /ngsi-ld/v1/snapshots/{snapshot_id} -- Update snapshot status.
 pub async fn update(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
@@ -73,7 +89,7 @@ pub async fn update(
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_snapshot_instance(&uri)?;
 
     let body = serde_json::to_value(&updated).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
-    let rendered = start_rendering_normalized(accept.media_type(), &ContextSpec::none(), RenderingPreferences::default())
+    let rendered = start_rendering_core(accept.media_type(), RenderingPreferences::default())
         .with_payload(ResponsePayload::Single(body))
         .render()
         .map_err(|error| internal_problem(&error, InternalFailureSummary::new("failed to render the snapshot"), &uri))?;
@@ -82,6 +98,9 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/snapshots/{snapshot_id} -- Delete a snapshot.
 pub async fn delete(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(snapshot_id): TypedPath<Identifier>,
@@ -130,6 +149,9 @@ pub async fn purge(
 
 /// POST /ngsi-ld/v1/snapshots/{snapshot_id}/clone -- Clone a snapshot.
 pub async fn clone(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(snapshot_id): TypedPath<Identifier>,

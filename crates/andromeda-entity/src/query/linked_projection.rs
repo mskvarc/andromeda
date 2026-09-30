@@ -299,8 +299,7 @@ fn term_for_attribute<'p>(key: &str, expanded: &IriBuf, terms: &'p [ProjectionTe
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::query::service_test_double::service;
+    use crate::query::{linked_projection::*, service_test_double::service};
     use serde_json::json;
     use std::slice::from_ref;
 
@@ -352,12 +351,12 @@ mod tests {
     /// deterministic, offline-resolvable expanded IRI -- no network fetch, so
     /// term expansion is exercised for real without flaky or slow I/O.
     fn context() -> ContextSpec {
-        ContextSpec::none().with_body_context(Some(json!({
+        ContextSpec::from_body(json!({
             "hasA": "https://example.com/hasA",
             "hasB": "https://example.com/hasB",
             "hasMany": "https://example.com/hasMany",
             "temperature": "https://example.com/temperature",
-        })))
+        }))
     }
 
     /// Clause 4.21: `hasA{temperature}` attaches `temperature` as the

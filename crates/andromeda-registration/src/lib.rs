@@ -86,6 +86,14 @@ impl RegistrationService {
         self
     }
 
+    /// The JSON-LD processor registrations are expanded and compacted with,
+    /// which also resolves the `@context` a registration response names
+    /// (clause 5.2.3).
+    #[must_use]
+    pub const fn engine(&self) -> &JsonLdEngine {
+        &self.engine
+    }
+
     fn emit_csr_change(&self, event: CsrChangeEvent) {
         if let Some(ref sink) = self.change_sink {
             sink.publish(event);

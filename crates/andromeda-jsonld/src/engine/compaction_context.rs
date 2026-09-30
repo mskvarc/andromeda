@@ -8,6 +8,7 @@
 //! every document of the operation is compacted against the result.
 
 use crate::{
+    context_graph::check_context_graph,
     context_spec::ContextSpec,
     error::JsonLdError,
     loader::{error::LoaderError, http::HttpContextLoader},
@@ -52,8 +53,11 @@ impl CompactionContext {
     /// process.
     pub(crate) async fn prepare(spec: &ContextSpec, loader: &HttpContextLoader) -> Result<CompactionContext, CompactionContextError> {
         let unprocessed = match spec.to_context_value() {
-            Some(value) => JsonLdContext::try_from_json(&jsonld_syntax::Value::from_serde_json(value))
-                .map_err(|error| CompactionContextError::Invalid(JsonLdError::InlineContextInvalid(error)))?,
+            Some(value) => {
+                check_context_graph(loader, &value).await.map_err(CompactionContextError::Invalid)?;
+                JsonLdContext::try_from_json(&jsonld_syntax::Value::from_serde_json(value))
+                    .map_err(|error| CompactionContextError::Invalid(JsonLdError::InlineContextInvalid(error)))?
+            }
             None => JsonLdContext::default(),
         };
         let processed = unprocessed
@@ -118,7 +122,8 @@ pub(crate) enum ContextEmbedding {
 /// Why a request `@context` could not be prepared for compaction.
 #[derive(Debug, Error)]
 pub(crate) enum CompactionContextError {
-    /// The resolved `@context` is not a JSON-LD context at all.
+    /// The resolved `@context` is not a JSON-LD context at all, or its
+    /// references form a cycle or nest too deep.
     #[error(transparent)]
     Invalid(JsonLdError),
     /// A context did not resolve, or did not process.

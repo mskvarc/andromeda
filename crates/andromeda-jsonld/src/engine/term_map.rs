@@ -13,7 +13,7 @@
 //! the processor's.
 
 use crate::{
-    context_spec::{ContextSpec, CoreContextPolicy},
+    context_spec::ContextSpec,
     core_context::is_ngsi_ld_core_context_url,
     engine::{
         context_url::{is_absolute_iri, is_full_iri},
@@ -28,6 +28,7 @@ use crate::{
     },
     loader::http::HttpContextLoader,
 };
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf, iri};
 use serde_json::Value;
 use std::{borrow::Cow, collections::HashMap};
@@ -163,25 +164,23 @@ fn builtin_prefix(prefix: &str) -> Option<&'static Iri<&'static str>> {
 
 /// Build the term table for one [`ContextSpec`].
 ///
-/// `default_core_url` is the released core context this engine expands a
-/// versionless reference against (clause 4.4); the coercion, container and
-/// scoped-context flags below are read from that version's document, so two
-/// engines pinned to different versions build different tables.
+/// Every core reference, of any release, is processed as the v1.9 core
+/// context (clause 4.4), so the coercion, container and scoped-context flags
+/// below are read from the v1.9 document.
 pub(crate) async fn build_batch_term_map(
     spec: &ContextSpec,
     loader: &HttpContextLoader,
     cache: &UserTermTableCache,
-    default_core_url: &IriBuf,
     core_vocabulary: &CoreVocabulary,
 ) -> BatchTermMap {
     // The IRI of every core term comes from the compile-time table the vocab
     // macro derived from the core context; its coercion, container and
-    // scoped-context flag come from the same context document, parsed for the
-    // version this deployment pinned (clause 4.4). Both halves are read
-    // from the context rather than restated, so the fastpath cannot drift from
-    // what the processor does.
-    let core_url = default_core_url;
-    let semantics = core_term_semantics(core_url);
+    // scoped-context flag come from the same context document, the v1.9 core
+    // context every core reference is processed as (clause 4.4). Both halves
+    // are read from the context rather than restated, so the fastpath cannot
+    // drift from what the processor does.
+    let core_url = IriBuf::from(NGSI_LD_CORE_CONTEXT_URL);
+    let semantics = core_term_semantics(&core_url);
     let mut terms: HashMap<Box<str>, ResolvedTerm> = core_vocabulary
         .iter()
         .map(|(compact, expanded)| {
@@ -209,22 +208,10 @@ pub(crate) async fn build_batch_term_map(
     let vocab = IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/default-context/"));
     let mut eligibility = FastpathEligibility::Eligible;
 
-    // A spec that omits the core context resolves nothing the seeded table
-    // describes, so the fastpath cannot speak for it.
-    match spec.core_policy() {
-        CoreContextPolicy::Only | CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit => {}
-        CoreContextPolicy::Omit => eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable),
-    }
-
-    for url in spec.link_contexts() {
-        let Ok(url) = IriBuf::new(url.as_str().to_owned()) else {
-            eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable);
-            continue;
-        };
-        if is_ngsi_ld_core_context_url(url.as_ref()) {
-            continue;
-        }
-        match cache.get_or_load(loader, &url).await {
+    if let Some(url) = spec.link_context()
+        && !is_ngsi_ld_core_context_url(url.as_ref())
+    {
+        match cache.get_or_load(loader, url).await {
             Ok(table) => merge_user_table(&mut terms, &table, &mut eligibility),
             Err(_unresolved) => eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable),
         }
@@ -266,7 +253,7 @@ pub(crate) async fn build_batch_term_map(
     BatchTermMap {
         terms,
         vocab,
-        core_url: core_url.clone(),
+        core_url,
         eligibility,
     }
 }
@@ -328,7 +315,7 @@ fn merge_user_table(terms: &mut HashMap<Box<str>, ResolvedTerm>, table: &UserTer
 #[cfg(test)]
 mod tests {
     use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use iri_rs::IriRefBuf;
+    use iri_rs::IriBuf;
     use serde_json::{Value, json};
     use std::{
         collections::HashMap,
@@ -345,13 +332,13 @@ mod tests {
     }
 
     /// A context URL as the [`IriRefBuf`] a `Link` header carries.
-    fn iri_ref(url: &str) -> IriRefBuf {
-        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    fn iri_ref(url: &str) -> IriBuf {
+        IriBuf::new(url.to_owned()).expect("a valid IRI")
     }
 
     /// A spec carrying one inline body context.
     fn body_spec(body: Value) -> ContextSpec {
-        ContextSpec::none().with_body_context(Some(body))
+        ContextSpec::from_body(body)
     }
 
     /// A temporary context file and the URL it is preloaded under.
@@ -412,7 +399,7 @@ mod tests {
             .build()
             .expect("engine builds");
 
-        let spec = ContextSpec::from_links(vec![iri_ref(url.as_str())]);
+        let spec = ContextSpec::from_link(iri_ref(url.as_str()));
         let handle = engine.batch_context_handle(&spec).await;
         assert!(handle.fast_eligible(), "a resolvable context of custom terms stays eligible");
 
@@ -578,7 +565,7 @@ mod tests {
             .preload_contexts(preloads)
             .build()
             .expect("engine builds");
-        let spec = ContextSpec::from_links(vec![iri_ref(url.as_str())]);
+        let spec = ContextSpec::from_link(iri_ref(url.as_str()));
 
         let _first = engine.batch_context_handle(&spec).await;
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 1, "the first batch parses the context");
@@ -601,12 +588,12 @@ mod tests {
             .preload_contexts(preloads)
             .build()
             .expect("engine builds");
-        let spec = ContextSpec::from_links(vec![iri_ref(url.as_str())]); // url is also passed to invalidate below
+        let spec = ContextSpec::from_link(iri_ref(url.as_str())); // url is also passed to invalidate below
 
         let _handle = engine.batch_context_handle(&spec).await;
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 1, "the batch parses the context");
 
-        let url_iri = iri_ref(url.as_str()).try_into_iri().expect("absolute context URL");
+        let url_iri = iri_ref(url.as_str());
         engine.invalidate_context(&url_iri).await;
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 0, "invalidation drops the parsed table");
 

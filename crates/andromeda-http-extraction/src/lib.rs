@@ -7,6 +7,8 @@
 
 pub mod accept;
 pub mod addressed_uri;
+pub mod admitted_temporal_query;
+pub mod api_root;
 pub mod batch_body_refusal;
 pub mod batch_item_refusal;
 pub mod classification;
@@ -20,14 +22,15 @@ pub mod json_payload;
 pub mod jsonld;
 pub mod language;
 pub mod operation_hit_scope;
-pub mod origin;
 pub mod prefer;
 pub mod profile;
 pub mod protocol;
 pub mod query;
 pub mod request_body_limit;
 pub mod request_envelope;
+pub mod request_links;
 pub mod request_payload;
+pub mod response_context_request;
 pub mod scoped_response;
 pub mod snapshot;
 pub mod snapshot_purge;

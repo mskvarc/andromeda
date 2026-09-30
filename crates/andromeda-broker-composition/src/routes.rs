@@ -7,5 +7,6 @@ pub mod entity_map;
 pub mod notification_receiver;
 pub mod registration;
 pub mod snapshot;
+pub mod source_identity;
 pub mod subscription;
 pub mod temporal;

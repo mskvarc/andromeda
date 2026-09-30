@@ -17,23 +17,25 @@ use andromeda_entity::{
     side_effect::{AsyncPreference, SideEffectPlacement},
 };
 use andromeda_federation::{provision_batch::BatchProvisionOperation, request::TriggeringRequest};
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::{AcceptFormat, AcceptFormatNoGeo},
-    entity_batch::{BatchBody, parse_batch_entities},
+    api_root::ApiRoot,
+    context::ContextUrl,
+    entity_batch::{BatchBody, ParsedBatch, parse_batch_entities},
     jsonld::JsonLd,
     prefer::PreferHeader,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
 };
-use andromeda_http_headers::{media_type::ResponseMediaType, preference::RespondMode, preference_applied::PreferenceApplied};
+use andromeda_http_headers::{preference::RespondMode, preference_applied::PreferenceApplied};
 use andromeda_http_response::{
     batch::NgsiLdBatchResponse,
     batch_projection::batch_operation_result,
     problem_response::ProblemResponse,
-    render::start_rendering_normalized,
+    render::start_rendering_partial_success,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{expanded::mutation::selection::OverwritePolicy, query::body::Query};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
@@ -44,7 +46,6 @@ use andromeda_ngsi_ld_request::{
     query::entity::parameters::EntityQueryParameters,
 };
 use axum::{
-    body::Bytes,
     http::{StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
 };
@@ -68,15 +69,12 @@ const fn async_preference(prefer: PreferHeader) -> AsyncPreference {
 /// clause 5.2.16 result.
 ///
 /// Clause 6.3.6: the body is always `application/json`, regardless of the
-/// negotiated `Accept`, so it carries no JSON-LD context.
-fn multi_status_response(
-    result: &BatchOperationResult,
-    context: &ContextSpec,
-    uri: &HttpUri,
-    placement: SideEffectPlacement<'_>,
-) -> Result<Response, ProblemResponse> {
+/// negotiated `Accept`, and names only fully qualified names "as there is no
+/// context present", so it carries no JSON-LD context, in the body or in a
+/// `Link` header.
+fn multi_status_response(result: &BatchOperationResult, uri: &HttpUri, placement: SideEffectPlacement<'_>) -> Result<Response, ProblemResponse> {
     let value = serde_json::to_value(result).with_entity_instance(uri)?;
-    let rendered = start_rendering_normalized(ResponseMediaType::Json, context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_partial_success()
         .with_payload(ResponsePayload::Batch(value))
         .render()
         .with_entity_instance(uri)?;
@@ -87,16 +85,20 @@ fn multi_status_response(
 }
 
 /// The 201 Created answer listing the created identifiers (clauses 5.6.7.5
-/// and 5.6.8.5), rendered under the negotiated media type.
-fn created_response(
+/// and 5.6.8.5), rendered under the negotiated media type and the request's
+/// `@context` (clause 6.3.6).
+async fn created_response(
     created: &[Identifier],
     accept: AcceptFormatNoGeo,
-    context: &ContextSpec,
+    response_context: ResponseContextSource<'_>,
     uri: &HttpUri,
     placement: SideEffectPlacement<'_>,
 ) -> Result<Response, ProblemResponse> {
     let value = serde_json::to_value(created).with_entity_instance(uri)?;
-    let rendered = start_rendering_normalized(accept.media_type(), context, PreferHeader::default().rendering_preferences())
+    let rendered = response_context
+        .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
+        .await
+        .with_entity_instance(uri)?
         .with_payload(ResponsePayload::Batch(value))
         .render()
         .with_entity_instance(uri)?;

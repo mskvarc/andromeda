@@ -11,11 +11,13 @@ use crate::{
         ForwardedBatch,
         IntoResponse,
         NgsiLdRequestEnvelope,
+        ParsedBatch,
         PreferHeader,
         ProblemResponse,
         Response,
         StatusCode,
         TriggeringRequest,
+        ValidatedQuery,
         apply_preference_applied,
         async_preference,
         batch_operation_result,
@@ -30,28 +32,34 @@ use crate::{
 };
 use andromeda_entity::write_kind::BatchMerge;
 use andromeda_http_extraction::context_target;
+use andromeda_ngsi_ld_request::empty::EmptyParams;
 
 pub(crate) async fn batch_merge(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     context_target::ExistingTargetedTenantState {
         services: state,
         target,
         snapshot: _,
     }: EntityTenantState,
     _accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope {
-        uri, context, incoming_via, ..
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, .. }: NgsiLdRequestEnvelope,
     prefer: PreferHeader,
     batch_body: BatchBody,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
 
-    let (entities, context, mut entity_errors) = parse_batch_entities(&batch_body, &context, &uri)?;
+    let ParsedBatch {
+        items,
+        context: _,
+        errors: mut entity_errors,
+    } = parse_batch_entities(&batch_body, &uri)?;
     // Clause 5.6.20.4 runs clause 5.6.17 "for each of the NGSI-LD Entities
     // included in the input Array", each entity answering for itself: the
     // clause 5.5.4 validation an entity fails contributes a BatchEntityError of
     // its own rather than failing the whole request.
-    let mut admitted = admitted_batch_entities(service, BatchMerge, entities, &context, &mut entity_errors)
+    let mut admitted = admitted_batch_entities(service, BatchMerge, items, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
 
@@ -68,7 +76,6 @@ pub(crate) async fn batch_merge(
             triggering,
         },
         &admitted,
-        &context,
         &uri,
     )
     .await?;
@@ -76,7 +83,7 @@ pub(crate) async fn batch_merge(
     // Clause 5.6.20.4: the local phase merges what proxied registrations left.
     local_remainder(&mut admitted, &forwarded);
     let placement = service.side_effect_placement(&target, async_preference(prefer), admitted.len());
-    let batch = service.batch_merge(placement, admitted, &context).await.with_entity_instance(&uri)?;
+    let batch = service.batch_merge(placement, admitted).await.with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     result.errors.append(&mut entity_errors);
     merge_forwarded(&mut result, &forwarded);
@@ -84,6 +91,6 @@ pub(crate) async fn batch_merge(
     if result.errors.is_empty() {
         Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), placement))
     } else {
-        multi_status_response(&result, &context, &uri, placement)
+        multi_status_response(&result, &uri, placement)
     }
 }

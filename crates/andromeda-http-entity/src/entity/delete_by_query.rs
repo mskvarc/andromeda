@@ -3,7 +3,6 @@
 
 use crate::entity::{
     BatchOperationResult,
-    ContextSpec,
     EntityQuery,
     EntityResultExt,
     EntityTenantState,
@@ -29,7 +28,7 @@ use crate::entity::{
 use andromeda_entity::side_effect::SideEffectPlacement;
 use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{context::ContextUrl, context_target};
 use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, projection::purge::DatasetPurgeScope};
@@ -81,12 +80,8 @@ pub(crate) async fn delete_by_query(
         target,
         snapshot: _,
     }: EntityTenantState,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    ContextUrl(context): ContextUrl,
     protocol: NgsiLdProtocolHeaders,
     Extension(enabled): Extension<EnabledExtensions>,
     EntityQuery(mut query): EntityQuery,
@@ -102,7 +97,6 @@ pub(crate) async fn delete_by_query(
     reject_linked_retrieval(query.pick.as_deref(), query.omit.as_deref(), query.q.as_ref()).with_entity_instance(&uri)?;
 
     let is_local = !target.permits_federation() || query.is_local();
-    let context: ContextSpec = context.into_inner();
 
     // Table 6.4.3.3-2: "If present, the EntityMap supplied is used for
     // determining the set of Entities requested during the purge operation."

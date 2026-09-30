@@ -4,6 +4,7 @@ use andromeda_http_component_report::routes::ComponentReportRoutes;
 use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
 use andromeda_http_entity_map::routes::EntityMapRoutes;
+use andromeda_http_extraction::api_root::AdvertisedApiRoot;
 use andromeda_http_health::routes::HealthRoutes;
 use andromeda_http_notification_receiver::routes::NotificationReceiverRoutes;
 use andromeda_http_registration::routes::RegistrationRoutes;
@@ -48,4 +49,7 @@ pub struct ApiRoutes {
     pub(crate) health: HealthRoutes,
     /// Active-component report route.
     pub(crate) component_report: ComponentReportRoutes,
+    /// The configured `apiRoot` minted URLs are built on, when one is
+    /// configured; otherwise each request's origin is (clause 6.2).
+    pub(crate) advertised_api_root: Option<AdvertisedApiRoot>,
 }

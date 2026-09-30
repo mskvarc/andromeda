@@ -18,6 +18,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-configuration-scalars",
         "andromeda-context-space",
         "andromeda-delivery",
+        "andromeda-http-context-registry",
         "andromeda-http-extraction",
         "andromeda-http-headers",
         "andromeda-http-response",

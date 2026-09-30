@@ -26,6 +26,9 @@ pub mod expanded_input;
 pub mod fast_attribute;
 pub mod fast_entity;
 pub mod options;
+/// Engines for unit tests that resolve exactly the documents a test preloads.
+#[cfg(test)]
+pub(crate) mod preloaded_engine;
 pub mod processor;
 pub mod term_lookup;
 pub mod term_map;

@@ -1,6 +1,6 @@
 //! The invariants Entity Map policy relies on, and how each one broke.
 
-use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::EntityMapIdParseError;
 use thiserror::Error;
 
 /// An Entity Map policy invariant that did not hold.
@@ -14,7 +14,7 @@ pub enum EntityMapInvariant {
     LifetimeOutOfRange,
     /// A freshly minted Entity Map identifier is not an identifier.
     #[error("a minted entity map identifier is invalid: {0}")]
-    MintedIdentifier(#[source] IdentifierParseError),
+    MintedIdentifier(#[source] EntityMapIdParseError),
     /// A geo-query the broker already parsed cannot be written back to JSON.
     #[error("the geo-query cannot be written back: {0}")]
     GeoQueryUnserializable(#[source] serde_json::Error),

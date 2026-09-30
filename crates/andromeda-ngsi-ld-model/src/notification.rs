@@ -3,7 +3,7 @@
 use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use serde_with::skip_serializing_none;
 use strum::{Display, EnumCount, EnumIter, EnumString};
 use typed_builder::TypedBuilder;
@@ -110,8 +110,26 @@ pub struct Notification {
     /// When the notification was generated.
     pub notified_at: DateTime<Utc>,
     /// The entity representations that triggered it.
-    #[builder(default = Default::default())]
-    pub data: Vec<Value>,
+    #[builder(default = NotificationData::Entities(Vec::new()))]
+    pub data: NotificationData,
+}
+
+/// The `data` member of a Notification (Table 5.3.1-1): "NGSI-LD Entity[] or
+/// `FeatureCollection`".
+///
+/// Which one is decided by the subscription's `notification.endpoint.accept`:
+/// "If the notification has been triggered from a Subscription that has the
+/// notification.endpoint.accept field set to application/geo+json then data is
+/// returned as a `FeatureCollection`", and otherwise "Entity[] is returned".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum NotificationData {
+    /// The notified Entities, each rendered as the subscription's
+    /// `notification.format` asks.
+    Entities(Vec<Value>),
+    /// The notified Entities as one clause 5.2.30 `GeoJSON`
+    /// `FeatureCollection`.
+    FeatureCollection(Map<String, Value>),
 }
 
 /// Trigger reason for CSR notifications (ETSI GS CIM 009 clause 5.3.2).
@@ -167,7 +185,7 @@ pub struct CsourceNotification {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification::{CsourceNotification, CsrTriggerReason, Notification, NotificationTrigger, effective_notification_triggers};
+    use crate::notification::{CsourceNotification, CsrTriggerReason, Notification, NotificationData, NotificationTrigger, effective_notification_triggers};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -256,9 +274,24 @@ mod tests {
             .id("urn:ngsi-ld:Notification:1".parse::<Identifier>().expect("valid notification id"))
             .subscription_id(subscription_id())
             .notified_at(instant())
-            .data(vec![entity])
+            .data(NotificationData::Entities(vec![entity]))
             .build();
         let encoded = serde_json::to_string(&notification).expect("notification JSON");
         assert!(encoded.contains("0.100000000000000005"), "{encoded}");
+    }
+
+    /// Table 5.3.1-1: `data` is an Entity array or one `FeatureCollection`, and
+    /// each shape reads back as the variant it was written as.
+    #[test]
+    fn notification_data_is_an_entity_array_or_a_feature_collection() {
+        let entities: NotificationData = serde_json::from_value(json!([{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}])).expect("an Entity array");
+        assert!(matches!(entities, NotificationData::Entities(ref list) if list.len() == 1), "{entities:?}");
+
+        let collection: NotificationData = serde_json::from_value(json!({"type": "FeatureCollection", "features": []})).expect("a FeatureCollection");
+        assert!(matches!(collection, NotificationData::FeatureCollection(ref map) if map.get("type") == Some(&json!("FeatureCollection"))));
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&collection).expect("serialises"),
+            json!({"type": "FeatureCollection", "features": []})
+        );
     }
 }

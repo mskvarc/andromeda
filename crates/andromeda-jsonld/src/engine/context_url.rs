@@ -1,12 +1,12 @@
 //! Reading and rewriting the URLs a document's `@context` names.
 
-use crate::core_context::is_ngsi_ld_core_context_url;
-use iri_rs::{IriBuf, iri};
+use crate::{
+    core_context::is_ngsi_ld_core_context_url,
+    hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
+};
+use iri_rs::{IriBuf, IriRefBuf, iri};
 use serde_json::Value;
 use std::collections::HashSet;
-
-/// The path prefix under which this broker serves its hosted contexts.
-const HOSTED_CONTEXT_PATH: &str = "/ngsi-ld/v1/jsonldContexts/";
 
 /// Whether a term is already an absolute IRI and needs no expansion.
 ///
@@ -30,7 +30,7 @@ pub(crate) fn is_absolute_iri(term: &str) -> bool {
     let mut chars = term.char_indices();
     match chars.next() {
         Some((_, first)) if first.is_ascii_alphabetic() => {}
-        _ => return false,
+        Some(_) | None => return false,
     }
     for (index, ch) in chars {
         if ch == ':' {
@@ -96,17 +96,22 @@ pub(crate) fn canonical_context_urls(urls: &[IriBuf]) -> Vec<IriBuf> {
     canonical
 }
 
-/// Rewrite path-relative hosted-context references to the bare identifier.
+/// Rewrite root-relative references to the tenant's own stored `@context`s to
+/// their identifier.
 ///
-/// A client that read a context from `/ngsi-ld/v1/jsonldContexts/{id}` may
-/// echo that path back as its `@context`. The path is not an IRI and the
-/// processor cannot resolve it; the identifier alone is a URN, which the
-/// loader resolves through the registry and the durable cache.
-pub(crate) fn resolve_relative_context_urls(document: &mut Value) {
+/// A client that read a context from this broker may echo the path it read it
+/// from as its `@context`. A request body has no base URL to resolve such a
+/// reference against, so the processor could not dereference it; the
+/// identifier is a URN, which the loader resolves from storage (clause 5.13.1
+/// serves the document "on-demand"). An absolute reference is left as it is:
+/// the loader recognises it when it is resolved, and resolves it from storage
+/// only when the tenant holds the identifier it names. Which references name a
+/// stored context is `hosted`'s to say.
+pub(crate) fn resolve_relative_context_urls(document: &mut Value, hosted: &dyn HostedContextRecognizer) {
     match document {
         Value::Object(object) => {
             if let Some(context) = object.get_mut("@context") {
-                resolve_relative_entry(context);
+                resolve_hosted_entry(context, hosted);
             }
         }
         Value::Array(items) => {
@@ -114,7 +119,7 @@ pub(crate) fn resolve_relative_context_urls(document: &mut Value) {
                 if let Value::Object(object) = item
                     && let Some(context) = object.get_mut("@context")
                 {
-                    resolve_relative_entry(context);
+                    resolve_hosted_entry(context, hosted);
                 }
             }
         }
@@ -123,17 +128,25 @@ pub(crate) fn resolve_relative_context_urls(document: &mut Value) {
 }
 
 /// Rewrite one `@context` entry, or each member of an array of them.
-fn resolve_relative_entry(value: &mut Value) {
+///
+/// A relative reference that is no IRI reference at all, or that names no
+/// stored `@context` of the tenant, is left as written for the processor to
+/// refuse or resolve.
+fn resolve_hosted_entry(value: &mut Value, hosted: &dyn HostedContextRecognizer) {
     match value {
-        Value::String(url) if url.starts_with(HOSTED_CONTEXT_PATH) => {
-            *url = url[HOSTED_CONTEXT_PATH.len()..].to_string();
+        Value::String(url) if !is_absolute_iri(url) => {
+            if let Ok(reference) = IriRefBuf::new(url.as_str())
+                && let HostedReference::Own(identifier) = hosted.recognize(&reference)
+            {
+                *url = identifier.to_string();
+            }
         }
         Value::Array(items) => {
             for item in items {
-                resolve_relative_entry(item);
+                resolve_hosted_entry(item, hosted);
             }
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => {}
+        Value::String(_) | Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => {}
     }
 }
 
@@ -142,9 +155,10 @@ mod tests {
     use crate::{
         core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
         engine::context_url::{canonical_context_urls, context_urls_of, is_absolute_iri, is_full_iri, resolve_relative_context_urls},
+        hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-    use iri_rs::IriBuf;
+    use iri_rs::{IriBuf, IriRefBuf};
     use serde_json::json;
 
     #[test]
@@ -206,15 +220,56 @@ mod tests {
         );
     }
 
+    /// Recognises the one hosted path the test stores.
+    #[derive(Debug)]
+    struct OneHostedContext;
+
+    impl HostedContextRecognizer for OneHostedContext {
+        fn recognize(&self, reference: &IriRefBuf) -> HostedReference {
+            if reference.as_str() == "/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:abc" {
+                HostedReference::Own("urn:ngsi-ld:JsonLdContext:abc".parse().expect("an identifier"))
+            } else {
+                HostedReference::Unrelated
+            }
+        }
+    }
+
     #[test]
-    fn a_hosted_context_path_is_rewritten_to_the_bare_identifier() {
+    fn a_reference_to_a_stored_context_is_rewritten_to_its_identifier() {
         let mut document = json!({
-            "@context": ["/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:Context:abc", "https://example.com/keep"],
+            "@context": ["/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:abc", "https://example.com/keep"],
             "id": "urn:ngsi-ld:Device:1"
         });
 
-        resolve_relative_context_urls(&mut document);
+        resolve_relative_context_urls(&mut document, &OneHostedContext);
 
-        pretty_assertions::assert_eq!(document["@context"], json!(["urn:ngsi-ld:Context:abc", "https://example.com/keep"]));
+        pretty_assertions::assert_eq!(document["@context"], json!(["urn:ngsi-ld:JsonLdContext:abc", "https://example.com/keep"]));
+    }
+
+    /// Recognises the stored path on any origin.
+    #[derive(Debug)]
+    struct HostedOnAnyOrigin;
+
+    impl HostedContextRecognizer for HostedOnAnyOrigin {
+        fn recognize(&self, reference: &IriRefBuf) -> HostedReference {
+            if reference.as_str().ends_with("/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:abc") {
+                HostedReference::Own("urn:ngsi-ld:JsonLdContext:abc".parse().expect("an identifier"))
+            } else {
+                HostedReference::Unrelated
+            }
+        }
+    }
+
+    /// An absolute reference is the loader's to resolve: it serves it from
+    /// storage only when the tenant holds the identifier, and otherwise as the
+    /// URL it is, which a rewrite to the identifier would make impossible.
+    #[test]
+    fn an_absolute_reference_to_a_stored_context_is_left_for_the_loader() {
+        let absolute = "http://127.0.0.1:1056/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:abc";
+        let mut document = json!({ "@context": absolute, "id": "urn:ngsi-ld:Device:1" });
+
+        resolve_relative_context_urls(&mut document, &HostedOnAnyOrigin);
+
+        pretty_assertions::assert_eq!(document["@context"], json!(absolute));
     }
 }

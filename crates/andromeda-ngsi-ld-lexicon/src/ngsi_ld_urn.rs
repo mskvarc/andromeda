@@ -1,7 +1,28 @@
 //! The `urn:ngsi-ld:<Kind>:<id>` identifiers the broker generates for its own resources.
+//!
+//! Every broker-minted resource kind has one typed identifier here, and each
+//! type is the only place its identifier format is written. The shape follows
+//! Annex A.3 of ETSI GS CIM 009 v1.9.1: the lowercase `urn:ngsi-ld:` prefix, a
+//! `PascalCase` kind naming the resource, and exactly one colon-free local id.
+//!
+//! Which RFC 9562 UUID version a mint carries is decided per use:
+//!
+//! - version 4 for identifiers a client sees on low-volume resources, because a
+//!   random identifier publishes nothing, where a version 7 one would publish
+//!   its creation time and a version 1 or 6 one a node identifier;
+//! - version 5 for identifiers derived from content, so equal content shares
+//!   one identifier ([`JsonLdContextId::content_derived`]).
+//!
+//! Versions 1, 3 and 6 are never used: 1 and 6 embed a node identifier and 3
+//! hashes with MD5. The high-volume and ordered identities take version 7 and
+//! live beside the types they identify: write records and leases are bare
+//! UUIDs, and temporal Attribute and scope instances are the lowercase
+//! `urn:ngsi-ld:attribute:instance:<uuid>` family whose shape is permanent
+//! ([`crate::instance_identity::InstanceIdentity`]).
 
 use crate::{identifier::Identifier, identifier_length::IdentifierTooLong};
 use derive_more::{AsRef, Deref, Display};
+use iri_rs::{InvalidIri, IriBuf};
 use serde::{Deserialize, Serialize, Serializer};
 use std::str::FromStr;
 use thiserror::Error;
@@ -54,6 +75,21 @@ macro_rules! ngsi_ld_urn_id {
             /// Borrow the identifier as the URN it wraps.
             pub const fn as_urn(&self) -> &Urn {
                 &self.0
+            }
+
+            /// Mint a fresh identifier of this kind around a random (RFC 9562
+            /// version 4) UUID.
+            ///
+            /// # Errors
+            ///
+            #[doc = concat!("Never in practice: a hyphenated UUID is a valid, colon-free local id well within the identifier bound, so every [`", stringify!($error), "`] variant is unreachable here.")]
+            pub fn mint() -> Result<Self, $error> {
+                Self::around_uuid(Uuid::new_v4())
+            }
+
+            /// The identifier of this kind whose local id is `uuid`, hyphenated.
+            fn around_uuid(uuid: Uuid) -> Result<Self, $error> {
+                Self::try_from(format!("{}{}", Self::PREFIX, uuid.hyphenated()))
             }
         }
 
@@ -145,6 +181,85 @@ ngsi_ld_urn_id!(EntityTypeListId, EntityTypeListIdParseError, "EntityTypeList");
 ngsi_ld_urn_id!(AttributeListId, AttributeListIdParseError, "AttributeList");
 ngsi_ld_urn_id!(NotificationId, NotificationIdParseError, "Notification");
 ngsi_ld_urn_id!(ContextSourceId, ContextSourceIdParseError, "ContextSourceIdentity");
+ngsi_ld_urn_id!(SubscriptionId, SubscriptionIdParseError, "Subscription");
+ngsi_ld_urn_id!(ContextSourceRegistrationId, ContextSourceRegistrationIdParseError, "ContextSourceRegistration");
+ngsi_ld_urn_id!(HealthCheckId, HealthCheckIdParseError, "HealthCheck");
+ngsi_ld_urn_id!(ComponentReportListId, ComponentReportListIdParseError, "ComponentReportList");
+ngsi_ld_urn_id!(JsonLdContextId, JsonLdContextIdParseError, "JsonLdContext");
+
+/// The namespace every content-derived [`JsonLdContextId`] is a version 5 UUID
+/// in (RFC 9562 section 5.5).
+///
+/// Generated once and never to be changed. Changing it would not corrupt an
+/// identifier already handed out, since a derived identifier is only ever
+/// compared with the one the same content derives next; it would only stop new
+/// derivations from meeting the entries stored under the old namespace, so
+/// equal content would no longer share one entry until those entries are gone.
+const IMPLICIT_CONTEXT_NAMESPACE: Uuid = Uuid::from_u128(0x85e3_3eb6_38dc_40ec_8e0a_4fc1_7ba5_0889);
+
+/// The local-id marker of a subscription this broker hands to a peer.
+const FORWARDED_SUBSCRIPTION_MARKER: &str = "forwarded-";
+
+impl SubscriptionId {
+    /// Mint the identifier of a subscription this broker hands to a peer: a
+    /// companion or a forwarded copy.
+    ///
+    /// The marker sits inside the one local id (`forwarded-<uuid>`) rather than
+    /// in a segment of its own, so the identifier keeps the single colon-free
+    /// local id every broker-minted identifier has. The broker recognises the
+    /// copies it forwarded by its route and mapping records, never by parsing
+    /// this marker; the marker only tells a human reading a peer's subscription
+    /// list where the subscription came from.
+    ///
+    /// # Errors
+    ///
+    /// Never in practice, for the reason [`SubscriptionId::mint`] gives.
+    pub fn mint_forwarded() -> Result<SubscriptionId, SubscriptionIdParseError> {
+        SubscriptionId::forwarded_around(Uuid::new_v4())
+    }
+
+    /// The forwarded-subscription identifier whose local id carries `uuid`.
+    fn forwarded_around(uuid: Uuid) -> Result<SubscriptionId, SubscriptionIdParseError> {
+        SubscriptionId::try_from(format!("{}{FORWARDED_SUBSCRIPTION_MARKER}{}", SubscriptionId::PREFIX, uuid.hyphenated()))
+    }
+}
+
+impl JsonLdContextId {
+    /// The identifier a stored `@context` document derives from its content.
+    ///
+    /// An `ImplicitlyCreated` entry (clause 5.13.1) is a document the broker
+    /// hosts on its own initiative, so equal documents share one entry: the
+    /// identifier is the version 5 UUID of `canonical_document` in
+    /// [`IMPLICIT_CONTEXT_NAMESPACE`]. The caller hands the RFC 8785 canonical
+    /// form of the document, so neither formatting, key order nor number
+    /// spelling changes the identifier, while the order of an `@context` array,
+    /// which JSON-LD processes in order, does.
+    ///
+    /// A version 5 UUID hashes with SHA-1, which does not resist a deliberate
+    /// collision. The identifier is not a security boundary: an entry is shared
+    /// only after its stored content is compared, so a collision can cost the
+    /// sharing and never merge two documents.
+    ///
+    /// # Errors
+    ///
+    /// Never in practice, for the reason [`JsonLdContextId::mint`] gives.
+    pub fn content_derived(canonical_document: &[u8]) -> Result<JsonLdContextId, JsonLdContextIdParseError> {
+        JsonLdContextId::around_uuid(Uuid::new_v5(&IMPLICIT_CONTEXT_NAMESPACE, canonical_document))
+    }
+
+    /// The identifier as the IRI a JSON-LD processor names a context by.
+    ///
+    /// A URN is an IRI (IETF RFC 3987 section 2), so the conversion succeeds for
+    /// every identifier of this kind; `every_json_ld_context_identifier_is_an_iri`
+    /// proves it across minted and derived identifiers.
+    ///
+    /// # Errors
+    ///
+    /// Never in practice: the IRI grammar admits every URN this type holds.
+    pub fn to_iri(&self) -> Result<IriBuf, InvalidIri<String>> {
+        IriBuf::new(self.to_string())
+    }
+}
 
 /// Identifier generated for a snapshot status notification.
 ///
@@ -155,6 +270,15 @@ ngsi_ld_urn_id!(ContextSourceId, ContextSourceIdParseError, "ContextSourceIdenti
 pub struct SnapshotNotificationId(#[serde(serialize_with = "serialize_snapshot_notification_uuid")] Uuid);
 
 impl SnapshotNotificationId {
+    /// Mint a fresh identifier around a random (RFC 9562 version 4) UUID.
+    ///
+    /// A status notification is a low-volume, client-visible resource, so its
+    /// identifier carries no information (see the module documentation).
+    #[must_use]
+    pub fn mint() -> SnapshotNotificationId {
+        SnapshotNotificationId(Uuid::new_v4())
+    }
+
     /// Create an identifier from the UUID generated for a notification.
     #[must_use]
     pub const fn from_uuid(uuid: Uuid) -> SnapshotNotificationId {
@@ -178,9 +302,184 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::ngsi_ld_urn::{AttributeListId, ContextSourceId, EntityMapId, EntityTypeListId, NotificationId, SnapshotId, SnapshotNotificationId};
+    use crate::{
+        identifier::Identifier,
+        identifier_length::IDENTIFIER_BYTE_LIMIT,
+        ngsi_ld_urn::{
+            AttributeListId,
+            ComponentReportListId,
+            ContextSourceId,
+            ContextSourceRegistrationId,
+            EntityMapId,
+            EntityTypeListId,
+            HealthCheckId,
+            JsonLdContextId,
+            JsonLdContextIdParseError,
+            NotificationId,
+            SnapshotId,
+            SnapshotNotificationId,
+            SubscriptionId,
+        },
+    };
     use urn_rs::Urn;
-    use uuid::Uuid;
+    use uuid::{Uuid, Version};
+
+    /// The UUID a minted identifier carries after its kind prefix.
+    fn embedded_uuid(identifier: &str, prefix: &str) -> Uuid {
+        let local_id = identifier.strip_prefix(prefix).expect("the identifier carries its kind prefix");
+        Uuid::parse_str(local_id).expect("the local id is a hyphenated UUID")
+    }
+
+    #[test]
+    fn a_json_ld_context_identifier_of_the_right_kind_is_accepted() {
+        let raw = "urn:ngsi-ld:JsonLdContext:2fc7f63e-9213-4821-8720-65b9a404df6f";
+        let id: JsonLdContextId = raw.parse().expect("a JsonLdContext identifier");
+        pretty_assertions::assert_eq!(id.to_string(), raw);
+    }
+
+    #[test]
+    fn a_json_ld_context_identifier_with_an_empty_local_id_is_refused() {
+        pretty_assertions::assert_eq!("urn:ngsi-ld:JsonLdContext:".parse::<JsonLdContextId>(), Err(JsonLdContextIdParseError::EmptyId));
+    }
+
+    #[test]
+    fn a_json_ld_context_identifier_with_a_colon_in_its_local_id_is_refused() {
+        pretty_assertions::assert_eq!(
+            "urn:ngsi-ld:JsonLdContext:a:b".parse::<JsonLdContextId>(),
+            Err(JsonLdContextIdParseError::ExtraColonInSuffix)
+        );
+    }
+
+    /// The retired `Context` kind names no stored `@context` any more.
+    #[test]
+    fn the_retired_context_kind_is_not_a_json_ld_context_identifier() {
+        pretty_assertions::assert_eq!(
+            "urn:ngsi-ld:Context:x".parse::<JsonLdContextId>(),
+            Err(JsonLdContextIdParseError::WrongConstant)
+        );
+    }
+
+    /// RFC 8141 section 3.1 compares `urn` and the NID case-insensitively, and
+    /// the URN parser folds them to lowercase, so a typed identifier only ever
+    /// holds the lowercase prefix Annex A.3 asks for: an uppercase spelling
+    /// reads as the canonical identifier rather than as a second one.
+    #[test]
+    fn a_non_canonical_prefix_spelling_reads_as_the_canonical_identifier() {
+        let folded: JsonLdContextId = "URN:NGSI-LD:JsonLdContext:x".parse().expect("the prefix compares case-insensitively");
+        pretty_assertions::assert_eq!(folded.to_string(), "urn:ngsi-ld:JsonLdContext:x");
+    }
+
+    /// The kind and the local id are the NSS, which compares case-sensitively.
+    #[test]
+    fn the_kind_is_matched_case_sensitively() {
+        pretty_assertions::assert_eq!(
+            "urn:ngsi-ld:jsonldcontext:x".parse::<JsonLdContextId>(),
+            Err(JsonLdContextIdParseError::WrongConstant)
+        );
+    }
+
+    #[test]
+    fn a_url_is_not_a_json_ld_context_identifier() {
+        assert!(matches!(
+            "https://example.org/ctx.jsonld".parse::<JsonLdContextId>(),
+            Err(JsonLdContextIdParseError::InvalidUrn(_))
+        ));
+    }
+
+    #[test]
+    fn a_json_ld_context_identifier_is_bounded_like_every_identifier() {
+        let prefix = "urn:ngsi-ld:JsonLdContext:";
+        let at_limit = format!("{prefix}{}", "a".repeat(IDENTIFIER_BYTE_LIMIT - prefix.len()));
+        let past_limit = format!("{prefix}{}", "a".repeat(IDENTIFIER_BYTE_LIMIT + 1 - prefix.len()));
+
+        assert!(at_limit.parse::<JsonLdContextId>().is_ok());
+        assert!(matches!(past_limit.parse::<JsonLdContextId>(), Err(JsonLdContextIdParseError::TooLong(_))));
+    }
+
+    /// A Hosted or Cached entry gets a random identifier (study section 7.2).
+    #[test]
+    fn a_minted_json_ld_context_identifier_carries_a_version_4_uuid() {
+        let id = JsonLdContextId::mint().expect("a minted identifier");
+        let reparsed: JsonLdContextId = id.to_string().parse().expect("a minted identifier parses back");
+
+        pretty_assertions::assert_eq!(reparsed, id);
+        pretty_assertions::assert_eq!(embedded_uuid(id.as_ref(), "urn:ngsi-ld:JsonLdContext:").get_version(), Some(Version::Random));
+    }
+
+    /// Equal content derives an equal identifier, and the identifier carries a
+    /// version 5 UUID (study section 7.3).
+    #[test]
+    fn equal_content_derives_an_equal_version_5_identifier() {
+        let document = br#"{"@context":{"a":"https://e.org/a","b":"https://e.org/b"}}"#;
+        let first = JsonLdContextId::content_derived(document).expect("a derived identifier");
+        let second = JsonLdContextId::content_derived(document).expect("a derived identifier");
+
+        pretty_assertions::assert_eq!(first, second);
+        pretty_assertions::assert_eq!(embedded_uuid(first.as_ref(), "urn:ngsi-ld:JsonLdContext:").get_version(), Some(Version::Sha1));
+    }
+
+    #[test]
+    fn different_content_derives_a_different_identifier() {
+        let first = JsonLdContextId::content_derived(br#"{"@context":{"a":"https://e.org/a"}}"#).expect("a derived identifier");
+        let second = JsonLdContextId::content_derived(br#"{"@context":{"a":"https://e.org/b"}}"#).expect("a derived identifier");
+
+        assert_ne!(first, second);
+    }
+
+    /// The namespace is fixed: this pins the identifier one known document
+    /// derives, so a change to the namespace constant fails here rather than
+    /// silently splitting equal documents into two entries.
+    #[test]
+    fn the_derivation_namespace_is_stable() {
+        let id = JsonLdContextId::content_derived(br#"{"@context":{}}"#).expect("a derived identifier");
+        let expected = Uuid::new_v5(
+            &Uuid::parse_str("85e33eb6-38dc-40ec-8e0a-4fc17ba50889").expect("the namespace literal"),
+            br#"{"@context":{}}"#,
+        );
+
+        pretty_assertions::assert_eq!(id.to_string(), format!("urn:ngsi-ld:JsonLdContext:{expected}"));
+    }
+
+    /// Every broker-minted kind mints a version 4 identifier under its own
+    /// prefix that converts into an [`Identifier`].
+    #[test]
+    fn every_minted_kind_carries_its_prefix_and_a_version_4_uuid() {
+        let minted: [(String, &str); 9] = [
+            (SubscriptionId::mint().expect("mint").to_string(), "urn:ngsi-ld:Subscription:"),
+            (
+                ContextSourceRegistrationId::mint().expect("mint").to_string(),
+                "urn:ngsi-ld:ContextSourceRegistration:",
+            ),
+            (SnapshotId::mint().expect("mint").to_string(), "urn:ngsi-ld:Snapshot:"),
+            (EntityMapId::mint().expect("mint").to_string(), "urn:ngsi-ld:EntityMap:"),
+            (NotificationId::mint().expect("mint").to_string(), "urn:ngsi-ld:Notification:"),
+            (EntityTypeListId::mint().expect("mint").to_string(), "urn:ngsi-ld:EntityTypeList:"),
+            (AttributeListId::mint().expect("mint").to_string(), "urn:ngsi-ld:AttributeList:"),
+            (HealthCheckId::mint().expect("mint").to_string(), "urn:ngsi-ld:HealthCheck:"),
+            (ComponentReportListId::mint().expect("mint").to_string(), "urn:ngsi-ld:ComponentReportList:"),
+        ];
+        for (identifier, prefix) in minted {
+            pretty_assertions::assert_eq!(embedded_uuid(&identifier, prefix).get_version(), Some(Version::Random), "{identifier}");
+            assert!(identifier.parse::<Identifier>().is_ok(), "{identifier} converts into an identifier");
+        }
+    }
+
+    /// The forwarded marker lives inside the one local id, so a forwarded
+    /// subscription identifier still has no colon after its kind.
+    #[test]
+    fn a_forwarded_subscription_identifier_keeps_a_single_local_id() {
+        let id = SubscriptionId::mint_forwarded().expect("a forwarded identifier").to_string();
+        let local_id = id
+            .strip_prefix("urn:ngsi-ld:Subscription:forwarded-")
+            .expect("the forwarded marker opens the local id");
+
+        pretty_assertions::assert_eq!(Uuid::parse_str(local_id).expect("a hyphenated UUID").get_version(), Some(Version::Random));
+    }
+
+    #[test]
+    fn a_minted_snapshot_notification_identifier_carries_a_version_4_uuid() {
+        pretty_assertions::assert_eq!(SnapshotNotificationId::mint().as_uuid().get_version(), Some(Version::Random));
+    }
 
     #[test]
     fn snapshot_id_accepts_valid_value() {
@@ -244,5 +543,65 @@ mod tests {
     fn notification_and_context_source_reject_wrong_constant() {
         assert!("urn:ngsi-ld:Snapshot:x".parse::<NotificationId>().is_err());
         assert!("urn:ngsi-ld:Notification:x".parse::<ContextSourceId>().is_err());
+    }
+
+    /// Every UUID a mint can meet: the nil and the max UUID, then ten thousand
+    /// random ones of the three versions the broker mints (4, 5 and 7).
+    fn every_uuid_a_mint_can_meet() -> Vec<Uuid> {
+        let mut uuids = vec![Uuid::nil(), Uuid::max()];
+        uuids.extend((0_u32..10_000).map(|index| match index % 3 {
+            0 => Uuid::new_v4(),
+            1 => Uuid::new_v5(&Uuid::NAMESPACE_URL, &index.to_be_bytes()),
+            _ => Uuid::now_v7(),
+        }));
+        uuids
+    }
+
+    /// Mint `uuid` as a `$kind` identifier and require it to parse back to
+    /// itself.
+    macro_rules! assert_round_trip {
+        ($kind:ty, $minted:expr) => {{
+            let minted: $kind = $minted.expect(concat!("a ", stringify!($kind), " is minted"));
+            let reparsed: $kind = minted.to_string().parse().expect(concat!("a minted ", stringify!($kind), " parses back"));
+            assert_eq!(reparsed, minted);
+        }};
+    }
+
+    /// The "never in practice" of every mint's error is proven rather than
+    /// asserted: every kind mints and round-trips through `FromStr` over the
+    /// nil UUID, the max UUID and ten thousand random ones, and so do the
+    /// forwarded-subscription and content-derived mints.
+    #[test]
+    fn every_kind_mints_and_round_trips_over_every_uuid() {
+        for uuid in every_uuid_a_mint_can_meet() {
+            assert_round_trip!(SnapshotId, SnapshotId::around_uuid(uuid));
+            assert_round_trip!(EntityMapId, EntityMapId::around_uuid(uuid));
+            assert_round_trip!(EntityTypeListId, EntityTypeListId::around_uuid(uuid));
+            assert_round_trip!(AttributeListId, AttributeListId::around_uuid(uuid));
+            assert_round_trip!(NotificationId, NotificationId::around_uuid(uuid));
+            assert_round_trip!(ContextSourceId, ContextSourceId::around_uuid(uuid));
+            assert_round_trip!(SubscriptionId, SubscriptionId::around_uuid(uuid));
+            assert_round_trip!(SubscriptionId, SubscriptionId::forwarded_around(uuid));
+            assert_round_trip!(ContextSourceRegistrationId, ContextSourceRegistrationId::around_uuid(uuid));
+            assert_round_trip!(HealthCheckId, HealthCheckId::around_uuid(uuid));
+            assert_round_trip!(ComponentReportListId, ComponentReportListId::around_uuid(uuid));
+            assert_round_trip!(JsonLdContextId, JsonLdContextId::around_uuid(uuid));
+            assert_round_trip!(JsonLdContextId, JsonLdContextId::content_derived(uuid.as_bytes()));
+        }
+    }
+
+    /// A stored `@context` is named by its identifier as an IRI; every minted
+    /// and derived identifier converts, spelled exactly as it displays.
+    #[test]
+    fn every_json_ld_context_identifier_is_an_iri() {
+        for uuid in every_uuid_a_mint_can_meet() {
+            for identifier in [
+                JsonLdContextId::around_uuid(uuid).expect("a minted identifier"),
+                JsonLdContextId::content_derived(uuid.as_bytes()).expect("a derived identifier"),
+            ] {
+                let iri = identifier.to_iri().expect("a URN is an IRI");
+                pretty_assertions::assert_eq!(iri.as_str(), identifier.to_string());
+            }
+        }
     }
 }

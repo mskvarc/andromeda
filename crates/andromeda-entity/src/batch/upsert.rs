@@ -38,7 +38,6 @@ use crate::{
 };
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     mutation::{
@@ -64,7 +63,6 @@ impl EntityService {
         &self,
         placement: SideEffectPlacement<'_>,
         chunk: Vec<AdmittedBatchEntity>,
-        context: &ContextSpec,
         errors: &mut Vec<(Identifier, EntityError)>,
     ) -> Result<UpsertOutcome, EntityError> {
         let target = placement.target();
@@ -76,7 +74,7 @@ impl EntityService {
         // NGSI-LD Nulls are not supported. Clause 5.5.4 excepts only partial
         // update and merge fragments, and a replacement is neither.
         let (prepared, mut chunk_errors) = self
-            .prepare_admitted_chunk(chunk, context, BatchWrite::Upsert(UpsertPolicy::Replace).null_sentinel_admission())
+            .prepare_admitted_chunk(chunk, BatchWrite::Upsert(UpsertPolicy::Replace).null_sentinel_admission())
             .await;
         errors.append(&mut chunk_errors);
         if prepared.is_empty() {
@@ -165,7 +163,6 @@ impl EntityService {
         &self,
         placement: SideEffectPlacement<'_>,
         chunk: Vec<AdmittedBatchEntity>,
-        context: &ContextSpec,
         errors: &mut Vec<(Identifier, EntityError)>,
     ) -> Result<UpsertOutcome, EntityError> {
         let target = placement.target();
@@ -184,7 +181,7 @@ impl EntityService {
         // contained by the target", and a target that does not exist contains
         // none of them.
         let (prepared, mut chunk_errors) = self
-            .prepare_admitted_chunk(chunk, context, BatchWrite::Upsert(UpsertPolicy::Update).null_sentinel_admission())
+            .prepare_admitted_chunk(chunk, BatchWrite::Upsert(UpsertPolicy::Update).null_sentinel_admission())
             .await;
         errors.append(&mut chunk_errors);
         if prepared.is_empty() {

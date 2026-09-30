@@ -11,13 +11,13 @@ use andromeda_federation::{
     outcome::ForwardReadOutcome,
     request::TriggeringRequest,
 };
-use andromeda_http_extraction::{accept::AcceptFormatNoGeo, prefer::PreferHeader};
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
+use andromeda_http_extraction::{accept::AcceptFormatNoGeo, api_root::ApiRoot, prefer::PreferHeader};
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{
     declined_representation::single_source_declined,
     internal_failure_summary::InternalFailureSummary,
     problem_response::ProblemResponse,
-    render::start_rendering_normalized,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -31,6 +31,7 @@ use axum::{
 };
 use iso8601_duration::Duration as Iso8601Duration;
 use std::sync::Arc;
+use typed_builder::TypedBuilder;
 
 /// What one creation request resolved to.
 pub(crate) struct MapCreation<'a> {
@@ -55,6 +56,7 @@ pub(crate) struct MapCreation<'a> {
 }
 
 /// How a created map is rendered.
+#[derive(TypedBuilder)]
 pub(crate) struct CreationRendering<'a> {
     /// The request's JSON-LD context.
     pub(crate) context: &'a ContextSpec,
@@ -64,6 +66,8 @@ pub(crate) struct CreationRendering<'a> {
     pub(crate) prefer: PreferHeader,
     /// The request URI problem responses name.
     pub(crate) uri: &'a HttpUri,
+    /// The `apiRoot` a wrapper the response `Link` names is served under.
+    pub(crate) api_root: &'a ApiRoot,
 }
 
 /// Compose the local map with every map the contributing sources created
@@ -110,16 +114,25 @@ pub(crate) async fn create_map(
         }
     }
     state.entity_maps.store(&map).await.with_entity_map_instance(rendering.uri)?;
-    render_created(&map, creation.resource, rendering, warnings)
+    render_created(&map, creation.resource, rendering, state, warnings).await
 }
 
 /// Render a created map: 201 with `Location` and `NGSILD-EntityMap`, or 203
 /// with `Preference-Applied` when the body was adapted to an older version
 /// (Table 6.34.3.1-1).
-fn render_created(map: &EntityMap, resource: &str, rendering: &CreationRendering<'_>, warnings: Vec<NgsiLdWarning>) -> Result<Response, ProblemResponse> {
+async fn render_created(
+    map: &EntityMap,
+    resource: &str,
+    rendering: &CreationRendering<'_>,
+    state: &EntityMapRouteServices,
+    warnings: Vec<NgsiLdWarning>,
+) -> Result<Response, ProblemResponse> {
     let location = format!("/ngsi-ld/v1/{resource}/{}", map.id);
     let value = serde_json::to_value(map).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, rendering.uri))?;
-    let rendered = start_rendering_normalized(rendering.accept.media_type(), rendering.context, rendering.prefer.rendering_preferences())
+    let rendered = ResponseContextSource::new(state.entity_query.engine(), rendering.context, &state.context_hosting, rendering.api_root)
+        .start_rendering_normalized(rendering.accept.media_type(), rendering.prefer.rendering_preferences())
+        .await
+        .with_entity_map_instance(rendering.uri)?
         .with_payload(ResponsePayload::Single(value))
         .render()
         .with_entity_map_instance(rendering.uri)?;

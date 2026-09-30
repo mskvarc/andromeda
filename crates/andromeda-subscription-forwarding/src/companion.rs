@@ -28,9 +28,10 @@ use andromeda_subscription::{
     csource_matching::csource_subscription_selects_registration,
     error::SubscriptionError,
     forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook, SubscriptionTeardown},
+    subscription_context::SubscriptionContext,
     subscription_invariant::SubscriptionInvariant,
 };
-use futures::future::BoxFuture;
+use futures::{TryFutureExt, future::BoxFuture};
 use serde_json::{Map, Value, json};
 use tracing::{debug, warn};
 
@@ -97,7 +98,7 @@ impl SubscriptionForwardingService {
         // context source, so it carries no `Via` chain of its own.
         let companion = self
             .csource_subscriptions
-            .create(&self.live_target, document, &ContextSpec::core_only(), None, &[])
+            .create(&self.live_target, document, SubscriptionContext::CoreOnly, &[])
             .await?;
         self.place_initial_copies(subscription, &companion, context, encountered_sources).await?;
         self.mappings.link_companion(&subscription.id, &companion).await?;
@@ -262,7 +263,7 @@ impl SubscriptionForwardingService {
                 object.remove("type");
             }
             self.csource_subscriptions
-                .update(&self.live_target, &companion, fragment, &ContextSpec::core_only(), None)
+                .update(&self.live_target, &companion, fragment, &ContextSpec::core_only())
                 .await?;
             companion
         } else {
@@ -319,7 +320,9 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
         'life2: 'async_trait,
         Self: 'async_trait,
     {
-        Box::pin(async move { self.follow_update(subscription, context).await.map_err(into_subscription_error) })
+        // The update future is large, so it is boxed as it stands rather than
+        // moved into a wrapping async block.
+        Box::pin(self.follow_update(subscription, context).map_err(into_subscription_error))
     }
 
     fn teardown_of<'life0, 'life1, 'async_trait>(
@@ -398,7 +401,7 @@ mod tests {
     fn copy() -> ForwardedCopy {
         ForwardedCopy {
             registration: "urn:ngsi-ld:ContextSourceRegistration:b".parse().expect("valid URI"),
-            remote_subscription: "urn:ngsi-ld:Subscription:forwarded:1".parse().expect("valid URI"),
+            remote_subscription: "urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI"),
         }
     }
 
@@ -452,13 +455,13 @@ mod tests {
             "modifiedAt": "2024-01-01T00:00:00Z"
         }))
         .expect("valid subscription");
-        let minted = "urn:ngsi-ld:Subscription:forwarded:1".parse().expect("valid URI");
+        let minted = "urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI");
         let receiver = Url::parse("http://broker-a:1056/ngsi-ld/v1/notifications").expect("valid URL");
         let document = companion_document(&subscription, &minted, &receiver);
         pretty_assertions::assert_eq!(
             document,
             json!({
-                "id": "urn:ngsi-ld:Subscription:forwarded:1",
+                "id": "urn:ngsi-ld:Subscription:forwarded-1",
                 "type": "Subscription",
                 "entities": [{"type": "https://example.org/Vehicle"}],
                 "watchedAttributes": ["https://example.org/speed"],

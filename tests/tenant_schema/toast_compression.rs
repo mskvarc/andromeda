@@ -22,6 +22,7 @@ const LZ4_COLUMNS: &[(&str, &str)] = &[
     ("entity_search", "scope_paths"),
     ("jsonld_contexts", "id"),
     ("jsonld_contexts", "url"),
+    ("jsonld_contexts", "document_url"),
     ("jsonld_contexts", "payload"),
     ("jsonld_contexts", "extra_info"),
     ("temporal_entities", "id"),

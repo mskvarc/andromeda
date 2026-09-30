@@ -15,6 +15,8 @@ pub enum JsonldContexts {
     Id,
     /// Source URL, when the Context has one
     Url,
+    /// The URL a Cached Context was finally read from
+    DocumentUrl,
     /// Context kind (`JsonldContextKindCode`)
     Kind,
     /// The `@context` document
@@ -42,6 +44,7 @@ mod tests {
         assert_eq!(JsonldContexts::Table.to_string(), "jsonld_contexts");
         assert_eq!(JsonldContexts::Id.to_string(), "id");
         assert_eq!(JsonldContexts::Url.to_string(), "url");
+        assert_eq!(JsonldContexts::DocumentUrl.to_string(), "document_url");
         assert_eq!(JsonldContexts::Kind.to_string(), "kind");
         assert_eq!(JsonldContexts::Payload.to_string(), "payload");
         assert_eq!(JsonldContexts::CreatedAt.to_string(), "created_at");

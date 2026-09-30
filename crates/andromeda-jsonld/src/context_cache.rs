@@ -49,6 +49,47 @@ pub struct CachedContext {
     /// request happened to use. `None` when the row has no such URL, in which
     /// case the access is attributed to the requested URL.
     pub canonical_url: Option<IriBuf>,
+    /// Where the stored document was read from.
+    pub source: StoredDocumentSource,
+}
+
+/// Where a stored `@context` document came from, which decides the base its
+/// own relative references resolve against.
+///
+/// JSON-LD resolves a relative reference inside a remote context against the
+/// document's own URL (JSON-LD 1.1 API section 4.1.2 step 5.2.1), and a remote
+/// document's URL is the one it was finally read from after redirects
+/// (JSON-LD 1.1 API section 9.4.3, `documentUrl`). A download may have been
+/// redirected or sent to a JSON-LD alternate, so that URL is stored with it
+/// rather than recomputed from the URL the row is keyed by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredDocumentSource {
+    /// A document the broker downloaded: a clause 5.13.1 "Cached" entry.
+    Downloaded {
+        /// The URL the document was finally read from.
+        document_url: IriBuf,
+    },
+    /// A document the broker stores itself (clause 5.13.1 "Hosted" or
+    /// "`ImplicitlyCreated`"), which was never read from anywhere: its
+    /// references resolve against the URL it is resolved by.
+    Broker,
+}
+
+/// A `@context` document downloaded afresh from its source, as a "Cached" row
+/// stores it.
+///
+/// Clause 5.13.5.4 replaces a reloaded entry's document "with the newly
+/// downloaded one", and the row keeps the document as downloaded -- not the copy
+/// prepared for processing -- together with the URL it was finally read from,
+/// exactly as a first download is stored ([`ContextCache::put`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadedContext {
+    /// The downloaded document, reduced to its `@context` subtree (clause
+    /// 5.13.2.3).
+    pub document: Value,
+    /// The URL the document was finally read from, after redirects and a
+    /// JSON-LD alternate link.
+    pub document_url: IriBuf,
 }
 
 /// A cache of fetched context documents that outlives the process.
@@ -69,6 +110,12 @@ pub trait ContextCache: Send + Sync + Debug {
 
     /// Store a context payload under a URL, for `lifetime`.
     ///
+    /// `document_url` is the URL the payload was finally read from, after
+    /// redirects and a JSON-LD alternate link; implementations must store it and
+    /// report it back as [`StoredDocumentSource::Downloaded`], so a later read
+    /// resolves the document's relative references against the same base the
+    /// first load did.
+    ///
     /// `lifetime` is what clause 6.3.16 derived from the response that carried
     /// the document — its `s-maxage`, `max-age` or `Expires`, or the configured
     /// heuristic when it stated none. Implementations must record it, and must
@@ -82,5 +129,5 @@ pub trait ContextCache: Send + Sync + Debug {
     /// task the broker wires up, precisely so this write stays off the
     /// expansion path.
     #[must_use = "context-cache writes must be awaited"]
-    async fn put(&self, url: &IriBuf, payload: &Value, lifetime: CacheLifetime) -> Result<(), ContextCacheError>;
+    async fn put(&self, url: &IriBuf, document_url: &IriBuf, payload: &Value, lifetime: CacheLifetime) -> Result<(), ContextCacheError>;
 }

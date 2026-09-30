@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+/// The `@context` of a notification whose slot is already claimed.
+mod claimed_notification_context;
 /// Sending one context source notification.
 mod csource_delivery;
 /// Context-source interval notification evaluation.

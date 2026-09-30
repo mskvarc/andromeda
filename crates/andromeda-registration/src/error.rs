@@ -42,9 +42,6 @@ pub enum RegistrationError {
     /// JSON representation processing failed.
     #[error(transparent)]
     Representation(#[from] serde_json::Error),
-    /// Registration identifier generation failed.
-    #[error(transparent)]
-    Identifier(#[from] urn_rs::Error),
     /// The persistence adapter could not complete the requested operation.
     #[error("registration persistence failed: {0}")]
     Persistence(#[source] PersistenceFailure),

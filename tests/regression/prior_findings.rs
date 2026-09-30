@@ -224,16 +224,14 @@ async fn regression_r2_73_response_advertises_the_versioned_core_context() {
     assert_eq!(client.post_entity(&entity).send().await.expect("create").status, StatusCode::CREATED);
 
     // No explicit request context, so the response names the core context
-    // (clause 5.5.7 AppendIfNoExplicit) rather than echoing one the client sent.
+    // alone (clause 5.5.5), written as the one string clause 5.2.3 flattens it to.
     let response = client.get_entity(&id, "", "application/ld+json", None).await.expect("get");
     assert_eq!(response.status, StatusCode::OK);
     let response_body = response.json_value().expect("retrieved entity must be valid JSON");
-    let context = response_body["@context"].as_array().expect("an ld+json body carries an @context array");
-    assert!(
-        context
-            .iter()
-            .any(|c| c.as_str() == Some("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld")),
-        "the response must advertise the versioned core context: {context:?}"
+    assert_eq!(
+        response_body["@context"],
+        json!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"),
+        "the response must advertise the versioned core context"
     );
     scope.finish().await.expect("cleanup failed");
 }

@@ -626,7 +626,7 @@ async fn regression_reloading_a_cached_context_replaces_it_with_the_download() {
 #[tokio::test]
 async fn regression_reloading_an_unknown_context_is_resource_not_found() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let unknown = format!("urn:ngsi-ld:Context:{}", Uuid::new_v4());
+    let unknown = format!("urn:ngsi-ld:JsonLdContext:{}", Uuid::new_v4());
 
     let refused = remove_stored_context(&scope, &unknown, "?reload=true").await;
 

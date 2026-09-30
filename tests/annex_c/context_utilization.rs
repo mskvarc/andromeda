@@ -63,10 +63,12 @@ async fn annex_c_7_the_response_context_array_reflects_the_header_supplied_conte
     let abbreviated_url = hosted_contexts().url("parking-abbreviated.jsonld").to_string();
     let actual = retrieve(&environment.client(), Some(&context_link(&abbreviated_url))).await;
 
-    let rendered = flattened_context(&actual);
-    assert!(
-        rendered.iter().any(|entry| entry == &abbreviated_url),
-        "clause C.7: the response @context has to carry the header-supplied @context, got {:?}",
+    // C.7 prints the header-supplied @context followed by the Core @context,
+    // which the abbreviated vocabulary does not import (clause 5.2.3).
+    assert_eq!(
+        flattened_context(&actual),
+        vec![abbreviated_url, "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld".to_owned()],
+        "clause C.7: the response @context carries the header-supplied @context and the Core @context last, got {:?}",
         actual["@context"]
     );
 

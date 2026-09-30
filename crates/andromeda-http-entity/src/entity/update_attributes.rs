@@ -2,7 +2,6 @@
 
 use crate::{
     entity::{
-        ContextUrl,
         EntityResultExt,
         EntityTenantState,
         ForwardProvisionRequest,
@@ -18,6 +17,7 @@ use crate::{
         Response,
         StatusCode,
         TypedPath,
+        ValidatedQuery,
         classify_entity_error,
         collect_proxied_attrs,
         provision_response,
@@ -29,26 +29,25 @@ use crate::{
 use andromeda_entity::write_kind::UpdateAttributes;
 use andromeda_federation::{outcome::ForwardedWriteResult, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
+use andromeda_ngsi_ld_request::empty::EmptyParams;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn update_attrs(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     context_target::ExistingTargetedTenantState {
         services: state,
         target,
         snapshot: _,
     }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
     TypedPath(id): TypedPath<Identifier>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
-    JsonLdDocument {
-        document: fragment,
-        context: body_context,
-    }: JsonLdDocument,
+    JsonLdDocument { document: fragment, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
-    let context = context.merge(body_context);
     // Clause 5.6.2.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
     // update left with nothing local is still validated.

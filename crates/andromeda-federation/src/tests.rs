@@ -330,7 +330,7 @@ fn merge_temporal_retrieve_remote_only() {
 fn build_discovery_url_with_query_string() {
     use crate::forwarding_url::build_discovery_url;
 
-    let url = build_discovery_url(&Url::parse("http://cs1.example.com").expect("valid url"), "/types", "details=true");
+    let url = build_discovery_url(&Url::parse("http://cs1.example.com").expect("valid url"), &["types"], "details=true");
     assert!(matches!(url, Ok(url) if url.as_str() == "http://cs1.example.com/ngsi-ld/v1/types?details=true"));
 }
 
@@ -338,7 +338,7 @@ fn build_discovery_url_with_query_string() {
 fn build_discovery_url_without_query_string() {
     use crate::forwarding_url::build_discovery_url;
 
-    let url = build_discovery_url(&Url::parse("http://cs1.example.com/").expect("valid url"), "/attributes", "");
+    let url = build_discovery_url(&Url::parse("http://cs1.example.com/").expect("valid url"), &["attributes"], "");
     assert!(matches!(url, Ok(url) if url.as_str() == "http://cs1.example.com/ngsi-ld/v1/attributes"));
 }
 

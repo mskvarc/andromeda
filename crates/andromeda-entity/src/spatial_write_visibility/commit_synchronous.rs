@@ -97,7 +97,7 @@ async fn under_commit_synchronous_an_enqueued_batch_create_is_a_candidate_before
     let entity: Entity = serde_json::from_value(vehicle_at("urn:ngsi-ld:Vehicle:batched", 0.001)).expect("a valid entity");
     let admitted = admitted_batch(&service, BatchCreate, vec![entity], &ContextSpec::core_only()).await;
     service
-        .batch_create(SideEffectPlacement::DeferredOnLive, admitted, &ContextSpec::core_only())
+        .batch_create(SideEffectPlacement::DeferredOnLive, admitted)
         .await
         .expect("the batch create lands");
 

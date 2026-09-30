@@ -36,21 +36,12 @@ pub(crate) async fn update(
         target,
         snapshot: _,
     }: EntityTenantState,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    JsonLd {
-        value: patch,
-        context: body_context,
-    }: JsonLd<EntityPatch>,
+    JsonLd { value: patch, context }: JsonLd<EntityPatch>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
-    let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
     let patch_value = serde_json::to_value(&patch).with_entity_instance(&uri)?;
     // Clause 5.6.18.4 runs the clause 5.5.4 validation before the forwarding

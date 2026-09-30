@@ -7,7 +7,6 @@ use crate::{
     },
     tenant_factory::{storage::TenantStorage, tasks::TenantSignals, transport::TenantTransports},
 };
-use andromeda_context_registry::service::ContextRegistryService;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
 use andromeda_http_source_identity::config::InfoConfig;
@@ -84,7 +83,6 @@ pub(super) fn compose_subscription_services(
     transports: &TenantTransports,
     edge: Option<DistributedSubscriptionEdge<'_>>,
     entity_query: &Arc<EntityQueryService>,
-    contexts: &Arc<ContextRegistryService>,
 ) -> SubscriptionServices {
     let endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
     let csource = Arc::new(SubscriptionService::new(
@@ -100,8 +98,8 @@ pub(super) fn compose_subscription_services(
     let forwarding = edge.map(|edge| compose_subscription_forwarding(edge, storage, transports, entity_query, &csource, &store));
     let mut entity = SubscriptionService::new(
         Arc::clone(&store),
-        storage.engine.clone(), // clone: each subscription service owns its engine handle.
-        EntitySubscriptionVariant::new(storage.engine.clone(), Arc::clone(contexts)), // clone: the variant expands against its own engine handle.
+        storage.engine.clone(),                                 // clone: each subscription service owns its engine handle.
+        EntitySubscriptionVariant::new(storage.engine.clone()), // clone: the variant expands against its own engine handle.
         Some(Arc::new(CoherentSubscriptionChangeSink::new(
             signals.subscription.clone(), // clone: service and worker each own a sender handle.
             Arc::clone(&storage.subscription_cache),

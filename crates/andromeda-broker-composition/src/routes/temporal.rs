@@ -38,6 +38,7 @@ impl TemporalStateResolver for BrokerTemporalStateResolver {
                     .entity_maps(Arc::clone(&state.entity_maps))
                     .live_target(state.live_target.clone())
                     .snapshot_targets(snapshot_targets)
+                    .context_hosting(state.context_hosting.clone()) // clone: the route services own a handle on the tenant's hosting
                     .build(),
             ))
         })

@@ -93,11 +93,11 @@ mod tests {
     /// The coercing `@context` clause C.6 prints, beside a plain declaration
     /// and the term whose definition coerces an identifier.
     fn coercing_context() -> ContextSpec {
-        ContextSpec::none().with_body_context(Some(json!({
+        ContextSpec::from_body(json!({
             "brandName": "http://example.org/vehicle/brandName",
             "isParked": {"@type": "@id", "@id": "http://example.org/common/isParked"},
             "testedAt": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"}
-        })))
+        }))
     }
 
     /// One Entity whose Attribute keys are the names the document compaction

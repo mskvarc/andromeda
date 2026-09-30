@@ -28,9 +28,9 @@ dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["debug", "display"] }
 headers = "0.4.1"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-jsonld = { version = "0.23.1", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
-jsonld-core = "0.23.1"
-jsonld-syntax = { version = "0.23.1", features = ["serde-json"] }
+jsonld = { version = "0.23.3", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
+jsonld-core = "0.23.3"
+jsonld-syntax = { version = "0.23.3", features = ["serde-json"] }
 mediatype = "0.23.0"
 moka = { version = "0.12.16", features = ["future"] }
 rdfx = "0.24.0"
@@ -43,10 +43,12 @@ tokio = { version = "1.53.1", features = ["rt", "sync"] }
 toml = "1.1.6"
 toml-comment = "0.3.0"
 tracing = "0.1.44"
+typed-builder = "0.23.2"
 url = { version = "2.5.8", features = ["serde"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
+andromeda-test-mocks.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }

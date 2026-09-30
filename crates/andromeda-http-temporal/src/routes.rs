@@ -1,6 +1,7 @@
 //! Typed, state-complete inventory of temporal HTTP routes.
 
 use crate::{
+    grouping_gate::GroupingGate,
     operation_query,
     state::{TemporalRouteState, TemporalStateResolver},
     temporal,
@@ -32,7 +33,7 @@ impl TemporalRoutes {
     pub fn new(resolver: Arc<dyn TemporalStateResolver>, enabled: EnabledExtensions) -> TemporalRoutes {
         let mut entity_routes = Router::new()
             .route("/", post(temporal::create_or_update::create_or_update))
-            .route("/", get(temporal::query::query))
+            .route("/", get(temporal::query::request::query))
             .route("/{id}", get(temporal::retrieve::get))
             .route("/{id}", delete(temporal::delete::delete))
             .route("/{id}/attrs", post(temporal::add_attributes::add_attrs))
@@ -54,11 +55,11 @@ impl TemporalRoutes {
             .nest("/entities", entity_routes)
             .nest("/entityOperations", operation_routes)
             .layer(from_fn(echo_scope_headers))
-            // The temporal aggregation grouping gate reads the enabled-extension
-            // set from this layer: the aggregation query handlers reject
-            // `aggrGroupBy`/`groupedValues` when the extension is off, exactly as
-            // a broker that never implemented them does.
-            .layer(Extension(enabled))
+            // The aggregation query bindings read their parameters through the
+            // grouping gate installed here: they reject `aggrGroupBy` and
+            // `groupedValues` when the extension is off, exactly as a broker
+            // that never implemented them does.
+            .layer(Extension(GroupingGate::new(enabled)))
             .with_state(state);
         TemporalRoutes { router }
     }

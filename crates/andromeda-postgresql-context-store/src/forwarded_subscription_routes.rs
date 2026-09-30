@@ -179,7 +179,7 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
 
     fn minted() -> Identifier {
-        "urn:ngsi-ld:Subscription:forwarded:1".parse().expect("a URI")
+        "urn:ngsi-ld:Subscription:forwarded-1".parse().expect("a URI")
     }
 
     #[test]
@@ -190,7 +190,7 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"INSERT INTO "forwarded_subscription_routes" ("minted_subscription_id", "tenant_key") VALUES ('urn:ngsi-ld:Subscription:forwarded:1', (SELECT "tenants"."tenant_key" FROM "tenants" WHERE "tenants"."name" = 'acme' AND "tenants"."is_unnamed_default" = FALSE)) ON CONFLICT ("minted_subscription_id") DO UPDATE SET "tenant_key" = "excluded"."tenant_key""#
+            r#"INSERT INTO "forwarded_subscription_routes" ("minted_subscription_id", "tenant_key") VALUES ('urn:ngsi-ld:Subscription:forwarded-1', (SELECT "tenants"."tenant_key" FROM "tenants" WHERE "tenants"."name" = 'acme' AND "tenants"."is_unnamed_default" = FALSE)) ON CONFLICT ("minted_subscription_id") DO UPDATE SET "tenant_key" = "excluded"."tenant_key""#
         );
     }
 
@@ -210,7 +210,7 @@ mod tests {
         let sql = tenant_of_statement(&minted()).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"SELECT "tenants"."name" FROM "forwarded_subscription_routes" JOIN "tenants" ON "tenants"."tenant_key" = "forwarded_subscription_routes"."tenant_key" WHERE "forwarded_subscription_routes"."minted_subscription_id" = 'urn:ngsi-ld:Subscription:forwarded:1'"#
+            r#"SELECT "tenants"."name" FROM "forwarded_subscription_routes" JOIN "tenants" ON "tenants"."tenant_key" = "forwarded_subscription_routes"."tenant_key" WHERE "forwarded_subscription_routes"."minted_subscription_id" = 'urn:ngsi-ld:Subscription:forwarded-1'"#
         );
     }
 }

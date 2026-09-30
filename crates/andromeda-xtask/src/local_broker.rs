@@ -24,9 +24,11 @@ const MAX_LAST_N: &str = "19";
 /// the containerized `broker` profile in `docker/compose/test/base/docker-compose.yaml`,
 /// which documents why each one is needed: a 1s expiry sweep for the expiration
 /// suite, pool bounds that keep two brokers under PostgreSQL's connection limit,
-/// and the tenant-management extension the tenant suites and cleanup rely on.
-const TIER_SETTINGS: [(&str, &str); 7] = [
+/// the tenant-management extension the tenant suites and cleanup rely on, and a
+/// short stored-`@context` revalidation span for the `jsonld_context` suite.
+const TIER_SETTINGS: [(&str, &str); 8] = [
     ("ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL", "1s"),
+    ("ANDROMEDA__JSONLD__HOSTED_CONTEXT_REVALIDATION", "2s"),
     ("ANDROMEDA__DATABASE__MAX_CONNECTIONS", "16"),
     ("ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS", "4"),
     ("ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL", "60s"),

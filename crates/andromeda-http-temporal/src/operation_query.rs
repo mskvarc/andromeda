@@ -10,24 +10,20 @@
 //! [`crate::temporal::query::run`], the same one the GET binding runs.
 
 use crate::{
-    error::TemporalResultExt,
-    grouping_gate::reject_grouping_when_disabled,
+    grouping_gate::GroupingGate,
     state::TemporalTenantState,
-    temporal::query::{TemporalQueryRequest, run},
+    temporal::query::{request::TemporalQueryRequest, run},
 };
-use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
+    admitted_temporal_query::AdmittedTemporalPostQuery,
+    api_root::ApiRoot,
     context_target,
-    jsonld::JsonLd,
     protocol::NgsiLdProtocolHeaders,
-    query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
 };
 use andromeda_http_response::{pagination::PagePointers, problem_response::ProblemResponse};
-use andromeda_ngsi_ld_model::query::body::Query;
-use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, post_parameters::TemporalPostQueryParams};
-use axum::{Extension, response::Response};
+use axum::response::Response;
 
 /// POST /ngsi-ld/v1/temporal/entityOperations/query -- Query Temporal Evolution
 /// of Entities carried in a clause 5.2.23 `Query` body.
@@ -39,40 +35,23 @@ use axum::{Extension, response::Response};
 pub async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: TemporalTenantState,
     accept: AcceptFormatNoGeo,
-    Extension(enabled): Extension<EnabledExtensions>,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via: _,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,
+    api_root: ApiRoot,
     protocol: NgsiLdProtocolHeaders,
-    ValidatedQuery(url_params): ValidatedQuery<TemporalPostQueryParams>,
-    JsonLd {
-        value: request,
-        context: body_context,
-    }: JsonLd<Query>,
+    AdmittedTemporalPostQuery { params, context, .. }: AdmittedTemporalPostQuery<GroupingGate>,
 ) -> Result<Response, ProblemResponse> {
-    // Clause 6.3.5: a POST query carries its `@context` in the body as well as
-    // in the `Link` headers, and the operation reads both.
-    let context = context.merge(body_context);
-    let mut params = TemporalQueryParameters::try_from(request).with_instance(&uri)?;
-    url_params.apply_to(&mut params);
-    // The grouped extension is refused upstream when it is disabled
-    // (extension-strategy 5.2); the POST body's `aggrParams.aggrGroupBy` is now
-    // folded into `params`.
-    reject_grouping_when_disabled(&params, enabled, &uri)?;
     // Boxed: a temporal query parameter set is wide enough that the operation's
     // future overflows the task-local budget the `large_futures` lint guards.
-    Box::pin(run(TemporalQueryRequest {
-        services,
-        target,
-        accept,
-        protocol,
-        uri,
-        headers,
-        context,
-        params,
+    Box::pin(run(TemporalQueryRequest::builder()
+        .services(services)
+        .target(target)
+        .accept(accept)
+        .protocol(protocol)
+        .uri(uri)
+        .api_root(api_root)
+        .headers(headers)
+        .context(context)
+        .params(params)
         // Clause 6.3.10 asks for a Link Target "that could be dereferenced by
         // an NGSI-LD Client to retrieve the next page of NGSI-LD Elements", and
         // clause 5.5.9.1 that the pointers "contain all the parameters needed
@@ -84,7 +63,7 @@ pub async fn query(
         // Clause 4.12's "mechanism to flag NGSI-LD Clients when there are
         // remaining NGSI-LD Elements" is served here by the clause 6.3.13
         // `NGSILD-Results-Count` a counted query asks for.
-        pointers: PagePointers::NotDereferenceable,
-    }))
+        .pointers(PagePointers::NotDereferenceable)
+        .build()))
     .await
 }

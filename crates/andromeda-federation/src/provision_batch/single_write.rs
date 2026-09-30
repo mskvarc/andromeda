@@ -19,16 +19,16 @@ pub(super) fn single_write_request(
     let fragment = || entity.body.as_ref().map(without_identifier).and_then(|body| serde_json::to_vec(&body).ok());
     let whole = || entity.body.as_ref().and_then(|body| serde_json::to_vec(body).ok());
     match write {
-        SingleWrite::Create | SingleWrite::CreateThenOnConflict(_) => (forwarding_url(endpoint, &["entities"], ""), reqwest::Method::POST, whole()),
-        SingleWrite::Replace => (forwarding_url(endpoint, &["entities", id], ""), reqwest::Method::PUT, whole()),
-        SingleWrite::UpdateAttributes => (forwarding_url(endpoint, &["entities", id, "attrs"], ""), reqwest::Method::PATCH, fragment()),
+        SingleWrite::Create | SingleWrite::CreateThenOnConflict(_) => (forwarding_url(endpoint, &["entities"], None), reqwest::Method::POST, whole()),
+        SingleWrite::Replace => (forwarding_url(endpoint, &["entities", id], None), reqwest::Method::PUT, whole()),
+        SingleWrite::UpdateAttributes => (forwarding_url(endpoint, &["entities", id, "attrs"], None), reqwest::Method::PATCH, fragment()),
         SingleWrite::AppendAttributesNoOverwrite => (
-            forwarding_url(endpoint, &["entities", id, "attrs"], "options=noOverwrite"),
+            forwarding_url(endpoint, &["entities", id, "attrs"], Some("options=noOverwrite")),
             reqwest::Method::POST,
             fragment(),
         ),
-        SingleWrite::Delete => (forwarding_url(endpoint, &["entities", id], ""), reqwest::Method::DELETE, None),
-        SingleWrite::Merge => (forwarding_url(endpoint, &["entities", id], ""), reqwest::Method::PATCH, fragment()),
+        SingleWrite::Delete => (forwarding_url(endpoint, &["entities", id], None), reqwest::Method::DELETE, None),
+        SingleWrite::Merge => (forwarding_url(endpoint, &["entities", id], None), reqwest::Method::PATCH, fragment()),
     }
 }
 
@@ -55,16 +55,19 @@ mod tests {
         registration_fixture::uri,
         single_write::single_write_request,
     };
+    use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec};
     use serde_json::{Value, json};
     use url::Url;
 
     #[test]
     fn every_single_entity_fallback_addresses_its_clause_6_4_and_6_5_resource() {
         let endpoint = Url::parse("http://peer").expect("valid URL");
+        let context = BatchContexts::shared(ContextSpec::none()).context_of(None);
         let entity = NarrowedEntity {
             id: uri("urn:ngsi-ld:Vehicle:1"),
             body: Some(json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 1}})),
             proxied_attrs: Vec::new(),
+            context: &context,
         };
         let cases = [
             (SingleWrite::Create, reqwest::Method::POST, "http://peer/ngsi-ld/v1/entities", true),

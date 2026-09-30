@@ -30,6 +30,9 @@ use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 
 pub async fn delete(
+    // Clause 6.3.20: the parameters are read first, before the tenant is
+    // resolved, so an undefined one is an `InvalidRequest` on any tenant.
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     context_target::ExistingTargetedTenantState {
         services: state,
         target,
@@ -38,7 +41,6 @@ pub async fn delete(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Identifier>,
-    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {

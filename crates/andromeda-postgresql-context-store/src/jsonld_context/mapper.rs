@@ -4,6 +4,7 @@ use crate::jsonld_context::{
     kind_code::kind_of,
     rows::{ContextMetadataRow, ContextSummaryRow},
 };
+use andromeda_jsonld::context_cache::StoredDocumentSource;
 use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 use andromeda_postgresql_codes::{jsonld_context_kind::JsonldContextKindCode, registry::UnknownCompactCode};
@@ -39,6 +40,33 @@ pub enum ContextMapperError {
     /// Stored serving URL is not an IRI reference the hit counter can key on.
     #[error("a stored serving URL is not an IRI: {0}")]
     ServingIri(#[source] InvalidIri<String>),
+    /// Stored document URL is not an IRI a document can be based on.
+    #[error("a stored document URL is not an IRI: {0}")]
+    DocumentUrl(#[source] InvalidIri<String>),
+    /// A `Cached` row stores no URL its document was read from.
+    #[error("a cached context row stores no document URL")]
+    CachedWithoutDocumentUrl,
+    /// A row the broker stores itself claims a URL its document was read from.
+    #[error("a hosted or implicitly created context row stores a document URL")]
+    DocumentUrlOnStoredContext,
+}
+
+/// Where the document of a row of `kind` came from, given the URL the row says
+/// it was finally read from.
+///
+/// A `Cached` row is a download and stores that URL; a Hosted or
+/// `ImplicitlyCreated` row is a document the broker stores itself and stores
+/// none. The table's check holds both, so a row breaking either is refused as
+/// undecodable rather than read with a guessed base.
+pub(crate) fn row_document_source(kind: i16, document_url: Option<String>) -> Result<StoredDocumentSource, ContextMapperError> {
+    match (JsonldContextKindCode::try_from(kind)?, document_url) {
+        (JsonldContextKindCode::Cached, Some(document_url)) => Ok(StoredDocumentSource::Downloaded {
+            document_url: IriBuf::new(document_url).map_err(ContextMapperError::DocumentUrl)?,
+        }),
+        (JsonldContextKindCode::Cached, None) => Err(ContextMapperError::CachedWithoutDocumentUrl),
+        (JsonldContextKindCode::Hosted | JsonldContextKindCode::ImplicitlyCreated, None) => Ok(StoredDocumentSource::Broker),
+        (JsonldContextKindCode::Hosted | JsonldContextKindCode::ImplicitlyCreated, Some(_)) => Err(ContextMapperError::DocumentUrlOnStoredContext),
+    }
 }
 
 /// Convert a detailed-projection row into the domain [`ContextMetadata`].
@@ -83,5 +111,66 @@ pub(crate) fn row_to_identifier(row: ContextSummaryRow) -> Result<Identifier, Co
     match row.url {
         Some(raw) => Ok(Identifier::try_from(Url::parse(&raw).map_err(|source| ContextMapperError::Url { source })?)?),
         None => row.id.parse().map_err(ContextMapperError::LocalId),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::jsonld_context::mapper::{ContextMapperError, row_document_source};
+    use andromeda_jsonld::context_cache::StoredDocumentSource;
+    use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
+    use iri_rs::IriBuf;
+
+    /// A download reads back with the URL it was finally read from, which is
+    /// the base its relative references resolve against.
+    #[test]
+    fn a_cached_row_reads_back_as_a_download_from_its_document_url() {
+        let source = row_document_source(JsonldContextKindCode::Cached.code(), Some("https://mirror.example.com/v2/c.jsonld".to_owned()));
+
+        pretty_assertions::assert_eq!(
+            source.expect("a readable cached row"),
+            StoredDocumentSource::Downloaded {
+                document_url: IriBuf::new("https://mirror.example.com/v2/c.jsonld".to_owned()).expect("a valid IRI"),
+            }
+        );
+    }
+
+    /// A document the broker stores itself was never read from anywhere.
+    #[test]
+    fn a_hosted_or_implicitly_created_row_reads_back_as_the_brokers_own() {
+        for kind in [JsonldContextKindCode::Hosted, JsonldContextKindCode::ImplicitlyCreated] {
+            pretty_assertions::assert_eq!(
+                row_document_source(kind.code(), None).expect("a readable stored row"),
+                StoredDocumentSource::Broker,
+                "{kind:?}"
+            );
+        }
+    }
+
+    /// The table's check ties the document URL to the `Cached` kind; a row
+    /// breaking it is refused rather than read with a guessed base.
+    #[test]
+    fn a_row_breaking_the_document_url_invariant_is_refused() {
+        assert!(matches!(
+            row_document_source(JsonldContextKindCode::Cached.code(), None),
+            Err(ContextMapperError::CachedWithoutDocumentUrl)
+        ));
+        assert!(matches!(
+            row_document_source(JsonldContextKindCode::Hosted.code(), Some("https://example.com/c.jsonld".to_owned())),
+            Err(ContextMapperError::DocumentUrlOnStoredContext)
+        ));
+    }
+
+    #[test]
+    fn a_document_url_that_is_not_an_iri_is_refused() {
+        assert!(matches!(
+            row_document_source(JsonldContextKindCode::Cached.code(), Some("not an iri".to_owned())),
+            Err(ContextMapperError::DocumentUrl(_))
+        ));
+    }
+
+    #[test]
+    fn an_unknown_kind_is_refused() {
+        assert!(matches!(row_document_source(0, None), Err(ContextMapperError::Kind(_))));
     }
 }

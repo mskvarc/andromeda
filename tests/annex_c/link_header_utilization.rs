@@ -6,16 +6,7 @@
 //! broker echoing the wrapper back, and notes that including the Core
 //! `@context` in the wrapper is good practice rather than a requirement.
 
-use crate::{
-    BASE_URL,
-    clean_tenant,
-    comparison::corpus,
-    context_link,
-    context_utilization::flattened_context,
-    example_context::hosted_contexts,
-    get_json,
-    get_with_headers,
-};
+use crate::{BASE_URL, clean_tenant, comparison::corpus, context_link, example_context::hosted_contexts, get_json, get_with_headers};
 use pretty_assertions::assert_eq;
 use reqwest::{Client, StatusCode};
 use serde_json::json;
@@ -78,18 +69,20 @@ async fn annex_c_8_the_broker_echoes_the_wrapper_context_it_was_given() {
     .await;
     assert_eq!(status, StatusCode::OK, "retrieval failed: {actual}");
 
-    // The clause allows either carrier: the Link header of the response, or the
-    // @context of the JSON-LD body. One of them has to name the wrapper.
-    let in_body = flattened_context(&actual).contains(&wrapper);
-    let in_header = headers
-        .get_all("Link")
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .any(|value| value.contains(&wrapper));
+    // The wrapper already ends with the Core @context, so the JSON-LD body
+    // names it alone, as the one string C.8 prints; no Link header repeats it.
+    assert_eq!(
+        actual["@context"],
+        json!(wrapper),
+        "clause C.8: the broker answers with the same wrapper @context"
+    );
     assert!(
-        in_body || in_header,
-        "clause C.8: the broker answers with the same wrapper @context, got body {:?} and headers {headers:?}",
-        actual["@context"]
+        !headers
+            .get_all("Link")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .any(|value| value.contains("json-ld#context")),
+        "clause 6.3.5: an ld+json body carries its @context and no context Link, got {headers:?}"
     );
 
     environment.finish().await;
@@ -121,6 +114,14 @@ async fn annex_c_8_a_wrapper_without_the_core_context_is_still_processed() {
         actual["builtYear"],
         json!({"type": "Property", "value": "2014"}),
         "the core terms `type` and `value` are implicit, got {actual}"
+    );
+    // C.8 calls a wrapper without the Core @context "not recommended", and
+    // clause 5.2.3 still has the answer carry the Core @context: after the
+    // wrapper, last.
+    assert_eq!(
+        actual["@context"],
+        json!([bare, "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"]),
+        "clause 5.2.3: the Core @context follows a wrapper that does not end with it"
     );
 
     environment.finish().await;

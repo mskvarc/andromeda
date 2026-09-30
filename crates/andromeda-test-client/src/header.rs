@@ -1,12 +1,20 @@
 //! Typed HTTP header construction and inspection for test requests.
 
-use andromeda_http_headers::link::header::Link;
+use andromeda_http_headers::{
+    link::{header::Link, relation_type::RelationType, value::LinkValue},
+    media_type::APPLICATION_LD_JSON,
+};
 use http::{HeaderMap, HeaderValue, header::ToStrError};
 use iri_rs::IriRefBuf;
+use mediatype::MediaTypeBuf;
 use std::str::FromStr;
 use thiserror::Error;
 
 /// Build the JSON-LD context `Link` header defined by NGSI-LD clause 6.3.5.
+///
+/// A request may name its context by a relative reference, which the broker
+/// resolves against the request's own URI (IETF RFC 8288 section 3.1), so the
+/// target is taken as an IRI reference rather than an absolute IRI.
 ///
 /// # Errors
 ///
@@ -14,7 +22,10 @@ use thiserror::Error;
 /// [`HeaderEncodingError::InvalidLink`] when the typed `Link` cannot be rendered as an HTTP header value.
 pub fn jsonld_link_header(context_url: &str) -> Result<HeaderValue, HeaderEncodingError> {
     let context_url = IriRefBuf::from_str(context_url).map_err(|_error| HeaderEncodingError::InvalidIri)?;
-    Link::jsonld_context(context_url).to_header_value().ok_or(HeaderEncodingError::InvalidLink)
+    let context_link = LinkValue::new(context_url)
+        .push_rel(RelationType::JsonLdContext)
+        .set_media_type(MediaTypeBuf::from(&APPLICATION_LD_JSON));
+    Link::new(vec![context_link]).to_header_value().ok_or(HeaderEncodingError::InvalidLink)
 }
 
 /// Collect every valid `NGSILD-Warning` response header value.

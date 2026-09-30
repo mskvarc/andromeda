@@ -1,119 +1,109 @@
 //! Which `@context` applies to one operation.
 //!
-//! ETSI GS CIM 009 clause 5.5.7 lets a request carry its context in a `Link`
-//! header, in the body, or not at all, and clause 4.3.6.8 lets a deployment
-//! pin which released core context a versionless reference means.
-//! [`ContextSpec`] is those three inputs plus the policy that decides how the
-//! core context joins them; resolving it into a `@context` value is
-//! [`crate::document_context`].
+//! ETSI GS CIM 009 clause 6.3.5 lets a request name its context in exactly one
+//! place -- a `Link` header, the body, or nowhere -- which is
+//! [`RequestContext`]. [`ContextSpec`] is that choice plus the policy that
+//! decides how the core context joins it; resolving it into the `@context` a
+//! document is processed under is [`crate::document_context`], and into the
+//! `@context` a response names is [`crate::presented_context`].
 
-use crate::{core_context::is_ngsi_ld_core_context_url, document_context::resolve_context_value};
+use crate::{document_context::resolve_context_value, request_context::RequestContext};
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-use iri_rs::{Iri, IriBuf, IriRefBuf};
+use iri_rs::{Iri, IriBuf};
 use serde_json::Value;
-use std::collections::HashSet;
-use url::Url;
 
-/// How the NGSI-LD core context joins the contexts a request supplied.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// How the NGSI-LD core context joins the context a request named when a
+/// document is processed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum CoreContextPolicy {
-    /// Append the core context last, always.
+    /// Append the core context last, always (clauses 4.4 and 5.5.7).
+    #[default]
     Append,
-    /// Append it only when the request supplied no context of its own.
-    AppendIfNoExplicit,
-    /// Do not add it.
-    Omit,
-    /// Use it alone, discarding everything the request supplied.
+    /// Use it alone, discarding whatever the request named.
     Only,
 }
 
-/// The contexts that apply to a single operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The context that applies to a single operation.
+///
+/// The default is [`ContextSpec::none`]: no context named, the core context
+/// appended.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContextSpec {
-    /// Context URLs the request carried in `Link` headers, in order.
-    link_contexts: Vec<IriRefBuf>,
-    /// The `@context` the request body carried, if any.
-    body_context: Option<Value>,
-    /// How the core context joins them.
+    /// Where the request named its context, if anywhere.
+    context: RequestContext,
+    /// How the core context joins it.
     core_policy: CoreContextPolicy,
 }
 
 impl ContextSpec {
-    /// A spec carrying nothing, with the core context appended.
+    /// A spec for a request that named no context, with the core context
+    /// appended.
     #[must_use]
     pub const fn none() -> ContextSpec {
         ContextSpec {
-            link_contexts: Vec::new(),
-            body_context: None,
+            context: RequestContext::Default,
             core_policy: CoreContextPolicy::Append,
         }
     }
 
-    /// A spec that resolves to the core context alone.
+    /// A spec that resolves to the core context alone, for a resource that
+    /// always answers under it whatever the request named.
     #[must_use]
     pub const fn core_only() -> ContextSpec {
         ContextSpec {
-            link_contexts: Vec::new(),
-            body_context: None,
+            context: RequestContext::Default,
             core_policy: CoreContextPolicy::Only,
         }
     }
 
-    /// A spec built from the `Link` header context URLs of a request.
+    /// A spec for the context a request named.
     #[must_use]
-    pub const fn from_links(links: Vec<IriRefBuf>) -> ContextSpec {
+    pub const fn from_request(context: RequestContext) -> ContextSpec {
         ContextSpec {
-            link_contexts: links,
-            body_context: None,
+            context,
             core_policy: CoreContextPolicy::Append,
         }
+    }
+
+    /// A spec for a request whose one `Link` header named `url`.
+    #[must_use]
+    pub const fn from_link(url: IriBuf) -> ContextSpec {
+        ContextSpec::from_request(RequestContext::Link(url))
+    }
+
+    /// A spec for a request whose body named `context` as its `@context`.
+    #[must_use]
+    pub const fn from_body(context: Value) -> ContextSpec {
+        ContextSpec::from_request(RequestContext::Body(context))
     }
 
     /// The spec a subscription's `jsonldContext` selects for its notifications
     /// (clause 5.8.6): that context with the core context appended, or the
     /// core context alone when the subscription named none.
-    ///
-    /// A [`Url`] is always a well-formed IRI reference, so the conversion
-    /// cannot fail in practice; a URL the IRI parser nonetheless rejects
-    /// falls back to the core context rather than to no context at all.
     #[must_use]
-    pub fn for_subscription_context(jsonld_context: Option<&Url>) -> ContextSpec {
-        match jsonld_context.and_then(|url| IriRefBuf::new(url.as_str().to_owned()).ok()) {
-            Some(iri) => ContextSpec::from_links(vec![iri]),
+    pub fn for_subscription_context(jsonld_context: Option<&IriBuf>) -> ContextSpec {
+        match jsonld_context {
+            Some(context) => ContextSpec::from_link(context.clone()), // clone: the subscription keeps its jsonldContext
             None => ContextSpec::none(),
         }
     }
 
-    /// Attach the `@context` the request body carried.
+    /// Where the request named its context.
     #[must_use]
-    pub fn with_body_context(mut self, context: Option<Value>) -> ContextSpec {
-        self.body_context = context;
-        self
+    pub const fn request_context(&self) -> &RequestContext {
+        &self.context
+    }
+
+    /// The context IRI the request's one `Link` header named, if it named one.
+    #[must_use]
+    pub const fn link_context(&self) -> Option<&IriBuf> {
+        self.context.link()
     }
 
     /// The body `@context`, if the request carried one.
     #[must_use]
     pub const fn body_context(&self) -> Option<&Value> {
-        self.body_context.as_ref()
-    }
-
-    /// Consume the spec and take its body `@context`.
-    #[must_use]
-    pub fn into_body_context(self) -> Option<Value> {
-        self.body_context
-    }
-
-    /// The `Link` header context URLs, in the order the request gave them.
-    #[must_use]
-    pub fn link_contexts(&self) -> &[IriRefBuf] {
-        &self.link_contexts
-    }
-
-    /// Choose how the core context joins the request's own contexts.
-    #[must_use]
-    pub const fn with_core_policy(mut self, policy: CoreContextPolicy) -> ContextSpec {
-        self.core_policy = policy;
-        self
+        self.context.body()
     }
 
     /// The current core-context policy.
@@ -122,95 +112,22 @@ impl ContextSpec {
         self.core_policy
     }
 
-    /// The core context URL a response names for this spec.
+    /// The core context URL a document is processed under.
     ///
-    /// Always the versionless clause-4.3.6.8 core context: a response advertises
-    /// the stable identifier so a client is not tied to the version this
-    /// deployment happens to have pinned. Which released version a *versionless*
-    /// reference expands against is a separate, engine-internal decision (the
-    /// fastpath term table, [`crate::engine::JsonLdEngine::default_core_url`]),
-    /// and it is not leaked here.
+    /// Always the v1.9 core context this broker implements (clause 4.4): every
+    /// core reference a request names, of any release or the versionless
+    /// alias, is removed and this one appended last, so the documents a
+    /// request names are processed under the same definitions whichever
+    /// release the client wrote.
     #[must_use]
     pub const fn effective_core_url(&self) -> Iri<&'static str> {
         NGSI_LD_CORE_CONTEXT_URL
     }
 
-    /// The same spec, as it applies to a response rather than a request.
-    ///
-    /// A response repeats the context the client supplied and names the core
-    /// context only when the client named none, which is
-    /// [`CoreContextPolicy::AppendIfNoExplicit`].
-    #[must_use]
-    pub fn for_presentation(&self) -> ContextSpec {
-        ContextSpec {
-            link_contexts: self.link_contexts.clone(), // clone: the source spec is borrowed and stays valid
-            body_context: self.body_context.clone(),   // clone: the source spec is borrowed and stays valid
-            core_policy: CoreContextPolicy::AppendIfNoExplicit,
-        }
-    }
-
-    /// The `@context` value a response body carries for this spec.
+    /// The `@context` value a document is processed under for this spec.
     #[must_use]
     pub fn to_context_value(&self) -> Option<Value> {
         resolve_context_value(None, self)
-    }
-
-    /// The ordered context URLs a response carries in `Link` headers.
-    ///
-    /// Core-context aliases the request supplied are dropped and re-appended
-    /// canonically, so a client that asked with v1.6 and a client that asked
-    /// versionless receive the same header.
-    pub fn to_link_headers(&self) -> Vec<IriRefBuf> {
-        match self.core_policy {
-            CoreContextPolicy::Only => return vec![core_context_iri_ref(NGSI_LD_CORE_CONTEXT_URL)],
-            CoreContextPolicy::Omit | CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit => {}
-        }
-
-        let should_strip_core = matches!(self.core_policy, CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit);
-        let mut urls = Vec::new();
-        let mut seen = HashSet::new();
-
-        for url in &self.link_contexts {
-            if should_strip_core && url.as_iri().is_some_and(is_ngsi_ld_core_context_url) {
-                continue;
-            }
-            if seen.insert(url.clone()) {
-                // clone: the set keeps a copy, the list keeps a copy
-                urls.push(url.clone());
-            }
-        }
-
-        let has_explicit = !urls.is_empty() || self.body_context.is_some();
-        let should_append_core = match self.core_policy {
-            CoreContextPolicy::Append => true,
-            CoreContextPolicy::AppendIfNoExplicit => !has_explicit,
-            CoreContextPolicy::Omit | CoreContextPolicy::Only => false,
-        };
-
-        if should_append_core {
-            let core_url = core_context_iri_ref(NGSI_LD_CORE_CONTEXT_URL);
-            if seen.insert(core_url.clone()) {
-                // clone: the set keeps a copy, the list keeps a copy
-                urls.push(core_url);
-            }
-        }
-
-        urls
-    }
-}
-
-/// The header form of a compile-time-valid core context IRI.
-///
-/// The core context URLs a response advertises are compile-time constants, so
-/// this conversion is infallible; it bridges the `Iri` a constant carries to the
-/// owned [`IriRefBuf`] a `Link` header value holds.
-fn core_context_iri_ref(iri: Iri<&'static str>) -> IriRefBuf {
-    IriRefBuf::from(IriBuf::from(iri))
-}
-
-impl Default for ContextSpec {
-    fn default() -> ContextSpec {
-        ContextSpec::none()
     }
 }
 
@@ -219,21 +136,22 @@ mod tests {
     use crate::{
         context_spec::{ContextSpec, CoreContextPolicy},
         core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
+        request_context::RequestContext,
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-    use iri_rs::IriRefBuf;
+    use iri_rs::IriBuf;
     use serde_json::json;
 
-    /// A context URL as the [`IriRefBuf`] the `Link` header carries.
-    fn iri_ref(url: &str) -> IriRefBuf {
-        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    /// A context URL as the absolute IRI a `Link` header resolves to.
+    fn iri(url: &str) -> IriBuf {
+        IriBuf::new(url.to_owned()).expect("a valid IRI")
     }
 
     #[test]
     fn a_subscription_context_is_the_named_context_with_the_core_context_appended() {
-        let url = url::Url::parse("https://example.com/context.jsonld").expect("valid URL");
+        let url = iri("https://example.com/context.jsonld");
         let named = ContextSpec::for_subscription_context(Some(&url));
-        pretty_assertions::assert_eq!(named.link_contexts(), &[iri_ref("https://example.com/context.jsonld")]);
+        pretty_assertions::assert_eq!(named.link_context(), Some(&url));
         pretty_assertions::assert_eq!(named.core_policy(), CoreContextPolicy::Append);
         pretty_assertions::assert_eq!(ContextSpec::for_subscription_context(None), ContextSpec::none());
     }
@@ -245,18 +163,17 @@ mod tests {
     }
 
     #[test]
-    fn link_headers_carry_the_request_context_first_and_the_core_context_last() {
-        let links = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).to_link_headers();
-        pretty_assertions::assert_eq!(
-            links,
-            vec![iri_ref("https://example.com/context.jsonld"), iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]
-        );
+    fn a_link_context_is_processed_first_and_the_core_context_last() {
+        let context = ContextSpec::from_link(iri("https://example.com/context.jsonld"))
+            .to_context_value()
+            .expect("a context value");
+        pretty_assertions::assert_eq!(context, json!(["https://example.com/context.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
-    fn the_only_policy_discards_every_context_the_request_supplied() {
-        let spec = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).with_core_policy(CoreContextPolicy::Only);
-        pretty_assertions::assert_eq!(spec.to_link_headers(), vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]);
+    fn the_default_spec_names_no_context_and_appends_the_core_context() {
+        pretty_assertions::assert_eq!(ContextSpec::default(), ContextSpec::none());
+        pretty_assertions::assert_eq!(ContextSpec::default().core_policy(), CoreContextPolicy::Append);
     }
 
     #[test]
@@ -266,26 +183,39 @@ mod tests {
         pretty_assertions::assert_eq!(spec.core_policy(), CoreContextPolicy::Only);
     }
 
+    /// Clause 6.3.5: a request names its context in one place, so a spec holds
+    /// a `Link` context or a body context, never both.
     #[test]
-    fn a_core_context_alias_the_request_supplied_comes_back_canonical() {
-        let links = ContextSpec::from_links(vec![
-            iri_ref("https://example.com/context.jsonld"),
-            iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()),
-        ])
-        .to_link_headers();
+    fn a_spec_holds_its_context_in_exactly_one_place() {
+        let linked = ContextSpec::from_link(iri("https://example.com/a.jsonld"));
+        assert!(linked.body_context().is_none());
+        pretty_assertions::assert_eq!(linked.request_context(), &RequestContext::Link(iri("https://example.com/a.jsonld")));
 
-        pretty_assertions::assert_eq!(
-            links,
-            vec![iri_ref("https://example.com/context.jsonld"), iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]
-        );
+        let bodied = ContextSpec::from_body(json!("https://example.com/a.jsonld"));
+        assert!(bodied.link_context().is_none());
+        pretty_assertions::assert_eq!(bodied.body_context(), Some(&json!("https://example.com/a.jsonld")));
+
+        pretty_assertions::assert_eq!(ContextSpec::none().request_context(), &RequestContext::Default);
     }
 
+    /// Clause 4.4: a core context the request named in another release is
+    /// processed as the v1.9 one, last.
     #[test]
-    fn a_presentation_spec_names_the_core_context_only_when_the_request_named_none() {
-        let bare = ContextSpec::none().for_presentation();
-        pretty_assertions::assert_eq!(bare.to_link_headers(), vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]);
+    fn a_core_context_alias_the_request_supplied_is_processed_as_the_current_one_last() {
+        let context = ContextSpec::from_body(json!([NGSI_LD_CORE_CONTEXT_V16_URL.as_str(), "https://example.com/context.jsonld"]))
+            .to_context_value()
+            .expect("a context value");
 
-        let explicit = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).for_presentation();
-        pretty_assertions::assert_eq!(explicit.to_link_headers(), vec![iri_ref("https://example.com/context.jsonld")]);
+        pretty_assertions::assert_eq!(context, json!(["https://example.com/context.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
+    }
+
+    /// A `Link` naming a core context of another release is processed as the
+    /// v1.9 core context alone.
+    #[test]
+    fn a_link_naming_an_older_core_context_resolves_to_the_current_core_context() {
+        let context = ContextSpec::from_link(iri(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()))
+            .to_context_value()
+            .expect("a context value");
+        pretty_assertions::assert_eq!(context, json!([NGSI_LD_CORE_CONTEXT_URL]));
     }
 }

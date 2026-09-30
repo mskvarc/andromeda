@@ -38,7 +38,6 @@ toml = "1.1.6"
 toml-comment = "0.3.0"
 tracing = "0.1.44"
 url = "2.5.8"
-uuid = { version = "1.26.1", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

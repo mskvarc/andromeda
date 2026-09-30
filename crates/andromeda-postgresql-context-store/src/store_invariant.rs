@@ -5,7 +5,6 @@
 //! two pieces of this adapter, or an identifier it minted itself, and reaching
 //! one means the adapter is wrong rather than the data or the database.
 
-use andromeda_ngsi_ld_lexicon::identifier_length::IdentifierTooLong;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use strum::Display;
 use thiserror::Error;
@@ -44,13 +43,6 @@ pub enum StoreInvariant {
         /// How many rows it was asked to write.
         rows: usize,
     },
-    /// A subscription identifier the store minted is refused by the URN
-    /// grammar.
-    #[error("a minted subscription URN is not valid: {0}")]
-    MintedUrn(#[source] urn_rs::Error),
-    /// A subscription identifier the store minted is past the identifier bound.
-    #[error("a minted subscription URN is too long to be an identifier: {0}")]
-    MintedIdentifier(#[source] IdentifierTooLong),
 }
 
 #[cfg(test)]

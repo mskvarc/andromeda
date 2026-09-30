@@ -5,13 +5,13 @@
 //! [`BatchContextHandle`] does that work once. It carries the resolved value
 //! and the [`BatchTermMap`] the fastpath reads.
 //!
-//! Clause 5.5.7 lets an individual entity carry its own `@context`. An entity
-//! whose context diverges from the batch's is routed to the per-entity path
-//! rather than being expanded against the wrong table.
+//! Clause 5.5.7 lets an individual entity carry its own `@context`, and a
+//! batch gives every distinct context its own handle: the entities naming one
+//! context are prepared together under that context's handle, so no entity is
+//! ever expanded against another's table.
 
 use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},
-    document_context::resolve_context_value,
     engine::{
         fast_entity::expand_document,
         processor::JsonLdEngine,
@@ -19,7 +19,7 @@ use crate::{
     },
     error::JsonLdError,
 };
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::sync::Arc;
 
 /// A batch's `@context`, resolved.
@@ -27,8 +27,6 @@ use std::sync::Arc;
 pub struct BatchContextHandle {
     /// The spec the handle was built from, for the per-entity fallback.
     spec: ContextSpec,
-    /// The resolved `@context`, shared rather than deep-copied per entity.
-    resolved_context: Option<Arc<Value>>,
     /// The term table the fastpath resolves against.
     term_map: Arc<BatchTermMap>,
 }
@@ -54,12 +52,6 @@ impl BatchContextHandle {
     pub(crate) fn term_map(&self) -> &BatchTermMap {
         &self.term_map
     }
-
-    /// The shared resolved context, for tests that assert it is shared.
-    #[cfg(test)]
-    pub(crate) const fn resolved_context(&self) -> Option<&Arc<Value>> {
-        self.resolved_context.as_ref()
-    }
 }
 
 impl JsonLdEngine {
@@ -70,12 +62,10 @@ impl JsonLdEngine {
     /// the network. Parsed context tables are kept on the engine, so a second
     /// batch naming the same URL pays a map read.
     pub async fn batch_context_handle(&self, context: &ContextSpec) -> BatchContextHandle {
-        let resolved_context = resolve_context_value(None, context);
-        let term_map = build_batch_term_map(context, self.loader(), self.user_term_tables(), self.default_core_url(), self.core_vocabulary()).await;
+        let term_map = build_batch_term_map(context, self.loader(), self.user_term_tables(), self.core_vocabulary()).await;
 
         BatchContextHandle {
             spec: context.clone(), // clone: the handle outlives the caller's borrow
-            resolved_context: resolved_context.map(Arc::new),
             term_map: Arc::new(term_map),
         }
     }
@@ -132,30 +122,6 @@ impl JsonLdEngine {
         }
         expand_document(document, &handle.term_map)
     }
-
-    /// Whether a document's own `@context` agrees with the batch handle's.
-    ///
-    /// Read by the batch classifier to route entities between the
-    /// synchronous and asynchronous pools without touching the document.
-    #[must_use]
-    pub fn entity_context_matches_handle(&self, document: &Value, handle: &BatchContextHandle) -> bool {
-        match document {
-            Value::Object(object) => context_agrees(object, handle),
-            Value::Array(items) => items.iter().all(|item| match item {
-                Value::Object(object) => context_agrees(object, handle),
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => false,
-            }),
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
-        }
-    }
-}
-
-/// Whether one object's `@context` agrees with the handle's.
-fn context_agrees(object: &Map<String, Value>, handle: &BatchContextHandle) -> bool {
-    match object.get("@context") {
-        None => true,
-        Some(existing) => Some(existing) == handle.resolved_context.as_deref(),
-    }
 }
 
 #[cfg(test)]
@@ -165,13 +131,12 @@ mod tests {
         engine::{processor::JsonLdEngine, term_map::BatchTermMap},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-    use iri_rs::IriRefBuf;
+    use iri_rs::IriBuf;
     use serde_json::{Value, json};
-    use std::sync::Arc;
 
     /// A context URL as the [`IriRefBuf`] a `Link` header carries.
-    fn iri_ref(url: &str) -> IriRefBuf {
-        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    fn iri_ref(url: &str) -> IriBuf {
+        IriBuf::new(url.to_owned()).expect("a valid IRI")
     }
 
     /// An engine that resolves only what is embedded, never the network.
@@ -195,7 +160,7 @@ mod tests {
         for spec in [
             ContextSpec::none(),
             ContextSpec::core_only(),
-            ContextSpec::from_links(vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]),
+            ContextSpec::from_link(iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())),
         ] {
             assert!(
                 engine.batch_context_handle(&spec).await.fast_eligible(),
@@ -206,7 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_body_context_that_only_declares_a_vocabulary_still_admits_the_fastpath() {
-        let spec = ContextSpec::none().with_body_context(Some(json!({ "@vocab": "https://example.com/vocab#" })));
+        let spec = ContextSpec::from_body(json!({ "@vocab": "https://example.com/vocab#" }));
 
         let handle = offline_engine().batch_context_handle(&spec).await;
 
@@ -215,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_context_that_redefines_a_core_term_disables_the_fastpath() {
-        let spec = ContextSpec::none().with_body_context(Some(json!({ "observedAt": "https://example.com/own/observedAt" })));
+        let spec = ContextSpec::from_body(json!({ "observedAt": "https://example.com/own/observedAt" }));
 
         let handle = offline_engine().batch_context_handle(&spec).await;
 
@@ -224,20 +189,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_context_url_that_does_not_resolve_disables_the_fastpath() {
-        let spec = ContextSpec::from_links(vec![iri_ref("https://example.com/custom.jsonld")]);
+        let spec = ContextSpec::from_link(iri_ref("https://example.com/custom.jsonld"));
 
         let handle = offline_engine().batch_context_handle(&spec).await;
 
         assert!(!handle.fast_eligible(), "an unresolved context defines terms the term map does not have");
-    }
-
-    #[tokio::test]
-    async fn omitting_the_core_context_disables_the_fastpath() {
-        let spec = ContextSpec::none().with_core_policy(CoreContextPolicy::Omit);
-
-        let handle = offline_engine().batch_context_handle(&spec).await;
-
-        assert!(!handle.fast_eligible(), "the term map is seeded from the core context this spec omits");
     }
 
     #[tokio::test]
@@ -247,22 +203,6 @@ mod tests {
         // that catches a field being added that does not.
         const fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<BatchTermMap>();
-    }
-
-    #[tokio::test]
-    async fn cloning_a_handle_shares_the_resolved_context_rather_than_copying_it() {
-        let engine = offline_engine();
-        let handle = engine.batch_context_handle(&ContextSpec::core_only()).await;
-        let shared = handle.resolved_context().expect("a core-only spec resolves to a context");
-        let baseline = Arc::strong_count(shared);
-
-        let clones: Vec<_> = (0..16).map(|_| handle.clone()).collect(); // clone: the point of the test
-        let after_clone = handle.resolved_context().expect("still present");
-        assert!(Arc::strong_count(after_clone) >= baseline + clones.len());
-
-        drop(clones);
-        let after_drop = handle.resolved_context().expect("still present");
-        pretty_assertions::assert_eq!(Arc::strong_count(after_drop), baseline);
     }
 
     #[tokio::test]
@@ -325,20 +265,5 @@ mod tests {
 
         pretty_assertions::assert_eq!(bulk.len(), 1);
         pretty_assertions::assert_eq!(bulk[0].as_ref().expect("the single document expands"), &solo);
-    }
-
-    #[tokio::test]
-    async fn a_document_carrying_the_handles_own_context_is_routed_to_the_fast_pool() {
-        let engine = offline_engine();
-        let handle = engine.batch_context_handle(&ContextSpec::none()).await;
-        let resolved = handle.resolved_context().expect("a context").as_ref().clone(); // clone: written onto the document
-
-        let bare = json!({ "id": "urn:ngsi-ld:Device:1", "type": "Device" });
-        let matching = json!({ "@context": resolved, "id": "urn:ngsi-ld:Device:1", "type": "Device" });
-        let divergent = json!({ "@context": "https://example.com/other.jsonld", "id": "urn:ngsi-ld:Device:1", "type": "Device" });
-
-        assert!(engine.entity_context_matches_handle(&bare, &handle));
-        assert!(engine.entity_context_matches_handle(&matching, &handle));
-        assert!(!engine.entity_context_matches_handle(&divergent, &handle));
     }
 }

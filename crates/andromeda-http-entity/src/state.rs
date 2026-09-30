@@ -4,6 +4,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService};
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
+use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_http_extraction::{
     classification::classify_tenancy_error,
     context_target::{ContextTargetProvider, ExistingTargetedTenantState, ProvisionableTargetedTenantState, SnapshotTargetResolver},
@@ -36,6 +37,9 @@ pub struct EntityRouteServices {
     pub live_target: ContextTarget,
     /// Snapshot URI to durable branch resolution.
     pub snapshot_targets: Arc<dyn SnapshotTargetResolver>,
+    /// The tenant's host of the contexts its responses name when no single
+    /// URL names them (Annex C.8).
+    pub context_hosting: TenantContextHosting,
 }
 
 /// Existing-tenant extractor specialized to the entity binding's focused state.

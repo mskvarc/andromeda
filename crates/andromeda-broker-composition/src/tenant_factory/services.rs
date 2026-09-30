@@ -35,6 +35,7 @@ use andromeda_entity::{
 };
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
+use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
 use andromeda_snapshot::{
@@ -49,7 +50,7 @@ use andromeda_temporal::{
     remote_linked::RemoteTemporalLinkedSource,
     service::TemporalService,
 };
-use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
+use andromeda_tenancy::context_source_alias::ContextSourceAliases;
 use std::sync::Arc;
 
 /// Request-facing state and the scheduled snapshot preparation operation composed with it.
@@ -86,14 +87,8 @@ pub(super) fn construct_services(
         subscription_router,
         snapshot_delivery_signal,
     } = collaborators;
-    let pool_size = match storage.tenant {
-        TenantRef::UnnamedDefault => config.database.max_connections as usize,
-        // Match the serving pool's actual size, which is the pooler's small
-        // per-tenant cap when one fronts the request path.
-        TenantRef::Named(_) => config.database.named_serving_max_connections(config.tenancy.tenant_max_connections) as usize,
-    };
     let notifier = compose_change_notifier(config, storage, signals);
-    let entities = compose_entity_service(config, storage, &notifier, writes, pool_size);
+    let entities = compose_entity_service(config, storage, &notifier, writes);
     // Table 5.2.40-1: the alias this tenant writes into the outgoing `Via`
     // chain identifies the tenant within this context source, so a request that
     // has traversed one tenant is not mistaken for a loop at another (clause
@@ -116,6 +111,7 @@ pub(super) fn construct_services(
     let entity_query = compose_entity_query_service(storage, &forwarding);
     let context_store = Arc::new(JsonLdContextRepository::new(&storage.pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
+    let context_hosting = TenantContextHosting::new(contexts, storage.tenant.clone()); // clone: the hosting names the tenant its URLs qualify
     let (snapshot_preparation, snapshots) = compose_snapshot_services(
         &config.snapshot,
         storage,
@@ -126,7 +122,7 @@ pub(super) fn construct_services(
         snapshot_delivery_signal,
     );
     let edge = DistributedSubscriptionEdge::resolve(&config.identity, subscription_router, &forwarding, &storage.tenant);
-    let subscriptions = compose_subscription_services(storage, signals, transports, edge, &entity_query, &contexts);
+    let subscriptions = compose_subscription_services(storage, signals, transports, edge, &entity_query);
     let state = AndromedaState {
         live_target: storage.live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
         entities,
@@ -138,7 +134,7 @@ pub(super) fn construct_services(
         )),
         temporal,
         subscriptions: subscriptions.entity,
-        contexts,
+        context_hosting,
         csr: compose_registration_service(storage, signals, subscriptions.forwarding.as_ref()),
         csr_subscriptions: subscriptions.csource,
         forwarding,
@@ -181,7 +177,6 @@ fn compose_entity_service(
     storage: &TenantStorage,
     notifier: &Arc<ChangeNotifier>,
     writes: &Arc<dyn ContextCommitter>,
-    pool_size: usize,
 ) -> Arc<EntityService> {
     let attribute_history = Arc::clone(&storage.temporal_repo) as Arc<dyn AttributeDatasetHistory>; // clone: temporal and entity policy share the concrete history adapter.
     Arc::new(EntityService::new(
@@ -195,7 +190,6 @@ fn compose_entity_service(
         storage.engine.clone(), // clone: entity policy owns its engine handle.
         Arc::clone(notifier),
         BatchExecutionConfig {
-            concurrency: config.entity.batch_concurrency.unwrap_or_else(|| usize::min(pool_size, 25)),
             chunk_concurrency: config.entity.batch_chunk_concurrency.unwrap_or(4),
             chunk_write_concurrency: config.entity.batch_chunk_write_concurrency.unwrap_or(4),
             chunk_size: config.entity.batch_chunk_size,

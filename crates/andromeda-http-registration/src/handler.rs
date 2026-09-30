@@ -4,8 +4,10 @@ use crate::{
     error::{RegistrationResultExt, internal_problem},
     state::{RegistrationTenantState, RegistrationTenantStateOrCreate},
 };
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
+    api_root::ApiRoot,
     context::ContextUrl,
     jsonld::JsonLdDocument,
     prefer::PreferHeader,
@@ -21,14 +23,13 @@ use andromeda_http_response::{
     internal_failure_summary::InternalFailureSummary,
     pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links},
     problem_response::ProblemResponse,
-    render::start_rendering_normalized,
     single::NgsiLdResponse,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, registration::RegistrationRenderer, response::ResponsePayload};
 use andromeda_ngsi_ld_request::{
+    empty::EmptyParams,
     pagination_cursor::decode_cursor,
     query::{SharedQueryParams, csr::CsrQueryParameters},
 };
@@ -40,19 +41,14 @@ use axum::{
 };
 
 pub(crate) async fn create(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ProvisionableTenantState(state): RegistrationTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
-    JsonLdDocument {
-        document: payload,
-        context: body_context,
-    }: JsonLdDocument,
+    JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
-    let identifier = state
-        .registrations
-        .create(payload, &context.merge(body_context))
-        .await
-        .with_registration_instance(&uri)?;
+    let identifier = state.registrations.create(payload, &context).await.with_registration_instance(&uri)?;
     Ok(with_location(
         StatusCode::CREATED.into_response(),
         format!("/ngsi-ld/v1/csourceRegistrations/{identifier}"),
@@ -62,12 +58,12 @@ pub(crate) async fn create(
 pub(crate) async fn get(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
+    api_root: ApiRoot,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
+    ContextUrl(context): ContextUrl,
     TypedPath(registration_id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
-    let context: ContextSpec = context.into_inner();
     let registration = state.registrations.get(&registration_id, &context).await.with_registration_instance(&uri)?;
     let payload = RegistrationRenderer::new(registration)
         .with_sys_attrs(params.parse_options().with_registration_instance(&uri)?.sys_attrs)
@@ -75,7 +71,10 @@ pub(crate) async fn get(
         .with_omit(params.omit.as_deref())
         .with_language_filter(params.lang.as_ref())
         .render();
-    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = ResponseContextSource::new(state.registrations.engine(), &context, &state.context_hosting, &api_root)
+        .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
+        .await
+        .with_registration_instance(&uri)?
         .with_geometry_selection(GeometrySelection::new(params.geometry_property.as_ref(), &[]))
         .with_payload(ResponsePayload::Single(payload))
         .render()
@@ -86,16 +85,16 @@ pub(crate) async fn get(
 pub(crate) async fn query(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
+    api_root: ApiRoot,
     // Clause 6.3.4: `application/geo+json` is acceptable only on Retrieve Entity
     // and Query Entities; every other operation answers 406. Query Context
     // Source Registrations is clause 5.10.2, and clause 5.10.2.5 gives its
     // output as a JSON-LD array of registrations, which has no GeoJSON form.
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
+    ContextUrl(context): ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
-    let context: ContextSpec = context.into_inner();
     let options = params.parse_options().with_registration_instance(&uri)?;
     let limit = i64::from(params.effective_limit());
     let offset = i64::from(params.effective_offset());
@@ -127,7 +126,10 @@ pub(crate) async fn query(
                 .render()
         })
         .collect::<Vec<_>>();
-    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = ResponseContextSource::new(state.registrations.engine(), &context, &state.context_hosting, &api_root)
+        .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
+        .await
+        .with_registration_instance(&uri)?
         .with_geometry_selection(GeometrySelection::new(params.geometry_property.as_ref(), &[]))
         .with_payload(ResponsePayload::Collection(registrations))
         .render()
@@ -166,24 +168,26 @@ pub(crate) async fn query(
 }
 
 pub(crate) async fn update(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
     TypedPath(registration_id): TypedPath<Identifier>,
-    JsonLdDocument {
-        document: payload,
-        context: body_context,
-    }: JsonLdDocument,
+    JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     state
         .registrations
-        .update(&registration_id, payload, &context.merge(body_context))
+        .update(&registration_id, payload, &context)
         .await
         .with_registration_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 pub(crate) async fn delete(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(registration_id): TypedPath<Identifier>,

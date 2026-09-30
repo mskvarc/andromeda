@@ -19,7 +19,6 @@ use crate::{
     write_admission::BatchWrite,
 };
 use andromeda_context_commit::precondition::Precondition;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     mutation::{entity::merge_entity, selection::OverwritePolicy},
@@ -29,16 +28,11 @@ use chrono::Utc;
 use std::sync::Arc;
 
 impl EntityService {
-    pub(super) async fn batch_merge_chunk(
-        &self,
-        placement: SideEffectPlacement<'_>,
-        chunk: Vec<AdmittedBatchEntity>,
-        context: &ContextSpec,
-    ) -> Result<BatchResult, EntityError> {
+    pub(super) async fn batch_merge_chunk(&self, placement: SideEffectPlacement<'_>, chunk: Vec<AdmittedBatchEntity>) -> Result<BatchResult, EntityError> {
         let target = placement.target();
         // Clause 5.6.20 is the batch form of Merge Entity, whose fragments carry
         // the NGSI-LD Null to arbitrary depth (clause 5.5.12).
-        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, context, BatchWrite::Merge.null_sentinel_admission()).await;
+        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Merge.null_sentinel_admission()).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
         }

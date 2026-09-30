@@ -6,23 +6,24 @@
 
 use crate::{
     addressed_uri::addressed_request_uri,
+    classification::classify_context_link_error,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
+    request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
     undecodable_body::UndecodableBody,
 };
-use andromeda_http_headers::link::header::Link;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext};
 use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact, deserialize_exact_document};
 use axum::{
     extract::{FromRequest, Request},
-    http::{StatusCode, Uri, header::LINK},
+    http::{StatusCode, Uri},
 };
 use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::{collections::HashSet, str::FromStr};
+use thiserror::Error;
 
 /// Axum extractor for NGSI-LD JSON-LD request bodies decoded into a domain type.
 ///
@@ -107,48 +108,37 @@ fn document_has_context(document: &Value) -> bool {
     }
 }
 
-/// Merge the context values carried by a document into one JSON value.
-fn merge_context_values_from_document(document: &Value) -> Option<Value> {
-    let mut merged = Vec::new();
-    let mut seen = HashSet::new();
+/// Why the `@context` of an `application/ld+json` body cannot be read.
+#[derive(Debug, Error, PartialEq, Eq)]
+enum BodyContextError {
+    /// Clause 6.3.5: an `application/ld+json` body names its context in its
+    /// `@context` member, and this one has none.
+    #[error("application/ld+json body must contain @context")]
+    Missing,
+    /// JSON-LD applies a top-level node's `@context` to that node alone, so the
+    /// members of an array body read as one request must name one and the same
+    /// context; a batch operation, whose items are separate entities, is read
+    /// item by item instead.
+    #[error("every member of an application/ld+json array body must carry the same @context")]
+    Divergent,
+}
 
-    let mut push_context = |ctx: Value| match ctx {
-        Value::Array(items) => {
-            for item in items {
-                let key = item.to_string();
-                if seen.insert(key) {
-                    merged.push(item);
-                }
-            }
-        }
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => {
-            let key = other.to_string();
-            if seen.insert(key) {
-                merged.push(other);
-            }
-        }
-    };
-
+/// The `@context` an `application/ld+json` body names, as written.
+///
+/// An object names its own; an array names the one every member carries.
+fn body_context(document: &Value) -> Result<Value, BodyContextError> {
     match document {
-        Value::Object(obj) => {
-            if let Some(ctx) = obj.get("@context") {
-                push_context(ctx.clone());
-            }
-        }
+        Value::Object(object) => object.get("@context").cloned().ok_or(BodyContextError::Missing), // clone: the member is stripped from the body below
         Value::Array(items) => {
-            for item in items {
-                if let Some(ctx) = item.as_object().and_then(|obj| obj.get("@context")) {
-                    push_context(ctx.clone());
-                }
+            let mut contexts = items.iter().map(|item| item.as_object().and_then(|object| object.get("@context")));
+            let first = contexts.next().flatten().ok_or(BodyContextError::Missing)?;
+            if contexts.all(|context| context == Some(first)) {
+                Ok(first.clone()) // clone: the member is stripped from the body below
+            } else {
+                Err(BodyContextError::Divergent)
             }
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-    }
-
-    match merged.len() {
-        0 => None,
-        1 => merged.into_iter().next(),
-        _ => Some(Value::Array(merged)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Err(BodyContextError::Missing),
     }
 }
 
@@ -243,28 +233,19 @@ async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedB
         return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
     };
 
-    let is_ld_json = matches!(content_kind, ContentKind::LdJson);
-    let is_plain_json = matches!(content_kind, ContentKind::Json);
-
-    // Collect raw Link header strings before the request body is consumed.
-    let link_header_strings: Vec<String> = req.headers().get_all(LINK).iter().filter_map(|v| v.to_str().ok().map(String::from)).collect();
-    let mut link_contexts = Vec::new();
-    for raw in &link_header_strings {
-        let parsed = Link::from_str(raw).map_err(|_| ExtractorRejection::bad_request_data("Invalid Link header", uri.clone()))?;
-        link_contexts.extend(parsed.context_urls().cloned());
-    }
-
-    // Per NGSI-LD 6.3.5: application/ld+json MUST NOT be combined with a Link header
-    // containing a JSON-LD context relation
-    if is_ld_json {
-        let has_context_link = link_header_strings.iter().any(|s| s.contains("http://www.w3.org/ns/json-ld#context"));
-        if has_context_link {
-            return Err(ExtractorRejection::bad_request_data(
-                "application/ld+json must not be combined with a Link context header",
-                uri,
-            ));
-        }
-    }
+    // Clause 6.3.5: an `application/ld+json` body names its context itself and
+    // refuses a context `Link` beside it; any other body is read against the
+    // one context `Link` the request carries, or none. The headers are read
+    // before the body is consumed.
+    let carrier = match content_kind {
+        ContentKind::LdJson => PayloadCarrier::LdJsonBody,
+        ContentKind::Json | ContentKind::MergePatchJson => PayloadCarrier::LinkHeader,
+    };
+    let (mut parts, body) = req.into_parts();
+    let link_context = RequestLinks::of(&mut parts)
+        .and_then(|links| links.context_for(carrier))
+        .map_err(|error| ExtractorRejection::Classified(classify_context_link_error(&error).with_instance(uri.clone())))?;
+    let req = Request::from_parts(parts, body);
 
     let bytes = buffer_payload(req, state, declared, uri.clone()).await?;
 
@@ -291,14 +272,9 @@ async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedB
     // version is read by the `PayloadProfile` extractor. This broker
     // interprets every version the clause 4.3.6.8 tables describe, so no
     // amendment of the payload is needed for it to be accepted here.
-    // Per NGSI-LD 6.3.5: application/json MUST NOT contain @context in body
-    if is_plain_json && document_has_context(&value) {
+    // Clause 6.3.5: an application/json body must not carry @context.
+    if matches!(content_kind, ContentKind::Json) && document_has_context(&value) {
         return Err(ExtractorRejection::bad_request_data("application/json body must not contain @context", uri));
-    }
-
-    // Per NGSI-LD 6.3.5: application/ld+json MUST contain @context in body
-    if is_ld_json && !document_has_context(&value) {
-        return Err(ExtractorRejection::bad_request_data("application/ld+json body must contain @context", uri));
     }
 
     if !document_contexts_are_well_formed(&value) {
@@ -308,13 +284,15 @@ async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedB
         ));
     }
 
-    let mut context = ContextSpec::from_links(link_contexts);
-    if is_ld_json && let Some(ctx) = merge_context_values_from_document(&value) {
-        context = context.with_body_context(Some(ctx));
-    }
+    let context = match carrier {
+        PayloadCarrier::LdJsonBody => {
+            ContextSpec::from_body(body_context(&value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?)
+        }
+        PayloadCarrier::LinkHeader => ContextSpec::from_request(link_context.map_or(RequestContext::Default, RequestContext::Link)),
+    };
 
-    // Always strip @context before deserializing into Entity
-    // Context is handled separately by ContextUrl extractor
+    // The context is carried by the spec; the member is removed before the body
+    // is decoded into its domain type.
     strip_context_from_value(&mut value);
 
     Ok(AdmittedBody { document: value, context, uri })
@@ -322,15 +300,23 @@ async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedB
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::jsonld::{JsonLd, JsonLdDocument};
+    use andromeda_http_response::extraction_rejection::ExtractorRejection;
+    use andromeda_jsonld::request_context::RequestContext;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
         body::{Body, HttpBody},
+        extract::FromRequest,
         http::{
             HeaderValue,
             Request,
-            header::{CONTENT_LENGTH, CONTENT_TYPE},
+            StatusCode,
+            header::{CONTENT_LENGTH, CONTENT_TYPE, LINK},
         },
     };
+    use iri_rs::IriBuf;
+    use serde::de::DeserializeOwned;
+    use serde_json::{Value, json};
 
     /// Declare the fixed length of a test request's body.
     fn with_content_length(mut request: Request<Body>) -> Request<Body> {
@@ -358,6 +344,166 @@ mod tests {
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(body))
             .expect("request builds")
+    }
+
+    /// A JSON request carrying `body` and one `Link` line per entry of `links`.
+    fn json_request_with_links(body: &'static str, links: &[&str]) -> Request<Body> {
+        request_with_links("application/json", body, links)
+    }
+
+    /// A request of `content_type` carrying `body` and one `Link` line per
+    /// entry of `links`, addressed to `broker.example`.
+    fn request_with_links(content_type: &str, body: &'static str, links: &[&str]) -> Request<Body> {
+        let mut request = Request::builder()
+            .uri("/ngsi-ld/v1/entityOperations/query")
+            .header("host", "broker.example")
+            .header(CONTENT_TYPE, content_type);
+        for link in links {
+            request = request.header(LINK, *link);
+        }
+        request.body(Body::from(body)).expect("request builds")
+    }
+
+    /// The request context a document extraction reads, or its rejection.
+    async fn extracted_context(request: Request<Body>) -> Result<RequestContext, ExtractorRejection> {
+        extract_document(request).await.map(|admitted| admitted.context.request_context().clone()) // clone: the spec is dropped here
+    }
+
+    /// Whether `rejection` is a clause 5.5.4 `BadRequestData`.
+    fn is_bad_request_data(rejection: &ExtractorRejection) -> bool {
+        match rejection {
+            ExtractorRejection::Classified(response) => response.problem().error_type() == NgsiLdErrorType::BadRequestData,
+            ExtractorRejection::BadRequestData { .. } => true,
+            ExtractorRejection::Empty(_) | ExtractorRejection::NotAcceptable(_) | ExtractorRejection::InvalidRequest { .. } => false,
+        }
+    }
+
+    const CONTEXT_A: &str = r#"<https://example.com/a.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#;
+    const CONTEXT_B: &str = r#"<https://example.com/b.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#;
+    const PROFILE: &str = r#"<https://uri.etsi.org/ngsi-ld/v1.9>; rel="profile""#;
+
+    /// Clause 6.3.5 and JSON-LD 1.1 API section 9.4.1: a JSON body read against
+    /// two context links is refused as `BadRequestData`.
+    #[tokio::test]
+    async fn a_json_body_with_two_context_links_is_bad_request_data() {
+        let request = json_request_with_links(
+            r#"{"type": "Query"}"#,
+            &[
+                r#"<https://example.com/a.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#,
+                r#"<https://example.com/b.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#,
+            ],
+        );
+
+        let rejection = extract_document(request).await.err().expect("two context links are refused");
+
+        assert!(matches!(rejection, ExtractorRejection::Classified(_)), "{rejection:?}");
+    }
+
+    #[tokio::test]
+    async fn a_json_body_with_one_context_link_is_read_against_it() {
+        let request = json_request_with_links(
+            r#"{"type": "Query"}"#,
+            &[r#"<https://example.com/a.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#],
+        );
+
+        pretty_assertions::assert_eq!(
+            extracted_context(request).await.expect("one context link is admitted"),
+            RequestContext::Link(IriBuf::new("https://example.com/a.jsonld".to_owned()).expect("a valid IRI"))
+        );
+    }
+
+    /// Two context values in one `Link` line are two context links.
+    #[tokio::test]
+    async fn a_json_body_with_two_context_values_in_one_link_line_is_bad_request_data() {
+        let request = json_request_with_links(r#"{"type": "Query"}"#, &[&format!("{CONTEXT_A}, {CONTEXT_B}")]);
+        let rejection = extracted_context(request).await.expect_err("two context links are refused");
+        assert!(is_bad_request_data(&rejection), "{rejection:?}");
+    }
+
+    /// JSON-LD counts links, not distinct targets.
+    #[tokio::test]
+    async fn a_json_body_with_the_same_context_link_twice_is_bad_request_data() {
+        let request = json_request_with_links(r#"{"type": "Query"}"#, &[CONTEXT_A, CONTEXT_A]);
+        let rejection = extracted_context(request).await.expect_err("the same context link twice is refused");
+        assert!(is_bad_request_data(&rejection), "{rejection:?}");
+    }
+
+    /// Clause 6.3.5: an `application/ld+json` body beside a context `Link` is
+    /// `BadRequestData`, decided on the parsed link-values, whatever case the
+    /// relation is written in.
+    #[tokio::test]
+    async fn an_ld_json_body_beside_a_context_link_is_bad_request_data() {
+        let body = r#"{"type": "Query", "@context": "https://example.com/a.jsonld"}"#;
+        for link in [CONTEXT_A, r#"<https://example.com/a.jsonld>; rel="HTTP://WWW.W3.ORG/ns/json-ld#context""#] {
+            let rejection = extracted_context(request_with_links("application/ld+json", body, &[link]))
+                .await
+                .expect_err("a context link beside an ld+json body is refused");
+            assert!(is_bad_request_data(&rejection), "{link}: {rejection:?}");
+        }
+    }
+
+    /// Clause 6.3.21: a `profile` link is not a context and may accompany an
+    /// `application/ld+json` body, which is then read against its own context.
+    #[tokio::test]
+    async fn an_ld_json_body_beside_a_profile_link_is_read_against_its_own_context() {
+        let body = r#"{"type": "Query", "@context": "https://example.com/a.jsonld"}"#;
+        pretty_assertions::assert_eq!(
+            extracted_context(request_with_links("application/ld+json", body, &[PROFILE]))
+                .await
+                .expect("a profile link is admitted"),
+            RequestContext::Body(json!("https://example.com/a.jsonld"))
+        );
+    }
+
+    /// Clause 5.5.4: a malformed `Link` refuses a body-carrying request as it
+    /// does a body-less one, whatever the body's media type.
+    #[tokio::test]
+    async fn a_malformed_link_refuses_a_body_carrying_request() {
+        for content_type in ["application/json", "application/ld+json"] {
+            let body = r#"{"type": "Query", "@context": "https://example.com/a.jsonld"}"#;
+            let request = if content_type == "application/json" {
+                request_with_links(content_type, r#"{"type": "Query"}"#, &["not a link"])
+            } else {
+                request_with_links(content_type, body, &["not a link"])
+            };
+            let rejection = extracted_context(request).await.expect_err("a malformed Link is refused");
+            assert!(is_bad_request_data(&rejection), "{content_type}: {rejection:?}");
+        }
+    }
+
+    /// A `Link` value that is not visible ASCII refuses a body-carrying request
+    /// rather than being skipped.
+    #[tokio::test]
+    async fn a_non_ascii_link_refuses_a_body_carrying_request() {
+        let mut request = json_request(r#"{"type": "Query"}"#);
+        request.headers_mut().insert(
+            LINK,
+            HeaderValue::from_bytes("<https://example.com/\u{e9}.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"".as_bytes())
+                .expect("an opaque header value"),
+        );
+        let rejection = extracted_context(request).await.expect_err("a non-ASCII Link is refused");
+        assert!(is_bad_request_data(&rejection), "{rejection:?}");
+    }
+
+    /// IETF RFC 8288 section 3.1: a relative context link resolves against
+    /// the request's own URI.
+    #[tokio::test]
+    async fn a_relative_context_link_on_a_json_body_resolves_against_the_request_uri() {
+        let request = json_request_with_links(r#"{"type": "Query"}"#, &[r#"<ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#]);
+        pretty_assertions::assert_eq!(
+            extracted_context(request).await.expect("a relative context link"),
+            RequestContext::Link(IriBuf::new("http://broker.example/ngsi-ld/v1/entityOperations/ctx.jsonld".to_owned()).expect("a valid IRI"))
+        );
+    }
+
+    /// A JSON body without a context `Link` is read against the default
+    /// context.
+    #[tokio::test]
+    async fn a_json_body_without_a_link_is_read_against_the_default_context() {
+        pretty_assertions::assert_eq!(
+            extracted_context(json_request(r#"{"type": "Query"}"#)).await.expect("admitted"),
+            RequestContext::Default
+        );
     }
 
     #[tokio::test]
@@ -450,32 +596,60 @@ mod tests {
         assert!(result.document.as_object().unwrap().get("@context").is_none());
     }
 
+    /// The members of an `application/ld+json` array body read as one request
+    /// name one context; members naming different ones are refused rather
+    /// than merged into a union neither of them named.
     #[tokio::test]
-    async fn extracts_and_merges_contexts_from_array_body() {
-        let body = serde_json::json!([
-            {
-                "@context": "https://example.org/a",
-                "id": "urn:ngsi-ld:T:1",
-                "type": "T"
-            },
-            {
-                "@context": ["https://example.org/b", "https://example.org/a"],
-                "id": "urn:ngsi-ld:T:2",
-                "type": "T"
-            }
+    async fn an_ld_json_array_body_whose_members_name_different_contexts_is_bad_request_data() {
+        let body = json!([
+            {"@context": "https://example.org/a", "id": "urn:ngsi-ld:T:1", "type": "T"},
+            {"@context": ["https://example.org/b", "https://example.org/a"], "id": "urn:ngsi-ld:T:2", "type": "T"}
         ]);
-
         let req = Request::builder()
-            .uri("/ngsi-ld/v1/entityOperations/create")
+            .uri("/ngsi-ld/v1/entities")
             .header(CONTENT_TYPE, "application/ld+json")
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
-        let result = extract_document(req).await.unwrap();
+        let rejection = extract_document(req).await.err().expect("divergent contexts are refused");
+        assert!(is_bad_request_data(&rejection), "{rejection:?}");
+    }
+
+    /// Members carrying one and the same context are read against it, as
+    /// written.
+    #[tokio::test]
+    async fn an_ld_json_array_body_whose_members_share_a_context_is_read_against_it() {
+        let body = json!([
+            {"@context": ["https://example.org/a", "https://example.org/b", "https://example.org/a"], "id": "urn:ngsi-ld:T:1", "type": "T"},
+            {"@context": ["https://example.org/a", "https://example.org/b", "https://example.org/a"], "id": "urn:ngsi-ld:T:2", "type": "T"}
+        ]);
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header(CONTENT_TYPE, "application/ld+json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+
         pretty_assertions::assert_eq!(
-            result.context.body_context(),
-            Some(&serde_json::json!(["https://example.org/a", "https://example.org/b"]))
+            extracted_context(req).await.expect("a shared context"),
+            RequestContext::Body(json!(["https://example.org/a", "https://example.org/b", "https://example.org/a"]))
         );
+    }
+
+    /// Clause 6.3.5: an `application/ld+json` body without `@context` is
+    /// `BadRequestData`, and so is an `application/json` body carrying one.
+    #[tokio::test]
+    async fn a_context_in_the_wrong_body_or_none_in_the_right_one_is_bad_request_data() {
+        let without = Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header(CONTENT_TYPE, "application/ld+json")
+            .body(Body::from(r#"{"id": "urn:ngsi-ld:T:1", "type": "T"}"#))
+            .unwrap();
+        let rejection = extract_document(without).await.err().expect("an ld+json body needs @context");
+        assert!(is_bad_request_data(&rejection), "{rejection:?}");
+
+        let with = json_request(r#"{"id": "urn:ngsi-ld:T:1", "type": "T", "@context": "https://example.org/a"}"#);
+        let rejection = extract_document(with).await.err().expect("a json body must not carry @context");
+        assert!(is_bad_request_data(&rejection), "{rejection:?}");
     }
 
     #[tokio::test]

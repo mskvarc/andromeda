@@ -18,9 +18,9 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{cursor::PageCursor, dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
+use iri_rs::IriBuf;
 use langtag::LangTagBuf;
 use serde_json::Value;
-use url::Url;
 
 /// Borrowed field values used when creating or updating a subscription.
 #[derive(Debug)]
@@ -67,7 +67,7 @@ pub struct SubscriptionFields<'a> {
     /// Preferred language for notifications.
     pub lang: Option<&'a LangTagBuf>,
     /// JSON-LD context URI associated with the subscription.
-    pub jsonld_context: Option<&'a Url>,
+    pub jsonld_context: Option<&'a IriBuf>,
     /// When true, subscription only matches locally stored entities (clause 5.5.13).
     pub local_only: bool,
     /// Whether entities are assumed split across sources (clause 5.2.12

@@ -27,9 +27,9 @@ use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{clock::now, placeholder::external_placeholder};
 use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields};
+use iri_rs::IriBuf;
 use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query};
 use sqlx::{postgres::PgArguments, query::Query as SqlxQuery, types::Json};
-use url::Url;
 
 /// The stored `SMALLINT[]` of a subscription's trigger set, or `None` when the
 /// subscription carries no explicit set (matching every trigger).
@@ -78,7 +78,7 @@ pub fn bind_entity_create<'q>(
         .bind(stored_status(status).code())
         .bind(fields.temporal_q.map(Json))
         .bind(fields.lang.map(ToString::to_string))
-        .bind(fields.jsonld_context.map(Url::as_str))
+        .bind(fields.jsonld_context.map(IriBuf::as_str))
         .bind(fields.local_only)
         .bind(fields.split_entities)
         .bind(stored_conformance(fields))
@@ -112,7 +112,7 @@ pub fn bind_entity_update<'q>(
         .bind(fields.throttling)
         .bind(stored_status(status).code())
         .bind(fields.lang.map(ToString::to_string))
-        .bind(fields.jsonld_context.map(Url::as_str))
+        .bind(fields.jsonld_context.map(IriBuf::as_str))
         .bind(fields.local_only)
         .bind(fields.split_entities)
         .bind(stored_conformance(fields))
@@ -146,7 +146,7 @@ pub fn bind_csource_create<'q>(
         .bind(stored_status(status).code())
         .bind(fields.temporal_q.map(Json))
         .bind(fields.lang.map(ToString::to_string))
-        .bind(fields.jsonld_context.map(Url::as_str))
+        .bind(fields.jsonld_context.map(IriBuf::as_str))
         .bind(stored_conformance(fields))
 }
 
@@ -177,7 +177,7 @@ pub fn bind_csource_update<'q>(
         .bind(fields.throttling)
         .bind(stored_status(status).code())
         .bind(fields.lang.map(ToString::to_string))
-        .bind(fields.jsonld_context.map(Url::as_str))
+        .bind(fields.jsonld_context.map(IriBuf::as_str))
         .bind(stored_conformance(fields))
 }
 

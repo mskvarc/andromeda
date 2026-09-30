@@ -5,6 +5,8 @@
 
 /// The narrow port for periodically invalidating cached contexts.
 pub mod cached_context_invalidation;
+/// The RFC 8785 canonical form of a stored `@context` document.
+mod canonical_document;
 /// Embedded NGSI-LD core Context representation.
 mod core_context;
 /// The permitted origins of newly persisted hosted contexts.
@@ -17,8 +19,16 @@ pub mod error;
 pub mod fetched_context;
 /// The narrow port for durably flushing resolver hit deltas.
 pub mod hit_store;
+/// Where a stored Context is served.
+pub mod hosted_context_locator;
 /// The identifier that addresses one stored Context.
 pub mod identifier;
+/// Storing the Contexts the broker hosts on its own initiative.
+pub mod implicit_context_hosting;
+/// Whether a new Context was stored under the identifier it was offered.
+pub mod insertion;
+/// Which identifier a new Context is stored under.
+mod insertion_policy;
 /// Parameters for listing hosted and cached contexts.
 pub mod list_query;
 /// A list returned by the registry persistence port.
@@ -31,6 +41,8 @@ mod pending_hits;
 pub mod registry_invariant;
 /// Delete and reload lifecycle commands.
 pub mod removal;
+/// What the Serve @context operation answers with.
+pub mod served_context;
 /// Hosted and cached Context lifecycle policy.
 pub mod service;
 /// The replaceable hosted-context persistence capability.

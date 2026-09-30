@@ -11,11 +11,11 @@ use andromeda_federation::{
     request::{CsrModeFilter, ForwardProvisionRequest, ForwardTemporalQueryRequest, TriggeringRequest},
     temporal_result::merge_temporal_retrieve_results,
 };
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     context::ContextUrl,
     jsonld::JsonLdDocument,
-    prefer::PreferHeader,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
@@ -26,7 +26,6 @@ use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     problem_response::ProblemResponse,
     provision::{LocalOutcome, provision_response},
-    render::start_rendering_temporal,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};

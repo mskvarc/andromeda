@@ -1,7 +1,9 @@
 //! Exhaustive HTTP classification for context-source registration failures.
 
+use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
 use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
+use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
@@ -27,7 +29,7 @@ impl RegistrationHttpClassify for RegistrationError {
             // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
             RegistrationError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
             RegistrationError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the registration store is unavailable")),
-            RegistrationError::Representation(_) | RegistrationError::Identifier(_) | RegistrationError::Internal(_) => {
+            RegistrationError::Representation(_) | RegistrationError::Internal(_) => {
                 ClassifiedReport::internal(self, InternalFailureSummary::new("internal registration error"))
             }
         }
@@ -39,6 +41,18 @@ impl RegistrationHttpClassify for RegistrationError {
 impl RegistrationHttpClassify for ParameterError {
     fn classify_for_registration_http(&self) -> ClassifiedReport {
         classify_parameter_error(self)
+    }
+}
+
+impl RegistrationHttpClassify for JsonLdError {
+    fn classify_for_registration_http(&self) -> ClassifiedReport {
+        classify_jsonld_error(self)
+    }
+}
+
+impl RegistrationHttpClassify for ResponseContextError {
+    fn classify_for_registration_http(&self) -> ClassifiedReport {
+        classify_response_context_error(self)
     }
 }
 

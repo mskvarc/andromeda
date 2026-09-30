@@ -7,17 +7,11 @@
 //! version is negotiated by `Prefer: ngsi-ld=<version>` alone (clause 6.3.6),
 //! so a profile never turns a 200 into a 203.
 
-use andromeda_http_headers::link::header::Link;
+use crate::{addressed_uri::addressed_uri, classification::classify_context_link_error, request_links::RequestLinks};
+use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
-use axum::{
-    extract::FromRequestParts,
-    http::{header::LINK, request::Parts},
-};
-use std::{
-    convert::Infallible,
-    future::{Future, ready},
-    str::FromStr,
-};
+use axum::{extract::FromRequestParts, http::request::Parts};
+use std::future::{Future, ready};
 
 /// The NGSI-LD version the request's payload is announced to conform to
 /// (clause 6.3.21), snapped to the nearest version the clause 4.3.6.8 fallback
@@ -33,34 +27,29 @@ impl PayloadProfile {
     }
 }
 
-/// Reads the profile off every `Link` header present.
+/// Reads the profile off the one reading of the request's `Link` headers.
 ///
-/// A `Link` header that does not parse is skipped here rather than rejected:
-/// the context extractor owns the clause 5.5.4 rejection of a malformed
-/// `Link`, and reporting it twice would serve no one.
-fn announced_profile(parts: &Parts) -> PayloadProfile {
-    let announced = parts
-        .headers
-        .get_all(LINK)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .filter_map(|raw| Link::from_str(raw).ok())
-        .find_map(|link| link.ngsi_ld_profile_version());
-    let profile = announced.map(SpecVersion::nearest_supported);
+/// A `Link` header that does not parse is refused here exactly as it is by
+/// the context extractor (clause 5.5.4): both read the same kept result, so
+/// the refusal is one and the same whichever extractor meets it first.
+fn announced_profile(parts: &mut Parts) -> Result<PayloadProfile, ExtractorRejection> {
+    let links =
+        RequestLinks::of(parts).map_err(|error| ExtractorRejection::Classified(classify_context_link_error(&error).with_instance(addressed_uri(parts))))?;
+    let profile = links.profile().map(SpecVersion::nearest_supported);
     if let Some(version) = profile {
         tracing::debug!(%version, "request payload announced an NGSI-LD version profile");
     }
-    PayloadProfile(profile)
+    Ok(PayloadProfile(profile))
 }
 
 impl<S> FromRequestParts<S> for PayloadProfile
 where
     S: Send + Sync,
 {
-    type Rejection = Infallible;
+    type Rejection = ExtractorRejection;
 
     fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
-        ready(Ok(announced_profile(parts)))
+        ready(announced_profile(parts))
     }
 }
 
@@ -78,10 +67,9 @@ mod tests {
         }
         let request = builder.body(()).expect("a valid request");
         let (mut parts, ()) = request.into_parts();
-        match PayloadProfile::from_request_parts(&mut parts, &()).await {
-            Ok(profile) => profile,
-            Err(never) => match never {},
-        }
+        PayloadProfile::from_request_parts(&mut parts, &())
+            .await
+            .expect("the Link headers are readable")
     }
 
     #[tokio::test]
@@ -117,9 +105,17 @@ mod tests {
         pretty_assertions::assert_eq!(profile_of(&[]).await.version(), None);
     }
 
+    /// Clause 5.5.4: a malformed `Link` is refused whichever extractor reads
+    /// the headers first, so a profile beside it announces nothing.
     #[tokio::test]
-    async fn a_malformed_link_is_left_to_the_context_extractor() {
-        let profile = profile_of(&["not a link", r#"<https://uri.etsi.org/ngsi-ld/profile/1.3>; rel="profile""#]).await;
-        pretty_assertions::assert_eq!(profile.version(), Some(SpecVersion::V1_3));
+    async fn a_malformed_link_beside_a_profile_is_refused() {
+        let request = Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header("Link", "not a link")
+            .header("Link", r#"<https://uri.etsi.org/ngsi-ld/profile/1.3>; rel="profile""#)
+            .body(())
+            .expect("a valid request");
+        let (mut parts, ()) = request.into_parts();
+        assert!(PayloadProfile::from_request_parts(&mut parts, &()).await.is_err());
     }
 }

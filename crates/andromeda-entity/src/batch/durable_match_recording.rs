@@ -72,7 +72,7 @@ async fn batch_create_records_an_entity_created_match_inline() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_batch(&service, BatchCreate, vec![building_entity("office")], &ContextSpec::core_only()).await;
     service
-        .batch_create(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
+        .batch_create(SideEffectPlacement::Inline(&live_target()), admitted)
         .await
         .expect("the batch create lands");
 
@@ -90,7 +90,7 @@ async fn batch_create_records_the_match_and_defers_no_event_when_enqueued() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_batch(&service, BatchCreate, vec![building_entity("office")], &ContextSpec::core_only()).await;
     service
-        .batch_create(SideEffectPlacement::DeferredOnLive, admitted, &ContextSpec::core_only())
+        .batch_create(SideEffectPlacement::DeferredOnLive, admitted)
         .await
         .expect("the batch create lands");
 
@@ -113,7 +113,7 @@ async fn a_live_delivery_batch_create_defers_its_changes_with_the_resulting_enti
     let (service, recorded) = live_recording_service();
     let admitted = admitted_batch(&service, BatchCreate, vec![building_entity("office")], &ContextSpec::core_only()).await;
     service
-        .batch_create(SideEffectPlacement::DeferredOnLive, admitted, &ContextSpec::core_only())
+        .batch_create(SideEffectPlacement::DeferredOnLive, admitted)
         .await
         .expect("the batch create lands");
 
@@ -137,12 +137,7 @@ async fn batch_update_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_batch(&service, BatchUpdate, vec![building_entity("retail")], &ContextSpec::core_only()).await;
     service
-        .batch_update(
-            SideEffectPlacement::Inline(&live_target()),
-            admitted,
-            &ContextSpec::core_only(),
-            OverwritePolicy::Overwrite,
-        )
+        .batch_update(SideEffectPlacement::Inline(&live_target()), admitted, OverwritePolicy::Overwrite)
         .await
         .expect("the batch update lands");
 
@@ -157,7 +152,7 @@ async fn batch_merge_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_batch(&service, BatchMerge, vec![building_entity("retail")], &ContextSpec::core_only()).await;
     service
-        .batch_merge(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
+        .batch_merge(SideEffectPlacement::Inline(&live_target()), admitted)
         .await
         .expect("the batch merge lands");
 
@@ -176,7 +171,7 @@ async fn batch_upsert_replace_of_an_existing_entity_records_an_attribute_updated
     )
     .await;
     service
-        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
+        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted)
         .await
         .expect("the batch upsert lands");
 
@@ -195,7 +190,7 @@ async fn batch_upsert_update_of_an_existing_entity_records_an_attribute_updated_
     )
     .await;
     service
-        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
+        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted)
         .await
         .expect("the batch upsert lands");
 
@@ -217,7 +212,7 @@ async fn batch_upsert_update_replaces_the_whole_instance_dropping_a_subattribute
     )
     .await;
     service
-        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
+        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted)
         .await
         .expect("the batch upsert lands");
 

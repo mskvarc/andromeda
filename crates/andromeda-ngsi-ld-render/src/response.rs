@@ -16,17 +16,17 @@
 //! variants and read once.
 
 use crate::{
-    context::{ContextLocation, ResponseContext},
+    context::ResponseContext,
     error::RenderError,
     geojson::{GeoJsonRenderer, GeoJsonShape},
     geometry_selection::GeometrySelection,
     uri_decoding::decode_percent_encoded_uris,
     version::{adaptation::VersionAdaptation, adapted_payload::AdaptedPayload, renderer::VersionRenderer},
 };
-use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
+use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use iri_rs::IriRefBuf;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -88,12 +88,10 @@ impl ResponsePayload {
 /// not an optional field defaulted to a JSON null.
 #[derive(Debug)]
 pub struct ResponseRenderer<'a> {
-    /// The negotiated media type, which decides the envelope and the carrier.
+    /// The negotiated media type, which decides the envelope.
     media_type: ResponseMediaType,
-    /// The resolved `@context`, in both the spellings the carriers need.
+    /// The resolved `@context`, in the one carrier the response uses.
     context: ResponseContext,
-    /// The `Prefer: body=` token, which moves a `GeoJSON` `@context` to the headers.
-    geo_json_body: GeoJsonBodyPreference,
     /// The `Prefer: ngsi-ld=` version to adapt the payload to, if any.
     requested_version: Option<SpecVersion>,
     /// The clause 4.5 representation the payload was already rendered in.
@@ -122,12 +120,11 @@ pub struct ReadyResponse<'a> {
 pub struct RenderedOutput {
     /// The fully-rendered JSON value, with `@context` injected if applicable.
     pub value: Value,
-    /// The context URLs a `Link` header should advertise.
-    pub context_links: Vec<IriRefBuf>,
+    /// The target of the one context `Link` header the response carries, when
+    /// its `@context` is advertised rather than embedded.
+    pub context_link: Option<IriBuf>,
     /// The media type this response is written as.
     pub media_type: ResponseMediaType,
-    /// Where the JSON-LD `@context` ended up.
-    pub context_location: ContextLocation,
     /// Whether version adaptation was applied, which makes the status 203.
     pub version_adaptation: VersionAdaptation,
 }
@@ -139,7 +136,6 @@ impl<'a> ResponseRenderer<'a> {
         ResponseRenderer {
             media_type,
             context,
-            geo_json_body: GeoJsonBodyPreference::LdJson,
             requested_version: None,
             format: ResponseFormat::Normalized,
             adapted_payload: AdaptedPayload::Entity,
@@ -175,14 +171,6 @@ impl<'a> ResponseRenderer<'a> {
         self
     }
 
-    /// Set the `Prefer: body=` token, which decides where a `GeoJSON` response
-    /// carries its `@context` (clause 4.5.16).
-    #[must_use]
-    pub const fn with_geo_json_body(mut self, geo_json_body: GeoJsonBodyPreference) -> Self {
-        self.geo_json_body = geo_json_body;
-        self
-    }
-
     /// Set the `Prefer: ngsi-ld=` version the payload is adapted to, if any.
     #[must_use]
     pub const fn with_requested_version(mut self, requested_version: Option<SpecVersion>) -> Self {
@@ -207,28 +195,6 @@ impl<'a> ResponseRenderer<'a> {
     pub const fn with_payload(self, payload: ResponsePayload) -> ReadyResponse<'a> {
         ReadyResponse { renderer: self, payload }
     }
-
-    /// Where this response carries its `@context`.
-    ///
-    /// `application/ld+json` carries it in the body and `application/json`
-    /// cannot, so it goes in the `Link` header. `GeoJSON` is the exception: the
-    /// envelope can hold an `@context` member, and clause 4.5.16 lets the client
-    /// ask for it not to with `Prefer: body=json`.
-    const fn context_location(&self, geo_json_shape: Option<GeoJsonShape>) -> ContextLocation {
-        match geo_json_shape {
-            Some(_) => match self.geo_json_body {
-                GeoJsonBodyPreference::Json => ContextLocation::LinkHeader,
-                GeoJsonBodyPreference::LdJson => ContextLocation::Body,
-            },
-            None => {
-                if self.media_type.include_context_in_body() {
-                    ContextLocation::Body
-                } else {
-                    ContextLocation::LinkHeader
-                }
-            }
-        }
-    }
 }
 
 impl ReadyResponse<'_> {
@@ -239,12 +205,11 @@ impl ReadyResponse<'_> {
     /// Returns [`RenderError::Serialization`] when the `GeoJSON` envelope cannot
     /// be turned into a JSON value.
     pub fn render(self) -> Result<RenderedOutput, RenderError> {
-        let ReadyResponse { mut renderer, payload } = self;
+        let ReadyResponse { renderer, payload } = self;
         let geo_json_shape = match renderer.media_type {
             ResponseMediaType::Json | ResponseMediaType::JsonLd => None,
             ResponseMediaType::GeoJson => payload.geo_json_shape(),
         };
-        let context_location = renderer.context_location(geo_json_shape);
 
         let carries_relationships = payload.carries_relationships();
         let mut value = payload.into_value();
@@ -273,9 +238,12 @@ impl ReadyResponse<'_> {
             None => VersionAdaptation::None,
         };
 
-        let context_value = match context_location {
-            ContextLocation::Body => renderer.context.take_body_value(),
-            ContextLocation::LinkHeader => None,
+        // Exactly one carrier holds the context, so the body value and the
+        // `Link` target are read from the one variant the caller chose.
+        let (context_value, context_link) = match renderer.context {
+            ResponseContext::Body(context) => (Some(context), None),
+            ResponseContext::Link(target) => (None, Some(target)),
+            ResponseContext::Absent => (None, None),
         };
 
         value = if let Some(shape) = geo_json_shape {
@@ -291,9 +259,8 @@ impl ReadyResponse<'_> {
 
         Ok(RenderedOutput {
             value,
-            context_links: renderer.context.link_urls().to_vec(),
+            context_link,
             media_type: renderer.media_type,
-            context_location,
             version_adaptation,
         })
     }
@@ -329,22 +296,28 @@ fn inject_context(value: &mut Value, context_value: Option<Value>) {
 #[cfg(test)]
 mod tests {
     use crate::{
-        context::{ContextLocation, ResponseContext},
+        context::ResponseContext,
         response::{ResponsePayload, ResponseRenderer},
         version::adaptation::VersionAdaptation,
     };
-    use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
+    use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
-    use iri_rs::IriRefBuf;
+    use iri_rs::IriBuf;
     use serde_json::{Value, json};
 
-    /// A context URL as the [`IriRefBuf`] a `Link` header carries.
-    fn iri_ref(url: &str) -> IriRefBuf {
-        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    /// A context URL as the absolute [`IriBuf`] a `Link` header names.
+    fn iri(url: &str) -> IriBuf {
+        IriBuf::new(url.to_string()).expect("a valid IRI")
     }
 
-    fn a_context() -> ResponseContext {
-        ResponseContext::new(Some(json!("https://example.org/ctx")), vec![iri_ref("https://example.org/ctx")])
+    /// A context the body embeds.
+    fn embedded() -> ResponseContext {
+        ResponseContext::Body(json!("https://example.org/ctx"))
+    }
+
+    /// A context the `Link` header advertises.
+    fn linked() -> ResponseContext {
+        ResponseContext::Link(iri("https://example.org/ctx"))
     }
 
     fn an_entity() -> Value {
@@ -352,31 +325,31 @@ mod tests {
     }
 
     #[test]
-    fn render_single_json_does_not_inject_context() {
-        let rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
+    fn a_linked_context_is_not_injected_and_is_advertised() {
+        let rendered = ResponseRenderer::new(ResponseMediaType::Json, linked())
             .with_payload(ResponsePayload::Single(an_entity()))
             .render()
             .expect("render");
         assert!(rendered.value.get("@context").is_none());
-        pretty_assertions::assert_eq!(rendered.context_location, ContextLocation::LinkHeader);
+        pretty_assertions::assert_eq!(rendered.context_link, Some(iri("https://example.org/ctx")));
         pretty_assertions::assert_eq!(rendered.media_type, ResponseMediaType::Json);
     }
 
     #[test]
-    fn render_single_ld_json_injects_context() {
-        let rendered = ResponseRenderer::new(ResponseMediaType::JsonLd, a_context())
+    fn an_embedded_context_is_injected_and_not_advertised() {
+        let rendered = ResponseRenderer::new(ResponseMediaType::JsonLd, embedded())
             .with_payload(ResponsePayload::Single(json!({"id": "urn:x", "type": "T"})))
             .render()
             .expect("render");
         pretty_assertions::assert_eq!(rendered.value["@context"], json!("https://example.org/ctx"));
-        pretty_assertions::assert_eq!(rendered.context_location, ContextLocation::Body);
+        pretty_assertions::assert_eq!(rendered.context_link, None);
         pretty_assertions::assert_eq!(rendered.media_type, ResponseMediaType::JsonLd);
     }
 
     #[test]
     fn render_collection_ld_json_injects_context_per_item() {
         let values = vec![json!({"id": "urn:x", "type": "T"}), json!({"id": "urn:y", "type": "T"})];
-        let rendered = ResponseRenderer::new(ResponseMediaType::JsonLd, a_context())
+        let rendered = ResponseRenderer::new(ResponseMediaType::JsonLd, embedded())
             .with_payload(ResponsePayload::Collection(values))
             .render()
             .expect("render");
@@ -388,11 +361,23 @@ mod tests {
 
     #[test]
     fn render_batch_injects_context_for_ld_json() {
-        let rendered = ResponseRenderer::new(ResponseMediaType::JsonLd, a_context())
+        let rendered = ResponseRenderer::new(ResponseMediaType::JsonLd, embedded())
             .with_payload(ResponsePayload::Batch(json!({"success": ["urn:x"], "errors": []})))
             .render()
             .expect("render");
         assert!(rendered.value.get("@context").is_some());
+    }
+
+    /// Clause 6.3.6: a partial-success body names only fully qualified names,
+    /// "as there is no context present", so it carries a context nowhere.
+    #[test]
+    fn an_absent_context_is_neither_injected_nor_advertised() {
+        let rendered = ResponseRenderer::new(ResponseMediaType::Json, ResponseContext::Absent)
+            .with_payload(ResponsePayload::Batch(json!({"success": ["urn:x"], "errors": []})))
+            .render()
+            .expect("render");
+        assert!(rendered.value.get("@context").is_none());
+        pretty_assertions::assert_eq!(rendered.context_link, None);
     }
 
     #[test]
@@ -400,7 +385,7 @@ mod tests {
         // Clause 4.5.16 wraps entities; a BatchOperationResult is not one, and
         // wrapping it would put `success` and `errors` inside a Feature's
         // properties where no client looks for them.
-        let rendered = ResponseRenderer::new(ResponseMediaType::GeoJson, a_context())
+        let rendered = ResponseRenderer::new(ResponseMediaType::GeoJson, linked())
             .with_payload(ResponsePayload::Batch(json!({"success": ["urn:x"], "errors": []})))
             .render()
             .expect("render");
@@ -410,36 +395,36 @@ mod tests {
 
     #[test]
     fn a_single_entity_renders_as_a_geojson_feature_and_a_collection_as_a_feature_collection() {
-        let single = ResponseRenderer::new(ResponseMediaType::GeoJson, a_context())
+        let single = ResponseRenderer::new(ResponseMediaType::GeoJson, embedded())
             .with_payload(ResponsePayload::Single(an_entity()))
             .render()
             .expect("render");
         pretty_assertions::assert_eq!(single.value["type"], "Feature");
 
-        let collection = ResponseRenderer::new(ResponseMediaType::GeoJson, a_context())
+        let collection = ResponseRenderer::new(ResponseMediaType::GeoJson, embedded())
             .with_payload(ResponsePayload::Collection(vec![an_entity()]))
             .render()
             .expect("render");
         pretty_assertions::assert_eq!(collection.value["type"], "FeatureCollection");
     }
 
+    /// Clause 4.5.16: a `GeoJSON` envelope holds the context it is given, and
+    /// with `Prefer: body=json` the context is advertised instead.
     #[test]
-    fn a_geojson_response_moves_its_context_to_the_link_header_when_body_json_is_preferred() {
-        let embedded = ResponseRenderer::new(ResponseMediaType::GeoJson, a_context())
-            .with_geo_json_body(GeoJsonBodyPreference::LdJson)
+    fn a_geojson_response_embeds_or_advertises_the_context_it_is_given() {
+        let embedded_feature = ResponseRenderer::new(ResponseMediaType::GeoJson, embedded())
             .with_payload(ResponsePayload::Single(an_entity()))
             .render()
             .expect("render");
-        pretty_assertions::assert_eq!(embedded.context_location, ContextLocation::Body);
-        assert!(embedded.value.get("@context").is_some());
+        assert!(embedded_feature.value.get("@context").is_some());
+        pretty_assertions::assert_eq!(embedded_feature.context_link, None);
 
-        let advertised = ResponseRenderer::new(ResponseMediaType::GeoJson, a_context())
-            .with_geo_json_body(GeoJsonBodyPreference::Json)
+        let advertised = ResponseRenderer::new(ResponseMediaType::GeoJson, linked())
             .with_payload(ResponsePayload::Single(an_entity()))
             .render()
             .expect("render");
-        pretty_assertions::assert_eq!(advertised.context_location, ContextLocation::LinkHeader);
         assert!(advertised.value.get("@context").is_none());
+        pretty_assertions::assert_eq!(advertised.context_link, Some(iri("https://example.org/ctx")));
     }
 
     #[test]
@@ -456,14 +441,14 @@ mod tests {
             })
         };
 
-        let json_rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
+        let json_rendered = ResponseRenderer::new(ResponseMediaType::Json, linked())
             .with_payload(ResponsePayload::Single(payload()))
             .render()
             .expect("render");
         pretty_assertions::assert_eq!(json_rendered.value["ref"]["object"], "urn:y");
         pretty_assertions::assert_eq!(json_rendered.value["refs"]["objectList"], json!(["urn:a", "urn:b"]));
 
-        let geo_rendered = ResponseRenderer::new(ResponseMediaType::GeoJson, a_context())
+        let geo_rendered = ResponseRenderer::new(ResponseMediaType::GeoJson, embedded())
             .with_payload(ResponsePayload::Single(payload()))
             .render()
             .expect("render");
@@ -476,7 +461,7 @@ mod tests {
         // Clause 4.3.6.8: `Prefer: ngsi-ld=1.9` names the current version, so
         // nothing is adapted and the response stays 200. Setting the flag from
         // the mere presence of a requested version made this a spurious 203.
-        let rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
+        let rendered = ResponseRenderer::new(ResponseMediaType::Json, linked())
             .with_requested_version(Some(SpecVersion::CONFORMANT))
             .with_payload(ResponsePayload::Single(
                 json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"}),
@@ -490,7 +475,7 @@ mod tests {
     fn a_batch_result_keeps_its_relationship_shaped_members_undecoded() {
         // Nothing in a batch result is an attribute, so the walk is skipped
         // outright rather than run over a payload that cannot match.
-        let rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
+        let rendered = ResponseRenderer::new(ResponseMediaType::Json, linked())
             .with_payload(ResponsePayload::Batch(
                 json!({"success": [], "errors": [{"entityId": "urn%3Ay", "type": "Relationship", "object": "urn%3Az"}]}),
             ))
@@ -501,7 +486,7 @@ mod tests {
 
     #[test]
     fn render_single_version_adapted_flag() {
-        let rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
+        let rendered = ResponseRenderer::new(ResponseMediaType::Json, linked())
             .with_requested_version(Some(SpecVersion::V1_4))
             .with_payload(ResponsePayload::Single(json!({"id": "urn:x", "type": "T"})))
             .render()
@@ -511,25 +496,10 @@ mod tests {
 
     #[test]
     fn render_single_no_version_adaptation_by_default() {
-        let rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
+        let rendered = ResponseRenderer::new(ResponseMediaType::Json, linked())
             .with_payload(ResponsePayload::Single(json!({"id": "urn:x", "type": "T"})))
             .render()
             .expect("render");
         pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::None);
-    }
-
-    #[test]
-    fn the_link_urls_survive_every_media_type_including_the_ones_that_embed_the_context() {
-        for media_type in [ResponseMediaType::Json, ResponseMediaType::JsonLd, ResponseMediaType::GeoJson] {
-            let rendered = ResponseRenderer::new(media_type, a_context())
-                .with_payload(ResponsePayload::Single(an_entity()))
-                .render()
-                .expect("render");
-            pretty_assertions::assert_eq!(
-                rendered.context_links,
-                vec![iri_ref("https://example.org/ctx")],
-                "link URLs lost for {media_type:?}"
-            );
-        }
     }
 }

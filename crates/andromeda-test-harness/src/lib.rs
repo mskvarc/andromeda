@@ -12,6 +12,7 @@ pub mod identifiers;
 pub mod multi_broker;
 pub mod pooler_probe;
 pub mod readiness;
+pub mod resident_tenancy;
 pub mod run_isolated;
 pub mod scope;
 pub mod serialized_environment;

@@ -243,7 +243,6 @@ fn recording_service_with(notifications: Option<NotificationWriteConfig>) -> (En
         JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds"),
         Arc::new(ChangeNotifier::new(None, notifications)),
         BatchExecutionConfig {
-            concurrency: 1,
             chunk_concurrency: 1,
             chunk_write_concurrency: 1,
             chunk_size: 1,

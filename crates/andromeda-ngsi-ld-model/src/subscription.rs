@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
+use iri_rs::IriBuf;
 use langtag::LangTagBuf;
 use mediatype::MediaTypeBuf;
 use serde::{Deserialize, Serialize};
@@ -27,7 +28,6 @@ use serde_with::{DisplayFromStr, serde_as};
 use std::num::NonZeroU32;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 use typed_builder::TypedBuilder;
-use url::Url;
 
 constant_string!(SubscriptionType, "Subscription");
 
@@ -282,9 +282,10 @@ pub struct SubscriptionDelivery {
     /// Preferred language for multi-language properties.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lang: Option<LangTagBuf>,
-    /// JSON-LD context for term expansion.
+    /// The `@context` notifications are rendered with (clause 5.8.1.4), an
+    /// absolute URI (Table 5.2.12-1).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub jsonld_context: Option<Url>,
+    pub jsonld_context: Option<IriBuf>,
     /// Whether to restrict matching to local entities only (clause 5.5.13).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_only: Option<bool>,

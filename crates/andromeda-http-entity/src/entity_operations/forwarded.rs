@@ -11,7 +11,7 @@ use andromeda_federation::{
     request::TriggeringRequest,
 };
 use andromeda_http_response::{batch_projection::forwarded_write_error, problem_response::ProblemResponse};
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity::Entity, entity_type::EntityTypeValue, registration::forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
@@ -42,7 +42,8 @@ pub(crate) struct ForwardedBatch<'a> {
     pub(crate) triggering: TriggeringRequest<'a>,
 }
 
-/// Forward the admitted entities of a batch to every matching registration.
+/// Forward the admitted entities of a batch to every matching registration,
+/// each under the context it was submitted with.
 ///
 /// Each entity is serialised only for a registration it matches, so a batch
 /// no registration covers serialises nothing.
@@ -51,7 +52,6 @@ pub(crate) async fn forward_entities<W: BatchWriteKind>(
     target: &ContextTarget,
     request: ForwardedBatch<'_>,
     admitted: &AdmittedBatch<W>,
-    context: &ContextSpec,
     instance: &HttpUri,
 ) -> Result<Vec<BatchForwardedResult>, ProblemResponse> {
     let ForwardedBatch {
@@ -61,10 +61,11 @@ pub(crate) async fn forward_entities<W: BatchWriteKind>(
     } = request;
     let batch = admitted
         .entities()
-        .map(|entity| BatchEntity {
+        .map(|(entity, context)| BatchEntity {
             id: &entity.id,
             entity_type: matching_type(entity),
             body: Some(entity),
+            context,
         })
         .collect::<Vec<_>>();
     services
@@ -74,7 +75,6 @@ pub(crate) async fn forward_entities<W: BatchWriteKind>(
             ForwardBatchRequest {
                 operation,
                 entities: &batch,
-                context,
                 query_string,
                 triggering,
             },
@@ -84,21 +84,23 @@ pub(crate) async fn forward_entities<W: BatchWriteKind>(
 }
 
 /// Forward a batch of identifiers (clause 5.6.10) to every matching
-/// registration.
+/// registration, every one under the request's `context`.
 pub(crate) async fn forward_identifiers(
     services: &EntityRouteServices,
     target: &ContextTarget,
     ids: &[Identifier],
-    context: &ContextSpec,
+    context: ContextSpec,
     triggering: TriggeringRequest<'_>,
     instance: &HttpUri,
 ) -> Result<Vec<BatchForwardedResult>, ProblemResponse> {
+    let context = BatchContexts::shared(context).context_of(None);
     let batch = ids
         .iter()
         .map(|id| BatchEntity {
             id,
             entity_type: None,
             body: None,
+            context: &context,
         })
         .collect::<Vec<_>>();
     services
@@ -108,7 +110,6 @@ pub(crate) async fn forward_identifiers(
             ForwardBatchRequest {
                 operation: BatchProvisionOperation::Delete,
                 entities: &batch,
-                context,
                 query_string: None,
                 triggering,
             },

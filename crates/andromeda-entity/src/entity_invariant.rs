@@ -5,7 +5,11 @@
 //! broken one is answered `InternalError`.
 
 use crate::residual_predicate::ResidualPredicate;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReferenceError};
+use andromeda_ngsi_ld_lexicon::{
+    identifier::Identifier,
+    ngsi_ld_urn::{AttributeListIdParseError, EntityTypeListIdParseError},
+    reference::NgsiLdReferenceError,
+};
 use andromeda_ngsi_ld_model::expanded::{dataset_id::InstanceDatasetIdError, entity_member::ExpandedMemberError};
 use andromeda_unit_catalog::unit_code_registry::UnitCodeSnapshotMalformed;
 use std::num::TryFromIntError;
@@ -66,6 +70,12 @@ pub enum EntityInvariant {
     /// The core `location` term is not a well-formed attribute name.
     #[error("the default location attribute name is invalid: {0}")]
     DefaultLocationName(#[source] NgsiLdReferenceError),
+    /// The identifier minted for an `EntityTypeList` (clause 5.2.24) is not one.
+    #[error("a minted entity type list identifier is not one: {0}")]
+    MintedEntityTypeListId(#[source] EntityTypeListIdParseError),
+    /// The identifier minted for an `AttributeList` (clause 5.2.27) is not one.
+    #[error("a minted attribute list identifier is not one: {0}")]
+    MintedAttributeListId(#[source] AttributeListIdParseError),
 }
 
 /// Render the predicates a store left unapplied, for the invariant's message.

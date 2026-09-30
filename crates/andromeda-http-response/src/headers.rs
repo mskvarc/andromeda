@@ -8,10 +8,9 @@ use andromeda_http_headers::{
     ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_render::context::ContextLocation;
 use axum::{http::HeaderMap, response::Response};
 use headers::HeaderMapExt;
-use iri_rs::IriRefBuf;
+use iri_rs::IriBuf;
 
 /// Options for applying common NGSI-LD headers to a response.
 pub struct CommonHeadersOptions<'a> {
@@ -23,16 +22,15 @@ pub struct CommonHeadersOptions<'a> {
     pub snapshot_uri: Option<&'a Identifier>,
     /// NGSILD-Warning header values from distributed forwarding (clause 6.3.17).
     pub warnings: &'a [NgsiLdWarning],
-    /// Where the JSON-LD `@context` should appear: in the `Link` header or in the body.
-    pub context_location: ContextLocation,
 }
 
 /// Apply common NGSI-LD headers to a `HeaderMap`.
 ///
-/// `context_links` is what the rendering already resolved; it is advertised
-/// only when the rendering put the `@context` in the headers rather than in
-/// the body, which is what `options.context_location` reports.
-pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[IriRefBuf], options: &CommonHeadersOptions<'_>) {
+/// `context_link` is the one context link the rendering resolved, present only
+/// when it advertises the `@context` rather than embedding it (clause 6.3.6);
+/// it is taken by value, since the response it is written onto is the last
+/// thing that reads it.
+pub fn apply_common_headers(headers: &mut HeaderMap, context_link: Option<IriBuf>, options: &CommonHeadersOptions<'_>) {
     if let Some(loc) = options.location.and_then(Location::new) {
         headers.typed_insert(loc);
     }
@@ -49,8 +47,8 @@ pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[IriRefBuf]
         headers.typed_insert(NgsiLdWarningHeader::new(options.warnings.to_vec()));
     }
 
-    if options.context_location == ContextLocation::LinkHeader {
-        Link::insert_jsonld_contexts(headers, context_links.iter().cloned());
+    if let Some(target) = context_link {
+        Link::insert_jsonld_context(headers, target);
     }
 }
 

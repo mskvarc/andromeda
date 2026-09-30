@@ -9,15 +9,16 @@
 //! one from drifting apart, which is how the periodic one came to omit the
 //! `triggerReason` Table 5.3.2-1 makes mandatory.
 
-use crate::error::NotificationError;
+use crate::{claimed_notification_context::claimed_notification_context, error::NotificationError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{
     dispatch::TransportDispatcher,
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
+    notification_context::NotificationContext,
     request::NotificationDelivery,
 };
 use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
 use andromeda_ngsi_ld_model::{
     notification::{CsourceNotification, CsourceNotificationType, CsrTriggerReason},
     registration::ContextSourceRegistration,
@@ -34,7 +35,6 @@ use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, error};
-use uuid::Uuid;
 
 /// Whether a notification reached its endpoint's transport.
 ///
@@ -140,7 +140,7 @@ impl CsourceNotificationDelivery {
             }
         }
 
-        let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Identifier>() else {
+        let Ok(notification_id) = NotificationId::mint().map(Identifier::from) else {
             error!("Failed to construct notification URN for {}", sub_id);
             return CsourceDeliveryOutcome::NotSent;
         };
@@ -164,7 +164,14 @@ impl CsourceNotificationDelivery {
         let Some(endpoint_transport) = compiled_transport(subscription) else {
             return CsourceDeliveryOutcome::NotSent;
         };
-        let request = self.request_for(subscription, &payload).assemble();
+        // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no context
+        // this notification can be rendered under.
+        let Some(context) =
+            claimed_notification_context(&self.engine, subscription.jsonld_context.as_ref(), self.sub_repo.as_ref(), &self.target, sub_id).await
+        else {
+            return CsourceDeliveryOutcome::NotSent;
+        };
+        let request = self.request_for(subscription, &payload, &context).assemble();
         let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
         if success {
@@ -178,18 +185,17 @@ impl CsourceNotificationDelivery {
     }
 
     /// The delivery one CSR notification becomes.
-    fn request_for<'a>(&'a self, subscription: &'a CompiledCsrSubscription, payload: &'a Value) -> NotificationDelivery<'a> {
-        NotificationDelivery {
-            payload,
-            endpoint_uri: &subscription.endpoint_uri,
-            accept: subscription.endpoint_accept.as_ref(),
-            receiver_info: subscription.endpoint_receiver_info.as_deref(),
-            jsonld_context: subscription.jsonld_context.as_ref(),
-            tenant: self.tenant.tenant_name(),
-            snapshot: None,
-            timeout: subscription.endpoint_timeout,
-            subscription_id: &subscription.id,
-        }
+    fn request_for<'a>(&'a self, subscription: &'a CompiledCsrSubscription, payload: &'a Value, context: &'a NotificationContext) -> NotificationDelivery<'a> {
+        NotificationDelivery::builder()
+            .payload(payload)
+            .endpoint_uri(&subscription.endpoint_uri)
+            .accept(subscription.endpoint_accept.as_ref())
+            .receiver_info(subscription.endpoint_receiver_info.as_deref())
+            .context(context)
+            .tenant(self.tenant.tenant_name())
+            .timeout(subscription.endpoint_timeout)
+            .subscription_id(&subscription.id)
+            .build()
     }
 }
 

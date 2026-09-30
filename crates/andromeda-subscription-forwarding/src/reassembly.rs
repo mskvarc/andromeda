@@ -9,7 +9,11 @@
 //! subscription's identifier.
 
 use crate::{error::SubscriptionForwardingError, forwarding_invariant::ForwardingInvariant, service::SubscriptionForwardingService};
-use andromeda_delivery::{endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
+use andromeda_delivery::{
+    endpoint::transport::parse_endpoint_transport,
+    notification_context::NotificationContext,
+    request::{NotificationDelivery, notification_media_type},
+};
 use andromeda_entity::{
     error::EntityError,
     query::{
@@ -33,13 +37,18 @@ use andromeda_jsonld::{
         options::{CompactOptions, ContextStripping},
     },
 };
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    notification::{Notification, NotificationType},
+    notification::{Notification, NotificationData, NotificationType},
     registration::forwarding_mode::ForwardingMode,
 };
-use andromeda_ngsi_ld_render::{entity::EntityRenderer, notification_conformance::amend_notification_entities};
+use andromeda_ngsi_ld_render::{
+    entity::EntityRenderer,
+    geometry_selection::GeometrySelection,
+    notification_conformance::amend_notification_entities,
+    notification_data::notification_data,
+};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use andromeda_subscription::{
@@ -52,15 +61,12 @@ use chrono::Utc;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use tracing::{debug, warn};
-use urn_rs::UrnBuilder;
-use uuid::Uuid;
 
 /// Mint a notification identifier.
 fn notification_id() -> Result<Identifier, SubscriptionForwardingError> {
-    let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Notification:{}", Uuid::new_v4()))
-        .build()
-        .map_err(ForwardingInvariant::MintedUrn)?;
-    Identifier::try_from(urn).map_err(|error| ForwardingInvariant::MintedIdentifier(error).into())
+    NotificationId::mint()
+        .map(Identifier::from)
+        .map_err(|error| ForwardingInvariant::MintedNotificationId(error).into())
 }
 
 impl SubscriptionForwardingService {
@@ -150,6 +156,13 @@ impl SubscriptionForwardingService {
                 subscription: notification.subscription_id.clone(), // clone: the error owns the identifier
             });
         };
+        // Every forwarded copy asks its source for `application/json`, so its
+        // notifications carry an Entity array (Table 5.3.1-1); a
+        // FeatureCollection names no Entity this copy can be re-assembled from.
+        let NotificationData::Entities(received_entities) = &notification.data else {
+            warn!(subscription = %local, "inbound notification carried a FeatureCollection its forwarded copy did not ask for");
+            return Ok(());
+        };
         let Some(stored) = self.subscriptions.get(&self.live_target, &local).await? else {
             debug!(subscription = %local, "notification for a forwarded copy whose local subscription no longer exists");
             return Ok(());
@@ -187,8 +200,8 @@ impl SubscriptionForwardingService {
         let local_terms = self.engine.prepare_term_context(&local_context);
         let mut local_expansions = AttributeExpansions::new(&self.engine, &local_terms);
         let wanted = notification_attribute_iris(&compiled);
-        let mut data = Vec::with_capacity(notification.data.len());
-        for value in &notification.data {
+        let mut data = Vec::with_capacity(received_entities.len());
+        for value in received_entities {
             let received = match self.received_under(value, context, &local_compactor).await {
                 Ok(entity) => entity,
                 Err(error) => {
@@ -224,6 +237,15 @@ impl SubscriptionForwardingService {
             return Ok(());
         }
 
+        let endpoint = &subscription.notification.endpoint;
+        // Table 5.3.1-1: the local endpoint's `accept` decides the shape of the
+        // copy's `data`, whatever shape the source sent.
+        let data = notification_data(
+            data,
+            notification_media_type(endpoint.accept.as_ref()),
+            GeometrySelection::new(None, subscription.filters.dataset_id.as_deref().unwrap_or_default()),
+        )
+        .map_err(ForwardingInvariant::Rendering)?;
         let copy = Notification {
             id: notification_id()?,
             type_: NotificationType,
@@ -232,20 +254,19 @@ impl SubscriptionForwardingService {
             data,
         };
         let payload = serde_json::to_value(&copy)?;
-        let endpoint = &subscription.notification.endpoint;
         let transport = parse_endpoint_transport(endpoint.uri.url(), endpoint.notifier_info.as_deref()).map_err(ForwardingInvariant::LocalEndpoint)?;
-        let request = NotificationDelivery {
-            payload: &payload,
-            endpoint_uri: endpoint.uri.url(),
-            accept: endpoint.accept.as_ref(),
-            receiver_info: endpoint.receiver_info.as_deref(),
-            jsonld_context: subscription.delivery.jsonld_context.as_ref(),
-            tenant: self.tenant.tenant_name(),
-            snapshot: None,
-            timeout: endpoint.timeout,
-            subscription_id: &local,
-        }
-        .assemble();
+        let context = NotificationContext::resolve(subscription.delivery.jsonld_context.as_ref(), &self.engine).await?;
+        let request = NotificationDelivery::builder()
+            .payload(&payload)
+            .endpoint_uri(endpoint.uri.url())
+            .accept(endpoint.accept.as_ref())
+            .receiver_info(endpoint.receiver_info.as_deref())
+            .context(&context)
+            .tenant(self.tenant.tenant_name())
+            .timeout(endpoint.timeout)
+            .subscription_id(&local)
+            .build()
+            .assemble();
         let result = self.transport.deliver(&transport, &request).await;
         if result.is_delivered() {
             self.subscriptions.mark_success(&self.live_target, &local).await?;

@@ -3,10 +3,8 @@
 
 use crate::temporal::{
     AcceptFormatNoGeo,
-    ContextSpec,
     IntoResponse,
     NgsiLdCollectionResponse,
-    PreferHeader,
     ProblemResponse,
     Response,
     ResponsePayload,
@@ -15,11 +13,11 @@ use crate::temporal::{
     TemporalSimplifyPayload,
     TemporalSimplifyRenderer,
     query::page::QueriedPage,
-    start_rendering_temporal,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::content_range::build_content_range;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_render::response::ResponseRenderer;
 use andromeda_temporal::service::TemporalRange;
 use axum::http::Uri;
 use serde_json::Value;
@@ -62,15 +60,18 @@ pub(crate) struct TemporalCollectionMetadata {
 
 /// Render the queried collection and assemble the response around it.
 ///
+/// `rendering` is the renderer the request's media type, `Prefer` tokens,
+/// clause 6.3.12 representation and `@context` configured (Table 6.18.3.2-2
+/// carries the 203 row and clause 6.3.6 the `Preference-Applied` echo, which
+/// `NgsiLdCollectionResponse` turns the rendering's outcome into).
+///
 /// # Errors
 ///
 /// The classified rendering failure when the negotiated representation cannot
 /// be produced.
 pub(crate) fn query_response(
     accept: AcceptFormatNoGeo,
-    prefer: PreferHeader,
-    format: TemporalFormat,
-    context: &ContextSpec,
+    rendering: ResponseRenderer<'_>,
     entities: Vec<Value>,
     metadata: TemporalCollectionMetadata,
     instance: &Uri,
@@ -85,17 +86,7 @@ pub(crate) fn query_response(
         returned,
         boundary,
     } = metadata;
-    // Table 6.18.3.2-2 carries the 203 row and clause 6.3.6 the
-    // `Preference-Applied` echo, so the preference the request expressed is the
-    // one that renders; `NgsiLdCollectionResponse` turns the outcome into both.
-    // Table 6.24.3.1-1 prints no 203 row for the POST form, but clause 6.24.3.1
-    // gives it the clause 5.7.4 behaviour of the GET and clause 6.3.6 ties the
-    // echo to any response carrying a payload body, so both bindings answer the
-    // same way.
-    let rendered = start_rendering_temporal(accept.media_type(), context, prefer.rendering_preferences(), format)
-        .with_payload(ResponsePayload::Collection(entities))
-        .render()
-        .with_instance(instance)?;
+    let rendered = rendering.with_payload(ResponsePayload::Collection(entities)).render().with_instance(instance)?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count);

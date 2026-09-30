@@ -22,7 +22,6 @@ use crate::{
     write_admission::BatchWrite,
 };
 use andromeda_context_commit::precondition::Precondition;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     mutation::{
@@ -61,7 +60,6 @@ impl EntityService {
         &self,
         placement: SideEffectPlacement<'_>,
         chunk: Vec<AdmittedBatchEntity>,
-        context: &ContextSpec,
         overwrite: OverwritePolicy,
     ) -> Result<BatchResult, EntityError> {
         let target = placement.target();
@@ -84,7 +82,7 @@ impl EntityService {
         // because clause 5.6.2's NGSI-LD Null support is a statement about the
         // Update Attributes operation and its Entity Fragment, not about a
         // whole Entity submitted to a batch.
-        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, context, BatchWrite::Update.null_sentinel_admission()).await;
+        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Update.null_sentinel_admission()).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
         }

@@ -18,6 +18,7 @@ workspace = true
 andromeda-configuration-scalars.workspace = true
 andromeda-context-space.workspace = true
 andromeda-delivery.workspace = true
+andromeda-http-context-registry.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true

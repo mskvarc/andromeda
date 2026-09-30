@@ -149,6 +149,7 @@ mod tests {
         Event,
         Level,
         Subscriber,
+        callsite::rebuild_interest_cache,
         metadata::Metadata,
         span::{Attributes, Id, Record},
         subscriber::with_default,
@@ -210,6 +211,10 @@ mod tests {
         let errors = Arc::new(AtomicUsize::new(0));
         let subscriber = CountingSubscriber { errors: Arc::clone(&errors) };
         let report = with_default(subscriber, || {
+            // Other tests log through the same callsite on threads with no
+            // subscriber, and a callsite first registered there caches that
+            // no one listens; the cache is rebuilt now that one does.
+            rebuild_interest_cache();
             ClassifiedReport::internal(&"database db-7.internal failed", InternalFailureSummary::new("the entity store is unavailable"))
         });
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);

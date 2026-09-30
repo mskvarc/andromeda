@@ -5,66 +5,22 @@ use crate::{
     FederationService,
     error::FederationError,
     forwarded_body::ForwardedBody,
+    forwarded_names::ForwardedNames,
+    forwarded_write::PlannedWrite,
+    forwarding_context::BodyPresence,
     forwarding_url::forwarding_url,
-    outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
+    outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
+    registration_payload::forwarding_decision,
     registration_selection::{collect_matching_attrs, csr_has_matching_information, filter_fragment_for_registration},
-    request::{ForwardProvisionRequest, TriggeringRequest},
+    request::ForwardProvisionRequest,
     term_resolver::TermResolver,
-    transport::ForwardedRequest,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_telemetry::federation_ops::{self, FederationOperation};
-use futures::{StreamExt, stream};
 use iri_rs::IriBuf;
-use serde_json::Value;
-use tracing::{debug, warn};
 use url::Url;
-
-/// One write to forward to one registration, decided before it is sent.
-pub(crate) struct PlannedWrite<'a> {
-    /// The registration to contact.
-    pub(crate) registration: ContextSourceRegistration,
-    /// The forwarded URL.
-    pub(crate) url: Result<Url, FederationError>,
-    /// The HTTP method.
-    pub(crate) method: reqwest::Method,
-    /// The body narrowed to what the registration covers.
-    pub(crate) body: Option<Vec<u8>>,
-    /// The attributes an exclusive registration claims from the payload.
-    pub(crate) proxied_attrs: Vec<AttributeName>,
-    /// The context of the triggering request.
-    pub(crate) context: &'a ContextSpec,
-    /// The triggering request.
-    pub(crate) triggering: TriggeringRequest<'a>,
-    /// The `NGSILD-EntityMap` this forwarded write carries: the map the source
-    /// is linked to under the Entity Map in use (clause 5.5.14), or `None` when
-    /// the write runs under no map.
-    pub(crate) linked_map: Option<Identifier>,
-}
-
-/// One forwarded write request, as [`FederationService::forward_write`] sends it.
-///
-/// The fields are what the transport needs to build and classify one request;
-/// they travel as a struct rather than a long argument list.
-pub(crate) struct ForwardWrite<'a> {
-    /// The registration being contacted.
-    pub(crate) registration: &'a ContextSourceRegistration,
-    /// The forwarded URL, or the failure that stops it being built.
-    pub(crate) url: Result<Url, FederationError>,
-    /// The HTTP method.
-    pub(crate) method: reqwest::Method,
-    /// The request body, already narrowed to what the registration covers.
-    pub(crate) body: Option<&'a [u8]>,
-    /// The context of the triggering request.
-    pub(crate) context: &'a ContextSpec,
-    /// The request that triggered the forwarding.
-    pub(crate) triggering: TriggeringRequest<'a>,
-    /// The `NGSILD-EntityMap` the forwarded request carries (clause 5.5.14).
-    pub(crate) linked_map: Option<&'a Identifier>,
-}
 
 impl FederationService {
     /// Forward a single NGSI-LD provision operation.
@@ -190,7 +146,7 @@ impl FederationService {
 
             let mut planned: Vec<PlannedWrite<'_>> = Vec::new();
             for csr in matching_csrs {
-                if let Some(write) = plan_write(csr, &request, body.as_deref(), &expanded_types, &resolver).await? {
+                if let Some(write) = self.plan_write(csr, &request, body.as_deref(), &expanded_types, &resolver).await? {
                     planned.push(write);
                 }
             }
@@ -203,166 +159,115 @@ impl FederationService {
         result
     }
 
-    /// Send every planned write, at most `csr_concurrency` at a time.
-    pub(crate) async fn execute_writes(&self, planned: Vec<PlannedWrite<'_>>) -> Vec<ForwardedWriteResult> {
-        stream::iter(planned)
-            .map(|write| self.execute_write(write))
-            .buffer_unordered(self.csr_concurrency)
-            .collect()
-            .await
+    /// Plan the one forwarded write to `csr` for `request`, whose payload
+    /// serialised to `body`, or `None` when the registration covers nothing of
+    /// the body once it is narrowed to what the registration declares (clause
+    /// 4.3.6.1).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::JsonLd`] when a body attribute cannot be
+    /// expanded against the request context.
+    async fn plan_write<'a>(
+        &self,
+        csr: ContextSourceRegistration,
+        request: &ForwardProvisionRequest<'a>,
+        body: Option<&[u8]>,
+        entity_types: &[IriBuf],
+        resolver: &TermResolver<'_>,
+    ) -> Result<Option<PlannedWrite<'a>>, FederationError> {
+        let url = self.write_url(&csr, request, body, resolver).await;
+
+        let proxied_attrs = if is_proxied(&csr) {
+            collect_matching_attrs(&csr, entity_types, Some(request.entity_id), request.attribute_name, body, resolver).await?
+        } else {
+            Vec::new()
+        };
+
+        let narrowed = if request.attribute_name.is_none() {
+            filter_fragment_for_registration(body, &csr, entity_types, Some(request.entity_id), resolver).await?
+        } else {
+            body.map(<[u8]>::to_vec)
+        };
+        if body.is_some() && narrowed.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(PlannedWrite {
+            registration: csr,
+            url,
+            method: request.method.clone(), // clone: each planned write owns the method it sends
+            body: narrowed,
+            proxied_attrs,
+            context: request.context,
+            triggering: request.triggering,
+            // A single-entity provision runs under no Entity Map.
+            linked_map: None,
+        }))
     }
 
-    /// Send one planned write and classify what came back.
-    pub(crate) async fn execute_write(&self, write: PlannedWrite<'_>) -> ForwardedWriteResult {
-        let PlannedWrite {
-            registration,
-            url,
-            method,
-            body,
-            proxied_attrs,
-            context,
-            triggering,
-            linked_map,
-        } = write;
-        let mode = registration.access.mode.unwrap_or_default();
-        let outcome = self
-            .forward_write(ForwardWrite {
-                registration: &registration,
-                url,
-                method,
-                body: body.as_deref(),
-                context,
-                triggering,
-                linked_map: linked_map.as_ref(),
-            })
-            .await;
-        if let ForwardedWriteOutcome::Transport(failure) = &outcome {
-            warn!("Failed to forward to context source {}: {}", registration.id, failure);
-        }
-        ForwardedWriteResult {
-            registration_id: registration.id,
-            mode,
-            outcome,
-            proxied_attrs,
-        }
-    }
-
-    /// Make a write request (POST/PUT/PATCH/DELETE) to a context source endpoint.
-    pub(crate) async fn forward_write(&self, write: ForwardWrite<'_>) -> ForwardedWriteOutcome {
-        let ForwardWrite {
-            registration,
-            url,
-            method,
-            body,
-            context,
-            triggering,
-            linked_map,
-        } = write;
-        if self.registration_loops(registration, triggering.via) {
-            return ForwardedWriteOutcome::LoopDetected;
-        }
-        let unreachable = |error: FederationError| ForwardedWriteOutcome::Transport(TransportFailure::unprepared(error));
-        let url = match url {
-            Ok(url) => url,
-            Err(error) => return unreachable(error),
+    /// The URL one forwarded write to `csr` is sent to, with the attribute its
+    /// path names and every name-bearing query parameter spelled in the
+    /// registration's forwarding context (clause 4.3.6.6), or the failure to
+    /// prepare it, which the write then reports as its own.
+    async fn write_url(
+        &self,
+        csr: &ContextSourceRegistration,
+        request: &ForwardProvisionRequest<'_>,
+        body: Option<&[u8]>,
+        resolver: &TermResolver<'_>,
+    ) -> Result<Url, FederationError> {
+        let presence = match body {
+            Some(_) => BodyPresence::Present,
+            None => BodyPresence::Absent,
         };
-        if let Some(remaining) = self.cooldowns.remaining(registration) {
-            // Clause 5.2.34: a request inside the cooldown window is answered
-            // with a timeout for the registration, without contacting it.
-            return ForwardedWriteOutcome::Transport(TransportFailure::CoolingDown { remaining });
+        let decision = forwarding_decision(csr, request.context, presence)?;
+        let naming = decision.context.naming(request.context);
+        let names = ForwardedNames::new(&self.engine, resolver, &naming, decision.context.rewording());
+        let spelled_attribute = match request.attribute_name {
+            Some(attribute) => Some(names.attr(attribute).await?),
+            None => None,
+        };
+        // A POST below the bare resource creates (clauses 6.4.3.1 and
+        // 6.18.3.1); every other write addresses the entity itself, and the
+        // attribute segment of its path is spelled for the source.
+        let mut path = request.resource.segments().to_vec();
+        if !(request.method == reqwest::Method::POST && request.path_suffix.is_none()) {
+            path.push(request.entity_id.as_str());
+            path.extend(spelled_suffix(request.path_suffix, spelled_attribute.as_ref()));
         }
-        debug!("CS forwarding {} {}", method, url);
-        let payload = match self.payload_for(registration, context, body).await {
-            Ok(payload) => payload,
-            Err(error) => return unreachable(error),
+        let query_string = match request.query_string {
+            Some(raw) => Some(names.query_string(raw).await?),
+            None => None,
         };
-        let request = match self.build_request(ForwardedRequest {
-            method,
-            url,
-            payload: &payload,
-            registration,
-            triggering,
-            linked_map,
-        }) {
-            Ok(request) => request,
-            Err(error) => return unreachable(error),
-        };
-
-        let sent = match self.send_request(registration, request).await {
-            Ok(sent) => sent,
-            Err(failure) => return ForwardedWriteOutcome::Transport(failure),
-        };
-
-        let response_body = if sent.body.is_empty() {
-            None
-        } else {
-            serde_json::from_slice::<Value>(&sent.body).ok()
-        };
-        let status = sent.status.as_u16();
-        if sent.status.is_success() {
-            ForwardedWriteOutcome::Completed { status, body: response_body }
-        } else {
-            ForwardedWriteOutcome::RemoteHttpFailure { status, body: response_body }
-        }
+        forwarding_url(csr.access.endpoint.url(), &path, query_string.as_deref())
     }
 }
 
-/// Plan the one forwarded write to `csr` for `request`, whose payload
-/// serialised to `body`, or `None` when the registration covers nothing of the
-/// body once it is narrowed to what the registration declares (clause
-/// 4.3.6.1).
-///
-/// # Errors
-///
-/// Returns [`FederationError::JsonLd`] when a body attribute cannot be expanded
-/// against the request context.
-async fn plan_write<'a>(
-    csr: ContextSourceRegistration,
-    request: &ForwardProvisionRequest<'a>,
-    body: Option<&[u8]>,
-    entity_types: &[IriBuf],
-    resolver: &TermResolver<'_>,
-) -> Result<Option<PlannedWrite<'a>>, FederationError> {
-    // A POST below the bare resource creates (clauses 6.4.3.1 and 6.18.3.1);
-    // every other write addresses the entity itself.
-    let mut path = request.resource.segments().to_vec();
-    if !(request.method == reqwest::Method::POST && request.path_suffix.is_none()) {
-        path.push(request.entity_id.as_str());
-        path.extend(
-            request
-                .path_suffix
-                .into_iter()
-                .flat_map(|suffix| suffix.split('/'))
-                .filter(|segment| !segment.is_empty()),
-        );
-    }
-    let url = forwarding_url(csr.access.endpoint.url(), &path, request.query_string.unwrap_or(""));
+/// The collection segment an attribute path hangs below (clauses 6.6 to 6.7
+/// and 6.20 to 6.22).
+const ATTRIBUTES_SEGMENT: &str = "attrs";
 
-    let proxied_attrs = if is_proxied(&csr) {
-        collect_matching_attrs(&csr, entity_types, Some(request.entity_id), request.attribute_name, body, resolver).await?
-    } else {
-        Vec::new()
-    };
-
-    let narrowed = if request.attribute_name.is_none() {
-        filter_fragment_for_registration(body, &csr, entity_types, Some(request.entity_id), resolver).await?
-    } else {
-        body.map(<[u8]>::to_vec)
-    };
-    if body.is_some() && narrowed.is_none() {
-        return Ok(None);
+/// The segments of a path suffix below the entity, with the attribute segment
+/// -- the one right after the `attrs` collection -- replaced by `spelled`.
+///
+/// The attribute is found by its position rather than by its name, so an
+/// attribute named like a collection (`attrs/attrs`) replaces only itself.
+fn spelled_suffix<'a>(suffix: Option<&'a str>, spelled: Option<&'a AttributeName>) -> Vec<&'a str> {
+    let mut segments = suffix
+        .into_iter()
+        .flat_map(|suffix| suffix.split('/'))
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let attribute_position = segments
+        .iter()
+        .position(|segment| *segment == ATTRIBUTES_SEGMENT)
+        .map(|collection| collection + 1);
+    if let (Some(spelled), Some(position)) = (spelled, attribute_position)
+        && let Some(segment) = segments.get_mut(position)
+    {
+        *segment = spelled.as_str();
     }
-    Ok(Some(PlannedWrite {
-        registration: csr,
-        url,
-        method: request.method.clone(), // clone: each planned write owns the method it sends
-        body: narrowed,
-        proxied_attrs,
-        context: request.context,
-        triggering: request.triggering,
-        // A single-entity provision runs under no Entity Map.
-        linked_map: None,
-    }))
+    segments
 }
 
 /// Whether a registration is proxied (clause 4.3.6.3): its data is held
@@ -387,11 +292,12 @@ mod tests {
         fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
         operation::{ForwardingOperation, ProvisionResource},
         outcome::ForwardedWriteOutcome,
+        provision::spelled_suffix,
         request::{ForwardProvisionRequest, TriggeringRequest},
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use serde_json::json;
     use std::sync::Arc;
@@ -463,6 +369,27 @@ mod tests {
         let outcomes = forward_create(&service(Vec::new()), &body).await;
         assert!(outcomes.is_empty(), "{outcomes:?}");
         pretty_assertions::assert_eq!(body.serialisations(), 0);
+    }
+
+    /// The attribute segment is the one after the `attrs` collection, so an
+    /// attribute named `attrs` is spelled once and the collection stays as it
+    /// is.
+    #[test]
+    fn the_attribute_segment_is_replaced_by_its_position() {
+        let spelled: AttributeName = "velocity".parse().expect("an attribute name");
+        pretty_assertions::assert_eq!(spelled_suffix(Some("attrs/speed"), Some(&spelled)), vec!["attrs", "velocity"]);
+        let spelled_attrs: AttributeName = "https://example.org/attrs".parse().expect("an attribute name");
+        pretty_assertions::assert_eq!(
+            spelled_suffix(Some("attrs/attrs"), Some(&spelled_attrs)),
+            vec!["attrs", "https://example.org/attrs"]
+        );
+        pretty_assertions::assert_eq!(
+            spelled_suffix(Some("attrs/speed/urn:ngsi-ld:instance:1"), Some(&spelled)),
+            vec!["attrs", "velocity", "urn:ngsi-ld:instance:1"]
+        );
+        pretty_assertions::assert_eq!(spelled_suffix(Some("attrs"), Some(&spelled)), vec!["attrs"]);
+        pretty_assertions::assert_eq!(spelled_suffix(Some("attrs/speed"), None), vec!["attrs", "speed"]);
+        pretty_assertions::assert_eq!(spelled_suffix(None, Some(&spelled)), Vec::<&str>::new());
     }
 
     /// Clauses 5.6.1.4 and following: once a registration matches, the

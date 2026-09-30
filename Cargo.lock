@@ -115,6 +115,8 @@ dependencies = [
  "h3-quinn",
  "http",
  "iri-rs",
+ "jsonld",
+ "jsonld-syntax",
  "mimalloc",
  "pretty_assertions",
  "quinn",
@@ -296,12 +298,15 @@ dependencies = [
  "chrono",
  "derive_more",
  "iri-rs",
+ "moka",
  "pretty_assertions",
  "serde",
  "serde_json",
+ "serde_json_canonicalizer",
  "thiserror 2.0.21",
+ "tokio",
  "url",
- "urn-rs",
+ "uuid",
 ]
 
 [[package]]
@@ -320,6 +325,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-health",
  "andromeda-http-headers",
+ "andromeda-jsonld",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-vocabulary",
@@ -345,6 +351,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "typed-builder",
  "url",
  "uuid",
 ]
@@ -394,7 +401,6 @@ dependencies = [
  "toml",
  "toml-comment",
  "tracing",
- "urn-rs",
  "uuid",
 ]
 
@@ -416,7 +422,6 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror 2.0.21",
  "tokio",
- "uuid",
 ]
 
 [[package]]
@@ -477,6 +482,7 @@ dependencies = [
  "toml",
  "toml-comment",
  "tracing",
+ "typed-builder",
  "url",
 ]
 
@@ -526,10 +532,12 @@ dependencies = [
  "chrono",
  "futures",
  "pretty_assertions",
+ "serde_json",
  "tokio",
  "tower",
  "tower-http 0.7.1",
  "typed-builder",
+ "url",
 ]
 
 [[package]]
@@ -546,8 +554,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tower",
- "urn-rs",
- "uuid",
 ]
 
 [[package]]
@@ -557,18 +563,32 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-registry",
  "andromeda-http-extraction",
+ "andromeda-http-headers",
  "andromeda-http-response",
+ "andromeda-jsonld",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
  "andromeda-persistence-failure",
  "andromeda-tenancy",
+ "andromeda-test-harness",
  "axum",
+ "derive_more",
  "futures",
+ "headers",
+ "hex",
+ "iri-rs",
+ "percent-encoding",
  "pretty_assertions",
  "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
  "tokio",
  "tower",
+ "url",
 ]
 
 [[package]]
@@ -581,6 +601,7 @@ dependencies = [
  "andromeda-entity-map",
  "andromeda-extensions",
  "andromeda-federation",
+ "andromeda-http-context-registry",
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
@@ -599,6 +620,7 @@ dependencies = [
  "futures",
  "headers",
  "indexmap 2.14.2",
+ "iri-rs",
  "pretty_assertions",
  "serde_json",
  "serde_urlencoded",
@@ -619,6 +641,7 @@ dependencies = [
  "andromeda-entity",
  "andromeda-entity-map",
  "andromeda-federation",
+ "andromeda-http-context-registry",
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
@@ -641,6 +664,7 @@ dependencies = [
  "serde_urlencoded",
  "tokio",
  "tower",
+ "typed-builder",
  "url",
 ]
 
@@ -720,8 +744,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tower",
- "urn-rs",
- "uuid",
 ]
 
 [[package]]
@@ -752,6 +774,7 @@ name = "andromeda-http-registration"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-http-context-registry",
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
@@ -787,6 +810,7 @@ dependencies = [
  "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-persistence-failure",
  "axum",
  "chrono",
  "derive_more",
@@ -834,11 +858,11 @@ dependencies = [
  "andromeda-federation",
  "andromeda-http-extraction",
  "andromeda-http-response",
- "andromeda-jsonld",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-problem-details",
  "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-request",
  "andromeda-persistence-failure",
  "andromeda-snapshot",
  "andromeda-temporal",
@@ -856,19 +880,26 @@ name = "andromeda-http-source-identity"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-registry",
  "andromeda-extensions",
+ "andromeda-http-context-registry",
  "andromeda-http-extraction",
  "andromeda-http-response",
+ "andromeda-jsonld",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-request",
  "andromeda-tenancy",
+ "andromeda-test-harness",
  "axum",
  "chrono",
+ "futures",
  "iri-rs",
  "pretty_assertions",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "toml",
@@ -914,6 +945,7 @@ dependencies = [
  "andromeda-configuration-scalars",
  "andromeda-context-space",
  "andromeda-delivery",
+ "andromeda-http-context-registry",
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
@@ -966,6 +998,7 @@ dependencies = [
  "andromeda-entity-map",
  "andromeda-extensions",
  "andromeda-federation",
+ "andromeda-http-context-registry",
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
@@ -1059,6 +1092,7 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
+ "andromeda-test-mocks",
  "async-trait",
  "backon",
  "contextual",
@@ -1082,6 +1116,7 @@ dependencies = [
  "toml",
  "toml-comment",
  "tracing",
+ "typed-builder",
  "url",
 ]
 
@@ -1156,7 +1191,6 @@ dependencies = [
  "thiserror 2.0.21",
  "typed-builder",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -1507,7 +1541,6 @@ dependencies = [
  "tracing",
  "url",
  "url-macro",
- "urn-rs",
  "uuid",
 ]
 
@@ -1719,8 +1752,6 @@ dependencies = [
  "tokio",
  "tracing",
  "typed-builder",
- "urn-rs",
- "uuid",
 ]
 
 [[package]]
@@ -1775,7 +1806,6 @@ dependencies = [
  "toml-comment",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -1800,7 +1830,6 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
- "andromeda-context-registry",
  "andromeda-context-space",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-geometry",
@@ -1831,8 +1860,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "urn-rs",
- "uuid",
 ]
 
 [[package]]
@@ -1863,8 +1890,6 @@ dependencies = [
  "tracing",
  "typed-builder",
  "url",
- "urn-rs",
- "uuid",
 ]
 
 [[package]]
@@ -1971,6 +1996,7 @@ dependencies = [
  "bytes",
  "http",
  "iri-rs",
+ "mediatype",
  "pretty_assertions",
  "reqwest",
  "serde",
@@ -2005,6 +2031,8 @@ dependencies = [
  "andromeda-tenancy",
  "andromeda-test-client",
  "andromeda-test-fixtures",
+ "async-trait",
+ "chrono",
  "dashmap",
  "futures",
  "http",
@@ -2119,7 +2147,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2130,7 +2158,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2146,6 +2174,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "ar_archive_writer"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
+dependencies = [
+ "object",
 ]
 
 [[package]]
@@ -3459,7 +3496,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4799,9 +4836,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld"
-version = "0.23.1"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a31ecd1f0b8a2a77db9bb8450e625749ce76607ccbc384c87e3b606c454ebd0"
+checksum = "f3d9632ceae82019ba4fed66a9a1b4821bda908c7133084cf85e6af1bbddfb2d"
 dependencies = [
  "contextual",
  "iri-rs",
@@ -4821,9 +4858,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-compaction"
-version = "0.23.1"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c826cde4c55681ac9d9b8cd791bff891f26e529a8e0f7ec2885fe62b4f0e017"
+checksum = "a6e321bc2b4c6ef116fd20ef8f96852c2e02ddc610bee9746692e72fff646b18"
 dependencies = [
  "contextual",
  "jsonld-context-processing",
@@ -4838,9 +4875,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-context-processing"
-version = "0.23.1"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e884ffe7bf5cf00f5d22039670d7b49dee26a3ad2a7b0c9533d74f8cc2455bc8"
+checksum = "56abc99f6ebd3bff876ac5bf9e1571b539f08f85769a63ad53418071fde8675f"
 dependencies = [
  "contextual",
  "foldhash",
@@ -4849,14 +4886,15 @@ dependencies = [
  "jsonld-syntax",
  "parking_lot",
  "rdfx",
+ "stacker",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "jsonld-core"
-version = "0.23.1"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00bc8379defaddd5e3d870677fe4743ab58f2b17578b70e63ce0bb9a4b5a679a"
+checksum = "7e3c5ced76d70ee2fd8756fd2793a01f6c6d5f0e7bdd9f90c529b0a79fbcc8d7"
 dependencies = [
  "contextual",
  "derive-where",
@@ -4886,9 +4924,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expandable"
-version = "0.23.1"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72a9f13fa3022b47bdc1e1749e09cd17920bebb68a065bf4c85646ec05ea4a95"
+checksum = "c3c3db2d742dd577f1569aef129261702f6a2b2db9196737b1e6029d9b81fe29"
 dependencies = [
  "jsonld-expandable-core",
  "proc-macro-crate",
@@ -4899,9 +4937,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expandable-core"
-version = "0.23.1"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70b88b76e067560aa07b63deca38f2d81e8ff29b4b8da6e47893da9ee9ceda3f"
+checksum = "013433cabc6eceba28f9260863d6f5d6549a19fabcec0c737b226b40bd42a1fa"
 dependencies = [
  "chrono",
  "proc-macro2",
@@ -4912,9 +4950,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expansion"
-version = "0.23.1"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "718d81fc0956c7e547bdfe5732656603a5b01b33d51b6d0426f2025c28a7951e"
+checksum = "d1467b3ef23e6456f9ecec1c204e61859ca530c0b9aa7328536aca24b8cc49ac"
 dependencies = [
  "contextual",
  "jsonld-context-processing",
@@ -4929,9 +4967,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-serialization"
-version = "0.23.1"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3effce108f01f1597b7df8a0ee8d52d9e43df4765ea4ce41626f06cf9b118835"
+checksum = "c28444026ddd8fd1600cc6b3f92ce04e9e05548eec7d1d5af9688b34005583c8"
 dependencies = [
  "iri-rs",
  "jsonld-core",
@@ -4944,9 +4982,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-syntax"
-version = "0.23.1"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d08f79a5fe7ac7c0070324c442c1d98915cfe837a7ff9430f37bd4654f24b31e"
+checksum = "ae61ecbeb5f3af5935cf769d2f69b838f12ca82f717f07a665134b65d40d2337"
 dependencies = [
  "contextual",
  "hashbrown 0.17.1",
@@ -4958,14 +4996,15 @@ dependencies = [
  "rdfx",
  "serde",
  "smallvec",
+ "stacker",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "jsonld-vocab"
-version = "0.23.1"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31ee367411e2d309d13812fb8c9c3a1bb03db30e97862478cd4988683e86397c"
+checksum = "c17d4b52e0f40c8b0a184a15f91483a4b4268d20731b7f75580b7ce42fcb97e5"
 dependencies = [
  "heck 0.5.0",
  "proc-macro-crate",
@@ -5504,7 +5543,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5551,6 +5590,15 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
+]
+
+[[package]]
+name = "object"
+version = "0.39.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -5798,6 +5846,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "psm"
+version = "0.1.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
+dependencies = [
+ "ar_archive_writer",
+ "cc",
+]
+
+[[package]]
 name = "quanta"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5883,7 +5941,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6360,7 +6418,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6427,7 +6485,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6675,6 +6733,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_json_canonicalizer"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe52319a927259afbfa5180c5157cd8167edfd3e8c254f9558c7fef44c5649f2"
+dependencies = [
+ "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "serde_norway"
 version = "0.9.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6800,6 +6869,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6914,7 +6989,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7126,6 +7201,19 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "stacker"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "707f49d46706bacf8a2b00d51dace3f9de527c13eec3778f570c411f89e69967"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "psm",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "static-automata"
@@ -7344,10 +7432,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7357,7 +7445,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7973,6 +8061,7 @@ dependencies = [
  "js-sys",
  "rand 0.10.3",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 
@@ -8155,7 +8244,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

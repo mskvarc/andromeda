@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use sqlx::types::Json;
 
 /// Full metadata row (detailed projection).
 #[derive(Debug, sqlx::FromRow)]
@@ -33,4 +34,22 @@ pub(crate) struct ContextSummaryRow {
     pub id: String,
     /// Public URL, if any.
     pub url: Option<String>,
+}
+
+/// The resolver's read of one unexpired row.
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct FreshContextRow {
+    /// The stored `@context` document.
+    pub payload: Json<Value>,
+    /// When the row lapses, when it has an expiry.
+    pub expires_at: Option<DateTime<Utc>>,
+    /// The URL the row is keyed by, if any.
+    pub url: Option<String>,
+    /// Stored kind, as the raw `JsonldContextKindCode` number.
+    pub kind: i16,
+    /// The URL a download was finally read from; set exactly for a `Cached`
+    /// row.
+    pub document_url: Option<String>,
+    /// The database clock the expiry was judged against.
+    pub read_at: DateTime<Utc>,
 }

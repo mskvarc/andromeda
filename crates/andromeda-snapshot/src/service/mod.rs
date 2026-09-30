@@ -24,7 +24,7 @@ use crate::{
     store::SnapshotStore,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SnapshotId};
 use andromeda_ngsi_ld_model::{
     snapshot::{Snapshot, SnapshotStatus},
     snapshot_clone::SnapshotCloneInput,
@@ -345,8 +345,9 @@ impl SnapshotService {
 
 /// A fresh broker-minted Snapshot identifier.
 fn build_snapshot_id() -> Result<Identifier, SnapshotError> {
-    let value = format!("urn:ngsi-ld:Snapshot:{}", uuid::Uuid::new_v4());
-    value.parse().map_err(|error| SnapshotInvariant::MintedIdentifier(error).into())
+    SnapshotId::mint()
+        .map(Identifier::from)
+        .map_err(|error| SnapshotInvariant::MintedIdentifier(error).into())
 }
 
 #[cfg(test)]

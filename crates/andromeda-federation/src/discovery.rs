@@ -2,14 +2,23 @@
 
 use crate::{
     FederationService,
+    answer_vocabulary::AnswerVocabulary,
     cache::Cacheability,
     entity_read::own_loop_warning,
+    error::FederationError,
+    forwarded_names::ForwardedNames,
+    forwarding_context::BodyPresence,
     forwarding_url::build_discovery_url,
     outcome::{ForwardGetOutcome, ForwardedDiscoveryResult},
-    request::ForwardDiscoveryRequest,
+    registration_payload::forwarding_decision,
+    request::{DiscoveryTarget, ForwardDiscoveryRequest},
+    source_read::SourceRead,
+    term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use futures::{StreamExt, stream};
 use tracing::warn;
 
@@ -24,7 +33,7 @@ impl FederationService {
             return Vec::new();
         }
         let ForwardDiscoveryRequest {
-            path,
+            target: discovered,
             query_string,
             context,
             operation,
@@ -72,11 +81,25 @@ impl FederationService {
             return Vec::new();
         }
 
+        let resolver = TermResolver::new(&self.engine, context);
+        let resolver = &resolver;
         stream::iter(csrs)
             .map(|csr| async move {
-                let url = build_discovery_url(csr.access.endpoint.url(), path, query_string);
+                let url = match self.spelled_discovery(&csr, context, resolver, discovered, query_string).await {
+                    Ok((segments, query_string)) => {
+                        let segments = segments.iter().map(String::as_str).collect::<Vec<_>>();
+                        build_discovery_url(csr.access.endpoint.url(), &segments, &query_string)
+                    }
+                    Err(error) => Err(error),
+                };
+                let read = SourceRead::builder()
+                    .registration(&csr)
+                    .inbound(context)
+                    .triggering(triggering)
+                    .vocabulary(AnswerVocabulary::Discovery)
+                    .build();
                 // Clause 6.3.17 allows caching for `/entities` only.
-                let outcome = self.forward_get(&csr, url, context, triggering, Cacheability::Uncacheable, None).await;
+                let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;
                 match outcome {
                     ForwardGetOutcome::Success(response) => Some(ForwardedDiscoveryResult {
                         body: Some(response.body),
@@ -85,6 +108,7 @@ impl FederationService {
                     // 404 is not abnormal per spec clause 6.3.17
                     ForwardGetOutcome::NotFound(_) => None,
                     other @ (ForwardGetOutcome::InvalidPayload(_)
+                    | ForwardGetOutcome::UnreadableNames(_)
                     | ForwardGetOutcome::ErrorStatus(_)
                     | ForwardGetOutcome::Transport(_)
                     | ForwardGetOutcome::LoopDetected) => {
@@ -101,5 +125,62 @@ impl FederationService {
             .filter_map(|entry| async move { entry })
             .collect()
             .await
+    }
+
+    /// The discovery path segments and query string `registration` is sent,
+    /// with the type or attribute a path names and every name-bearing parameter
+    /// spelled in the registration's forwarding context (clause 4.3.6.6).
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure to decide the registration's forwarding context, or
+    /// to spell a name in it.
+    async fn spelled_discovery(
+        &self,
+        registration: &ContextSourceRegistration,
+        inbound: &ContextSpec,
+        resolver: &TermResolver<'_>,
+        target: DiscoveryTarget<'_>,
+        query_string: &str,
+    ) -> Result<(Vec<String>, String), FederationError> {
+        let decision = forwarding_decision(registration, inbound, BodyPresence::Absent)?;
+        let naming = decision.context.naming(inbound);
+        let names = ForwardedNames::new(&self.engine, resolver, &naming, decision.context.rewording());
+        let collection = collection_of(target).to_owned();
+        let segments = match target {
+            DiscoveryTarget::Types | DiscoveryTarget::Attributes => vec![collection],
+            DiscoveryTarget::Type(name) => vec![collection, names.entity_type(name).await?.to_string()],
+            DiscoveryTarget::Attribute(name) => vec![collection, names.attr(name).await?.to_string()],
+        };
+        Ok((segments, names.query_string(query_string).await?))
+    }
+}
+
+/// The collection segment of type discovery (clauses 5.7.5 to 5.7.7).
+const TYPES_COLLECTION: &str = "types";
+/// The collection segment of attribute discovery (clauses 5.7.8 to 5.7.10).
+const ATTRIBUTES_COLLECTION: &str = "attributes";
+
+/// The collection a discovery target sits in.
+const fn collection_of(target: DiscoveryTarget<'_>) -> &'static str {
+    match target {
+        DiscoveryTarget::Types | DiscoveryTarget::Type(_) => TYPES_COLLECTION,
+        DiscoveryTarget::Attributes | DiscoveryTarget::Attribute(_) => ATTRIBUTES_COLLECTION,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{discovery::collection_of, request::DiscoveryTarget};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+
+    #[test]
+    fn every_discovery_target_sits_in_its_collection() {
+        let vehicle: EntityTypeName = "Vehicle".parse().expect("a type name");
+        let speed: AttributeName = "https://example.org/ns/speed".parse().expect("an attribute name");
+        pretty_assertions::assert_eq!(collection_of(DiscoveryTarget::Types), "types");
+        pretty_assertions::assert_eq!(collection_of(DiscoveryTarget::Type(&vehicle)), "types");
+        pretty_assertions::assert_eq!(collection_of(DiscoveryTarget::Attributes), "attributes");
+        pretty_assertions::assert_eq!(collection_of(DiscoveryTarget::Attribute(&speed)), "attributes");
     }
 }

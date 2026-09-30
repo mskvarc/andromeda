@@ -385,10 +385,10 @@ mod tests {
     #[tokio::test]
     async fn a_registration_naming_attributes_keeps_them_by_iri_under_an_aliased_context() {
         let engine = offline_engine();
-        let context = ContextSpec::none().with_body_context(Some(json!({
+        let context = ContextSpec::from_body(json!({
             "Veh": "https://example.org/Vehicle",
             "spd": "https://example.org/vocab/speed"
-        })));
+        }));
         let resolver = TermResolver::new(&engine, &context);
         let csr = registration(&json!({
             "entities": [{"type": "https://example.org/Vehicle"}],

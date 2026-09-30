@@ -1,6 +1,6 @@
 //! Focused tenant-state resolution for Context Registry routes.
 
-use andromeda_context_registry::service::ContextRegistryService;
+use crate::tenant_context_hosting::TenantContextHosting;
 use andromeda_http_extraction::{
     classification::classify_tenancy_error,
     tenant_state::{ExistingTenantState, TenantStateResolver},
@@ -13,8 +13,9 @@ use std::sync::Arc;
 
 /// The complete Context Registry capability set exposed by one tenant.
 pub struct ContextRegistryRouteServices {
-    /// Hosted and cached Context lifecycle policy.
-    pub contexts: Arc<ContextRegistryService>,
+    /// The tenant's stored `@context`s, whose lifecycle the routes drive and
+    /// whose serving URLs they mint.
+    pub hosting: TenantContextHosting,
     /// Keeps the tenant runtime resident for the life of the request holding
     /// this capability set, so eviction never closes its pools mid-request.
     pub runtime_lease: RuntimeLease,
@@ -23,8 +24,8 @@ pub struct ContextRegistryRouteServices {
 impl ContextRegistryRouteServices {
     /// Construct the focused capability set.
     #[must_use]
-    pub const fn new(contexts: Arc<ContextRegistryService>, runtime_lease: RuntimeLease) -> ContextRegistryRouteServices {
-        ContextRegistryRouteServices { contexts, runtime_lease }
+    pub const fn new(hosting: TenantContextHosting, runtime_lease: RuntimeLease) -> ContextRegistryRouteServices {
+        ContextRegistryRouteServices { hosting, runtime_lease }
     }
 }
 

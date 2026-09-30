@@ -90,6 +90,7 @@ const fn expansion_failure(error: &JsonLdError) -> TermExpansionFailure {
         | JsonLdError::JsonLdContextText(_)
         | JsonLdError::JsonLdContextShape
         | JsonLdError::DocumentShape
+        | JsonLdError::ContextGraph(_)
         | JsonLdError::Json(_) => TermExpansionFailure::ContextUnprocessable,
     }
 }

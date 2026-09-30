@@ -6,24 +6,26 @@ use crate::{
     detail_level::ContextDetailLevel,
     error::ContextRegistryError,
     fetched_context::FetchedContext,
+    hosted_context_locator::HostedContextLocator,
     identifier::ContextIdentifier,
+    implicit_context_hosting::ImplicitContextHosting,
+    insertion_policy::InsertionPolicy,
     list_query::ContextListQuery,
     listed_contexts::ListedContexts,
     mutation::ContextMutation,
     pending_hits::fold_pending_hits,
     registry_invariant::RegistryInvariant,
     removal::ContextRemoval,
+    served_context::ServedContext,
     store::ContextRegistryStore,
 };
 use andromeda_jsonld::{context_subtree::context_subtree, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use std::sync::Arc;
-use url::Url;
-use urn_rs::Urn;
 
 /// Maximum stored rows included in the current unpaginated HTTP representation.
 const LIST_DEFAULT_LIMIT: u32 = 1000;
@@ -34,45 +36,67 @@ pub struct ContextRegistryService {
     store: Arc<dyn ContextRegistryStore>,
     /// JSON-LD resolver used for cache reload and in-process invalidation.
     engine: JsonLdEngine,
+    /// The `ImplicitlyCreated` Contexts the broker hosts on its own initiative.
+    hosting: ImplicitContextHosting,
 }
 
 impl ContextRegistryService {
     /// Create a Context Registry service from persistence and JSON-LD capabilities.
-    pub const fn new(store: Arc<dyn ContextRegistryStore>, engine: JsonLdEngine) -> ContextRegistryService {
-        ContextRegistryService { store, engine }
+    ///
+    /// A stored `ImplicitlyCreated` identifier is remembered for as long as the
+    /// engine trusts its copy of a hosted document before reading it again.
+    #[must_use]
+    pub fn new(store: Arc<dyn ContextRegistryStore>, engine: JsonLdEngine) -> ContextRegistryService {
+        let hosting = ImplicitContextHosting::new(Arc::clone(&store), engine.hosted_context_revalidation().as_duration());
+        ContextRegistryService { store, engine, hosting }
     }
 
     /// Create an explicitly hosted Context resource.
     ///
     /// Everything the request carried outside the `@context` subtree is
-    /// discarded before the document is stored (clause 5.13.2.3).
+    /// discarded before the document is stored (clause 5.13.2.3). Clause
+    /// 5.13.2.4 makes every Add @context "a new entry", so two creations of the
+    /// same document are two entries, each under a fresh random identifier.
     ///
     /// # Errors
     ///
     /// Returns [`ContextRegistryError::MissingTopLevelContext`] when the payload
-    /// carries no top-level `@context` member, and
+    /// carries no top-level `@context` member,
     /// [`ContextRegistryError::Persistence`] when the store cannot record the
-    /// hosted Context.
-    pub async fn create(&self, payload: Value, base_url: Option<&Url>) -> Result<Urn, ContextRegistryError> {
+    /// hosted Context, and [`ContextRegistryError::Invariant`] when a freshly
+    /// minted identifier is not one or is already held.
+    pub async fn create(&self, payload: Value, locator: &dyn HostedContextLocator) -> Result<JsonLdContextId, ContextRegistryError> {
         let document = hosted_context_subtree(payload)?;
-        self.store.create(document, base_url, ContextCreationKind::Hosted).await
+        InsertionPolicy::over(self.store.as_ref(), locator)
+            .fresh(&document, ContextCreationKind::Hosted)
+            .await
     }
 
-    /// Persist a compound Context created while processing another resource.
+    /// Host a compound Context the broker needs while processing another
+    /// resource, and return the identifier it is served under.
     ///
     /// Everything outside the `@context` subtree is discarded before the
     /// document is stored (clause 5.13.2.3), so a Context the broker mints for
     /// its own use is shaped exactly like one a client supplied.
     ///
+    /// Equal documents share one entry under an identifier derived from their
+    /// content, and a different document is never served under a shared one
+    /// (see [`InsertionPolicy::content_derived`]): a thousand subscriptions with
+    /// the same `@context` array are served by one stored document, and a
+    /// document this process stored recently is not written again (see
+    /// [`ImplicitContextHosting`]). `locator` names the URL the entry is served
+    /// under.
+    ///
     /// # Errors
     ///
     /// Returns [`ContextRegistryError::MissingTopLevelContext`] when the payload
-    /// carries no top-level `@context` member, and
-    /// [`ContextRegistryError::Persistence`] when the store cannot record the
-    /// implicitly created Context.
-    pub async fn create_implicitly(&self, payload: Value, base_url: Option<&Url>) -> Result<Urn, ContextRegistryError> {
+    /// carries no top-level `@context` member,
+    /// [`ContextRegistryError::Persistence`] when the store cannot record or read
+    /// the Context, and [`ContextRegistryError::Invariant`] when an identifier
+    /// cannot be built or a freshly minted one is already held.
+    pub async fn create_implicitly(&self, payload: Value, locator: &dyn HostedContextLocator) -> Result<JsonLdContextId, ContextRegistryError> {
         let document = hosted_context_subtree(payload)?;
-        self.store.create(document, base_url, ContextCreationKind::ImplicitlyCreated).await
+        self.hosting.host(&document, locator).await
     }
 
     /// List available Contexts, optionally filtered by lifecycle kind.
@@ -116,6 +140,11 @@ impl ContextRegistryService {
 
     /// Retrieve a Context document or its lifecycle metadata.
     ///
+    /// A `"Hosted"` or `"ImplicitlyCreated"` document comes back with the span
+    /// after which this broker reads its row again
+    /// ([`JsonLdEngine::hosted_context_revalidation`]), so a party caching the
+    /// served copy can be held to the same span.
+    ///
     /// # Errors
     ///
     /// Returns [`ContextRegistryError::NotFound`] when no Context is stored under
@@ -126,7 +155,7 @@ impl ContextRegistryService {
     /// representable metadata or document, and
     /// [`ContextRegistryError::Representation`] when the metadata cannot be
     /// serialized.
-    pub async fn get(&self, requested: &ContextIdentifier, detail_level: ContextDetailLevel) -> Result<Value, ContextRegistryError> {
+    pub async fn get(&self, requested: &ContextIdentifier, detail_level: ContextDetailLevel) -> Result<ServedContext, ContextRegistryError> {
         // Clause 5.13.4.4: "It shall give back ResourceNotFound if the
         // identifier is not found." An identifier that keys no row at all is
         // one such, and is answered before the storage is consulted.
@@ -137,8 +166,8 @@ impl ContextRegistryService {
         };
         if core_context::is_core_context(identifier) {
             return match detail_level {
-                ContextDetailLevel::Full => serialize(core_context::metadata(identifier)?),
-                ContextDetailLevel::Summary => core_context::payload(),
+                ContextDetailLevel::Full => serialize(core_context::metadata(identifier)?).map(ServedContext::Metadata),
+                ContextDetailLevel::Summary => core_context::payload().map(ServedContext::Embedded),
             };
         }
         // Clause 5.13.4.4: the full content is served from internal storage only
@@ -168,9 +197,12 @@ impl ContextRegistryService {
         match fetched {
             FetchedContext::Detailed(mut metadata) => {
                 self.add_pending_hits(&mut metadata);
-                serialize(*metadata)
+                serialize(*metadata).map(ServedContext::Metadata)
             }
-            FetchedContext::Payload(payload) => Ok(payload),
+            FetchedContext::Payload(document) => Ok(ServedContext::Stored {
+                document,
+                revalidation: self.engine.hosted_context_revalidation(),
+            }),
         }
     }
 
@@ -237,6 +269,7 @@ impl ContextRegistryService {
                 identifier: ContextIdentifier::from(identifier.clone()), // clone: the error must own the identifier after this call returns.
             });
         }
+        self.hosting.forget(identifier)?;
         if let Some(source_url) = source_url {
             self.engine.invalidate_context(&source_url).await;
         }
@@ -263,7 +296,7 @@ impl ContextRegistryService {
         let source_url = stored.source_url.ok_or_else(|| ContextRegistryError::MissingSourceUrl {
             identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
         })?;
-        let resolved = self
+        let downloaded = self
             .engine
             .fetch_remote_context(&source_url)
             .await
@@ -274,10 +307,12 @@ impl ContextRegistryService {
         // Clause 5.13.5.4: "the existing @context is replaced with the newly
         // downloaded one." The resolver hands the download back already reduced
         // to its `@context` subtree (clause 5.13.2.3), which is exactly the
-        // shape a stored Context has, so it is stored as it stands. Wrapping it
-        // in a second `@context` produced a document no expansion can use, and
+        // shape a stored Context has, so it is stored as it stands, together
+        // with the URL it was finally read from: the source may redirect
+        // elsewhere now than it did at the first download. Wrapping it in a
+        // second `@context` produced a document no expansion can use, and
         // clause 5.13.5 offers no operation that could undo that.
-        if self.store.replace_payload(&stored.identifier, resolved).await? == ContextMutation::Missing {
+        if self.store.replace_download(&stored.identifier, &downloaded).await? == ContextMutation::Missing {
             return Err(ContextRegistryError::NotFound {
                 identifier: ContextIdentifier::from(stored.identifier),
             });
@@ -316,6 +351,9 @@ fn serialize<T: serde::Serialize>(value: T) -> Result<Value, ContextRegistryErro
 }
 
 #[cfg(test)]
+mod identity_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         error::ContextRegistryError,
@@ -338,7 +376,7 @@ mod tests {
     fn a_hosted_document_keeps_only_its_context_subtree() -> Result<(), ContextRegistryError> {
         let supplied = json!({
             "@context": { "Building": "https://example.com/Building" },
-            "id": "urn:ngsi-ld:Context:supplied-by-the-client",
+            "id": "urn:ngsi-ld:JsonLdContext:supplied-by-the-client",
             "createdAt": "2020-01-01T00:00:00Z",
             "extraInfo": { "owner": "someone" }
         });

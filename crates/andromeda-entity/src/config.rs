@@ -20,9 +20,6 @@ pub const PENDING_SIDE_EFFECTS_LEASE_MARGIN: Duration = Duration::from_secs(5);
 /// Invalid entity execution configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum EntityConfigError {
-    /// Batch concurrency was explicitly configured as zero.
-    #[error("entity.batch_concurrency must be at least 1")]
-    ZeroBatchConcurrency,
     /// Batch preparation concurrency was explicitly configured as zero.
     #[error("entity.batch_chunk_concurrency must be at least 1")]
     ZeroBatchChunkConcurrency,
@@ -90,8 +87,6 @@ pub enum EntityConfigError {
 /// Entity batching, expiry, and durable side-effect configuration.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct EntityConfig {
-    /// Maximum concurrent entities processed in batch operations.
-    pub batch_concurrency: Option<usize>,
     /// Maximum concurrent CPU-bound preparation chunks.
     pub batch_chunk_concurrency: Option<usize>,
     /// Maximum concurrent database write chunks.
@@ -150,7 +145,6 @@ pub struct EntityConfig {
 impl Default for EntityConfig {
     fn default() -> EntityConfig {
         EntityConfig {
-            batch_concurrency: None,
             batch_chunk_concurrency: None,
             batch_chunk_write_concurrency: None,
             batch_chunk_size: 512,
@@ -180,9 +174,6 @@ impl EntityConfig {
     /// the expiry batch size does not fit the unsigned 32-bit width the expiry
     /// source port accepts.
     pub fn validate(&self) -> Result<(), EntityConfigError> {
-        if self.batch_concurrency == Some(0) {
-            return Err(EntityConfigError::ZeroBatchConcurrency);
-        }
         if self.batch_chunk_concurrency == Some(0) {
             return Err(EntityConfigError::ZeroBatchChunkConcurrency);
         }
@@ -266,7 +257,6 @@ mod tests {
 
     fn valid_config() -> EntityConfig {
         EntityConfig {
-            batch_concurrency: None,
             batch_chunk_concurrency: None,
             batch_chunk_write_concurrency: None,
             batch_chunk_size: 512,

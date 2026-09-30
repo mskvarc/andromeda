@@ -48,9 +48,6 @@ fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::Query(source) => classify_query_error(source),
         EntityError::Request(source) => classify_parameter_error(source),
         EntityError::Representation(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-        EntityError::Identifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-        EntityError::EntityTypeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-        EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         EntityError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         EntityError::TransactionContended => ClassifiedReport::transaction_contended(error.to_string()),
         EntityError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to commit the entity write")),
@@ -124,7 +121,7 @@ pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSu
 
 #[cfg(test)]
 mod tests {
-    use super::classify_snapshot_error;
+    use crate::error::classify_snapshot_error;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;

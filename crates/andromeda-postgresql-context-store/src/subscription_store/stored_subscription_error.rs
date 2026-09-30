@@ -9,6 +9,7 @@ use andromeda_context_commit::subscription_key::SubscriptionKeyOutOfRange;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError, spec_version::SpecVersionParseError};
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_postgresql_codes::registry::UnknownCompactCode;
+use iri_rs::InvalidIri;
 use langtag::InvalidLangTag;
 use thiserror::Error;
 
@@ -55,9 +56,9 @@ pub enum StoredSubscriptionError {
     /// The `lang` column is not a language tag.
     #[error("a stored subscription lang is not a language tag: {0}")]
     Lang(#[source] InvalidLangTag<String>),
-    /// The `jsonld_context` column is not a URL.
-    #[error("a stored subscription jsonldContext is not a URL: {0}")]
-    JsonldContext(#[source] url::ParseError),
+    /// The `jsonld_context` column is not an absolute IRI.
+    #[error("a stored subscription jsonldContext is not an absolute IRI: {0}")]
+    JsonldContext(#[source] InvalidIri<String>),
     /// The `status` column holds a code the status registry never assigned.
     #[error("a stored subscription status is not a known code: {0}")]
     Status(#[source] UnknownCompactCode),

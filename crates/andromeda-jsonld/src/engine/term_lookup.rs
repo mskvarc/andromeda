@@ -11,16 +11,14 @@ use crate::{
     document_context::resolve_context_value,
     engine::{context_url::is_full_iri, processor::JsonLdEngine},
     error::JsonLdError,
+    loader::cache_lifetime::CacheLifetime,
 };
 use iri_rs::IriBuf;
 use moka::{Equivalent, future::Cache};
 use serde_json::Value;
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 /// How often the cache reports its hit rate.
@@ -39,9 +37,9 @@ pub(crate) struct TermCache {
 
 impl TermCache {
     /// A cache bounded by entry count and entry age.
-    pub(crate) fn new(capacity: u64, ttl_seconds: u64) -> TermCache {
+    pub(crate) fn new(capacity: u64, ttl: CacheLifetime) -> TermCache {
         TermCache {
-            expansions: Cache::builder().max_capacity(capacity).time_to_live(Duration::from_secs(ttl_seconds)).build(),
+            expansions: Cache::builder().max_capacity(capacity).time_to_live(ttl.as_duration()).build(),
             hits: Arc::new(AtomicU64::new(0)),
             misses: Arc::new(AtomicU64::new(0)),
         }
@@ -318,8 +316,8 @@ mod tests {
     #[tokio::test]
     async fn distinct_prepared_contexts_cannot_share_term_cache_entries() {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        let first_context = ContextSpec::none().with_body_context(Some(json!({ "custom": "https://example.com/first/custom" })));
-        let second_context = ContextSpec::none().with_body_context(Some(json!({ "custom": "https://example.com/second/custom" })));
+        let first_context = ContextSpec::from_body(json!({ "custom": "https://example.com/first/custom" }));
+        let second_context = ContextSpec::from_body(json!({ "custom": "https://example.com/second/custom" }));
         let first_context = engine.prepare_term_context(&first_context);
         let second_context = engine.prepare_term_context(&second_context);
 
@@ -350,8 +348,8 @@ mod tests {
     #[test]
     fn a_borrowed_key_under_another_context_or_role_is_not_equivalent() {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        let first = engine.prepare_term_context(&ContextSpec::none().with_body_context(Some(json!({ "custom": "https://example.com/first/custom" }))));
-        let second = engine.prepare_term_context(&ContextSpec::none().with_body_context(Some(json!({ "custom": "https://example.com/second/custom" }))));
+        let first = engine.prepare_term_context(&ContextSpec::from_body(json!({ "custom": "https://example.com/first/custom" })));
+        let second = engine.prepare_term_context(&ContextSpec::from_body(json!({ "custom": "https://example.com/second/custom" })));
         let owned = TermCacheKeyRef::new(TermRole::Attribute, "custom", &first).to_owned_key(&first);
 
         assert!(!TermCacheKeyRef::new(TermRole::Attribute, "custom", &second).equivalent(&owned));

@@ -32,26 +32,19 @@ use crate::{
 use andromeda_http_extraction::context_target;
 
 pub async fn update_attr_instance(
+    // Clause 6.3.20: the parameters are read first, before the tenant is
+    // resolved, so an undefined one is an `InvalidRequest` on any tenant.
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     context_target::ExistingTargetedTenantState {
         services: state,
         target,
         snapshot: _,
     }: TenantState,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath((id, attr_id, instance_id)): TypedPath<(Identifier, AttributeName, Identifier)>,
-    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    JsonLdDocument {
-        document: payload,
-        context: body_context,
-    }: JsonLdDocument,
+    JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
-    let context = context.merge(body_context);
     let path_suffix = format!("/attrs/{attr_id}/{instance_id}");
     // Clause 4.5.7 carries an `instanceId` as a URI; which of the two stored
     // shapes it names is decided here, at the edge, so the store addresses one

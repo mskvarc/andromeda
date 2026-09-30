@@ -4,6 +4,7 @@ use crate::entity_error::classify_entity_error;
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
+use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
@@ -11,6 +12,7 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
     provision::classify_forwarding_error,
 };
+use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::error::RenderError;
@@ -66,6 +68,12 @@ impl EntityHttpClassify for FederationError {
     }
 }
 
+impl EntityHttpClassify for ResponseContextError {
+    fn classify_for_entity_http(&self) -> ClassifiedReport {
+        classify_response_context_error(self)
+    }
+}
+
 impl EntityHttpClassify for RenderError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
         ClassifiedReport::internal(self, InternalFailureSummary::RESPONSE_RENDERING)
@@ -75,6 +83,12 @@ impl EntityHttpClassify for RenderError {
 impl EntityHttpClassify for ParameterError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
         classify_parameter_error(self)
+    }
+}
+
+impl EntityHttpClassify for JsonLdError {
+    fn classify_for_entity_http(&self) -> ClassifiedReport {
+        classify_jsonld_error(self)
     }
 }
 

@@ -5,6 +5,7 @@
 pub mod callback_path;
 pub mod callback_server;
 pub mod context_source_server;
+pub mod free_port;
 pub mod jsonld_context_server;
 pub mod mqtt_receiver;
 pub mod notification_server;

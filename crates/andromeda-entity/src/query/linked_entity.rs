@@ -363,11 +363,10 @@ fn collect_from_attribute(attr: &Attribute, visited: &IndexSet<Identifier>, seen
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
         entity_snapshot::EntitySnapshot,
         port::{query::EntityQueryStore, reader::EntityReader},
-        query::remote_linked::RemoteLinkedEntities,
+        query::{linked_entity::*, remote_linked::RemoteLinkedEntities},
         query_outcome::QueryOutcome,
         spatial_acceleration::SpatialAcceleration,
         storage_profile::StorageProfile,
@@ -590,7 +589,7 @@ mod tests {
     /// A context mapping the tests' one term to a deterministic,
     /// offline-resolvable IRI, so compaction needs no network fetch.
     fn context() -> ContextSpec {
-        ContextSpec::none().with_body_context(Some(json!({"linksTo": "https://example.com/linksTo"})))
+        ContextSpec::from_body(json!({"linksTo": "https://example.com/linksTo"}))
     }
 
     fn level(value: u32) -> NonZeroU32 {

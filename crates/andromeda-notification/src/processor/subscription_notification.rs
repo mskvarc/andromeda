@@ -13,10 +13,15 @@ use crate::processor::{
 };
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
-use andromeda_delivery::{dispatch::DeliveryResult, request::NotificationDelivery};
+use andromeda_delivery::{
+    dispatch::DeliveryResult,
+    notification_context::NotificationContext,
+    request::{NotificationDelivery, notification_media_type},
+};
 use andromeda_entity::sys_attrs::inject_sys_attrs;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
 use andromeda_ngsi_ld_model::notification::{Notification, NotificationType, SysAttrsSnapshot};
+use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::notification_data};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     compiled::CompiledSubscription,
@@ -24,8 +29,7 @@ use andromeda_subscription::{
 };
 use chrono::Utc;
 use serde_json::Value;
-use tracing::{debug, error};
-use uuid::Uuid;
+use tracing::{debug, error, warn};
 
 /// The committed change every subscription matched by it is notified of.
 ///
@@ -45,12 +49,27 @@ pub(super) struct NotifiedChange<'a> {
     pub(super) compaction_cache: &'a NotificationCompactionCache,
 }
 
-/// The clause 5.3.1 notification document sent to one subscription, or `None`
-/// when it can be neither identified nor serialized.
-fn notification_payload(subscription_id: &Identifier, data: Vec<Value>) -> Option<Value> {
-    let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Identifier>() else {
+/// The clause 5.3.1 notification document sent to `subscription`, or `None`
+/// when it can be neither identified, shaped nor serialized.
+///
+/// Table 5.3.1-1: an endpoint whose `accept` is `application/geo+json`
+/// receives the entities as one `FeatureCollection`.
+fn notification_payload(subscription: &CompiledSubscription, entities: Vec<Value>) -> Option<Value> {
+    let subscription_id = &subscription.id;
+    let Ok(notification_id) = NotificationId::mint().map(Identifier::from) else {
         error!("Failed to construct notification URN for {}", subscription_id);
         return None;
+    };
+    let data = match notification_data(
+        entities,
+        notification_media_type(subscription.endpoint_accept.as_ref()),
+        GeometrySelection::new(None, subscription.dataset_id.as_deref().unwrap_or_default()),
+    ) {
+        Ok(data) => data,
+        Err(error) => {
+            error!("Failed to render the notification data for {}: {}", subscription_id, error);
+            return None;
+        }
     };
     let notification = Notification::builder()
         .id(notification_id)
@@ -133,24 +152,34 @@ impl NotificationProcessor {
             return Some(DeliveryResult::TerminalFailure);
         }
 
-        let Some(payload) = notification_payload(subscription_id, data) else {
+        let Some(payload) = notification_payload(compiled_sub, data) else {
             return Some(DeliveryResult::TerminalFailure);
         };
         let Some(endpoint_transport) = compiled_transport(compiled_sub) else {
             return Some(DeliveryResult::TerminalFailure);
         };
-        let request = (NotificationDelivery {
-            payload: &payload,
-            endpoint_uri: &compiled_sub.endpoint_uri,
-            accept: compiled_sub.endpoint_accept.as_ref(),
-            receiver_info: compiled_sub.endpoint_receiver_info.as_deref(),
-            jsonld_context: compiled_sub.jsonld_context.as_ref(),
-            tenant: self.tenant.tenant_name(),
-            snapshot: change.target.snapshot().map(SnapshotTarget::snapshot_id),
-            timeout: compiled_sub.endpoint_timeout,
-            subscription_id,
-        })
-        .assemble();
+        // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no context
+        // this notification can be rendered under; the document may be reachable
+        // again on a later attempt.
+        let context = match NotificationContext::resolve(compiled_sub.jsonld_context.as_ref(), &self.engine).await {
+            Ok(context) => context,
+            Err(error) => {
+                warn!("the jsonldContext of subscription {} cannot be loaded: {}", subscription_id, error);
+                return Some(DeliveryResult::RetryableFailure);
+            }
+        };
+        let request = NotificationDelivery::builder()
+            .payload(&payload)
+            .endpoint_uri(&compiled_sub.endpoint_uri)
+            .accept(compiled_sub.endpoint_accept.as_ref())
+            .receiver_info(compiled_sub.endpoint_receiver_info.as_deref())
+            .context(&context)
+            .tenant(self.tenant.tenant_name())
+            .snapshot(change.target.snapshot().map(SnapshotTarget::snapshot_id))
+            .timeout(compiled_sub.endpoint_timeout)
+            .subscription_id(subscription_id)
+            .build()
+            .assemble();
         let delivery = self.transport.deliver(&endpoint_transport, &request).await;
 
         if delivery.is_delivered() {

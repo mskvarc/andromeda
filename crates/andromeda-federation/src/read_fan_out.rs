@@ -8,15 +8,16 @@
 
 use crate::{
     FederationService,
+    answer_vocabulary::AnswerVocabulary,
     cache::Cacheability,
     entity_read::mode_admitted,
     error::FederationError,
-    forwarded_query::ForwardedQuery,
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, MatchedSources},
     read_binding::{ReadIntent, read_binding_for},
     registration_selection::registration_scope_admits,
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
+    source_read::SourceRead,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -116,6 +117,9 @@ pub(crate) struct ForwardedGetConditions<'a> {
     /// The `EntityMap` the read runs under, which fixes the location each
     /// source is told.
     pub(crate) entity_map: EntityMapInUse<'a>,
+    /// What kind of answer every source returns, which decides where its names
+    /// sit when it is read back in the client's terms (clause 4.3.6.6).
+    pub(crate) vocabulary: AnswerVocabulary,
 }
 
 /// What one contacted registration answered, before the caller folds it.
@@ -209,25 +213,6 @@ impl FederationService {
         eval_q_expr(filter, &Value::Object(expanded))
     }
 
-    /// Send one GET to every target, telling each the location of the map in
-    /// use (clause 5.5.14), and read each answer with `read`.
-    pub(crate) async fn fan_out_get<T>(
-        &self,
-        targets: Vec<(ContextSourceRegistration, ForwardedQuery)>,
-        url_of: impl Fn(&ContextSourceRegistration, &ForwardedQuery) -> Result<Url, FederationError> + Sync,
-        read: impl Fn(&ContextSourceRegistration, ForwardGetOutcome) -> Option<T> + Sync,
-        conditions: ForwardedGetConditions<'_>,
-    ) -> Vec<SourceAnswer<T>> {
-        let reads = targets
-            .into_iter()
-            .map(|(registration, query)| {
-                let forwarded = ForwardedRead::Get(url_of(&registration, &query));
-                (registration, forwarded)
-            })
-            .collect();
-        self.fan_out_read(reads, read, conditions).await
-    }
-
     /// Send each target the forwarded read it resolved to -- a GET or a POST
     /// batch query -- telling each the location of the map in use (clause
     /// 5.5.14), and read each answer with `read`. Both answer with the entities
@@ -244,13 +229,20 @@ impl FederationService {
             triggering,
             cacheability,
             entity_map,
+            vocabulary,
         } = conditions;
         stream::iter(targets)
             .map(|(registration, forwarded)| async move {
-                let linked_map = entity_map.location_for(&registration.id);
+                let source = SourceRead::builder()
+                    .registration(&registration)
+                    .inbound(context)
+                    .triggering(triggering)
+                    .linked_map(entity_map.location_for(&registration.id))
+                    .vocabulary(vocabulary)
+                    .build();
                 let outcome = match forwarded {
-                    ForwardedRead::Get(url) => self.forward_get(&registration, url, context, triggering, cacheability, linked_map).await,
-                    ForwardedRead::PostQuery { url, body } => self.forward_post_query(&registration, url, body, context, triggering, linked_map).await,
+                    ForwardedRead::Get(url) => self.forward_get(source, url, cacheability).await,
+                    ForwardedRead::PostQuery { url, body } => self.forward_post_query(source, url, &body).await,
                 };
                 let error_status = outcome.error_status();
                 SourceAnswer {

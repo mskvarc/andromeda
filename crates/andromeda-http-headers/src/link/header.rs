@@ -14,7 +14,7 @@ use crate::link::{
 };
 use headers::HeaderMapExt;
 use http::{HeaderMap, HeaderName, HeaderValue};
-use iri_rs::IriRefBuf;
+use iri_rs::{IriBuf, IriRefBuf};
 use std::{fmt, iter, str::FromStr};
 
 /// Typed `Link` header (RFC 8288).
@@ -48,17 +48,22 @@ impl Link {
         if values.is_empty() { None } else { Some(Link::new(values)) }
     }
 
-    /// A single-value JSON-LD context `Link` header.
+    /// A single-value JSON-LD context `Link` header naming an absolute context.
     #[must_use]
-    pub fn jsonld_context(context_url: IriRefBuf) -> Link {
+    pub fn jsonld_context(context_url: IriBuf) -> Link {
         Link::new(vec![LinkValue::jsonld_context(context_url)])
     }
 
-    /// Insert JSON-LD context links into a header map as one `Link` header.
-    pub fn insert_jsonld_contexts(headers: &mut HeaderMap, urls: impl IntoIterator<Item = IriRefBuf>) {
-        if let Some(link) = Link::from_values(urls.into_iter().map(LinkValue::jsonld_context).collect()) {
-            headers.typed_insert(link);
-        }
+    /// Insert the one JSON-LD context link a response carries.
+    ///
+    /// JSON-LD 1.1 section 6.1: "A response MUST NOT contain more than one
+    /// HTTP Link Header using the <http://www.w3.org/ns/json-ld#context> link
+    /// relation", which the JSON-LD 1.1 API enforces as `multiple context link
+    /// headers`. Taking a single target makes a second context link
+    /// unrepresentable here; a compound context is named through one hosted
+    /// wrapper instead (ETSI GS CIM 009 v1.9.1 Annex C.8).
+    pub fn insert_jsonld_context(headers: &mut HeaderMap, url: IriBuf) {
+        headers.typed_insert(Link::jsonld_context(url));
     }
 
     /// Encode this header into a raw [`HeaderValue`], if it encodes at all.
@@ -161,7 +166,7 @@ impl headers::Header for Link {
 mod tests {
     use crate::link::{header::Link, relation_type::RelationType, value::LinkValue};
     use headers::Header;
-    use http::HeaderValue;
+    use http::{HeaderMap, HeaderValue};
     use iri_rs::{IriBuf, IriRefBuf};
     use mediatype::MediaTypeBuf;
     use std::iter;
@@ -169,6 +174,11 @@ mod tests {
     /// A validated IRI reference, for building link targets in tests.
     fn iri_ref(value: &str) -> IriRefBuf {
         IriRefBuf::new(value).expect("valid IRI reference")
+    }
+
+    /// A validated absolute IRI, for building context link targets in tests.
+    fn iri(value: &str) -> IriBuf {
+        IriBuf::new(value).expect("valid IRI")
     }
 
     /// Decode a `Link` from a raw header string through the `headers` trait.
@@ -250,13 +260,26 @@ mod tests {
 
     #[test]
     fn a_json_ld_context_header_encodes_with_relation_and_media_type() {
-        let raw = Link::jsonld_context(iri_ref("https://example.com/context.jsonld"))
+        let raw = Link::jsonld_context(iri("https://example.com/context.jsonld"))
             .to_header_string()
             .expect("encodes");
         pretty_assertions::assert_eq!(
             raw,
             r#"<https://example.com/context.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#
         );
+    }
+
+    /// JSON-LD 1.1 section 6.1: a response names exactly one context link.
+    #[test]
+    fn a_response_context_is_inserted_as_exactly_one_context_link() {
+        let mut headers = HeaderMap::new();
+        Link::insert_jsonld_context(&mut headers, iri("https://example.com/ctx.jsonld"));
+
+        let values: Vec<&HeaderValue> = headers.get_all("link").iter().collect();
+        pretty_assertions::assert_eq!(values.len(), 1);
+        let link: Link = values[0].to_str().expect("visible ASCII").parse().expect("a Link header");
+        let targets: Vec<&str> = link.context_urls().map(IriRefBuf::as_str).collect();
+        pretty_assertions::assert_eq!(targets, vec!["https://example.com/ctx.jsonld"]);
     }
 
     #[test]
@@ -286,7 +309,7 @@ mod tests {
 
     #[test]
     fn the_encoding_decodes_back_to_the_same_header() {
-        let link = Link::jsonld_context(iri_ref("https://example.com/ctx.jsonld"));
+        let link = Link::jsonld_context(iri("https://example.com/ctx.jsonld"));
         let mut encoded = Vec::new();
         link.encode(&mut encoded);
         pretty_assertions::assert_eq!(encoded.len(), 1);
@@ -298,9 +321,9 @@ mod tests {
     #[test]
     fn context_urls_returns_only_the_context_links() {
         let link = Link::new(vec![
-            LinkValue::new(iri_ref("https://example.com/ctx.jsonld")).push_rel(RelationType::jsonld_context()),
+            LinkValue::new(iri_ref("https://example.com/ctx.jsonld")).push_rel(RelationType::JsonLdContext),
             LinkValue::new(iri_ref("/page/2")).push_rel(RelationType::Next),
-            LinkValue::new(iri_ref("https://example.com/other.jsonld")).push_rel(RelationType::jsonld_context()),
+            LinkValue::new(iri_ref("https://example.com/other.jsonld")).push_rel(RelationType::JsonLdContext),
         ]);
 
         let urls: Vec<&str> = link.context_urls().map(IriRefBuf::as_str).collect();
@@ -311,7 +334,7 @@ mod tests {
     fn find_by_rel_returns_every_value_with_that_relation() {
         let link = Link::new(vec![
             LinkValue::new(iri_ref("/page/2")).push_rel(RelationType::Next),
-            LinkValue::new(iri_ref("https://example.com/ctx.jsonld")).push_rel(RelationType::jsonld_context()),
+            LinkValue::new(iri_ref("https://example.com/ctx.jsonld")).push_rel(RelationType::JsonLdContext),
             LinkValue::new(iri_ref("/page/3")).push_rel(RelationType::Next),
         ]);
 

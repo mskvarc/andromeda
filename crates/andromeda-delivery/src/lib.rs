@@ -14,7 +14,9 @@
 //! read is clause 5.5.7's: an `application/json` or `application/geo+json`
 //! notification carries its `@context` in a `Link` header rather than in the
 //! body, and [`request::DeliveryRequest::context_link`] is the single place
-//! that decides it.
+//! that decides it. Which `@context` that is, in the spelling each carrier
+//! names, is resolved once per notification by
+//! [`notification_context::NotificationContext::resolve`].
 //!
 //! [`mqtt::indicator::MqttHealthIndicator`] points outward, at
 //! `andromeda-health`: the connection pool is the only thing that can say
@@ -32,6 +34,7 @@ pub mod error;
 pub mod host_port;
 pub mod http;
 pub mod mqtt;
+pub mod notification_context;
 pub mod notification_context_placement;
 pub mod outcome;
 pub mod request;
@@ -43,6 +46,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-health",
         "andromeda-http-headers",
+        "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-vocabulary",

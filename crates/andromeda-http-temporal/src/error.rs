@@ -2,6 +2,7 @@
 
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
+use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
@@ -9,6 +10,7 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
     provision::classify_forwarding_error,
 };
+use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::{error::RenderError, temporal::simplify::TemporalSimplifyError};
@@ -102,6 +104,18 @@ impl TemporalHttpClassify for ParameterError {
 impl TemporalHttpClassify for QueryError {
     fn classify_for_temporal_http(&self) -> ClassifiedReport {
         classify_query_error(self)
+    }
+}
+
+impl TemporalHttpClassify for JsonLdError {
+    fn classify_for_temporal_http(&self) -> ClassifiedReport {
+        classify_jsonld_error(self)
+    }
+}
+
+impl TemporalHttpClassify for ResponseContextError {
+    fn classify_for_temporal_http(&self) -> ClassifiedReport {
+        classify_response_context_error(self)
     }
 }
 

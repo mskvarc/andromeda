@@ -85,7 +85,7 @@ impl CompactionContextCache {
 /// processed, so two specs share an entry only when they would process the same
 /// value.
 fn cache_key(spec: &ContextSpec) -> Option<Arc<str>> {
-    let embedded_only = spec.body_context().is_none() && spec.link_contexts().iter().all(|url| url.as_iri().is_some_and(is_ngsi_ld_core_context_url));
+    let embedded_only = spec.body_context().is_none() && spec.link_context().is_none_or(|url| is_ngsi_ld_core_context_url(url.as_ref()));
     if !embedded_only {
         return None;
     }
@@ -95,11 +95,11 @@ fn cache_key(spec: &ContextSpec) -> Option<Arc<str>> {
 #[cfg(test)]
 mod tests {
     use crate::{context_spec::ContextSpec, core_context::NGSI_LD_CORE_CONTEXT_V16_URL, engine::compaction_context_cache::cache_key};
-    use iri_rs::IriRefBuf;
+    use iri_rs::IriBuf;
     use serde_json::json;
 
-    fn iri_ref(url: &str) -> IriRefBuf {
-        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    fn iri_ref(url: &str) -> IriBuf {
+        IriBuf::new(url.to_owned()).expect("a valid IRI")
     }
 
     #[test]
@@ -110,23 +110,23 @@ mod tests {
 
     #[test]
     fn a_spec_naming_only_released_core_contexts_is_kept() {
-        assert!(cache_key(&ContextSpec::from_links(vec![iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL.as_str())])).is_some());
+        assert!(cache_key(&ContextSpec::from_link(iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()))).is_some());
     }
 
     #[test]
     fn a_spec_naming_a_remote_context_is_not_kept() {
-        assert!(cache_key(&ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")])).is_none());
+        assert!(cache_key(&ContextSpec::from_link(iri_ref("https://example.com/context.jsonld"))).is_none());
     }
 
     #[test]
     fn a_spec_carrying_a_body_context_is_not_kept() {
-        let spec = ContextSpec::none().with_body_context(Some(json!({ "speed": "https://example.com/speed" })));
+        let spec = ContextSpec::from_body(json!({ "speed": "https://example.com/speed" }));
         assert!(cache_key(&spec).is_none());
     }
 
     #[test]
     fn specs_resolving_to_the_same_context_share_one_key() {
-        let versioned = ContextSpec::from_links(vec![iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL.as_str())]);
+        let versioned = ContextSpec::from_link(iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()));
         pretty_assertions::assert_eq!(cache_key(&versioned), cache_key(&ContextSpec::none()));
     }
 }

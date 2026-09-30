@@ -23,7 +23,7 @@ mod tests {
 
     #[test]
     fn hosted_context_may_have_no_public_url() -> Result<(), ContextRegistryError> {
-        let identifier = "urn:ngsi-ld:Context:local"
+        let identifier = "urn:ngsi-ld:JsonLdContext:local"
             .parse::<Identifier>()
             .map_err(|error| ContextRegistryError::from(RegistryInvariant::CoreContextIdentifier(error)))?;
         let stored = StoredContext {

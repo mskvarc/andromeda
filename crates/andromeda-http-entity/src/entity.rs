@@ -14,6 +14,7 @@ use andromeda_federation::{
     request::{CsrModeFilter, ForwardProvisionRequest, ForwardQueryRequest},
     single_source_failure::single_source_failure,
 };
+use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormat,
     context::ContextUrl,
@@ -31,7 +32,6 @@ use andromeda_http_response::{
     linked_resolution_warning::with_linked_resolution_warnings,
     problem_response::ProblemResponse,
     provision::{LocalOutcome, classify_forwarding_error, multi_status, provision_response},
-    render::start_rendering,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};

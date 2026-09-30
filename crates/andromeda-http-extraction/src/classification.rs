@@ -1,6 +1,6 @@
 //! Exhaustive classification shared by HTTP extractors.
 
-use crate::origin::RequestOriginError;
+use crate::{api_root::ApiRootError, request_links::ContextLinkError};
 use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -25,11 +25,36 @@ pub fn classify_tenancy_error(error: &TenancyError) -> ClassifiedReport {
     }
 }
 
-/// Classify a malformed request-origin header at the shared extraction boundary.
+/// Classify a request authority no `apiRoot` can be built from at the shared
+/// extraction boundary.
 #[must_use]
-pub fn classify_request_origin_error(error: &RequestOriginError) -> ClassifiedReport {
+pub fn classify_api_root_error(error: &ApiRootError) -> ClassifiedReport {
     match error {
-        RequestOriginError::InvalidOrigin(_) => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
+        ApiRootError::InvalidOrigin(_) => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
+    }
+}
+
+/// Classify a request's `Link` headers that name no usable context.
+///
+/// Clause 5.5.4 validates the context of every request, and clause 6.3.5 reads
+/// it from one `Link` header and refuses one beside an `application/ld+json`
+/// body: a malformed link, a second context link, a relative target that does
+/// not resolve against the request URI and a context link beside an
+/// `application/ld+json` body are each a `BadRequestData`. A request authority
+/// that forms no origin is the same `InvalidRequest` it draws wherever the
+/// broker reads it ([`classify_api_root_error`]).
+#[must_use]
+pub fn classify_context_link_error(error: &ContextLinkError) -> ClassifiedReport {
+    match error {
+        ContextLinkError::InvalidOrigin(source) => classify_api_root_error(source),
+        ContextLinkError::NotVisibleAscii(_)
+        | ContextLinkError::Malformed(_)
+        | ContextLinkError::SeveralContexts { .. }
+        | ContextLinkError::NoRequestAuthority
+        | ContextLinkError::RequestUriNotIri(_)
+        | ContextLinkError::Unresolvable(_)
+        | ContextLinkError::ResolvedNotAbsolute(_)
+        | ContextLinkError::CombinedWithLdJson => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }
 }
 
@@ -167,16 +192,18 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
         | JsonLdError::JsonLdContextText(_)
         | JsonLdError::JsonLdContextShape
         | JsonLdError::DocumentShape
+        | JsonLdError::ContextGraph(_)
         | JsonLdError::Json(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::classify_jsonld_error;
-    use andromeda_jsonld::error::JsonLdError;
+    use crate::classification::classify_jsonld_error;
+    use andromeda_jsonld::{context_graph::ContextGraphError, error::JsonLdError};
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_tenancy::runtime_build_failure::RuntimeBuildFailure;
+    use iri_rs::IriBuf;
 
     #[test]
     fn malformed_json_is_invalid_request() {
@@ -188,6 +215,21 @@ mod tests {
     fn valid_json_with_a_deserialization_error_is_bad_request_data() {
         let error = JsonLdError::Json(serde_json::from_value::<u64>(serde_json::json!("not a number")).expect_err("wrong JSON type"));
         pretty_assertions::assert_eq!(classify_jsonld_error(&error).error_type(), NgsiLdErrorType::BadRequestData);
+    }
+
+    /// Clause 5.5.6: a `@context` whose references cycle, run too deep or
+    /// overflow the processor is invalid, a `BadRequestData`.
+    #[test]
+    fn an_invalid_context_reference_graph_is_bad_request_data() {
+        let url = IriBuf::new("https://example.org/cycle.jsonld".to_owned()).expect("a valid IRI");
+        for refusal in [
+            ContextGraphError::Cycle(url.clone()),
+            ContextGraphError::TooDeep(url),
+            ContextGraphError::ProcessorOverflow,
+        ] {
+            let error = JsonLdError::ContextGraph(refusal);
+            pretty_assertions::assert_eq!(classify_jsonld_error(&error).error_type(), NgsiLdErrorType::BadRequestData, "{error}");
+        }
     }
 
     #[test]

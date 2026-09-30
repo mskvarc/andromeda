@@ -86,7 +86,7 @@ mod tests {
         engine::processor::JsonLdEngine,
         error::JsonLdError,
     };
-    use iri_rs::IriRefBuf;
+    use iri_rs::IriBuf;
     use serde_json::json;
 
     /// An engine that resolves only what is embedded, never the network.
@@ -138,9 +138,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unavailable_link_context_remains_a_typed_loading_failure() {
-        let context = ContextSpec::from_links(vec![
-            IriRefBuf::new("https://example.com/absent.jsonld".to_string()).expect("a valid IRI reference"),
-        ]);
+        let context = ContextSpec::from_link(IriBuf::new("https://example.com/absent.jsonld".to_owned()).expect("a valid IRI"));
         let error = validate_context_spec(&offline_engine(), &context).await.expect_err("nothing resolves offline");
 
         assert!(error.is_context_not_available(), "expected a loading failure, got {error}");
@@ -148,7 +146,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unavailable_body_context_remains_a_typed_loading_failure() {
-        let context = ContextSpec::none().with_body_context(Some(json!("https://example.com/absent.jsonld")));
+        let context = ContextSpec::from_body(json!("https://example.com/absent.jsonld"));
         let error = validate_context_spec(&offline_engine(), &context).await.expect_err("nothing resolves offline");
 
         assert!(error.is_context_not_available(), "expected a loading failure, got {error}");

@@ -2,10 +2,13 @@
 
 use crate::{
     handler,
+    served_document::vary_on_tenant,
     state::{ContextRegistryRouteState, ContextRegistryStateResolver},
 };
 use axum::{
     Router,
+    handler::Handler,
+    middleware::map_response,
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -20,7 +23,7 @@ impl ContextRegistryRoutes {
     pub fn new(resolver: Arc<dyn ContextRegistryStateResolver>) -> ContextRegistryRoutes {
         let context_routes = Router::new()
             .route("/", post(handler::create).get(handler::query))
-            .route("/{context_id}", get(handler::get).delete(handler::delete));
+            .route("/{context_id}", get(handler::get.layer(map_response(vary_on_tenant))).delete(handler::delete));
         let router = Router::new()
             .nest("/jsonldContexts", context_routes)
             .with_state(ContextRegistryRouteState::new(resolver));
@@ -34,8 +37,14 @@ impl ContextRegistryRoutes {
 }
 
 #[cfg(test)]
+mod serve_tests;
+
+#[cfg(test)]
 mod tests {
-    use crate::state::{ContextRegistryRouteServices, ContextRegistryStateResolver};
+    use crate::{
+        routes::ContextRegistryRoutes,
+        state::{ContextRegistryRouteServices, ContextRegistryStateResolver},
+    };
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::{Body, to_bytes},
@@ -60,7 +69,7 @@ mod tests {
 
     #[tokio::test]
     async fn owns_the_complete_context_registry_inventory() -> Result<(), HttpError> {
-        let routes = super::ContextRegistryRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let routes = ContextRegistryRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/jsonldContexts"),
             (Method::GET, "/jsonldContexts"),
@@ -91,7 +100,7 @@ mod tests {
     /// tenant is resolved.
     #[tokio::test]
     async fn creating_a_context_without_a_declared_length_is_the_bare_411() -> Result<(), HttpError> {
-        let routes = super::ContextRegistryRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let routes = ContextRegistryRoutes::new(Arc::new(RejectingResolver)).into_router();
         let request = Request::builder()
             .method(Method::POST)
             .uri("/jsonldContexts")
@@ -115,7 +124,7 @@ mod tests {
     /// the operation, which the rejecting resolver then refuses.
     #[tokio::test]
     async fn a_declared_length_carries_the_request_past_the_precondition() -> Result<(), HttpError> {
-        let routes = super::ContextRegistryRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let routes = ContextRegistryRoutes::new(Arc::new(RejectingResolver)).into_router();
         let request = Request::builder()
             .method(Method::POST)
             .uri("/jsonldContexts")

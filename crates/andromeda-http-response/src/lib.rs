@@ -10,6 +10,7 @@ pub mod batch_projection;
 pub mod classified_report;
 pub mod collection;
 pub mod content_range;
+pub mod context_hosting_failure;
 pub mod declined_representation;
 pub mod extraction_rejection;
 pub mod headers;
@@ -35,10 +36,11 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-representation",
+        "andromeda-ngsi-ld-vocabulary",
+        "andromeda-persistence-failure",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-model",
-        "andromeda-ngsi-ld-vocabulary",
     ],
     allow_production_dependencies: ["axum"],
 }

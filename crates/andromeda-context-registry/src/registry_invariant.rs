@@ -1,6 +1,9 @@
 //! The invariants Context Registry policy relies on, and how each one broke.
 
-use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
+use andromeda_ngsi_ld_lexicon::{
+    identifier::IdentifierParseError,
+    ngsi_ld_urn::{JsonLdContextId, JsonLdContextIdParseError},
+};
 use iri_rs::InvalidIri;
 use thiserror::Error;
 
@@ -24,4 +27,16 @@ pub enum RegistryInvariant {
     /// reference.
     #[error("a validated Context identifier is not an IRI reference: {0}")]
     IdentifierNotIri(#[source] InvalidIri<String>),
+    /// The identifier minted or derived for a new Context is not one.
+    #[error("a minted Context identifier is not a JsonLdContext identifier: {0}")]
+    MintedIdentifier(#[source] JsonLdContextIdParseError),
+    /// A freshly minted random identifier is already held by a stored Context.
+    #[error("a freshly minted Context identifier is already held: {identifier}")]
+    MintedIdentifierTaken {
+        /// The identifier that was already held.
+        identifier: JsonLdContextId,
+    },
+    /// The memo of stored identifiers refused to forget a deleted one.
+    #[error("the memo of stored Context identifiers cannot forget a deleted one: {0}")]
+    MemoInvalidation(#[source] moka::PredicateError),
 }

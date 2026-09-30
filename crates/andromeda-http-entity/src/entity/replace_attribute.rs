@@ -37,22 +37,13 @@ pub(crate) async fn replace_attr(
         target,
         snapshot: _,
     }: EntityTenantState,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath((id, attr_id)): TypedPath<(Identifier, AttributeName)>,
     ValidatedQuery(params): ValidatedQuery<ReplaceAttrParams>,
-    JsonLdDocument {
-        document: fragment,
-        context: body_context,
-    }: JsonLdDocument,
+    JsonLdDocument { document: fragment, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let dataset_id = selected_dataset_uri(params.dataset_id.as_ref());
-    let context = context.merge(body_context);
     // Clause 5.6.19.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
     // attribute a proxied registration claims is still validated.

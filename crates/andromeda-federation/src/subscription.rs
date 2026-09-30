@@ -10,6 +10,7 @@
 use crate::{
     FederationService,
     error::FederationError,
+    forwarded_payload::OutgoingBody,
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
     outcome::{ForwardedWriteOutcome, TransportFailure},
@@ -143,12 +144,14 @@ impl FederationService {
             }
             SubscriptionForward::Delete { remote_id } => (reqwest::Method::DELETE, vec!["subscriptions", remote_id.as_str()], None, &CORE_CONTEXT),
         };
-        let url = match forwarding_url(registration.access.endpoint.url(), &path, "") {
+        let url = match forwarding_url(registration.access.endpoint.url(), &path, None) {
             Ok(url) => url,
             Err(error) => return unreachable(error),
         };
         debug!("CS forwarding subscription {} {}", method, url);
-        let payload = match self.payload_for(registration, context, body).await {
+        // A reduced subscription is respelled member by member, so its shape
+        // survives a configured forwarding context (clause 4.3.6.6).
+        let payload = match self.payload_for(registration, context, body.map(OutgoingBody::Subscription)).await {
             Ok(payload) => payload,
             Err(error) => return unreachable(error),
         };
@@ -163,20 +166,9 @@ impl FederationService {
             Ok(request) => request,
             Err(error) => return unreachable(error),
         };
-        let sent = match self.send_request(registration, request).await {
-            Ok(sent) => sent,
-            Err(failure) => return ForwardedWriteOutcome::Transport(failure),
-        };
-        let response_body = if sent.body.is_empty() {
-            None
-        } else {
-            serde_json::from_slice::<Value>(&sent.body).ok()
-        };
-        let status = sent.status.as_u16();
-        if sent.status.is_success() {
-            ForwardedWriteOutcome::Completed { status, body: response_body }
-        } else {
-            ForwardedWriteOutcome::RemoteHttpFailure { status, body: response_body }
+        match self.send_request(registration, request).await {
+            Ok(sent) => ForwardedWriteOutcome::of_sent(&registration.id, &sent),
+            Err(failure) => ForwardedWriteOutcome::Transport(failure),
         }
     }
 }

@@ -71,7 +71,6 @@ fn entity_service(store: &Arc<InMemoryStore>, writes: Arc<dyn ContextCommitter>)
         JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds"),
         Arc::new(ChangeNotifier::new(None, None)),
         BatchExecutionConfig {
-            concurrency: 1,
             chunk_concurrency: 1,
             chunk_write_concurrency: 1,
             chunk_size: 1,

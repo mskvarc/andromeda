@@ -1,24 +1,14 @@
-#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
-//! Consumption: List @contexts tests (NGSI-LD 6.25.3.3)
-
-use reqwest::StatusCode;
-use std::{collections::HashMap, time::Duration};
-use tokio::time::sleep;
+//! List @contexts (clause 5.13.3, binding 6.29.3.2; ETSI 052).
 
 use crate::{
-    BAD_REQUEST_DATA_TYPE,
-    ContextServer,
-    create_context,
-    create_entity,
-    create_subscription,
-    delete_subscription,
-    extract_id,
-    list_contexts,
-    provision_tenant,
-    tenant_client,
-    unique_id,
+    broker_endpoints::broker_url,
+    context_api::{create_context, extract_id, list_contexts, setup_cached_context},
+    ngsi_requests::{create_subscription, delete_subscription},
+    private_tenant::{provision_tenant, tenant_client},
+    problem_types::BAD_REQUEST_DATA_TYPE,
 };
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
+use reqwest::StatusCode;
 use serde_json::{Value, json};
 
 /// Assert listing contains no non-core context URIs.
@@ -27,11 +17,14 @@ fn assert_no_non_core(contexts: &[Value]) {
     assert!(non_core.is_empty(), "expected no non-core contexts, got {non_core:?}");
 }
 
-/// Assert listing contains a URI ending with the given string.
+/// Assert listing names the stored @context `uri` (a `Location` or serving
+/// URL) addresses. A non-default tenant's serving URL carries its tenant as a
+/// query parameter, so entries are compared by identifier.
 fn assert_contains(contexts: &[Value], uri: &str) {
+    let identifier = extract_id(uri);
     assert!(
-        contexts.iter().any(|v| v.as_str().is_some_and(|s| s.ends_with(uri))),
-        "should contain context URI {uri}"
+        contexts.iter().any(|v| v.as_str().is_some_and(|s| extract_id(s) == identifier)),
+        "should contain context {identifier}: {contexts:?}"
     );
 }
 
@@ -77,11 +70,8 @@ async fn create_implicit_context_for_list(c: &reqwest::Client) -> String {
     let sub = json!({
         "type": "Subscription",
         "entities": [{"type": "T1"}],
-        "notification": {"endpoint": {"uri": "http://a.b.c/123"}},
-        "@context": [
-            "https://fiware.github.io/NGSI-LD_TestSuite/ldContext/testContext.jsonld",
-            "http://smartdatamodels.org/context.jsonld"
-        ]
+        "notification": {"endpoint": {"uri": "http://127.0.0.1:1/notify"}},
+        "@context": [{ "T1": "https://example.org/list/T1" }, { "speed": "https://example.org/list/speed" }]
     });
     let (status, location) = create_subscription(c, &sub).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -285,7 +275,7 @@ async fn list_invalid_kind_returns_400() {
     let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
     let c = tenant_client(env.tenant());
     provision_tenant(&c).await;
-    let resp = c.get(crate::broker_url("jsonldContexts?kind=other")).send().await.expect("request failed");
+    let resp = c.get(broker_url("jsonldContexts?kind=other")).send().await.expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -298,7 +288,7 @@ async fn list_invalid_details_returns_400() {
     let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
     let c = tenant_client(env.tenant());
     provision_tenant(&c).await;
-    let resp = c.get(crate::broker_url("jsonldContexts?details=other")).send().await.expect("request failed");
+    let resp = c.get(broker_url("jsonldContexts?details=other")).send().await.expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -312,7 +302,7 @@ async fn list_invalid_kind_with_details_true_returns_400() {
     let c = tenant_client(env.tenant());
     provision_tenant(&c).await;
     let resp = c
-        .get(crate::broker_url("jsonldContexts?details=true&kind=other"))
+        .get(broker_url("jsonldContexts?details=true&kind=other"))
         .send()
         .await
         .expect("request failed");
@@ -329,7 +319,7 @@ async fn list_invalid_details_with_kind_hosted_returns_400() {
     let c = tenant_client(env.tenant());
     provision_tenant(&c).await;
     let resp = c
-        .get(crate::broker_url("jsonldContexts?details=other&kind=Hosted"))
+        .get(broker_url("jsonldContexts?details=other&kind=Hosted"))
         .send()
         .await
         .expect("request failed");
@@ -346,7 +336,7 @@ async fn list_invalid_details_and_kind_returns_400() {
     let c = tenant_client(env.tenant());
     provision_tenant(&c).await;
     let resp = c
-        .get(crate::broker_url("jsonldContexts?details=other&kind=other"))
+        .get(broker_url("jsonldContexts?details=other&kind=other"))
         .send()
         .await
         .expect("request failed");
@@ -552,23 +542,7 @@ async fn list_cached_contexts_with_details() {
     let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
     let c = tenant_client(env.tenant());
     provision_tenant(&c).await;
-
-    let ctx_content = r#"{"@context":{"X1":"urn:ngsi-ld:attributes:X1"}}"#;
-    let server = ContextServer::start(HashMap::from([("/context.jsonld".to_string(), ctx_content.to_string())])).await;
-    let ctx_url = server.url("/context.jsonld");
-
-    // Create entity to trigger caching
-    let entity_id = unique_id("urn:ngsi-ld:Testing:list-cached");
-    let entity = json!({
-        "id": &entity_id,
-        "type": "Testing",
-        "X1": {"type": "Property", "value": "test"},
-        "@context": [&ctx_url]
-    });
-    let (status, _) = create_entity(&c, &entity).await;
-    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
-
-    sleep(Duration::from_secs(1)).await;
+    let (server, ctx_url) = setup_cached_context(&c).await;
 
     // List with details=true and kind=Cached
     let (status, contexts) = list_contexts(&c, "details=true&kind=Cached").await;
@@ -582,7 +556,6 @@ async fn list_cached_contexts_with_details() {
     assert!(entry.get("URL").is_some());
     assert!(entry.get("createdAt").is_some());
 
-    crate::delete_entity(&c, &entity_id).await;
-    let _ = server;
+    server.shutdown().await;
     env.finish().await.expect("cleanup failed");
 }

@@ -43,7 +43,7 @@ async fn batch_merge_records_the_merged_instance_keeping_its_untouched_sub_prope
     )
     .await;
     service
-        .batch_merge(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
+        .batch_merge(SideEffectPlacement::Inline(&live_target()), admitted)
         .await
         .expect("the batch merge lands");
 
@@ -66,7 +66,7 @@ async fn batch_merge_defers_the_merged_instance_when_enqueued() {
     )
     .await;
     service
-        .batch_merge(SideEffectPlacement::DeferredOnLive, admitted, &ContextSpec::core_only())
+        .batch_merge(SideEffectPlacement::DeferredOnLive, admitted)
         .await
         .expect("the batch merge lands");
 
@@ -95,12 +95,7 @@ async fn batch_update_without_overwrite_records_only_the_attributes_it_appended(
     )
     .await;
     service
-        .batch_update(
-            SideEffectPlacement::Inline(&live_target()),
-            admitted,
-            &ContextSpec::core_only(),
-            OverwritePolicy::Preserve,
-        )
+        .batch_update(SideEffectPlacement::Inline(&live_target()), admitted, OverwritePolicy::Preserve)
         .await
         .expect("the batch update lands");
 
@@ -121,12 +116,7 @@ async fn batch_update_without_overwrite_that_appended_nothing_records_no_observa
     )
     .await;
     service
-        .batch_update(
-            SideEffectPlacement::Inline(&live_target()),
-            admitted,
-            &ContextSpec::core_only(),
-            OverwritePolicy::Preserve,
-        )
+        .batch_update(SideEffectPlacement::Inline(&live_target()), admitted, OverwritePolicy::Preserve)
         .await
         .expect("the batch update completes");
 
@@ -146,12 +136,7 @@ async fn batch_update_with_overwrite_records_the_stored_instance() {
     )
     .await;
     service
-        .batch_update(
-            SideEffectPlacement::Inline(&live_target()),
-            admitted,
-            &ContextSpec::core_only(),
-            OverwritePolicy::Overwrite,
-        )
+        .batch_update(SideEffectPlacement::Inline(&live_target()), admitted, OverwritePolicy::Overwrite)
         .await
         .expect("the batch update lands");
 
@@ -171,7 +156,7 @@ async fn batch_upsert_update_records_the_stored_instance() {
     )
     .await;
     service
-        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
+        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted)
         .await
         .expect("the batch upsert lands");
 
@@ -195,7 +180,7 @@ async fn batch_upsert_replace_records_every_stored_attribute_of_the_replacement(
     )
     .await;
     service
-        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted, &ContextSpec::core_only())
+        .batch_upsert(SideEffectPlacement::Inline(&live_target()), admitted)
         .await
         .expect("the batch upsert lands");
 

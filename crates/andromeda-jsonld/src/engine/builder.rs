@@ -8,20 +8,16 @@
 use crate::{
     context_cache::ContextCache,
     context_registry::ContextRegistry,
-    core_context::{
-        NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL,
-        NGSI_LD_CORE_CONTEXT_URL_LIST,
-        embedded_core_context as embedded_core_context_payload,
-        is_ngsi_ld_core_context_url,
-    },
+    core_context::{NGSI_LD_CORE_CONTEXT_URL_LIST, embedded_core_context as embedded_core_context_payload, is_ngsi_ld_core_context_url},
     engine::{options::RemoteContextFetch, processor::JsonLdEngine, term_lookup::TermCache, term_map::vocabulary::CoreVocabulary},
     error::JsonLdError,
     hit_counter::HitCounter,
-    loader::{cache_lifetime::CacheLifetime, http::HttpContextLoader},
+    hosted_context_recognizer::{HostedContextRecognizer, NoHostedContexts},
+    loader::{cache_lifetime::CacheLifetime, context_lifetimes::ContextLifetimes, http::HttpContextLoader, loader_settings::LoaderSettings},
 };
 use iri_rs::{Iri, IriBuf, iri};
 use jsonld_syntax::Parse;
-use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 use tracing::info;
 use url::Url;
 
@@ -49,22 +45,24 @@ pub struct JsonLdEngineBuilder {
     l2_cache: Option<Arc<dyn ContextCache>>,
     /// Whether the engine may fetch a context it does not hold.
     allow_remote: RemoteContextFetch,
-    /// HTTP request timeout, in seconds.
-    timeout_secs: u64,
+    /// How long one context fetch may take.
+    timeout: Duration,
     /// How many redirects a context fetch may follow.
     max_redirects: u32,
     /// Entry bound shared by the context cache and the term cache.
     cache_capacity: u64,
     /// The term cache's entry lifetime, and the heuristic lifetime a context
     /// falls back to when its response states no expiration time.
-    cache_ttl_secs: u64,
+    cache_ttl: CacheLifetime,
+    /// How long an `@context` the broker stores itself is used from memory
+    /// before its row is read again.
+    hosted_context_revalidation: CacheLifetime,
     /// The size beyond which a remote context is refused.
     max_context_bytes: u64,
     /// Contexts to read from disk at build time, by URL.
     preload_contexts: Option<HashMap<Url, PathBuf>>,
-    /// The released core context a versionless reference expands against
-    /// (clause 4.4), or `None` for the versionless core context.
-    default_core_url: Option<IriBuf>,
+    /// Recognises references to the tenant's own stored `@context`s.
+    hosted_contexts: Arc<dyn HostedContextRecognizer>,
 }
 
 impl JsonLdEngineBuilder {
@@ -75,25 +73,15 @@ impl JsonLdEngineBuilder {
             registry: Arc::new(ContextRegistry::new()),
             l2_cache: None,
             allow_remote: RemoteContextFetch::Allow,
-            timeout_secs: 30,
+            timeout: Duration::from_secs(30),
             max_redirects: 5,
             cache_capacity: 1024,
-            cache_ttl_secs: 3600,
+            cache_ttl: CacheLifetime::DEFAULT,
+            hosted_context_revalidation: CacheLifetime::HOSTED_REVALIDATION_DEFAULT,
             max_context_bytes: 2_000_000,
             preload_contexts: None,
-            default_core_url: None,
+            hosted_contexts: Arc::new(NoHostedContexts),
         }
-    }
-
-    /// Pin which released core context a versionless reference expands against.
-    ///
-    /// Clause 4.3.6.8 admits any released core context; a deployment picks one,
-    /// and the fastpath term table is derived from it. Left unset, a versionless
-    /// reference expands against the versionless core context.
-    #[must_use]
-    pub fn default_core_url(mut self, url: IriBuf) -> JsonLdEngineBuilder {
-        self.default_core_url = Some(url);
-        self
     }
 
     /// Whether the engine may fetch contexts over HTTP.
@@ -103,10 +91,10 @@ impl JsonLdEngineBuilder {
         self
     }
 
-    /// The HTTP request timeout, in seconds.
+    /// How long one context fetch may take.
     #[must_use]
-    pub const fn timeout_secs(mut self, seconds: u64) -> JsonLdEngineBuilder {
-        self.timeout_secs = seconds;
+    pub const fn timeout(mut self, timeout: Duration) -> JsonLdEngineBuilder {
+        self.timeout = timeout;
         self
     }
 
@@ -124,15 +112,28 @@ impl JsonLdEngineBuilder {
         self
     }
 
-    /// The term cache's entry lifetime, in seconds, and the heuristic lifetime
-    /// assigned to a downloaded `@context` whose response states none.
+    /// The term cache's entry lifetime, and the heuristic lifetime assigned to
+    /// a downloaded `@context` whose response states none.
     ///
     /// Clause 6.3.16 makes a response's own `Expires` field and `max-age` or
     /// `s-maxage` directives authoritative over how long the `@context` it
     /// carries may be reused, so this is a fallback rather than a cap.
     #[must_use]
-    pub const fn cache_ttl_secs(mut self, ttl: u64) -> JsonLdEngineBuilder {
-        self.cache_ttl_secs = ttl;
+    pub const fn cache_ttl(mut self, ttl: CacheLifetime) -> JsonLdEngineBuilder {
+        self.cache_ttl = ttl;
+        self
+    }
+
+    /// How long an `@context` the broker stores itself (clause 5.13.1
+    /// `"Hosted"` and `"ImplicitlyCreated"`) is used from memory before its row
+    /// is read again.
+    ///
+    /// No origin server can make such a document stale, but another broker
+    /// process sharing the database can delete it, so the in-process copy is
+    /// revalidated on this span rather than kept for the life of the process.
+    #[must_use]
+    pub const fn hosted_context_revalidation(mut self, revalidation: CacheLifetime) -> JsonLdEngineBuilder {
+        self.hosted_context_revalidation = revalidation;
         self
     }
 
@@ -154,6 +155,17 @@ impl JsonLdEngineBuilder {
     #[must_use]
     pub fn preload_contexts(mut self, contexts: HashMap<Url, PathBuf>) -> JsonLdEngineBuilder {
         self.preload_contexts = Some(contexts);
+        self
+    }
+
+    /// The recogniser of the tenant's own stored `@context`s (clause 5.13.1),
+    /// which the loader resolves from storage rather than over HTTP.
+    ///
+    /// An engine no tenant stands behind keeps the default, which recognises
+    /// nothing.
+    #[must_use]
+    pub fn hosted_contexts(mut self, recognizer: Arc<dyn HostedContextRecognizer>) -> JsonLdEngineBuilder {
+        self.hosted_contexts = recognizer;
         self
     }
 
@@ -189,18 +201,22 @@ impl JsonLdEngineBuilder {
         // memory, so `usize::MAX` refuses exactly the same set of documents.
         let max_context_bytes = usize::try_from(self.max_context_bytes).unwrap_or(usize::MAX);
         // Clause 6.3.16: the configured TTL is the heuristic expiration time
-        // assigned when a response states none, not the lifetime of every
-        // entry. `JsonLdConfig::validate` refuses a zero setting; a builder
-        // driven without a configuration falls back to the same default.
-        let default_lifetime = CacheLifetime::from_seconds(self.cache_ttl_secs).unwrap_or(CacheLifetime::DEFAULT);
+        // assigned when a response states none, not the lifetime of every entry.
+        let settings = LoaderSettings::builder()
+            .allow_remote(self.allow_remote)
+            .timeout(self.timeout)
+            .max_redirects(self.max_redirects)
+            .cache_capacity(self.cache_capacity)
+            .lifetimes(ContextLifetimes {
+                heuristic: self.cache_ttl,
+                hosted_revalidation: self.hosted_context_revalidation,
+            })
+            .max_context_bytes(max_context_bytes)
+            .build();
         let mut loader = HttpContextLoader::new(
             Arc::clone(&self.registry), // clone: Arc ref-count bump
-            self.allow_remote,
-            self.timeout_secs,
-            self.max_redirects,
-            self.cache_capacity,
-            default_lifetime,
-            max_context_bytes,
+            settings,
+            self.hosted_contexts,
         )?;
 
         // Counting accesses is only worth doing when there is a durable cache
@@ -213,15 +229,11 @@ impl JsonLdEngineBuilder {
             loader = loader.with_l2_cache(durable);
         }
 
-        // The pin defaults to the versionless core context, which the registry
-        // resolves to whatever version this deployment embedded.
-        let default_core_url = self.default_core_url.unwrap_or_else(|| IriBuf::from(NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL));
         let core_vocabulary = CoreVocabulary::try_from_generated()?;
         Ok(JsonLdEngine::assembled(
             loader,
-            TermCache::new(self.cache_capacity, self.cache_ttl_secs),
+            TermCache::new(self.cache_capacity, self.cache_ttl),
             hit_counter,
-            default_core_url,
             core_vocabulary,
         ))
     }
@@ -283,11 +295,11 @@ fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &Contex
 mod tests {
     use crate::{
         context_spec::ContextSpec,
-        core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V19_URL},
+        core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
         engine::processor::JsonLdEngine,
         error::JsonLdError,
     };
-    use iri_rs::IriBuf;
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
     use std::{
         collections::HashMap,
@@ -468,7 +480,7 @@ mod tests {
     fn a_preload_cannot_replace_an_embedded_core_context() {
         let path = preloaded_file("protected-core", r#"{"@context":{"overridden":"https://example.com/override"}}"#);
         let mut preloads = HashMap::new();
-        preloads.insert(context_url(NGSI_LD_CORE_CONTEXT_V19_URL.as_str()), path.clone());
+        preloads.insert(context_url(NGSI_LD_CORE_CONTEXT_URL.as_str()), path.clone());
 
         let built = JsonLdEngine::builder().preload_contexts(preloads).build();
 
@@ -482,29 +494,28 @@ mod tests {
         assert!(engine.hit_counter().is_none(), "there is nothing to flush accumulated hits into");
     }
 
-    #[test]
-    fn two_engines_carry_their_own_core_context_pin_independently() {
-        // The pin lives on the engine, not a process global: two engines built
-        // with different pins keep them both, where the removed `OnceLock` let
-        // the first setter win for the whole process (clause 4.4).
-        let older = JsonLdEngine::builder()
-            .allow_remote(false)
-            .default_core_url(IriBuf::new(NGSI_LD_CORE_CONTEXT_V16_URL.to_string()).expect("valid core URL"))
-            .build()
-            .expect("engine builds");
-        let newer = JsonLdEngine::builder()
-            .allow_remote(false)
-            .default_core_url(IriBuf::new(NGSI_LD_CORE_CONTEXT_V19_URL.to_string()).expect("valid core URL"))
-            .build()
-            .expect("engine builds");
-
-        pretty_assertions::assert_eq!(older.default_core_url().as_str(), NGSI_LD_CORE_CONTEXT_V16_URL.as_str());
-        pretty_assertions::assert_eq!(newer.default_core_url().as_str(), NGSI_LD_CORE_CONTEXT_V19_URL.as_str());
-    }
-
-    #[test]
-    fn an_engine_without_a_pin_defaults_to_the_versionless_core_context() {
+    /// Clause 4.4: every core reference, whatever release it names, is
+    /// processed as the v1.9 core context, so a term only an older release
+    /// defined falls to the core `@vocab` rather than to its older IRI.
+    #[tokio::test]
+    async fn every_release_of_the_core_context_expands_as_the_v1_9_core_context() {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        pretty_assertions::assert_eq!(engine.default_core_url().as_str(), NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL.as_str());
+        for core in [NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_URL] {
+            let expanded = engine
+                .expand(
+                    json!({
+                        "@context": core.as_str(),
+                        "id": "urn:ngsi-ld:Thing:1",
+                        "type": "Thing",
+                        "attributeCount": { "type": "Property", "value": 1 }
+                    }),
+                    &ContextSpec::none(),
+                )
+                .await
+                .expect("a core context expands")
+                .to_string();
+
+            assert!(expanded.contains("https://uri.etsi.org/ngsi-ld/attributeCount"), "{core}: {expanded}");
+        }
     }
 }

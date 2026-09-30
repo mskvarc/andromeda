@@ -11,13 +11,18 @@ use crate::{
     addressed_uri::addressed_request_uri,
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
     batch_item_refusal::BatchItemRefusal,
+    classification::classify_context_link_error,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
-    context::ContextUrl,
+    request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
     undecodable_body::UndecodableBody,
 };
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{
+    batch_contexts::{BatchContext, BatchContexts},
+    context_spec::ContextSpec,
+    request_context::RequestContext,
+};
 use andromeda_ngsi_ld_lexicon::{identifier_length::IdentifierTooLong, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact};
@@ -31,7 +36,7 @@ use axum::{
 use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
 use serde_json::Value;
-use std::{collections::HashSet, mem::take};
+use std::mem::take;
 
 /// The representation a batch request announced in its `Content-Type`.
 ///
@@ -78,6 +83,10 @@ pub struct BatchBody {
     headers: HeaderMap,
     /// The representation the request announced, classified once here.
     content_kind: ContentKind,
+    /// The context the request's `Link` header named: the one the items of an
+    /// `application/json` batch are read against, and the default context for
+    /// an `application/ld+json` batch, which may not name one (clause 6.3.5).
+    link_context: ContextSpec,
     /// Raw request body bytes.
     body: Bytes,
 }
@@ -115,10 +124,17 @@ where
         // Clause 6.3.5: an `application/ld+json` body names its context in the
         // body, so "the presence of a JSON-LD Link header in the incoming HTTP
         // request when the Content-Type header is application/ld+json shall
-        // result in an HTTP error response of type BadRequestData".
-        if content_kind == ContentKind::LdJson && carries_context_link(&parts.headers) {
-            return Err(BatchBodyRefusal::ContextLinkWithLdJson.into_problem(uri).into_response());
-        }
+        // result in an HTTP error response of type BadRequestData"; any other
+        // body is read against the request's one context `Link`, which is
+        // validated here like every other request's.
+        let carrier = match content_kind {
+            ContentKind::LdJson => PayloadCarrier::LdJsonBody,
+            ContentKind::Json => PayloadCarrier::LinkHeader,
+        };
+        let link_context = match RequestLinks::of(&mut parts).and_then(|links| links.context_for(carrier)) {
+            Ok(link_context) => ContextSpec::from_request(link_context.map_or(RequestContext::Default, RequestContext::Link)),
+            Err(error) => return Err(classify_context_link_error(&error).with_instance(uri).into_response()),
+        };
         // Move headers out before reassembling the request for body extraction:
         // the payload reader looks only at the declared length it is handed and
         // the size limit the request's extensions carry, never at a header.
@@ -133,16 +149,13 @@ where
         if body.is_empty() {
             return Err(ContentLengthPreconditionError::Empty.into_rejection(uri).into_response());
         }
-        Ok(BatchBody { headers, content_kind, body })
+        Ok(BatchBody {
+            headers,
+            content_kind,
+            link_context,
+            body,
+        })
     }
-}
-
-/// Return whether any `Link` header names the JSON-LD context relation.
-fn carries_context_link(headers: &HeaderMap) -> bool {
-    headers
-        .get_all("Link")
-        .iter()
-        .any(|v| v.to_str().is_ok_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")))
 }
 
 /// Decode the request body into the non-empty JSON array that clauses 5.6.7
@@ -164,42 +177,34 @@ pub(crate) fn batch_items(body: &Bytes, members: BatchMembers) -> Result<Vec<Val
     }
 }
 
-/// Fold the `@context` of every batch item into the request's context.
+/// One decoded batch entity, with the context it is read against.
 ///
-/// A batch is one request with one context, so the item contexts are merged
-/// into a single body context, each distinct value kept once.
-fn merge_item_contexts(items: &[Value], context: ContextSpec) -> ContextSpec {
-    let mut seen = HashSet::new();
-    let mut merged = Vec::new();
+/// JSON-LD applies a top-level node's `@context` to that node alone, so each
+/// item of an `application/ld+json` batch is expanded under its own
+/// (clause 5.5.7: "the @context [...] provided by each API call"); items of an
+/// `application/json` batch share the request's `Link` context. Items naming
+/// one and the same context share one [`BatchContext`], identified once here,
+/// so a batch whose items agree resolves its context once.
+#[derive(Debug)]
+pub struct BatchItem {
+    /// The decoded entity, its `@context` member removed.
+    pub entity: Entity,
+    /// The context the entity is read against.
+    pub context: BatchContext,
+}
 
-    for item in items {
-        if let Some(ctx) = item.as_object().and_then(|o| o.get("@context")) {
-            match ctx {
-                Value::Array(entries) => {
-                    for entry in entries {
-                        let key = entry.to_string();
-                        if seen.insert(key) {
-                            merged.push(entry.clone()); // clone: collecting values from borrowed JSON
-                        }
-                    }
-                }
-                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => {
-                    let key = other.to_string();
-                    if seen.insert(key) {
-                        merged.push(other.clone()); // clone: collecting values from borrowed JSON
-                    }
-                }
-            }
-        }
-    }
-
-    let body_context = match merged.len() {
-        0 => return context,
-        1 => merged.into_iter().next(),
-        _ => Some(Value::Array(merged)),
-    };
-
-    context.with_body_context(body_context)
+/// A decoded batch request.
+#[derive(Debug)]
+pub struct ParsedBatch {
+    /// The entities that decoded, each with its own context, in submission
+    /// order.
+    pub items: Vec<BatchItem>,
+    /// The context the request as a whole is answered and forwarded under:
+    /// the one every item shares, or the default context when the items of an
+    /// `application/ld+json` batch name different ones.
+    pub context: ContextSpec,
+    /// The items that failed to decode, each against its own entity.
+    pub errors: Vec<BatchEntityError>,
 }
 
 /// The `id` a batch item must carry before anything can be reported against
@@ -224,7 +229,8 @@ fn batch_entity_id(item: &Value, index: usize) -> Result<Uri, BatchBodyRefusal> 
         .map_err(|source| BatchBodyRefusal::MalformedId { index, source })
 }
 
-/// Admit one batch array item, whose `id` is `entity_id`, as an entity.
+/// Admit one batch array item, whose `id` is `entity_id`, as an entity and the
+/// `@context` member it carried.
 ///
 /// # Errors
 ///
@@ -233,28 +239,27 @@ fn batch_entity_id(item: &Value, index: usize) -> Result<Uri, BatchBodyRefusal> 
 /// `@context` its representation forbids or lacks one it requires (clause
 /// 6.3.5), or is not an entity. Clause 5.6.7.4 reports these per entity,
 /// leaving the rest of the batch intact.
-fn admit_batch_item(mut item: Value, entity_id: &Uri, content_kind: ContentKind) -> Result<Entity, BatchItemRefusal> {
+fn admit_batch_item(mut item: Value, entity_id: &Uri, content_kind: ContentKind) -> Result<(Entity, Option<Value>), BatchItemRefusal> {
     IdentifierTooLong::check(entity_id.as_str())?;
     canonicalize_numbers(&mut item)?;
 
-    let has_context = item.as_object().is_some_and(|o| o.contains_key("@context"));
-    match content_kind {
-        ContentKind::Json if has_context => return Err(BatchItemRefusal::ContextInJson),
-        ContentKind::LdJson if !has_context => return Err(BatchItemRefusal::NoContextInLdJson),
-        ContentKind::Json | ContentKind::LdJson => {}
+    // The context is carried beside the entity, not decoded into it.
+    let context = item.as_object_mut().and_then(|object| object.remove("@context"));
+    match (content_kind, &context) {
+        (ContentKind::Json, Some(_)) => return Err(BatchItemRefusal::ContextInJson),
+        (ContentKind::LdJson, None) => return Err(BatchItemRefusal::NoContextInLdJson),
+        (ContentKind::Json, None) | (ContentKind::LdJson, Some(_)) => {}
     }
 
-    // Strip @context before deserializing: the context is carried separately.
-    if let Some(obj) = item.as_object_mut() {
-        obj.remove("@context");
-    }
-
-    deserialize_exact::<Entity>(&item).map_err(|source| UndecodableBody::of::<Entity>(&item, source).into())
+    let entity = deserialize_exact::<Entity>(&item).map_err(|source| BatchItemRefusal::from(UndecodableBody::of::<Entity>(&item, source)))?;
+    Ok((entity, context))
 }
 
 /// Parse a batch request body with per-entity error handling.
 ///
-/// Returns `(valid_entities, context, per_entity_errors)`.
+/// Every decoded entity comes back with the context it is read against: its
+/// own `@context` member for an `application/ld+json` batch, the request's
+/// `Link` context for an `application/json` one.
 ///
 /// # Errors
 ///
@@ -265,44 +270,47 @@ fn admit_batch_item(mut item: Value, entity_id: &Uri, content_kind: ContentKind)
 /// per entity in the returned [`BatchEntityError`] list, leaving the rest of
 /// the batch intact. The clause 6.3.4 media-type and payload-length refusals
 /// are not among them: [`BatchBody`] raised those before this was reached.
-pub fn parse_batch_entities(
-    batch: &BatchBody,
-    context: &ContextUrl,
-    uri: &HttpUri,
-) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), ProblemResponse> {
+pub fn parse_batch_entities(batch: &BatchBody, uri: &HttpUri) -> Result<ParsedBatch, ProblemResponse> {
     let content_kind = batch.content_kind;
     let items = batch_items(&batch.body, BatchMembers::Entities).map_err(|refusal| refusal.into_problem(uri.clone()))?; // clone: the refusal names the request it answers
 
-    let request_context = context.0.clone(); // clone: need owned ContextSpec to merge body contexts into
-    let merged_context = match content_kind {
-        ContentKind::Json => request_context,
-        ContentKind::LdJson => merge_item_contexts(&items, request_context),
+    let mut contexts = match content_kind {
+        ContentKind::Json => BatchContexts::shared(batch.link_context.clone()), // clone: every item of a JSON batch shares the request's context
+        ContentKind::LdJson => BatchContexts::per_entity(),
     };
-
-    let mut entities = Vec::new();
-    let mut parse_errors = Vec::new();
+    let mut admitted = Vec::new();
+    let mut errors = Vec::new();
 
     for (index, item) in items.into_iter().enumerate() {
         let entity_id = batch_entity_id(&item, index).map_err(|refusal| refusal.into_problem(uri.clone()))?; // clone: the refusal names the request it answers
         match admit_batch_item(item, &entity_id, content_kind) {
-            Ok(entity) => entities.push(entity),
-            Err(refusal) => parse_errors.push(refusal.against(entity_id)),
+            Ok((entity, own)) => admitted.push(BatchItem {
+                entity,
+                context: contexts.context_of(own),
+            }),
+            Err(refusal) => errors.push(refusal.against(entity_id)),
         }
     }
 
-    Ok((entities, merged_context, parse_errors))
+    Ok(ParsedBatch {
+        items: admitted,
+        context: contexts.request_context(),
+        errors,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        context::ContextUrl,
-        entity_batch::{BatchBody, parse_batch_entities},
-    };
+    use crate::entity_batch::{BatchBody, ParsedBatch, parse_batch_entities};
     use andromeda_http_response::problem_response::ProblemResponse;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
-    use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+    use andromeda_ngsi_ld_model::entity::Entity;
+    use andromeda_ngsi_ld_problem_details::{
+        batch_operation::{BatchEntityError, BatchErrorKind},
+        error_type::NgsiLdErrorType,
+        problem_detail::ProblemClassification,
+    };
     use axum::{
         body::{Body, to_bytes},
         extract::FromRequest,
@@ -313,10 +321,19 @@ mod tests {
             header::{CONTENT_LENGTH, CONTENT_TYPE},
         },
     };
+    use iri_rs::IriBuf;
+    use serde_json::json;
 
     /// The URI every fixture request addresses.
     fn batch_uri() -> Uri {
         Uri::from_static("/ngsi-ld/v1/entityOperations/create")
+    }
+
+    /// The entities and per-entity errors a batch decodes into, read against
+    /// the default context.
+    fn parsed(batch: &BatchBody) -> (Vec<Entity>, Vec<BatchEntityError>) {
+        let ParsedBatch { items, errors, .. } = parse_batch_entities(batch, &batch_uri()).expect("batch parses");
+        (items.into_iter().map(|item| item.entity).collect(), errors)
     }
 
     /// The batch body an `application/json` request carries, as the extractor
@@ -329,12 +346,19 @@ mod tests {
     /// The batch body a request of `content_type` carries, as the extractor
     /// admits it.
     async fn batch_of(content_type: &str, body: &str) -> BatchBody {
-        let request = Request::builder()
-            .uri(batch_uri())
-            .header(CONTENT_TYPE, content_type)
-            .header(CONTENT_LENGTH, body.len())
-            .body(Body::from(body.to_owned()))
-            .expect("request builds");
+        admitted_batch(
+            Request::builder()
+                .uri(batch_uri())
+                .header(CONTENT_TYPE, content_type)
+                .header(CONTENT_LENGTH, body.len())
+                .body(Body::from(body.to_owned()))
+                .expect("request builds"),
+        )
+        .await
+    }
+
+    /// The batch body `request` carries, as the extractor admits it.
+    async fn admitted_batch(request: Request<Body>) -> BatchBody {
         match BatchBody::from_request(request, &()).await {
             Ok(batch) => batch,
             Err(refusal) => panic!("the fixture meets the clause 6.3.4 preconditions, got {}", refusal.status()),
@@ -350,7 +374,7 @@ mod tests {
             r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":10}},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","bad name":{"type":"Property","value":20}},{"id":"urn:ngsi-ld:Vehicle:3","type":"Vehicle","speed":{"type":"Property","value":30}}]"#,
         )
         .await;
-        let (entities, _context, errors) = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect("batch parses");
+        let (entities, errors) = parsed(&batch);
 
         assert_eq!(entities.len(), 2, "{errors:?}");
         pretty_assertions::assert_eq!(
@@ -367,7 +391,7 @@ mod tests {
         // malformed batch content and fails the whole request as BadRequestData,
         // not the InvalidRequest a missing id raises.
         let batch = json_batch(r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle"},null]"#).await;
-        let error = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect_err("a null item fails the request");
+        let error = parse_batch_entities(&batch, &batch_uri()).expect_err("a null item fails the request");
         pretty_assertions::assert_eq!(error.problem().error_type(), NgsiLdErrorType::BadRequestData);
     }
 
@@ -380,8 +404,12 @@ mod tests {
     /// The whole-request refusal a batch body draws.
     async fn request_refusal(body: &str) -> ProblemResponse {
         let batch = json_batch(body).await;
-        match parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()) {
-            Ok((entities, _context, errors)) => panic!("the request was to fail as a whole, parsed {} entities and {errors:?}", entities.len()),
+        match parse_batch_entities(&batch, &batch_uri()) {
+            Ok(parsed) => panic!(
+                "the request was to fail as a whole, parsed {} entities and {:?}",
+                parsed.items.len(),
+                parsed.errors
+            ),
             Err(refusal) => refusal,
         }
     }
@@ -396,7 +424,7 @@ mod tests {
             r#"[{{"id":"urn:ngsi-ld:Vehicle:A","type":"Vehicle"}},{{"id":"{long_id}","type":"Vehicle"}},{{"id":"urn:ngsi-ld:Vehicle:C","type":"Vehicle"}}]"#
         );
         let batch = json_batch(&body).await;
-        let (entities, _context, errors) = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect("batch parses");
+        let (entities, errors) = parsed(&batch);
 
         pretty_assertions::assert_eq!(
             entities.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
@@ -421,7 +449,7 @@ mod tests {
     async fn a_batch_of_one_over_long_id_parses_to_one_error() {
         let body = format!(r#"[{{"id":"{}","type":"Vehicle"}}]"#, urn_of_length(IDENTIFIER_BYTE_LIMIT + 1));
         let batch = json_batch(&body).await;
-        let (entities, _context, errors) = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect("batch parses");
+        let (entities, errors) = parsed(&batch);
         assert!(entities.is_empty());
         pretty_assertions::assert_eq!(errors.len(), 1);
     }
@@ -491,7 +519,7 @@ mod tests {
             ),
         ] {
             let batch = batch_of(content_type, body).await;
-            let (entities, _context, errors) = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect("batch parses");
+            let (entities, errors) = parsed(&batch);
             pretty_assertions::assert_eq!(
                 entities.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
                 vec!["urn:ngsi-ld:Vehicle:A".to_string()],
@@ -509,7 +537,7 @@ mod tests {
             r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":0.100000000000000005}},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","json":{"type":"JsonProperty","json":{"nested":1e-16384}}},{"id":"urn:ngsi-ld:Vehicle:3","type":"Vehicle","speed":{"type":"Property","value":18446744073709551616}}]"#,
         )
         .await;
-        let (entities, _context, errors) = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect("batch parses");
+        let (entities, errors) = parsed(&batch);
 
         assert_eq!(entities.len(), 2, "{errors:?}");
         let encoded = serde_json::to_string(&entities).expect("exact entities");
@@ -518,6 +546,109 @@ mod tests {
         pretty_assertions::assert_eq!(errors.len(), 1);
         pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
         assert!(errors[0].error.detail.contains("/json/json/nested"), "{}", errors[0].error.detail);
+    }
+
+    /// JSON-LD applies a top-level node's `@context` to that node alone, so each
+    /// item of an `application/ld+json` batch is read against its own context,
+    /// and items naming the same one share it.
+    #[tokio::test]
+    async fn each_ld_json_batch_item_is_read_against_its_own_context() {
+        let batch = batch_of(
+            "application/ld+json",
+            r#"[{"id":"urn:ngsi-ld:Vehicle:A","type":"Vehicle","@context":{"speed":"https://a.example/speed"}},{"id":"urn:ngsi-ld:Vehicle:B","type":"Vehicle","@context":{"speed":"https://b.example/speed"}},{"id":"urn:ngsi-ld:Vehicle:C","type":"Vehicle","@context":{"speed":"https://a.example/speed"}}]"#,
+        )
+        .await;
+
+        let ParsedBatch { items, context, errors } = parse_batch_entities(&batch, &batch_uri()).expect("batch parses");
+
+        assert!(errors.is_empty(), "{errors:?}");
+        pretty_assertions::assert_eq!(items[0].context.spec().body_context(), Some(&json!({"speed": "https://a.example/speed"})));
+        pretty_assertions::assert_eq!(items[1].context.spec().body_context(), Some(&json!({"speed": "https://b.example/speed"})));
+        pretty_assertions::assert_eq!(items[0].context.id(), items[2].context.id(), "items naming one context share it");
+        pretty_assertions::assert_ne!(items[0].context.id(), items[1].context.id());
+        pretty_assertions::assert_eq!(context, ContextSpec::none(), "items naming several contexts leave the request the default one");
+        assert!(items.iter().all(|item| item.entity.id.as_str().starts_with("urn:ngsi-ld:Vehicle:")));
+    }
+
+    /// Items naming one and the same context make it the request's context
+    /// too, as written: repeats and order included.
+    #[tokio::test]
+    async fn an_ld_json_batch_whose_items_agree_is_read_against_their_context() {
+        let batch = batch_of(
+            "application/ld+json",
+            r#"[{"id":"urn:ngsi-ld:Vehicle:A","type":"Vehicle","@context":["https://a.example/c.jsonld","https://b.example/c.jsonld","https://a.example/c.jsonld"]},{"id":"urn:ngsi-ld:Vehicle:B","type":"Vehicle","@context":["https://a.example/c.jsonld","https://b.example/c.jsonld","https://a.example/c.jsonld"]}]"#,
+        )
+        .await;
+
+        let ParsedBatch { items, context, .. } = parse_batch_entities(&batch, &batch_uri()).expect("batch parses");
+
+        let written = json!(["https://a.example/c.jsonld", "https://b.example/c.jsonld", "https://a.example/c.jsonld"]);
+        pretty_assertions::assert_eq!(context.body_context(), Some(&written));
+        pretty_assertions::assert_eq!(items[0].context.id(), items[1].context.id());
+    }
+
+    /// The items of an `application/json` batch share the request's `Link`
+    /// context.
+    #[tokio::test]
+    async fn json_batch_items_share_the_link_context() {
+        let body = r#"[{"id":"urn:ngsi-ld:Vehicle:A","type":"Vehicle"},{"id":"urn:ngsi-ld:Vehicle:B","type":"Vehicle"}]"#;
+        let batch = admitted_batch(
+            Request::builder()
+                .uri(batch_uri())
+                .header(CONTENT_TYPE, "application/json")
+                .header(CONTENT_LENGTH, body.len())
+                .header("Link", r#"<https://example.com/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#)
+                .body(Body::from(body))
+                .expect("request builds"),
+        )
+        .await;
+        let link = ContextSpec::from_link(IriBuf::new("https://example.com/ctx.jsonld".to_owned()).expect("a valid IRI"));
+
+        let ParsedBatch { items, context, .. } = parse_batch_entities(&batch, &batch_uri()).expect("batch parses");
+
+        pretty_assertions::assert_eq!(context, link);
+        assert!(items.iter().all(|item| *item.context.spec() == link));
+        pretty_assertions::assert_eq!(items[0].context.id(), items[1].context.id());
+    }
+
+    /// Clause 6.3.5: a context `Link` beside an `application/ld+json` batch is
+    /// `BadRequestData`, a `profile` link is not.
+    #[tokio::test]
+    async fn an_ld_json_batch_beside_a_context_link_is_bad_request_data() {
+        let body = r#"[{"id":"urn:ngsi-ld:Vehicle:A","type":"Vehicle","@context":"https://example.com/ctx.jsonld"}]"#;
+        let refused = Request::builder()
+            .uri(batch_uri())
+            .header(CONTENT_TYPE, "application/ld+json")
+            .header(CONTENT_LENGTH, body.len())
+            .header("Link", r#"<https://example.com/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#)
+            .body(Body::from(body))
+            .expect("request builds");
+        let (status, problem) = batch_refusal(refused).await;
+        pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+        let problem: serde_json::Value = serde_json::from_slice(&problem).expect("a problem details body");
+        pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+
+        let admitted = Request::builder()
+            .uri(batch_uri())
+            .header(CONTENT_TYPE, "application/ld+json")
+            .header(CONTENT_LENGTH, body.len())
+            .header("Link", r#"<https://uri.etsi.org/ngsi-ld/v1.9>; rel="profile""#)
+            .body(Body::from(body))
+            .expect("request builds");
+        assert!(BatchBody::from_request(admitted, &()).await.is_ok(), "a profile link is admitted");
+    }
+
+    /// Clause 5.5.4: a malformed `Link` refuses a batch as it does any request.
+    #[tokio::test]
+    async fn a_malformed_link_refuses_a_batch() {
+        let request = Request::builder()
+            .uri(batch_uri())
+            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_LENGTH, 2)
+            .header("Link", "not a link")
+            .body(Body::from("[]"))
+            .expect("request builds");
+        pretty_assertions::assert_eq!(batch_refusal(request).await.0, StatusCode::BAD_REQUEST);
     }
 
     /// Clause 6.3.4: "Unsupported Media Type, i.e. 'Content-Type' header is not

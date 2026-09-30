@@ -3,7 +3,7 @@
 use crate::entity_operations::{
     AcceptFormatNoGeo,
     BatchOperationResult,
-    Bytes,
+    ContextUrl,
     EntityResultExt,
     EntityTenantState,
     IntoResponse,
@@ -13,6 +13,7 @@ use crate::entity_operations::{
     Response,
     StatusCode,
     TriggeringRequest,
+    ValidatedQuery,
     apply_preference_applied,
     async_preference,
     batch_operation_result,
@@ -23,32 +24,31 @@ use crate::entity_operations::{
     multi_status_response,
 };
 use andromeda_http_extraction::{
-    content_length_precondition::DeclaredBodyLength,
     context_target,
     entity_id_batch::{EntityIdBatch, parse_batch_entity_ids},
+    request_payload::RequestPayload,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_request::empty::EmptyParams;
 
 pub(crate) async fn batch_delete(
+    // Clause 6.3.20: the operation defines no parameter, so any is an
+    // `InvalidRequest`; it is read first, before the tenant is resolved.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     context_target::ExistingTargetedTenantState {
         services: state,
         target,
         snapshot: _,
     }: EntityTenantState,
     _accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope {
-        uri,
-        context,
-        incoming_via,
-        headers,
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    ContextUrl(context): ContextUrl,
     prefer: PreferHeader,
     // Clause 6.3.2: "'Length required' (411) ... shall be raised when an HTTP
     // request provided by a client does not define the 'Content-Length' HTTP
     // header." This operation reads a raw body rather than going through the
-    // `JsonLd` extractor, so it states the precondition itself.
-    _body_length: DeclaredBodyLength,
-    body: Bytes,
+    // `JsonLd` extractor, and `RequestPayload` applies the precondition before
+    // it reads the body within the broker's size limit.
+    RequestPayload(body): RequestPayload,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
 
@@ -59,12 +59,11 @@ pub(crate) async fn batch_delete(
         refused: mut id_errors,
     } = parse_batch_entity_ids(&body, &uri)?;
 
-    let context: ContextSpec = context.into_inner();
     let triggering = TriggeringRequest {
         via: incoming_via.as_ref(),
         headers: Some(&headers),
     };
-    let forwarded = forward_identifiers(&state, &target, &entity_ids, &context, triggering, &uri).await?;
+    let forwarded = forward_identifiers(&state, &target, &entity_ids, context, triggering, &uri).await?;
 
     // Clause 5.6.10.4: every identifier is also deleted locally; an entity a
     // proxied registration holds is no local failure when it is absent here.
@@ -78,6 +77,6 @@ pub(crate) async fn batch_delete(
     if result.errors.is_empty() {
         Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), placement))
     } else {
-        multi_status_response(&result, &context, &uri, placement)
+        multi_status_response(&result, &uri, placement)
     }
 }

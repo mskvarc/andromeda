@@ -12,6 +12,7 @@ use crate::{
         IntoResponse,
         NgsiLdRequestEnvelope,
         OverwritePolicy,
+        ParsedBatch,
         PreferHeader,
         ProblemResponse,
         RequestOverwritePolicy,
@@ -42,22 +43,24 @@ pub(crate) async fn batch_update(
         snapshot: _,
     }: EntityTenantState,
     _accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope {
-        uri, context, incoming_via, ..
-    }: NgsiLdRequestEnvelope,
+    NgsiLdRequestEnvelope { uri, incoming_via, .. }: NgsiLdRequestEnvelope,
     prefer: PreferHeader,
     ValidatedQuery(params): ValidatedQuery<UpdateParams>,
     batch_body: BatchBody,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
 
-    let (entities, context, mut entity_errors) = parse_batch_entities(&batch_body, &context, &uri)?;
+    let ParsedBatch {
+        items,
+        context: _,
+        errors: mut entity_errors,
+    } = parse_batch_entities(&batch_body, &uri)?;
     // Clause 5.6.9.4 runs clause 5.6.3 "for each of the NGSI-LD Entities
     // included in the input Array", and "if the Entity update failed, then a
     // new BatchEntityError shall be added to E containing the failed Entity ID
     // and the ProblemDetails associated": the clause 5.5.4 validation an entity
     // fails is that entity's failure, not the request's.
-    let mut admitted = admitted_batch_entities(service, BatchUpdate, entities, &context, &mut entity_errors)
+    let mut admitted = admitted_batch_entities(service, BatchUpdate, items, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
 
@@ -85,7 +88,6 @@ pub(crate) async fn batch_update(
             triggering,
         },
         &admitted,
-        &context,
         &uri,
     )
     .await?;
@@ -93,10 +95,7 @@ pub(crate) async fn batch_update(
     // Clause 5.6.9.4: the local phase updates what proxied registrations left.
     local_remainder(&mut admitted, &forwarded);
     let placement = service.side_effect_placement(&target, async_preference(prefer), admitted.len());
-    let batch = service
-        .batch_update(placement, admitted, &context, overwrite)
-        .await
-        .with_entity_instance(&uri)?;
+    let batch = service.batch_update(placement, admitted, overwrite).await.with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     result.errors.append(&mut entity_errors);
     merge_forwarded(&mut result, &forwarded);
@@ -104,6 +103,6 @@ pub(crate) async fn batch_update(
     if result.errors.is_empty() {
         Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), placement))
     } else {
-        multi_status_response(&result, &context, &uri, placement)
+        multi_status_response(&result, &uri, placement)
     }
 }

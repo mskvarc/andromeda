@@ -573,10 +573,10 @@ fn service(broker: StubBroker) -> TemporalService {
 /// A context mapping the harness's one term to a deterministic,
 /// offline-resolvable IRI, so compaction needs no network fetch.
 fn context() -> ContextSpec {
-    ContextSpec::none().with_body_context(Some(json!({
+    ContextSpec::from_body(json!({
         "linksTo": "https://example.com/linksTo",
         "reading": "https://example.com/reading",
-    })))
+    }))
 }
 
 /// The window every traversal test runs over: all history, normalized.

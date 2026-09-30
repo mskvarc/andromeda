@@ -1,6 +1,7 @@
 //! Periodic (`timeInterval`) entity notification evaluation (clause 5.8.6).
 
 use crate::{
+    claimed_notification_context::claimed_notification_context,
     error::NotificationError,
     interval_match::{apply_subscription_filters, entity_id_of, entity_types},
     processor::payload::{
@@ -10,15 +11,23 @@ use crate::{
     },
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
-use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
+use andromeda_delivery::{
+    dispatch::TransportDispatcher,
+    endpoint::transport::parse_endpoint_transport,
+    request::{NotificationDelivery, notification_media_type},
+};
 use andromeda_entity::{
     port::{payload_pages::EntityPayloadPages, reader::EntityReader},
     sys_attrs::inject_sys_attrs,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, uri::NGSI_LD_URN_NID};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, ngsi_ld_urn::NotificationId};
 use andromeda_ngsi_ld_model::{notification::Notification, subscription::Subscription};
-use andromeda_ngsi_ld_render::notification_conformance::amend_notification_entities;
+use andromeda_ngsi_ld_render::{
+    geometry_selection::GeometrySelection,
+    notification_conformance::amend_notification_entities,
+    notification_data::notification_data,
+};
 use andromeda_subscription::{
     compilation::notification_projection,
     notification_slot::{NotificationSlot, NotificationSlotGate},
@@ -30,7 +39,6 @@ use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, error};
-use uuid::Uuid;
 
 const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -151,25 +159,8 @@ impl IntervalNotificationOperation {
                     }
                 }
 
-                let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Identifier>() else {
-                    error!("Failed to construct notification URN for {}", sub.id);
+                let Some(payload) = notification_payload(&sub, data) else {
                     return;
-                };
-                // clone: the notification owns its subscription id and the
-                // subscription is still needed below
-                let notification = Notification::builder()
-                    .id(notification_id)
-                    .subscription_id(sub.id.clone())
-                    .notified_at(Utc::now())
-                    .data(data)
-                    .build();
-
-                let payload = match serde_json::to_value(&notification) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        error!("Failed to serialize notification for {}: {}", sub.id, e);
-                        return;
-                    }
                 };
 
                 let endpoint_uri = sub.notification.endpoint.uri.url();
@@ -182,18 +173,31 @@ impl IntervalNotificationOperation {
                     }
                 };
 
-                let request = (NotificationDelivery {
-                    payload: &payload,
-                    endpoint_uri: sub.notification.endpoint.uri.url(),
-                    accept: sub.notification.endpoint.accept.as_ref(),
-                    receiver_info: sub.notification.endpoint.receiver_info.as_deref(),
-                    jsonld_context: sub.delivery.jsonld_context.as_ref(),
-                    tenant: this.tenant.tenant_name(),
-                    snapshot: this.target.snapshot().map(SnapshotTarget::snapshot_id),
-                    timeout: sub.notification.endpoint.timeout,
-                    subscription_id: &sub.id,
-                })
-                .assemble();
+                // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no
+                // context this notification can be rendered under.
+                let Some(context) = claimed_notification_context(
+                    &this.engine,
+                    sub.delivery.jsonld_context.as_ref(),
+                    this.sub_repo.as_ref(),
+                    &this.target,
+                    &sub.id,
+                )
+                .await
+                else {
+                    return;
+                };
+                let request = NotificationDelivery::builder()
+                    .payload(&payload)
+                    .endpoint_uri(sub.notification.endpoint.uri.url())
+                    .accept(sub.notification.endpoint.accept.as_ref())
+                    .receiver_info(sub.notification.endpoint.receiver_info.as_deref())
+                    .context(&context)
+                    .tenant(this.tenant.tenant_name())
+                    .snapshot(this.target.snapshot().map(SnapshotTarget::snapshot_id))
+                    .timeout(sub.notification.endpoint.timeout)
+                    .subscription_id(&sub.id)
+                    .build()
+                    .assemble();
 
                 let success = this.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
@@ -331,5 +335,41 @@ impl IntervalNotificationOperation {
         // format rendering: a periodic notification is sent the same way a
         // change-driven one is, so it is amended the same way too.
         Ok(amend_notification_entities(results, sub.delivery.ngsild_conformance, format))
+    }
+}
+
+/// The Notification (Table 5.3.1-1) carrying `data` for `sub`, serialised, or
+/// `None` -- logged -- when it cannot be built.
+///
+/// An `application/geo+json` endpoint receives the entities as one
+/// `FeatureCollection`, as Table 5.3.1-1 requires.
+fn notification_payload(sub: &Subscription, data: Vec<Value>) -> Option<Value> {
+    let Ok(notification_id) = NotificationId::mint().map(Identifier::from) else {
+        error!("Failed to construct notification URN for {}", sub.id);
+        return None;
+    };
+    let data = match notification_data(
+        data,
+        notification_media_type(sub.notification.endpoint.accept.as_ref()),
+        GeometrySelection::new(None, sub.filters.dataset_id.as_deref().unwrap_or_default()),
+    ) {
+        Ok(data) => data,
+        Err(e) => {
+            error!("Failed to render the notification data for {}: {}", sub.id, e);
+            return None;
+        }
+    };
+    let notification = Notification::builder()
+        .id(notification_id)
+        .subscription_id(sub.id.clone()) // clone: the notification owns its subscription id
+        .notified_at(Utc::now())
+        .data(data)
+        .build();
+    match serde_json::to_value(&notification) {
+        Ok(payload) => Some(payload),
+        Err(e) => {
+            error!("Failed to serialize notification for {}: {}", sub.id, e);
+            None
+        }
     }
 }

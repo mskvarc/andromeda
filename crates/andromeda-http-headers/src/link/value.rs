@@ -68,6 +68,13 @@ impl LinkValue {
         self.profile.as_ref()
     }
 
+    /// The `type` parameter, if present: a hint on the media type of the
+    /// target (RFC 8288 section 3.4.1).
+    #[must_use]
+    pub const fn media_type(&self) -> Option<&MediaTypeBuf> {
+        self.media_type.as_ref()
+    }
+
     /// Add a relation type to the `rel` parameter.
     #[must_use]
     pub fn push_rel(mut self, rel: RelationType) -> LinkValue {
@@ -103,10 +110,14 @@ impl LinkValue {
     }
 
     /// A JSON-LD context link-value with the standard relation and media type.
+    ///
+    /// The context is an absolute IRI: a context link a response or a
+    /// forwarded request names is always absolute, so the conversion to the
+    /// link target's reference form happens here and nowhere else.
     #[must_use]
-    pub fn jsonld_context(context_url: IriRefBuf) -> LinkValue {
-        LinkValue::new(context_url)
-            .push_rel(RelationType::jsonld_context())
+    pub fn jsonld_context(context_url: IriBuf) -> LinkValue {
+        LinkValue::new(IriRefBuf::from(context_url))
+            .push_rel(RelationType::JsonLdContext)
             .set_media_type(MediaTypeBuf::from(&APPLICATION_LD_JSON))
     }
 
@@ -222,7 +233,7 @@ mod tests {
 
     #[test]
     fn only_the_json_ld_relation_makes_a_context_link() {
-        let context = LinkValue::new(iri_ref("https://example.com/ctx.jsonld")).push_rel(RelationType::jsonld_context());
+        let context = LinkValue::new(iri_ref("https://example.com/ctx.jsonld")).push_rel(RelationType::JsonLdContext);
         assert!(context.is_context_link());
 
         let pagination = LinkValue::new(iri_ref("/page/2")).push_rel(RelationType::Next);
@@ -231,7 +242,7 @@ mod tests {
 
     #[test]
     fn a_json_ld_context_value_carries_the_standard_relation_and_media_type() {
-        let value = LinkValue::jsonld_context(iri_ref("https://example.com/ctx.jsonld"));
+        let value = LinkValue::jsonld_context(iri("https://example.com/ctx.jsonld"));
         pretty_assertions::assert_eq!(
             value.to_string(),
             r#"<https://example.com/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#
@@ -249,7 +260,7 @@ mod tests {
     #[test]
     fn every_parameter_set_appears_in_the_rendering() {
         let value = LinkValue::new(iri_ref("http://example.com/ctx.jsonld"))
-            .push_rel(RelationType::jsonld_context())
+            .push_rel(RelationType::JsonLdContext)
             .set_media_type("application/ld+json".parse::<MediaTypeBuf>().expect("valid media type"))
             .set_profile(iri("https://uri.etsi.org/ngsi-ld/profile/version"));
         assert!(value.to_string().contains(r#"profile="https://uri.etsi.org/ngsi-ld/profile/version""#));

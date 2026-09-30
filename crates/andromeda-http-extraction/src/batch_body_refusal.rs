@@ -81,10 +81,6 @@ pub enum BatchBodyRefusal {
         /// The item's zero-based position in the array.
         index: usize,
     },
-    /// Clause 6.3.5: `application/ld+json` together with a JSON-LD `Link`
-    /// header.
-    #[error("application/ld+json must not be combined with a Link context header")]
-    ContextLinkWithLdJson,
 }
 
 impl BatchBodyRefusal {
@@ -103,8 +99,7 @@ impl BatchBodyRefusal {
             | BatchBodyRefusal::NullItem { .. }
             | BatchBodyRefusal::MissingId { .. }
             | BatchBodyRefusal::MalformedId { .. }
-            | BatchBodyRefusal::NotAnEntityId { .. }
-            | BatchBodyRefusal::ContextLinkWithLdJson => NgsiLdErrorType::BadRequestData,
+            | BatchBodyRefusal::NotAnEntityId { .. } => NgsiLdErrorType::BadRequestData,
         }
     }
 
@@ -151,7 +146,6 @@ mod tests {
                 source: UriParseError,
             },
             BatchBodyRefusal::NotAnEntityId { index: 1 },
-            BatchBodyRefusal::ContextLinkWithLdJson,
         ] {
             pretty_assertions::assert_eq!(refusal.error_type(), NgsiLdErrorType::BadRequestData, "{refusal}");
         }

@@ -27,12 +27,19 @@ CREATE TABLE jsonld_contexts (
     -- cached once; NULL for a hosted or implicitly created context with no
     -- origin, and never NULL for a cached one.
     url TEXT COMPRESSION lz4 COLLATE "C",
+    -- The URL a cached context was finally read from, after redirects and a
+    -- JSON-LD alternate link: the base its own relative references resolve
+    -- against. NULL for a context the broker stores itself, which was never
+    -- read from anywhere. Nothing looks a row up by it or orders by it, so it
+    -- has no index, no length bound and no byte-wise collation.
+    document_url TEXT COMPRESSION lz4,
     payload JSONB COMPRESSION lz4 NOT NULL,
     extra_info JSONB COMPRESSION lz4,
     CONSTRAINT pk_jsonld_contexts PRIMARY KEY (id),
     CONSTRAINT uq_jsonld_contexts_url UNIQUE (url),
     CONSTRAINT chk_jsonld_contexts_kind CHECK (kind BETWEEN 1 AND 3),
     CONSTRAINT chk_jsonld_contexts_cached_has_url CHECK (kind <> 1 OR url IS NOT NULL),
+    CONSTRAINT chk_jsonld_contexts_document_url_kind CHECK ((kind = 1) = (document_url IS NOT NULL)),
     CONSTRAINT chk_jsonld_contexts_id_length CHECK (octet_length(id) <= 1024),
     CONSTRAINT chk_jsonld_contexts_url_length CHECK (octet_length(url) <= 1024)
 );

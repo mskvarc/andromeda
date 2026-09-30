@@ -19,6 +19,7 @@ use andromeda_entity::{
     spatial_acceleration::SpatialAcceleration,
 };
 use andromeda_entity_map::store::EntityMapStore;
+use andromeda_http_context_registry::hosted_context_reference::TenantHostedContexts;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_atomic_write::config::BulkWriteMode;
@@ -143,6 +144,18 @@ async fn bring_pattern_forms_current(pool: &PgPool) -> Result<(), TenantAssembly
     Ok(())
 }
 
+/// The tenant's JSON-LD engine, recognising the tenant's own stored contexts.
+///
+/// Clause 5.13.1: a reference to one of this tenant's own stored contexts is
+/// resolved from its storage, never fetched over HTTP from this broker.
+fn tenant_engine(config: &TenantFactoryConfig, context_repo: &Arc<JsonLdContextRepository>, tenant: &TenantRef) -> Result<JsonLdEngine, TenantAssemblyError> {
+    let recognizer = Arc::new(TenantHostedContexts::new(
+        config.identity.advertised_url.clone(), // clone: the recogniser owns the configured apiRoot
+        tenant.clone(),                         // clone: the recogniser names the tenant it serves
+    ));
+    Ok(config.jsonld.build_engine(Arc::clone(context_repo), recognizer)?)
+}
+
 /// Open, migrate, validate, and warm every storage component for a tenant.
 ///
 /// The database is migrated over `migration_url`, which reaches PostgreSQL
@@ -177,7 +190,7 @@ pub(super) async fn initialize_storage(
     bring_pattern_forms_current(&pool).await?;
     let live_target = resolve_live_target();
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
-    let engine = config.jsonld.build_engine(Arc::clone(&context_repo))?;
+    let engine = tenant_engine(config, &context_repo, tenant)?;
     let context_workers = TenantContextWorkers {
         hit_flush: engine.hit_counter().map(|hit_counter| {
             ContextHitFlushWorker::spawn(

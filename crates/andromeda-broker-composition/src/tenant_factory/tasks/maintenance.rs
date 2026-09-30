@@ -22,6 +22,7 @@ use andromeda_entity::{
     spatial_acceleration::SpatialAcceleration,
     spatial_reconciliation::{RebuildOutcome, rebuild_location_index},
 };
+use andromeda_jsonld::compound_context_host::ContextHostingError;
 use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
 use andromeda_registration::error::RegistrationError;
 use andromeda_subscription::error::SubscriptionError;
@@ -251,15 +252,19 @@ where
 
 pub(super) const fn classify_subscription_expiry_failure(error: SubscriptionError) -> TaskFailure<SubscriptionError> {
     let class = match &error {
-        SubscriptionError::Persistence(_) | SubscriptionError::StoreSaturated => FailureClass::Transient,
+        // A store of hosted `@context`s that failed a write fails for the
+        // reasons any store does, so it is retried like the subscription store.
+        SubscriptionError::Persistence(_) | SubscriptionError::StoreSaturated | SubscriptionError::ContextHosting(ContextHostingError::Persistence(_)) => {
+            FailureClass::Transient
+        }
         SubscriptionError::Internal(_) => FailureClass::InvariantViolation,
         SubscriptionError::Validation(_)
         | SubscriptionError::NotFound { .. }
         | SubscriptionError::AlreadyExists { .. }
         | SubscriptionError::JsonLd(_)
+        | SubscriptionError::ContextHosting(ContextHostingError::NoHost | ContextHostingError::NoRequestAuthority | ContextHostingError::MintedUrlNotIri(_))
         | SubscriptionError::Query(_)
-        | SubscriptionError::Representation(_)
-        | SubscriptionError::Identifier(_) => FailureClass::Permanent,
+        | SubscriptionError::Representation(_) => FailureClass::Permanent,
     };
     TaskFailure::new(class, error)
 }
@@ -274,8 +279,7 @@ pub(super) const fn classify_registration_expiry_failure(error: RegistrationErro
         | RegistrationError::Conflict(_)
         | RegistrationError::JsonLd(_)
         | RegistrationError::Query(_)
-        | RegistrationError::Representation(_)
-        | RegistrationError::Identifier(_) => FailureClass::Permanent,
+        | RegistrationError::Representation(_) => FailureClass::Permanent,
     };
     TaskFailure::new(class, error)
 }
@@ -299,10 +303,33 @@ pub(super) const fn classify_entity_expiry_failure(error: EntityError) -> TaskFa
         | EntityError::JsonLd(_)
         | EntityError::Query(_)
         | EntityError::Request(_)
-        | EntityError::Representation(_)
-        | EntityError::Identifier(_)
-        | EntityError::EntityTypeListIdentifier(_)
-        | EntityError::AttributeListIdentifier(_) => FailureClass::Permanent,
+        | EntityError::Representation(_) => FailureClass::Permanent,
     };
     TaskFailure::new(class, error)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tenant_factory::tasks::maintenance::classify_subscription_expiry_failure;
+    use andromeda_jsonld::compound_context_host::ContextHostingError;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use andromeda_subscription::error::SubscriptionError;
+    use andromeda_task_runtime::failure::FailureClass;
+
+    /// A hosted-context store that is saturated or rolled a write back fails
+    /// for the reasons the subscription store does, and is retried like it.
+    #[test]
+    fn a_hosted_context_store_that_is_saturated_or_rolled_back_is_a_transient_failure() {
+        for failure in [PersistenceFailure::Saturated, PersistenceFailure::RolledBack] {
+            let classified = classify_subscription_expiry_failure(SubscriptionError::ContextHosting(ContextHostingError::Persistence(failure)));
+            pretty_assertions::assert_eq!(classified.class(), FailureClass::Transient);
+        }
+    }
+
+    /// No host attached is a composition fault a retry cannot mend.
+    #[test]
+    fn a_missing_context_host_is_a_permanent_failure() {
+        let classified = classify_subscription_expiry_failure(SubscriptionError::ContextHosting(ContextHostingError::NoHost));
+        pretty_assertions::assert_eq!(classified.class(), FailureClass::Permanent);
+    }
 }

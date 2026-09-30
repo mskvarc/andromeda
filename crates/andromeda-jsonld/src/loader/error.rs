@@ -8,7 +8,7 @@
 //! Detail, instead of being flattened into one message at the boundary.
 
 use crate::{context_cache::ContextCacheError, error::JsonLdError};
-use iri_rs::IriBuf;
+use iri_rs::{InvalidIri, IriBuf};
 use mediatype::{MediaTypeBuf, MediaTypeError};
 use reqwest::StatusCode;
 use std::{str::Utf8Error, sync::Arc};
@@ -48,6 +48,14 @@ pub enum LoaderErrorKind {
     /// The response body could not be parsed as valid JSON-LD.
     #[error("invalid context: {0}")]
     Invalid(#[source] InvalidContextDocument),
+    /// A reference was recognised as one of the tenant's own stored
+    /// `@context`s, but its identifier is not an IRI to resolve it by.
+    ///
+    /// The lexicon proves every `urn:ngsi-ld:JsonLdContext:` identifier is an
+    /// IRI, so this reports a broken invariant, never a client mistake. Shared
+    /// for the same reason as [`ContextUnavailable::Request`].
+    #[error("the stored context identifier is not an IRI: {0}")]
+    StoredIdentifier(#[source] Arc<InvalidIri<String>>),
 }
 
 /// Why a context document could not be reached.
@@ -62,19 +70,34 @@ pub enum ContextUnavailable {
     /// The attached durable cache failed while remote loading was unavailable.
     #[error("context cache failed: {0}")]
     Cache(#[source] ContextCacheError),
-}
-
-/// Why a retrieved response is not a usable `@context` document.
-#[derive(Debug, Clone, Error)]
-pub enum InvalidContextDocument {
-    /// The response declared a content type that is not JSON-shaped.
+    /// The response is served as a media type no context is read from, and
+    /// names no single JSON-LD alternate to read it from instead.
     ///
     /// Boxed so the rare refusal does not widen every loader failure.
-    #[error("unsupported context content type {0}")]
-    UnsupportedContentType(Box<MediaTypeBuf>),
+    #[error("the context is served as {0}, not JSON, and names no JSON-LD alternate")]
+    UnsupportedMediaType(Box<MediaTypeBuf>),
     /// The response declared a content type that is not a media type.
-    #[error("the response content type is not a media type: {0}")]
-    MalformedContentType(#[source] MediaTypeError),
+    #[error("the context response content type is not a media type: {0}")]
+    MalformedMediaType(#[source] MediaTypeError),
+    /// The response names more than one JSON-LD alternate, so which one is the
+    /// context is not stated.
+    #[error("the context response names {0} JSON-LD alternates")]
+    AmbiguousAlternates(usize),
+    /// The URL the document was finally read from is not an IRI.
+    ///
+    /// Shared for the same reason as [`ContextUnavailable::Request`].
+    #[error("the context was read from a location that is not an IRI: {0}")]
+    UnaddressableDocument(#[source] Arc<InvalidIri<String>>),
+}
+
+/// Why a retrieved JSON-shaped response is not a usable `@context` document.
+///
+/// A response whose media type no context is read from is not here: clause
+/// 5.5.6 reports an invalid remote context as `BadRequestData`, but such a
+/// response yielded no document at all, which is
+/// [`ContextUnavailable::UnsupportedMediaType`] and `LdContextNotAvailable`.
+#[derive(Debug, Clone, Error)]
+pub enum InvalidContextDocument {
     /// The response body is not UTF-8.
     #[error("the response body is not UTF-8: {0}")]
     NotUtf8(#[source] Utf8Error),
@@ -116,6 +139,7 @@ impl From<&LoaderError> for JsonLdError {
                 url,
                 source: source.clone(), // clone: the caller keeps the LoaderError; the sources are shared or small
             },
+            LoaderErrorKind::StoredIdentifier(source) => JsonLdError::ContextUrlNotIri(InvalidIri(source.0.clone())), // clone: the caller keeps the LoaderError
         }
     }
 }
@@ -138,6 +162,8 @@ mod tests {
             LoaderErrorKind::Http(StatusCode::NOT_FOUND),
             LoaderErrorKind::Unavailable(ContextUnavailable::Cache(ContextCacheError::Read(PersistenceFailure::Unavailable))),
             LoaderErrorKind::TooLarge { size: 10, max: 5 },
+            LoaderErrorKind::Unavailable(ContextUnavailable::UnsupportedMediaType(Box::new("text/html".parse().expect("a media type")))),
+            LoaderErrorKind::Unavailable(ContextUnavailable::AmbiguousAlternates(2)),
         ];
         for kind in kinds {
             let error = JsonLdError::from(&LoaderError {
@@ -189,6 +215,7 @@ mod tests {
             | JsonLdError::JsonLdContextText(_)
             | JsonLdError::JsonLdContextShape
             | JsonLdError::DocumentShape
+            | JsonLdError::ContextGraph(_)
             | JsonLdError::ScopedUserContext { .. }
             | JsonLdError::Json(_)) => panic!("expected ContextHttp, got {other}"),
         }

@@ -3,10 +3,11 @@
 //! A remote fetch that resolves but whose durable write fails must not cost the
 //! request its `@context`: the document is served from the in-process cache and
 //! the write is retried on the next access. Everything that retry needs — the
-//! payload, the lifetime clause 6.3.16 derived for it, and the hits that
-//! accrued meanwhile — is held here until it lands.
+//! payload, where it was read from, the lifetime clause 6.3.16 derived for it,
+//! and the hits that accrued meanwhile — is held here until it lands.
 
 use crate::loader::cache_lifetime::CacheLifetime;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -15,6 +16,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 pub(crate) struct PendingPersistence {
     /// Valid remote payload served while persistence is pending.
     pub(crate) payload: Value,
+    /// The URL the payload was finally read from, replayed on the retried
+    /// write so the stored row resolves its references as the download did.
+    pub(crate) document_url: IriBuf,
     /// The lifetime the response granted, replayed on the retried write so the
     /// stored row expires when clause 6.3.16 says it must.
     pub(crate) lifetime: CacheLifetime,
@@ -28,9 +32,10 @@ pub(crate) struct PendingPersistence {
 
 impl PendingPersistence {
     /// The state a failed durable write leaves behind.
-    pub(crate) const fn owed(payload: Value, lifetime: CacheLifetime) -> PendingPersistence {
+    pub(crate) const fn owed(payload: Value, document_url: IriBuf, lifetime: CacheLifetime) -> PendingPersistence {
         PendingPersistence {
             payload,
+            document_url,
             lifetime,
             retrying: AtomicBool::new(false),
             hits: AtomicU64::new(0),
@@ -57,6 +62,7 @@ mod tests {
         cache_lifetime::CacheLifetime,
         pending_persistence::{PendingPersistence, PersistenceRetryLease},
     };
+    use iri_rs::IriBuf;
     use serde_json::Value;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -71,11 +77,13 @@ mod tests {
     #[test]
     fn owed_persistence_starts_with_no_hits_and_no_durability() {
         let lifetime = CacheLifetime::from_seconds(30).expect("thirty seconds is a positive lifetime");
-        let pending = PendingPersistence::owed(Value::Null, lifetime);
+        let document_url = IriBuf::new("https://example.com/final.jsonld".to_owned()).expect("a valid IRI");
+        let pending = PendingPersistence::owed(Value::Null, document_url.clone(), lifetime); // clone: the expectation compares against it
 
         pretty_assertions::assert_eq!(pending.hits.load(Ordering::Relaxed), 0);
         assert!(!pending.durable.load(Ordering::Acquire));
         assert!(!pending.retrying.load(Ordering::Acquire));
         pretty_assertions::assert_eq!(pending.lifetime, lifetime);
+        pretty_assertions::assert_eq!(pending.document_url, document_url);
     }
 }

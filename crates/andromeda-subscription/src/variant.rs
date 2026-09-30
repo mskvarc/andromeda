@@ -15,7 +15,6 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use futures::future::BoxFuture;
 use serde_json::Value;
-use url::Url;
 
 /// Controls whether a subscription variant persists clause 5.8 `datasetId`
 /// filtering.
@@ -37,18 +36,21 @@ pub trait SubscriptionVariant: Send + Sync {
     /// The change-event type emitted over the broadcast channel.
     type Change: Clone + Send + 'static;
 
-    /// Expand subscription terms in-place (context hosting, IRI expansion).
-    fn expand_terms<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+    /// Expand the subscription's terms in place under `context` (clause
+    /// 5.5.7).
+    ///
+    /// Initialising `jsonldContext` is not part of it: that is a clause 5.8.1.4
+    /// creation step, and an update leaves the stored member as it is unless
+    /// the fragment names one (clauses 5.8.2.4 and 5.5.8).
+    fn expand_terms<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         payload: &'life1 mut Value,
         context: &'life2 ContextSpec,
-        base_url: Option<&'life3 Url>,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
-        'life3: 'async_trait,
         Self: 'async_trait;
 
     /// Serialize a subscription for an HTTP response (compaction, fixups),

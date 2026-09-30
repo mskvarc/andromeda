@@ -99,7 +99,7 @@ mod tests {
         let now = Utc::now();
         let mut metadata = ContextMetadata::builder()
             .serving_iri(None)
-            .local_id("urn:ngsi-ld:Context:hosted".parse::<Identifier>().expect("a URN is a valid URI"))
+            .local_id("urn:ngsi-ld:JsonLdContext:hosted".parse::<Identifier>().expect("a URN is a valid URI"))
             .kind(ContextKind::Hosted)
             .created_at(now)
             .last_usage(now)

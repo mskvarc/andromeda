@@ -31,10 +31,7 @@ pub const GOD_FILE_SIGNAL_LIMIT: usize = 400;
 /// line fails the gate immediately; a file split back under the line must be
 /// removed from this list, which a stale-entry check enforces, so the baseline
 /// can only shrink toward empty.
-pub const GOD_FILE_BASELINE: &[&str] = &[
-    "crates/andromeda-http-temporal/src/temporal/query.rs",
-    "crates/andromeda-postgresql-temporal-store/src/instance_mutation.rs",
-];
+pub const GOD_FILE_BASELINE: &[&str] = &["crates/andromeda-postgresql-temporal-store/src/instance_mutation.rs"];
 
 /// Assert that no production file exceeds the hard limit, and that the set of
 /// files over the signal line has only shrunk from the baseline.

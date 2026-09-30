@@ -13,7 +13,7 @@ use crate::{
             metadata_page_query,
             payload_by_identifier_query,
             record_access_update,
-            replace_payload_update,
+            replace_download_update,
             stored_context_query,
             summary_page_query,
         },
@@ -25,28 +25,33 @@ use andromeda_context_registry::{
     detail_level::ContextDetailLevel,
     error::ContextRegistryError,
     fetched_context::FetchedContext,
+    insertion::ContextInsertion,
     list_query::ContextListQuery,
     listed_contexts::ListedContexts,
     mutation::ContextMutation,
     store::{ContextRegistryFuture, ContextRegistryStore},
     stored_context::StoredContext,
 };
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::NGSI_LD_URN_NID};
+use andromeda_jsonld::context_cache::DownloadedContext;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
-use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use iri_rs::IriBuf;
-use sea_query::PostgresQueryBuilder;
+use sea_query::{InsertStatement, PostgresQueryBuilder, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::types::Json;
 use url::Url;
-use urn_rs::{Urn, UrnBuilder};
-use uuid::Uuid;
 
 impl ContextRegistryStore for JsonLdContextRepository {
-    fn create<'a>(&'a self, payload: Value, base_url: Option<&'a Url>, kind: ContextCreationKind) -> ContextRegistryFuture<'a, Urn> {
-        Box::pin(async move { insert_context(self, payload, base_url, kind).await })
+    fn insert<'a>(
+        &'a self,
+        identifier: &'a JsonLdContextId,
+        payload: &'a Value,
+        serving_url: &'a Url,
+        kind: ContextCreationKind,
+    ) -> ContextRegistryFuture<'a, ContextInsertion> {
+        Box::pin(async move { insert_context(self, identifier, payload, serving_url, kind).await })
     }
 
     fn list<'a>(&'a self, query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ListedContexts> {
@@ -151,9 +156,14 @@ impl ContextRegistryStore for JsonLdContextRepository {
         })
     }
 
-    fn replace_payload<'a>(&'a self, identifier: &'a Identifier, payload: Value) -> ContextRegistryFuture<'a, ContextMutation> {
+    fn replace_download<'a>(&'a self, identifier: &'a Identifier, download: &'a DownloadedContext) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
-            let (sql, values) = replace_payload_update(identifier.as_str(), payload).build_sqlx(PostgresQueryBuilder);
+            let (sql, values) = replace_download_update(
+                identifier.as_str(),
+                download.document_url.as_str(),
+                download.document.clone(), // clone: the bound statement owns its JSON value while the caller keeps the download
+            )
+            .build_sqlx(PostgresQueryBuilder);
             let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(&self.pool)
                 .await
@@ -163,28 +173,49 @@ impl ContextRegistryStore for JsonLdContextRepository {
     }
 }
 
-/// Insert a non-cached Context using the exact kind selected by policy.
+/// Insert a non-cached Context under the identifier and kind policy chose,
+/// unless a row already holds the identifier.
 async fn insert_context(
     repository: &JsonLdContextRepository,
-    payload: Value,
-    base_url: Option<&Url>,
+    identifier: &JsonLdContextId,
+    payload: &Value,
+    serving_url: &Url,
     kind: ContextCreationKind,
-) -> Result<Urn, ContextRegistryError> {
-    let local_id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4()))
-        .build()
-        .map_err(|error| ContextRegistryError::from(PersistenceFailure::ContractBroken.record(&error)))?;
-    let serving_url = base_url.map(|base| {
-        let mut serving = base.clone(); // clone: the caller retains its request origin while persistence owns the serving URL.
-        serving.set_path(&format!("/ngsi-ld/v1/jsonldContexts/{local_id}"));
-        serving
-    });
-    let statement = hosted_insert(local_id.as_ref(), serving_url.as_ref().map(Url::as_str), created_kind(kind), payload).map_err(persistence_error)?;
+) -> Result<ContextInsertion, ContextRegistryError> {
+    let statement = insert_statement(identifier, payload, serving_url, kind).map_err(persistence_error)?;
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&repository.pool)
         .await
         .map_err(persistence_error)?;
-    Ok(local_id)
+    Ok(insertion(result.rows_affected()))
+}
+
+/// The insert of a non-cached Context.
+///
+/// `serving_url` is the URL the HTTP binding minted for the entry, on its
+/// `apiRoot` path prefix and with its tenant parameter, and is stored exactly
+/// as minted: the clause 6.30 path is the binding's to build, never this
+/// adapter's.
+fn insert_statement(identifier: &JsonLdContextId, payload: &Value, serving_url: &Url, kind: ContextCreationKind) -> Result<InsertStatement, SeaQueryError> {
+    hosted_insert(
+        identifier.as_ref(),
+        Some(serving_url.as_str()),
+        created_kind(kind),
+        payload.clone(), // clone: the bound statement owns its JSON value while the caller keeps the document for a retry.
+    )
+}
+
+/// Convert the affected-row count of a conflict-free insert into its outcome.
+///
+/// The insert does nothing on an identifier conflict, so no row affected means
+/// the identifier was already held.
+const fn insertion(rows_affected: u64) -> ContextInsertion {
+    if rows_affected == 0 {
+        ContextInsertion::Occupied
+    } else {
+        ContextInsertion::Inserted
+    }
 }
 
 /// Collapse an implementation error into the policy's backend-neutral category.
@@ -207,8 +238,42 @@ const fn mutation(rows_affected: u64) -> ContextMutation {
 
 #[cfg(test)]
 mod tests {
-    use crate::jsonld_context::registry_store::mutation;
-    use andromeda_context_registry::mutation::ContextMutation;
+    use crate::jsonld_context::registry_store::{insert_statement, insertion, mutation, persistence_error};
+    use andromeda_context_registry::{
+        creation_kind::ContextCreationKind,
+        error::ContextRegistryError,
+        insertion::ContextInsertion,
+        mutation::ContextMutation,
+    };
+    use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
+    use sea_query::PostgresQueryBuilder;
+    use serde_json::json;
+    use url::Url;
+
+    /// Clause 6.2 lets the `apiRoot` carry a path prefix, and a non-default
+    /// tenant's entry is served with its tenant parameter: the serving URL the
+    /// HTTP binding minted is stored exactly as minted, prefix and parameter
+    /// included.
+    #[test]
+    fn a_prefixed_tenant_qualified_serving_url_is_stored_byte_for_byte() {
+        let identifier: JsonLdContextId = "urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b".parse().expect("an identifier");
+        let minted = "https://gw.example.com/broker/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b?andromedaTenant=acme";
+        let serving_url = Url::parse(minted).expect("a URL");
+
+        let sql = insert_statement(&identifier, &json!({ "@context": {} }), &serving_url, ContextCreationKind::ImplicitlyCreated)
+            .expect("the statement builds")
+            .to_string(PostgresQueryBuilder);
+
+        assert!(sql.contains(&format!("'{minted}'")), "{sql}");
+    }
+
+    /// The insert does nothing on a conflicting identifier, so no affected row
+    /// is an identifier already held.
+    #[test]
+    fn affected_rows_map_to_named_insertion_outcomes() {
+        pretty_assertions::assert_eq!(insertion(0), ContextInsertion::Occupied);
+        pretty_assertions::assert_eq!(insertion(1), ContextInsertion::Inserted);
+    }
 
     #[test]
     fn affected_rows_map_to_named_mutation_outcomes() {
@@ -219,8 +284,6 @@ mod tests {
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
-        use crate::jsonld_context::registry_store::persistence_error;
-        use andromeda_context_registry::error::ContextRegistryError;
         assert!(matches!(persistence_error(sqlx::Error::PoolTimedOut), ContextRegistryError::StoreSaturated));
         assert!(matches!(persistence_error(sqlx::Error::RowNotFound), ContextRegistryError::Persistence { .. }));
     }

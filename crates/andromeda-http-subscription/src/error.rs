@@ -1,7 +1,14 @@
 //! Exhaustive HTTP classification for subscription failures.
 
+use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
+use andromeda_http_response::{
+    classified_report::ClassifiedReport,
+    context_hosting_failure::classify_context_hosting_error,
+    internal_failure_summary::InternalFailureSummary,
+    problem_response::ProblemResponse,
+};
+use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
@@ -22,11 +29,12 @@ impl SubscriptionHttpClassify for SubscriptionError {
             SubscriptionError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()),
             SubscriptionError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, self.to_string()),
             SubscriptionError::JsonLd(source) => classify_jsonld_error(source),
+            SubscriptionError::ContextHosting(source) => classify_context_hosting_error(source),
             SubscriptionError::Query(source) => classify_query_error(source),
             // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
             SubscriptionError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
             SubscriptionError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the subscription store is unavailable")),
-            SubscriptionError::Representation(_) | SubscriptionError::Identifier(_) | SubscriptionError::Internal(_) => {
+            SubscriptionError::Representation(_) | SubscriptionError::Internal(_) => {
                 ClassifiedReport::internal(self, InternalFailureSummary::new("internal subscription error"))
             }
         }
@@ -38,6 +46,18 @@ impl SubscriptionHttpClassify for SubscriptionError {
 impl SubscriptionHttpClassify for ParameterError {
     fn classify_for_subscription_http(&self) -> ClassifiedReport {
         classify_parameter_error(self)
+    }
+}
+
+impl SubscriptionHttpClassify for JsonLdError {
+    fn classify_for_subscription_http(&self) -> ClassifiedReport {
+        classify_jsonld_error(self)
+    }
+}
+
+impl SubscriptionHttpClassify for ResponseContextError {
+    fn classify_for_subscription_http(&self) -> ClassifiedReport {
+        classify_response_context_error(self)
     }
 }
 
@@ -79,11 +99,16 @@ pub(crate) fn internal_problem(error: &impl Display, summary: InternalFailureSum
 
 #[cfg(test)]
 mod tests {
-    use super::SubscriptionHttpClassify;
+    use crate::error::SubscriptionHttpClassify;
+    use andromeda_jsonld::compound_context_host::ContextHostingError;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_subscription::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
+    use axum::{
+        http::{StatusCode, Uri, header::RETRY_AFTER},
+        response::IntoResponse,
+    };
     use std::error::Error;
 
     #[test]
@@ -115,5 +140,32 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// A saturated store of hosted `@context`s is backpressure: 503 with
+    /// `Retry-After`, as every saturated store is.
+    #[test]
+    fn a_saturated_context_host_is_service_unavailable_with_retry_after() {
+        let error = SubscriptionError::ContextHosting(ContextHostingError::Persistence(PersistenceFailure::Saturated));
+
+        let response = error
+            .classify_for_subscription_http()
+            .with_instance(Uri::from_static("/ngsi-ld/v1/subscriptions"))
+            .into_response();
+
+        pretty_assertions::assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(response.headers().contains_key(RETRY_AFTER));
+    }
+
+    /// A missing host and a failed store are faults no client can act on:
+    /// 500 `InternalError`, with the cause kept from the detail.
+    #[test]
+    fn a_missing_or_failed_context_host_is_an_internal_error_without_its_cause() {
+        for error in [ContextHostingError::NoHost, ContextHostingError::Persistence(PersistenceFailure::Unavailable)] {
+            let cause = error.to_string();
+            let report = SubscriptionError::ContextHosting(error).classify_for_subscription_http();
+            pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
+            assert!(!report.detail().contains(&cause), "the raw cause leaked: {}", report.detail());
+        }
     }
 }

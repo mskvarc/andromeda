@@ -29,6 +29,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use chrono::{DateTime, Utc};
+use iri_rs::IriBuf;
 use mediatype::MediaTypeBuf;
 use std::{collections::HashSet, num::NonZeroU32};
 use url::Url;
@@ -76,7 +77,7 @@ pub struct CompiledCsrSubscription {
     /// Periodic notification interval in seconds.
     pub time_interval_secs: Option<f64>,
     /// JSON-LD context supplied with notifications.
-    pub jsonld_context: Option<Url>,
+    pub jsonld_context: Option<IriBuf>,
     /// Subscription expiration timestamp.
     pub expires_at: Option<DateTime<Utc>>,
     /// Parsed context-source filter, evaluated against the registration's
@@ -133,7 +134,7 @@ pub struct CompiledSubscription {
     /// Whether notification data contains previous values.
     pub notification_show_changes: bool,
     /// JSON-LD context supplied with notifications.
-    pub jsonld_context: Option<Url>,
+    pub jsonld_context: Option<IriBuf>,
     /// Subscription expiration timestamp.
     pub expires_at: Option<DateTime<Utc>>,
     /// When the subscription was created (clause 5.2.12 `createdAt`).

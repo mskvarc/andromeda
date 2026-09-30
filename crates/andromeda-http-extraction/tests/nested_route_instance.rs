@@ -10,6 +10,7 @@
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_extraction::{
+    api_root::ApiRoot,
     content_length_precondition::DeclaredBodyLength,
     context::ContextUrl,
     context_target::{ContextTargetProvider, ContextTargetResolutionError, ExistingTargetedTenantState, SnapshotTargetResolver},
@@ -17,7 +18,6 @@ use andromeda_http_extraction::{
     entity_query::EntityQuery,
     jsonld::JsonLdDocument,
     language::LanguageNegotiation,
-    origin::RequestOrigin,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
@@ -175,7 +175,7 @@ async fn batch(_batch: BatchBody) -> StatusCode {
     StatusCode::OK
 }
 
-async fn origin(_origin: RequestOrigin) -> StatusCode {
+async fn origin(_api_root: ApiRoot) -> StatusCode {
     StatusCode::OK
 }
 

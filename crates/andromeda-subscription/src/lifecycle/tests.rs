@@ -2,6 +2,7 @@ use crate::{
     csource::CsrSubscriptionVariant,
     endpoint_admission::SubscriptionEndpointValidator,
     endpoint_refusal::EndpointRefusal,
+    entity::EntitySubscriptionVariant,
     error::SubscriptionError,
     forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook, SubscriptionTeardown},
     lifecycle::{SubscriptionService, generate_id},
@@ -9,6 +10,7 @@ use crate::{
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
+use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
@@ -19,7 +21,9 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use iri_rs::IriBuf;
 use pretty_assertions::assert_eq;
+use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use url::Url;
 
@@ -248,4 +252,173 @@ async fn deleting_an_unknown_subscription_tears_nothing_down() {
     assert!(matches!(deleted, Err(SubscriptionError::NotFound { .. })), "{deleted:?}");
     let steps = log.lock().expect("the deletion log is never poisoned").clone();
     assert_eq!(steps, vec![DeletionStep::TeardownCaptured, DeletionStep::RowDeleted]);
+}
+
+/// The core context release a subscriber chose explicitly for its
+/// notifications.
+const CHOSEN_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld";
+
+/// The `jsonldContext` an update wrote, recorded by [`UpdatingStore`].
+type WrittenContext = Arc<Mutex<Option<Option<IriBuf>>>>;
+
+/// A store holding one subscription, which records the `jsonldContext` an
+/// update writes back.
+struct UpdatingStore {
+    stored: Subscription,
+    written: WrittenContext,
+}
+
+#[async_trait]
+impl SubscriptionStore for UpdatingStore {
+    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
+        Ok(Some(StoredSubscription {
+            key: SubscriptionKey::try_from(1_i64).expect("a positive key"),
+            subscription: self.stored.clone(), // clone: every read hands back its own copy of the stored resource.
+        }))
+    }
+
+    async fn list(&self, _target: &ContextTarget, _limit: Option<i64>, _offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+        Err(unused("list"))
+    }
+
+    async fn list_keyset(&self, _target: &ContextTarget, _cursor: Option<&PageCursor>, _limit: i64) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+        Err(unused("list_keyset"))
+    }
+
+    async fn delete(&self, _target: &ContextTarget, _id: &Identifier) -> Result<u64, SubscriptionError> {
+        Err(unused("delete"))
+    }
+
+    async fn exists(&self, _target: &ContextTarget, _id: &Identifier) -> Result<bool, SubscriptionError> {
+        Err(unused("exists"))
+    }
+
+    async fn list_active(&self, _target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
+        Err(unused("list_active"))
+    }
+
+    async fn claim_notification_slot(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        _gate: NotificationSlotGate,
+    ) -> Result<NotificationSlot, SubscriptionError> {
+        Err(unused("claim_notification_slot"))
+    }
+
+    async fn mark_success(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
+        Err(unused("mark_success"))
+    }
+
+    async fn mark_failure(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
+        Err(unused("mark_failure"))
+    }
+
+    async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
+        Err(unused("expire_due"))
+    }
+
+    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
+        Err(unused("find_due_interval_subscriptions"))
+    }
+
+    async fn next_interval_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Option<DateTime<Utc>>, SubscriptionError> {
+        Err(unused("next_interval_due"))
+    }
+
+    async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
+        Err(unused("advance_interval_anchor"))
+    }
+
+    async fn create_subscription(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        _fields: &SubscriptionFields<'_>,
+        _status: SubscriptionStatus,
+    ) -> Result<(), SubscriptionError> {
+        Err(unused("create_subscription"))
+    }
+
+    async fn update_subscription(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        fields: &SubscriptionFields<'_>,
+        _status: SubscriptionStatus,
+    ) -> Result<u64, SubscriptionError> {
+        // clone: the record keeps the written IRI for the assertion.
+        *self.written.lock().expect("the written context is never poisoned") = Some(fields.jsonld_context.cloned());
+        Ok(1)
+    }
+}
+
+/// An entity subscription whose subscriber chose [`CHOSEN_CONTEXT`] for its
+/// notifications.
+fn subscription_with_chosen_context() -> Subscription {
+    serde_json::from_value(json!({
+        "id": "urn:ngsi-ld:Subscription:stored",
+        "type": "Subscription",
+        "entities": [{ "type": "https://example.com/Vehicle" }],
+        "notification": { "endpoint": { "uri": "http://receiver.example.com/notify" } },
+        "jsonldContext": CHOSEN_CONTEXT,
+        "status": "active",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "modifiedAt": "2026-01-01T00:00:00Z"
+    }))
+    .expect("the fixture is a valid subscription")
+}
+
+/// Update the stored subscription with `fragment` under `context`, answering
+/// the `jsonldContext` the update wrote back.
+async fn written_context_after_update(fragment: Value, context: &ContextSpec) -> Option<IriBuf> {
+    let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+    let written = WrittenContext::default();
+    let store = UpdatingStore {
+        stored: subscription_with_chosen_context(),
+        written: Arc::clone(&written),
+    };
+    let service = SubscriptionService::new(
+        Arc::new(store),
+        // clone: the service and the variant each own an engine handle.
+        engine.clone(),
+        EntitySubscriptionVariant::new(engine),
+        None,
+        Arc::new(AcceptingEndpointValidator),
+    );
+    let updated = service
+        .update(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:stored"), fragment, context)
+        .await;
+    assert!(updated.is_ok(), "{updated:?}");
+    written
+        .lock()
+        .expect("the written context is never poisoned")
+        .clone() // clone: the lock guard is released before the answer is returned.
+        .expect("the update wrote the subscription back")
+}
+
+/// Clauses 5.8.2.4 and 5.5.8: an update whose fragment names no
+/// `jsonldContext` leaves the member the subscriber chose, even though the
+/// request itself names a context. Initialising it from the applicable
+/// `@context` is a clause 5.8.1.4 creation step, and this inline context
+/// would have needed a hosted wrapper there.
+#[tokio::test]
+async fn an_update_naming_a_request_context_keeps_the_stored_jsonld_context() {
+    let context = ContextSpec::from_body(json!({ "speed": "https://example.com/speed" }));
+
+    let written = written_context_after_update(json!({ "q": "speed>1" }), &context).await;
+
+    assert_eq!(written.as_ref().map(IriBuf::as_str), Some(CHOSEN_CONTEXT));
+}
+
+/// A fragment that names a `jsonldContext` replaces the stored one (clause
+/// 5.5.8).
+#[tokio::test]
+async fn an_update_naming_a_jsonld_context_replaces_the_stored_one() {
+    // An embedded release, so the offline engine can validate it.
+    let replacement = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
+
+    let written = written_context_after_update(json!({ "jsonldContext": replacement }), &ContextSpec::none()).await;
+
+    assert_eq!(written.as_ref().map(IriBuf::as_str), Some(replacement));
 }

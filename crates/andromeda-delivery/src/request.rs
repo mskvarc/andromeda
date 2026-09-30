@@ -1,14 +1,18 @@
 //! One notification, ready to hand to a transport.
 
-use crate::notification_context_placement::{NotificationContextPlacement, notification_context_placement};
+use crate::{
+    notification_context::NotificationContext,
+    notification_context_placement::{NotificationContextPlacement, notification_context_placement},
+};
 use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds, tenant::TenantName};
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-use iri_rs::IriRefBuf;
+use iri_rs::IriBuf;
 use mediatype::MediaTypeBuf;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::sync::Arc;
+use typed_builder::TypedBuilder;
 use url::Url;
 
 /// Everything a transport needs to deliver a single notification.
@@ -34,7 +38,7 @@ pub struct DeliveryRequest {
     /// The `@context` this notification advertises, when the subscription
     /// named one. [`context_link`](DeliveryRequest::context_link) supplies the
     /// core context when it did not.
-    pub context_url: Option<Url>,
+    pub context_url: Option<IriBuf>,
     /// Tenant the notification originates from (clause 6.3.14).
     pub tenant: Option<NgsiLdTenant>,
     /// Snapshot branch the notification originates from (clause 6.3.22).
@@ -62,45 +66,50 @@ impl DeliveryRequest {
     /// transport asks this rather than deciding for itself, because three
     /// transports deciding independently is how `application/geo+json` came to
     /// carry no `@context` at all in either place.
+    #[must_use]
     pub fn context_link(&self) -> Option<Link> {
-        if self.context_placement == NotificationContextPlacement::Body {
-            return None;
+        match self.context_placement {
+            NotificationContextPlacement::Body => None,
+            // A subscription that named no context is notified under the core
+            // context (clause 5.5.5).
+            NotificationContextPlacement::LinkHeader => Some(Link::jsonld_context(
+                self.context_url.clone().unwrap_or_else(|| IriBuf::from(NGSI_LD_CORE_CONTEXT_URL)), // clone: the request keeps its context for another delivery attempt
+            )),
         }
-        // The `@context` a notification advertises is an IRI reference, so the
-        // Link header carries it as a typed [`IriRefBuf`] rather than a bare
-        // string; a subscription that named no context falls back to the core
-        // context. A URL and the core-context constant are both valid IRI
-        // references, so the construction does not fail in practice.
-        let context = self.context_url.as_ref().map_or(NGSI_LD_CORE_CONTEXT_URL.as_str(), Url::as_str);
-        IriRefBuf::new(context).ok().map(Link::jsonld_context)
     }
 }
 
 /// The notification a subscription asked for, before it is serialised.
 ///
-/// Named fields rather than a seven-argument function: four of those arguments
-/// were `Option<&str>` or `&str`, and swapping two of them is a mistake no
-/// signature could have caught.
-#[derive(Debug)]
+/// Built through its builder rather than a positional function: four of the
+/// references it takes are optional members of the subscription, and swapping
+/// two of them is a mistake no signature could have caught.
+#[derive(Debug, TypedBuilder)]
 pub struct NotificationDelivery<'a> {
     /// The notification document.
-    pub payload: &'a Value,
+    payload: &'a Value,
     /// The endpoint URI the subscription named, already parsed by the model.
-    pub endpoint_uri: &'a Url,
+    endpoint_uri: &'a Url,
     /// The subscription's `notification.endpoint.accept`, if it set one.
-    pub accept: Option<&'a MediaTypeBuf>,
+    #[builder(default = None)]
+    accept: Option<&'a MediaTypeBuf>,
     /// The subscription's `notification.endpoint.receiverInfo`, if it set any.
-    pub receiver_info: Option<&'a [KeyValuePair]>,
-    /// The subscription's `jsonldContext`, if it set one.
-    pub jsonld_context: Option<&'a Url>,
+    #[builder(default = None)]
+    receiver_info: Option<&'a [KeyValuePair]>,
+    /// The `@context` the notification carries, resolved once for both the
+    /// `Link` header and the body.
+    context: &'a NotificationContext,
     /// The subscription's `notification.endpoint.timeout`, if it set one.
-    pub timeout: Option<PositiveMilliseconds>,
+    #[builder(default = None)]
+    timeout: Option<PositiveMilliseconds>,
     /// The tenant the subscription belongs to.
-    pub tenant: Option<&'a TenantName>,
+    #[builder(default = None)]
+    tenant: Option<&'a TenantName>,
     /// The Snapshot branch the subscription belongs to, when scoped.
-    pub snapshot: Option<&'a Identifier>,
+    #[builder(default = None)]
+    snapshot: Option<&'a Identifier>,
     /// The subscription's identifier.
-    pub subscription_id: &'a Identifier,
+    subscription_id: &'a Identifier,
 }
 
 impl NotificationDelivery<'_> {
@@ -121,33 +130,34 @@ impl NotificationDelivery<'_> {
     /// NGSI-LD document, exactly as it would from an entity query, where an
     /// array body leaves each Entity to carry its own. Both are written with
     /// the one `@context` clause 5.8.6 names, "the one specified in the
-    /// jsonldContext field", so the inner one restates the outer rather than
-    /// narrowing it.
+    /// jsonldContext field" with the core context clause 5.2.3 adds to it, so
+    /// the inner one restates the outer rather than narrowing it.
+    ///
+    /// An `application/geo+json` notification's `data` is one `FeatureCollection`
+    /// rather than an array (Table 5.3.1-1), so that `FeatureCollection` carries
+    /// the context instead, and no Feature does (clauses 4.5.16.3 and
+    /// 4.5.17.2: "separate @context elements for each Feature will not be
+    /// present"). With `Prefer: body=json` in `receiverInfo` "the
+    /// `FeatureCollection` will not contain an @context field" (Table 5.3.1-1)
+    /// and the `Link` header names the context.
     ///
     /// Infallible: serialisation, the only step that could fail, now happens in
     /// each transport against the body shape it sends.
+    #[must_use]
     pub fn assemble(&self) -> DeliveryRequest {
         let content_type = notification_media_type(self.accept);
         let context_placement = notification_context_placement(content_type, self.receiver_info);
         // clone: the request owns the notification body the borrow points at, and the `Arc` lets each transport read it without another copy
         let mut payload = self.payload.clone();
-        if context_placement == NotificationContextPlacement::Body
-            && let Some(document) = payload.as_object_mut()
-        {
-            let context = self.jsonld_context.map_or(NGSI_LD_CORE_CONTEXT_URL.as_str(), Url::as_str);
-            document.insert("@context".to_owned(), Value::String(context.to_owned()));
-            for notified in document.get_mut("data").and_then(Value::as_array_mut).into_iter().flatten() {
-                if let Some(notified) = notified.as_object_mut() {
-                    notified.insert("@context".to_owned(), Value::String(context.to_owned()));
-                }
-            }
+        if let Some(document) = payload.as_object_mut() {
+            place_context(document, context_placement, self.context.body_context());
         }
         DeliveryRequest {
             payload: Arc::new(payload),
             endpoint_uri: self.endpoint_uri.clone(), // clone: the request outlives this borrow of the subscription
             content_type,
             context_placement,
-            context_url: self.jsonld_context.cloned(), // clone: same
+            context_url: self.context.jsonld_context().cloned(), // clone: the request outlives this borrow of the subscription
             // clone: `NgsiLdTenant` owns its name and the request outlives this borrow
             tenant: self.tenant.map(|name| NgsiLdTenant::new(name.clone())),
             // clone: `NgsiLdSnapshot` owns its URI and the request outlives this borrow
@@ -155,6 +165,46 @@ impl NotificationDelivery<'_> {
             receiver_info: self.receiver_info.unwrap_or_default().to_vec(),
             timeout: self.timeout,
             subscription_id: self.subscription_id.clone(), // clone: the request outlives this borrow of the subscription
+        }
+    }
+}
+
+/// Write the one notification `@context` wherever `placement` puts it: on the
+/// envelope and on each notified Entity, or on the envelope and on the `data`
+/// `FeatureCollection`; and nowhere in a body whose context travels in the
+/// `Link` header.
+fn place_context(document: &mut Map<String, Value>, placement: NotificationContextPlacement, body_context: &Value) {
+    match placement {
+        NotificationContextPlacement::Body => {
+            // clone: the envelope and every document inside it each own a copy of the one context
+            document.insert("@context".to_owned(), body_context.clone());
+            match document.get_mut("data") {
+                Some(Value::Array(entities)) => {
+                    for entity in entities.iter_mut().filter_map(Value::as_object_mut) {
+                        entity.insert("@context".to_owned(), body_context.clone()); // clone: as above
+                    }
+                }
+                Some(Value::Object(collection)) => {
+                    collection.insert("@context".to_owned(), body_context.clone()); // clone: as above
+                    strip_feature_contexts(collection);
+                }
+                Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) | None => {}
+            }
+        }
+        NotificationContextPlacement::LinkHeader => {
+            if let Some(Value::Object(collection)) = document.get_mut("data") {
+                collection.remove("@context");
+                strip_feature_contexts(collection);
+            }
+        }
+    }
+}
+
+/// Remove the `@context` of every Feature of a `FeatureCollection`.
+fn strip_feature_contexts(collection: &mut Map<String, Value>) {
+    for feature in collection.get_mut("features").and_then(Value::as_array_mut).into_iter().flatten() {
+        if let Some(feature) = feature.as_object_mut() {
+            feature.remove("@context");
         }
     }
 }
@@ -180,11 +230,15 @@ pub fn notification_media_type(accept: Option<&MediaTypeBuf>) -> ResponseMediaTy
 
 #[cfg(test)]
 mod tests {
-    use crate::request::{DeliveryRequest, NotificationDelivery, notification_media_type};
+    use crate::{
+        notification_context::NotificationContext,
+        request::{DeliveryRequest, NotificationDelivery, notification_media_type},
+    };
     use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds, tenant::TenantName};
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use iri_rs::IriBuf;
     use mediatype::MediaTypeBuf;
     use serde_json::json;
     use std::str::FromStr;
@@ -202,22 +256,31 @@ mod tests {
         Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id")
     }
 
+    /// The notification `@context` of a subscription whose `jsonldContext` is
+    /// `jsonld_context`, when the named context is not known to end with the
+    /// core context.
+    fn context_of(jsonld_context: Option<&str>) -> NotificationContext {
+        match jsonld_context {
+            Some(url) => NotificationContext::stated(
+                Some(IriBuf::new(url.to_owned()).expect("a well-formed context URI")),
+                json!([url, NGSI_LD_CORE_CONTEXT_URL.as_str()]),
+            ),
+            None => NotificationContext::stated(None, json!(NGSI_LD_CORE_CONTEXT_URL.as_str())),
+        }
+    }
+
     fn assemble(accept: Option<&MediaTypeBuf>, jsonld_context: Option<&str>) -> DeliveryRequest {
         let endpoint = endpoint();
-        let context = jsonld_context.map(|value| Url::parse(value).expect("a well-formed context URI"));
         let subscription = subscription();
-        NotificationDelivery {
-            payload: &json!({"id": "urn:ngsi-ld:Notification:1"}),
-            endpoint_uri: &endpoint,
-            accept,
-            receiver_info: None,
-            jsonld_context: context.as_ref(),
-            tenant: None,
-            snapshot: None,
-            timeout: None,
-            subscription_id: &subscription,
-        }
-        .assemble()
+        let context = context_of(jsonld_context);
+        NotificationDelivery::builder()
+            .payload(&json!({"id": "urn:ngsi-ld:Notification:1"}))
+            .endpoint_uri(&endpoint)
+            .accept(accept)
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .assemble()
     }
 
     #[test]
@@ -250,9 +313,8 @@ mod tests {
         assert!(assemble(Some(&media("application/ld+json")), None).context_link().is_none());
     }
 
-    /// Clauses 5.2.13 and 6.3.5: the JSON-LD body carries one top-level
-    /// `@context`, the subscription's own when it named one and the core
-    /// context otherwise.
+    /// Clauses 5.2.3 and 6.3.5: the JSON-LD body carries one top-level
+    /// `@context`, the one the subscription's processor resolved.
     #[test]
     fn a_json_ld_notification_carries_one_top_level_context_in_the_body() {
         let core = assemble(Some(&media("application/ld+json")), None);
@@ -260,7 +322,10 @@ mod tests {
         pretty_assertions::assert_eq!(core.payload["id"], json!("urn:ngsi-ld:Notification:1"));
 
         let named = assemble(Some(&media("application/ld+json")), Some("https://example.com/ctx.jsonld"));
-        pretty_assertions::assert_eq!(named.payload["@context"], json!("https://example.com/ctx.jsonld"));
+        pretty_assertions::assert_eq!(
+            named.payload["@context"],
+            json!(["https://example.com/ctx.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()])
+        );
     }
 
     /// Clause 6.3.6 has the `application/ld+json` body carry a JSON-LD
@@ -271,28 +336,25 @@ mod tests {
     fn a_json_ld_notification_writes_the_context_on_every_notified_entity_too() {
         let endpoint = endpoint();
         let subscription = subscription();
-        let context = Url::parse("https://example.com/ctx.jsonld").expect("a well-formed context URI");
         let accept = media("application/ld+json");
-        let request = NotificationDelivery {
-            payload: &json!({
+        let context = context_of(Some("https://example.com/ctx.jsonld"));
+        let request = NotificationDelivery::builder()
+            .payload(&json!({
                 "id": "urn:ngsi-ld:Notification:1",
                 "type": "Notification",
                 "data": [{"id": "urn:ngsi-ld:Building:1", "type": "Building"}, {"id": "urn:ngsi-ld:Building:2", "type": "Building"}]
-            }),
-            endpoint_uri: &endpoint,
-            accept: Some(&accept),
-            receiver_info: None,
-            jsonld_context: Some(&context),
-            tenant: None,
-            snapshot: None,
-            timeout: None,
-            subscription_id: &subscription,
-        }
-        .assemble();
+            }))
+            .endpoint_uri(&endpoint)
+            .accept(Some(&accept))
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .assemble();
 
-        pretty_assertions::assert_eq!(request.payload["@context"], json!("https://example.com/ctx.jsonld"));
+        let expected = context.body_context();
+        pretty_assertions::assert_eq!(&request.payload["@context"], expected);
         for notified in request.payload["data"].as_array().expect("the data array survives") {
-            pretty_assertions::assert_eq!(notified["@context"], json!("https://example.com/ctx.jsonld"), "{notified}");
+            pretty_assertions::assert_eq!(&notified["@context"], expected, "{notified}");
         }
     }
 
@@ -317,7 +379,7 @@ mod tests {
     fn a_geo_json_notification_body_carries_the_context_member_by_default() {
         let request = assemble(Some(&media("application/geo+json")), Some("https://example.com/ctx.jsonld"));
 
-        pretty_assertions::assert_eq!(request.payload["@context"], json!("https://example.com/ctx.jsonld"));
+        pretty_assertions::assert_eq!(&request.payload["@context"], context_of(Some("https://example.com/ctx.jsonld")).body_context());
     }
 
     #[test]
@@ -345,18 +407,17 @@ mod tests {
         }];
         let endpoint = endpoint();
         let subscription = subscription();
-        let request = NotificationDelivery {
-            payload: &json!({"id": "urn:ngsi-ld:Notification:1"}),
-            endpoint_uri: &endpoint,
-            accept: Some(&media("application/geo+json")),
-            receiver_info: Some(&pairs),
-            jsonld_context: None,
-            tenant: None,
-            snapshot: None,
-            timeout: None,
-            subscription_id: &subscription,
-        }
-        .assemble();
+        let accept = media("application/geo+json");
+        let context = context_of(None);
+        let request = NotificationDelivery::builder()
+            .payload(&json!({"id": "urn:ngsi-ld:Notification:1"}))
+            .endpoint_uri(&endpoint)
+            .accept(Some(&accept))
+            .receiver_info(Some(&pairs))
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .assemble();
 
         assert!(request.payload.get("@context").is_none(), "{}", request.payload);
         let rendered = request.context_link().expect("a Link").to_header_string().expect("the Link encodes");
@@ -383,18 +444,15 @@ mod tests {
         }];
         let endpoint = endpoint();
         let subscription = subscription();
-        let request = NotificationDelivery {
-            payload: &json!({}),
-            endpoint_uri: &endpoint,
-            accept: None,
-            receiver_info: Some(&pairs),
-            jsonld_context: None,
-            tenant: None,
-            snapshot: None,
-            timeout: None,
-            subscription_id: &subscription,
-        }
-        .assemble();
+        let context = context_of(None);
+        let request = NotificationDelivery::builder()
+            .payload(&json!({}))
+            .endpoint_uri(&endpoint)
+            .receiver_info(Some(&pairs))
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .assemble();
         pretty_assertions::assert_eq!(request.receiver_info, pairs);
     }
 
@@ -406,18 +464,15 @@ mod tests {
         let endpoint_url = endpoint();
         let subscription = subscription();
         let timeout = PositiveMilliseconds::try_from(750).expect("a positive millisecond count");
-        let request = NotificationDelivery {
-            payload: &json!({}),
-            endpoint_uri: &endpoint_url,
-            accept: None,
-            receiver_info: None,
-            jsonld_context: None,
-            tenant: None,
-            snapshot: None,
-            timeout: Some(timeout),
-            subscription_id: &subscription,
-        }
-        .assemble();
+        let context = context_of(None);
+        let request = NotificationDelivery::builder()
+            .payload(&json!({}))
+            .endpoint_uri(&endpoint_url)
+            .context(&context)
+            .timeout(Some(timeout))
+            .subscription_id(&subscription)
+            .build()
+            .assemble();
         pretty_assertions::assert_eq!(request.timeout, Some(timeout));
         assert!(assemble(None, None).timeout.is_none());
     }
@@ -427,18 +482,15 @@ mod tests {
         let name = TenantName::try_from("acme".to_string()).expect("a valid tenant name");
         let endpoint = endpoint();
         let subscription = subscription();
-        let request = NotificationDelivery {
-            payload: &json!({}),
-            endpoint_uri: &endpoint,
-            accept: None,
-            receiver_info: None,
-            jsonld_context: None,
-            tenant: Some(&name),
-            snapshot: None,
-            timeout: None,
-            subscription_id: &subscription,
-        }
-        .assemble();
+        let context = context_of(None);
+        let request = NotificationDelivery::builder()
+            .payload(&json!({}))
+            .endpoint_uri(&endpoint)
+            .context(&context)
+            .tenant(Some(&name))
+            .subscription_id(&subscription)
+            .build()
+            .assemble();
         pretty_assertions::assert_eq!(request.tenant.as_ref().map(NgsiLdTenant::as_str), Some("acme"));
     }
 
@@ -447,18 +499,75 @@ mod tests {
         let snapshot = Identifier::from_str("urn:ngsi-ld:Snapshot:branch").expect("a valid Snapshot id");
         let endpoint = endpoint();
         let subscription = subscription();
-        let request = NotificationDelivery {
-            payload: &json!({}),
-            endpoint_uri: &endpoint,
-            accept: None,
-            receiver_info: None,
-            jsonld_context: None,
-            tenant: None,
-            snapshot: Some(&snapshot),
-            timeout: None,
-            subscription_id: &subscription,
-        }
-        .assemble();
+        let context = context_of(None);
+        let request = NotificationDelivery::builder()
+            .payload(&json!({}))
+            .endpoint_uri(&endpoint)
+            .context(&context)
+            .snapshot(Some(&snapshot))
+            .subscription_id(&subscription)
+            .build()
+            .assemble();
         pretty_assertions::assert_eq!(request.snapshot.as_ref().map(NgsiLdSnapshot::as_str), Some(snapshot.as_str()));
+    }
+
+    /// A `GeoJSON` notification the subscription asked for with `accept` and,
+    /// optionally, `receiverInfo`, whose `data` is a `FeatureCollection` whose
+    /// renderer wrote a context on it and on its Feature.
+    fn geo_json_notification(receiver_info: Option<&[KeyValuePair]>) -> DeliveryRequest {
+        let endpoint = endpoint();
+        let subscription = subscription();
+        let accept = media("application/geo+json");
+        let context = context_of(None);
+        NotificationDelivery::builder()
+            .payload(&json!({
+                "id": "urn:ngsi-ld:Notification:1",
+                "type": "Notification",
+                "data": {
+                    "type": "FeatureCollection",
+                    "@context": "https://renderer.example/stale.jsonld",
+                    "features": [{ "id": "urn:ngsi-ld:Building:1", "type": "Feature", "@context": "https://renderer.example/stale.jsonld" }]
+                }
+            }))
+            .endpoint_uri(&endpoint)
+            .accept(Some(&accept))
+            .receiver_info(receiver_info)
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .assemble()
+    }
+
+    /// Table 5.3.1-1 and clause 4.5.16.3: a `GeoJSON` notification's context is
+    /// on the envelope and on the `data` `FeatureCollection`, and on no Feature.
+    #[test]
+    fn a_geo_json_notification_carries_its_context_on_the_feature_collection_and_no_feature() {
+        let request = geo_json_notification(None);
+
+        let expected = context_of(None);
+        pretty_assertions::assert_eq!(&request.payload["@context"], expected.body_context());
+        pretty_assertions::assert_eq!(&request.payload["data"]["@context"], expected.body_context());
+        for feature in request.payload["data"]["features"].as_array().expect("the features survive") {
+            assert!(feature.get("@context").is_none(), "{feature}");
+        }
+        assert!(request.context_link().is_none());
+    }
+
+    /// Table 5.3.1-1: with `Prefer: body=json` "the `FeatureCollection` will not
+    /// contain an @context field"; the `Link` header names the context.
+    #[test]
+    fn a_geo_json_notification_preferring_json_carries_no_context_on_the_feature_collection() {
+        let pairs = vec![KeyValuePair {
+            key: "Prefer".into(),
+            value: "body=json".into(),
+        }];
+        let request = geo_json_notification(Some(&pairs));
+
+        assert!(request.payload.get("@context").is_none(), "{}", request.payload);
+        assert!(request.payload["data"].get("@context").is_none(), "{}", request.payload);
+        for feature in request.payload["data"]["features"].as_array().expect("the features survive") {
+            assert!(feature.get("@context").is_none(), "{feature}");
+        }
+        assert!(request.context_link().is_some());
     }
 }

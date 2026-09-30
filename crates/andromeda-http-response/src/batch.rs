@@ -47,13 +47,12 @@ impl IntoResponse for NgsiLdBatchResponse {
 
         apply_common_headers(
             &mut headers,
-            &self.rendered.context_links,
+            self.rendered.context_link,
             &CommonHeadersOptions {
                 location: None,
                 entity_map_uri: None,
                 snapshot_uri: self.snapshot_uri.as_ref(),
                 warnings: &self.warnings,
-                context_location: self.rendered.context_location,
             },
         );
 

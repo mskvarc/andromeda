@@ -168,9 +168,6 @@ impl TemporalError {
             | EntityError::Query(_)
             | EntityError::Request(_)
             | EntityError::Representation(_)
-            | EntityError::Identifier(_)
-            | EntityError::EntityTypeListIdentifier(_)
-            | EntityError::AttributeListIdentifier(_)
             | EntityError::Commit(_)
             | EntityError::Internal(_)) => {
                 tracing::error!(error = %other, "an entity operation a temporal operation depends on failed");

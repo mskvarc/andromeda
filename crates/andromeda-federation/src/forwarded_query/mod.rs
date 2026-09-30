@@ -17,6 +17,7 @@
 use crate::{
     config::SplitEntities,
     error::FederationError,
+    forwarded_names::ForwardedNames,
     forwarded_parameter::ForwardedParameter,
     forwarded_query::{
         block_footprint::{AttrCoverage, BlockSelection, block_attrs, block_covers_id, covered_type},
@@ -24,20 +25,20 @@ use crate::{
     },
     request::SourcePage,
     source_walk::SOURCE_PAGE_SIZE,
-    term_resolver::TermResolver,
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, rfc3339::sub_second, temporal_format::TemporalFormat};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, geo::input::GeoQueryInput};
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
+use andromeda_ngsi_ld_request::representation_parameter::WrittenValue;
 use std::num::NonZeroU32;
-use tracing::warn;
 use url::form_urlencoded;
 
 pub mod block_footprint;
 pub mod client_query;
+mod filter_parameters;
+mod temporal_parameters;
 
 /// The `options` token asking a source for its system-generated attributes
 /// (clause 4.8; Table 6.3.11-1).
@@ -56,7 +57,10 @@ impl ForwardedQuery {
     /// Narrow `client` to `registration`, one forwarded query per information
     /// block that covers part of the request; an empty result when no block
     /// covers any of the types, identifiers or attributes the client asked for,
-    /// in which case the registration has nothing to answer.
+    /// in which case the registration has nothing to answer. `source_page` is
+    /// requested when a durable range consumer must walk the complete source
+    /// result set. Identical block queries are collapsed so a source is
+    /// contacted once for the same request.
     ///
     /// # Errors
     ///
@@ -66,30 +70,12 @@ impl ForwardedQuery {
         client: ClientQuery<'_>,
         registration: &ContextSourceRegistration,
         split: SplitEntities,
-        resolver: &TermResolver<'_>,
-    ) -> Result<Vec<ForwardedQuery>, FederationError> {
-        Self::for_registration_on_page(client, registration, split, None, resolver).await
-    }
-
-    /// Narrow `client` to `registration` per information block, requesting
-    /// `source_page` when a durable range consumer must walk the complete source
-    /// result set. Identical block queries are collapsed so a source is
-    /// contacted once for the same request.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FederationError::JsonLd`] when a client type or attribute
-    /// cannot be expanded against the request context.
-    pub(crate) async fn for_registration_on_page(
-        client: ClientQuery<'_>,
-        registration: &ContextSourceRegistration,
-        split: SplitEntities,
         source_page: Option<SourcePage>,
-        resolver: &TermResolver<'_>,
+        names: &ForwardedNames<'_>,
     ) -> Result<Vec<ForwardedQuery>, FederationError> {
         let mut queries: Vec<ForwardedQuery> = Vec::new();
         for block in &registration.coverage.information {
-            if let Some(query) = Self::for_block(client, block, split, source_page, resolver).await?
+            if let Some(query) = Self::for_block(client, block, split, source_page, names).await?
                 && !queries.contains(&query)
             {
                 queries.push(query);
@@ -111,13 +97,12 @@ impl ForwardedQuery {
         block: &RegistrationInfo,
         split: SplitEntities,
         source_page: Option<SourcePage>,
-        resolver: &TermResolver<'_>,
+        names: &ForwardedNames<'_>,
     ) -> Result<Option<ForwardedQuery>, FederationError> {
         let mut query = ForwardedQuery::default();
         match client {
             ClientQuery::EntityQuery(params) => {
-                let Some(selection) =
-                    BlockSelection::of(block, params.id.as_deref(), params.id_pattern.as_ref(), params.entity_type.as_ref(), resolver).await?
+                let Some(selection) = BlockSelection::of(block, params.id.as_deref(), params.id_pattern.as_ref(), params.entity_type.as_ref(), names).await?
                 else {
                     return Ok(None);
                 };
@@ -125,11 +110,11 @@ impl ForwardedQuery {
                 query.push_source_page(source_page);
                 match split {
                     SplitEntities::Complete => {
-                        if !query.push_block_attrs(block_attrs(block, params.attrs.as_deref(), resolver).await?) {
+                        if !query.push_block_attrs(block_attrs(block, params.attrs.as_deref(), names).await?) {
                             return Ok(None);
                         }
-                        query.push_optional(ForwardedParameter::Q, params.q.as_ref().map(ToString::to_string));
-                        query.push_geo(params.geo.0.as_ref());
+                        query.push_q(params.q.as_ref(), params.json_keys.as_deref(), names).await?;
+                        query.push_geo(params.geo.0.as_ref(), names).await?;
                         query.push_optional(ForwardedParameter::ScopeQ, params.scope_q.as_ref().map(ToString::to_string));
                     }
                     // Clause 5.7.2.4: the client's attribute filter is applied to
@@ -137,12 +122,12 @@ impl ForwardedQuery {
                     // The block's declared attribute names are a registration
                     // constraint, not a client filter, so they still travel.
                     SplitEntities::Split => {
-                        if !query.push_block_attrs(block_attrs(block, None, resolver).await?) {
+                        if !query.push_block_attrs(block_attrs(block, None, names).await?) {
                             return Ok(None);
                         }
                     }
                 }
-                query.push_optional(ForwardedParameter::Csf, params.csf.as_ref().map(ToString::to_string));
+                query.push_csf(params.csf.as_ref(), names).await?;
                 query.push_dataset_ids(params.dataset_id.as_deref());
                 query.push_lang(params.lang.as_ref());
                 query.push_sys_attrs(params.options.as_ref().and_then(WrittenValue::if_supported).map(|options| options.sys_attrs));
@@ -158,12 +143,12 @@ impl ForwardedQuery {
                 // equivalent", so a block covering none of the selected types
                 // does not hold it, and the source is told the part it covers.
                 if let Some(entity_type) = params.entity_type.as_ref() {
-                    let Some(covered) = covered_type(entity_type, block, resolver).await? else {
+                    let Some(covered) = covered_type(entity_type, block, names).await? else {
                         return Ok(None);
                     };
                     query.push(ForwardedParameter::Type, covered.to_string());
                 }
-                if !query.push_block_attrs(block_attrs(block, params.attrs.as_deref(), resolver).await?) {
+                if !query.push_block_attrs(block_attrs(block, params.attrs.as_deref(), names).await?) {
                     return Ok(None);
                 }
                 query.push_dataset_ids(params.dataset_id.as_deref());
@@ -172,8 +157,7 @@ impl ForwardedQuery {
                 query.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
             }
             ClientQuery::Temporal(params) => {
-                let Some(selection) =
-                    BlockSelection::of(block, params.id.as_deref(), params.id_pattern.as_ref(), params.entity_type.as_ref(), resolver).await?
+                let Some(selection) = BlockSelection::of(block, params.id.as_deref(), params.id_pattern.as_ref(), params.entity_type.as_ref(), names).await?
                 else {
                     return Ok(None);
                 };
@@ -181,71 +165,29 @@ impl ForwardedQuery {
                 query.push_source_page(source_page);
                 match split {
                     SplitEntities::Complete => {
-                        if !query.push_block_attrs(block_attrs(block, params.attrs.as_deref(), resolver).await?) {
+                        if !query.push_block_attrs(block_attrs(block, params.attrs.as_deref(), names).await?) {
                             return Ok(None);
                         }
-                        query.push_optional(ForwardedParameter::Q, params.q.as_ref().map(ToString::to_string));
-                        query.push_geo(params.geo.0.as_ref());
+                        query.push_q(params.q.as_ref(), params.json_keys.as_deref(), names).await?;
+                        query.push_geo(params.geo.0.as_ref(), names).await?;
                         query.push_optional(ForwardedParameter::ScopeQ, params.scope_q.as_ref().map(ToString::to_string));
                     }
                     // Clause 5.7.4.4: as for entities, the attribute-reading
                     // filters wait for the aggregation; the block's declared
                     // attribute names still travel as a registration constraint.
                     SplitEntities::Split => {
-                        if !query.push_block_attrs(block_attrs(block, None, resolver).await?) {
+                        if !query.push_block_attrs(block_attrs(block, None, names).await?) {
                             return Ok(None);
                         }
                     }
                 }
-                query.push_optional(ForwardedParameter::Csf, params.csf.as_ref().map(ToString::to_string));
+                query.push_csf(params.csf.as_ref(), names).await?;
                 query.push_dataset_ids(params.dataset_id.as_deref());
                 query.push_lang(params.lang.as_ref());
                 query.push_temporal_parameters(params);
             }
         }
         Ok(Some(query))
-    }
-
-    /// The temporal window, representation and aggregation parameters a temporal
-    /// query forwards (clauses 5.7.3.4, 5.7.4.4, 6.3.12), and its clause 4.5.23
-    /// traversal continuation.
-    fn push_temporal_parameters(&mut self, params: &TemporalQueryParameters) {
-        self.push_optional(ForwardedParameter::Timerel, params.timerel.map(|timerel| timerel.to_string()));
-        self.push_optional(ForwardedParameter::TimeAt, params.time_at.map(sub_second));
-        self.push_optional(ForwardedParameter::EndTimeAt, params.end_time_at.map(sub_second));
-        self.push_optional(ForwardedParameter::Timeproperty, params.timeproperty.map(|property| property.to_string()));
-        self.push_optional(ForwardedParameter::LastN, params.last_n.map(|last_n| last_n.to_string()));
-        // Clause 6.3.12: `normalized` is the absence of a temporal `format`, not
-        // a value a source accepts. The grouped extension format is never
-        // forwarded (study §4.10): grouping is applied by this broker after the
-        // merge, so a source is asked for the plain aggregated representation and
-        // `aggrGroupBy` stays local.
-        self.push_optional(
-            ForwardedParameter::Format,
-            params
-                .format
-                .as_ref()
-                .and_then(WrittenValue::if_supported)
-                .filter(|format| **format != TemporalFormat::Normalized)
-                .map(|format| match format {
-                    TemporalFormat::GroupedValues => TemporalFormat::AggregatedValues.to_string(),
-                    TemporalFormat::Normalized | TemporalFormat::TemporalValues | TemporalFormat::AggregatedValues => format.to_string(),
-                }),
-        );
-        self.push_temporal_options(params);
-        self.push_optional(
-            ForwardedParameter::AggrMethods,
-            params
-                .aggr_methods
-                .as_deref()
-                .filter(|methods| !methods.is_empty())
-                .map(|methods| methods.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
-        );
-        self.push_optional(
-            ForwardedParameter::AggrPeriodDuration,
-            params.aggr_period_duration.map(|period| period.as_iso8601()),
-        );
-        self.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
     }
 
     fn push_source_page(&mut self, source_page: Option<SourcePage>) {
@@ -317,28 +259,6 @@ impl ForwardedQuery {
         }
     }
 
-    /// Write the four clause 4.10 geo-query members.
-    fn push_geo(&mut self, geo: Option<&GeoQueryInput>) {
-        let Some(geo) = geo else {
-            return;
-        };
-        let geometry = match serde_json::to_value(&geo.geometry) {
-            Ok(geometry) => geometry,
-            Err(error) => {
-                warn!(%error, "a validated geo-query geometry could not be written back to its wire form");
-                return;
-            }
-        };
-        let (Some(geometry_type), Some(coordinates)) = (geometry.get("type").and_then(serde_json::Value::as_str), geometry.get("coordinates")) else {
-            warn!("a validated geo-query geometry lost its type or coordinates on the way back to its wire form");
-            return;
-        };
-        self.push(ForwardedParameter::Georel, geo.georel.to_string());
-        self.push(ForwardedParameter::Geometry, geometry_type.to_string());
-        self.push(ForwardedParameter::Coordinates, coordinates.to_string());
-        self.push_optional(ForwardedParameter::Geoproperty, geo.geoproperty.as_ref().map(ToString::to_string));
-    }
-
     fn push_dataset_ids(&mut self, selectors: Option<&[DatasetSelector]>) {
         if let Some(selectors) = selectors.filter(|selectors| !selectors.is_empty()) {
             self.push(
@@ -366,25 +286,6 @@ impl ForwardedQuery {
         }
     }
 
-    /// The temporal `options` tokens: the representation a source answers in
-    /// has to be the one the local history is rendered in for the two to merge,
-    /// so the deprecated `options` spelling of the format travels as written.
-    fn push_temporal_options(&mut self, params: &TemporalQueryParameters) {
-        let Some(options) = params.options.as_ref().and_then(WrittenValue::if_supported) else {
-            return;
-        };
-        let mut tokens = Vec::new();
-        if let Some(format) = options.format {
-            tokens.push(format.to_string());
-        }
-        if options.sys_attrs == SysAttrsInclusion::Include {
-            tokens.push(SYS_ATTRS_OPTION.to_string());
-        }
-        if !tokens.is_empty() {
-            self.push(ForwardedParameter::Options, tokens.join(","));
-        }
-    }
-
     /// The clause 4.5.23 traversal continuation of a Linked Entity retrieval.
     fn push_traversal(&mut self, join: Option<String>, join_level: Option<NonZeroU32>, contained_by: Option<&[Identifier]>) {
         self.push_optional(ForwardedParameter::Join, join);
@@ -402,8 +303,10 @@ impl ForwardedQuery {
 mod tests {
     use crate::{
         config::SplitEntities,
+        forwarded_names::ForwardedNames,
         forwarded_parameter::ForwardedParameter,
         forwarded_query::{ForwardedQuery, client_query::ClientQuery},
+        forwarding_context::Rewording,
         request::SourcePage,
         term_resolver::TermResolver,
     };
@@ -457,7 +360,8 @@ mod tests {
         let engine = offline_engine();
         let context = ContextSpec::none();
         let resolver = TermResolver::new(&engine, &context);
-        ForwardedQuery::for_registration(client, registration, split, &resolver)
+        let names = ForwardedNames::new(&engine, &resolver, &context, Rewording::AsInbound);
+        ForwardedQuery::for_registration(client, registration, split, None, &names)
             .await
             .expect("narrowing succeeds")
     }
@@ -467,7 +371,8 @@ mod tests {
         let engine = offline_engine();
         let context = ContextSpec::none();
         let resolver = TermResolver::new(&engine, &context);
-        ForwardedQuery::for_registration_on_page(client, registration, split, Some(page), &resolver)
+        let names = ForwardedNames::new(&engine, &resolver, &context, Rewording::AsInbound);
+        ForwardedQuery::for_registration(client, registration, split, Some(page), &names)
             .await
             .expect("narrowing succeeds")
     }
@@ -481,9 +386,10 @@ mod tests {
         body_context: Value,
     ) -> Vec<ForwardedQuery> {
         let engine = offline_engine();
-        let context = ContextSpec::none().with_body_context(Some(body_context));
+        let context = ContextSpec::from_body(body_context);
         let resolver = TermResolver::new(&engine, &context);
-        ForwardedQuery::for_registration(client, registration, split, &resolver)
+        let names = ForwardedNames::new(&engine, &resolver, &context, Rewording::AsInbound);
+        ForwardedQuery::for_registration(client, registration, split, None, &names)
             .await
             .expect("narrowing succeeds")
     }
@@ -828,5 +734,36 @@ mod tests {
             "the IRI's last segment must not leak: {}",
             forwarded[0].to_query_string()
         );
+    }
+
+    /// Clause 4.3.6.6: a registration configuring its own `jsonldContext` is
+    /// sent every name in that context -- the client's type, attributes, query
+    /// and filter terms reworded, and the block's supplied names compacted
+    /// against it -- never in the client's spelling.
+    #[tokio::test]
+    async fn a_configured_context_rewords_every_forwarded_name() {
+        let engine = offline_engine();
+        let inbound = ContextSpec::from_body(aliased_context());
+        let forwarding = ContextSpec::from_body(json!({ "velocity": ALIASED_SPEED, "Car": ALIASED_VEHICLE }));
+        let resolver = TermResolver::new(&engine, &inbound);
+        let names = ForwardedNames::new(&engine, &resolver, &forwarding, Rewording::Reword);
+
+        let block = registration(&json!([{"entities": [{"type": ALIASED_VEHICLE}], "propertyNames": [ALIASED_SPEED]}]));
+        let query = entity_query("type=Veh&attrs=spd&q=spd%3E1&jsonKeys=spd&csf=spd%3D%3D1");
+        let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&query), &block, SplitEntities::Complete, None, &names)
+            .await
+            .expect("narrowing succeeds");
+        pretty_assertions::assert_eq!(forwarded.len(), 1);
+        pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Type), Some("Car"));
+        pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Attrs), Some("velocity"));
+        pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Q), Some("velocity>1"));
+        pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::JsonKeys), Some("velocity"));
+        pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Csf), Some("velocity==1"));
+
+        let supplied = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&entity_query("")), &block, SplitEntities::Complete, None, &names)
+            .await
+            .expect("narrowing succeeds");
+        pretty_assertions::assert_eq!(supplied[0].value_of(ForwardedParameter::Type), Some("Car"));
+        pretty_assertions::assert_eq!(supplied[0].value_of(ForwardedParameter::Attrs), Some("velocity"));
     }
 }
