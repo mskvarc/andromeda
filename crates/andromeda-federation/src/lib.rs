@@ -27,6 +27,8 @@ pub mod entity_map;
 pub mod entity_read;
 /// Current-entity response merging.
 pub mod entity_result;
+/// Dropping source entities a write to this broker would refuse (clause 6.3.17).
+mod entity_revalidation;
 /// Federation policy failures.
 pub mod error;
 /// The concrete reasons a single forwarded write is reported as a conflict.

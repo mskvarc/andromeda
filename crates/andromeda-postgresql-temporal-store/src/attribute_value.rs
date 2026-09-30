@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_lexicon::{
     time_value::{TimeValue, TimeValueError},
     uri::Uri,
 };
-use andromeda_ngsi_ld_model::expanded::geo_property::expanded_geo_node_to_geometry;
+use andromeda_ngsi_ld_model::expanded::geo_node::expanded_geo_node_to_geometry;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_temporal::attribute_instance_value::{object_list_target_iri, relationship_target_uri};

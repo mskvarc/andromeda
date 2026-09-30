@@ -5,6 +5,7 @@ use crate::{
     cache::Cacheability,
     config::SplitEntities,
     entity_read::own_loop_warning,
+    entity_revalidation::retain_admissible,
     error::FederationError,
     forwarded_query::{ForwardedQuery, client_query::ClientQuery},
     forwarding_url::{build_temporal_query_url, build_temporal_retrieve_url},
@@ -71,9 +72,12 @@ impl FederationService {
     /// abnormal outcome. A 404 contributes nothing. A query answers with an
     /// array and a retrieval with one object, but either is read from either:
     /// a retrieval continuing a clause 4.5.23 flat join answers with an array.
+    /// An entity carrying an instance a write to this broker would refuse is
+    /// dropped with a warning of its own.
     fn temporal_entities_of(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> Option<ForwardedTemporalEntities> {
         let mode = registration.access.mode.unwrap_or_default();
-        let answered = |entities, warnings, linked_map, partial_range: Option<NgsiLdContentRange>| {
+        let answered = |mut entities: Vec<Value>, mut warnings: Vec<NgsiLdWarning>, linked_map, partial_range: Option<NgsiLdContentRange>| {
+            retain_admissible(&registration.id, &mut entities, &mut warnings);
             Some(ForwardedTemporalEntities {
                 registration_id: Some(registration.id.clone()), // clone: the result names the registration it came from
                 mode,

@@ -6,7 +6,8 @@
 //! usable expansion is one plain `@value` string naming a code this catalog
 //! registers. The rule lives here, beside the catalog it consults, so that the
 //! write admission refusing an entity and the store persisting its unit hold
-//! the member to the same rule.
+//! the member to the same rule. The compacted spelling a context source
+//! answers with, the bare string itself, is held to it too.
 
 use crate::{
     unit_code_id::UnitCodeId,
@@ -72,6 +73,22 @@ pub fn unit_code_identity(member: &Value) -> Result<UnitCodeId, ExpandedUnitCode
         .and_then(|entry| entry.get(VALUE_KEYWORD))
         .and_then(Value::as_str)
         .ok_or(UnitCodeRefusal::Malformed)?;
+    common_code_identity(raw)
+}
+
+/// Resolve a compacted `unitCode` member, the bare string clause 4.5.2.2
+/// renders it as, to the identity the catalog assigned its code.
+///
+/// # Errors
+///
+/// The same as [`unit_code_identity`], a member that is not a string being
+/// [`UnitCodeRefusal::Malformed`].
+pub fn compacted_unit_code_identity(member: &Value) -> Result<UnitCodeId, ExpandedUnitCodeError> {
+    common_code_identity(member.as_str().ok_or(UnitCodeRefusal::Malformed)?)
+}
+
+/// Resolve one written common code to its catalog identity.
+fn common_code_identity(raw: &str) -> Result<UnitCodeId, ExpandedUnitCodeError> {
     let code = UnitCode::from_code(raw).ok_or(UnitCodeRefusal::NotACommonCode)?;
     registry()?.id_of(code).map_err(|_| UnitCodeRefusal::Unregistered { code }.into())
 }
@@ -79,7 +96,7 @@ pub fn unit_code_identity(member: &Value) -> Result<UnitCodeId, ExpandedUnitCode
 #[cfg(test)]
 mod tests {
     use crate::{
-        expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal, unit_code_identity},
+        expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal, compacted_unit_code_identity, unit_code_identity},
         unit_code_registry::registry,
     };
     use cefact_units::UnitCode;
@@ -117,6 +134,22 @@ mod tests {
         ] {
             pretty_assertions::assert_eq!(
                 unit_code_identity(&member),
+                Err(ExpandedUnitCodeError::Refused(UnitCodeRefusal::Malformed)),
+                "{member}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_compacted_code_resolves_like_its_expansion() {
+        pretty_assertions::assert_eq!(compacted_unit_code_identity(&json!("KMH")), unit_code_identity(&json!([{"@value": "KMH"}])));
+        pretty_assertions::assert_eq!(
+            compacted_unit_code_identity(&json!("km/h")),
+            Err(ExpandedUnitCodeError::Refused(UnitCodeRefusal::NotACommonCode))
+        );
+        for member in [json!(1), json!(["KMH"]), json!({"value": "KMH"}), json!(null)] {
+            pretty_assertions::assert_eq!(
+                compacted_unit_code_identity(&member),
                 Err(ExpandedUnitCodeError::Refused(UnitCodeRefusal::Malformed)),
                 "{member}"
             );

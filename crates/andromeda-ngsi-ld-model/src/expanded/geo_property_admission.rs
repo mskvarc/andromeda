@@ -30,7 +30,7 @@
 //! paths alike, runs this one admission, so a geometry refused through one is
 //! refused through all of them.
 
-use crate::expanded::geo_property::validate_expanded_geo_node;
+use crate::expanded::geo_node::validate_expanded_geo_node;
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
