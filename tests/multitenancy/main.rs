@@ -2,7 +2,7 @@
 //!
 //! Verifies tenant isolation, implicit tenant creation, cross-tenant visibility
 //! rules, and notification header propagation per the NGSI-LD multitenancy
-//! specification (ETSI GS CIM 009 section 5.5.6).
+//! specification (ETSI GS CIM 009 clauses 4.14, 5.5.10 and 6.3.14).
 //!
 //! Naming convention: `multitenancy_<scenario>_<expected_outcome>`.
 
@@ -182,6 +182,55 @@ async fn ngsi_request(
     (status, headers, response_body)
 }
 
+/// Sends a plain JSON body, as `POST /jsonldContexts` and a batch delete take
+/// it, to `tenant`.
+async fn json_request(http_client: &Client, method: Method, path: &str, body: &Value, tenant: &str) -> (StatusCode, HeaderMap, Value) {
+    let response = http_client
+        .request(method, format!("{BASE_URL}{path}"))
+        .header("NGSILD-Tenant", tenant)
+        .header("Content-Type", "application/json")
+        .json(body)
+        .send()
+        .await
+        .expect("json request failed");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let response_body = read_json_or_null(response).await;
+    (status, headers, response_body)
+}
+
+/// Assert that `tenant` exists: `path` on it answers 200 and echoes the tenant
+/// (clause 6.3.14).
+async fn assert_tenant_serves(http_client: &Client, path: &str, tenant: &str) {
+    let (status, headers, body) = ngsi_request(http_client, Method::GET, path, None, tenant, true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK, "GET {path} on {tenant}: {body}");
+    pretty_assertions::assert_eq!(
+        headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()),
+        Some(tenant),
+        "GET {path} on {tenant} must echo NGSILD-Tenant"
+    );
+}
+
+/// Assert that a request refused on `tenant` was refused as `NonexistentTenant`
+/// with the tenant echoed, and that the tenant still does not exist afterwards.
+async fn assert_refused_without_creating(http_client: &Client, operation: &str, refusal: (StatusCode, HeaderMap, Value), tenant: &str) {
+    let (status, headers, body) = refusal;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND, "{operation} on unknown {tenant}: {body}");
+    pretty_assertions::assert_eq!(
+        body["type"],
+        NONEXISTENT_TENANT_ERROR.as_str(),
+        "{operation} is not among the clause 5.5.10 creating operations, so it must raise NonexistentTenant"
+    );
+    pretty_assertions::assert_eq!(
+        headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()),
+        Some(tenant),
+        "{operation} refusal must echo NGSILD-Tenant"
+    );
+    let (status, _, body) = ngsi_request(http_client, Method::GET, "/entities?type=Vehicle", None, tenant, true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND, "{operation} must not create {tenant}: {body}");
+    pretty_assertions::assert_eq!(body["type"], NONEXISTENT_TENANT_ERROR.as_str(), "{operation} must leave {tenant} nonexistent");
+}
+
 /// GET /tenants and decode JSON body.
 async fn list_tenants(http_client: &Client) -> (StatusCode, Value) {
     let response = http_client
@@ -322,6 +371,87 @@ async fn multitenancy_non_create_on_unknown_tenant_returns_nonexistent_tenant_er
     environment.finish().await;
 }
 
+/// Clause 5.5.10 enumerates the six operations that may create a Tenant
+/// implicitly; "All other NGSI-LD operations [...] that target a non-existing
+/// Tenant should raise an error of type `NonexistentTenant`". Batch Upsert
+/// (5.6.8) and Batch Merge (5.6.20) can create Entities but are not in the list,
+/// and neither is Add @context (5.13.2), so each is refused and the Tenant is
+/// not created as a side effect.
+#[serial_test::serial]
+#[tokio::test]
+async fn multitenancy_non_creating_operations_on_unknown_tenant_raise_nonexistent_tenant_and_create_nothing() {
+    let http_client = client();
+    let environment = reset_broker_state().await;
+
+    let id = unique_entity_id("urn:ngsi-ld:Vehicle:noncreating");
+    let batch = json!([vehicle_entity(&id, "batch")]);
+    let fragment = json!({"name": {"type": "Property", "value": "fragment"}, "@context": [CORE_CONTEXT]});
+    let attrs_path = format!("/entities/{id}/attrs");
+    let entity_path = format!("/entities/{id}");
+    let ld_json_operations: [(&str, Method, &str, Option<&Value>); 5] = [
+        ("Batch Entity Upsert (5.6.8)", Method::POST, "/entityOperations/upsert", Some(&batch)),
+        ("Batch Entity Merge (5.6.20)", Method::POST, "/entityOperations/merge", Some(&batch)),
+        ("Update Attributes (5.6.2)", Method::PATCH, &attrs_path, Some(&fragment)),
+        ("Append Attributes (5.6.3)", Method::POST, &attrs_path, Some(&fragment)),
+        ("Delete Entity (5.6.6)", Method::DELETE, &entity_path, None),
+    ];
+    for (operation, method, path, body) in ld_json_operations {
+        let tenant = format!("tenant-noncreating-{}", Uuid::new_v4());
+        let refusal = ngsi_request(&http_client, method, path, body, &tenant, false).await;
+        assert_refused_without_creating(&http_client, operation, refusal, &tenant).await;
+    }
+
+    let json_operations = [
+        ("Batch Entity Delete (5.6.10)", "/entityOperations/delete", json!([id])),
+        (
+            "Add @context (5.13.2)",
+            "/jsonldContexts",
+            json!({"@context": {"noncreating": "https://example.org/noncreating"}}),
+        ),
+    ];
+    for (operation, path, body) in json_operations {
+        let tenant = format!("tenant-noncreating-{}", Uuid::new_v4());
+        let refusal = json_request(&http_client, Method::POST, path, &body, &tenant).await;
+        assert_refused_without_creating(&http_client, operation, refusal, &tenant).await;
+    }
+
+    environment.finish().await;
+}
+
+/// Batch Entity Creation (5.6.7) is one of the clause 5.5.10 creating
+/// operations, and clause 5.6.7.4 fails a refused entity on its own, so a batch
+/// in which one entity is refused still answers 207 and still creates the Tenant
+/// for the entity it created.
+#[serial_test::serial]
+#[tokio::test]
+async fn multitenancy_batch_create_with_a_refused_entity_still_creates_the_tenant() {
+    let http_client = client();
+    let environment = reset_broker_state().await;
+
+    let tenant = format!("tenant-batch-partial-{}", Uuid::new_v4());
+    let created = unique_entity_id("urn:ngsi-ld:Vehicle:batch-partial-created");
+    let refused = unique_entity_id("urn:ngsi-ld:Vehicle:batch-partial-refused");
+    // A null Property value is refused per entity (clause 5.5.4).
+    let refused_entity = json!({
+        "id": refused,
+        "type": "Vehicle",
+        "name": {"type": "Property", "value": null},
+        "@context": [CORE_CONTEXT]
+    });
+    let batch = json!([vehicle_entity(&created, "created"), refused_entity]);
+    let (status, headers, body) = ngsi_request(&http_client, Method::POST, "/entityOperations/create", Some(&batch), &tenant, false).await;
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS, "{body}");
+    pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant.as_str()));
+    pretty_assertions::assert_eq!(body["success"], json!([created]));
+    pretty_assertions::assert_eq!(body["errors"][0]["entityId"], json!(refused));
+
+    assert_tenant_serves(&http_client, &format!("/entities/{created}"), &tenant).await;
+    let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{refused}"), None, &tenant, true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND, "the refused entity was not created");
+
+    environment.finish().await;
+}
+
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_create_operations_implicitly_create_named_tenant() {
@@ -334,8 +464,7 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     let (status, headers, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&vehicle_entity(&id_1, "v1")), &tenant_1, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_1.as_str()));
-    let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id_1}"), None, &tenant_1, true).await;
-    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert_tenant_serves(&http_client, &format!("/entities/{id_1}"), &tenant_1).await;
     // Entity not visible in unnamed default tenant
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id_1}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
@@ -347,8 +476,7 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     let (status, headers, _) = ngsi_request(&http_client, Method::POST, "/entityOperations/create", Some(&batch), &tenant_2, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_2.as_str()));
-    let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id_2}"), None, &tenant_2, true).await;
-    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert_tenant_serves(&http_client, &format!("/entities/{id_2}"), &tenant_2).await;
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id_2}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -366,6 +494,9 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_3.as_str()));
+    assert_tenant_serves(&http_client, &format!("/temporal/entities/{id_3}"), &tenant_3).await;
+    let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/temporal/entities/{id_3}"), None, "", true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
     // 4. Create Subscription
     let tenant_4 = format!("tenant-sub-create-{}", Uuid::new_v4());
@@ -381,8 +512,7 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_4.as_str()));
-    let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/subscriptions/{id_4}"), None, &tenant_4, true).await;
-    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert_tenant_serves(&http_client, &format!("/subscriptions/{id_4}"), &tenant_4).await;
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/subscriptions/{id_4}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -400,8 +530,7 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_5.as_str()));
-    let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceRegistrations/{id_5}"), None, &tenant_5, true).await;
-    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert_tenant_serves(&http_client, &format!("/csourceRegistrations/{id_5}"), &tenant_5).await;
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceRegistrations/{id_5}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -419,8 +548,7 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_6.as_str()));
-    let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceSubscriptions/{id_6}"), None, &tenant_6, true).await;
-    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert_tenant_serves(&http_client, &format!("/csourceSubscriptions/{id_6}"), &tenant_6).await;
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceSubscriptions/{id_6}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
