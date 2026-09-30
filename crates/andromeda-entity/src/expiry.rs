@@ -8,14 +8,13 @@ use crate::{
     notification_plan::modification,
     port::expiry::EntityExpirySource,
 };
-#[cfg(test)]
-use andromeda_context_commit::write_outcome::WriteOutcome;
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     entity_mutation::EntityMutation,
     entity_record::EntityRecord,
     history_record::HistoryRecord,
     precondition::Precondition,
+    write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
 #[cfg(test)]
@@ -180,7 +179,14 @@ impl EntityService {
 
         let outcomes = self.writes.commit(target, writes).await?;
         let mut landed = 0;
-        for ((_, events), outcome) in pending.into_iter().zip(&outcomes) {
+        for ((identifier, events), outcome) in pending.into_iter().zip(&outcomes) {
+            // The sweep writes back what the store already held, less the
+            // expired instances, so a refusal means the stored entity no longer
+            // reads as storable. The entity stays a candidate for the next
+            // sweep while its neighbours are purged.
+            if let WriteOutcome::Refused(refusal) = outcome {
+                warn!(entity = %identifier, %refusal, "attribute-expiry write refused");
+            }
             if outcome.is_updated() {
                 landed += 1;
                 for event in events {

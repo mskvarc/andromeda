@@ -10,6 +10,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+mod attempt_failure;
 mod columns;
 mod commit_refusal;
 /// Native PostgreSQL implementation of the context commit port.
@@ -31,6 +32,7 @@ mod job_settlement;
 mod name_resolution;
 mod projected_entity_key;
 mod projection;
+mod write_isolation;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

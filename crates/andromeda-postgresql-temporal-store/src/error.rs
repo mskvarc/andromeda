@@ -12,7 +12,7 @@ use crate::{
     unit_code_metadata::UnitCodeMetadataError,
 };
 use andromeda_context_commit::{submission_refusal::SubmissionRefusal, write_id::WriteId, write_ordinal::WriteOrdinalOutOfRange};
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_date_time::NgsiLdDateTimeError, ngsi_ld_time::NgsiLdTimeError};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_date_time::NgsiLdDateTimeError, ngsi_ld_time::NgsiLdTimeError};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
@@ -114,6 +114,21 @@ pub enum TemporalStoreError {
         /// The write the mismatched intent names.
         write_id: WriteId,
     },
+    /// Recording one entity's intent failed.
+    ///
+    /// A chunk records the intents of many entities together, and a refusal
+    /// raised while building one intent's rows belongs to that entity's write
+    /// alone (clauses 5.6.7 to 5.6.10 report every entity of a batch on its
+    /// own). The entity travels beside the failure so the commit can set that
+    /// write aside; what the failure means is `source`'s alone.
+    #[error("temporal store: recording the history of entity {entity_id} failed: {source}")]
+    EntityIntent {
+        /// The entity whose intent failed.
+        entity_id: Identifier,
+        /// What failed.
+        #[source]
+        source: Box<TemporalStoreError>,
+    },
     /// A temporal hypertable already carries the columnstore under segment or
     /// order columns other than the ones the broker enables it with.
     #[error("temporal store columnstore: {hypertable} is {observed}, not the settings the broker enables")]
@@ -131,6 +146,7 @@ impl TemporalStoreError {
     #[must_use]
     pub fn failure_class(&self) -> Option<PersistenceFailure> {
         match self {
+            TemporalStoreError::EntityIntent { source, .. } => source.failure_class(),
             TemporalStoreError::Database(error) => Some(classify(error)),
             TemporalStoreError::NameLookup(error) => Some(error.failure_class()),
             TemporalStoreError::StoredHistory(_)
@@ -179,6 +195,7 @@ impl From<TemporalStoreError> for TemporalError {
             return TemporalError::from(failure.record(&error));
         }
         match error {
+            TemporalStoreError::EntityIntent { source, .. } => TemporalError::from(*source),
             TemporalStoreError::NotFound(reason) => TemporalError::NotFound(reason),
             TemporalStoreError::Refused(refusal) => TemporalError::from(refusal),
             // A unit the client sent is a request fault (clause 4.5.2).
@@ -289,6 +306,29 @@ mod tests {
         assert!(matches!(
             refused,
             TemporalError::Validation(TemporalValidationReason::Refused(SubmissionRefusal::UnitCodeUnregistered))
+        ));
+    }
+
+    /// The entity an intent failure names changes nothing about what the
+    /// failure means: a refusal stays a refusal, a fault stays a fault.
+    #[test]
+    fn an_entity_intent_failure_is_classified_as_its_source() {
+        let entity_intent = |source: TemporalStoreError| TemporalStoreError::EntityIntent {
+            entity_id: "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"),
+            source: Box::new(source),
+        };
+        let refused = TemporalError::from(entity_intent(TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(
+            UnitCodeRefusal::NotACommonCode,
+        ))));
+        assert!(matches!(
+            refused,
+            TemporalError::Validation(TemporalValidationReason::Refused(SubmissionRefusal::UnitCodeUnregistered))
+        ));
+        let fault = entity_intent(TemporalStoreError::ScopeHasNoAttributeRow);
+        pretty_assertions::assert_eq!(fault.failure_class(), Some(PersistenceFailure::ContractBroken));
+        assert!(matches!(
+            TemporalError::from(fault),
+            TemporalError::Persistence(PersistenceFailure::ContractBroken)
         ));
     }
 

@@ -15,6 +15,7 @@
 //! the dictionary keys were minted from those same intents in this transaction.
 
 use crate::{
+    attempt_failure::AttemptFailure,
     commit_refusal::{context_store, unit_code},
     projected_entity_key::ProjectedEntityKey,
 };
@@ -57,8 +58,8 @@ struct ProjectionWork {
 /// # Errors
 ///
 /// Returns [`CommitError::Persistence`] when a statement fails,
-/// [`CommitError::Submission`] when an instance carries a `unitCode` the
-/// catalog cannot store, and [`CommitError::Invariant`] when an observation
+/// [`AttemptFailure::Refused`] naming the entity when an instance carries a
+/// `unitCode` the catalog cannot store, and [`CommitError::Invariant`] when an observation
 /// carries a value the projection has no column for or names an attribute the
 /// dictionary did not resolve.
 pub(crate) async fn apply(
@@ -67,7 +68,7 @@ pub(crate) async fn apply(
     intents: &[&TemporalAppendIntent],
     keys: &HashMap<Identifier, ProjectedEntityKey>,
     dictionary: &HashMap<AttributeName, AttributeNameKey>,
-) -> Result<(), CommitError> {
+) -> Result<(), AttemptFailure> {
     let projected: Vec<(&TemporalAppendIntent, ProjectedEntityKey)> = intents
         .iter()
         .copied()
@@ -98,7 +99,7 @@ fn collect(
     intent: &TemporalAppendIntent,
     entity: ProjectedEntityKey,
     dictionary: &HashMap<AttributeName, AttributeNameKey>,
-) -> Result<(), CommitError> {
+) -> Result<(), AttemptFailure> {
     for entry in &intent.entries {
         match entry {
             TemporalAppendEntry::Observation { row } => {
@@ -113,7 +114,10 @@ fn collect(
                             key,
                             attribute_kind: stored_attribute_kind(row.attribute_type),
                             value,
-                            unit_code_id: unit_code_in(row.metadata.as_ref()).map_err(unit_code)?,
+                            // A unit the instance carries is its entity's
+                            // content, refused for that entity's write alone.
+                            unit_code_id: unit_code_in(row.metadata.as_ref())
+                                .map_err(|error| AttemptFailure::of_write(unit_code(error), intent.entity_id.clone()))?, // clone: the attribution owns the entity it names.
                             // The instance's own members other than its value
                             // are its metadata, so its clause 4.22 `expiresAt`
                             // is read from there exactly as the payload carries it.
@@ -156,10 +160,11 @@ fn grain(
 #[cfg(test)]
 mod tests {
     use crate::{
+        attempt_failure::AttemptFailure,
         projected_entity_key::ProjectedEntityKey,
         projection::{ProjectionWork, collect},
     };
-    use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
+    use andromeda_context_commit::{submission_refusal::SubmissionRefusal, write_ordinal::WriteOrdinal, write_record::WriteRecord};
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         attribute_type::AttributeType,
@@ -319,5 +324,19 @@ mod tests {
         let mut work = ProjectionWork::default();
         let intent = intent(vec![observation(TemporalValue::Boolean(true))]);
         assert!(collect(&mut work, &intent, entity_key(), &HashMap::new()).is_err());
+    }
+
+    /// A unit the catalog does not register is the content of the entity that
+    /// carried it, so the refusal names that entity and no other.
+    #[test]
+    fn an_unregistered_unit_code_is_refused_for_the_entity_that_carried_it() {
+        let mut work = ProjectionWork::default();
+        let metadata = serde_json::json!({"https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "NOTACODE"}]});
+        let intent = intent(vec![observation_with(TemporalValue::Number(JsonNumber::from(1)), Some(metadata))]);
+        let refused = collect(&mut work, &intent, entity_key(), &dictionary());
+        assert!(
+            matches!(&refused, Err(AttemptFailure::Refused(refused)) if refused.entity_id.as_str() == "urn:ngsi-ld:Vehicle:1" && matches!(refused.refusal, SubmissionRefusal::UnitCodeUnregistered)),
+            "{refused:?}"
+        );
     }
 }

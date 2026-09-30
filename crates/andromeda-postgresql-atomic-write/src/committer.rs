@@ -1,8 +1,9 @@
 //! Native PostgreSQL atomic context commits.
 
 use crate::{
+    attempt_failure::AttemptFailure,
     columns::{columns_for, expectations},
-    commit_refusal::{context_store, database},
+    commit_refusal::{context_store, database, entity_statement},
     consequences::{ConsequenceWrite, notification_events, side_effects},
     contention_retry::rerun_while_contended,
     deferred_history,
@@ -14,6 +15,7 @@ use crate::{
     name_resolution::{ResolvedWriteNames, resolve_attribute_names, resolve_write_names},
     projected_entity_key::ProjectedEntityKey,
     projection,
+    write_isolation::IsolatedSubmission,
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -105,7 +107,12 @@ impl PostgresAtomicCommitter {
 
     /// Apply every current-state mutation and preserve submission-order
     /// outcomes.
-    async fn apply_entities(&self, tx: &mut Transaction<'_, Postgres>, target: &ContextTarget, writes: &[AtomicWrite]) -> Result<EntityMutations, CommitError> {
+    async fn apply_entities(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
+        writes: &[AtomicWrite],
+    ) -> Result<EntityMutations, AttemptFailure> {
         let EntityGroups {
             inserts,
             updates,
@@ -140,7 +147,7 @@ impl PostgresAtomicCommitter {
         names: &ResolvedWriteNames,
         outcomes: &mut [Option<WriteOutcome>],
         keys: &mut HashMap<Identifier, ProjectedEntityKey>,
-    ) -> Result<(), CommitError> {
+    ) -> Result<(), AttemptFailure> {
         if inserts.is_empty() {
             return Ok(());
         }
@@ -149,7 +156,7 @@ impl PostgresAtomicCommitter {
             EntityInsertMode::Unnest => EntityRepository::create_batch_in_tx(tx, target, &columns).await,
             EntityInsertMode::CopyStaging => create_batch_via_copy_in_tx(tx, target, &columns).await,
         }
-        .map_err(context_store)?;
+        .map_err(entity_statement)?;
         record_minted(keys, inserted);
         for (index, write) in inserts {
             outcomes[*index] = Some(insert_outcome(write.precondition, returned_flag(keys, write.entity_id.as_ref())));
@@ -166,7 +173,7 @@ impl PostgresAtomicCommitter {
         names: &ResolvedWriteNames,
         outcomes: &mut [Option<WriteOutcome>],
         keys: &mut HashMap<Identifier, ProjectedEntityKey>,
-    ) -> Result<(), CommitError> {
+    ) -> Result<(), AttemptFailure> {
         if updates.is_empty() {
             return Ok(());
         }
@@ -174,7 +181,7 @@ impl PostgresAtomicCommitter {
         let expected = expectations(updates);
         let saved = EntityRepository::save_batch_in_tx(tx, target, &columns, &expected)
             .await
-            .map_err(context_store)?;
+            .map_err(entity_statement)?;
         record_keys(keys, saved);
         for (index, write) in updates {
             outcomes[*index] = Some(update_outcome(write.precondition, returned_flag(keys, write.entity_id.as_ref())));
@@ -274,7 +281,10 @@ impl PostgresAtomicCommitter {
     /// a deadlock or serialization victim ends in
     /// [`CommitError::TransactionContended`] having left nothing behind, which
     /// is what lets [`rerun_while_contended`] run the identical call again
-    /// under the same record and base.
+    /// under the same record and base. A write whose own content was refused
+    /// ends the attempt in [`AttemptFailure::Refused`], having left nothing
+    /// behind either, which is what lets `commit` set that write aside and run
+    /// the rest under the same record and base.
     ///
     /// A replay also removes the job it `settles` in that one transaction, as
     /// the transaction's first statement and under the job's lease (see
@@ -289,7 +299,7 @@ impl PostgresAtomicCommitter {
         base: WriteOrdinal,
         writes: &[AtomicWrite],
         settles: Option<JobLease>,
-    ) -> Result<Vec<WriteOutcome>, CommitError> {
+    ) -> Result<Vec<WriteOutcome>, AttemptFailure> {
         if writes.is_empty() && settles.is_none() {
             return Ok(Vec::new());
         }
@@ -351,17 +361,31 @@ impl PostgresAtomicCommitter {
 }
 
 impl ContextCommitter for PostgresAtomicCommitter {
+    /// Every refused write is set aside and the rest run again, one attempt per
+    /// refusal, so a successful commit costs exactly what it did before and
+    /// each refused entity costs its chunk one more transaction.
     fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
         Box::pin(async move {
             let record = WriteRecord::mint(Utc::now());
-            rerun_while_contended(|| self.commit_under(&target, record, WriteOrdinal::at(0), &writes, None)).await
+            let mut submission = IsolatedSubmission::new(writes);
+            loop {
+                match rerun_while_contended(|| self.commit_under(&target, record, WriteOrdinal::at(0), submission.writes(), None)).await {
+                    Ok(landed) => return submission.outcomes(landed),
+                    Err(AttemptFailure::Refused(refused)) => submission.set_aside(&refused.entity_id, refused.refusal)?,
+                    Err(AttemptFailure::Failed(error)) => return Err(error),
+                }
+            }
         })
     }
 
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
-        Box::pin(async move { rerun_while_contended(|| self.commit_under(&target, replay.record, replay.base_ordinal, &writes, Some(replay.lease))).await })
+        Box::pin(async move {
+            rerun_while_contended(|| self.commit_under(&target, replay.record, replay.base_ordinal, &writes, Some(replay.lease)))
+                .await
+                .map_err(AttemptFailure::into_commit_error)
+        })
     }
 }
 

@@ -1,7 +1,7 @@
 //! The broker's own side-effect drain over the suite's database, in live
 //! delivery, with the changes it publishes recorded.
 
-use crate::{recorded_changes::RecordedChanges, replay_committer::committer};
+use crate::{broker_committer::committer, recorded_changes::RecordedChanges};
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_entity::{
     change_sink::EntityChangeSink,

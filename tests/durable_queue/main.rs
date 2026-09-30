@@ -16,6 +16,8 @@
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport and persistence errors.
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+#[path = "../support/broker_committer.rs"]
+mod broker_committer;
 #[path = "../support/notification_adapter.rs"]
 pub mod notification_adapter;
 
@@ -32,7 +34,6 @@ mod notification_unreadable_subscription;
 mod queue_database;
 mod queue_workers;
 mod recorded_changes;
-mod replay_committer;
 mod replay_interruption;
 mod side_effect_attempt_ceiling;
 mod side_effect_change_round_trip;

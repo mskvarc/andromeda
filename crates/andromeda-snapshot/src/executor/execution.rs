@@ -15,7 +15,14 @@ use crate::{
         translation::temporal_parameters,
     },
 };
-use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, error::CommitError};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    entity_mutation::EntityMutation,
+    entity_record::EntityRecord,
+    error::CommitError,
+    submission_refusal::SubmissionRefusal,
+    write_outcome::WriteOutcome,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::error::EntityError;
 use andromeda_federation::{
@@ -146,9 +153,19 @@ impl SnapshotExecutor {
                 return Ok(failure_detail(format!("Failed to read results: {error}")));
             }
         };
-        if let Err(error) = self.writes.commit(target, writes).await {
-            error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize current Snapshot results");
-            return branch_commit_failure(error);
+        let outcomes = match self.writes.commit(target, writes).await {
+            Ok(outcomes) => outcomes,
+            Err(error) => {
+                error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize current Snapshot results");
+                return branch_commit_failure(error);
+            }
+        };
+        // A Snapshot captures the query's results whole, so one captured entity
+        // the branch refused fails the query rather than leaving a capture that
+        // silently lacks it.
+        if let Some(refusal) = outcomes.into_iter().find_map(refusal_of) {
+            error!(snapshot_id = %snapshot_id, query_index = index, %refusal, "A captured Snapshot result was refused");
+            return branch_commit_failure(CommitError::Submission(refusal));
         }
         Ok(success_detail(pairs.len()))
     }
@@ -186,6 +203,21 @@ fn temporal_failure(error: TemporalError, prefix: &str) -> Result<ExecutionResul
     match temporal_recurrence(&error) {
         Recurrence::Transient => Err(SnapshotError::from(error)),
         Recurrence::Persistent => Ok(failure_detail(format!("{prefix}{error}"))),
+    }
+}
+
+/// The refusal a captured entity's write met, if the branch refused it.
+fn refusal_of(outcome: WriteOutcome) -> Option<SubmissionRefusal> {
+    match outcome {
+        WriteOutcome::Refused(refusal) => Some(refusal),
+        WriteOutcome::Created
+        | WriteOutcome::Updated
+        | WriteOutcome::Deleted(_)
+        | WriteOutcome::AlreadyExists
+        | WriteOutcome::NotFound
+        | WriteOutcome::Superseded
+        | WriteOutcome::Skipped
+        | WriteOutcome::NoEntityChange => None,
     }
 }
 

@@ -14,6 +14,7 @@
 //! nothing behind and the identical write can run again, so each keeps a
 //! category of its own; the second is what the committer re-runs.
 
+use crate::attempt_failure::{AttemptFailure, RefusedWrite};
 use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_context_store::{entity::types_present::EntityTypesMissing, error::ContextStoreError};
@@ -71,6 +72,47 @@ pub(crate) fn context_store(error: ContextStoreError) -> CommitError {
     }
 }
 
+/// Classify a failure of the fused entity statements.
+///
+/// The statements write every entity of the commit at once, but the store names
+/// the entity it refused for carrying no type (clause 4.5.1), so that refusal is
+/// attributed to the one write it came from.
+#[track_caller]
+pub(crate) fn entity_statement(error: ContextStoreError) -> AttemptFailure {
+    match error {
+        ContextStoreError::EntityTypes(EntityTypesMissing::Rejected(entity)) => AttemptFailure::Refused(Box::new(RefusedWrite {
+            refusal: SubmissionRefusal::UntypedEntity(entity.clone()), // clone: the refusal and its attribution each own the entity.
+            entity_id: entity,
+        })),
+        other @ (ContextStoreError::EntityTypes(EntityTypesMissing::ConstraintViolated)
+        | ContextStoreError::Database(_)
+        | ContextStoreError::Saturated
+        | ContextStoreError::Encoding(_)
+        | ContextStoreError::Collation(_)
+        | ContextStoreError::CopyField(_)
+        | ContextStoreError::UniqueViolation(_)
+        | ContextStoreError::InvalidRegex(_)
+        | ContextStoreError::Render(_)
+        | ContextStoreError::NameLookup(_)
+        | ContextStoreError::ContextMapper(_)
+        | ContextStoreError::Migration(_)
+        | ContextStoreError::SchemaContract(_)
+        | ContextStoreError::BranchVersion(_)
+        | ContextStoreError::StoredRegistrationInformation(_)
+        | ContextStoreError::StatementBuild(_)
+        | ContextStoreError::PayloadEncoding(_)
+        | ContextStoreError::OrdinalOutOfRange(_)
+        | ContextStoreError::StoredRegistration(_)
+        | ContextStoreError::StoredSubscription(_)
+        | ContextStoreError::StoredSnapshot(_)
+        | ContextStoreError::StoredEntity(_)
+        | ContextStoreError::StoredEntityMap(_)
+        | ContextStoreError::CatalogueIdentityGeneration(_)
+        | ContextStoreError::Invariant(_)
+        | ContextStoreError::DatabaseUrlUnnamed) => AttemptFailure::Failed(context_store(other)),
+    }
+}
+
 /// Classify a temporal-policy failure raised inside the commit transaction.
 ///
 /// The temporal layer already separates what the request said from what the
@@ -105,6 +147,42 @@ pub(crate) fn temporal_store(error: TemporalStoreError) -> CommitError {
     temporal(TemporalError::from(error))
 }
 
+/// Classify a failure of the native history phase.
+///
+/// The store records every landed write's intent in one chunk, and names the
+/// entity whose intent failed; a refusal among those failures is attributed to
+/// that entity's write.
+#[track_caller]
+pub(crate) fn history(error: TemporalStoreError) -> AttemptFailure {
+    match error {
+        TemporalStoreError::EntityIntent { entity_id, source } => AttemptFailure::of_write(temporal_store(*source), entity_id),
+        other @ (TemporalStoreError::Database(_)
+        | TemporalStoreError::StoredHistory(_)
+        | TemporalStoreError::StoredCatalog(_)
+        | TemporalStoreError::StoredAggregation(_)
+        | TemporalStoreError::Render(_)
+        | TemporalStoreError::NotFound(_)
+        | TemporalStoreError::Encoding(_)
+        | TemporalStoreError::Collation(_)
+        | TemporalStoreError::CopyField(_)
+        | TemporalStoreError::NameLookup(_)
+        | TemporalStoreError::Invariant(_)
+        | TemporalStoreError::Refused(_)
+        | TemporalStoreError::WriteOrdinal(_)
+        | TemporalStoreError::EntryPosition(_)
+        | TemporalStoreError::StatementBuild(_)
+        | TemporalStoreError::RetentionHorizon(_)
+        | TemporalStoreError::StoredTime(_)
+        | TemporalStoreError::ScopeHasNoAttributeRow
+        | TemporalStoreError::TimestampPrecision(_)
+        | TemporalStoreError::UnitCode(_)
+        | TemporalStoreError::MixedAggregationGroup(_)
+        | TemporalStoreError::DuplicateInstanceClaim(_)
+        | TemporalStoreError::WriteRecordMismatch { .. }
+        | TemporalStoreError::ColumnstoreSettingsDrift { .. }) => AttemptFailure::Failed(temporal_store(other)),
+    }
+}
+
 /// Classify a name-dictionary failure raised while minting the keys a write
 /// binds.
 ///
@@ -135,13 +213,20 @@ pub(crate) fn unit_code(error: UnitCodeMetadataError) -> CommitError {
 
 #[cfg(test)]
 mod tests {
-    use crate::commit_refusal::{context_store, name_lookup, temporal, temporal_store, unit_code};
+    use crate::{
+        attempt_failure::AttemptFailure,
+        commit_refusal::{context_store, entity_statement, history, name_lookup, temporal, temporal_store, unit_code},
+    };
     use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_postgresql_context_store::{entity::types_present::EntityTypesMissing, error::ContextStoreError};
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
-    use andromeda_postgresql_temporal_store::{error::TemporalStoreError, unit_code_metadata::UnitCodeMetadataError};
+    use andromeda_postgresql_temporal_store::{
+        duplicate_instance_claim::DuplicateInstanceClaimError,
+        error::TemporalStoreError,
+        unit_code_metadata::UnitCodeMetadataError,
+    };
     use andromeda_temporal::error::TemporalError;
     use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 
@@ -231,5 +316,45 @@ mod tests {
             name_lookup(&NameLookupError::Statement(sqlx::Error::RowNotFound)),
             CommitError::Persistence(_)
         ));
+    }
+
+    /// Clause 4.5.1: the entity statement names the entity that carried no
+    /// type, so the rest of the commit need not answer for it.
+    #[test]
+    fn a_typeless_entity_refused_by_the_entity_statement_is_attributed_to_its_write() {
+        let failure = entity_statement(ContextStoreError::EntityTypes(EntityTypesMissing::Rejected(entity_id())));
+        assert!(
+            matches!(&failure, AttemptFailure::Refused(refused) if refused.entity_id == entity_id() && matches!(refused.refusal, SubmissionRefusal::UntypedEntity(_))),
+            "{failure:?}"
+        );
+        let anonymous = entity_statement(ContextStoreError::EntityTypes(EntityTypesMissing::ConstraintViolated));
+        assert!(matches!(anonymous, AttemptFailure::Failed(CommitError::Submission(_))), "{anonymous:?}");
+    }
+
+    #[test]
+    fn a_failed_entity_statement_fails_the_attempt_as_a_whole() {
+        let failure = entity_statement(ContextStoreError::Database(sqlx::Error::RowNotFound));
+        assert!(matches!(failure, AttemptFailure::Failed(CommitError::Persistence(_))), "{failure:?}");
+    }
+
+    /// A refusal raised while recording one entity's intent is that entity's;
+    /// a fault raised there is the store's, whichever intent it struck.
+    #[test]
+    fn a_refused_history_intent_is_attributed_to_the_entity_it_names() {
+        let entity_intent = |source: TemporalStoreError| TemporalStoreError::EntityIntent {
+            entity_id: entity_id(),
+            source: Box::new(source),
+        };
+        let refused = history(entity_intent(TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(
+            UnitCodeRefusal::NotACommonCode,
+        ))));
+        assert!(
+            matches!(&refused, AttemptFailure::Refused(refused) if refused.entity_id == entity_id() && matches!(refused.refusal, SubmissionRefusal::UnitCodeUnregistered)),
+            "{refused:?}"
+        );
+        let fault = history(entity_intent(TemporalStoreError::ScopeHasNoAttributeRow));
+        assert!(matches!(fault, AttemptFailure::Failed(CommitError::Persistence(_))), "{fault:?}");
+        let unattributed = history(TemporalStoreError::DuplicateInstanceClaim(DuplicateInstanceClaimError));
+        assert!(matches!(unattributed, AttemptFailure::Failed(CommitError::Submission(_))), "{unattributed:?}");
     }
 }

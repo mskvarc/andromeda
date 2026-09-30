@@ -10,6 +10,7 @@
 //! `AlreadyExists`; a conflict with an unrelated transaction must not become a
 //! second one, so the committer absorbs it rather than reporting it.
 
+use crate::attempt_failure::AttemptFailure;
 use andromeda_context_commit::{error::CommitError, write_retry::backoff_after_lost_attempts};
 use std::future::Future;
 use tokio::time::sleep;
@@ -26,15 +27,15 @@ pub(crate) const CONTENDED_COMMIT_ATTEMPTS: u32 = 5;
 /// [`CommitError::TransactionContended`], at most
 /// [`CONTENDED_COMMIT_ATTEMPTS`] times, with a jittered backoff between runs so
 /// the contenders that collided do not restart in lockstep.
-pub(crate) async fn rerun_while_contended<T, F, Attempt>(mut attempt: F) -> Result<T, CommitError>
+pub(crate) async fn rerun_while_contended<T, F, Attempt>(mut attempt: F) -> Result<T, AttemptFailure>
 where
     F: FnMut() -> Attempt,
-    Attempt: Future<Output = Result<T, CommitError>>,
+    Attempt: Future<Output = Result<T, AttemptFailure>>,
 {
     let mut lost_attempts = 0;
     loop {
         match attempt().await {
-            Err(CommitError::TransactionContended) if lost_attempts + 1 < CONTENDED_COMMIT_ATTEMPTS => {
+            Err(AttemptFailure::Failed(CommitError::TransactionContended)) if lost_attempts + 1 < CONTENDED_COMMIT_ATTEMPTS => {
                 lost_attempts += 1;
                 tracing::debug!(lost_attempts, "atomic context commit rolled back by a concurrent transaction; running it again");
                 sleep(backoff_after_lost_attempts(lost_attempts)).await;
@@ -46,8 +47,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::contention_retry::{CONTENDED_COMMIT_ATTEMPTS, rerun_while_contended};
-    use andromeda_context_commit::error::CommitError;
+    use crate::{
+        attempt_failure::{AttemptFailure, RefusedWrite},
+        contention_retry::{CONTENDED_COMMIT_ATTEMPTS, rerun_while_contended},
+    };
+    use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use std::{
         cell::Cell,
@@ -59,12 +63,12 @@ mod tests {
     fn attempt_contended_for(
         contended: u32,
         runs: &Cell<u32>,
-        settled: fn() -> Result<u32, CommitError>,
-    ) -> impl FnMut() -> Ready<Result<u32, CommitError>> + '_ {
+        settled: fn() -> Result<u32, AttemptFailure>,
+    ) -> impl FnMut() -> Ready<Result<u32, AttemptFailure>> + '_ {
         move || {
             runs.set(runs.get() + 1);
             ready(if runs.get() <= contended {
-                Err(CommitError::TransactionContended)
+                Err(AttemptFailure::Failed(CommitError::TransactionContended))
             } else {
                 settled()
             })
@@ -83,7 +87,7 @@ mod tests {
     async fn a_commit_rolled_back_on_every_run_reports_contention_after_the_budget() {
         let runs = Cell::new(0);
         let outcome = rerun_while_contended(attempt_contended_for(u32::MAX, &runs, || Ok(7))).await;
-        assert!(matches!(outcome, Err(CommitError::TransactionContended)), "{outcome:?}");
+        assert!(matches!(outcome, Err(AttemptFailure::Failed(CommitError::TransactionContended))), "{outcome:?}");
         pretty_assertions::assert_eq!(runs.get(), CONTENDED_COMMIT_ATTEMPTS);
     }
 
@@ -93,12 +97,28 @@ mod tests {
     async fn a_failure_other_than_contention_is_never_run_again() {
         let runs = Cell::new(0);
         let outcome = rerun_while_contended(attempt_contended_for(0, &runs, || {
-            Err(CommitError::Persistence(PersistenceFailure::Unavailable))
+            Err(AttemptFailure::Failed(CommitError::Persistence(PersistenceFailure::Unavailable)))
         }))
         .await;
-        assert!(matches!(outcome, Err(CommitError::Persistence(_))), "{outcome:?}");
+        assert!(matches!(outcome, Err(AttemptFailure::Failed(CommitError::Persistence(_)))), "{outcome:?}");
         pretty_assertions::assert_eq!(runs.get(), 1);
-        let saturated = rerun_while_contended(|| ready(Err::<u32, CommitError>(CommitError::StoreSaturated))).await;
-        assert!(matches!(saturated, Err(CommitError::StoreSaturated)), "{saturated:?}");
+        let saturated = rerun_while_contended(|| ready(Err::<u32, AttemptFailure>(AttemptFailure::Failed(CommitError::StoreSaturated)))).await;
+        assert!(matches!(saturated, Err(AttemptFailure::Failed(CommitError::StoreSaturated))), "{saturated:?}");
+    }
+
+    /// A refused write is the committer's to set aside, not a conflict to run
+    /// again unchanged: the identical attempt would be refused identically.
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_write_is_handed_back_from_its_first_run() {
+        let runs = Cell::new(0);
+        let outcome = rerun_while_contended(attempt_contended_for(0, &runs, || {
+            Err(AttemptFailure::Refused(Box::new(RefusedWrite {
+                entity_id: "urn:ngsi-ld:A".parse().expect("a valid entity URI"),
+                refusal: SubmissionRefusal::UnitCodeUnregistered,
+            })))
+        }))
+        .await;
+        assert!(matches!(outcome, Err(AttemptFailure::Refused(_))), "{outcome:?}");
+        pretty_assertions::assert_eq!(runs.get(), 1);
     }
 }

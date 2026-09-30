@@ -89,81 +89,108 @@ impl PostgresTemporalHistorySink {
         // that instant.
         let recorded_at = intents[0].record.recorded_at();
         let catalog = repository.upsert_temporal_catalog_batch_in_tx(tx, target, &upserts, recorded_at).await?;
-        let mut history = Vec::new();
-        let mut scopes = Vec::new();
+        let mut rows = IntentRows::default();
         for intent in intents {
-            let recorded_at = intent.record.recorded_at();
-            let Some(entity_key) = recording_entity_key(&catalog, intent)? else {
-                continue;
-            };
-            for (position, entry) in intent.entries.iter().enumerate() {
-                let delta = u32::try_from(position).map_err(TemporalStoreError::EntryPosition)?;
-                let ordinal = intent.base_ordinal.advanced_by(delta).map_err(TemporalStoreError::WriteOrdinal)?;
-                let identity = TemporalObservationIdentity {
-                    write_id: intent.record.write_id(),
-                    ordinal,
-                };
-                match entry {
-                    TemporalAppendEntry::Observation { row } => {
-                        let stream_key = resolve_stream(&catalog, entity_key, &row.attribute_name, row.dataset_id.as_ref())?;
-                        history.push(observation_row(stream_key, row, recorded_at, identity)?);
-                    }
-                    TemporalAppendEntry::Tombstone {
-                        attribute_name,
-                        dataset_id,
-                        attribute_type,
-                        instance,
-                    } => {
-                        let stream_key = resolve_stream(&catalog, entity_key, attribute_name, dataset_id.as_ref())?;
-                        history.push(AttributeHistoryRow {
-                            recorded_at,
-                            identity,
-                            stream_key,
-                            // The family the ended instance belonged to is carried on
-                            // the tombstone, which is what lets the render synthesise
-                            // the null member that family prescribes.
-                            attribute_kind: stored_attribute_kind(*attribute_type),
-                            // A deletion records its instant and no typed value; the
-                            // null representation is synthesised from the attribute
-                            // family at render time (clauses 4.5.7 and 4.5.8).
-                            value: AttributeHistoryValue::Tombstone { deleted_at: recorded_at },
-                            axes: SemanticTimeAxes::default(),
-                            instance: instance.clone(), // clone: the persisted row owns its stable instance identity.
-                            unit_code_id: None,
-                            metadata: None,
-                        });
-                    }
-                    TemporalAppendEntry::Scope {
-                        observation,
-                        observed_at,
-                        instance,
-                    } => scopes.push(ScopeHistoryEntry {
-                        recorded_at,
-                        entity_id: intent.entity_id.clone(), // clone: each persisted scope row owns its entity identity.
-                        identity,
-                        value: match observation {
-                            // clone: each persisted scope row owns its validated path.
-                            ScopeObservation::Path(path) => ScopeHistoryValue::Path(path.clone()),
-                            // Clause 4.18 reserves `urn:ngsi-ld:null` for a deleted
-                            // scope, which the row records as a deletion instant with
-                            // no path rather than as a sentinel path.
-                            ScopeObservation::Deleted => ScopeHistoryValue::Tombstone { deleted_at: recorded_at },
-                        },
-                        // Clause 4.5.6: the temporal scope carries `observedAt`,
-                        // `createdAt` and `modifiedAt`; a scope appended by this
-                        // write is created and last modified at the write.
-                        axes: SemanticTimeAxes {
-                            observed_at: *observed_at,
-                            created_at: Some(recorded_at),
-                            modified_at: Some(recorded_at),
-                        },
-                        instance: instance.clone(), // clone: each persisted scope row owns its instance identity.
-                    }),
-                }
-            }
+            // Every failure below is this intent's own, so it names the entity
+            // whose write the commit can set aside when it is a refusal.
+            rows.extend(&catalog, intent).map_err(|source| TemporalStoreError::EntityIntent {
+                entity_id: intent.entity_id.clone(), // clone: the failure owns the entity it names.
+                source: Box::new(source),
+            })?;
         }
+        let IntentRows { history, scopes } = rows;
         repository.insert_history_batch_in_tx(tx, target, &history).await?;
         repository.insert_scope_history_batch_in_tx(tx, target, &scopes).await?;
+        Ok(())
+    }
+}
+
+/// The history and scope rows a chunk's intents amount to.
+#[derive(Default)]
+struct IntentRows {
+    /// Attribute history rows, observations and endings alike.
+    history: Vec<AttributeHistoryRow>,
+    /// Scope history rows.
+    scopes: Vec<ScopeHistoryEntry>,
+}
+
+impl IntentRows {
+    /// Add the rows one intent records, resolved against the chunk's catalogue.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalStoreError`] when an entry cannot be encoded, or when
+    /// the catalogue resolved no key or stream the intent needs.
+    fn extend(&mut self, catalog: &TemporalCatalog, intent: &TemporalAppendIntent) -> Result<(), TemporalStoreError> {
+        let recorded_at = intent.record.recorded_at();
+        let Some(entity_key) = recording_entity_key(catalog, intent)? else {
+            return Ok(());
+        };
+        for (position, entry) in intent.entries.iter().enumerate() {
+            let delta = u32::try_from(position).map_err(TemporalStoreError::EntryPosition)?;
+            let ordinal = intent.base_ordinal.advanced_by(delta).map_err(TemporalStoreError::WriteOrdinal)?;
+            let identity = TemporalObservationIdentity {
+                write_id: intent.record.write_id(),
+                ordinal,
+            };
+            match entry {
+                TemporalAppendEntry::Observation { row } => {
+                    let stream_key = resolve_stream(catalog, entity_key, &row.attribute_name, row.dataset_id.as_ref())?;
+                    self.history.push(observation_row(stream_key, row, recorded_at, identity)?);
+                }
+                TemporalAppendEntry::Tombstone {
+                    attribute_name,
+                    dataset_id,
+                    attribute_type,
+                    instance,
+                } => {
+                    let stream_key = resolve_stream(catalog, entity_key, attribute_name, dataset_id.as_ref())?;
+                    self.history.push(AttributeHistoryRow {
+                        recorded_at,
+                        identity,
+                        stream_key,
+                        // The family the ended instance belonged to is carried on
+                        // the tombstone, which is what lets the render synthesise
+                        // the null member that family prescribes.
+                        attribute_kind: stored_attribute_kind(*attribute_type),
+                        // A deletion records its instant and no typed value; the
+                        // null representation is synthesised from the attribute
+                        // family at render time (clauses 4.5.7 and 4.5.8).
+                        value: AttributeHistoryValue::Tombstone { deleted_at: recorded_at },
+                        axes: SemanticTimeAxes::default(),
+                        instance: instance.clone(), // clone: the persisted row owns its stable instance identity.
+                        unit_code_id: None,
+                        metadata: None,
+                    });
+                }
+                TemporalAppendEntry::Scope {
+                    observation,
+                    observed_at,
+                    instance,
+                } => self.scopes.push(ScopeHistoryEntry {
+                    recorded_at,
+                    entity_id: intent.entity_id.clone(), // clone: each persisted scope row owns its entity identity.
+                    identity,
+                    value: match observation {
+                        // clone: each persisted scope row owns its validated path.
+                        ScopeObservation::Path(path) => ScopeHistoryValue::Path(path.clone()),
+                        // Clause 4.18 reserves `urn:ngsi-ld:null` for a deleted
+                        // scope, which the row records as a deletion instant with
+                        // no path rather than as a sentinel path.
+                        ScopeObservation::Deleted => ScopeHistoryValue::Tombstone { deleted_at: recorded_at },
+                    },
+                    // Clause 4.5.6: the temporal scope carries `observedAt`,
+                    // `createdAt` and `modifiedAt`; a scope appended by this
+                    // write is created and last modified at the write.
+                    axes: SemanticTimeAxes {
+                        observed_at: *observed_at,
+                        created_at: Some(recorded_at),
+                        modified_at: Some(recorded_at),
+                    },
+                    instance: instance.clone(), // clone: each persisted scope row owns its instance identity.
+                }),
+            }
+        }
         Ok(())
     }
 }

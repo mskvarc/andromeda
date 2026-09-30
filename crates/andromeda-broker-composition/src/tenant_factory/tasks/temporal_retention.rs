@@ -115,7 +115,10 @@ const fn classify_retention_failure(error: TemporalStoreError) -> TaskFailure<Te
         | TemporalStoreError::MixedAggregationGroup(_)
         | TemporalStoreError::WriteRecordMismatch { .. }
         | TemporalStoreError::ColumnstoreSettingsDrift { .. }
-        | TemporalStoreError::UnitCode(_) => FailureClass::InvariantViolation,
+        | TemporalStoreError::UnitCode(_)
+        // Retention only deletes aged rows and records no intent, so a
+        // failure naming the entity whose intent it recorded cannot reach it.
+        | TemporalStoreError::EntityIntent { .. } => FailureClass::InvariantViolation,
         TemporalStoreError::Refused(_)
         | TemporalStoreError::NotFound(_)
         | TemporalStoreError::TimestampPrecision(_)

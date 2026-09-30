@@ -32,7 +32,9 @@ impl Precondition {
 /// Next action after one read-modify-write commit attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AfterAttempt {
-    /// The requested mutation or independent consequence settled.
+    /// No further attempt can change the outcome: the requested mutation or
+    /// independent consequence settled, or the store refused the write's
+    /// content, which reading the entity again cannot change.
     Settled,
     /// Current state changed and must be read again.
     Reread,
@@ -44,9 +46,12 @@ pub enum AfterAttempt {
 #[must_use]
 pub const fn after_attempt(outcome: &WriteOutcome) -> AfterAttempt {
     match outcome {
-        WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => {
-            AfterAttempt::Settled
-        }
+        WriteOutcome::Created
+        | WriteOutcome::Updated
+        | WriteOutcome::Deleted(_)
+        | WriteOutcome::NoEntityChange
+        | WriteOutcome::Skipped
+        | WriteOutcome::Refused(_) => AfterAttempt::Settled,
         WriteOutcome::Superseded | WriteOutcome::AlreadyExists => AfterAttempt::Reread,
         WriteOutcome::NotFound => AfterAttempt::Vanished,
     }
@@ -56,6 +61,7 @@ pub const fn after_attempt(outcome: &WriteOutcome) -> AfterAttempt {
 mod tests {
     use crate::{
         precondition::{AfterAttempt, after_attempt},
+        submission_refusal::SubmissionRefusal,
         write_outcome::WriteOutcome,
     };
 
@@ -67,6 +73,16 @@ mod tests {
     #[test]
     fn a_missing_entity_stops_the_retry_loop() {
         pretty_assertions::assert_eq!(after_attempt(&WriteOutcome::NotFound), AfterAttempt::Vanished);
+    }
+
+    /// A refusal names the write's content, not the entity's state, so reading
+    /// the entity again cannot turn it into a landed write.
+    #[test]
+    fn a_refused_write_is_final() {
+        pretty_assertions::assert_eq!(
+            after_attempt(&WriteOutcome::Refused(SubmissionRefusal::UnitCodeUnregistered)),
+            AfterAttempt::Settled
+        );
     }
 
     #[test]

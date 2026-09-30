@@ -3,9 +3,11 @@
 //! Covers current projection atomicity and deletion, default dataset
 //! uniqueness, distinct datasets, narrow Entity keys, empty Entity types,
 //! replayed writes, no-op suppression, long strings, instance expiry,
-//! identifier bounds, and the consequences of attribute and Entity writes.
-//! Each test drives the broker over HTTP (or, for the no-op guard, the
-//! broker's own projection statement) and then reads
+//! identifier bounds, refused-write isolation, and the consequences of
+//! attribute and Entity writes.
+//! Each test drives the broker over HTTP (or, for the no-op guard and
+//! refused-write isolation, the broker's own projection statement or
+//! committer) and then reads
 //! `current_attribute_values`, `entities`, and `temporal_entities` directly, so
 //! an assertion states what the storage actually holds rather than what the
 //! rendering suggests.
@@ -21,6 +23,8 @@ mod atomicity;
 mod attribute_writes;
 mod bad_request;
 mod bounded_identifier;
+#[path = "../support/broker_committer.rs"]
+mod broker_committer;
 mod bypass_writes;
 mod datasets;
 mod deletion;
@@ -32,5 +36,6 @@ mod instance_expiry;
 mod long_text;
 mod noop_suppression;
 mod projection_rows;
+mod refused_write_isolation;
 mod replayed_writes;
 mod write_consequences;

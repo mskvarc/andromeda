@@ -1,5 +1,9 @@
-//! The broker's own atomic committer over the suite's database, which is what
-//! replays a leased side-effect job in these verifications.
+//! The broker's own atomic committer over a suite's database.
+//!
+//! A verification that must hand the committer writes no HTTP request can
+//! produce -- a replay of a leased side-effect job, or content the admission
+//! layer would have refused -- drives the committer the broker composes, over
+//! the same tenant database the broker writes.
 
 use andromeda_context_commit::commit_consequence_publisher::NoCommitConsequencePublisher;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
@@ -18,8 +22,8 @@ use andromeda_temporal::core_write_history::CoreWriteHistory;
 use sqlx::PgPool;
 use std::sync::Arc;
 
-/// The broker's own committer over the suite's database. History is native;
-/// the replays here record only notifications, which need no history.
+/// The broker's own committer over `pool`, recording history natively and every
+/// Core write in it.
 pub fn committer(pool: &PgPool) -> PostgresAtomicCommitter {
     let attribute_names = Arc::new(NameCache::<AttributeName>::new(pool)) as Arc<dyn NameLookup<AttributeName>>;
     let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(pool)) as Arc<dyn NameLookup<EntityTypeName>>;

@@ -1370,6 +1370,7 @@ dependencies = [
  "andromeda-unit-catalog",
  "async-trait",
  "chrono",
+ "derive_more",
  "pretty_assertions",
  "sea-query",
  "sea-query-sqlx",

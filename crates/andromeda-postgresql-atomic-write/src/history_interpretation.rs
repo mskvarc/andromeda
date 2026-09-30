@@ -10,7 +10,7 @@
 //! write under [`CoreWriteHistory::NotRecorded`] is the other way round: its
 //! history is its current-state change, but none of it is written to history.
 
-use crate::commit_refusal::temporal;
+use crate::{attempt_failure::AttemptFailure, commit_refusal::temporal};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_invariant::CommitInvariant,
@@ -20,7 +20,8 @@ use andromeda_context_commit::{
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
-use andromeda_temporal::{append_intent::TemporalAppendIntent, core_write_history::CoreWriteHistory};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_temporal::{append_intent::TemporalAppendIntent, core_write_history::CoreWriteHistory, error::TemporalError};
 use std::{iter::once, sync::Arc};
 
 /// Interpret every landed write's temporal consequences exactly once, and
@@ -36,27 +37,29 @@ use std::{iter::once, sync::Arc};
 /// Under [`CoreWriteHistory::NotRecorded`] a Core write -- one whose history
 /// is its current-state change -- is interpreted for the projection alone, so
 /// Core queries still see it while its Temporal Evolution stays as it was.
+///
+/// A refusal raised while interpreting one write's history names that write's
+/// content alone, so it is attributed to the write it came from.
 pub(crate) fn interpret(
     landed: &[&AtomicWrite],
     record: &WriteRecord,
     base: WriteOrdinal,
     core_write_history: CoreWriteHistory,
-) -> Result<(InterpretedHistory, WriteOrdinal), CommitError> {
+) -> Result<(InterpretedHistory, WriteOrdinal), AttemptFailure> {
     let mut next = base;
     let mut interpreted = InterpretedHistory {
         intents: Vec::with_capacity(landed.len()),
         projected: Vec::with_capacity(landed.len()),
     };
     for write in landed {
+        let refused = |error: TemporalError| AttemptFailure::of_write(temporal(error), Identifier::clone(&write.entity_id)); // clone: the attribution owns the entity it names.
         let entity_types = write.recorded_entity_types()?;
         match (&write.projection, core_write_history) {
             (CurrentStateProjection::FromHistory, CoreWriteHistory::Recorded) | (CurrentStateProjection::Untouched, _) => {}
             (CurrentStateProjection::FromHistory, CoreWriteHistory::NotRecorded) => {
                 // Interpreted for the projection alone: it draws no ordinal,
                 // because none of its entries is written to history.
-                if let Some(unrecorded) =
-                    TemporalAppendIntent::from_history(&write.entity_id, &entity_types, &write.history, *record, next).map_err(temporal)?
-                {
+                if let Some(unrecorded) = TemporalAppendIntent::from_history(&write.entity_id, &entity_types, &write.history, *record, next).map_err(refused)? {
                     interpreted.projected.push(ProjectedIntent::Unrecorded(unrecorded));
                 }
                 continue;
@@ -67,12 +70,12 @@ pub(crate) fn interpret(
                     .collect();
                 // Interpreted for the projection alone, like an unrecorded
                 // Core write.
-                if let Some(restated) = TemporalAppendIntent::from_history(&write.entity_id, &entity_types, &restatement, *record, next).map_err(temporal)? {
+                if let Some(restated) = TemporalAppendIntent::from_history(&write.entity_id, &entity_types, &restatement, *record, next).map_err(refused)? {
                     interpreted.projected.push(ProjectedIntent::Unrecorded(restated));
                 }
             }
         }
-        let Some(intent) = TemporalAppendIntent::from_history(&write.entity_id, &entity_types, &write.history, *record, next).map_err(temporal)? else {
+        let Some(intent) = TemporalAppendIntent::from_history(&write.entity_id, &entity_types, &write.history, *record, next).map_err(refused)? else {
             continue;
         };
         let advance = u32::try_from(intent.entries.len()).map_err(|error| CommitError::from(CommitInvariant::ConsequenceCount(error)))?;

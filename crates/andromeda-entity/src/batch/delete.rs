@@ -23,6 +23,7 @@ use andromeda_context_commit::{
     change_event::ChangeEvent,
     deleted_entity::DeletedEntity,
     entity_mutation::EntityMutation,
+    error::CommitError,
     history_record::deletion_history,
     precondition::Precondition,
     subscription_match::SubscriptionMatch,
@@ -142,6 +143,9 @@ impl EntityService {
                 | WriteOutcome::Updated
                 | WriteOutcome::NoEntityChange => {
                     errors.push((id.clone(), EntityError::not_found(id))); // clone: error result owns the entity ID
+                }
+                WriteOutcome::Refused(refusal) => {
+                    errors.push((id.clone(), EntityError::from(CommitError::Submission(refusal)))); // clone: error result owns the entity ID
                 }
             }
         }

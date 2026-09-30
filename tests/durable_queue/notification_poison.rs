@@ -118,11 +118,15 @@ async fn durable_queue_an_unreadable_delivery_is_dead_lettered_without_holding_b
     assert!(exhausted_at.is_some(), "an unreadable row is dead-lettered");
     assert_eq!(attempts, 1, "the retiring acknowledgement is counted");
     assert_eq!(claim_columns, 0, "a dead-lettered row holds no lease");
+    // The recorded reason names the row and what is wrong with it, never the
+    // stored value itself: a row is unreadable precisely because its content
+    // is not what the broker wrote, so it is not echoed into the error.
     let last_error = last_error.expect("the dead-lettered row records why it could not be read");
     assert!(
-        last_error.contains(&format!("notification delivery {unreadable}")) && last_error.contains(UNREADABLE_ENTITY_ID),
+        last_error.contains(&format!("notification delivery {unreadable}")) && last_error.contains("invalid entity URI"),
         "{last_error}"
     );
+    assert!(!last_error.contains(UNREADABLE_ENTITY_ID), "the unreadable value is not echoed: {last_error}");
 
     let second = drain.execute(Utc::now()).await.expect("a second pass");
     assert_eq!(second.claimed, 0, "a retired row is not claimed again");

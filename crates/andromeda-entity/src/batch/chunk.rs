@@ -27,6 +27,7 @@ use andromeda_context_commit::{
     change_event::ChangeEvent,
     entity_mutation::EntityMutation,
     entity_record::EntityRecord,
+    error::CommitError,
     history_record::{HistoryRecord, mutation_history},
     precondition::{AfterAttempt, Precondition, after_attempt},
     write_outcome::WriteOutcome,
@@ -255,12 +256,16 @@ impl EntityService {
 ///
 /// `Skipped` is silent on purpose: an unconditional insert that met an existing
 /// row neither succeeded nor failed, and the upsert path that issues one has
-/// always left such entities out of both lists.
-fn error_of(id: &Identifier, outcome: &WriteOutcome) -> Option<EntityError> {
+/// always left such entities out of both lists. A write whose content the
+/// store refused reports that refusal against its own entity only (clause
+/// 5.6.8.4: "If while processing an Entity there is any kind of error or
+/// abnormal situation, a `BatchEntityError` shall be added").
+fn error_of(id: &Identifier, outcome: WriteOutcome) -> Option<EntityError> {
     match outcome {
         WriteOutcome::AlreadyExists => Some(EntityError::already_exists(id)),
         WriteOutcome::NotFound => Some(EntityError::not_found(id)),
         WriteOutcome::Superseded => Some(EntityError::contention(id, WRITE_ATTEMPTS)),
+        WriteOutcome::Refused(refusal) => Some(EntityError::from(CommitError::Submission(refusal))),
         WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => None,
     }
 }
@@ -343,15 +348,17 @@ impl EntityService {
 
         let mut chunk = ChunkOutcome::default();
         let mut emit_events = Vec::new();
-        for ((id, creates, events), outcome) in settled.into_iter().zip(&outcomes) {
+        for ((id, creates, events), outcome) in settled.into_iter().zip(outcomes) {
+            let next = after_attempt(&outcome);
+            let skipped = outcome.is_skipped();
             if let Some(error) = error_of(&id, outcome) {
-                match after_attempt(outcome) {
+                match next {
                     AfterAttempt::Reread => chunk.retryable.push((id, error)),
                     AfterAttempt::Settled | AfterAttempt::Vanished => chunk.errors.push((id, error)),
                 }
                 continue;
             }
-            if outcome.is_skipped() {
+            if skipped {
                 continue;
             }
             if creates {
@@ -371,15 +378,24 @@ impl EntityService {
 
 #[cfg(test)]
 mod tests {
-    use super::error_of;
-    use andromeda_context_commit::write_outcome::WriteOutcome;
+    use crate::{batch::chunk::error_of, error::EntityError};
+    use andromeda_context_commit::{submission_refusal::SubmissionRefusal, write_outcome::WriteOutcome};
 
     #[test]
     fn a_conflicting_insert_reports_409_and_a_missing_update_reports_404() {
         // NGSI-LD 6.4.3.1 for the conflict; clause 5.6.9 for the absent entity.
         let id = "urn:ngsi-ld:A".parse().expect("URI");
-        assert!(error_of(&id, &WriteOutcome::AlreadyExists).is_some_and(|error| !error.is_not_found()));
-        assert!(error_of(&id, &WriteOutcome::NotFound).is_some_and(|error| error.is_not_found()));
+        assert!(error_of(&id, WriteOutcome::AlreadyExists).is_some_and(|error| !error.is_not_found()));
+        assert!(error_of(&id, WriteOutcome::NotFound).is_some_and(|error| error.is_not_found()));
+    }
+
+    /// A refusal of the entity's own content is a validation failure of that
+    /// entity, answered `BadRequestData` in its `BatchEntityError`.
+    #[test]
+    fn a_refused_write_reports_its_refusal_as_a_validation_failure() {
+        let id = "urn:ngsi-ld:A".parse().expect("URI");
+        let error = error_of(&id, WriteOutcome::Refused(SubmissionRefusal::UnitCodeUnregistered));
+        assert!(error.as_ref().is_some_and(EntityError::is_validation), "{error:?}");
     }
 
     #[test]
@@ -391,7 +407,7 @@ mod tests {
             WriteOutcome::Skipped,
         ] {
             let id = "urn:ngsi-ld:A".parse().expect("URI");
-            assert!(error_of(&id, &outcome).is_none());
+            assert!(error_of(&id, outcome).is_none());
         }
     }
 }

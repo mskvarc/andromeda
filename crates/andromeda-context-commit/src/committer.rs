@@ -16,6 +16,13 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// nevertheless committed in the same atomic unit as its entity mutation,
     /// under a freshly minted write identity and an ordinal counter that starts
     /// at zero.
+    ///
+    /// A write whose own content the store refuses is reported as
+    /// [`WriteOutcome::Refused`] at its position, and every other write lands
+    /// without it. A refusal the implementation cannot attribute to one write
+    /// fails the whole call with
+    /// [`CommitError::Submission`](crate::error::CommitError::Submission), and
+    /// nothing lands.
     fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
 
     /// Commit writes as the replay of a previously enqueued, partially durable
@@ -33,6 +40,10 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// [`CommitError::ReplayLeaseLost`](crate::error::CommitError::ReplayLeaseLost)
     /// with nothing written, and a job the commit removed stays out of every
     /// other worker's reach until the commit ends.
+    ///
+    /// A replay is one write set settling one lease, so it is never split: a
+    /// refusal of any of its writes fails the whole replay with
+    /// [`CommitError::Submission`](crate::error::CommitError::Submission).
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
 }
 
@@ -67,7 +78,7 @@ pub fn validate_submission(writes: &[AtomicWrite]) -> Result<(), CommitError> {
 pub const fn consequences_land(outcome: &WriteOutcome) -> bool {
     match outcome {
         WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => true,
-        WriteOutcome::AlreadyExists | WriteOutcome::NotFound | WriteOutcome::Superseded => false,
+        WriteOutcome::AlreadyExists | WriteOutcome::NotFound | WriteOutcome::Superseded | WriteOutcome::Refused(_) => false,
     }
 }
 
@@ -78,6 +89,7 @@ mod tests {
         committer::{consequences_land, validate_submission},
         entity_mutation::EntityMutation,
         error::CommitError,
+        submission_refusal::SubmissionRefusal,
         write_outcome::WriteOutcome,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -113,7 +125,12 @@ mod tests {
         ] {
             assert!(consequences_land(&outcome));
         }
-        for outcome in [WriteOutcome::AlreadyExists, WriteOutcome::NotFound, WriteOutcome::Superseded] {
+        for outcome in [
+            WriteOutcome::AlreadyExists,
+            WriteOutcome::NotFound,
+            WriteOutcome::Superseded,
+            WriteOutcome::Refused(SubmissionRefusal::UnitCodeUnregistered),
+        ] {
             assert!(!consequences_land(&outcome));
         }
     }
