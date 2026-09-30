@@ -366,7 +366,7 @@ async fn regression_scoped_user_context_temporal_writes_are_refused() {
         client,
         Method::PATCH,
         &format!("/ngsi-ld/v1/temporal/entities/{id}/attrs/gear/urn:ngsi-ld:AttributeInstance:probe"),
-        &json!({"type": "Property", "value": 5, "@context": context}),
+        &json!({"gear": [{"type": "Property", "value": 5}], "@context": context}),
     )
     .await;
     assert_scoped_context_refused(&instance, "clause 5.6.14 modify attribute instance");

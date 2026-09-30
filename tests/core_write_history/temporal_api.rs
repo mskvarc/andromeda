@@ -107,7 +107,7 @@ async fn modifying_and_deleting_a_recorded_instance_still_apply() {
         .collect();
     assert_eq!(instance_ids.len(), 2, "{recorded}");
 
-    let correction = fragment(json!({"type": "Property", "value": 99, "observedAt": at(0)}));
+    let correction = fragment(json!({"v": [{"type": "Property", "value": 99, "observedAt": at(0)}]}));
     let response = scope
         .client()
         .raw(

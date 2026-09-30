@@ -76,10 +76,10 @@ fn add_attribute_fragment() -> Value {
 
 /// Fragment to modify an attribute instance (changes value to 129).
 fn modify_instance_fragment() -> Value {
+    // Clause 5.6.14.3: an EntityTemporal Fragment naming the Attribute, its one
+    // instance contained by an Array of exactly one item.
     json!({
-        "type": "Property",
-        "value": 129,
-        "observedAt": "2020-09-01T12:03:00Z",
+        "speed": [{"type": "Property", "value": 129, "observedAt": "2020-09-01T12:03:00Z"}],
         "@context": [COMPOUND_CONTEXT]
     })
 }

@@ -10,6 +10,7 @@ use crate::{
     error::TemporalError,
     service::TemporalService,
     temporal_not_found_reason::TemporalNotFoundReason,
+    temporal_validation_reason::TemporalValidationReason,
     unit_code_admission::validate_instance_unit_code_admission,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -19,15 +20,17 @@ use andromeda_telemetry::temporal::{self, TemporalOperation};
 use serde_json::Value;
 
 impl TemporalService {
-    /// Replace an existing attribute instance with new data.
+    /// Replace an existing attribute instance with the one instance the clause
+    /// 5.6.14.3 `EntityTemporal` `fragment` carries.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalError::NotFound`] when the entity, the attribute or
     /// the named instance does not exist; [`TemporalError::Validation`] when
-    /// the attribute name does not expand to a valid one or the replacement
-    /// puts a `unitCode` on an attribute family clause 4.5.2 defines without
-    /// one; [`TemporalError::JsonLd`] when the payload cannot be expanded
+    /// the attribute name does not expand to a valid one, the Fragment does
+    /// not carry exactly one instance of the target attribute, or the
+    /// replacement puts a `unitCode` on an attribute family clause 4.5.2
+    /// defines without one; [`TemporalError::JsonLd`] when the Fragment cannot be expanded
     /// against `context`; and [`TemporalError::Persistence`] when the
     /// delivery barrier cannot drain the entity's pending history or the
     /// update cannot be applied.
@@ -37,11 +40,11 @@ impl TemporalService {
         entity_id: &Identifier,
         attr_id: &AttributeName,
         instance: &InstanceIdentity,
-        payload: Value,
+        fragment: Value,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
         let timer = temporal::start(TemporalOperation::ModifyAttributeInstance);
-        let result = self.modify_attr_instance_inner(target, entity_id, attr_id, instance, payload, context).await;
+        let result = self.modify_attr_instance_inner(target, entity_id, attr_id, instance, fragment, context).await;
         timer.finish_result(&result);
         result
     }
@@ -53,7 +56,7 @@ impl TemporalService {
         entity_id: &Identifier,
         attr_id: &AttributeName,
         instance: &InstanceIdentity,
-        payload: Value,
+        fragment: Value,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
         self.mutation_barrier.synchronize(target, entity_id).await?;
@@ -76,8 +79,11 @@ impl TemporalService {
             }));
         }
 
-        let expanded = self.engine.expand(payload, context).await?;
-        let instance_value = expanded.as_array().and_then(|arr| arr.first()).cloned().unwrap_or(expanded); // clone: extracting first element from array requires owned value; original consumed by unwrap_or
+        // Clause 5.6.14.4 raises ResourceNotFound for an unknown Entity,
+        // Attribute or instance before the Fragment is read, so a Fragment
+        // naming another Attribute is refused only once the target is known.
+        let expanded = self.engine.expand(fragment, context).await?;
+        let instance_value = fragment_instance(expanded, &attr_iri)?;
         validate_instance_unit_code_admission(attr_iri.as_str(), &instance_value)?;
 
         self.mutator.update_instance(target, instance, entity_id, &attr_iri, &instance_value).await
@@ -137,5 +143,89 @@ impl TemporalService {
 
         self.mutator.delete_instance(target, instance, entity_id, &attr_iri).await?;
         Ok(())
+    }
+}
+
+/// The one instance of `target` an expanded clause 5.6.14.3 `EntityTemporal`
+/// Fragment carries.
+///
+/// The Fragment's shape -- one Attribute, an Array of exactly one instance --
+/// is admitted at the binding edge before anything is forwarded; what only
+/// expansion can decide is whether that Attribute is the one the request
+/// targets.
+///
+/// # Errors
+///
+/// Returns [`TemporalValidationReason::FragmentWithoutTargetAttribute`] when
+/// the Fragment does not expand to exactly one instance of `target`.
+fn fragment_instance(expanded: Value, target: &AttributeName) -> Result<Value, TemporalValidationReason> {
+    let without_target = || TemporalValidationReason::FragmentWithoutTargetAttribute {
+        // clone: the error owns the attribute it names
+        target: target.clone(),
+    };
+    let Value::Array(nodes) = expanded else {
+        return Err(without_target());
+    };
+    let [Value::Object(mut node)] = <[Value; 1]>::try_from(nodes).map_err(|_| without_target())? else {
+        return Err(without_target());
+    };
+    let Some(Value::Array(instances)) = node.remove(target.as_str()) else {
+        return Err(without_target());
+    };
+    let [instance] = <[Value; 1]>::try_from(instances).map_err(|_| without_target())?;
+    Ok(instance)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{attribute_instance_mutation::fragment_instance, temporal_validation_reason::TemporalValidationReason};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    const SPEED: &str = "https://example.com/speed";
+
+    fn speed() -> AttributeName {
+        SPEED.parse().expect("valid attribute name")
+    }
+
+    fn expanded_instance() -> serde_json::Value {
+        json!({"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 129}]})
+    }
+
+    #[test]
+    fn the_one_instance_of_the_target_attribute_is_taken() {
+        let expanded = json!([{SPEED: [expanded_instance()]}]);
+        assert_eq!(fragment_instance(expanded, &speed()).expect("the target instance"), expanded_instance());
+    }
+
+    /// A Fragment naming another Attribute than the request targets carries no
+    /// instance of the target.
+    #[test]
+    fn a_fragment_naming_another_attribute_is_refused() {
+        let expanded = json!([{"https://example.com/fuel": [expanded_instance()]}]);
+        assert!(matches!(
+            fragment_instance(expanded, &speed()),
+            Err(TemporalValidationReason::FragmentWithoutTargetAttribute { .. })
+        ));
+    }
+
+    /// Two compact terms expanding to the target would merge into two instances.
+    #[test]
+    fn two_instances_of_the_target_are_refused() {
+        let expanded = json!([{SPEED: [expanded_instance(), expanded_instance()]}]);
+        assert!(matches!(
+            fragment_instance(expanded, &speed()),
+            Err(TemporalValidationReason::FragmentWithoutTargetAttribute { .. })
+        ));
+    }
+
+    /// A Fragment whose member JSON-LD expansion drops expands to no node.
+    #[test]
+    fn a_fragment_expanding_to_nothing_is_refused() {
+        assert!(matches!(
+            fragment_instance(json!([]), &speed()),
+            Err(TemporalValidationReason::FragmentWithoutTargetAttribute { .. })
+        ));
     }
 }

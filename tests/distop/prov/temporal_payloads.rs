@@ -28,12 +28,12 @@ pub fn temporal_speed_fragment() -> Value {
     })
 }
 
-/// A single `speed` instance node, for modifying one attribute instance.
+/// The `EntityTemporal` Fragment a modification of one `speed` instance carries.
 pub fn speed_instance() -> Value {
+    // Clause 5.6.14.3: an EntityTemporal Fragment naming `speed`, its one
+    // instance contained by an Array of exactly one item.
     json!({
-        "type": "Property",
-        "value": 100,
-        "observedAt": "2021-03-01T00:00:00Z",
+        "speed": [{"type": "Property", "value": 100, "observedAt": "2021-03-01T00:00:00Z"}],
         "@context": COMPOUND_CONTEXT.as_str()
     })
 }

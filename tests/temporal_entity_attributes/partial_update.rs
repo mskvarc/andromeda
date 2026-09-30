@@ -99,7 +99,7 @@ async fn temporal_attrs_modify_instance_preserves_an_exact_decimal() {
         .expect("isolated test environment");
     let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:modify_exact_number").await;
     let exact = Number::from_str("0.170000000000000005").expect("exact JSON number");
-    let fragment = json!({"type": "Property", "value": exact, "observedAt": "2020-09-01T12:03:00Z", "@context": [COMPOUND_CONTEXT]});
+    let fragment = json!({"speed": [{"type": "Property", "value": exact, "observedAt": "2020-09-01T12:03:00Z"}], "@context": [COMPOUND_CONTEXT]});
 
     let (status, bytes, _) = modify_temporal_attr_instance(&c, &id, "speed", &instance_id, &fragment).await;
     assert_eq!(status, StatusCode::NO_CONTENT);

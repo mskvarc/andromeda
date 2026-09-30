@@ -47,12 +47,13 @@
 use crate::request_context_admission::admit_request_context;
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_representation::{
-    attribute_type_validation::{validate_attribute_node, validate_fragment_attribute_types},
-    embedded_context_admission::{reject_embedded_contexts_in_attribute, reject_embedded_contexts_in_fragment},
+    attribute_type_validation::validate_fragment_attribute_types,
+    embedded_context_admission::reject_embedded_contexts_in_fragment,
 };
+use andromeda_ngsi_ld_request::temporal_instance_fragment::admit_temporal_instance_fragment;
 use axum::http::Uri as HttpUri;
 use serde_json::Value;
 use std::fmt::Display;
@@ -72,21 +73,25 @@ pub(crate) async fn admit_written_evolution(engine: &JsonLdEngine, payload: &Val
     reject_embedded_contexts_in_fragment(payload).map_err(|error| bad_request_data(&error, instance))
 }
 
-/// Screen the one attribute instance a clause 5.6.14 modification carries.
+/// Screen the `EntityTemporal` Fragment a clause 5.6.14 modification of `entity`
+/// carries: its clause 5.6.14.3 shape first, then the same checks as any written
+/// `EntityTemporal` payload.
 ///
 /// # Errors
 ///
-/// Answers on the same terms as [`admit_written_evolution`].
+/// Answers `BadRequestData` for a body that is not a Fragment naming exactly
+/// one Attribute with an Array of exactly one instance, or whose `id` is not
+/// `entity` (clause 5.4), and otherwise on the same terms as
+/// [`admit_written_evolution`].
 pub(crate) async fn admit_written_instance(
     engine: &JsonLdEngine,
-    attribute: &AttributeName,
+    entity: &Identifier,
     payload: &Value,
     context: &ContextSpec,
     instance: &HttpUri,
 ) -> Result<(), ProblemResponse> {
-    admit_request_context(engine, context, instance).await?;
-    validate_attribute_node(attribute.as_str(), payload).map_err(|error| bad_request_data(&error, instance))?;
-    reject_embedded_contexts_in_attribute(attribute.as_str(), payload).map_err(|error| bad_request_data(&error, instance))
+    admit_temporal_instance_fragment(payload, entity).map_err(|error| bad_request_data(&error, instance))?;
+    admit_written_evolution(engine, payload, context, instance).await
 }
 
 /// The clause 5.5.4 answer to a representation this broker refuses.
@@ -99,16 +104,22 @@ fn bad_request_data<E: Display>(error: &E, instance: &HttpUri) -> ProblemRespons
 mod tests {
     use crate::written_evolution_admission::{admit_written_evolution, admit_written_instance};
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use axum::http::Uri as HttpUri;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn instance() -> HttpUri {
         "/ngsi-ld/v1/temporal/entities".parse().expect("a valid request target")
     }
 
-    fn attribute() -> AttributeName {
-        "belongsTo".parse().expect("a valid attribute name")
+    fn entity() -> Identifier {
+        "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity identifier")
+    }
+
+    /// The clause 5.6.14.3 `EntityTemporal` Fragment carrying `instance` as the
+    /// one instance of `belongsTo`.
+    fn fragment(instance: &Value) -> Value {
+        json!({"belongsTo": [instance]})
     }
 
     /// An engine that resolves the embedded core context and nothing else.
@@ -141,9 +152,9 @@ mod tests {
     /// modification carries.
     #[tokio::test]
     async fn a_forged_seal_on_a_modified_instance_is_refused() {
-        let payload = json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1", "entityTypeSealed": "Vehicle"});
+        let payload = fragment(&json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1", "entityTypeSealed": "Vehicle"}));
         assert!(
-            admit_written_instance(&engine(), &attribute(), &payload, &ContextSpec::none(), &instance())
+            admit_written_instance(&engine(), &entity(), &payload, &ContextSpec::none(), &instance())
                 .await
                 .is_err()
         );
@@ -164,13 +175,25 @@ mod tests {
         assert!(
             admit_written_instance(
                 &engine(),
-                &attribute(),
-                &json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"}),
+                &entity(),
+                &fragment(&json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"})),
                 &ContextSpec::none(),
                 &instance()
             )
             .await
             .is_ok()
+        );
+    }
+
+    /// Clause 5.6.14.3 takes an `EntityTemporal` Fragment; the bare instance it
+    /// would contain is refused before anything is forwarded or stored.
+    #[tokio::test]
+    async fn a_bare_modified_instance_is_refused() {
+        let bare = json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"});
+        assert!(
+            admit_written_instance(&engine(), &entity(), &bare, &ContextSpec::none(), &instance())
+                .await
+                .is_err()
         );
     }
 
@@ -211,9 +234,9 @@ mod tests {
         });
         assert!(admit_written_evolution(&engine(), &payload, &ContextSpec::none(), &instance()).await.is_err());
 
-        let modified = json!({"type": "Property", "value": 10, "unit": {"@context": {}}});
+        let modified = fragment(&json!({"type": "Property", "value": 10, "unit": {"@context": {}}}));
         assert!(
-            admit_written_instance(&engine(), &attribute(), &modified, &ContextSpec::none(), &instance())
+            admit_written_instance(&engine(), &entity(), &modified, &ContextSpec::none(), &instance())
                 .await
                 .is_err()
         );
@@ -235,8 +258,8 @@ mod tests {
         assert!(
             admit_written_instance(
                 &engine(),
-                &attribute(),
-                &json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"}),
+                &entity(),
+                &fragment(&json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"})),
                 &context,
                 &instance()
             )

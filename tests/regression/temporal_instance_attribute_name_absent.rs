@@ -32,9 +32,10 @@ use reqwest::StatusCode;
 use serde_json::{Value, json};
 use urlencoding::encode;
 
-/// The attribute-instance fragment clause 5.6.14 patches with.
+/// The clause 5.6.14.3 `EntityTemporal` Fragment the modifications carry: the
+/// `temperature` Attribute with its one instance contained by an Array.
 fn fragment() -> Value {
-    json!({"value": 99, "@context": [CORE_CONTEXT]})
+    json!({"temperature": [{"value": 99}], "@context": [CORE_CONTEXT]})
 }
 
 /// Create one temporal entity carrying a single `speed` instance, and return

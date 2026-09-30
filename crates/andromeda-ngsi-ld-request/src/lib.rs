@@ -46,6 +46,7 @@ pub mod query_narrowing;
 pub mod representation_format;
 pub mod representation_parameter;
 pub mod subscription;
+pub mod temporal_instance_fragment;
 pub mod unsupported_representation;
 
 #[cfg(test)]

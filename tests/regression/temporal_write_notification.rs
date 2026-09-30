@@ -334,7 +334,7 @@ async fn regression_temporal_write_notification_history_only_operations_notify_n
             &format!("/ngsi-ld/v1/temporal/entities/{encoded_id}/attrs/v/{}", urlencoding::encode(&instance_id)),
         )
         .header("content-type", "application/ld+json")
-        .json(&json!({"value": 99, "@context": [CORE_CONTEXT]}))
+        .json(&json!({"v": [{"value": 99}], "@context": [CORE_CONTEXT]}))
         .send()
         .await
         .expect("modify attribute instance request");

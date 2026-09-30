@@ -57,10 +57,13 @@ pub async fn update_attr_instance(
     // shapes it names is decided here, at the edge, so the store addresses one
     // identity column rather than searching both.
     let instance = InstanceIdentity::from_identifier(instance_id, InstanceFamily::Attribute);
-    // Clauses 4.5.3.2 and 4.5.3.3 prohibit the two seals on a Relationship in
-    // every representation, so a modified instance is held to them as well, and
-    // clause 5.5.7 refuses a user `@context` written anywhere but the top level.
-    admit_written_instance(service.engine(), &attr_id, &payload, &context, &uri).await?;
+    // Clause 5.6.14.3: the body is an EntityTemporal Fragment naming one
+    // Attribute with an Array of exactly one instance, screened before it is
+    // forwarded, so a Context Source receives that shape and nothing else. The
+    // seals clauses 4.5.3.2 and 4.5.3.3 prohibit, and a user `@context` clause
+    // 5.5.7 refuses below the top level, are held to it as to any written
+    // Temporal Evolution.
+    admit_written_instance(service.engine(), &id, &payload, &context, &uri).await?;
 
     if params.local.unwrap_or(false) {
         service

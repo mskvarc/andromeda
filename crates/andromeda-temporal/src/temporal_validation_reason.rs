@@ -81,6 +81,13 @@ pub enum TemporalValidationReason {
         /// How its instances disagree.
         conflict: AggregationConflict,
     },
+    /// The clause 5.6.14.3 `EntityTemporal` Fragment of an instance modification
+    /// does not carry exactly one instance of the Attribute the request targets.
+    #[error("the EntityTemporal Fragment does not carry one instance of the target attribute '{target}'")]
+    FragmentWithoutTargetAttribute {
+        /// The targeted attribute, by its expanded name.
+        target: AttributeName,
+    },
     /// The submitted content cannot be stored as written (clause 5.5.6).
     #[error(transparent)]
     Refused(#[from] SubmissionRefusal),

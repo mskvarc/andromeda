@@ -95,6 +95,7 @@ mod temporal_entity_map_narrowing;
 mod temporal_evolution_current_state;
 mod temporal_evolution_delete_order;
 mod temporal_instance_attribute_name_absent;
+mod temporal_instance_fragment;
 mod temporal_observed_at_sub_second;
 mod temporal_pagination_walk;
 mod temporal_prefer_version;

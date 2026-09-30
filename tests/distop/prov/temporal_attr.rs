@@ -238,6 +238,15 @@ async fn temporal_modify_instance_exclusive_supported_forwards_and_terminates() 
         "the modify forwards to the owning source: {}",
         request_path(&forwarded)
     );
+    // Clause 5.6.14.3: the source receives the EntityTemporal Fragment, the
+    // `speed` Attribute holding its one instance in an Array.
+    let forwarded_body = forwarded.json::<Value>().expect("forwarded modification body is JSON");
+    let speed = forwarded_body
+        .as_object()
+        .and_then(|members| members.iter().find(|(key, _)| key.rsplit(['/', '#']).next() == Some("speed")))
+        .map(|(_, value)| value)
+        .expect("the forwarded Fragment names speed");
+    assert_eq!(speed.as_array().map(Vec::len), Some(1), "one instance in an Array: {forwarded_body}");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

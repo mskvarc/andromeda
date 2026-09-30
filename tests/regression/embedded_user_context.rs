@@ -347,9 +347,11 @@ async fn regression_embedded_user_context_temporal_writes_are_refused() {
         Method::PATCH,
         &format!("/ngsi-ld/v1/temporal/entities/{id}/attrs/speed/urn:ngsi-ld:AttributeInstance:probe"),
         &json!({
-            "type": "Property",
-            "value": 5,
-            "accuracy": {"type": "Property", "value": 0.5, "@context": {}},
+            "speed": [{
+                "type": "Property",
+                "value": 5,
+                "accuracy": {"type": "Property", "value": 0.5, "@context": {}}
+            }],
             "@context": [CORE_CONTEXT]
         }),
     )
