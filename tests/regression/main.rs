@@ -28,6 +28,7 @@ mod csource_subscription_delete_unknown;
 mod csource_subscription_media_type;
 mod csource_subscription_notification;
 mod csource_subscription_pagination;
+mod delete_all_notification;
 mod discovery_name_compaction;
 mod embedded_user_context;
 mod entity_map_pruning;

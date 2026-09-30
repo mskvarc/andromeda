@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde_json::Value;
@@ -52,8 +52,8 @@ pub struct SubscriptionRow {
     pub expand_values: Option<Vec<AttributeName>>,
     /// Expanded attribute names whose `q` object keys were expanded (clause 5.2.12 `jsonKeys`).
     pub json_keys: Option<Vec<AttributeName>>,
-    /// Dataset IDs (entity subscriptions only; `None` when absent).
-    pub dataset_id: Option<Vec<Identifier>>,
+    /// `datasetId` selectors (entity subscriptions only; `None` when absent).
+    pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Notification endpoint configuration JSON.
     pub notification: NotificationParams,
     /// Expiry timestamp.

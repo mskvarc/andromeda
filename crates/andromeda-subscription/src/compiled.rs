@@ -21,6 +21,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
+    dataset::DatasetSelector,
     filter::expression::Expr,
     geo::query::GeoQuery,
     projection::compiled::Projection,
@@ -154,8 +155,9 @@ pub struct CompiledSubscription {
     pub compiled_geo_q: Option<GeoQuery>,
     /// The subscription's parsed `scopeQ`, if set.
     pub compiled_scope_q: Option<ScopeQuery>,
-    /// Dataset identifiers admitted by the subscription.
-    pub dataset_id: Option<Vec<Identifier>>,
+    /// The `datasetId` selectors of the Attribute instances each notification
+    /// carries (clause 5.8.6), `@none` naming the default instance.
+    pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Linked-entity join mode requested for notification data.
     pub notification_join: Option<JoinMode>,
     /// Maximum linked-entity join depth (the clause 4.5.23 joinLevel query parameter), which

@@ -21,9 +21,9 @@ pub enum StoredSubscriptionError {
     /// The `subscription_key` column is not a surrogate key.
     #[error("a stored subscription key is not a surrogate key: {0}")]
     Key(#[source] SubscriptionKeyOutOfRange),
-    /// One `dataset_id` element is not a URI.
-    #[error("a stored subscription datasetId is not a URI: {0}")]
-    DatasetId(#[source] IdentifierParseError),
+    /// One `dataset_id` element is neither a URI nor `@none`.
+    #[error("a stored subscription datasetId is neither a URI nor @none: {0}")]
+    DatasetId(#[source] Box<QueryError>),
     /// The `entities` column does not deserialize.
     #[error("the stored subscription entities do not deserialize: {0}")]
     Entities(#[source] serde_json::Error),

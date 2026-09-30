@@ -41,6 +41,16 @@ impl DatasetSelector {
         }
         raw.parse::<Identifier>().map(DatasetSelector::Id).map_err(QueryError::ParamDatasetIdInvalid)
     }
+
+    /// Whether this selector names the Attribute instance whose `datasetId` is
+    /// `dataset_id`, `None` being the default instance (clause 4.5.5).
+    #[must_use]
+    pub fn selects(&self, dataset_id: Option<&Identifier>) -> bool {
+        match self {
+            DatasetSelector::Default => dataset_id.is_none(),
+            DatasetSelector::Id(named) => dataset_id == Some(named),
+        }
+    }
 }
 
 impl FromStr for DatasetSelector {
@@ -159,6 +169,30 @@ mod tests {
     fn a_dataset_id_that_is_not_a_uri_is_rejected() {
         let error = DatasetSelector::parse("not a uri").expect_err("must reject");
         assert!(matches!(error, QueryError::ParamDatasetIdInvalid { .. }), "got {error:?}");
+    }
+
+    #[test]
+    fn the_none_token_selects_the_instance_that_carries_no_dataset_id() {
+        let selector = DatasetSelector::parse("@none").expect("valid selector");
+        assert!(selector.selects(None));
+        assert!(!selector.selects(Some(&dataset_uri("urn:ngsi-ld:Dataset:1"))));
+    }
+
+    #[test]
+    fn a_named_dataset_id_selects_only_the_instance_carrying_it() {
+        let selector = DatasetSelector::parse("urn:ngsi-ld:Dataset:1").expect("valid selector");
+        assert!(selector.selects(Some(&dataset_uri("urn:ngsi-ld:Dataset:1"))));
+        assert!(!selector.selects(Some(&dataset_uri("urn:ngsi-ld:Dataset:2"))));
+        assert!(!selector.selects(None));
+    }
+
+    #[test]
+    fn a_mixed_selection_admits_both_the_default_instance_and_the_named_one() {
+        let wanted = selectors(&["@none", "urn:ngsi-ld:Dataset:1"]);
+        let admitted = |dataset_id: Option<&Identifier>| wanted.iter().any(|selector| selector.selects(dataset_id));
+        assert!(admitted(None));
+        assert!(admitted(Some(&dataset_uri("urn:ngsi-ld:Dataset:1"))));
+        assert!(!admitted(Some(&dataset_uri("urn:ngsi-ld:Dataset:2"))));
     }
 
     #[test]

@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, Subscription, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::{cursor::PageCursor, filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{cursor::PageCursor, dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use langtag::LangTagBuf;
@@ -45,8 +45,9 @@ pub struct SubscriptionFields<'a> {
     pub scope_q: Option<&'a ScopeQuery>,
     /// Context source filter expression.
     pub csf: Option<&'a Expr>,
-    /// Dataset identifiers to restrict matching.
-    pub dataset_id: Option<&'a [Identifier]>,
+    /// The `datasetId` selectors of the Attribute instances notified
+    /// (Table 5.2.12-1), `@none` naming the default instance.
+    pub dataset_id: Option<&'a [DatasetSelector]>,
     /// Whether the subscription is currently active.
     pub is_active: bool,
     /// Validated notification endpoint and format configuration.

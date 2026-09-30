@@ -7,13 +7,13 @@ use crate::{
     subscription_validation_reason::SubscriptionValidationReason,
     variant::DatasetIdPolicy,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     attribute_name_csv,
     notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, Subscription},
 };
-use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde::de::DeserializeOwned;
@@ -48,8 +48,8 @@ pub struct SubscriptionWriteValues {
     pub scope_q: Option<ScopeQuery>,
     /// Parsed context-source filter expression.
     pub csf: Option<Expr>,
-    /// Validated dataset identifiers.
-    pub dataset_id: Option<Vec<Identifier>>,
+    /// Validated `datasetId` selectors, `@none` naming the default instance.
+    pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Whether the subscription is currently active.
     pub is_active: bool,
     /// Validated notification delivery parameters.
@@ -295,23 +295,53 @@ mod tests {
         error::SubscriptionError,
         fields::{extract_create_fields, merged_attribute_name_csv},
         subscription_member::SubscriptionMember,
+        subscription_validation_reason::SubscriptionValidationReason,
         variant::DatasetIdPolicy,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
+    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 
     #[test]
     fn entity_subscription_creation_retains_dataset_identifiers() -> Result<(), SubscriptionError> {
         let values = extract_create_fields(&serde_json::json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}), DatasetIdPolicy::Retain)?;
 
         assert_eq!(
-            values
-                .dataset_id
-                .as_deref()
-                .and_then(|identifiers| identifiers.first())
-                .map(AsRef::<str>::as_ref),
-            Some("urn:ngsi-ld:Dataset:one")
+            values.dataset_id,
+            Some(vec![DatasetSelector::Id("urn:ngsi-ld:Dataset:one".parse().expect("valid dataset URI"))])
         );
         Ok(())
+    }
+
+    /// Table 5.2.12-1 types `datasetId` as "Valid URIs, '@none' for including
+    /// the default Attribute instances", so `@none` is admitted beside a URI.
+    #[test]
+    fn entity_subscription_creation_admits_the_none_dataset_selector() -> Result<(), SubscriptionError> {
+        let values = extract_create_fields(&serde_json::json!({"datasetId": ["@none", "urn:ngsi-ld:Dataset:one"]}), DatasetIdPolicy::Retain)?;
+
+        assert_eq!(
+            values.dataset_id,
+            Some(vec![
+                DatasetSelector::Default,
+                DatasetSelector::Id("urn:ngsi-ld:Dataset:one".parse().expect("valid dataset URI"))
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_dataset_selector_that_is_neither_a_uri_nor_none_is_refused() {
+        let refused = extract_create_fields(&serde_json::json!({"datasetId": ["not a uri"]}), DatasetIdPolicy::Retain);
+
+        assert!(
+            matches!(
+                refused,
+                Err(SubscriptionError::Validation(SubscriptionValidationReason::MemberValue {
+                    member: SubscriptionMember::DatasetId,
+                    ..
+                }))
+            ),
+            "got {refused:?}"
+        );
     }
 
     #[test]

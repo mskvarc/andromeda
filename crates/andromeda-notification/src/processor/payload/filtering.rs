@@ -4,6 +4,7 @@ use andromeda_entity::sys_attrs::expanded_entity_object_mut;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::attribute_change::AttributeChange;
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, prefix};
 use serde_json::Value;
 
@@ -19,7 +20,10 @@ pub fn filter_entity_attributes(entity: &Value, attrs: &[AttributeName]) -> Valu
     Value::Object(filtered)
 }
 
-pub(super) fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[Identifier]) {
+/// Keep only the Attribute instances a Subscription `datasetId` selects
+/// (clause 5.8.6), `@none` selecting the default instance (Table 5.2.12-1),
+/// and drop an Attribute left with none.
+pub(super) fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[DatasetSelector]) {
     let Some(obj) = expanded_entity_object_mut(entity) else { return };
     let default_context_prefix = format!("{}default-context/", prefix::NGSI_LD.as_str());
 
@@ -46,9 +50,12 @@ pub(super) fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[Ide
                     .and_then(|o| o.get("@id"))
                     .and_then(|v| v.as_str());
 
-                match instance_dataset_id {
-                    Some(id) => dataset_ids.iter().any(|dataset_id| dataset_id.as_str() == id),
-                    None => dataset_ids.is_empty(),
+                // A stored `datasetId` was validated as an identifier when it was
+                // written; one that no longer parses names no selectable dataset.
+                match instance_dataset_id.map(str::parse::<Identifier>) {
+                    None => dataset_ids.iter().any(|selector| selector.selects(None)),
+                    Some(Ok(dataset_id)) => dataset_ids.iter().any(|selector| selector.selects(Some(&dataset_id))),
+                    Some(Err(_)) => false,
                 }
             })
             .collect();
@@ -209,10 +216,65 @@ fn extract_previous_value(previous: &Value, attribute_type: AttributeType) -> Op
 
 #[cfg(test)]
 mod tests {
-    use super::inject_previous_for_dataset;
+    use super::{filter_entity_by_dataset_id, inject_previous_for_dataset};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use pretty_assertions::assert_eq;
-    use serde_json::json;
+    use serde_json::{Value, json};
+
+    const SPEED: &str = "https://example.com/speed";
+    const NAMED: &str = "urn:ngsi-ld:Dataset:named";
+
+    /// An expanded entity whose `speed` holds a default and a named instance.
+    fn two_instance_entity() -> Value {
+        json!({
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            SPEED: [
+                {expanded_properties::VALUE.as_str(): [{"@value": 1}]},
+                {expanded_properties::VALUE.as_str(): [{"@value": 2}], expanded_properties::DATASET_ID.as_str(): [{"@id": NAMED}]}
+            ]
+        })
+    }
+
+    fn selectors(raw: &[&str]) -> Vec<DatasetSelector> {
+        raw.iter().map(|entry| entry.parse().expect("valid dataset selector")).collect()
+    }
+
+    /// Table 5.2.12-1: `@none` selects the default instance, and only it.
+    #[test]
+    fn the_none_selector_keeps_only_the_default_instance() {
+        let mut entity = two_instance_entity();
+        filter_entity_by_dataset_id(&mut entity, &selectors(&["@none"]));
+        assert_eq!(entity[SPEED], json!([{expanded_properties::VALUE.as_str(): [{"@value": 1}]}]));
+    }
+
+    /// A named selector keeps the instance carrying that `datasetId` and drops
+    /// the default one.
+    #[test]
+    fn a_named_selector_keeps_only_its_instance() {
+        let mut entity = two_instance_entity();
+        filter_entity_by_dataset_id(&mut entity, &selectors(&[NAMED]));
+        let kept = entity[SPEED].as_array().expect("the named instance remains");
+        assert_eq!(kept.len(), 1, "{entity}");
+        assert_eq!(kept[0][expanded_properties::DATASET_ID.as_str()], json!([{"@id": NAMED}]));
+    }
+
+    /// `@none` beside a named selector keeps both instances.
+    #[test]
+    fn the_none_and_a_named_selector_together_keep_both_instances() {
+        let mut entity = two_instance_entity();
+        filter_entity_by_dataset_id(&mut entity, &selectors(&["@none", NAMED]));
+        assert_eq!(entity[SPEED].as_array().map(Vec::len), Some(2), "{entity}");
+    }
+
+    /// An Attribute none of whose instances is selected leaves the entity.
+    #[test]
+    fn an_attribute_with_no_selected_instance_is_dropped() {
+        let mut entity = two_instance_entity();
+        filter_entity_by_dataset_id(&mut entity, &selectors(&["urn:ngsi-ld:Dataset:other"]));
+        assert!(entity.get(SPEED).is_none(), "{entity}");
+    }
 
     #[test]
     fn show_changes_marks_only_the_changed_dataset_instance() {

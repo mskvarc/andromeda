@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_model::{
         SubscriptionStatus,
     },
 };
-use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, scope::query::ScopeQuery};
 use andromeda_postgresql_codes::{notification_trigger::NotificationTriggerCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
 use andromeda_subscription::stored_subscription::StoredSubscription;
@@ -115,8 +115,8 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
     let dataset_id = dataset_id_raw
         .map(|ids| {
             ids.iter()
-                .map(|raw| raw.parse().map_err(StoredSubscriptionError::DatasetId))
-                .collect::<Result<Vec<Identifier>, StoredSubscriptionError>>()
+                .map(|raw| DatasetSelector::parse(raw).map_err(|error| StoredSubscriptionError::DatasetId(Box::new(error))))
+                .collect::<Result<Vec<DatasetSelector>, StoredSubscriptionError>>()
         })
         .transpose()?;
     let id = stored_subscription_uri(row.try_get(Subscriptions::Id.unquoted())?)?;

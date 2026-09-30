@@ -10,7 +10,13 @@ use andromeda_ngsi_ld_lexicon::{
     rfc3339,
     spec_version::SpecVersion,
 };
-use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
+    filter::expression::Expr,
+    pattern::Pattern,
+    scope::query::ScopeQuery,
+    type_selection::grammar::TypeExprRaw,
+};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
@@ -231,9 +237,10 @@ pub struct SubscriptionFilters {
     /// over a registration's own properties.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub csf: Option<Expr>,
-    /// Dataset ids to subscribe to.
+    /// The `datasetId`s of the Attribute instances each notification carries,
+    /// `@none` naming the default instance (Table 5.2.12-1, clause 4.5.5).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dataset_id: Option<Vec<Identifier>>,
+    pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Temporal query expression (clause 5.2.21).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temporal_q: Option<Value>,
@@ -453,7 +460,7 @@ mod tests {
             "geoQ": {"georel": "near;maxDistance==2000"},
             "scopeQ": "/Madrid",
             "csf": "type==\"ContextSourceRegistration\"",
-            "datasetId": ["urn:ngsi-ld:Dataset:1"],
+            "datasetId": ["urn:ngsi-ld:Dataset:1", "@none"],
             "expandValues": "speed",
             "jsonKeys": "payload",
             "isActive": true,
