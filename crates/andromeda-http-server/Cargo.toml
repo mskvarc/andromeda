@@ -18,6 +18,7 @@ workspace = true
 andromeda-configuration-scalars.workspace = true
 andromeda-server-tls.workspace = true
 axum = { version = "0.8.9", features = ["http2"] }
+headers = "0.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
@@ -34,4 +35,5 @@ andromeda-architecture-checks.workspace = true
 andromeda-test-tls.workspace = true
 pretty_assertions = "1.4.1"
 reqwest = "0.13.5"
-tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
+tower = { version = "0.5.3", features = ["util"] }

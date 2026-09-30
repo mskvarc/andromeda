@@ -140,12 +140,14 @@ pub async fn serve(
 
     if let (Some(management), Some(security)) = (management, management_security) {
         // The management listener is TCP-only and reuses the data plane's
-        // graceful-drain deadline on its own host and port.
+        // graceful-drain deadline and announced-close delay on its own host
+        // and port.
         let management_config = ServerConfig {
             host: config.management.host,
             port: config.management.port,
             transport: config.management.transport,
             graceful_drain: config.server.graceful_drain,
+            announced_close_delay: config.server.announced_close_delay,
         };
         let management_serve = serve_management(management_config, security, management, wait_for(&shutdown_token));
         listeners.push(Box::pin(async move { management_serve.await.map_err(ListenerError::from) }));

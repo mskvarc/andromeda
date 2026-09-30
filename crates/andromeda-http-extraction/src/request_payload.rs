@@ -6,13 +6,21 @@
 //! so each refuses an oversized body alike: as a problem detail that tells the
 //! client how large a body the broker accepts, never as the framework's
 //! plain-text 413.
+//!
+//! Over HTTP/1.x the refusal leaves content unread on the connection, and the
+//! only way to stop the upload is to close the connection. The problem detail
+//! says so with `Connection: close`, as RFC 9110 clause 10.1.1 asks of a server
+//! that "responds with a final status code before reading the entire request
+//! content"; the listener then closes the connection in stages, so the client
+//! reads the refusal before the connection is reset. HTTP/2 and HTTP/3 stop the
+//! upload with a stream reset instead and forbid the header.
 
 use crate::{
     addressed_uri::addressed_request_uri,
     content_length_precondition::{DeclaredBodyLength, declared_body_length},
     request_body_limit::RequestBodyLimit,
 };
-use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection};
+use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     body::Bytes,
@@ -21,7 +29,7 @@ use axum::{
         Request,
         rejection::{BytesRejection, FailedToBufferBody},
     },
-    http::Uri,
+    http::{Uri, Version},
 };
 
 /// What a client whose payload was refused as too large can do about it.
@@ -63,17 +71,18 @@ where
     S: Send + Sync,
 {
     let limit = request.extensions().get::<RequestBodyLimit>().copied();
+    let version = request.version();
     if let Some(limit) = limit
         && declares_more_than(declared, limit)
     {
-        return Err(payload_too_large(Some(limit), instance));
+        return Err(payload_too_large(Some(limit), instance, version));
     }
     Bytes::from_request(request, state).await.map_err(|rejection| {
         // `BytesRejection` and `FailedToBufferBody` are non-exhaustive, so the
         // limit is singled out and every other failure is a payload the
         // transport did not deliver.
         if matches!(&rejection, BytesRejection::FailedToBufferBody(FailedToBufferBody::LengthLimitError(_))) {
-            payload_too_large(limit, instance)
+            payload_too_large(limit, instance, version)
         } else {
             ExtractorRejection::invalid_request(format!("the request payload body could not be read: {}", rejection.body_text()), instance)
         }
@@ -85,9 +94,9 @@ fn declares_more_than(declared: DeclaredBodyLength, limit: RequestBodyLimit) -> 
     u64::try_from(limit.bytes()).is_ok_and(|limit| declared.bytes().get() > limit)
 }
 
-/// The clause 6.3.2 "Request Entity too large" refusal, naming the limit when
-/// the stack published one.
-fn payload_too_large(limit: Option<RequestBodyLimit>, instance: Uri) -> ExtractorRejection {
+/// The clause 6.3.2 "Request Entity too large" refusal of a request received
+/// over `version`, naming the limit when the stack published one.
+fn payload_too_large(limit: Option<RequestBodyLimit>, instance: Uri, version: Version) -> ExtractorRejection {
     let detail = match limit {
         Some(limit) => format!(
             "the request payload body is larger than the {} bytes this broker accepts in one request; {SPLIT_ADVICE}",
@@ -95,7 +104,18 @@ fn payload_too_large(limit: Option<RequestBodyLimit>, instance: Uri) -> Extracto
         ),
         None => format!("the request payload body is larger than this broker accepts in one request; {SPLIT_ADVICE}"),
     };
-    ExtractorRejection::Classified(ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, detail).with_instance(instance))
+    let refusal = ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, detail).with_instance(instance);
+    ExtractorRejection::Classified(closing_http1_connection(refusal, version))
+}
+
+/// Announce the close of an HTTP/1.x connection whose request content the
+/// refusal leaves unread; later versions stop the upload with a stream reset.
+fn closing_http1_connection(refusal: ProblemResponse, version: Version) -> ProblemResponse {
+    if version < Version::HTTP_2 {
+        refusal.with_connection_close()
+    } else {
+        refusal
+    }
 }
 
 #[cfg(test)]
@@ -106,7 +126,12 @@ mod tests {
         Router,
         body::{Body, to_bytes},
         extract::DefaultBodyLimit,
-        http::{Request, StatusCode, header::CONTENT_LENGTH},
+        http::{
+            Request,
+            StatusCode,
+            Version,
+            header::{CONNECTION, CONTENT_LENGTH},
+        },
         routing::post,
     };
     use futures::stream;
@@ -140,6 +165,14 @@ mod tests {
         let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
         (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    /// The status a router answers `request` with, and the `Connection` header
+    /// it announces.
+    async fn connection_announced(router: Router, request: Request<Body>) -> (StatusCode, Option<String>) {
+        let response = router.oneshot(request).await.expect("the router answers");
+        let connection = response.headers().get(CONNECTION).and_then(|value| value.to_str().ok()).map(str::to_owned);
+        (response.status(), connection)
     }
 
     /// A body `size` bytes long that declares its length.
@@ -204,6 +237,48 @@ mod tests {
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
         pretty_assertions::assert_eq!(body.as_ref(), b"16".as_slice());
+    }
+
+    /// RFC 9110 clause 10.1.1: refusing an HTTP/1.1 upload before reading it
+    /// announces that the connection closes after the refusal.
+    #[tokio::test]
+    async fn a_declared_length_over_the_limit_on_http1_announces_the_close() {
+        let (status, connection) = connection_announced(router(true), declared(LIMIT + 1)).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        pretty_assertions::assert_eq!(connection.as_deref(), Some("close"));
+    }
+
+    /// A body refused once it runs past the limit leaves the rest unread, so
+    /// its refusal announces the close too.
+    #[tokio::test]
+    async fn a_body_that_runs_past_the_limit_on_http1_announces_the_close() {
+        let (status, connection) = connection_announced(router(true), understated(LIMIT + 1)).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        pretty_assertions::assert_eq!(connection.as_deref(), Some("close"));
+    }
+
+    /// RFC 9113 clause 8.2.2 forbids `Connection` on HTTP/2, which stops an
+    /// upload with a stream reset instead.
+    #[tokio::test]
+    async fn a_refusal_over_http2_announces_no_close() {
+        let mut request = declared(LIMIT + 1);
+        *request.version_mut() = Version::HTTP_2;
+
+        let (status, connection) = connection_announced(router(true), request).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        pretty_assertions::assert_eq!(connection, None);
+    }
+
+    /// A payload read in full leaves the connection as it was.
+    #[tokio::test]
+    async fn a_payload_at_the_limit_announces_no_close() {
+        let (status, connection) = connection_announced(router(true), declared(LIMIT)).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::OK);
+        pretty_assertions::assert_eq!(connection, None);
     }
 
     /// Clause 6.3.4: the length precondition comes first.

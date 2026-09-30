@@ -1,6 +1,12 @@
 //! Real handshakes against a TLS-terminating TCP listener.
 
-use crate::{error::HttpServerError, execution::serve_listener, listener_security::TCP_HANDSHAKE_POLICY, tls_tcp_listener::TlsTcpListener};
+use crate::{
+    close_policy::ClosePolicy,
+    error::HttpServerError,
+    execution::serve_listener,
+    listener_security::TCP_HANDSHAKE_POLICY,
+    tls_tcp_listener::TlsTcpListener,
+};
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use andromeda_server_tls::{
     config::{ClientAuthentication, MinimumProtocolVersion, TlsConfig},
@@ -86,7 +92,10 @@ impl RunningTlsListener {
                     Ok(()) | Err(_) => {}
                 }
             },
-            Duration::from_secs(2),
+            ClosePolicy {
+                drain_deadline: Duration::from_secs(2),
+                announced_close_delay: Duration::from_millis(500),
+            },
         ));
         Ok(RunningTlsListener {
             address,
