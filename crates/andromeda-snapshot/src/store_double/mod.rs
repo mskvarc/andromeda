@@ -24,11 +24,13 @@ use serde_json::Value;
 use std::{
     mem::take,
     sync::{
+        Arc,
         Mutex,
         MutexGuard,
         atomic::{AtomicU32, Ordering},
     },
 };
+use tokio::sync::Notify;
 
 /// Whether the worker still holds the preparation claim when it restarts it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,6 +39,20 @@ pub(crate) enum ClaimHold {
     Held,
     /// Another worker took the claim over.
     Lost,
+}
+
+/// How the double answers a preparation lease renewal.
+#[derive(Clone, Debug)]
+pub(crate) enum Renewal {
+    /// The renewal extends a claim this worker still holds.
+    Retained,
+    /// The renewal waits until the gate is notified, as an UPDATE waits on a
+    /// row lock, and then extends the claim.
+    GatedOn(Arc<Notify>),
+    /// The renewal finds the claim lost.
+    Lost,
+    /// The renewal fails: the store is saturated.
+    Fails,
 }
 
 /// A terminal status a preparation recorded, with its execution details.
@@ -67,6 +83,8 @@ pub(crate) struct StoreDouble {
     condition: BranchCondition,
     claim: ClaimHold,
     restarts: AtomicU32,
+    renewal: Option<Renewal>,
+    renewals: AtomicU32,
     recorded: Mutex<Vec<RecordedStatus>>,
     copies: Mutex<Vec<CloneCopy>>,
 }
@@ -80,9 +98,25 @@ impl StoreDouble {
             condition,
             claim,
             restarts: AtomicU32::new(0),
+            renewal: None,
+            renewals: AtomicU32::new(0),
             recorded: Mutex::new(Vec::new()),
             copies: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Answer every lease renewal as `renewal` says; without it a renewal
+    /// fails loudly, since no test expects one.
+    pub(crate) fn with_renewal(self, renewal: Renewal) -> StoreDouble {
+        StoreDouble {
+            renewal: Some(renewal),
+            ..self
+        }
+    }
+
+    /// How often a preparation lease renewal was asked for.
+    pub(crate) fn renewals(&self) -> u32 {
+        self.renewals.load(Ordering::SeqCst)
     }
 
     /// Also hold `clone`, a clone job of `source`.

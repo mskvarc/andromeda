@@ -243,7 +243,13 @@ pub trait SnapshotStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Atomically copy a source branch into a claimed preparing clone and promote it.
+    /// Copy a source branch into a claimed preparing clone, then publish it.
+    ///
+    /// The copy reads the whole source as of one moment, in its own
+    /// transaction, without blocking writers on the source or status reads of
+    /// the clone; the publication is a second, short transaction. A failure
+    /// between the two leaves only staged rows, which the next restart or claim
+    /// of the clone discards.
     fn promote_clone<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         source_id: &'life1 Identifier,

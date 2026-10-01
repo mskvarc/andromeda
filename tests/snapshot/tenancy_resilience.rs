@@ -1,6 +1,7 @@
 //! Snapshot tenancy, replica durability, and worker-resilience acceptance cases.
 
 use crate::support::{
+    REPLICA_BASE,
     broker_url,
     clean_database,
     client,
@@ -28,7 +29,6 @@ use sqlx::PgPool;
 use std::{env, time::Duration};
 use tokio::{task::yield_now, time::timeout};
 
-const REPLICA_BASE: &str = "http://127.0.0.1:1082/ngsi-ld/v1";
 const NON_MULTITENANT_BASE: &str = "http://127.0.0.1:1084/ngsi-ld/v1";
 const QUOTA_BASE: &str = "http://127.0.0.1:1085/ngsi-ld/v1";
 const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";

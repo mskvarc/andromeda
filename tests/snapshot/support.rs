@@ -7,6 +7,9 @@ use sqlx::PgPool;
 use std::time::Duration;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 
+/// The second broker process over the primary's database (`snapshot-replica`).
+pub(crate) const REPLICA_BASE: &str = "http://127.0.0.1:1082/ngsi-ld/v1";
+
 pub(crate) fn client() -> Client {
     Client::new()
 }

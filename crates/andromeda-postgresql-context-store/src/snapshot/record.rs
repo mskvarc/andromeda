@@ -31,7 +31,21 @@ use andromeda_postgresql_seaquery::clock::now;
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
-use sea_query::{Expr, ExprTrait, Func, JoinType, Keyword, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query::{
+    Expr,
+    ExprTrait,
+    Func,
+    JoinType,
+    Keyword,
+    LockBehavior,
+    LockType,
+    Order,
+    PostgresQueryBuilder,
+    Query,
+    SelectStatement,
+    SimpleExpr,
+    UpdateStatement,
+};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use url::Url;
@@ -276,14 +290,40 @@ pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPu
     Ok(ids)
 }
 
-/// Stamp the last-used instant of one snapshot on its preparation row.
-pub(crate) async fn touch_last_used(pool: &PgPool, id: &Identifier) -> Result<(), SnapshotError> {
-    let statement = Query::update()
+/// Stamp the last-used instant of one Snapshot on its preparation row, unless
+/// a lifecycle transition holds that row.
+///
+/// Only claims, restarts, publications and reaps lock the row `FOR UPDATE`.
+/// The first three are short, a reap removes the Snapshot, and a reap waiting
+/// on readers of the published branch would otherwise stall the status read or
+/// scoped request behind it. `lastUsedAt` is the instant of the most recent
+/// operation (clause 4.8, Table 5.2.41-2) and only orders quota victims, so a
+/// touch skipped during a transition is overwritten by the next use.
+/// `FOR NO KEY UPDATE` does not conflict with the `FOR KEY SHARE` fence a clone
+/// copy holds, so touches land throughout a copy.
+fn touch_statement(id: &Identifier) -> UpdateStatement {
+    let unlocked_row = Query::select()
+        .column((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey))
+        .from(SnapshotPreparation::Table)
+        .join(
+            JoinType::Join,
+            Snapshots::Table,
+            Expr::col((Snapshots::Table, Snapshots::SnapshotKey)).equals((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)),
+        )
+        .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(id.as_str()))
+        .lock_with_tables_behavior(LockType::NoKeyUpdate, [SnapshotPreparation::Table], LockBehavior::SkipLocked)
+        .to_owned();
+    Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::LastUsedAt, now())
-        .and_where(Expr::col(SnapshotPreparation::SnapshotKey).in_subquery(snapshot_key_subquery(id)))
-        .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+        .and_where(Expr::col(SnapshotPreparation::SnapshotKey).in_subquery(unlocked_row))
+        .to_owned()
+}
+
+/// Stamp the last-used instant of one Snapshot, skipping a preparation row a
+/// lifecycle transition holds.
+pub(crate) async fn touch_last_used(pool: &PgPool, id: &Identifier) -> Result<(), SnapshotError> {
+    let (sql, values) = touch_statement(id).build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
         .await
@@ -307,9 +347,28 @@ pub(crate) fn victim_order(select: &mut SelectStatement) {
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::record::{snapshot_select, status_is_preparing};
+    use crate::snapshot::record::{snapshot_select, status_is_preparing, touch_statement};
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
+
+    #[test]
+    fn a_last_used_touch_skips_a_preparation_row_held_by_a_lifecycle_transition() {
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        let sql = touch_statement(&id).to_string(PostgresQueryBuilder);
+        assert!(sql.starts_with("UPDATE \"snapshot_preparation\" SET \"last_used_at\" = NOW()"), "{sql}");
+        assert!(sql.contains("\"snapshots\".\"id\" = 'urn:ngsi-ld:Snapshot:s'"), "{sql}");
+        assert!(sql.contains("FOR NO KEY UPDATE OF \"snapshot_preparation\" SKIP LOCKED"), "{sql}");
+    }
+
+    /// A clone copy fences the preparation row `FOR KEY SHARE`, which conflicts
+    /// with `FOR UPDATE` but not with the touch's `FOR NO KEY UPDATE`.
+    #[test]
+    fn a_last_used_touch_is_compatible_with_the_clone_copy_fence() {
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        let sql = touch_statement(&id).to_string(PostgresQueryBuilder);
+        assert!(sql.contains("FOR NO KEY UPDATE"), "{sql}");
+        assert!(!sql.contains("FOR UPDATE"), "{sql}");
+    }
 
     #[test]
     fn the_read_projection_joins_the_preparation_row_and_reads_the_status_code() {

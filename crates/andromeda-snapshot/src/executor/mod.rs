@@ -7,6 +7,7 @@ mod drain;
 /// Capturing the whole result of one snapshot entity query.
 mod entity_capture;
 mod execution;
+mod lease_renewal;
 mod status;
 mod translation;
 
@@ -16,6 +17,7 @@ use crate::{
         attempts::{PreparationClaim, PreparationEnd, QueryCounts},
         capture_sources::SnapshotCaptureSources,
         drain::DrainWorker,
+        lease_renewal::LeaseRenewal,
     },
     snapshot_invariant::SnapshotInvariant,
     status::validate_preparing_transition,
@@ -29,7 +31,6 @@ use chrono::Utc;
 use futures::future::BoxFuture;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc, time::Duration};
-use tokio::time::{Instant, MissedTickBehavior, interval_at};
 use tracing::{debug, info, warn};
 
 /// Executes a snapshot's typed queries and persists their frozen results.
@@ -237,7 +238,7 @@ impl SnapshotPreparation {
         }
     }
 
-    /// Execute one capture while periodically extending this replica's durable claim.
+    /// Execute one claimed job while periodically extending this replica's durable claim.
     async fn execute_with_lease_renewal(&self, job: &SnapshotPreparationJob) -> Result<PreparationEnd, SnapshotError> {
         let claim = PreparationClaim {
             store: self.store.as_ref(),
@@ -246,23 +247,13 @@ impl SnapshotPreparation {
             lease: self.lease_duration,
             queries: QueryCounts::of(job),
         };
-        let execution = claim.run(|| self.attempt(job));
-        tokio::pin!(execution);
-        let renewal_period = self.lease_duration / 2;
-        let mut renewals = interval_at(Instant::now() + renewal_period, renewal_period);
-        renewals.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        loop {
-            tokio::select! {
-                biased;
-                result = &mut execution => return result,
-                _ = renewals.tick() => {
-                    let retained = self.store.renew_preparation_lease(&job.snapshot.id, self.worker_id, lease_deadline(self.lease_duration)?).await?;
-                    if !retained {
-                        return Ok(PreparationEnd::ClaimLost);
-                    }
-                }
-            }
-        }
+        let renewal = LeaseRenewal {
+            store: self.store.as_ref(),
+            id: &job.snapshot.id,
+            worker: self.worker_id,
+            lease: self.lease_duration,
+        };
+        renewal.drive(claim.run(|| self.attempt(job))).await
     }
 
     /// One attempt at a claimed job: clone its source into it, or capture its

@@ -8,11 +8,12 @@ const MAIN_SOURCE: &str = include_str!("main.rs");
 /// Every source file of the suite whose attributes the serial-group check
 /// covers, by the module name `main.rs` declares it under. This module is left
 /// out: it spells the forbidden attributes in the patterns it checks for.
-const EXECUTABLE_SOURCES: [(&str, &str); 16] = [
+const EXECUTABLE_SOURCES: [(&str, &str); 17] = [
     ("main", MAIN_SOURCE),
     ("branch_schema", include_str!("branch_schema.rs")),
     ("capture", include_str!("capture.rs")),
     ("census", include_str!("census.rs")),
+    ("clone_liveness", include_str!("clone_liveness.rs")),
     ("clone_writes", include_str!("clone_writes.rs")),
     ("core", include_str!("core.rs")),
     ("deferred_history", include_str!("deferred_history.rs")),
@@ -26,7 +27,7 @@ const EXECUTABLE_SOURCES: [(&str, &str); 16] = [
     ("temporal", include_str!("temporal.rs")),
     ("tenancy_resilience", include_str!("tenancy_resilience.rs")),
 ];
-const EXPECTED_REQUIREMENTS: usize = 153;
+const EXPECTED_REQUIREMENTS: usize = 155;
 const EXPECTED_POLICIES: usize = 10;
 
 fn identifiers(source: &str, pattern: &str) -> BTreeSet<String> {

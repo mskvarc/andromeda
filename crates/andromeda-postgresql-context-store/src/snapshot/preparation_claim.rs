@@ -1,5 +1,6 @@
 //! Durable Snapshot preparation claiming, lease renewal, restart and release,
-//! and the staging reset a claim or restart performs.
+//! the staging reset a claim or restart performs, and the `FOR KEY SHARE` fence
+//! a clone copy holds on its claimed preparation.
 
 use crate::{
     migration_set::branch::BranchSchemaVersion,
@@ -177,9 +178,9 @@ pub(crate) async fn renew_preparation_lease(
     Ok(result.rows_affected() == 1)
 }
 
-/// Select, and row-lock, the preparing preparation row of one Snapshot claimed
-/// by `claimed_by`.
-fn claimed_preparation_statement(id: &Identifier, claimed_by: LeaseHolder) -> SelectStatement {
+/// Select the key of one Snapshot whose preparation row is preparing and
+/// claimed by `claimed_by`, reading the control record and the preparation row.
+fn claimed_preparation_select(id: &Identifier, claimed_by: LeaseHolder) -> SelectStatement {
     Query::select()
         .column((Snapshots::Table, Snapshots::SnapshotKey))
         .from(Snapshots::Table)
@@ -191,19 +192,53 @@ fn claimed_preparation_statement(id: &Identifier, claimed_by: LeaseHolder) -> Se
         .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(id.as_str()))
         .and_where(Expr::col((SnapshotPreparation::Table, SnapshotPreparation::ClaimedBy)).eq(claimed_by.as_uuid()))
         .and_where(status_is_preparing())
-        .lock(LockType::Update)
         .to_owned()
 }
 
-/// Resolve, and row-lock, the preparing preparation row of one Snapshot claimed
-/// by `claimed_by`; `None` when the claim is no longer held or the Snapshot has
-/// left `preparing`.
+/// Select, and row-lock for a lifecycle transition, the preparing preparation
+/// row of one Snapshot claimed by `claimed_by`.
+fn claimed_preparation_statement(id: &Identifier, claimed_by: LeaseHolder) -> SelectStatement {
+    claimed_preparation_select(id, claimed_by).lock(LockType::Update).to_owned()
+}
+
+/// Select, and fence for a clone copy, the preparing preparation row of one
+/// Snapshot claimed by `claimed_by`.
+///
+/// `FOR KEY SHARE` on both rows conflicts only with `FOR UPDATE`, `DELETE` and
+/// key updates. A lease renewal, a last-used touch and a metadata change update
+/// non-key columns and proceed beside the copy; another worker's claim skips
+/// the row, so the claim cannot change hands mid-copy; and every reaping path
+/// takes `FOR UPDATE` on the control record before it drops a schema, so it
+/// waits for the copy instead of dropping relations the copy is writing.
+fn shared_claim_statement(id: &Identifier, claimed_by: LeaseHolder) -> SelectStatement {
+    claimed_preparation_select(id, claimed_by).lock(LockType::KeyShare).to_owned()
+}
+
+/// Resolve, and row-lock for a lifecycle transition, the preparing preparation
+/// row of one Snapshot claimed by `claimed_by`; `None` when the claim is no
+/// longer held or the Snapshot has left `preparing`.
 pub(crate) async fn lock_claimed_preparation(
     transaction: &mut Transaction<'_, Postgres>,
     id: &Identifier,
     claimed_by: LeaseHolder,
 ) -> Result<Option<SnapshotKey>, SnapshotError> {
-    let (sql, values) = claimed_preparation_statement(id, claimed_by).build_sqlx(PostgresQueryBuilder);
+    claimed_key(transaction, &claimed_preparation_statement(id, claimed_by)).await
+}
+
+/// Resolve, and fence for the length of a clone copy, the preparing preparation
+/// row of one Snapshot claimed by `claimed_by`; `None` when the claim is no
+/// longer held or the Snapshot has left `preparing`.
+pub(crate) async fn share_claimed_preparation(
+    transaction: &mut Transaction<'_, Postgres>,
+    id: &Identifier,
+    claimed_by: LeaseHolder,
+) -> Result<Option<SnapshotKey>, SnapshotError> {
+    claimed_key(transaction, &shared_claim_statement(id, claimed_by)).await
+}
+
+/// Run one claimed-preparation lookup, decoding the key it finds.
+async fn claimed_key(transaction: &mut Transaction<'_, Postgres>, statement: &SelectStatement) -> Result<Option<SnapshotKey>, SnapshotError> {
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(&mut **transaction)
         .await
@@ -271,11 +306,12 @@ pub(crate) async fn release_preparation(pool: &PgPool, id: &Identifier, claimed_
 mod tests {
     use crate::{
         migration_set::branch::BranchSchemaVersion,
-        snapshot::preparation_claim::{claim_statement, claimed_preparation_statement, next_preparing_statement, release_statement},
+        snapshot::preparation_claim::{claim_statement, claimed_preparation_statement, next_preparing_statement, release_statement, shared_claim_statement},
     };
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use chrono::{TimeZone, Utc};
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use uuid::Uuid;
 
@@ -330,6 +366,32 @@ mod tests {
         );
         assert!(sql.contains("\"snapshot_preparation\".\"status\" = 1"), "{sql}");
         assert!(sql.ends_with("FOR UPDATE"), "{sql}");
+    }
+
+    #[test]
+    fn a_clone_copy_key_share_locks_only_a_preparation_this_worker_still_claims() {
+        let worker = LeaseHolder::from(Uuid::from_u128(1));
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        let sql = shared_claim_statement(&id, worker).to_string(PostgresQueryBuilder);
+        assert!(sql.contains("\"snapshots\".\"id\" = 'urn:ngsi-ld:Snapshot:s'"), "{sql}");
+        assert!(
+            sql.contains(&format!("\"snapshot_preparation\".\"claimed_by\" = '{}'", Uuid::from_u128(1))),
+            "{sql}"
+        );
+        assert!(sql.contains("\"snapshot_preparation\".\"status\" = 1"), "{sql}");
+        assert!(sql.ends_with("FOR KEY SHARE"), "both rows are fenced: {sql}");
+        assert!(!sql.contains("FOR UPDATE"), "{sql}");
+    }
+
+    #[test]
+    fn the_restart_lock_stays_for_update_while_the_copy_fence_is_key_share() {
+        let worker = LeaseHolder::from(Uuid::from_u128(1));
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        let locked = claimed_preparation_statement(&id, worker).to_string(PostgresQueryBuilder);
+        let fenced = shared_claim_statement(&id, worker).to_string(PostgresQueryBuilder);
+        let locked_rows = locked.strip_suffix(" FOR UPDATE").expect("a restart locks FOR UPDATE");
+        let fenced_rows = fenced.strip_suffix(" FOR KEY SHARE").expect("a copy fences FOR KEY SHARE");
+        assert_eq!(locked_rows, fenced_rows, "both select the same row");
     }
 
     #[test]

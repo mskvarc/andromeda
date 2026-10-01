@@ -5,7 +5,7 @@ use crate::{
     error::SnapshotError,
     snapshot_invariant::SnapshotInvariant,
     store::{InsertSnapshotParams, SnapshotPreparationJob, SnapshotStore},
-    store_double::{ClaimHold, StoreDouble, entry::Stage},
+    store_double::{ClaimHold, Renewal, StoreDouble, entry::Stage},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
@@ -192,7 +192,21 @@ impl SnapshotStore for StoreDouble {
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        unused("renew_preparation_lease")
+        let Some(renewal) = self.renewal.clone() else {
+            return unused("renew_preparation_lease");
+        }; // clone: the answer outlives the borrow of the double.
+        self.renewals.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            match renewal {
+                Renewal::Retained => Ok(true),
+                Renewal::GatedOn(gate) => {
+                    gate.notified().await;
+                    Ok(true)
+                }
+                Renewal::Lost => Ok(false),
+                Renewal::Fails => Err(SnapshotError::StoreSaturated),
+            }
+        })
     }
 
     fn update_metadata<'life0, 'life1, 'life2, 'life3, 'async_trait>(

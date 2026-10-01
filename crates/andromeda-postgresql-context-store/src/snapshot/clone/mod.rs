@@ -17,11 +17,11 @@
 //! the source's pending notifications a second time.
 //!
 //! A published Snapshot branch accepts writes, and each copy is its own
-//! statement, so the copied relations of the source are locked `SHARE` before
-//! the first copy: a writer cannot commit between two copies, and every relation
-//! is copied as of the same moment. That is what keeps a copied discovery census
-//! equal to the copied search rows it counts, and a copied membership row beside
-//! the copied Entity it belongs to.
+//! statement, so the copy runs inside its caller's REPEATABLE READ transaction:
+//! every statement reads the snapshot that transaction took, and every relation
+//! is copied as of the same moment while writers on the source carry on. That
+//! is what keeps a copied discovery census equal to the copied search rows it
+//! counts, and a copied membership row beside the copied Entity it belongs to.
 
 mod column_plan;
 mod identity_continuation;
@@ -56,12 +56,14 @@ const CLONED_TABLES: [&str; 13] = [
 /// Copy the Entity and temporal relations of `source_schema` into
 /// `target_schema` and continue the target's identity sequences past them.
 ///
+/// `conn` must be inside a REPEATABLE READ transaction: under READ COMMITTED
+/// each copy would read the source as of a different moment.
+///
 /// # Errors
 ///
-/// Returns [`ContextStoreError`] when locking the source, reading a relation's
-/// columns, executing one of the copies or continuing a sequence fails.
+/// Returns [`ContextStoreError`] when reading a relation's columns, executing
+/// one of the copies or continuing a sequence fails.
 pub(crate) async fn clone_branch(conn: &mut PgConnection, source_schema: &str, target_schema: &str) -> Result<(), ContextStoreError> {
-    conn.execute(sqlx::query(sqlx::AssertSqlSafe(lock_sql(source_schema).as_str()))).await?;
     for table in CLONED_TABLES {
         let plan = column_plan(conn, target_schema, table).await?;
         if plan.is_empty() {
@@ -74,12 +76,6 @@ pub(crate) async fn clone_branch(conn: &mut PgConnection, source_schema: &str, t
         }
     }
     Ok(())
-}
-
-/// The statement locking every copied relation of the source against writers.
-fn lock_sql(source_schema: &str) -> String {
-    let tables: Vec<String> = CLONED_TABLES.iter().map(|table| format!("{source_schema}.{table}")).collect();
-    format!("LOCK TABLE {} IN SHARE MODE", tables.join(", "))
 }
 
 /// The statement copying one relation verbatim from the source to the target.
@@ -97,7 +93,6 @@ mod tests {
             CLONED_TABLES,
             column_plan::{IdentityGeneration, fixture::entity_key_plan},
             copy_sql,
-            lock_sql,
         },
     };
     use pretty_assertions::assert_eq;
@@ -123,16 +118,19 @@ mod tests {
         for table in UNCLONED_TABLES {
             assert!(!CLONED_TABLES.contains(&table), "{table} is not copied");
         }
-        let lock = lock_sql("snap_2");
-        assert!(!lock.contains("subscriptions"), "{lock}");
-        assert!(!lock.contains("notification_"), "{lock}");
     }
 
+    /// The copy reads the source through its transaction's snapshot, so no
+    /// copy statement locks a source relation against its writers.
     #[test]
-    fn the_source_is_locked_share_across_every_copied_relation() {
-        let lock = lock_sql("snap_2");
-        assert!(lock.starts_with("LOCK TABLE snap_2.entities, snap_2.temporal_entities, "), "{lock}");
-        assert!(lock.ends_with(", snap_2.attribute_history_instance_claims IN SHARE MODE"), "{lock}");
+    fn no_copy_statement_takes_a_relation_lock() {
+        for table in CLONED_TABLES {
+            let copy = copy_sql("snap_2", "snap_3_stg", table, &entity_key_plan(None));
+            assert!(copy.starts_with(&format!("INSERT INTO snap_3_stg.{table} ")), "{copy}");
+            assert!(copy.ends_with(&format!(" FROM snap_2.{table}")), "{copy}");
+            assert!(!copy.contains("LOCK"), "{copy}");
+            assert!(!copy.contains("FOR SHARE"), "{copy}");
+        }
     }
 
     #[test]

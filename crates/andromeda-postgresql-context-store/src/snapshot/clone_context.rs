@@ -1,9 +1,13 @@
-//! Publishing a prepared Snapshot branch: promoting a staged capture, and
-//! cloning one Snapshot's published branch into another before promoting it.
+//! Publishing a prepared Snapshot branch: promoting a staged capture or clone,
+//! and copying one Snapshot's published branch into a clone's staging branch.
 //!
-//! Both paths end the same way -- the staging schema is renamed to the published
-//! schema and the preparation row leaves `preparing` -- and both run in a single
-//! transaction so the rename and the control-row update commit together.
+//! Every publication ends the same way -- the staging schema is renamed to the
+//! published schema and the preparation row leaves `preparing` -- in one short
+//! transaction, so the rename and the control-row update commit together.
+//!
+//! A clone's copy runs before that, in a transaction of its own: it can take as
+//! long as the source is large, and it must not hold for that long a lock that
+//! a lease renewal, a status read or a writer on the source waits on.
 
 use crate::{
     snapshot::{
@@ -11,7 +15,7 @@ use crate::{
         branch_version::{condition_of, current_version},
         clone::clone_branch,
         persistence_error,
-        preparation_claim::lock_claimed_preparation,
+        preparation_claim::{lock_claimed_preparation, share_claimed_preparation},
         record::status_is_preparing,
         status_code::stored_status,
         status_outbox::enqueue_terminal_notification,
@@ -24,16 +28,16 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
 use andromeda_postgresql_branch::snapshot_schema_name;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
-use andromeda_postgresql_seaquery::clock::now;
+use andromeda_postgresql_seaquery::{clock::now, transaction::repeatable_read};
 use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError, snapshot_invariant::SnapshotInvariant};
-use sea_query::{Expr, ExprTrait, JoinType, Keyword, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query::{Expr, ExprTrait, JoinType, Keyword, LockType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Transaction};
 
-/// Publish one query capture -- what it staged on success, an empty branch on
-/// failure, so a failed Snapshot stays addressable -- and record the terminal
-/// status, all in one transaction.
-pub(crate) async fn promote_staged_capture(
+/// Publish one prepared branch -- what a capture or a clone staged on success,
+/// an empty branch on failure, so a failed Snapshot stays addressable -- and
+/// record the terminal status, all in one transaction.
+pub(crate) async fn promote_staged_branch(
     pool: &PgPool,
     id: &Identifier,
     claimed_by: LeaseHolder,
@@ -58,40 +62,71 @@ pub(crate) async fn promote_staged_capture(
 }
 
 /// Copy a source Snapshot's published branch into the claimed target's staging
-/// branch, then publish it, in one transaction.
+/// branch, then publish it.
+///
+/// The copy and the publication are two transactions. The copy runs at
+/// REPEATABLE READ, and the lease renewal rewrites the target's preparation
+/// row throughout it; a REPEATABLE READ transaction updating a row changed
+/// after its snapshot fails with a serialization error, so the publication's
+/// update of that row cannot share the copy's transaction.
 pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Identifier, target_id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
+    copy_clone_source(pool, source_id, target_id, claimed_by).await?;
+    promote_staged_branch(pool, target_id, claimed_by, SnapshotStatus::Success, None, None).await
+}
+
+/// Copy a source Snapshot's published branch into the claimed target's staging
+/// branch, as of one moment, and commit the copy unpublished.
+///
+/// Every copy statement reads the snapshot the transaction's first statement
+/// took, so the copied relations agree with each other -- a copied census
+/// counts exactly the copied search rows -- without locking the source's
+/// relations against writers or the census fold. Clause 5.16.2.4 leaves the
+/// moment a concurrently written source is copied at unspecified; it is the
+/// start of the copy. The two control records are held only `FOR KEY SHARE`,
+/// which keeps the target's claim and both Snapshots in place without blocking
+/// renewals, touches or metadata changes. A failure after the commit leaves
+/// only staged rows, which the next restart or claim of the target discards.
+async fn copy_clone_source(pool: &PgPool, source_id: &Identifier, target_id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
     let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
+    sqlx::query(repeatable_read())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| persistence_error(error))?;
+    let target_key = share_claimed_preparation(&mut transaction, target_id, claimed_by)
+        .await?
+        .ok_or_else(|| claim_lost(target_id))?;
     let source_key = source_snapshot_key(&mut transaction, source_id).await?;
-    let target_key = lock_preparing_key(&mut transaction, target_id, claimed_by).await?;
     let source_schema = snapshot_schema_name(source_key, SnapshotBranch::Published);
     let target_schema = snapshot_schema_name(target_key, SnapshotBranch::Staging);
     clone_branch(&mut transaction, &source_schema, &target_schema)
         .await
         .map_err(|error| persistence_error(error))?;
-    promote_staging_schema(&mut transaction, target_key)
-        .await
-        .map_err(|error| persistence_error(error))?;
-    finalize_preparation(&mut transaction, target_key, claimed_by, SnapshotStatus::Success, None, None).await?;
-    enqueue_terminal_notification(&mut transaction, target_id).await?;
     transaction.commit().await.map_err(|error| persistence_error(error))
+}
+
+/// The refusal of a preparation whose claim this replica no longer holds.
+fn claim_lost(id: &Identifier) -> SnapshotError {
+    SnapshotError::from(SnapshotInvariant::ClaimLost {
+        snapshot: id.clone(), // clone: the error owns the Snapshot it names
+    })
 }
 
 /// Resolve, and row-lock, the preparing preparation row of one Snapshot claimed
 /// by this replica, refusing a claim that is no longer held.
 async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Identifier, claimed_by: LeaseHolder) -> Result<SnapshotKey, SnapshotError> {
-    lock_claimed_preparation(transaction, id, claimed_by).await?.ok_or_else(|| {
-        SnapshotError::from(SnapshotInvariant::ClaimLost {
-            snapshot: id.clone(), // clone: the error owns the Snapshot it names
-        })
-    })
+    lock_claimed_preparation(transaction, id, claimed_by).await?.ok_or_else(|| claim_lost(id))
 }
 
-/// Resolve a clone source's surrogate key by URI, refusing a quarantined source:
-/// its branch schema is behind this binary's branch relations, so a
-/// column-for-column copy into the target could not be trusted.
-async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source_id: &Identifier) -> Result<SnapshotKey, SnapshotError> {
-    let current = current_version()?;
-    let select = Query::select()
+/// Select a clone source's surrogate key and branch version by URI, holding its
+/// control record `FOR KEY SHARE`.
+///
+/// Every path that deletes a Snapshot takes `FOR UPDATE` on its control record
+/// before it drops the branch schema, so a delete, expiry or eviction of the
+/// source waits for the copy, or skips the source, instead of dropping the
+/// relations being copied. Only the control record is fenced: the preparation
+/// row takes the source's last-used touches, which must not conflict with it.
+fn source_key_statement(source_id: &Identifier) -> SelectStatement {
+    Query::select()
         .column((Snapshots::Table, Snapshots::SnapshotKey))
         .column((SnapshotPreparation::Table, SnapshotPreparation::BranchSchemaVersion))
         .from(Snapshots::Table)
@@ -101,8 +136,16 @@ async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source
             Expr::col((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)).equals((Snapshots::Table, Snapshots::SnapshotKey)),
         )
         .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(source_id.as_str()))
-        .to_owned();
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+        .lock_with_tables(LockType::KeyShare, [Snapshots::Table])
+        .to_owned()
+}
+
+/// Resolve, and fence, a clone source's surrogate key by URI, refusing a
+/// quarantined source: its branch schema is behind this binary's branch
+/// relations, so a column-for-column copy into the target could not be trusted.
+async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source_id: &Identifier) -> Result<SnapshotKey, SnapshotError> {
+    let current = current_version()?;
+    let (sql, values) = source_key_statement(source_id).build_sqlx(PostgresQueryBuilder);
     let (raw, version) = sqlx::query_as_with::<_, (i64, i32), _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(&mut **transaction)
         .await
@@ -153,5 +196,21 @@ async fn finalize_preparation(
         Ok(())
     } else {
         Err(SnapshotInvariant::PreparationChangedUnderPromotion.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::snapshot::clone_context::source_key_statement;
+    use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn a_clone_source_is_read_under_a_key_share_lock_of_its_control_record() {
+        let source = "urn:ngsi-ld:Snapshot:src".parse().expect("valid snapshot uri");
+        let sql = source_key_statement(&source).to_string(PostgresQueryBuilder);
+        assert!(sql.contains("JOIN \"snapshot_preparation\""), "{sql}");
+        assert!(sql.contains("\"snapshots\".\"id\" = 'urn:ngsi-ld:Snapshot:src'"), "{sql}");
+        assert!(sql.contains("\"snapshot_preparation\".\"branch_schema_version\""), "{sql}");
+        assert!(sql.ends_with("FOR KEY SHARE OF \"snapshots\""), "{sql}");
     }
 }

@@ -5,6 +5,7 @@
 mod branch_schema;
 mod capture;
 mod census;
+mod clone_liveness;
 mod clone_writes;
 mod core;
 mod coverage;

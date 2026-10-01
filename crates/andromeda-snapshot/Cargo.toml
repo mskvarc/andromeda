@@ -43,4 +43,4 @@ url = "2.5.8"
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
 strum = { version = "0.28.0", features = ["derive"] }
-tokio = { version = "1.53.1", features = ["macros", "rt", "test-util", "time"] }
+tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "test-util", "time"] }

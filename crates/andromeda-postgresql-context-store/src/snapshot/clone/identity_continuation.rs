@@ -5,7 +5,7 @@
 //! was given. The target branch is built fresh by the branch migrations, so its
 //! sequences would still start at 1 and the first key a write to the clone mints
 //! would collide with a copied row. Each identity sequence of the target is
-//! therefore set, in the clone's own transaction, to the larger of two
+//! therefore set, in the clone's copy transaction, to the larger of two
 //! positions: the source sequence's, so the clone never mints again a key its
 //! source already handed out and freed, and the largest value copied, so a
 //! source whose sequence lags its own rows cannot pass that lag on. When both

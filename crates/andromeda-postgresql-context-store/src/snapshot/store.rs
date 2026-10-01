@@ -6,7 +6,7 @@
 
 use crate::snapshot::{
     branch_version::read_branch_condition,
-    clone_context::{promote_context_clone, promote_staged_capture},
+    clone_context::{promote_context_clone, promote_staged_branch},
     creation::create_snapshot,
     metadata_change::MetadataChange,
     preparation_claim::{next_preparing_snapshot, release_preparation, renew_preparation_lease, restart_preparation},
@@ -119,7 +119,7 @@ impl SnapshotStore for SnapshotRepository {
         queries_details: Option<&[ExecutionResultDetails]>,
         temporal_queries_details: Option<&[ExecutionResultDetails]>,
     ) -> Result<(), SnapshotError> {
-        promote_staged_capture(self.pool(), id, claimed_by, status, queries_details, temporal_queries_details).await
+        promote_staged_branch(self.pool(), id, claimed_by, status, queries_details, temporal_queries_details).await
     }
 
     async fn delete(&self, id: &Identifier) -> Result<u64, SnapshotError> {
