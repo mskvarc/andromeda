@@ -12,90 +12,92 @@
 
 use crate::{
     EntityService,
-    batch::{BatchResult, admitted_batch::AdmittedBatchEntity, chunk::UpdatedPayloads},
+    batch::{
+        BatchResult,
+        admitted_batch::AdmittedBatchEntity,
+        chunk::UpdatedPayloads,
+        chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
+        prepare::PreparedEntity,
+    },
+    entity_snapshot::EntitySnapshot,
     error::EntityError,
     notification_plan::modification,
     side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
-use andromeda_context_commit::precondition::Precondition;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     mutation::{entity::merge_entity, selection::OverwritePolicy},
     written_observation::AddressedInstances,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
+
+/// Merging each entity of a chunk into the entity as an attempt read it
+/// (clause 5.6.20.4 runs the merge of clause 5.6.17 per entity).
+struct MergeRewrite<'a> {
+    service: &'a EntityService,
+    target: &'a ContextTarget,
+}
+
+impl ChunkRewrite for MergeRewrite<'_> {
+    type Entry = PreparedEntity;
+    type Reads = ();
+
+    fn id(entry: &PreparedEntity) -> &Identifier {
+        &entry.id
+    }
+
+    fn build(
+        &self,
+        entry: PreparedEntity,
+        snapshot: Option<&EntitySnapshot>,
+        _reads: &(),
+        now: DateTime<Utc>,
+    ) -> Result<PlannedWrite<PreparedEntity>, Box<(Identifier, EntityError)>> {
+        let Some(snapshot) = snapshot else {
+            let error = EntityError::not_found(&entry.id);
+            return Err(Box::new((entry.id, error)));
+        };
+        let previous = &snapshot.payload;
+        let mut merged = Value::clone(previous); // clone: the merge mutates its own copy of the stored payload
+        if let Err(error) = merge_entity(&mut merged, &entry.expanded, None) {
+            return Err(Box::new((entry.id, error.into())));
+        }
+        let change = match modification(previous, &merged) {
+            Ok(change) => change,
+            Err(error) => return Err(Box::new((entry.id, error))),
+        };
+        let write = self.service.chunk_update(
+            self.target,
+            entry.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
+            UpdatedPayloads {
+                previous,
+                merged: Arc::new(merged),
+                addressed: AddressedInstances::EntityFragment {
+                    fragment: &entry.expanded,
+                    overwrite: OverwritePolicy::Overwrite,
+                },
+            },
+            change,
+            now,
+        )?;
+        Ok(PlannedWrite { entry, write, alongside: None })
+    }
+}
 
 impl EntityService {
     pub(super) async fn batch_merge_chunk(&self, placement: SideEffectPlacement<'_>, chunk: Vec<AdmittedBatchEntity>) -> Result<BatchResult, EntityError> {
-        let target = placement.target();
         // Clause 5.6.20 is the batch form of Merge Entity, whose fragments carry
         // the NGSI-LD Null to arbitrary depth (clause 5.5.12).
         let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Merge.null_sentinel_admission()).await;
-        if prepared.is_empty() {
-            return Ok(BatchResult { success: Vec::new(), errors });
-        }
-
-        let prepared_ids: Vec<Identifier> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
-        // Hold the per-id locks across the read-modify-write window so two
-        // concurrent merges for the same id can't lose each other's writes.
-        let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;
-        // Shared by the computation and the notification it plans.
-        let existing_map = self
-            .reader
-            .get_batch(target, &prepared_ids)
-            .await?
-            .into_iter()
-            .map(|(id, payload)| (id, Arc::new(payload)))
-            .collect::<HashMap<Identifier, Arc<Value>>>();
-        let now = Utc::now();
-
-        let mut writes = Vec::with_capacity(prepared.len());
-        for prepared_entity in prepared {
-            let id = prepared_entity.id;
-            let Some(previous) = existing_map.get(&id) else {
-                let error = EntityError::not_found(&id);
-                errors.push((id, error));
-                continue;
-            };
-            let mut existing = Value::clone(previous); // clone: the merge mutates its own copy of the stored payload
-
-            if let Err(error) = merge_entity(&mut existing, &prepared_entity.expanded, None) {
-                errors.push((id, error.into()));
-                continue;
-            }
-
-            let change = match modification(previous, &existing) {
-                Ok(change) => change,
-                Err(error) => {
-                    errors.push((id, error));
-                    continue;
-                }
-            };
-
-            match self.chunk_update(
-                target,
-                id,
-                UpdatedPayloads {
-                    previous,
-                    merged: Arc::new(existing),
-                    addressed: AddressedInstances::EntityFragment {
-                        fragment: &prepared_entity.expanded,
-                        overwrite: OverwritePolicy::Overwrite,
-                    },
-                },
-                change,
-                Precondition::MustExist,
-                now,
-            ) {
-                Ok(write) => writes.push(write),
-                Err(failure) => errors.push(*failure),
-            }
-        }
-
-        let outcome = self.commit_chunk(placement, writes).await?.settled();
+        let rewrite = MergeRewrite {
+            service: self,
+            target: placement.target(),
+        };
+        let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, prepared).await?;
         errors.extend(outcome.errors);
         Ok(BatchResult {
             success: outcome.success,

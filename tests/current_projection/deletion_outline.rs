@@ -111,6 +111,14 @@ async fn current_projection_a_deletion_outline_lists_every_instance_with_its_dat
         .expect("the outline reads")
         .expect("the entity exists");
 
+    // The deletion's compare-and-set holds against the version the document
+    // row carries, so the outline reads exactly that one.
+    let version = store
+        .get_snapshot(&ContextTarget::Live, &identifier)
+        .await
+        .expect("the snapshot reads")
+        .expect("the entity exists")
+        .modified_at;
     let types: Vec<EntityTypeName> = [term("Car"), term("Vehicle")].iter().map(|name| name.parse().expect("a type name")).collect();
     let expected = DeletionOutline {
         types: types.clone(), // clone: the types read on their own are compared below
@@ -121,6 +129,7 @@ async fn current_projection_a_deletion_outline_lists_every_instance_with_its_dat
             instance(&term("speed"), Some("urn:ngsi-ld:Dataset:a"), AttributeType::Property),
         ]),
         scope: ScopePresence::Held,
+        modified_at: version,
     };
     assert_eq!(
         DeletionOutline {

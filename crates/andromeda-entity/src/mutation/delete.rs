@@ -9,10 +9,17 @@
 //! is asked of the store every replica shares, and of this process's
 //! subscription cache besides; a failed probe reads the payload, so an
 //! uncertain answer costs memory, never a notification.
+//!
+//! Either way the tombstones and the notification describe the state that was
+//! read, so the deletion holds only while the entity is unchanged since: an
+//! instance a concurrent write added would otherwise be removed without a
+//! tombstone or a notification. A deletion that loses is outlined again from
+//! the start, the watcher decision included.
 
 use crate::{
     EntityService,
     deletion_outline::{DeletionOutline, DeletionWatchers},
+    entity_snapshot::EntitySnapshot,
     error::EntityError,
     expanded_member::stored_entity_types,
     notification_fanout::{ChangedEntity, MutationSnapshots},
@@ -24,8 +31,9 @@ use andromeda_context_commit::{
     change_event::ChangeEvent,
     entity_mutation::EntityMutation,
     history_record::{deletion_history, deletion_tombstones},
-    precondition::Precondition,
+    precondition::{AfterAttempt, Precondition, after_attempt},
     write_outcome::single,
+    write_retry::WRITE_ATTEMPTS,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -49,26 +57,42 @@ impl EntityService {
     pub async fn delete(&self, target: &ContextTarget, id: &Identifier) -> Result<(), EntityError> {
         let timer = entity::start(EntityOperation::Delete);
         let result: Result<(), EntityError> = async {
-            let Some(outline) = self.deletion_outline.deletion_outline(target, id).await? else {
-                return Err(EntityError::not_found(id));
-            };
-            let change = EntityChange::new(
-                EntityLifecycle::Deleted,
-                deleted_instances(outline.instances.iter().map(|(key, _)| key.clone())),
-            ); // clone: the change owns the identities the outline lists
-            let deleted = ChangedEntity {
-                target,
-                id,
-                types: &outline.types,
-            };
-            match self.deletion_watchers(deleted, &change).await {
-                DeletionWatchers::Possible => self.delete_removed_state(target, id).await,
-                DeletionWatchers::None => self.delete_outline(target, id, outline, change).await,
+            for lost_attempts in 0..WRITE_ATTEMPTS {
+                self.wait_before_retry(lost_attempts).await;
+                match self.delete_attempt(target, id).await? {
+                    AfterAttempt::Settled => return Ok(()),
+                    AfterAttempt::Vanished => return Err(EntityError::not_found(id)),
+                    // A write landed between the read and the deletion: read
+                    // the entity again.
+                    AfterAttempt::Reread => (),
+                }
             }
+            Err(EntityError::contention(id, WRITE_ATTEMPTS))
         }
         .await;
         timer.finish_result(&result);
         result
+    }
+
+    /// One attempt at the deletion: outline the entity, decide whether its
+    /// removed state is needed, and delete it unless it changed since.
+    async fn delete_attempt(&self, target: &ContextTarget, id: &Identifier) -> Result<AfterAttempt, EntityError> {
+        let Some(outline) = self.deletion_outline.deletion_outline(target, id).await? else {
+            return Ok(AfterAttempt::Vanished);
+        };
+        let change = EntityChange::new(
+            EntityLifecycle::Deleted,
+            deleted_instances(outline.instances.iter().map(|(key, _)| key.clone())),
+        ); // clone: the change owns the identities the outline lists
+        let deleted = ChangedEntity {
+            target,
+            id,
+            types: &outline.types,
+        };
+        match self.deletion_watchers(deleted, &change).await {
+            DeletionWatchers::Possible => self.delete_removed_state(target, id).await,
+            DeletionWatchers::None => self.delete_outline(target, id, outline, change).await,
+        }
     }
 
     /// Whether a subscription may be owed the deletion `change` describes,
@@ -86,8 +110,19 @@ impl EntityService {
 
     /// Delete an entity no subscription can be owed a notification for, from
     /// its outline alone.
-    async fn delete_outline(&self, target: &ContextTarget, id: &Identifier, outline: DeletionOutline, change: EntityChange) -> Result<(), EntityError> {
-        let DeletionOutline { types, instances, scope } = outline;
+    async fn delete_outline(
+        &self,
+        target: &ContextTarget,
+        id: &Identifier,
+        outline: DeletionOutline,
+        change: EntityChange,
+    ) -> Result<AfterAttempt, EntityError> {
+        let DeletionOutline {
+            types,
+            instances,
+            scope,
+            modified_at,
+        } = outline;
         let write = AtomicWrite::builder()
             .entity_id(Arc::new(id.clone())) // clone: the delete write owns its validated identifier.
             .entity(EntityMutation::Delete)
@@ -95,10 +130,11 @@ impl EntityService {
             // Evolution standing, so every instance the entity still held is
             // recorded as ended rather than being deleted with it.
             .history(deletion_tombstones(instances, scope))
-            .precondition(Precondition::MustExist)
+            .precondition(Precondition::UnchangedSince(modified_at))
             .build();
-        if single(self.writes.commit(target, vec![write]).await?)?.is_not_found() {
-            return Err(EntityError::not_found(id));
+        let next = after_attempt(&single(self.writes.commit(target, vec![write]).await?)?);
+        if next != AfterAttempt::Settled {
+            return Ok(next);
         }
         self.notifier.publish(
             target,
@@ -110,17 +146,21 @@ impl EntityService {
                 .origin(ChangeOrigin::Local)
                 .build(),
         );
-        Ok(())
+        Ok(next)
     }
 
     /// Delete an entity a subscription may be owed a notification for,
     /// reading the state it removes for the notification.
-    async fn delete_removed_state(&self, target: &ContextTarget, id: &Identifier) -> Result<(), EntityError> {
-        let removed = Arc::new(self.reader.get(target, id).await?.ok_or_else(|| EntityError::not_found(id))?);
+    async fn delete_removed_state(&self, target: &ContextTarget, id: &Identifier) -> Result<AfterAttempt, EntityError> {
+        let Some(EntitySnapshot { payload: removed, modified_at }) = self.reader.get_snapshot(target, id).await? else {
+            return Ok(AfterAttempt::Vanished);
+        };
         let entity_types = stored_entity_types(&removed)?;
 
         // Captured before the delete so the notification can carry them: once
-        // the row is gone they are unreadable.
+        // the row is gone they are unreadable. Read after the payload, so a
+        // write that lands in between moves the version the deletion holds
+        // against.
         let sys_attrs_snapshot = match self.reader.get_sys_attrs(target, id).await {
             Ok(attrs) => attrs,
             Err(e) => {
@@ -161,11 +201,12 @@ impl EntityService {
             // recorded as ended rather than being deleted with it.
             .history(deletion_history(&removed)?)
             .subscription_matches(subscription_matches)
-            .precondition(Precondition::MustExist)
+            .precondition(Precondition::UnchangedSince(modified_at))
             .build();
 
-        if single(self.writes.commit(target, vec![write]).await?)?.is_not_found() {
-            return Err(EntityError::not_found(id));
+        let next = after_attempt(&single(self.writes.commit(target, vec![write]).await?)?);
+        if next != AfterAttempt::Settled {
+            return Ok(next);
         }
 
         self.notifier.publish(
@@ -182,6 +223,6 @@ impl EntityService {
                 .build(),
         );
 
-        Ok(())
+        Ok(next)
     }
 }

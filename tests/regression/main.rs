@@ -14,6 +14,7 @@ mod attribute_discovery_type_spelling;
 mod attribute_member_validation;
 mod attribute_system_timestamps;
 mod attrs_scope_admission;
+mod batch_compare_and_set;
 mod batch_context_expansion;
 mod batch_context_unavailable;
 mod batch_entity_errors;

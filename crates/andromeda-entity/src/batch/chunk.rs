@@ -92,8 +92,7 @@ pub(super) struct ChunkOutcome {
     /// Refusals a caller that read the entity first can fix by reading again:
     /// the entity moved on, or an identifier it read as absent now exists.
     /// A caller that read nothing has no reason to retry and folds these into
-    /// [`Self::errors`] with [`Self::settled`]. Typed because the retry path
-    /// reads the store again by identifier, which the port keys on [`Identifier`].
+    /// [`Self::errors`] with [`Self::settled`].
     pub retryable: Vec<(Identifier, EntityError)>,
 }
 
@@ -109,7 +108,8 @@ impl EntityService {
     /// The write that stores a freshly prepared payload as a new entity.
     ///
     /// Mirrors the single create (clause 5.6.1): one `entityCreated` over the
-    /// whole payload.
+    /// whole payload. A batch inserts only an entity it was asked to create or
+    /// found absent, so the write holds only while the entity does not exist.
     ///
     /// # Errors
     ///
@@ -119,7 +119,6 @@ impl EntityService {
         &self,
         target: &ContextTarget,
         prepared: PreparedEntity,
-        precondition: Precondition,
         now: DateTime<Utc>,
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
         let PreparedEntity {
@@ -150,13 +149,14 @@ impl EntityService {
                 min_attribute_expires_at,
             )),
             history: vec![HistoryRecord::Observations(payload)],
-            precondition,
+            precondition: Precondition::MustNotExist,
             plan,
         })
     }
 
     /// The write that stores `payload` as a new entity, deriving its columns
-    /// from the payload rather than from a preparation pass.
+    /// from the payload rather than from a preparation pass, under the same
+    /// precondition as [`Self::chunk_insert`].
     ///
     /// # Errors
     ///
@@ -167,7 +167,6 @@ impl EntityService {
         target: &ContextTarget,
         id: Identifier,
         payload: Arc<Value>,
-        precondition: Precondition,
         now: DateTime<Utc>,
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
         // Clause 4.8: stamp the created entity's attribute instances before the
@@ -192,7 +191,7 @@ impl EntityService {
             id,
             entity: EntityMutation::Insert(record),
             history: vec![HistoryRecord::Observations(payload)],
-            precondition,
+            precondition: Precondition::MustNotExist,
             plan,
         })
     }
@@ -201,6 +200,8 @@ impl EntityService {
     /// under the entity `change` the write made.
     ///
     /// The build site supplies one precise group per changed attribute instance.
+    /// The write is computed from `previous`, so the version it holds against
+    /// is stated by the read-modify-write driver that read it.
     ///
     /// # Errors
     ///
@@ -213,7 +214,6 @@ impl EntityService {
         id: Identifier,
         payloads: UpdatedPayloads<'_>,
         change: EntityChange,
-        precondition: Precondition,
         now: DateTime<Utc>,
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
         let UpdatedPayloads { previous, merged, addressed } = payloads;
@@ -246,7 +246,7 @@ impl EntityService {
             id,
             entity: EntityMutation::Update(record),
             history,
-            precondition,
+            precondition: Precondition::MustExist,
             plan,
         })
     }
@@ -254,12 +254,11 @@ impl EntityService {
 
 /// The per-entity error an outcome reports, if it reports one.
 ///
-/// `Skipped` is silent on purpose: an unconditional insert that met an existing
-/// row neither succeeded nor failed, and the upsert path that issues one has
-/// always left such entities out of both lists. A write whose content the
-/// store refused reports that refusal against its own entity only (clause
-/// 5.6.8.4: "If while processing an Entity there is any kind of error or
-/// abnormal situation, a `BatchEntityError` shall be added").
+/// `Skipped` answers only an unconditional insert, which no batch path issues.
+/// A write whose content the store refused reports that refusal against its
+/// own entity only (clause 5.6.8.4: "If while processing an Entity there is
+/// any kind of error or abnormal situation, a `BatchEntityError` shall be
+/// added").
 fn error_of(id: &Identifier, outcome: WriteOutcome) -> Option<EntityError> {
     match outcome {
         WriteOutcome::AlreadyExists => Some(EntityError::already_exists(id)),
@@ -329,7 +328,7 @@ impl EntityService {
                         temporal_entities,
                         change_events: self.notifier.owed_change_events(events),
                     };
-                    (builder.history(endings).side_effects(Some(job)).build(), Vec::new())
+                    (builder.history(endings).side_effects((!job.is_empty()).then_some(job)).build(), Vec::new())
                 }
             };
 

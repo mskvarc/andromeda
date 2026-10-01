@@ -25,6 +25,14 @@ pub struct BatchSideEffectJob {
     pub change_events: Vec<ChangeEvent>,
 }
 
+impl BatchSideEffectJob {
+    /// Whether the job carries no work at all, so a write need not queue it.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.temporal_entities.is_empty() && self.change_events.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::batch_side_effect_job::BatchSideEffectJob;
@@ -40,5 +48,15 @@ mod tests {
             change_events: Vec::new(),
         };
         assert!(Arc::ptr_eq(&payload, &job.temporal_entities[0].1));
+        assert!(!job.is_empty());
+    }
+
+    #[test]
+    fn a_job_without_observations_or_changes_is_empty() {
+        let job = BatchSideEffectJob {
+            temporal_entities: Vec::new(),
+            change_events: Vec::new(),
+        };
+        assert!(job.is_empty());
     }
 }

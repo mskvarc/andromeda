@@ -6,7 +6,7 @@ use crate::expanded::{
     null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// Whether an expanded `scope` member is the NGSI-LD Null of a deleted scope.
 ///
@@ -38,10 +38,13 @@ pub(crate) fn member_is_deletion(member: &Value) -> bool {
 }
 
 /// What [`drop_deletion_sentinels`] found in the payload it was given.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DroppedSentinels {
-    /// At least one member asked for a deletion and was dropped.
-    Dropped,
+    /// At least one member asked for a deletion and was dropped. Carries the
+    /// dropped members as the payload held them, so a caller that finds the
+    /// target did exist after all can still apply them
+    /// ([`restore_deletion_sentinels`]).
+    Dropped(Map<String, Value>),
     /// The payload asked for no deletion and is unchanged.
     Unchanged,
 }
@@ -78,16 +81,26 @@ pub fn drop_deletion_sentinels(entity: &mut Value) -> DroppedSentinels {
     if deletions.is_empty() {
         return DroppedSentinels::Unchanged;
     }
-    for key in deletions {
-        entity_obj.remove(&key);
+    DroppedSentinels::Dropped(deletions.into_iter().filter_map(|key| entity_obj.remove_entry(&key)).collect())
+}
+
+/// Put the `deletions` [`drop_deletion_sentinels`] dropped back into `entity`.
+///
+/// Clause 5.6.8.4 update mode creates an Entity it found absent, and the
+/// dropped deletions have nothing to delete there; when the Entity turns out to
+/// exist after all -- created concurrently -- the same request is an update of
+/// it by clause 5.6.2, whose Fragment carries the deletions again.
+pub fn restore_deletion_sentinels(entity: &mut Value, deletions: &Map<String, Value>) {
+    if let Some(entity_obj) = expanded_object_mut(entity) {
+        // clone: the restored members are owned by the payload while the caller keeps its record of them
+        entity_obj.extend(deletions.iter().map(|(key, member)| (key.clone(), member.clone())));
     }
-    DroppedSentinels::Dropped
 }
 
 #[cfg(test)]
 mod tests {
     use crate::expanded::mutation::{
-        deletion_sentinel::{DroppedSentinels, drop_deletion_sentinels},
+        deletion_sentinel::{DroppedSentinels, drop_deletion_sentinels, restore_deletion_sentinels},
         speed_entity::property_instance,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -112,8 +125,13 @@ mod tests {
             "https://example.com/bare": [{"@value": "urn:ngsi-ld:null"}]
         }]);
 
-        pretty_assertions::assert_eq!(drop_deletion_sentinels(&mut payload), DroppedSentinels::Dropped);
+        let DroppedSentinels::Dropped(dropped) = drop_deletion_sentinels(&mut payload) else {
+            panic!("the deletions are dropped: {payload}");
+        };
 
+        let mut dropped_keys: Vec<&str> = dropped.keys().map(String::as_str).collect();
+        dropped_keys.sort_unstable();
+        pretty_assertions::assert_eq!(dropped_keys, vec!["https://example.com/bare", "https://example.com/gone", scope_iri()]);
         pretty_assertions::assert_eq!(payload[0]["@id"], json!("urn:ngsi-ld:Device:1"));
         pretty_assertions::assert_eq!(
             payload[0]["https://example.com/speed"][0]["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"],
@@ -122,6 +140,27 @@ mod tests {
         for dropped in [scope_iri(), "https://example.com/gone", "https://example.com/bare"] {
             assert!(payload[0].get(dropped).is_none(), "{dropped} is dropped: {payload}");
         }
+    }
+
+    /// Restoring what was dropped gives back the payload the request carried,
+    /// which is the Fragment clause 5.6.2 applies when the Entity turns out to
+    /// exist after all.
+    #[test]
+    fn restoring_the_dropped_deletions_gives_back_the_requested_payload() {
+        let requested = json!([{
+            "@id": "urn:ngsi-ld:Device:1",
+            scope_iri(): [{"@value": "urn:ngsi-ld:null"}],
+            "https://example.com/speed": [property_instance(&json!(10), None)],
+            "https://example.com/gone": [property_instance(&json!("urn:ngsi-ld:null"), None)]
+        }]);
+        let mut payload = requested.clone();
+        let DroppedSentinels::Dropped(dropped) = drop_deletion_sentinels(&mut payload) else {
+            panic!("the deletions are dropped: {payload}");
+        };
+
+        restore_deletion_sentinels(&mut payload, &dropped);
+
+        pretty_assertions::assert_eq!(payload, requested);
     }
 
     /// A payload that asks for no deletion is left exactly as it was, so the

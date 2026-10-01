@@ -1,19 +1,26 @@
 //! Batch attribute update (clause 5.6.9).
 //!
 //! A read-modify-write over the whole chunk: the stored payloads are read
-//! once, each request fragment is applied in memory, and the results go back
-//! as one statement. The per-id guards are held across the whole window so two
-//! concurrent batches touching one entity cannot lose each other's writes.
+//! together, each request fragment is applied in memory, and the results go
+//! back as one statement, each holding only while its entity is unchanged
+//! since the read (see [`crate::batch::chunk_read_modify_write`]).
 //!
-//! Reading the stored payloads once is only sound because a chunk never carries
-//! two instances of the same entity: the coordinator gives each instance of a
+//! Reading the stored payloads together is only sound because a chunk never
+//! carries two instances of the same entity: the coordinator gives each instance of a
 //! repeated identifier a round of its own, so the second instance reads what
 //! the first committed. Clause 5.5.11.3 requires exactly that, one separate
 //! notification per individual update.
 
 use crate::{
     EntityService,
-    batch::{BatchResult, admitted_batch::AdmittedBatchEntity, chunk::UpdatedPayloads},
+    batch::{
+        BatchResult,
+        admitted_batch::AdmittedBatchEntity,
+        chunk::UpdatedPayloads,
+        chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
+        prepare::PreparedEntity,
+    },
+    entity_snapshot::EntitySnapshot,
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
@@ -21,7 +28,7 @@ use crate::{
     side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
-use andromeda_context_commit::precondition::Precondition;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::expanded::{
     mutation::{
@@ -30,9 +37,9 @@ use andromeda_ngsi_ld_model::expanded::{
     },
     written_observation::AddressedInstances,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 /// Whether a `noOverwrite` append of `attrs` onto `entity` can add nothing: the
 /// fragment names at least one attribute and every named attribute is already
@@ -55,6 +62,87 @@ fn appends_nothing(entity: &Value, attrs: &Value) -> bool {
     named.peek().is_some() && named.all(|key| entity_obj.contains_key(key))
 }
 
+/// Updating each entity of a chunk as an attempt read it (clause 5.6.9.4 runs
+/// the behaviour of clause 5.6.3 per entity).
+struct UpdateRewrite<'a> {
+    service: &'a EntityService,
+    target: &'a ContextTarget,
+    overwrite: OverwritePolicy,
+}
+
+impl ChunkRewrite for UpdateRewrite<'_> {
+    type Entry = PreparedEntity;
+    type Reads = ();
+
+    fn id(entry: &PreparedEntity) -> &Identifier {
+        &entry.id
+    }
+
+    fn build(
+        &self,
+        entry: PreparedEntity,
+        snapshot: Option<&EntitySnapshot>,
+        _reads: &(),
+        now: DateTime<Utc>,
+    ) -> Result<PlannedWrite<PreparedEntity>, Box<(Identifier, EntityError)>> {
+        let Some(snapshot) = snapshot else {
+            let error = EntityError::not_found(&entry.id);
+            return Err(Box::new((entry.id, error)));
+        };
+        let previous = &snapshot.payload;
+        let mut updated = Value::clone(previous); // clone: the update mutates its own copy of the stored payload
+
+        let attrs = unwrap_expanded_ref(&entry.expanded);
+        let mut alongside = None;
+        if self.overwrite == OverwritePolicy::Preserve {
+            // Clause 5.6.9.4: the local phase is an Append Attributes (clause
+            // 5.6.3) with overwrite disabled. Clause 5.6.9.5 puts an Entity in
+            // S when it was "successfully updated (Attributes appended)", so a
+            // fragment that appends at least one attribute is a success even if
+            // others are skipped for noOverwrite; only a fragment that appends
+            // nothing (every named attribute already present) leaves the Entity
+            // out of S and is reported as an error, making the batch a 207.
+            // Whether it appended anything depends on the state this attempt
+            // read, so the error belongs to the attempt.
+            if appends_nothing(&updated, attrs) {
+                alongside = Some(EntityError::Validation(EntityValidationReason::NoOverwriteConflict));
+            }
+            if let Err(error) = append_entity_attrs(&mut updated, attrs, OverwritePolicy::Preserve) {
+                return Err(Box::new((entry.id, error.into())));
+            }
+        } else {
+            if let Err(error) = update_entity_attrs(&mut updated, attrs) {
+                return Err(Box::new((entry.id, error.into())));
+            }
+            if let Err(error) = append_entity_attrs(&mut updated, attrs, OverwritePolicy::Overwrite) {
+                return Err(Box::new((entry.id, error.into())));
+            }
+        }
+
+        // Batch update mirrors the single attribute update (clause 5.6.9):
+        // the per-attribute triggers, partitioned from the before/after diff.
+        let change = match modification(previous, &updated) {
+            Ok(change) => change,
+            Err(error) => return Err(Box::new((entry.id, error))),
+        };
+        let write = self.service.chunk_update(
+            self.target,
+            entry.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
+            UpdatedPayloads {
+                previous,
+                merged: Arc::new(updated),
+                addressed: AddressedInstances::EntityFragment {
+                    fragment: &entry.expanded,
+                    overwrite: self.overwrite,
+                },
+            },
+            change,
+            now,
+        )?;
+        Ok(PlannedWrite { entry, write, alongside })
+    }
+}
+
 impl EntityService {
     pub(super) async fn batch_update_chunk(
         &self,
@@ -62,7 +150,6 @@ impl EntityService {
         chunk: Vec<AdmittedBatchEntity>,
         overwrite: OverwritePolicy,
     ) -> Result<BatchResult, EntityError> {
-        let target = placement.target();
         // Clause 5.5.4 excepts only the fragments "used in partial update and
         // merge operations" from its NGSI-LD Null prohibitions, and clause 5.2.1
         // makes every other placement of the sentinel `BadRequestData`. A batch
@@ -83,96 +170,12 @@ impl EntityService {
         // Update Attributes operation and its Entity Fragment, not about a
         // whole Entity submitted to a batch.
         let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Update.null_sentinel_admission()).await;
-        if prepared.is_empty() {
-            return Ok(BatchResult { success: Vec::new(), errors });
-        }
-
-        let prepared_ids: Vec<Identifier> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
-        // Hold the per-id locks across the read-modify-write window so two
-        // concurrent updates for the same id can't lose each other's writes.
-        let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;
-        // Shared by the computation and the notification it plans.
-        let existing_map = self
-            .reader
-            .get_batch(target, &prepared_ids)
-            .await?
-            .into_iter()
-            .map(|(id, payload)| (id, Arc::new(payload)))
-            .collect::<HashMap<Identifier, Arc<Value>>>();
-        let now = Utc::now();
-
-        let mut writes = Vec::with_capacity(prepared.len());
-        for prepared_entity in prepared {
-            let id = prepared_entity.id;
-            let Some(previous) = existing_map.get(&id) else {
-                let error = EntityError::not_found(&id);
-                errors.push((id, error));
-                continue;
-            };
-            let mut existing = Value::clone(previous); // clone: the update mutates its own copy of the stored payload
-
-            let attrs = unwrap_expanded_ref(&prepared_entity.expanded);
-            if overwrite == OverwritePolicy::Preserve {
-                // Clause 5.6.9.4: the local phase is an Append Attributes (clause
-                // 5.6.3) with overwrite disabled. Clause 5.6.9.5 puts an Entity in
-                // S when it was "successfully updated (Attributes appended)", so a
-                // fragment that appends at least one attribute is a success even if
-                // others are skipped for noOverwrite; only a fragment that appends
-                // nothing (every named attribute already present) leaves the Entity
-                // out of S and is reported as an error, making the batch a 207.
-                let appended_nothing = appends_nothing(&existing, attrs);
-                if let Err(error) = append_entity_attrs(&mut existing, attrs, OverwritePolicy::Preserve) {
-                    errors.push((id, error.into()));
-                    continue;
-                }
-                if appended_nothing {
-                    errors.push((
-                        id.clone(), // clone: the write below still owns the identifier
-                        EntityError::Validation(EntityValidationReason::NoOverwriteConflict),
-                    ));
-                }
-            } else {
-                if let Err(error) = update_entity_attrs(&mut existing, attrs) {
-                    errors.push((id, error.into()));
-                    continue;
-                }
-                if let Err(error) = append_entity_attrs(&mut existing, attrs, OverwritePolicy::Overwrite) {
-                    errors.push((id, error.into()));
-                    continue;
-                }
-            }
-
-            // Batch update mirrors the single attribute update (clause 5.6.9):
-            // the per-attribute triggers, partitioned from the before/after diff.
-            let change = match modification(previous, &existing) {
-                Ok(change) => change,
-                Err(error) => {
-                    errors.push((id, error));
-                    continue;
-                }
-            };
-
-            match self.chunk_update(
-                target,
-                id,
-                UpdatedPayloads {
-                    previous,
-                    merged: Arc::new(existing),
-                    addressed: AddressedInstances::EntityFragment {
-                        fragment: &prepared_entity.expanded,
-                        overwrite,
-                    },
-                },
-                change,
-                Precondition::MustExist,
-                now,
-            ) {
-                Ok(write) => writes.push(write),
-                Err(failure) => errors.push(*failure),
-            }
-        }
-
-        let outcome = self.commit_chunk(placement, writes).await?.settled();
+        let rewrite = UpdateRewrite {
+            service: self,
+            target: placement.target(),
+            overwrite,
+        };
+        let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, prepared).await?;
         errors.extend(outcome.errors);
         Ok(BatchResult {
             success: outcome.success,

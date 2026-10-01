@@ -19,6 +19,11 @@
 pub mod admitted_batch;
 /// Committing one chunk and settling what each entity in it did.
 mod chunk;
+/// Committing one chunk as a read-modify-write of each entity in it.
+mod chunk_read_modify_write;
+/// Compare-and-set tests for the batch read-modify-writes.
+#[cfg(test)]
+mod compare_and_set;
 /// Preparing a batch whose entities name different contexts.
 mod context_groups;
 /// Batch entity creation.
@@ -321,12 +326,12 @@ impl EntityService {
     ///
     /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when an
     /// entity the forwarding phase narrowed cannot be expanded against
-    /// the context it was submitted with,
-    /// [`EntityError::Contention`] when a replacement lost its precondition on
-    /// every attempt, and [`EntityError::Persistence`] when the store could not
-    /// read or commit a chunk. A failure that concerns one entity only is
-    /// carried in [`BatchResult::errors`] instead, because clause 5.6.8 reports
-    /// batch results per entity.
+    /// the context it was submitted with, and [`EntityError::Persistence`]
+    /// when the store could not read or commit a chunk. A failure that concerns
+    /// one entity only is carried in [`BatchResult::errors`] instead, because
+    /// clause 5.6.8 reports batch results per entity -- among them
+    /// [`EntityError::Contention`] for an entity whose write lost to a
+    /// concurrent writer on every attempt.
     pub async fn batch_upsert(
         &self,
         placement: SideEffectPlacement<'_>,

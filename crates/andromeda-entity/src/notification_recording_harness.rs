@@ -132,8 +132,9 @@ pub(crate) struct ObservedService {
 }
 
 /// A change sink keeping every change it is handed.
-struct RecordingSink {
-    published: Arc<Mutex<Vec<ChangeEvent>>>,
+pub(crate) struct RecordingSink {
+    /// The changes handed to the sink, in order.
+    pub(crate) published: Arc<Mutex<Vec<ChangeEvent>>>,
 }
 
 impl EntityChangeSink for RecordingSink {
@@ -219,11 +220,12 @@ fn recording_service_with(
 ) -> (EntityService, Arc<Mutex<Vec<AtomicWrite>>>, Arc<AtomicUsize>) {
     let (committer, recorded) = RecordingCommitter::new();
     let payload_reads = Arc::new(AtomicUsize::new(0));
+    let modified_at = Utc::now();
     let service = EntityService::new(
         EntityServicePorts {
             reader: Arc::new(SnapshotReader {
                 payload: building_snapshot(),
-                modified_at: Utc::now(),
+                modified_at,
                 payload_reads: Arc::clone(&payload_reads), // clone: the test reads the count the reader keeps
             }) as Arc<dyn EntityReader>,
             blocking_executor: Arc::new(UnusedBlockingExecutor) as Arc<dyn BlockingExecutor>,
@@ -232,6 +234,7 @@ fn recording_service_with(
             writes: Arc::new(committer) as Arc<dyn ContextCommitter>,
             deletion_outline: Arc::new(PayloadOutline {
                 payload: building_snapshot(),
+                modified_at,
                 probe,
             }) as Arc<dyn DeletionOutlineReader>,
         },

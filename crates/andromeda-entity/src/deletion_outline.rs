@@ -13,6 +13,7 @@
 use andromeda_context_commit::scope_presence::ScopePresence;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::expanded::instance_key::AttributeInstanceKey;
+use chrono::{DateTime, Utc};
 
 /// The entity a deletion removes, as far as the deletion itself reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,6 +24,11 @@ pub struct DeletionOutline {
     pub instances: Vec<(AttributeInstanceKey, AttributeType)>,
     /// Whether the entity held a Scope (clause 4.18).
     pub scope: ScopePresence,
+    /// The entity's clause 4.8 `modifiedAt` when the outline was read, which
+    /// the deletion holds against: an instance written after the read moves
+    /// it, and the deletion is outlined again rather than leaving that instance
+    /// without a tombstone.
+    pub modified_at: DateTime<Utc>,
 }
 
 /// Whether any subscription a deletion can notify exists in the context the

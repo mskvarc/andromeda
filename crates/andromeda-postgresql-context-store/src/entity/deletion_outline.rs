@@ -28,11 +28,12 @@ use andromeda_ngsi_ld_model::{
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_schema::{
-    current::{CurrentAttributeValues, E, Entities, EntitySearch},
+    current::{CurrentAttributeValues, E, Entities, EntityDocuments, EntitySearch},
     name_dictionary::AttributeNames,
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{pg_array::has_elements, pg_operator::PgBinaryOperator};
+use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::Row;
@@ -48,22 +49,42 @@ struct Projected;
 #[iden = "scoped"]
 struct Scoped;
 
+/// Alias `d` for the entity's document row, which carries its version.
+#[derive(Iden, Clone, Copy)]
+#[iden = "d"]
+struct Document;
+
 /// The column answering the watcher probe.
 #[derive(Iden, Clone, Copy)]
 #[iden = "watched"]
 struct Watched;
 
-/// One row per type the entity carries, each naming whether it held a Scope:
-/// the [`entity_types_statement`] with the column
-/// `(cardinality(s.scope_paths) > 0) AS scoped` beside the name.
+/// One row per type the entity carries, each naming whether it held a Scope
+/// and the clause 4.8 `modifiedAt` a deletion compares against: the
+/// [`entity_types_statement`] joined to `entity_documents d`, with the columns
+/// `(cardinality(s.scope_paths) > 0) AS scoped` and `d.modified_at` beside the
+/// name.
+///
+/// The version is read by the first statement of the outline and the instances
+/// by the second, so an instance a concurrent write adds in between moves the
+/// version past the one read and the deletion's compare-and-set refuses it,
+/// rather than the deletion leaving that instance without a tombstone.
 fn outline_types_statement(target: &ContextTarget, id: &str) -> SelectStatement {
     let mut statement = entity_types_statement(target, id);
-    statement.expr_as(
-        Expr::col((Search, EntitySearch::ScopePaths))
-            .is_not_null()
-            .and(has_elements(Expr::col((Search, EntitySearch::ScopePaths)))),
-        Scoped,
-    );
+    statement
+        .join_as(
+            JoinType::InnerJoin,
+            table_of(target, EntityDocuments::Table),
+            Document,
+            Expr::col((Document, EntityDocuments::EntityKey)).equals((E, Entities::EntityKey)),
+        )
+        .expr_as(
+            Expr::col((Search, EntitySearch::ScopePaths))
+                .is_not_null()
+                .and(has_elements(Expr::col((Search, EntitySearch::ScopePaths)))),
+            Scoped,
+        )
+        .column((Document, EntityDocuments::ModifiedAt));
     statement
 }
 
@@ -159,6 +180,7 @@ impl EntityRepository {
         } else {
             ScopePresence::Absent
         };
+        let modified_at = first.try_get::<DateTime<Utc>, _>(EntityDocuments::ModifiedAt.to_string().as_str())?;
         let types = type_rows
             .iter()
             .map(|row| stored_type_name(row.try_get::<&str, _>(0)?))
@@ -176,7 +198,12 @@ impl EntityRepository {
                 Ok((key, stored_attribute_family(row.try_get::<i16, _>(2)?)?))
             })
             .collect::<Result<Vec<_>, ContextStoreError>>()?;
-        Ok(Some(DeletionOutline { types, instances, scope }))
+        Ok(Some(DeletionOutline {
+            types,
+            instances,
+            scope,
+            modified_at,
+        }))
     }
 
     /// Whether any subscription a deletion in `target` can notify exists.
@@ -239,6 +266,11 @@ mod tests {
         let types = outline_types_statement(&ContextTarget::Live, "urn:ngsi-ld:T:1").to_string(PostgresQueryBuilder);
         assert!(types.contains(r#""n"."entity_type_name_key" = ANY("s"."entity_type_name_keys")"#), "{types}");
         assert!(types.contains(r#""e"."id" = 'urn:ngsi-ld:T:1'"#), "{types}");
+        assert!(
+            types.contains(r#"JOIN "entity_documents" AS "d" ON "d"."entity_key" = "e"."entity_key""#),
+            "{types}"
+        );
+        assert!(types.contains(r#""d"."modified_at""#), "{types}");
         let instances = outline_instances_statement(&ContextTarget::Live, "urn:ngsi-ld:T:1").to_string(PostgresQueryBuilder);
         assert!(instances.contains(r#""current_attribute_values" AS "cav""#), "{instances}");
         assert!(instances.contains(r#""an"."attribute_name_key" = "cav"."attribute_name_key""#), "{instances}");

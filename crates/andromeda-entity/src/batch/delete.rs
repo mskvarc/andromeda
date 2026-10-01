@@ -1,44 +1,104 @@
 //! Batch entity deletion (clause 5.6.10).
 //!
 //! A deleted entity's payload and system attributes are unreadable once the row
-//! is gone, and the clause 5.6.10 notifications carry both. Both modes read the
-//! payloads before the delete, which the tombstones of clause 5.6.6 need as
-//! well. Inline mode takes the system attributes from the delete itself, which
-//! reports what each row held; the asynchronous mode cannot: its notifications
-//! have to be persisted in the same transaction as the delete, which means they
-//! must exist before it runs, so it reads those first too.
+//! is gone, and the clause 5.6.10 notifications carry both, so both are read
+//! before the delete, which the tombstones of clause 5.6.6 need as well. The
+//! tombstones and the notification are only true of the state they were read
+//! from, so each delete holds only while the entity is unchanged since that
+//! read and is rebuilt from a fresh one when it is not (see
+//! [`crate::batch::chunk_read_modify_write`]): an instance a concurrent append
+//! added is ended in the Temporal Evolution like every other.
 
 use crate::{
     EntityService,
-    entity_invariant::EntityInvariant,
+    batch::{
+        chunk::ChunkWrite,
+        chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
+    },
+    entity_snapshot::EntitySnapshot,
     error::EntityError,
     expanded_member::stored_entity_types,
     notification_fanout::{ChangedEntity, MutationSnapshots},
-    notification_plan::deletion,
+    notification_plan::{NotificationPlan, deletion},
     side_effect::SideEffectPlacement,
     snapshot_supply::SnapshotSupply,
 };
 use andromeda_context_commit::{
-    atomic_write::AtomicWrite,
-    batch_side_effect_job::BatchSideEffectJob,
     change_event::ChangeEvent,
-    deleted_entity::DeletedEntity,
     entity_mutation::EntityMutation,
-    error::CommitError,
     history_record::deletion_history,
     precondition::Precondition,
     subscription_match::SubscriptionMatch,
-    write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, SysAttrsSnapshot};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 /// One chunk's successfully deleted identifiers and its per-entity failures.
 pub(super) type DeleteChunkOutcome = (Vec<Identifier>, Vec<(Identifier, EntityError)>);
+
+/// Deleting each entity of a chunk as an attempt read it (clause 5.6.10.4 runs
+/// the behaviour of clause 5.6.6 per entity).
+struct DeleteRewrite<'a> {
+    service: &'a EntityService,
+    target: &'a ContextTarget,
+}
+
+impl ChunkRewrite for DeleteRewrite<'_> {
+    type Entry = Identifier;
+    /// The system attributes of every pending entity: the durable matches and
+    /// the notifications carry them, and they are unreadable once the row is
+    /// gone.
+    type Reads = HashMap<Identifier, SysAttrsSnapshot>;
+
+    fn id(entry: &Identifier) -> &Identifier {
+        entry
+    }
+
+    async fn read(&self, pending: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
+        self.service.reader.get_sys_attrs_batch(self.target, pending).await
+    }
+
+    fn build(
+        &self,
+        entry: Identifier,
+        snapshot: Option<&EntitySnapshot>,
+        reads: &HashMap<Identifier, SysAttrsSnapshot>,
+        _now: DateTime<Utc>,
+    ) -> Result<PlannedWrite<Identifier>, Box<(Identifier, EntityError)>> {
+        let Some(snapshot) = snapshot else {
+            let error = EntityError::not_found(&entry);
+            return Err(Box::new((entry, error)));
+        };
+        let payload = &snapshot.payload;
+        let sys_attrs = reads.get(&entry);
+        let built = deletion_events(&entry, payload, sys_attrs).and_then(|events| {
+            let matches = self.service.delete_subscription_matches(self.target, &entry, payload, sys_attrs)?;
+            Ok((NotificationPlan { matches, events }, deletion_history(payload)?))
+        });
+        let (plan, history) = match built {
+            Ok(built) => built,
+            Err(error) => return Err(Box::new((entry, error))),
+        };
+        Ok(PlannedWrite {
+            write: ChunkWrite {
+                id: entry.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
+                entity: EntityMutation::Delete,
+                // Clause 5.6.6 removes current state and leaves the Temporal
+                // Evolution standing, so every instance the entity still held is
+                // recorded as ended rather than being deleted with it.
+                history,
+                precondition: Precondition::MustExist,
+                plan,
+            },
+            entry,
+            alongside: None,
+        })
+    }
+}
 
 impl EntityService {
     /// The durable notification records one deletion owes, mirroring the single
@@ -71,99 +131,12 @@ impl EntityService {
     }
 
     pub(super) async fn batch_delete_chunk(&self, placement: SideEffectPlacement<'_>, chunk: &[Identifier]) -> Result<DeleteChunkOutcome, EntityError> {
-        let target = placement.target();
-        let _id_guards = self.acquire_id_locks(target, chunk).await;
-
-        // Both paths need the payloads and the system attributes up front:
-        // clause 5.6.6 records one tombstone per instance the entity still held,
-        // and both the durable matches (on every path) and the asynchronous
-        // path's persisted notifications carry the system attributes — all
-        // unreadable once the row is gone.
-        // Shared by the matches, the history and the events of each deletion.
-        let payloads: HashMap<Identifier, Arc<Value>> = self
-            .reader
-            .get_batch(target, chunk)
-            .await?
-            .into_iter()
-            .map(|(id, payload)| (id, Arc::new(payload)))
-            .collect();
-        let sys_attrs = self.reader.get_sys_attrs_batch(target, chunk).await?;
-
-        let mut writes = Vec::with_capacity(chunk.len());
-        for id in chunk {
-            let payload = payloads.get(id);
-            // A durable-delivery broker commits the matches with the delete on
-            // both paths. A live-delivery broker records none, so a `Prefer:
-            // respond-async` delete defers its events to the job instead, for
-            // whichever broker drains it to notify.
-            let matches = match payload {
-                Some(payload) => self.delete_subscription_matches(target, id, payload, sys_attrs.get(id))?,
-                None => Vec::new(),
-            };
-            let side_effects = match (placement, payload) {
-                (SideEffectPlacement::Inline(_), _) | (SideEffectPlacement::DeferredOnLive, None) => None,
-                (SideEffectPlacement::DeferredOnLive, Some(payload)) => {
-                    let change_events = self.notifier.owed_change_events(deletion_events(id, payload, sys_attrs.get(id))?);
-                    (!change_events.is_empty()).then(|| BatchSideEffectJob {
-                        temporal_entities: Vec::new(),
-                        change_events,
-                    })
-                }
-            };
-            writes.push(
-                AtomicWrite::builder()
-                    .entity_id(Arc::new(id.clone())) // clone: each write owns a shared validated identifier.
-                    .entity(EntityMutation::Delete)
-                    .history(payload.map(|payload| deletion_history(payload)).transpose()?.unwrap_or_default())
-                    .subscription_matches(matches)
-                    .side_effects(side_effects)
-                    .precondition(Precondition::MustExist)
-                    .build(),
-            );
-        }
-
-        let outcomes = self.writes.commit(target, writes).await?;
-        if outcomes.len() != chunk.len() {
-            return Err(EntityInvariant::OutcomeCountMismatch {
-                submitted: chunk.len(),
-                returned: outcomes.len(),
-            }
-            .into());
-        }
-
-        let mut success = Vec::with_capacity(chunk.len());
-        let mut errors = Vec::new();
-        let mut events = Vec::new();
-        for (id, outcome) in chunk.iter().zip(outcomes) {
-            match outcome {
-                WriteOutcome::Deleted(deleted) => {
-                    if matches!(placement, SideEffectPlacement::Inline(_))
-                        && let Some(payload) = payloads.get(id)
-                    {
-                        events.extend(inline_deletion_events(&deleted, payload)?);
-                    }
-                    success.push(deleted.id);
-                }
-                WriteOutcome::NotFound
-                | WriteOutcome::AlreadyExists
-                | WriteOutcome::Superseded
-                | WriteOutcome::Skipped
-                | WriteOutcome::Created
-                | WriteOutcome::Updated
-                | WriteOutcome::NoEntityChange => {
-                    errors.push((id.clone(), EntityError::not_found(id))); // clone: error result owns the entity ID
-                }
-                WriteOutcome::Refused(refusal) => {
-                    errors.push((id.clone(), EntityError::from(CommitError::Submission(refusal)))); // clone: error result owns the entity ID
-                }
-            }
-        }
-
-        for event in events {
-            self.notifier.publish(target, event);
-        }
-
-        Ok((success, errors))
+        let rewrite = DeleteRewrite {
+            service: self,
+            target: placement.target(),
+        };
+        let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, chunk.to_vec()).await?;
+        Ok((outcome.success, outcome.errors))
     }
 }
 
@@ -187,19 +160,4 @@ fn deletion_events(id: &Identifier, payload: &Arc<Value>, sys_attrs: Option<&Sys
             .sys_attrs_snapshot(sys_attrs.cloned())
             .build(),
     ])
-}
-
-/// The same events, carrying the system attributes the delete reported the row
-/// held beside the payload read before it.
-///
-/// # Errors
-///
-/// Reports the [`EntityError::Internal`] of [`deletion_events`].
-fn inline_deletion_events(deleted: &DeletedEntity, payload: &Arc<Value>) -> Result<Vec<ChangeEvent>, EntityError> {
-    let sys_attrs = SysAttrsSnapshot {
-        created_at: deleted.created_at,
-        modified_at: deleted.modified_at,
-        expires_at: deleted.expires_at,
-    };
-    deletion_events(&deleted.id, payload, Some(&sys_attrs))
 }

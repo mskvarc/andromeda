@@ -11,8 +11,6 @@
 mod commit_synchronous;
 /// The query the tests ask and the index it is narrowed through.
 mod geo_query;
-/// The store the entity service writes to and reads from.
-mod in_memory_store;
 /// The store another broker process writes, which a watermark catches up from.
 mod replicated_store;
 /// The `store-verified` mode: no index narrows a query.

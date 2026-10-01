@@ -40,6 +40,12 @@ pub enum EntityInvariant {
         /// The entity the write addressed.
         entity: Identifier,
     },
+    /// A batch insert or update was built without the entity state it stores.
+    #[error("the batch write for {entity} stores no entity state")]
+    WriteWithoutStoredState {
+        /// The entity the write addressed.
+        entity: Identifier,
+    },
     /// The compiled-in UN/CEFACT unit catalog did not parse, so no `unitCode`
     /// can be checked.
     #[error("the unit catalog is unreadable: {0}")]

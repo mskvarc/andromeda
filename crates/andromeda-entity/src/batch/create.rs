@@ -7,7 +7,6 @@ use crate::{
     side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
-use andromeda_context_commit::precondition::Precondition;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::Utc;
 use std::collections::HashSet;
@@ -55,7 +54,7 @@ impl EntityService {
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
             if seen.insert(entity.id.clone()) {
-                match self.chunk_insert(target, entity, Precondition::MustNotExist, now) {
+                match self.chunk_insert(target, entity, now) {
                     Ok(write) => writes.push(write),
                     Err(failure) => errors.push(*failure),
                 }

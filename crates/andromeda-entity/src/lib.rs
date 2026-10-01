@@ -24,6 +24,9 @@ pub mod change_notifier;
 pub mod change_sink;
 /// The change events a side-effect job publishes once the replay commit that settled it has landed.
 mod committed_side_effect;
+/// A Building store another writer changes mid-operation, for the compare-and-set tests.
+#[cfg(test)]
+mod compare_and_set_fixture;
 /// Cache of compiled entity queries, owned by the query service.
 pub mod compiled_cache;
 /// Entity execution and background-operation configuration.
@@ -62,12 +65,21 @@ pub mod geo_property_geometry;
 mod history_recording_assertions;
 /// Coalescing concurrent writers by entity identifier.
 pub mod id_lock;
+/// An entity service reading the in-memory store, for tests.
+#[cfg(test)]
+mod in_memory_service;
+/// An in-memory store applying write preconditions, for tests.
+#[cfg(test)]
+mod in_memory_store;
 /// The fragment rewrite a merge performs for the target's attribute types.
 pub mod merge_fragment;
 /// The Table 6.5.3.4-1 options of a merge.
 pub mod merge_options;
 /// Whole-entity mutations (clauses 5.6.1 to 5.6.6).
 pub mod mutation;
+/// Compare-and-set tests for Delete Entity.
+#[cfg(test)]
+mod mutation_deletion_compare_and_set;
 /// Payload-read, match and tombstone tests for Delete Entity.
 #[cfg(test)]
 mod mutation_deletion_recording;
