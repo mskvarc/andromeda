@@ -14,7 +14,8 @@ use crate::{
     dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
-        history_window::{HistoryAliases, HistoryWindow, instance_document},
+        history_instance_document::instance_document,
+        history_window::{HistoryAliases, HistoryWindow},
         instance_test::InstanceTest,
         projection_probe::{exists_any_on_projection, exists_on_projection, projection_column},
         value_column::ValueColumn,
@@ -116,20 +117,27 @@ impl InstanceScan<'_> {
 mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
+        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_row_refs::EntityRowRefs,
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, instance_test::InstanceTest, value_column::ValueColumn},
     };
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
-    use sea_query::{Alias, Condition, Expr, PostgresQueryBuilder, Query};
+    use chrono::{DateTime, Utc};
+    use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query};
 
-    fn history() -> HistoryWindow {
+    fn history_over(interval: TimeInterval) -> HistoryWindow {
         HistoryWindow::builder()
             .schema(None)
             .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
             .axis(AttributeHistory::ModifiedAt)
-            .interval(TimeInterval::Unbounded)
+            .interval(interval)
             .build()
+    }
+
+    fn history() -> HistoryWindow {
+        history_over(TimeInterval::Unbounded)
     }
 
     fn render(condition: Condition) -> String {
@@ -190,6 +198,32 @@ mod tests {
             assert_eq!(sql.matches("EXISTS").count(), 1, "{sql}");
             assert!(sql.contains(&format!("{key} = 3")) && sql.contains(&format!("{key} = 4")), "{sql}");
         }
+    }
+
+    /// A Query Term only a jsonpath answers is checked against every instance
+    /// valid within the window, so the rebuilt instance document is read in
+    /// the probe over the instances inside it and in the probe over the
+    /// instance in effect when it opens (clause 4.11, Annex C clause C.5.5).
+    #[test]
+    fn a_document_condition_over_history_probes_both_window_and_in_effect_instances() {
+        let address = || "https://example.org/address".parse::<AttributeName>().expect("a valid attribute name");
+        let names = QueryNames {
+            attributes: ResolvedNames::from_pairs([(address(), AttributeNameKey::from(9))]),
+            types: ResolvedNames::default(),
+        };
+        let start = DateTime::parse_from_rfc3339("2019-01-01T00:00:00Z")
+            .expect("a valid instant")
+            .with_timezone(&Utc);
+        let window = history_over(TimeInterval::After(start));
+        let sql =
+            render(InstanceScan::History(&window).document_condition(&address(), &names, |document| Condition::all().add(Expr::expr(document).is_not_null())));
+        assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
+        assert_eq!(
+            sql.matches("jsonb_build_array(jsonb_build_object('https://example.org/address'").count(),
+            2,
+            "{sql}"
+        );
+        assert!(sql.contains("JOIN LATERAL"), "{sql}");
     }
 
     #[test]

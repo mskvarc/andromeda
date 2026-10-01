@@ -365,7 +365,7 @@ fn build_temporal_stage1_conditions(schema: Option<&DynIden>, compiled: &Compile
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::stage1::build_stage1_entity_ids;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
@@ -375,8 +375,10 @@ mod tests {
         filter::parser,
         geo::query::GeoQuery,
         ordering::{collation::IcuCollation, sort_direction::SortDirection},
+        pagination::CountPolicy,
         scope::query::ScopeQuery,
         temporal::{
+            compiled::CompiledTemporalQuery,
             instance_selection::InstanceSelection,
             ordering::TemporalEntityOrdering,
             representation::Representation,
@@ -385,8 +387,13 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_postgresql_query::{
+        attribute_name_key::AttributeNameKey,
+        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+        entity_type_name_key::EntityTypeNameKey,
+    };
     use chrono::{DateTime, Utc};
+    use iri_rs::IriBuf;
     use sea_query::{PostgresQueryBuilder, Value, Values};
     use std::str::FromStr;
 
@@ -668,11 +675,27 @@ mod tests {
             r#""qh"."observed_at" >="#,
             r#""qh"."value_number" >"#,
             r#""qs"."temporal_entity_key" = "e"."temporal_entity_key""#,
+            r#"FROM "temporal_attribute_streams" AS "qs" JOIN LATERAL"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
         assert!(!sql.contains("current_attribute_values"), "a temporal q never reads current state: {sql}");
         assert!(!sql.contains(r#""entities""#), "{sql}");
+    }
+
+    /// Clause 5.5.9: the count totals the same entities the page selects, so
+    /// it carries both of the `q` probes, the instance in effect when the
+    /// window opens included (clause 4.11, Annex C clause C.5.5).
+    #[test]
+    fn the_count_carries_the_same_two_probes() {
+        let mut compiled = minimal_compiled();
+        compiled.pagination.count = CountPolicy::Emit;
+        compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
+        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
+        let count = built_count(&compiled, &speed_and_address());
+        assert!(count.contains("JOIN LATERAL"), "{count}");
+        assert!(count.contains(r#""qe"."placed" <"#), "{count}");
+        pretty_assertions::assert_eq!(count.matches(r#"JOIN "attribute_history" AS "qh""#).count(), 2, "{count}");
     }
 
     /// The window a `q` term reads is on the requested Temporal Property.

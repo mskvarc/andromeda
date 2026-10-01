@@ -25,7 +25,7 @@ use crate::{
     entity_row_refs::{DocumentsRef, EntityRowRefs},
     instance_expiry::instance_stands,
     q_predicate::{
-        history_window::{HistoryAliases, HistoryWindow},
+        history_window::{HistoryAliases, HistoryWindow, WindowProbes},
         instance_scan::InstanceScan,
     },
 };
@@ -92,8 +92,9 @@ impl LinkedHop {
     /// reads, joined to the entity each one names. Over current state those are
     /// the `current_attribute_values` rows, read on the
     /// `(attribute_name_key, value_uri)` index; over a temporal window they are
-    /// the in-window history instances, so a temporal `q` follows the targets
-    /// the Relationship named inside the window (clause 5.7.4.4). The join to
+    /// the history instances valid within it, so a temporal `q` follows the
+    /// targets the Relationship named inside the window (clause 5.7.4.4), and
+    /// the window's two probes each become one `EXISTS`. The join to
     /// `entities.id` is that table's unique external key.
     ///
     /// A deleted Relationship needs no exclusion: the projection holds no
@@ -108,11 +109,29 @@ impl LinkedHop {
         outer: &InstanceScan<'_>,
         inner: Condition,
     ) -> Condition {
+        match outer {
+            InstanceScan::Current(rows) => {
+                let probe = self.current_objects(relationship_id, rows);
+                Condition::all().add(SeaExpr::exists(self.completed(probe, guard_types, types, outer, inner)))
+            }
+            InstanceScan::History(window) => self
+                .windowed_objects(relationship_id, window)
+                .map(|probe| self.completed(probe, guard_types, types, outer, inner.clone())) // clone: each of the window's probes tests the linked entity
+                .into_exists(),
+        }
+    }
+
+    /// One probe over the Relationship's instances, completed with the type
+    /// guard and the inner predicate on the entity each instance names.
+    fn completed(
+        &self,
+        mut probe: SelectStatement,
+        guard_types: &[AttributeName],
+        types: &ResolvedNames<EntityTypeName>,
+        outer: &InstanceScan<'_>,
+        inner: Condition,
+    ) -> SelectStatement {
         let linked = || Alias::new(self.linked_entity.as_str());
-        let mut probe = match outer {
-            InstanceScan::Current(rows) => self.current_objects(relationship_id, rows),
-            InstanceScan::History(window) => self.windowed_objects(relationship_id, window),
-        };
         // A multi-type guard is a disjunction; adding it as one condition keeps it
         // parenthesised so a second alternative cannot escape the correlation and
         // the attribute-name test to match any entity in the tenant that carries it.
@@ -132,7 +151,7 @@ impl LinkedHop {
         // The inner predicate is added as its own condition for the same reason,
         // before any future compilation of it renders a top-level `OR`.
         probe.cond_where(inner);
-        Condition::all().add(SeaExpr::exists(probe))
+        probe
     }
 
     /// The Relationship's current instances joined to the entities they name,
@@ -160,21 +179,20 @@ impl LinkedHop {
         probe
     }
 
-    /// The Relationship's in-window instances joined to the entities they name,
-    /// correlated against the window's temporal entity.
-    fn windowed_objects(&self, relationship_id: AttributeNameKey, window: &HistoryWindow) -> SelectStatement {
+    /// The Relationship's instances valid within the window joined to the
+    /// entities they name, correlated against the window's temporal entity.
+    fn windowed_objects(&self, relationship_id: AttributeNameKey, window: &HistoryWindow) -> WindowProbes {
         let aliases = HistoryAliases::at_depth(self.depth);
         let linked = || Alias::new(self.linked_entity.as_str());
-        let mut probe = window.instances_of(relationship_id, &aliases);
-        probe
-            .join_as(
+        window.probes_of(relationship_id, &aliases).map(|mut probe| {
+            probe.join_as(
                 JoinType::Join,
                 qualified(window.schema(), Entities::Table),
                 linked(),
                 SeaExpr::col((linked(), Entities::Id)).eq(aliases.instance_column(AttributeHistory::ValueUri)),
-            )
-            .and_where(window.correlation(&aliases));
-        probe
+            );
+            probe
+        })
     }
 }
 
@@ -205,4 +223,52 @@ fn type_guard(guard_types: &[AttributeName], types: &ResolvedNames<EntityTypeNam
             None => guard.add(false_literal()),
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        attribute_name_key::AttributeNameKey,
+        dictionary::resolved_names::ResolvedNames,
+        q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, traversal::LinkedHop},
+    };
+    use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
+    use andromeda_postgresql_schema::temporal::AttributeHistory;
+    use chrono::{DateTime, Utc};
+    use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query};
+
+    /// Clause 5.7.4.4 with clause 4.11: a hop in a temporal `q` follows every
+    /// target the Relationship named while valid within the window, the one in
+    /// effect when the window opens included, so each of the window's probes
+    /// joins the entity its instance names and correlates on the outer entity.
+    #[test]
+    fn a_windowed_hop_probes_both_the_window_and_the_instance_in_effect() {
+        let start = DateTime::parse_from_rfc3339("2019-01-01T00:00:00Z")
+            .expect("a valid instant")
+            .with_timezone(&Utc);
+        let window = HistoryWindow::builder()
+            .schema(None)
+            .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
+            .axis(AttributeHistory::ObservedAt)
+            .interval(TimeInterval::After(start))
+            .build();
+        let inner = Condition::all().add(Expr::col((Alias::new("le1"), Alias::new("entity_key"))).eq(5));
+        let probe = LinkedHop::at_depth(1).probe(
+            AttributeNameKey::from(4),
+            &[],
+            &ResolvedNames::default(),
+            &InstanceScan::History(&window),
+            inner,
+        );
+        let sql = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned().to_string(PostgresQueryBuilder);
+        assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
+        for fragment in [
+            r#"JOIN "entities" AS "le1" ON "le1"."id" = "qh_ln1"."value_uri""#,
+            r#""qs_ln1"."temporal_entity_key" = "e"."temporal_entity_key""#,
+            r#""le1"."entity_key" = 5"#,
+        ] {
+            assert_eq!(sql.matches(fragment).count(), 2, "{fragment}: {sql}");
+        }
+        assert!(sql.contains(r#"AS "qe_ln1" ON TRUE"#), "{sql}");
+    }
 }

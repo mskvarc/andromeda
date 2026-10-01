@@ -67,6 +67,7 @@ andromeda-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-representation.workspace = true
 andromeda-notification.workspace = true
 andromeda-postgresql-atomic-write.workspace = true
 andromeda-postgresql-codes.workspace = true
@@ -74,6 +75,7 @@ andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-name-dictionary.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
+andromeda-postgresql-temporal-query.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
 andromeda-temporal.workspace = true
 andromeda-tenancy.workspace = true
@@ -99,6 +101,7 @@ reqwest = { version = "0.13.5", features = ["json"] }
 rumqttc = { version = "0.25.1", features = ["use-rustls"] }
 rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std"] }
 rustls-pki-types = "1.15.1"
+sea-query = { version = "1.0.2", features = ["backend-postgres"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 serde_norway = "0.9.42"
 serial_test = "4.0.1"

@@ -18,6 +18,7 @@ mod delete;
 mod join;
 mod projection;
 mod query;
+mod query_in_effect;
 mod retrieve;
 mod update;
 

@@ -7,6 +7,7 @@
 //! minutes per test, so the rows are written directly and cleared again by the
 //! exclusive serialized reset that runs before each test in this suite.
 
+use crate::seeded_corpus::{dictionary_key, type_dictionary_key};
 use sqlx::PgPool;
 
 /// Streams written per seeded history corpus.
@@ -111,5 +112,170 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
     SeededHistory {
         narrow_stream: *streams.first().expect("the corpus writes at least one stream"),
         entity_key,
+    }
+}
+
+/// Temporal Entities written per windowed corpus, each with one stream of the
+/// history attribute.
+pub const WINDOWED_ENTITIES: i64 = 300;
+
+/// Hours between the observation in effect when the queried window opens and
+/// the end of the seeded history, so the history before the window grows with
+/// the corpus while the window itself stays the same size.
+const WINDOW_TAIL_HOURS: i64 = 100;
+
+/// Minutes after the observation in effect at which the queried window opens:
+/// no observation sits at the start itself, which would otherwise be the
+/// window's own (clause 4.11 opens it inclusively).
+const WINDOW_OPENING_MINUTES: i64 = 30;
+
+/// Minutes after the observation in effect at which its stream's tombstone
+/// is placed, on the one stream that holds one.
+const TOMBSTONE_MINUTES: i64 = 15;
+
+/// Minutes the queried window spans.
+const WINDOW_MINUTES: i64 = 600;
+
+/// A corpus a temporal `q` plan reads: one stream per temporal Entity, an
+/// hourly observation per stream, and one stream whose value was deleted just
+/// before the window opens.
+pub struct WindowedHistory {
+    /// Dictionary identifier of [`HISTORY_ATTRIBUTE`].
+    attribute: i32,
+    /// Observations written per stream.
+    observations: i64,
+    /// Identifier of the temporal Entity whose stream holds the tombstone.
+    tombstoned: String,
+}
+
+impl WindowedHistory {
+    /// Dictionary identifier of the seeded history attribute.
+    pub const fn attribute(&self) -> i32 {
+        self.attribute
+    }
+
+    /// The hour, counted from the seeded origin, of the observation every
+    /// stream holds when the window opens; its value is the hour too.
+    pub const fn value_in_effect(&self) -> i64 {
+        self.observations - WINDOW_TAIL_HOURS
+    }
+
+    /// The minute, counted from the seeded origin, the queried window opens at.
+    pub const fn window_start_minute(&self) -> i64 {
+        self.value_in_effect() * 60 + WINDOW_OPENING_MINUTES
+    }
+
+    /// The minute the queried window closes at, exclusively.
+    pub const fn window_end_minute(&self) -> i64 {
+        self.window_start_minute() + WINDOW_MINUTES
+    }
+
+    /// Identifier of the temporal Entity whose value was deleted before the
+    /// window opened, so it holds nothing in effect there.
+    pub fn tombstoned(&self) -> &str {
+        &self.tombstoned
+    }
+}
+
+/// Write the windowed corpus and analyze the relations its plans read.
+///
+/// Observation `g` of every stream sits at hour `g` after `2026-01-01` with the
+/// value `g`, and the window opens half an hour after one of them. The first
+/// Entity's stream also holds a deletion with no `observedAt` between that
+/// observation and the start, which is what that stream holds in effect at the
+/// start (clause 4.5.7). Every row is recorded
+/// within one hour of one fixed instant, so the corpus lands in one chunk
+/// however long its history is: a growing chunk count would grow every
+/// stream-led probe for a reason that is not the probe's.
+pub async fn seed_window_and_prior(pool: &PgPool, prefix: &str, observations: i64) -> WindowedHistory {
+    let attribute = dictionary_key(pool, HISTORY_ATTRIBUTE).await;
+    let type_key = type_dictionary_key(pool, "https://example.test/query-access-paths/Meter").await;
+
+    sqlx::query(
+        "WITH meters AS ( \
+             INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
+             SELECT now(), now(), $1::text || ':meter:' || lpad(g::text, 4, '0'), ARRAY[$2::integer] \
+             FROM generate_series(1, $3::bigint) AS g \
+             RETURNING temporal_entity_key) \
+         INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_key) \
+         SELECT temporal_entity_key, $4 FROM meters",
+    )
+    .bind(prefix)
+    .bind(type_key)
+    .bind(WINDOWED_ENTITIES)
+    .bind(attribute)
+    .execute(pool)
+    .await
+    .expect("the windowed catalogue must be writable");
+
+    sqlx::query(
+        "INSERT INTO attribute_history \
+         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, observed_at, generated_instance_id, value_number) \
+         SELECT TIMESTAMPTZ '2026-01-04 12:00:00Z' + (g || ' seconds')::interval, \
+                gen_random_uuid(), s.stream_key, 0, 1, 1, \
+                TIMESTAMPTZ '2026-01-01 00:00:00Z' + (g || ' hours')::interval, \
+                gen_random_uuid(), g::numeric \
+         FROM temporal_attribute_streams AS s \
+         CROSS JOIN generate_series(1, $2::bigint) AS g \
+         WHERE s.attribute_name_key = $1",
+    )
+    .bind(attribute)
+    .bind(observations)
+    .execute(pool)
+    .await
+    .expect("the windowed history must be writable");
+
+    let tombstoned = format!("{prefix}:meter:0001");
+    sqlx::query(
+        "INSERT INTO attribute_history \
+         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, deleted_at, generated_instance_id) \
+         SELECT TIMESTAMPTZ '2026-01-04 12:00:00Z', gen_random_uuid(), s.stream_key, 0, 1, 0, \
+                TIMESTAMPTZ '2026-01-01 00:00:00Z' + ($3::bigint || ' minutes')::interval, \
+                gen_random_uuid() \
+         FROM temporal_attribute_streams AS s \
+         JOIN temporal_entities AS e ON e.temporal_entity_key = s.temporal_entity_key \
+         WHERE e.id = $1 AND s.attribute_name_key = $2",
+    )
+    .bind(&tombstoned)
+    .bind(attribute)
+    .bind((observations - WINDOW_TAIL_HOURS) * 60 + TOMBSTONE_MINUTES)
+    .execute(pool)
+    .await
+    .expect("the tombstone must be writable");
+
+    for statement in ["ANALYZE attribute_history", "ANALYZE temporal_attribute_streams", "ANALYZE temporal_entities"] {
+        sqlx::query(statement).execute(pool).await.expect("analyze must succeed");
+    }
+
+    WindowedHistory {
+        attribute,
+        observations,
+        tombstoned,
+    }
+}
+
+/// Remove a windowed corpus written under `prefix` and vacuum what it leaves
+/// behind, so a corpus seeded next is read without the first one's dead rows.
+pub async fn remove_windowed_history(pool: &PgPool, prefix: &str) {
+    let meters = format!("{prefix}:meter:%");
+    for statement in [
+        "DELETE FROM attribute_history AS ah USING temporal_attribute_streams AS s, temporal_entities AS e \
+         WHERE ah.stream_key = s.stream_key AND s.temporal_entity_key = e.temporal_entity_key AND e.id LIKE $1",
+        "DELETE FROM temporal_attribute_streams AS s USING temporal_entities AS e \
+         WHERE s.temporal_entity_key = e.temporal_entity_key AND e.id LIKE $1",
+        "DELETE FROM temporal_entities WHERE id LIKE $1",
+    ] {
+        sqlx::query(statement)
+            .bind(&meters)
+            .execute(pool)
+            .await
+            .expect("the windowed corpus must be removable");
+    }
+    for statement in [
+        "VACUUM ANALYZE attribute_history",
+        "VACUUM ANALYZE temporal_attribute_streams",
+        "VACUUM ANALYZE temporal_entities",
+    ] {
+        sqlx::query(statement).execute(pool).await.expect("vacuum must succeed");
     }
 }

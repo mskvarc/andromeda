@@ -6,13 +6,17 @@
 //! that axis' own column: exactness first, and then the access path each axis
 //! actually gets.
 //!
-//! The schema deliberately indexes one axis. `idx_attribute_history_stream_observed_at`
+//! The schema deliberately indexes one axis for windows. `idx_attribute_history_stream_observed_at`
 //! exists because `observedAt` is the default and carries the query volume;
-//! migration 0020 records that a created, modified or deleted index is
-//! benchmark-gated and none was accepted. These tests assert both halves of
-//! that decision — the indexed axis reaches its index, the other three are
-//! exact and stay on the stream-led path — so a later index is added because a
-//! measurement asked for it rather than by accident.
+//! a created or modified index is benchmark-gated and none was accepted. The
+//! one stream-led index on `deleted_at`, `idx_attribute_history_stream_deletion`,
+//! was accepted because a measurement asked for it: the instance-in-effect
+//! probe of a temporal `q` seeks the latest deletion with no `observedAt` per
+//! stream, and reading it from the BRIN made a 78 ms statement take 310 ms on
+//! a four-million-row tenant. These tests assert both
+//! halves of that decision — the indexed axis reaches its index, the other
+//! three are exact and stay on the stream-led path — so a later index is added
+//! because a measurement asked for it rather than by accident.
 
 use crate::{
     seeded_corpus::{PlannerPaths, SEED_PREFIX, explain, explain_rolled_back},

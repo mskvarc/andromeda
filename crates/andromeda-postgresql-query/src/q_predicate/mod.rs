@@ -83,9 +83,11 @@
 //! two relations hold an instance's value in the same typed columns, and an
 //! [`InstanceScan`](crate::q_predicate::instance_scan::InstanceScan) says which
 //! one a compiled `q` reads. Each Query Term is its own existential over the
-//! window's instances of its attribute, honouring the query's `datasetId`
-//! selection and requested Temporal Property, and the AND/OR tree combines
-//! them.
+//! instances of its attribute valid within the window on the requested
+//! Temporal Property, of every `datasetId` (step S8 comes later), and the
+//! AND/OR tree combines them. The valid instances are read by two probes, the
+//! instances inside the window and the instance in effect when it opens (see
+//! [`history_window`]).
 //!
 //! # Disjunctions
 //!
@@ -105,7 +107,9 @@
 
 pub mod attribute_names;
 pub mod fallback;
+pub mod history_instance_document;
 pub mod history_window;
+pub mod in_effect_instance;
 pub mod instance_scan;
 pub mod instance_test;
 pub mod local_target;

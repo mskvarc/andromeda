@@ -104,6 +104,14 @@ CREATE INDEX idx_attribute_history_stream_observed_at
     ON attribute_history (stream_key, observed_at DESC)
     WHERE observed_at IS NOT NULL;
 
+-- A deletion with no `observedAt` is placed at its `deleted_at`; the
+-- instance-in-effect probe of a temporal `q` seeks the latest one per stream.
+-- The predicate names `observed_at` so that a generic plan, which cannot see
+-- the bound instant, still prices the index by how few rows it holds.
+CREATE INDEX idx_attribute_history_stream_deletion
+    ON attribute_history (stream_key, deleted_at DESC)
+    WHERE deleted_at IS NOT NULL AND observed_at IS NULL;
+
 CREATE INDEX idx_attribute_history_stream_generated_instance
     ON attribute_history (stream_key, generated_instance_id)
     WHERE generated_instance_id IS NOT NULL;
