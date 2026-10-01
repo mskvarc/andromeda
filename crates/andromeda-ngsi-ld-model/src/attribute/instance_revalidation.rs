@@ -94,7 +94,7 @@ fn instance_refusal(instance: &Value) -> Option<InstanceRefusal> {
     match AttributeType::from_str(declared) {
         Ok(family) => family_refusal(family, members),
         // Clause 4.7.3: a concise `GeoProperty` is the bare geometry.
-        Err(_not_a_family) if is_geometry_token(declared) => decode_geometry(instance).err().map(InstanceRefusal::from),
+        Err(_not_a_family) if is_geometry_token(declared) => Geometry::from_written_value(instance).err().map(InstanceRefusal::from),
         Err(_not_a_family) => None,
     }
 }
@@ -113,7 +113,7 @@ fn family_refusal(family: AttributeType, instance: &Map<String, Value>) -> Optio
     }
     match family {
         AttributeType::GeoProperty => geometries(instance)
-            .find_map(|geometry| decode_geometry(geometry).err())
+            .find_map(|geometry| Geometry::from_written_value(geometry).err())
             .map(InstanceRefusal::from),
         AttributeType::Property
         | AttributeType::Relationship
@@ -139,15 +139,6 @@ fn geometries(instance: &Map<String, Value>) -> impl Iterator<Item = &Value> {
 /// `type` does.
 fn is_geometry_token(declared: &str) -> bool {
     declared == GEOMETRY_COLLECTION_TOKEN || GeometryType::from_str(declared).is_ok()
-}
-
-/// Decode a geometry written as a `GeoJSON` object or, per clause 4.7.2, as a
-/// string holding one.
-fn decode_geometry(geometry: &Value) -> Result<Geometry, GeometryError> {
-    match geometry {
-        Value::String(document) => Geometry::from_geojson_value(&serde_json::from_str::<Value>(document)?),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => Geometry::from_geojson_value(geometry),
-    }
 }
 
 #[cfg(test)]

@@ -209,7 +209,7 @@ fn landed_ids(identifiers: Vec<Identifier>, outcomes: &[WriteOutcome]) -> Vec<Id
 }
 
 struct PurgedState {
-    previous: Value,
+    previous: Arc<Value>,
     current: Arc<Value>,
     modified_at: DateTime<Utc>,
     history: Vec<HistoryRecord>,
@@ -227,7 +227,7 @@ fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Result<Optio
         payload: previous,
         modified_at,
     } = snapshot;
-    let mut purged = previous.clone(); // clone: history diffing requires both the before and after payloads.
+    let mut purged = Value::clone(&previous); // clone: history diffing requires both the before and after payloads.
     if !remove_expired_attribute_instances(&mut purged, cutoff) {
         return Ok(None);
     }
@@ -267,6 +267,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
+    use std::sync::Arc;
 
     fn identifiers(raw: &[&str]) -> Result<Vec<Identifier>, IdentifierParseError> {
         raw.iter().map(|identifier| identifier.parse()).collect()
@@ -278,7 +279,7 @@ mod tests {
 
     fn snapshot(payload: Value) -> EntitySnapshot {
         EntitySnapshot {
-            payload,
+            payload: Arc::new(payload),
             modified_at: cutoff(),
         }
     }

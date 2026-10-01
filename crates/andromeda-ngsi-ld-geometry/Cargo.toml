@@ -9,6 +9,8 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-ngsi-ld-number.workspace = true
+derive_more = { version = "2.1.1", features = ["display"] }
 geo = "0.33.1"
 geojson = "1.0.0"
 jsonld-expandable-core = { version = "0.23.3", features = ["serde-json"] }

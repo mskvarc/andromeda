@@ -62,7 +62,9 @@ pub(crate) async fn retain_matching(
         }
         None => None,
     };
-    let compiled_geo = compile_geo_query(deferred.geo.as_ref(), &term_expander).await.with_entity_instance(instance)?;
+    let compiled_geo = compile_geo_query(deferred.geo.as_ref(), &term_expander, service.reference_limits())
+        .await
+        .with_entity_instance(instance)?;
     let compiled_scope = deferred.scope_q;
 
     let mut matching = Vec::with_capacity(entities.len());

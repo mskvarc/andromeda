@@ -27,7 +27,10 @@ use crate::{
 };
 use andromeda_context_commit::context_change_event::ContextChangeEvent;
 use andromeda_delivery::dispatch::TransportDispatcher;
-use andromeda_entity::query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource};
+use andromeda_entity::{
+    config::EntityConfig,
+    query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
+};
 use andromeda_federation::FederationService;
 use andromeda_jsonld::operation_hit_scope::run_in_operation_scope;
 use andromeda_notification::{
@@ -63,6 +66,7 @@ pub(super) fn compose_notification_processor(
     forwarding: &Arc<FederationService>,
     transport: &Arc<TransportDispatcher>,
     subscriptions: &Arc<dyn SubscriptionStore>,
+    entity_config: &EntityConfig,
 ) -> Arc<NotificationProcessor> {
     let notification_query = Arc::new(EntityQueryService::new(
         Arc::clone(&storage.entity_ports.reader),
@@ -76,6 +80,11 @@ pub(super) fn compose_notification_processor(
             Arc::clone(forwarding),      // clone: request handling and notification joins share one forwarding service.
             storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
         )) as Arc<dyn RemoteLinkedEntitySource>),
+        // A notification query only resolves Linked Entities by identifier and
+        // compiles no reference geometry: a subscription's `geoQ` is matched in
+        // memory from its stored form, admitted once when it was written, so a
+        // lower limit configured since never refuses a stored subscription.
+        entity_config.geometry_census_limits(),
     ));
     Arc::new(NotificationProcessor::new(NotificationProcessorDeps {
         live_target: storage.live_target.clone(), // clone: worker startup reloads the durable live-branch cache.

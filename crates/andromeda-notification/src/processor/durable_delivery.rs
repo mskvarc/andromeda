@@ -75,14 +75,14 @@ fn unreadable_subscription(subscription_id: &Identifier, error: &SubscriptionErr
 /// carried as the write left it, and its system attributes are read from its
 /// row.
 fn queued_change_event(stored: &NotificationEvent) -> ChangeEvent {
-    let snapshot = stored.entity_snapshot.clone(); // clone: the change event owns the durable payload while the leased delivery remains available for acknowledgement.
-    let entity_types = entity_types_from_snapshot(snapshot.as_ref());
+    let snapshot = stored.entity_snapshot.as_ref().map(Arc::clone);
+    let entity_types = entity_types_from_snapshot(snapshot.as_deref());
     let (removed, current, sys_attrs_snapshot) = match stored.change.lifecycle {
         EntityLifecycle::Deleted => {
-            let sys_attrs = sys_attrs_from_snapshot(snapshot.as_ref());
+            let sys_attrs = sys_attrs_from_snapshot(snapshot.as_deref());
             (snapshot, None, sys_attrs)
         }
-        EntityLifecycle::Created | EntityLifecycle::Modified => (None, snapshot.map(Arc::new), None),
+        EntityLifecycle::Created | EntityLifecycle::Modified => (None, snapshot, None),
     };
     ChangeEvent::builder()
         .entity_id(stored.entity_id.clone()) // clone: the change event and the stored event independently own the identifier.
@@ -90,7 +90,7 @@ fn queued_change_event(stored: &NotificationEvent) -> ChangeEvent {
         .change(stored.change.clone()) // clone: the change event owns the change it notifies through delivery.
         .occurred_at(stored.created_at)
         .entity_snapshot(removed)
-        .previous_attributes(stored.previous_snapshot.clone()) // clone: showChanges evaluation owns the prior representation.
+        .previous_attributes(stored.previous_snapshot.as_ref().map(Arc::clone))
         .sys_attrs_snapshot(sys_attrs_snapshot)
         .origin(ChangeOrigin::Local)
         .current_payload(current)
@@ -172,6 +172,7 @@ mod tests {
     use andromeda_subscription::error::SubscriptionError;
     use chrono::Utc;
     use serde_json::{Value, json};
+    use std::sync::Arc;
     use uuid::Uuid;
 
     /// The attribute the deliveries below name.
@@ -220,7 +221,7 @@ mod tests {
             .event_ordinal(WriteOrdinal::at(0))
             .change(EntityChange::new(lifecycle, vec![name]))
             .entity_id("urn:ngsi-ld:Building:1".parse().expect("valid entity URI"))
-            .entity_snapshot(snapshot)
+            .entity_snapshot(snapshot.map(Arc::new))
             .created_at(Utc::now())
             .build()
     }

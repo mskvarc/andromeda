@@ -56,9 +56,12 @@ pub(crate) async fn create(
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
     api_root: ApiRoot,
+    // Counted within the JSON value limit as it is read, so a payload of too
+    // many values costs its bytes and nothing more.
     RequestPayload(body): RequestPayload,
 ) -> Result<Response, ProblemResponse> {
     let payload: Value = serde_json::from_slice(&body).map_err(|error| {
+        // clone: the refusal names the request, which the response below names too
         ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, format!("request body is not valid JSON: {error}")).with_instance(uri.clone())
     })?;
     // Clause 5.13.2 records the absolute URL the entry is served under, which a

@@ -54,6 +54,7 @@ use crate::{
     spatial_acceleration::SpatialAcceleration,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, scoped_context_admission::reject_scoped_user_contexts};
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
 
@@ -70,6 +71,9 @@ pub struct EntityQueryService {
     /// (clause 4.5.23.1). Absent in a composition that resolves links purely
     /// locally.
     remote_linked: Option<Arc<dyn RemoteLinkedEntitySource>>,
+    /// The limits a query's reference geometry stays within, past which the
+    /// query is too complex to resolve (clause 5.5.6).
+    reference_limits: GeometryCensusLimits,
 }
 
 impl EntityQueryService {
@@ -85,6 +89,7 @@ impl EntityQueryService {
         spatial: SpatialAcceleration,
         tenant: TenantRef,
         remote_linked: Option<Arc<dyn RemoteLinkedEntitySource>>,
+        reference_limits: GeometryCensusLimits,
     ) -> EntityQueryService {
         EntityQueryService {
             reader,
@@ -94,6 +99,7 @@ impl EntityQueryService {
             spatial,
             tenant,
             remote_linked,
+            reference_limits,
         }
     }
 
@@ -101,6 +107,12 @@ impl EntityQueryService {
     #[must_use]
     pub const fn engine(&self) -> &JsonLdEngine {
         &self.engine
+    }
+
+    /// The limits a query's reference geometry stays within (clause 5.5.6).
+    #[must_use]
+    pub const fn reference_limits(&self) -> GeometryCensusLimits {
+        self.reference_limits
     }
 
     /// Refuse a request `@context` clause 5.5.7 does not admit, before a read or

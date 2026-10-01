@@ -90,6 +90,26 @@ pub fn classify_attribute_changes(previous: &Value, current: &Value) -> Result<V
     Ok(changes)
 }
 
+/// The change a deletion makes to every instance an entity held: each one
+/// deleted, in the order [`classify_attribute_changes`] reports changes.
+///
+/// The instances of a deleted entity are all it held, so this is what
+/// classifying the entity against no entity at all gives, from the instance
+/// identities alone.
+#[must_use]
+pub fn deleted_instances(keys: impl IntoIterator<Item = AttributeInstanceKey>) -> Vec<AttributeChange> {
+    let mut changes: Vec<AttributeChange> = keys
+        .into_iter()
+        .map(|key| AttributeChange {
+            key,
+            kind: AttributeChangeKind::Deleted,
+        })
+        .collect();
+    changes.sort_by(compare_changes);
+    changes.dedup_by(|left, right| compare_changes(left, right) == Ordering::Equal);
+    changes
+}
+
 /// Whether two instances of the same `(attribute, datasetId)` differ in their
 /// data, ignoring the clause 4.8 system times `createdAt`/`modifiedAt`.
 ///
@@ -162,7 +182,10 @@ fn dataset_str(key: &AttributeInstanceKey) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::attribute_change::{AttributeChange, AttributeChangeKind, classify_attribute_changes};
+    use crate::expanded::{
+        attribute_change::{AttributeChange, AttributeChangeKind, classify_attribute_changes, deleted_instances},
+        instance_key::AttributeInstanceKey,
+    };
     use serde_json::{Value, json};
 
     fn property(value: i64, dataset_id: Option<&str>) -> Value {
@@ -209,5 +232,70 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/modifiedAt": [{"@value": "2026-01-01T00:00:00Z"}]
         }]);
         pretty_assertions::assert_eq!(classify_attribute_changes(&previous, &current), Ok(Vec::<AttributeChange>::new()));
+    }
+
+    /// An instance identity from its attribute name and optional `datasetId`.
+    fn key(attr: &str, dataset_id: Option<&str>) -> AttributeInstanceKey {
+        AttributeInstanceKey {
+            attr: attr.parse().expect("a valid fixture attribute name"),
+            dataset_id: dataset_id.map(|id| id.parse().expect("a valid fixture datasetId")),
+        }
+    }
+
+    /// The identities of an entity's instances, read in any order, become one
+    /// deletion each, in the order the classification reports and with any
+    /// identity listed twice reported once.
+    #[test]
+    fn deleted_instances_lists_each_identity_once_in_classification_order() {
+        let changes = deleted_instances([
+            key("https://example.com/speed", Some("urn:dataset:b")),
+            key("https://example.com/colour", None),
+            key("https://example.com/speed", Some("urn:dataset:a")),
+            key("https://example.com/colour", None),
+        ]);
+
+        pretty_assertions::assert_eq!(
+            changes,
+            vec![
+                AttributeChange {
+                    key: key("https://example.com/colour", None),
+                    kind: AttributeChangeKind::Deleted,
+                },
+                AttributeChange {
+                    key: key("https://example.com/speed", Some("urn:dataset:a")),
+                    kind: AttributeChangeKind::Deleted,
+                },
+                AttributeChange {
+                    key: key("https://example.com/speed", Some("urn:dataset:b")),
+                    kind: AttributeChangeKind::Deleted,
+                },
+            ]
+        );
+    }
+
+    /// Deleting an entity changes its instances exactly as classifying it
+    /// against an entity holding none of them does.
+    #[test]
+    fn deleted_instances_agrees_with_classifying_against_no_instances() {
+        let previous = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "https://example.com/speed": [property(1, Some("urn:dataset:b")), property(2, None), property(3, Some("urn:dataset:a"))],
+            "https://example.com/colour": [property(4, None)]
+        }]);
+        let emptied = json!([{"@id": "urn:ngsi-ld:Vehicle:1"}]);
+
+        let classified = classify_attribute_changes(&previous, &emptied).expect("readable datasetIds");
+        let deleted = deleted_instances([
+            key("https://example.com/speed", None),
+            key("https://example.com/colour", None),
+            key("https://example.com/speed", Some("urn:dataset:a")),
+            key("https://example.com/speed", Some("urn:dataset:b")),
+        ]);
+        pretty_assertions::assert_eq!(deleted, classified);
+    }
+
+    #[test]
+    fn deleted_instances_of_no_identity_is_no_change() {
+        pretty_assertions::assert_eq!(deleted_instances([]), Vec::<AttributeChange>::new());
     }
 }

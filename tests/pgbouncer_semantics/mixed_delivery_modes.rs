@@ -32,7 +32,7 @@ use andromeda_test_mocks::{notification_server::NotificationServer, server_confi
 use chrono::Utc;
 use reqwest::Client;
 use serde_json::{Value, json};
-use std::{collections::HashMap, slice, time::Duration};
+use std::{collections::HashMap, slice, sync::Arc, time::Duration};
 use tokio::time::Instant;
 
 /// The expanded `Device` entity type the subscription watches.
@@ -143,14 +143,14 @@ fn live_deferred_creation(entity_id: &str) -> PersistedBatchSideEffectJob {
         previous_attributes: None,
         sys_attrs_snapshot: None,
         origin: ChangeOrigin::Local,
-        current_payload: Some(json!({
+        current_payload: Some(Arc::new(json!({
             "@id": entity_id,
             "@type": [DEVICE],
             TEMPERATURE: [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 21}]
             }]
-        })),
+        }))),
     };
     PersistedBatchSideEffectJob {
         temporal_entities: Vec::new(),

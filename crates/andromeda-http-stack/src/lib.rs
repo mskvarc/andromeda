@@ -13,6 +13,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-extraction",
         "andromeda-http-headers",
         "andromeda-http-tenancy",
+        "andromeda-ngsi-ld-number",
     ],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["axum"],

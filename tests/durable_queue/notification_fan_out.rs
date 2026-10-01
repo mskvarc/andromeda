@@ -196,7 +196,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
     );
     assert_eq!(rendered.event.change, updated, "the stored change reads back instance for instance");
     assert_eq!(
-        rendered.event.entity_snapshot.as_ref(),
+        rendered.event.entity_snapshot.as_deref(),
         Some(&snapshot),
         "delivery rendering carries the stored payload unchanged"
     );

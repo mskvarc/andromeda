@@ -16,7 +16,7 @@ use crate::{
     NotificationWriteConfig,
     change_sink::EntityChangeSink,
     notification_fanout::{ChangedEntity, MutationSnapshots},
-    sys_attrs::snapshot_with_sys_attrs,
+    snapshot_supply::SnapshotSupply,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
@@ -53,12 +53,13 @@ pub(crate) fn owed_subscription_matches(recording: &NotificationWriteConfig, tar
 /// system attributes embedded, because the row is gone by delivery time and
 /// `createdAt` and `modifiedAt` can no longer be read back (clause 5.8.6).
 fn change_matches(recording: &NotificationWriteConfig, target: &ContextTarget, change: &ChangeEvent) -> Vec<SubscriptionMatch> {
-    let removed = match change.change.lifecycle {
-        EntityLifecycle::Created | EntityLifecycle::Modified => None,
-        EntityLifecycle::Deleted => change.entity_snapshot.as_deref().map(|snapshot| match change.sys_attrs_snapshot.as_ref() {
-            Some(sys_attrs) => snapshot_with_sys_attrs(snapshot, sys_attrs),
-            None => snapshot.clone(), // clone: the durable match owns the removed entity while the change keeps its shared snapshot.
-        }),
+    let current = match (change.current_payload.as_ref(), change.change.lifecycle, change.entity_snapshot.as_ref()) {
+        (Some(current), _, _) => SnapshotSupply::Ready(current),
+        (None, EntityLifecycle::Deleted, Some(removed)) => SnapshotSupply::Removed {
+            removed,
+            sys_attrs: change.sys_attrs_snapshot.as_ref(),
+        },
+        (None, EntityLifecycle::Created | EntityLifecycle::Modified | EntityLifecycle::Deleted, _) => SnapshotSupply::Absent,
     };
     recording.subscription_matches(
         ChangedEntity {
@@ -68,8 +69,8 @@ fn change_matches(recording: &NotificationWriteConfig, target: &ContextTarget, c
         },
         &change.change,
         MutationSnapshots {
-            current: change.current_payload.as_deref().or(removed.as_ref()),
-            previous: change.previous_attributes.as_deref(),
+            current,
+            previous: change.previous_attributes.as_ref(),
         },
     )
 }
@@ -149,8 +150,8 @@ mod tests {
         assert_eq!(matches.len(), 1, "the one Building subscription is owed the update");
         assert_eq!(matches[0].subscription_key, subscription_key());
         assert_eq!(matches[0].change.lifecycle, EntityLifecycle::Modified);
-        assert_eq!(matches[0].entity_snapshot, Some(building("retail")));
-        assert_eq!(matches[0].previous_snapshot, Some(building("office")));
+        assert_eq!(matches[0].entity_snapshot.as_deref(), Some(&building("retail")));
+        assert_eq!(matches[0].previous_snapshot.as_deref(), Some(&building("office")));
     }
 
     /// A change to an entity no subscription selects is owed nothing.
@@ -181,7 +182,7 @@ mod tests {
         assert_eq!(matches.len(), 1);
         let stored = matches[0].entity_snapshot.as_ref().expect("the deletion stores the removed entity");
         assert!(stored[0].get(expanded_properties::CREATED_AT.as_str()).is_some(), "{stored}");
-        assert_eq!(matches[0].previous_snapshot, Some(building("office")));
+        assert_eq!(matches[0].previous_snapshot.as_deref(), Some(&building("office")));
     }
 
     /// The order the changes were raised in numbers the replay commit's

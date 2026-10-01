@@ -154,9 +154,6 @@ pub enum StoredHistoryError {
     /// A Geometry value is not EWKB the broker writes.
     #[error("a stored attribute_history value_geometry_ewkb is not a geometry: {0}")]
     ValueGeometry(#[source] EwkbError),
-    /// A decoded geometry does not render as `GeoJSON`.
-    #[error("a stored geometry does not render as GeoJSON: {0}")]
-    GeoJson(#[source] serde_json::Error),
     /// A scope label path does not convert back to a scope.
     #[error("a stored scope_history scope path is not a scope: {0}")]
     ScopePath(#[source] ScopePathError),

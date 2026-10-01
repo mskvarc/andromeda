@@ -16,14 +16,18 @@ use crate::{
     admission_fixture::admitted_batch,
     batch::UpsertPolicy,
     building_subscription_fixture::subscription_key,
+    deletion_outline::DeletionWatchers,
+    deletion_outline_fixture::ProbeAnswer,
     notification_recording_harness::{
         ACCURACY_IRI,
         CATEGORY_IRI,
+        CachedSubscription,
         ENTITY_ID,
         attribute_name,
         entity_uri,
         live_recording_service,
         live_target,
+        probing_recording_service,
         recording_service,
         single_recorded_write,
     },
@@ -35,6 +39,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::selection::OverwritePolicy, notification::NotificationTrigger};
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use std::sync::Arc;
 
 /// A single-entity batch input carrying one `category` Property, in the compact
 /// form a request submits.
@@ -281,4 +286,25 @@ async fn a_live_delivery_batch_delete_defers_its_events_when_enqueued() {
             .all(|event| event.entity_snapshot.is_some() && event.sys_attrs_snapshot.is_some()),
         "a deferred deletion carries what was removed and its system attributes"
     );
+}
+
+/// The change a batch deletion publishes for each entity carries the removed
+/// state as both its notified and its previous state, and both are the one
+/// payload the deletion read.
+#[tokio::test]
+async fn a_batch_deletion_publishes_one_snapshot_per_entity() {
+    let observed = probing_recording_service(ProbeAnswer::Answers(DeletionWatchers::Possible), CachedSubscription::Building).await;
+    let result = observed
+        .service
+        .batch_delete(SideEffectPlacement::Inline(&live_target()), &[entity_uri()])
+        .await
+        .expect("the batch delete completes");
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+    let published = observed.published.lock().expect("recording mutex is not poisoned");
+    assert_eq!(published.len(), 1, "one deleted entity publishes one change");
+    let (Some(snapshot), Some(previous)) = (&published[0].entity_snapshot, &published[0].previous_attributes) else {
+        panic!("a batch deletion publishes the removed state");
+    };
+    assert!(Arc::ptr_eq(snapshot, previous));
 }

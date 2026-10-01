@@ -305,7 +305,6 @@ mod tests {
     fn deleted() -> WriteOutcome {
         WriteOutcome::Deleted(DeletedEntity {
             id: vehicle(),
-            payload: json!([{}]),
             created_at: Utc::now(),
             modified_at: Utc::now(),
             expires_at: None,

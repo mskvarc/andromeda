@@ -1,6 +1,6 @@
 //! Temporal Evolution consequences carried by an atomic write.
 
-use crate::error::CommitError;
+use crate::{error::CommitError, scope_presence::ScopePresence};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::{
     instance_key::{AttributeInstanceKey, attribute_instance_families},
@@ -128,8 +128,21 @@ fn scope_was_cleared(previous: &Value, current: &Value) -> bool {
 /// Returns [`CommitError::Invariant`] when the entity carries an instance whose
 /// `datasetId` cannot be read.
 pub fn deletion_history(previous: &Value) -> Result<Vec<HistoryRecord>, CommitError> {
-    let mut removed = attribute_instance_families(previous)
-        .map_err(|error| CommitError::Invariant(error.into()))?
+    let instances = attribute_instance_families(previous).map_err(|error| CommitError::Invariant(error.into()))?;
+    let scope = if extract_scopes(previous).is_empty() {
+        ScopePresence::Absent
+    } else {
+        ScopePresence::Held
+    };
+    Ok(deletion_tombstones(instances, scope))
+}
+
+/// The tombstones a deleted entity's history records, from the instances it
+/// held and whether it held a Scope; [`deletion_history`] reads both off the
+/// removed payload, and a deletion that never read the payload states them
+/// itself.
+pub fn deletion_tombstones(instances: impl IntoIterator<Item = (AttributeInstanceKey, AttributeType)>, scope: ScopePresence) -> Vec<HistoryRecord> {
+    let mut removed = instances
         .into_iter()
         .map(|(key, attribute_type)| RemovedAttributeInstance { key, attribute_type })
         .collect::<Vec<RemovedAttributeInstance>>();
@@ -146,17 +159,26 @@ pub fn deletion_history(previous: &Value) -> Result<Vec<HistoryRecord>, CommitEr
     // Clause 4.18 ends a Scope's validity at the "delete operation" as well as
     // at an update, so an Entity that still held a Scope closes its interval
     // here rather than leaving it open past the Entity itself.
-    if !extract_scopes(previous).is_empty() {
-        history.push(HistoryRecord::ScopeRemoval);
+    match scope {
+        ScopePresence::Held => history.push(HistoryRecord::ScopeRemoval),
+        ScopePresence::Absent => {}
     }
-    Ok(history)
+    history
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::history_record::{HistoryRecord, deletion_history, mutation_history};
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::expanded::{mutation::selection::OverwritePolicy, written_observation::AddressedInstances};
+    use crate::{
+        history_record::{HistoryRecord, deletion_history, deletion_tombstones, mutation_history},
+        scope_presence::ScopePresence,
+    };
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
+    use andromeda_ngsi_ld_model::expanded::{
+        instance_key::AttributeInstanceKey,
+        mutation::selection::OverwritePolicy,
+        removed_instance::RemovedAttributeInstance,
+        written_observation::AddressedInstances,
+    };
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
 
@@ -326,5 +348,79 @@ mod tests {
     #[test]
     fn deleting_an_entity_that_held_no_attributes_records_nothing() {
         assert!(deletion_history(&json!([{"@id": "urn:ngsi-ld:A"}])).expect("readable datasetIds").is_empty());
+    }
+
+    /// What one entry of a deletion's history ends.
+    #[derive(Debug, PartialEq)]
+    enum Ended {
+        /// One attribute instance.
+        Instance(RemovedAttributeInstance),
+        /// The Entity's Scope.
+        Scope,
+    }
+
+    /// The entries of a deletion's history as the things they end.
+    fn ended(history: Vec<HistoryRecord>) -> Vec<Ended> {
+        history
+            .into_iter()
+            .map(|entry| match entry {
+                HistoryRecord::Tombstone(removed) => Ended::Instance(removed),
+                HistoryRecord::ScopeRemoval => Ended::Scope,
+                HistoryRecord::Observations(_) | HistoryRecord::EvolutionInstances(_) => panic!("a deletion records no observation: {entry:?}"),
+            })
+            .collect()
+    }
+
+    /// An instance identity and its family.
+    fn instance(attr: &str, dataset_id: Option<&str>, attribute_type: AttributeType) -> (AttributeInstanceKey, AttributeType) {
+        let key = AttributeInstanceKey {
+            attr: attr.parse().expect("a valid fixture attribute name"),
+            dataset_id: dataset_id.map(|id| id.parse().expect("a valid fixture datasetId")),
+        };
+        (key, attribute_type)
+    }
+
+    /// Clauses 4.5.7, 4.5.8 and 4.18: a deletion that never read the payload
+    /// states the instances and the Scope it removed itself, and records
+    /// exactly the tombstones -- each instance with its family, then the Scope
+    /// -- that reading the removed payload records.
+    #[test]
+    fn an_outline_of_every_instance_and_the_scope_records_the_tombstones_the_payload_would() {
+        let removed = json!([{
+            "@id": "urn:ngsi-ld:A",
+            "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}],
+            "https://example.org/speed": [
+                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:b"}]},
+                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"]},
+                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:a"}]}
+            ],
+            "https://example.org/owner": [{"@type": ["https://uri.etsi.org/ngsi-ld/Relationship"], "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:P"}]}]
+        }]);
+        // Listed in an order of its own, as a store answers.
+        let outline = vec![
+            instance("https://example.org/speed", Some("urn:ngsi-ld:Dataset:a"), AttributeType::Property),
+            instance("https://example.org/owner", None, AttributeType::Relationship),
+            instance("https://example.org/speed", Some("urn:ngsi-ld:Dataset:b"), AttributeType::Property),
+            instance("https://example.org/speed", None, AttributeType::Property),
+        ];
+        let expected = [
+            instance("https://example.org/owner", None, AttributeType::Relationship),
+            instance("https://example.org/speed", None, AttributeType::Property),
+            instance("https://example.org/speed", Some("urn:ngsi-ld:Dataset:a"), AttributeType::Property),
+            instance("https://example.org/speed", Some("urn:ngsi-ld:Dataset:b"), AttributeType::Property),
+        ]
+        .into_iter()
+        .map(|(key, attribute_type)| Ended::Instance(RemovedAttributeInstance { key, attribute_type }))
+        .chain([Ended::Scope])
+        .collect::<Vec<_>>();
+
+        pretty_assertions::assert_eq!(ended(deletion_tombstones(outline, ScopePresence::Held)), expected);
+        pretty_assertions::assert_eq!(ended(deletion_history(&removed).expect("readable datasetIds")), expected);
+    }
+
+    #[test]
+    fn an_entity_that_held_no_scope_records_no_scope_removal() {
+        let outline = vec![instance("https://example.org/speed", None, AttributeType::Property)];
+        assert!(!ended(deletion_tombstones(outline, ScopePresence::Absent)).contains(&Ended::Scope));
     }
 }

@@ -23,7 +23,7 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use serde_json::Value;
-use std::slice::from_ref;
+use std::{slice::from_ref, sync::Arc};
 
 impl EntityService {
     /// Commit one entity's read-modify-write, re-reading whatever a concurrent
@@ -49,7 +49,7 @@ impl EntityService {
     /// [`EntityError::Contention`] once the attempt budget is spent.
     pub(crate) async fn commit_read_modify_write<B>(&self, target: &ContextTarget, id: &Identifier, mut build: B) -> Result<Option<WriteOutcome>, EntityError>
     where
-        B: FnMut(&Value) -> Result<Option<AtomicWrite>, EntityError>,
+        B: FnMut(&Arc<Value>) -> Result<Option<AtomicWrite>, EntityError>,
     {
         let _id_guard = self.acquire_id_locks(target, from_ref(id)).await;
 
@@ -100,7 +100,7 @@ impl EntityService {
     /// and otherwise propagates whatever `build` or the coordinator returns.
     pub(crate) async fn commit_computed_write<B, T>(&self, target: &ContextTarget, id: &Identifier, mut build: B) -> Result<T, EntityError>
     where
-        B: FnMut(&Value) -> Result<(AtomicWrite, T), EntityError>,
+        B: FnMut(&Arc<Value>) -> Result<(AtomicWrite, T), EntityError>,
     {
         let mut produced: Option<T> = None;
         let landed = self

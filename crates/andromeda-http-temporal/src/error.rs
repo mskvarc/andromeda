@@ -42,6 +42,9 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         // applied to the delete-by-query extension: a 403 naming the count and
         // the limit so the client can narrow its window or selectors.
         TemporalError::TooManyResults { .. } => ClassifiedReport::public(NgsiLdErrorType::TooManyResults, error.to_string()),
+        // Clause 6.3.2 raises "Request Entity too large" (413) for an input
+        // too large to process, counted here in values and positions.
+        TemporalError::PayloadBudget(source) => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, source.to_string()),
         TemporalError::JsonLd(source) => classify_jsonld_error(source),
         TemporalError::Query(source) => classify_query_error(source),
         TemporalError::Request(source) => classify_parameter_error(source),
@@ -164,9 +167,11 @@ mod tests {
     use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
     use andromeda_http_response::declined_representation::single_source_declined;
     use andromeda_jsonld::error::JsonLdError;
+    use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_ngsi_ld_query::error::QueryError;
     use andromeda_ngsi_ld_render::temporal::values::TemporalValuesError;
+    use andromeda_ngsi_ld_representation::payload_census::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_ngsi_ld_request::{error::ParameterError, unsupported_representation::UnsupportedRepresentation};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_temporal::{
@@ -177,7 +182,7 @@ mod tests {
         temporal_validation_reason::TemporalValidationReason,
     };
     use axum::http::StatusCode;
-    use std::time::Duration;
+    use std::{num::NonZeroUsize, time::Duration};
 
     #[test]
     fn every_temporal_error_variant_has_one_typed_http_classification() {
@@ -300,5 +305,25 @@ mod tests {
             pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE, "{error}");
             pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(1)), "{error}");
         }
+    }
+
+    /// Clause 6.3.2: a temporal write past the payload budget is "Request
+    /// Entity too large", naming the attribute and the budget.
+    #[test]
+    fn a_temporal_write_past_the_payload_budget_is_a_413() {
+        let error = TemporalError::PayloadBudget(PayloadBudgetExceeded::GeometryPositions {
+            owner: GeometryOwner::Attribute("location".parse().expect("an attribute name")),
+            limit: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(99_999)),
+        });
+
+        let report = classify_temporal_error(&error);
+
+        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::RequestEntityTooLarge);
+        pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(
+            report.detail().contains("'location'") && report.detail().contains("100000"),
+            "{}",
+            report.detail()
+        );
     }
 }

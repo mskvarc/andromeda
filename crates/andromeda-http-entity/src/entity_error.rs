@@ -21,6 +21,10 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         // may be sent again.
         EntityError::Contention { .. } => ClassifiedReport::public(NgsiLdErrorType::Conflict, error.to_string()),
         EntityError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
+        // Clause 6.3.2 raises "Request Entity too large" (413) for an input too
+        // large to process; the budget is counted in values and positions
+        // rather than bytes, and the client's remedy is the same.
+        EntityError::PayloadBudget(source) => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, source.to_string()),
         EntityError::JsonLd(source) => classify_jsonld_error(source),
         EntityError::Query(source) => classify_query_error(source),
         EntityError::Request(source) => classify_parameter_error(source),
@@ -47,15 +51,19 @@ mod tests {
         residual_predicate::ResidualPredicate,
     };
     use andromeda_http_response::batch_projection::batch_entity_error;
+    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryOverLimit, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         identifier::Identifier,
         ngsi_ld_urn::{AttributeListId, EntityTypeListId},
     };
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_representation::payload_census::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use axum::http::StatusCode;
-    use std::time::Duration;
+    use std::{num::NonZeroUsize, time::Duration};
 
     fn entity_id() -> Identifier {
         "urn:ngsi-ld:Entity:1".parse::<Identifier>().expect("a valid identifier")
@@ -176,5 +184,60 @@ mod tests {
             BatchErrorKind::Known(ProblemClassification::Category(single.error_type()))
         );
         pretty_assertions::assert_eq!(batch.error.detail, single.detail());
+    }
+
+    /// One million, the default of both entity budgets.
+    fn one_million() -> NonZeroUsize {
+        NonZeroUsize::new(1_000_000).expect("one million is not zero")
+    }
+
+    /// Clause 6.3.2: an entity over its value or geometry position budget is
+    /// too large to process, the 413 "Request Entity too large", and the
+    /// detail names the limit and, for a geometry, the attribute holding it.
+    #[test]
+    fn a_payload_budget_refusal_is_a_413_request_entity_too_large_naming_the_limit() {
+        let location = "location".parse::<AttributeName>().expect("a valid attribute name");
+        for (refusal, named) in [
+            (
+                PayloadBudgetExceeded::GeometryPositions {
+                    owner: GeometryOwner::Attribute(location),
+                    limit: GeometryPositionLimit::new(one_million()),
+                },
+                Some("'location'"),
+            ),
+            (
+                PayloadBudgetExceeded::EntityJsonValues {
+                    limit: JsonValueLimit::new(one_million()),
+                },
+                None,
+            ),
+        ] {
+            let report = classify_entity_error(&EntityError::PayloadBudget(refusal));
+            pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::RequestEntityTooLarge);
+            pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::PAYLOAD_TOO_LARGE);
+            pretty_assertions::assert_eq!(report.classification().title(), NgsiLdErrorType::RequestEntityTooLarge.title());
+            assert!(report.detail().contains("1000000"), "the detail hides the limit: {}", report.detail());
+            if let Some(attribute) = named {
+                assert!(report.detail().contains(attribute), "the detail hides the attribute: {}", report.detail());
+            }
+        }
+    }
+
+    /// Clause 5.5.6: a query whose reference geometry holds more positions than
+    /// the broker resolves is `TooComplexQuery`, which Table 6.3.2-1 answers
+    /// with 403.
+    #[test]
+    fn a_reference_geometry_over_budget_is_a_403_too_complex_query() {
+        let error = EntityError::Query(QueryError::ReferenceGeometryTooComplex {
+            over: GeometryOverLimit::Positions {
+                limit: GeometryPositionLimit::new(one_million()),
+            },
+        });
+
+        let report = classify_entity_error(&error);
+
+        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::TooComplexQuery);
+        pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::FORBIDDEN);
+        assert!(report.detail().contains("1000000"), "{}", report.detail());
     }
 }

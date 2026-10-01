@@ -27,10 +27,10 @@ pub enum StoredEntityError {
     /// interned.
     #[error("a stored attribute name is not an NGSI-LD name: {0}")]
     AttributeName(#[source] NgsiLdReferenceError),
-    /// A census ledger records an attribute family under a code the registry
-    /// never assigned.
-    #[error("a stored census attribute family is not a known code: {0}")]
-    CensusFamily(#[source] UnknownCompactCode),
+    /// A current-state row or a census ledger records an attribute family
+    /// under a code the registry never assigned.
+    #[error("a stored attribute family is not a known code: {0}")]
+    AttributeFamily(#[source] UnknownCompactCode),
     /// A census ledger sums below zero, which means it drifted from the
     /// Entities it counts.
     #[error("the discovery census sums to {sum}, below zero")]

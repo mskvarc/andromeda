@@ -3,24 +3,9 @@
 
 use crate::{
     entity::{
-        census::read::{
-            AttributeNameRow,
-            Count,
-            LiveInstances,
-            LiveTypes,
-            Names,
-            Total,
-            TypeName,
-            join_attribute_name,
-            join_type_name,
-            live_instances,
-            live_types,
-            stored_count,
-            stored_family,
-            summed,
-            type_key_of,
-        },
-        mapper::{stored_attribute_name, stored_type_name},
+        census::read::{Count, LiveInstances, LiveTypes, Names, Total, live_instances, live_types, stored_count, summed, type_key_of},
+        dictionary_join::{AttributeNameRow, TypeName, join_attribute_name, join_type_name},
+        mapper::{stored_attribute_family, stored_attribute_name, stored_type_name},
         repo::EntityRepository,
     },
     error::ContextStoreError,
@@ -125,7 +110,7 @@ fn type_summary_of(rows: Vec<(i64, Option<String>, Option<i16>)>) -> Result<Opti
     let mut attributes: BTreeMap<String, Vec<AttributeType>> = BTreeMap::new();
     for (_, name, kind) in rows {
         if let (Some(name), Some(kind)) = (name, kind) {
-            attributes.entry(name).or_default().push(stored_family(kind)?);
+            attributes.entry(name).or_default().push(stored_attribute_family(kind)?);
         }
     }
     Ok(Some(EntityTypeSummary {

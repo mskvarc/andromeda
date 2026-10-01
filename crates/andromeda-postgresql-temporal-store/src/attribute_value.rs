@@ -173,19 +173,18 @@ fn geo_property_geometry(instance: &Value) -> Result<AttributeValue, TemporalSto
         .and_then(|arr| arr.first())
         .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyMissingValue))?;
 
-    // Literal-`@value` form (string or already-compact object) keeps the
-    // legacy decoding path. Expanded JSON-LD GeoJSON nodes go through the
-    // direct walker, skipping the compact-string round-trip and
-    // `extract_coordinates` clones that dominated the temporal hot path.
-    let geometry = if let Some(val) = geo_node.get("@value") {
-        let geo_value: Value = match val.as_str() {
-            Some(s) => serde_json::from_str(s).map_err(|error| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyGeoJson(error)))?,
-            None => val.clone(), // clone: need owned Value for from_geojson_value
-        };
-        Geometry::from_geojson_value(&geo_value).map_err(|_not_a_geometry| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyGeometryInvalid))?
-    } else {
-        expanded_geo_node_to_geometry(geo_node).ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyGeometryInvalid))?
-    };
+    // The expanded node JSON-LD expansion makes of a geometry goes through the
+    // direct expanded walker; a geometry kept as a JSON literal is read in
+    // place, and one encoded as a string (clause 4.7.2) is parsed first.
+    let geometry = match geo_node.get("@value") {
+        Some(Value::String(raw)) => {
+            let parsed: Value = serde_json::from_str(raw).map_err(|error| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyGeoJson(error)))?;
+            Geometry::from_geojson_value(&parsed).ok()
+        }
+        Some(literal) => Geometry::from_geojson_value(literal).ok(),
+        None => expanded_geo_node_to_geometry(geo_node),
+    }
+    .ok_or_else(|| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyGeometryInvalid))?;
     Ok(AttributeValue::Geometry(geometry))
 }
 

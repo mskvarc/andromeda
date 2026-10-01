@@ -90,6 +90,7 @@ fn probe_error(error: &EntityError) -> RegistrationError {
         | EntityError::AlreadyExists { .. }
         | EntityError::Contention { .. }
         | EntityError::OperationNotSupported(_)
+        | EntityError::PayloadBudget(_)
         | EntityError::JsonLd(_)
         | EntityError::Query(_)
         | EntityError::Request(_)

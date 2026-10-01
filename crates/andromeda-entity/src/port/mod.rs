@@ -4,8 +4,12 @@
 pub mod attribute_history;
 /// Runtime-neutral execution of CPU-bound policy work.
 pub mod blocking_executor;
+/// The reads that let a deletion skip the payload it removes.
+pub mod deletion_outline;
 /// Entity discovery reads.
 pub mod discovery;
+/// The types an entity carries, read without its payload.
+pub mod entity_types;
 /// Entity expiry candidates.
 pub mod expiry;
 /// Whole entity payloads read a page at a time.

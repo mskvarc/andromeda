@@ -1,5 +1,6 @@
 //! Backend-neutral temporal observations and aggregation values.
 
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -26,8 +27,10 @@ pub enum TemporalValue {
     String(String),
     /// A boolean attribute value.
     Boolean(bool),
-    /// A `GeoJSON` geometry in canonical JSON form.
-    Geometry(Value),
+    /// A `GeoJSON` geometry, held decoded: it persists as the `GeoJSON`
+    /// object it serializes to, so the wire form of a durable intent is the
+    /// one an untyped value gave.
+    Geometry(Geometry),
     /// A structured attribute value, in the expanded shape the write path
     /// stored it in.
     ///
@@ -73,6 +76,7 @@ pub enum TemporalValue {
 #[cfg(test)]
 mod tests {
     use crate::temporal::TemporalValue;
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_number::JsonNumber;
     use std::str::FromStr;
 
@@ -82,6 +86,17 @@ mod tests {
         let encoded = serde_json::to_string(&value).expect("durable JSON");
         pretty_assertions::assert_eq!(encoded, r#"{"number":0.100000000000000005}"#);
         pretty_assertions::assert_eq!(serde_json::from_str::<TemporalValue>(&encoded).expect("round trip"), value);
+    }
+
+    /// A durable intent persists a geometry as the tagged `GeoJSON` object an
+    /// untyped value held, so intents written either way decode alike.
+    #[test]
+    fn a_geometry_temporal_value_serializes_as_the_tagged_geojson_object() {
+        let point = Geometry::from_geojson_value(&serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("a point");
+        let value = TemporalValue::Geometry(point);
+        let encoded = serde_json::to_value(&value).expect("durable JSON");
+        pretty_assertions::assert_eq!(encoded, serde_json::json!({"geometry": {"type": "Point", "coordinates": [1.0, 2.0]}}));
+        pretty_assertions::assert_eq!(serde_json::from_value::<TemporalValue>(encoded).expect("round trip"), value);
     }
 
     #[test]

@@ -24,6 +24,7 @@ use crate::{
     },
     remote_linked::{RemoteTemporalLinkedEntities, RemoteTemporalLinkedSource, TemporalLinkedWindow},
     service::TemporalService,
+    service_limits::TemporalServiceLimits,
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -32,7 +33,8 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
-    change_notifier::ChangeNotifier,
+    change_notifier::{ChangeNotifier, SubscriptionMatching},
+    config::EntityConfig,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     port::{reader::EntityReader, retry_delay::RetryDelay},
@@ -559,13 +561,16 @@ fn service(broker: StubBroker) -> TemporalService {
             retry_delay: broker as Arc<dyn RetryDelay>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-        Arc::new(ChangeNotifier::new(None, None)),
-        TemporalInstanceLimits {
-            default_page: 100,
-            maximum: 1000,
+        Arc::new(ChangeNotifier::new(None, SubscriptionMatching::Absent)),
+        TemporalServiceLimits {
+            instance_limits: TemporalInstanceLimits {
+                default_page: 100,
+                maximum: 1000,
+            },
+            delete_by_query_max_matches: 100,
+            aggregation_grouping_max_groups: 100,
+            payload_budget: EntityConfig::default().payload_budget(),
         },
-        100,
-        100,
         None,
     )
 }
@@ -777,13 +782,16 @@ fn service_with_remote(broker: StubBroker, source: &Arc<RecordingSource>) -> Tem
             retry_delay: broker as Arc<dyn RetryDelay>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-        Arc::new(ChangeNotifier::new(None, None)),
-        TemporalInstanceLimits {
-            default_page: 100,
-            maximum: 1000,
+        Arc::new(ChangeNotifier::new(None, SubscriptionMatching::Absent)),
+        TemporalServiceLimits {
+            instance_limits: TemporalInstanceLimits {
+                default_page: 100,
+                maximum: 1000,
+            },
+            delete_by_query_max_matches: 100,
+            aggregation_grouping_max_groups: 100,
+            payload_budget: EntityConfig::default().payload_budget(),
         },
-        100,
-        100,
         Some(Arc::clone(source) as Arc<dyn RemoteTemporalLinkedSource>), // clone: the test keeps its handle on the recording
     )
 }

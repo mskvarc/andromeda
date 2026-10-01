@@ -261,6 +261,7 @@ pub(super) const fn classify_subscription_expiry_failure(error: SubscriptionErro
         SubscriptionError::Validation(_)
         | SubscriptionError::NotFound { .. }
         | SubscriptionError::AlreadyExists { .. }
+        | SubscriptionError::GeoQTooLarge { .. }
         | SubscriptionError::JsonLd(_)
         | SubscriptionError::ContextHosting(ContextHostingError::NoHost | ContextHostingError::NoRequestAuthority | ContextHostingError::MintedUrlNotIri(_))
         | SubscriptionError::Query(_)
@@ -277,6 +278,7 @@ pub(super) const fn classify_registration_expiry_failure(error: RegistrationErro
         | RegistrationError::NotFound { .. }
         | RegistrationError::AlreadyExists { .. }
         | RegistrationError::Conflict(_)
+        | RegistrationError::GeometryTooLarge { .. }
         | RegistrationError::JsonLd(_)
         | RegistrationError::Query(_)
         | RegistrationError::Representation(_) => FailureClass::Permanent,
@@ -300,6 +302,7 @@ pub(super) const fn classify_entity_expiry_failure(error: EntityError) -> TaskFa
         | EntityError::MemberNotFound(_)
         | EntityError::AlreadyExists { identifier: _ }
         | EntityError::OperationNotSupported(_)
+        | EntityError::PayloadBudget(_)
         | EntityError::JsonLd(_)
         | EntityError::Query(_)
         | EntityError::Request(_)

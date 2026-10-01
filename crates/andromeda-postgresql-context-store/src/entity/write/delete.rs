@@ -1,5 +1,5 @@
 //! The batch delete: one statement that removes each staged entity whose
-//! expectation still holds and hands back what it held.
+//! expectation still holds and hands back the system attributes it held.
 
 use crate::{
     entity::{
@@ -28,8 +28,8 @@ use sqlx::{Postgres, Row, Transaction};
 /// The statement name the entity set-delete is observed under.
 const ENTITY_DELETE: StatementName = StatementName("entity-delete");
 
-/// Alias `doc` for the `entity_documents` row the delete reads its payload and
-/// version token from.
+/// Alias `doc` for the `entity_documents` row the delete reads its version
+/// token from.
 #[derive(Iden, Clone, Copy)]
 #[iden = "doc"]
 struct Doc;
@@ -42,7 +42,7 @@ struct Gone;
 /// Build the batch delete.
 ///
 /// ```sql
-/// WITH doomed AS (SELECT e.entity_key, e.id, doc.payload, e.created_at, doc.modified_at, e.expires_at
+/// WITH doomed AS (SELECT e.entity_key, e.id, e.created_at, doc.modified_at, e.expires_at
 ///                 FROM UNNEST(…) AS d(id, expected_modified_at)
 ///                 JOIN entities e ON e.id = d.id
 ///                 JOIN entity_documents doc ON doc.entity_key = e.entity_key
@@ -53,7 +53,7 @@ struct Gone;
 ///               RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds),
 ///      gone AS (DELETE FROM entities WHERE entity_key IN (SELECT entity_key FROM doomed)),
 ///      census_types AS (INSERT INTO entity_type_census … FROM srch …), census_type_attributes AS (…), census_attributes AS (…)
-/// SELECT id, payload, created_at, modified_at, expires_at FROM doomed
+/// SELECT id, created_at, modified_at, expires_at FROM doomed
 /// ```
 ///
 /// Carries the same nullable expectation the update does, and for the same
@@ -69,9 +69,10 @@ struct Gone;
 /// snapshot of it. Everything else goes through the ownership edges that
 /// cascade from `entities`: the document row, the type memberships and the
 /// current attribute projection. Clause 5.6.6 leaves the temporal evolution
-/// standing, so no history relation is touched. The payload and system
-/// attributes come back because the clause 5.6.10 notification carries both
-/// and cannot read them once the rows are gone.
+/// standing, so no history relation is touched. The system attributes come
+/// back because the clause 5.6.10 notification carries them and cannot read
+/// them once the rows are gone; the payload does not, because every caller read
+/// it before the delete and decoding it again would only double its cost.
 ///
 /// # Errors
 ///
@@ -84,7 +85,6 @@ pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, Contex
     doomed
         .expr(Expr::col((E, Entities::EntityKey)))
         .expr(Expr::col((E, Entities::Id)))
-        .expr(Expr::col((Doc, EntityDocuments::Payload)))
         .expr(Expr::col((E, Entities::CreatedAt)))
         .expr(Expr::col((Doc, EntityDocuments::ModifiedAt)))
         .expr(Expr::col((E, Entities::ExpiresAt)))
@@ -142,7 +142,6 @@ pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, Contex
         Query::select()
             .columns([
                 Entities::Id.into_iden(),
-                EntityDocuments::Payload.into_iden(),
                 Entities::CreatedAt.into_iden(),
                 EntityDocuments::ModifiedAt.into_iden(),
                 Entities::ExpiresAt.into_iden(),
@@ -157,7 +156,7 @@ pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, Contex
 
 impl EntityRepository {
     /// Delete every entity in `ids` whose expectation still holds, returning
-    /// what each one held.
+    /// the system attributes each one held.
     ///
     /// The search row is deleted beside the identity row so the discovery
     /// census can count out what it held; the document, membership and current
@@ -205,7 +204,6 @@ impl EntityRepository {
             .map(|row| {
                 Ok(DeletedEntity {
                     id: stored_uri(row.get("id"))?,
-                    payload: row.get("payload"),
                     created_at: row.get("created_at"),
                     modified_at: row.get("modified_at"),
                     expires_at: row.get("expires_at"),
@@ -226,9 +224,7 @@ mod tests {
         let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
         pretty_assertions::assert_eq!(placeholders(&sql), (1..=2).collect::<BTreeSet<u32>>());
         assert!(
-            sql.starts_with(
-                r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "doc"."payload", "e"."created_at", "doc"."modified_at", "e"."expires_at" FROM UNNEST("#
-            ),
+            sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "doc"."modified_at", "e"."expires_at" FROM UNNEST("#),
             "{sql}"
         );
         assert!(sql.contains("AS d(id, expected_modified_at)"), "{sql}");
@@ -251,7 +247,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.ends_with(r#"SELECT "id", "payload", "created_at", "modified_at", "expires_at" FROM "doomed""#),
+            sql.ends_with(r#"SELECT "id", "created_at", "modified_at", "expires_at" FROM "doomed""#),
             "{sql}"
         );
     }

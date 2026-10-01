@@ -102,9 +102,9 @@ impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
 /// # Errors
 ///
 /// Returns [`GeometryError::Position`] when a position carries an ordinate
-/// count IETF RFC 7946 section 3.1.1 gives no meaning to, and
-/// [`GeometryError::GeojsonValue`] when the `type`/`coordinates` pair is not a
-/// `GeoJSON` geometry object.
+/// count IETF RFC 7946 section 3.1.1 gives no meaning to, and the
+/// [`GeometryError`] naming what is missing or misplaced when the
+/// `type`/`coordinates` pair is not a `GeoJSON` geometry object.
 fn try_geometry(value: &Value) -> Result<Option<Geometry>, GeometryError> {
     let Some(object) = value.as_object() else {
         return Ok(None);

@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_model::expanded::{
     mutation::{attribute::delete_attr, error::ExpandedEntityError, selection::DatasetSelection},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
@@ -66,7 +67,7 @@ impl EntityService {
 
         let MutatedEntity { events } = self
             .commit_computed_write(target, &entity_uri, |previous| {
-                let mut existing = previous.clone(); // clone: the deletion mutates its own copy of the stored payload
+                let mut existing = Value::clone(previous); // clone: the deletion mutates its own copy of the stored payload
                 delete_attr(&mut existing, &attr_iri, selection)?;
 
                 // Clause 5.6.5.4 handles the Scope before the `deleteAll` and

@@ -20,6 +20,7 @@ use crate::{
 use andromeda_jsonld::batch_contexts::{BatchContext, ContextGroups};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity};
+use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use serde_json::Value;
 
 /// A batch entity as submitted, with the compact JSON the admission renders it
@@ -150,27 +151,36 @@ impl EntityService {
         let slot_count = rendered.len();
         let mut groups = ContextGroups::default();
         let mut entities = Vec::with_capacity(slot_count);
+        let mut over_budget = Vec::new();
         for (
             idx,
             RenderedEntity {
                 entity,
-                representation,
+                mut representation,
                 context,
             },
         ) in rendered.into_iter().enumerate()
         {
             let id = entity.id.clone(); // clone: the classified entry owns the identifier its failure is reported against
-            groups.push(
-                &context,
-                ClassifiedEntry {
-                    idx,
-                    id,
-                    value: representation,
-                },
-            );
+            // Counted on the normalized form the preparation expands, before
+            // the expansion multiplies it; an entity over the budget leaves its
+            // slot empty and is reported against its own identifier.
+            normalize_entity_attributes(&mut representation);
+            match self.payload_budget.admit(&representation) {
+                Ok(()) => groups.push(
+                    &context,
+                    ClassifiedEntry {
+                        idx,
+                        id,
+                        value: representation,
+                    },
+                ),
+                Err(refusal) => over_budget.push((id, EntityError::from(refusal))),
+            }
             entities.push((entity, context));
         }
-        let PreparedBatch { slots, errors } = self.prepare_grouped(slot_count, groups, kind.write().null_sentinel_admission()).await;
+        let PreparedBatch { slots, mut errors } = self.prepare_grouped(slot_count, groups, kind.write().null_sentinel_admission()).await;
+        errors.extend(over_budget);
         let mut admitted = entities
             .into_iter()
             .zip(slots)
@@ -247,7 +257,7 @@ mod tests {
             admitted_batch::{AdmittedBatch, Preparation, RenderedEntity},
         },
         error::EntityError,
-        notification_recording_harness::recording_service,
+        notification_recording_harness::{budgeted_recording_service, geometry_budget, recording_service},
         null_sentinel_admission::NullSentinelAdmission,
         write_admission::BatchWrite,
         write_kind::{BatchCreate, BatchUpsert},
@@ -258,6 +268,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::entity::Entity;
+    use andromeda_ngsi_ld_representation::payload_census::PayloadBudgetExceeded;
     use serde_json::{Value, json};
 
     /// A Vehicle carrying `speed` and `brandName`, as a client writes it.
@@ -507,6 +518,35 @@ mod tests {
         ];
         let (admitted, refused) = service.admit_batch_write(BatchCreate, rendered(entities, &ContextSpec::core_only())).await;
         pretty_assertions::assert_eq!(refused.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>(), vec!["urn:ngsi-ld:Vehicle:1"]);
+        pretty_assertions::assert_eq!(
+            admitted.entities().map(|(entity, _)| entity.id.to_string()).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:2"]
+        );
+    }
+
+    /// Clause 5.6.7.4 reports a failed entity as one `BatchEntityError` rather
+    /// than failing the request: an entity over the payload budget is refused
+    /// against its own identifier, and its neighbour is admitted.
+    #[tokio::test]
+    async fn the_batch_admission_refuses_only_the_oversized_entity() {
+        let service = budgeted_recording_service(geometry_budget(4));
+        let located = entity(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "location": {"type": "GeoProperty", "value": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}}
+        }));
+        let entities = vec![located, vehicle("urn:ngsi-ld:Vehicle:2")];
+
+        let (admitted, refused) = service.admit_batch_write(BatchCreate, rendered(entities, &ContextSpec::core_only())).await;
+
+        let [(id, refusal)] = refused.as_slice() else {
+            panic!("exactly the oversized entity is refused: {refused:?}");
+        };
+        pretty_assertions::assert_eq!(id.as_str(), "urn:ngsi-ld:Vehicle:1");
+        assert!(
+            matches!(refusal, EntityError::PayloadBudget(PayloadBudgetExceeded::GeometryPositions { .. })),
+            "{refusal:?}"
+        );
         pretty_assertions::assert_eq!(
             admitted.entities().map(|(entity, _)| entity.id.to_string()).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:2"]

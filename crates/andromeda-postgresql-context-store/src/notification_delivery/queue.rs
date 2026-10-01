@@ -27,6 +27,7 @@ use andromeda_notification::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
+use std::sync::Arc;
 
 /// One tenant's notification delivery queue.
 #[derive(Debug)]
@@ -143,8 +144,8 @@ fn entry(delivery: ClaimedDelivery) -> DeliveryEntry {
                 .event_ordinal(delivery.event_ordinal)
                 .change(delivery.change)
                 .entity_id(delivery.entity_id)
-                .entity_snapshot(delivery.entity_snapshot)
-                .previous_snapshot(delivery.previous_snapshot)
+                .entity_snapshot(delivery.entity_snapshot.map(Arc::new))
+                .previous_snapshot(delivery.previous_snapshot.map(Arc::new))
                 .created_at(delivery.created_at)
                 .build(),
         )

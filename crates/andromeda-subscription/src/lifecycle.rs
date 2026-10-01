@@ -29,6 +29,7 @@ use andromeda_jsonld::{
     context_validation::{validate_context_spec, validate_jsonld_context_value},
     engine::processor::JsonLdEngine,
 };
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, ngsi_ld_urn::SubscriptionId};
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_telemetry::subscription_ops::{self, SubscriptionOperation};
@@ -59,6 +60,8 @@ pub struct SubscriptionService<V: SubscriptionVariant> {
     /// The distributed side of the lifecycle (clauses 5.8.1.4, 5.8.2.4,
     /// 5.8.5.4), absent for the variants that have none.
     forwarding_hook: Option<Arc<dyn SubscriptionForwardingHook>>,
+    /// The limits a `geoQ` reference geometry is admitted under.
+    geometry_limits: GeometryCensusLimits,
 }
 
 impl<V> SubscriptionService<V>
@@ -78,6 +81,7 @@ where
         variant: V,
         change_sink: Option<Arc<dyn SubscriptionChangeSink<V::Change>>>,
         endpoint_validator: Arc<dyn SubscriptionEndpointValidator>,
+        geometry_limits: GeometryCensusLimits,
     ) -> SubscriptionService<V> {
         SubscriptionService {
             repo,
@@ -86,6 +90,7 @@ where
             change_sink,
             endpoint_validator,
             forwarding_hook: None,
+            geometry_limits,
         }
     }
 
@@ -138,7 +143,7 @@ where
     ) -> Result<Identifier, SubscriptionError> {
         let context = subscription_context.spec();
         let result: Result<Identifier, SubscriptionError> = async {
-            validation::validate_create_payload(&payload)?;
+            validation::validate_create_payload(&payload, self.geometry_limits)?;
 
             validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
 
@@ -215,7 +220,7 @@ where
         let result: Result<(), SubscriptionError> = async {
             validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
 
-            validation::validate_common_fields(&payload)?;
+            validation::validate_common_fields(&payload, self.geometry_limits)?;
             self.variant.validate_update_extra(&payload)?;
             validation::validate_notification_fragment(&payload)?;
 

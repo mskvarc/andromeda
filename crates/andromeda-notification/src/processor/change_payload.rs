@@ -101,6 +101,7 @@ mod tests {
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use chrono::{TimeZone, Utc};
     use serde_json::{Value, json};
+    use std::sync::Arc;
 
     fn deletion_event(snapshot: Option<Value>) -> ChangeEvent {
         ChangeEvent::builder()
@@ -108,7 +109,7 @@ mod tests {
             .entity_types(vec!["https://example.com/Vehicle".parse().expect("valid type name")])
             .change(EntityChange::new(EntityLifecycle::Deleted, Vec::new()))
             .occurred_at(Utc.with_ymd_and_hms(2024, 6, 15, 12, 30, 0).single().expect("valid instant"))
-            .entity_snapshot(snapshot)
+            .entity_snapshot(snapshot.map(Arc::new))
             .origin(ChangeOrigin::Local)
             .build()
     }

@@ -1,11 +1,12 @@
 //! Batch entity deletion (clause 5.6.10).
 //!
 //! A deleted entity's payload and system attributes are unreadable once the row
-//! is gone, and the clause 5.6.10 notifications carry both. Inline mode takes
-//! them from the delete itself, which reports what each row held. The
-//! asynchronous mode cannot: its notifications have to be persisted in the same
-//! transaction as the delete, which means they must exist before it runs, so it
-//! reads them first.
+//! is gone, and the clause 5.6.10 notifications carry both. Both modes read the
+//! payloads before the delete, which the tombstones of clause 5.6.6 need as
+//! well. Inline mode takes the system attributes from the delete itself, which
+//! reports what each row held; the asynchronous mode cannot: its notifications
+//! have to be persisted in the same transaction as the delete, which means they
+//! must exist before it runs, so it reads those first too.
 
 use crate::{
     EntityService,
@@ -15,7 +16,7 @@ use crate::{
     notification_fanout::{ChangedEntity, MutationSnapshots},
     notification_plan::deletion,
     side_effect::SideEffectPlacement,
-    sys_attrs::snapshot_with_sys_attrs,
+    snapshot_supply::SnapshotSupply,
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -34,7 +35,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, SysAttrsSnapshot};
 use chrono::Utc;
 use serde_json::Value;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 /// One chunk's successfully deleted identifiers and its per-entity failures.
 pub(super) type DeleteChunkOutcome = (Vec<Identifier>, Vec<(Identifier, EntityError)>);
@@ -52,19 +53,18 @@ impl EntityService {
         &self,
         target: &ContextTarget,
         id: &Identifier,
-        payload: &Value,
+        payload: &Arc<Value>,
         sys_attrs: Option<&SysAttrsSnapshot>,
     ) -> Result<Vec<SubscriptionMatch>, EntityError> {
         let entity_types = stored_entity_types(payload)?;
         let change = deletion(payload)?;
-        let match_snapshot = sys_attrs.map_or_else(|| payload.clone(), |sys_attrs| snapshot_with_sys_attrs(payload, sys_attrs));
         let deleted = ChangedEntity {
             target,
             id,
             types: &entity_types,
         };
         let snapshots = MutationSnapshots {
-            current: Some(&match_snapshot),
+            current: SnapshotSupply::Removed { removed: payload, sys_attrs },
             previous: Some(payload),
         };
         Ok(self.notifier.subscription_matches(deleted, &change, snapshots))
@@ -79,7 +79,14 @@ impl EntityService {
         // and both the durable matches (on every path) and the asynchronous
         // path's persisted notifications carry the system attributes — all
         // unreadable once the row is gone.
-        let payloads = self.reader.get_batch(target, chunk).await?;
+        // Shared by the matches, the history and the events of each deletion.
+        let payloads: HashMap<Identifier, Arc<Value>> = self
+            .reader
+            .get_batch(target, chunk)
+            .await?
+            .into_iter()
+            .map(|(id, payload)| (id, Arc::new(payload)))
+            .collect();
         let sys_attrs = self.reader.get_sys_attrs_batch(target, chunk).await?;
 
         let mut writes = Vec::with_capacity(chunk.len());
@@ -107,7 +114,7 @@ impl EntityService {
                 AtomicWrite::builder()
                     .entity_id(Arc::new(id.clone())) // clone: each write owns a shared validated identifier.
                     .entity(EntityMutation::Delete)
-                    .history(payload.map(deletion_history).transpose()?.unwrap_or_default())
+                    .history(payload.map(|payload| deletion_history(payload)).transpose()?.unwrap_or_default())
                     .subscription_matches(matches)
                     .side_effects(side_effects)
                     .precondition(Precondition::MustExist)
@@ -130,8 +137,10 @@ impl EntityService {
         for (id, outcome) in chunk.iter().zip(outcomes) {
             match outcome {
                 WriteOutcome::Deleted(deleted) => {
-                    if matches!(placement, SideEffectPlacement::Inline(_)) {
-                        events.extend(inline_deletion_events(&deleted)?);
+                    if matches!(placement, SideEffectPlacement::Inline(_))
+                        && let Some(payload) = payloads.get(id)
+                    {
+                        events.extend(inline_deletion_events(&deleted, payload)?);
                     }
                     success.push(deleted.id);
                 }
@@ -165,7 +174,7 @@ impl EntityService {
 ///
 /// Reports [`EntityError::Internal`] when the stored payload's types or
 /// `datasetId`s cannot be read.
-fn deletion_events(id: &Identifier, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Result<Vec<ChangeEvent>, EntityError> {
+fn deletion_events(id: &Identifier, payload: &Arc<Value>, sys_attrs: Option<&SysAttrsSnapshot>) -> Result<Vec<ChangeEvent>, EntityError> {
     Ok(vec![
         ChangeEvent::builder()
             .entity_id(id.clone()) // clone: the event owns its identifier
@@ -173,23 +182,24 @@ fn deletion_events(id: &Identifier, payload: &Value, sys_attrs: Option<&SysAttrs
             .change(deletion(payload)?)
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
-            .entity_snapshot(Some(payload.clone())) // clone: the event owns its snapshot
-            .previous_attributes(Some(payload.clone())) // clone: the event owns its previous payload
+            .entity_snapshot(Some(Arc::clone(payload)))
+            .previous_attributes(Some(Arc::clone(payload)))
             .sys_attrs_snapshot(sys_attrs.cloned())
             .build(),
     ])
 }
 
-/// The same events, read off what the delete reported the row held.
+/// The same events, carrying the system attributes the delete reported the row
+/// held beside the payload read before it.
 ///
 /// # Errors
 ///
 /// Reports the [`EntityError::Internal`] of [`deletion_events`].
-fn inline_deletion_events(deleted: &DeletedEntity) -> Result<Vec<ChangeEvent>, EntityError> {
+fn inline_deletion_events(deleted: &DeletedEntity, payload: &Arc<Value>) -> Result<Vec<ChangeEvent>, EntityError> {
     let sys_attrs = SysAttrsSnapshot {
         created_at: deleted.created_at,
         modified_at: deleted.modified_at,
         expires_at: deleted.expires_at,
     };
-    deletion_events(&deleted.id, &deleted.payload, Some(&sys_attrs))
+    deletion_events(&deleted.id, payload, Some(&sys_attrs))
 }

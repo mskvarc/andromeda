@@ -2,6 +2,7 @@
 
 use crate::{subscription_invariant::SubscriptionInvariant, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_jsonld::{compound_context_host::ContextHostingError, error::JsonLdError};
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryOverLimit;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -24,6 +25,14 @@ pub enum SubscriptionError {
     AlreadyExists {
         /// Conflicting subscription identifier.
         identifier: Identifier,
+    },
+    /// The `geoQ` reference geometry holds more positions, or more JSON values
+    /// besides them, than the broker accepts in one geometry (clause 6.3.2,
+    /// "Request Entity too large").
+    #[error("the geoQ geometry holds {over}; send a simplified geometry")]
+    GeoQTooLarge {
+        /// The limit the geometry holds more than.
+        over: GeometryOverLimit,
     },
     /// JSON-LD processing failed.
     #[error(transparent)]

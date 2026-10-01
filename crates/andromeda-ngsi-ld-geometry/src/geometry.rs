@@ -15,7 +15,7 @@
 
 use crate::{dimension::GeometryDimension, form::GeometryForm, geojson::GeometryError, geometry_type::GeometryType, planar::project};
 use geo::algorithm::BoundingRect;
-use geojson::{Geometry as GeoJsonGeometry, GeometryValue};
+use geojson::Geometry as GeoJsonGeometry;
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -29,7 +29,7 @@ use serde_json::{Map, Value};
 /// geometry. There is deliberately no `Eq`/`Hash`, because the coordinates are
 /// `f64` and no total order or hash over them would be meaningful.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(try_from = "GeoJsonGeometry")]
+#[serde(try_from = "Value")]
 pub struct Geometry {
     /// The geometry as received, and as it will be rendered back.
     form: GeometryForm,
@@ -48,37 +48,36 @@ impl Geometry {
         Geometry { form, planar }
     }
 
-    /// Build from a parsed `GeoJSON` geometry.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GeometryError::Position`] if any position of the geometry
-    /// carries fewer than two or more than three ordinates or lies off the
-    /// CRS84 axes, [`GeometryError::LineString`] or
-    /// [`GeometryError::LinearRing`] for a line or ring RFC 7946 sections
-    /// 3.1.4 and 3.1.6 do not admit, and
-    /// [`GeometryError::GeometryCollectionUnsupported`] for a
-    /// `GeometryCollection`, which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes.
-    pub fn from_geojson(geometry: &GeoJsonGeometry) -> Result<Geometry, GeometryError> {
-        Ok(Geometry::new(GeometryForm::from_geojson(&geometry.value)?))
-    }
-
     /// Build from an arbitrary JSON value that is expected to encode a `GeoJSON`
     /// geometry object.
     ///
     /// # Errors
     ///
-    /// Returns [`GeometryError::GeojsonValue`] if `value` is not a `GeoJSON`
-    /// geometry object, [`GeometryError::Position`] if one of its positions has
+    /// Returns the [`GeometryError`] naming what is missing or misplaced if
+    /// `value` is not a `GeoJSON` geometry object, [`GeometryError::Position`] if one of its positions has
     /// an ordinate count RFC 7946 gives no meaning to or lies off the CRS84
     /// axes, [`GeometryError::LineString`] or [`GeometryError::LinearRing`]
     /// for a line or ring RFC 7946 does not admit, or
     /// [`GeometryError::GeometryCollectionUnsupported`] if it is a
     /// `GeometryCollection`.
     pub fn from_geojson_value(value: &Value) -> Result<Geometry, GeometryError> {
-        // clone: `serde_json::from_value` consumes the value it decodes
-        let geometry: GeoJsonGeometry = serde_json::from_value(value.clone())?;
-        Geometry::from_geojson(&geometry)
+        Ok(Geometry::new(GeometryForm::from_compact_value(value)?))
+    }
+
+    /// Build from a `GeoProperty` value as written: a `GeoJSON` geometry
+    /// object, or a string holding one, which ETSI GS CIM 009 v1.9.1 clause
+    /// 4.7.2 accepts "if and only if it can be parsed into a JSON Object" that
+    /// is a valid RFC 7946 geometry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GeometryError::EncodedNotJson`] for a string that is no JSON
+    /// text, and otherwise the errors of [`Geometry::from_geojson_value`].
+    pub fn from_written_value(value: &Value) -> Result<Geometry, GeometryError> {
+        match value {
+            Value::String(text) => Geometry::from_geojson_value(&serde_json::from_str::<Value>(text).map_err(GeometryError::EncodedNotJson)?),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => Geometry::from_geojson_value(value),
+        }
     }
 
     /// Build from the separate geometry type and coordinates used by NGSI-LD
@@ -133,6 +132,13 @@ impl Geometry {
         GeoJsonGeometry::new(self.form.to_geojson())
     }
 
+    /// Render as the compact `GeoJSON` geometry object, the content of the JSON
+    /// literal an expanded `GeoProperty` value holds.
+    #[must_use]
+    pub fn to_geojson_value(&self) -> Value {
+        Value::from(&self.form.to_geojson())
+    }
+
     /// Axis-aligned bounding rectangle of the horizontal projection, or `None`
     /// for a geometry with no coordinates, such as a Polygon with no rings.
     #[must_use]
@@ -169,11 +175,14 @@ impl PartialEq for Geometry {
     }
 }
 
-impl TryFrom<GeoJsonGeometry> for Geometry {
+// A decoded geometry is read off the JSON tree serde buffered for it rather
+// than through the `geojson` crate's own decoding, which would buffer the whole
+// geometry once more for its foreign members before reading a position.
+impl TryFrom<Value> for Geometry {
     type Error = GeometryError;
 
-    fn try_from(geometry: GeoJsonGeometry) -> Result<Geometry, GeometryError> {
-        Geometry::from_geojson(&geometry)
+    fn try_from(value: Value) -> Result<Geometry, GeometryError> {
+        Geometry::from_geojson_value(&value)
     }
 }
 
@@ -188,12 +197,11 @@ impl Serialize for Geometry {
 
 impl<V: JsonValue> ToJsonValue<V> for Geometry {
     fn to_json_value(&self) -> V {
-        // `From<&GeometryValue> for serde_json::Value` is infallible, so unlike
-        // a `serde_json::to_value` round trip there is no `Result` to discard
+        // The GeoJSON object is built infallibly, so unlike a
+        // `serde_json::to_value` round trip there is no `Result` to discard
         // inside this signature, which has no way to report a failure. The
         // second hop is `jsonld-expandable-core`'s own `serde_json` backend.
-        let value: &GeometryValue = &self.form.to_geojson();
-        ToJsonValue::<V>::to_json_value(&Value::from(value))
+        ToJsonValue::<V>::to_json_value(&self.to_geojson_value())
     }
 }
 
@@ -218,7 +226,15 @@ mod tests {
             other @ (GeometryError::LineString { .. }
             | GeometryError::LinearRing { .. }
             | GeometryError::Misnested { .. }
-            | GeometryError::GeojsonValue(_)
+            | GeometryError::NotAnObject
+            | GeometryError::EncodedNotJson(_)
+            | GeometryError::MissingType
+            | GeometryError::UnknownType(_)
+            | GeometryError::MissingCoordinates
+            | GeometryError::MissingGeometries
+            | GeometryError::InvalidBbox
+            | GeometryError::NotAnArray { .. }
+            | GeometryError::NonNumericOrdinate { .. }
             | GeometryError::NonFiniteCoordinate
             | GeometryError::GeometryCollectionUnsupported) => {
                 panic!("expected a refused position, got {other:?}")
@@ -402,7 +418,7 @@ mod tests {
     #[test]
     fn a_malformed_geometry_value_is_a_typed_error() {
         let error = Geometry::from_geojson_value(&serde_json::json!({ "type": "Nonsense", "coordinates": [] })).expect_err("must reject");
-        assert!(matches!(error, GeometryError::GeojsonValue(_)), "got {error:?}");
+        assert!(matches!(error, GeometryError::UnknownType(_)), "got {error:?}");
     }
 
     #[test]
@@ -448,5 +464,22 @@ mod tests {
         let geometry = Geometry::from_geojson_value(&elevated_point_json()).expect("elevated point parses");
         let rendered: Value = ToJsonValue::<Value>::to_json_value(&geometry);
         pretty_assertions::assert_eq!(rendered, elevated_point_json());
+    }
+
+    /// Clause 4.7.2: a string is a geometry if and only if it parses into a
+    /// valid geometry object.
+    #[test]
+    fn a_written_string_is_a_geometry_only_when_it_parses_into_one() {
+        let encoded = Value::String(point_json().to_string());
+        pretty_assertions::assert_eq!(
+            Geometry::from_written_value(&encoded).expect("an encoded point"),
+            Geometry::from_geojson_value(&point_json()).expect("a point")
+        );
+        let not_json = Geometry::from_written_value(&Value::String("POINT(1 2)".to_owned())).expect_err("no JSON text");
+        assert!(matches!(not_json, GeometryError::EncodedNotJson(_)), "{not_json:?}");
+        let not_an_object = Geometry::from_written_value(&Value::String("[1, 2]".to_owned())).expect_err("no object");
+        assert!(matches!(not_an_object, GeometryError::NotAnObject), "{not_an_object:?}");
+        let not_a_geometry = Geometry::from_written_value(&Value::String("{\"a\": 1}".to_owned())).expect_err("no geometry");
+        assert!(matches!(not_a_geometry, GeometryError::MissingType), "{not_a_geometry:?}");
     }
 }

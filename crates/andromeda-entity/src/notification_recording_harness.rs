@@ -13,37 +13,44 @@ use crate::{
     EntityService,
     NotificationWriteConfig,
     batch::execution::BatchExecutionConfig,
-    building_subscription_fixture::{BUILDING_TYPE_IRI, building_subscription_cache, subscription_key},
-    change_notifier::ChangeNotifier,
-    entity_snapshot::EntitySnapshot,
-    error::EntityError,
+    building_subscription_fixture::{
+        BUILDING_TYPE_IRI,
+        building_subscription_cache,
+        entity_updated_building_subscription_cache,
+        subscription_key,
+        twin_building_subscription_cache,
+    },
+    change_notifier::{ChangeNotifier, SubscriptionMatching},
+    change_sink::EntityChangeSink,
+    config::EntityConfig,
+    deletion_outline::DeletionWatchers,
+    deletion_outline_fixture::{PayloadOutline, ProbeAnswer},
     port::{
         attribute_history::AttributeDatasetHistory,
-        blocking_executor::{BlockingExecutor, BlockingTask},
+        blocking_executor::BlockingExecutor,
+        deletion_outline::DeletionOutlineReader,
         reader::EntityReader,
         retry_delay::RetryDelay,
         service_ports::EntityServicePorts,
     },
+    recording_ports::{ImmediateRetry, RecordingCommitter, SnapshotReader, UnusedAttributeHistory, UnusedBlockingExecutor},
 };
-use andromeda_context_commit::{
-    atomic_write::AtomicWrite,
-    commit_replay::CommitReplay,
-    committer::{CommitFuture, ContextCommitter},
-    write_outcome::WriteOutcome,
-};
+use andromeda_context_commit::{atomic_write::AtomicWrite, change_event::ChangeEvent, committer::ContextCommitter, context_change_event::ContextChangeEvent};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{expanded::attribute_change::AttributeChangeKind, notification::SysAttrsSnapshot};
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use andromeda_ngsi_ld_model::expanded::attribute_change::AttributeChangeKind;
+use andromeda_ngsi_ld_representation::payload_census::EntityPayloadBudget;
+use andromeda_subscription::cache::SubscriptionCache;
+use andromeda_tenancy::tenant_ref::TenantRef;
+use chrono::Utc;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     num::NonZeroUsize,
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::{Arc, Mutex, atomic::AtomicUsize},
 };
 
 /// The entity every operation under test reads, mutates and writes back.
@@ -55,141 +62,6 @@ pub(crate) const NAME_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/
 /// The expanded IRI of the sub-attribute the stored `category` carries, used to
 /// prove a whole-instance overwrite drops an unmentioned sub-attribute.
 pub(crate) const ACCURACY_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/accuracy";
-
-/// A committer that lands every write as an update and keeps the writes it saw.
-struct RecordingCommitter {
-    recorded: Arc<Mutex<Vec<AtomicWrite>>>,
-}
-
-impl RecordingCommitter {
-    fn new() -> (RecordingCommitter, Arc<Mutex<Vec<AtomicWrite>>>) {
-        let recorded: Arc<Mutex<Vec<AtomicWrite>>> = Arc::new(Mutex::new(Vec::new()));
-        (
-            RecordingCommitter {
-                recorded: Arc::clone(&recorded), // clone: the committer and the test both hold the recording.
-            },
-            recorded,
-        )
-    }
-}
-
-impl ContextCommitter for RecordingCommitter {
-    fn commit(&self, _target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        // The outcome mirrors each write's mutation so a batch of inserts settles
-        // as created and everything else as updated, which is what the batch
-        // coordinator reads back to build its per-entity result.
-        let outcomes: Vec<WriteOutcome> = writes
-            .iter()
-            .map(|write| {
-                if write.entity.is_insert() {
-                    WriteOutcome::Created
-                } else {
-                    WriteOutcome::Updated
-                }
-            })
-            .collect();
-        self.recorded.lock().expect("recording mutex is not poisoned").extend(writes);
-        Box::pin(async move { Ok(outcomes) })
-    }
-
-    fn commit_replayed(&self, _target: &ContextTarget, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        panic!("the durable-match recording tests never replay a commit")
-    }
-}
-
-/// A reader that always hands back one Building snapshot for whatever is asked,
-/// so both a single read-modify-write and a batch one have a payload to compute
-/// against.
-struct SnapshotReader {
-    payload: Value,
-    modified_at: DateTime<Utc>,
-}
-
-impl SnapshotReader {
-    fn sys_attrs(&self) -> SysAttrsSnapshot {
-        SysAttrsSnapshot {
-            created_at: self.modified_at,
-            modified_at: self.modified_at,
-            expires_at: None,
-        }
-    }
-}
-
-#[async_trait]
-impl EntityReader for SnapshotReader {
-    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Value>, EntityError> {
-        Ok(Some(self.payload.clone())) // clone: the caller owns its copy while the reader keeps serving the snapshot.
-    }
-
-    async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
-        // clone: each requested id gets its own owned copy of the fixture.
-        Ok(ids.iter().map(|id| (id.clone(), self.payload.clone())).collect())
-    }
-
-    async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
-        Ok(Some(EntitySnapshot {
-            payload: self.payload.clone(), // clone: each read yields an owned snapshot the writer mutates.
-            modified_at: self.modified_at,
-        }))
-    }
-
-    async fn get_snapshot_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
-        Ok(ids
-            .iter()
-            .map(|id| {
-                (
-                    id.clone(), // clone: the map owns each requested id
-                    EntitySnapshot {
-                        payload: self.payload.clone(), // clone: each entry owns its snapshot
-                        modified_at: self.modified_at,
-                    },
-                )
-            })
-            .collect())
-    }
-
-    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-        Ok(Some(self.sys_attrs()))
-    }
-
-    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
-        Ok(ids.iter().map(|id| (id.clone(), self.sys_attrs())).collect())
-    }
-}
-
-/// A retry delay that never waits, because the recording committer never loses.
-struct ImmediateRetry;
-
-#[async_trait]
-impl RetryDelay for ImmediateRetry {
-    async fn wait(&self, _delay: Duration) {}
-}
-
-/// A blocking executor the operations under test never reach.
-struct UnusedBlockingExecutor;
-
-#[async_trait]
-impl BlockingExecutor for UnusedBlockingExecutor {
-    async fn execute(&self, _tasks: Vec<Box<dyn BlockingTask>>, _concurrency: NonZeroUsize) -> Result<(), EntityError> {
-        Ok(())
-    }
-}
-
-/// An attribute-history port only `deleteAttr` with `DatasetSelection::All`
-/// consults, which these tests avoid.
-struct UnusedAttributeHistory;
-
-#[async_trait]
-impl AttributeDatasetHistory for UnusedAttributeHistory {
-    async fn dataset_identifiers(
-        &self,
-        _target: &ContextTarget,
-        _entity: &Identifier,
-        _attribute: &AttributeName,
-    ) -> Result<Vec<Option<Identifier>>, EntityError> {
-        Ok(Vec::new())
-    }
-}
 
 /// The Building payload the reader returns, expanded and carrying one `category`
 /// Property so the update, partial-update, delete and replace operations have an
@@ -213,35 +85,158 @@ pub(crate) fn building_snapshot() -> Value {
 /// committer, with the one Building subscription in its cache, returning the
 /// shared recording buffer.
 pub(crate) async fn recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicWrite>>>) {
-    recording_service_with(Some(NotificationWriteConfig {
-        subscription_cache: building_subscription_cache().await,
-    }))
+    let (service, recorded, _payload_reads) = recording_service_with(
+        ChangeNotifier::new(
+            None,
+            SubscriptionMatching::AtCommit(NotificationWriteConfig {
+                subscription_cache: building_subscription_cache().await,
+            }),
+        ),
+        ProbeAnswer::Answers(DeletionWatchers::Possible),
+        EntityConfig::default().payload_budget(),
+    );
+    (service, recorded)
+}
+
+/// The default payload budget with each geometry held to `positions`
+/// positions.
+pub(crate) fn geometry_budget(positions: usize) -> EntityPayloadBudget {
+    EntityPayloadBudget {
+        geometry_positions: GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("the fixture budget admits a position")),
+        ..EntityConfig::default().payload_budget()
+    }
+}
+
+/// An entity service of a live-delivery broker admitting payloads within
+/// `budget`.
+pub(crate) fn budgeted_recording_service(budget: EntityPayloadBudget) -> EntityService {
+    let (service, _recorded, _payload_reads) = recording_service_with(
+        ChangeNotifier::new(None, SubscriptionMatching::Absent),
+        ProbeAnswer::Answers(DeletionWatchers::Possible),
+        budget,
+    );
+    service
+}
+
+/// An entity service under observation: what it committed, how many whole
+/// payloads it read, and every change it published.
+pub(crate) struct ObservedService {
+    /// The service under test.
+    pub(crate) service: EntityService,
+    /// The writes it committed.
+    pub(crate) recorded: Arc<Mutex<Vec<AtomicWrite>>>,
+    /// How many whole payloads it read.
+    pub(crate) payload_reads: Arc<AtomicUsize>,
+    /// The changes it published.
+    pub(crate) published: Arc<Mutex<Vec<ChangeEvent>>>,
+}
+
+/// A change sink keeping every change it is handed.
+struct RecordingSink {
+    published: Arc<Mutex<Vec<ChangeEvent>>>,
+}
+
+impl EntityChangeSink for RecordingSink {
+    fn publish(&self, event: ContextChangeEvent) {
+        self.published.lock().expect("recording mutex is not poisoned").push(event.event);
+    }
+}
+
+/// An entity service of a durable-delivery broker whose deletion-watcher probe
+/// answers `probe`, with the subscriptions `cached` names in its cache.
+pub(crate) async fn probing_recording_service(probe: ProbeAnswer, cached: CachedSubscription) -> ObservedService {
+    let subscription_cache = cache_holding(cached).await;
+    observed_service(probe, SubscriptionMatching::AtCommit(NotificationWriteConfig { subscription_cache }))
+}
+
+/// An entity service of a live-delivery broker whose deletion-watcher probe
+/// answers `probe`, with the subscriptions `cached` names in its cache.
+pub(crate) async fn probing_live_service(probe: ProbeAnswer, cached: CachedSubscription) -> ObservedService {
+    observed_service(probe, SubscriptionMatching::AtDelivery(cache_holding(cached).await))
+}
+
+/// A subscription cache holding what `cached` names.
+async fn cache_holding(cached: CachedSubscription) -> Arc<SubscriptionCache> {
+    match cached {
+        CachedSubscription::Building => building_subscription_cache().await,
+        CachedSubscription::BuildingTwice => twin_building_subscription_cache().await,
+        CachedSubscription::BuildingOnEntityUpdated => entity_updated_building_subscription_cache().await,
+        CachedSubscription::None => Arc::new(SubscriptionCache::new(TenantRef::UnnamedDefault)),
+    }
+}
+
+/// An entity service matching as `matching` says, whose deletion-watcher
+/// probe answers `probe`, observed through what it commits, reads and
+/// publishes.
+fn observed_service(probe: ProbeAnswer, matching: SubscriptionMatching) -> ObservedService {
+    let published = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        published: Arc::clone(&published), // clone: the sink and the test both hold the published changes
+    };
+    let notifier = ChangeNotifier::new(Some(Arc::new(sink) as Arc<dyn EntityChangeSink>), matching);
+    let (service, recorded, payload_reads) = recording_service_with(notifier, probe, EntityConfig::default().payload_budget());
+    ObservedService {
+        service,
+        recorded,
+        payload_reads,
+        published,
+    }
+}
+
+/// Which subscription a probing service's cache holds.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CachedSubscription {
+    /// The one Building subscription.
+    Building,
+    /// Two Building subscriptions, each matching every change of the
+    /// Building.
+    BuildingTwice,
+    /// One Building subscription listening for `entityUpdated` alone.
+    BuildingOnEntityUpdated,
+    /// None at all, as on a replica that loaded the tenant before another
+    /// replica created the subscription.
+    None,
 }
 
 /// An entity service of a live-delivery broker wired to the recording
 /// committer: it records no durable match, because its notification worker
 /// evaluates every change in-process.
 pub(crate) fn live_recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicWrite>>>) {
-    recording_service_with(None)
+    let (service, recorded, _payload_reads) = recording_service_with(
+        ChangeNotifier::new(None, SubscriptionMatching::Absent),
+        ProbeAnswer::Answers(DeletionWatchers::Possible),
+        EntityConfig::default().payload_budget(),
+    );
+    (service, recorded)
 }
 
-/// An entity service over the recording committer that records durable matches
-/// through `notifications` when given.
-fn recording_service_with(notifications: Option<NotificationWriteConfig>) -> (EntityService, Arc<Mutex<Vec<AtomicWrite>>>) {
+/// An entity service over the recording committer that notifies through
+/// `notifier` and admits payloads within `budget`.
+fn recording_service_with(
+    notifier: ChangeNotifier,
+    probe: ProbeAnswer,
+    budget: EntityPayloadBudget,
+) -> (EntityService, Arc<Mutex<Vec<AtomicWrite>>>, Arc<AtomicUsize>) {
     let (committer, recorded) = RecordingCommitter::new();
+    let payload_reads = Arc::new(AtomicUsize::new(0));
     let service = EntityService::new(
         EntityServicePorts {
             reader: Arc::new(SnapshotReader {
                 payload: building_snapshot(),
                 modified_at: Utc::now(),
+                payload_reads: Arc::clone(&payload_reads), // clone: the test reads the count the reader keeps
             }) as Arc<dyn EntityReader>,
             blocking_executor: Arc::new(UnusedBlockingExecutor) as Arc<dyn BlockingExecutor>,
             retry_delay: Arc::new(ImmediateRetry) as Arc<dyn RetryDelay>,
             attribute_history: Arc::new(UnusedAttributeHistory) as Arc<dyn AttributeDatasetHistory>,
             writes: Arc::new(committer) as Arc<dyn ContextCommitter>,
+            deletion_outline: Arc::new(PayloadOutline {
+                payload: building_snapshot(),
+                probe,
+            }) as Arc<dyn DeletionOutlineReader>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds"),
-        Arc::new(ChangeNotifier::new(None, notifications)),
+        Arc::new(notifier),
         BatchExecutionConfig {
             chunk_concurrency: 1,
             chunk_write_concurrency: 1,
@@ -252,8 +247,9 @@ fn recording_service_with(notifications: Option<NotificationWriteConfig>) -> (En
             prepare_blocking_threshold: 1024,
             async_side_effect_threshold: None,
         },
+        budget,
     );
-    (service, recorded)
+    (service, recorded, payload_reads)
 }
 
 /// The ordinary branch target used by the recording fixtures.
@@ -302,4 +298,22 @@ pub(crate) fn assert_single_match(write: &AtomicWrite, expected: &[(AttributeCha
     let names: Vec<(AttributeChangeKind, AttributeName)> = expected.iter().map(|(kind, changed)| (*kind, attribute_name(changed))).collect();
     let expected: HashSet<(AttributeChangeKind, &AttributeName)> = names.iter().map(|(kind, name)| (*kind, name)).collect();
     assert_eq!(actual, expected);
+}
+
+/// Assert the write is owed one match for each of the two Building
+/// subscriptions, sharing one notified state and one previous state: the
+/// states a change is notified with are built once, however many
+/// subscriptions it matched.
+pub(crate) fn assert_matches_share_their_snapshots(write: &AtomicWrite) {
+    let [first, second] = write.subscription_matches.as_slice() else {
+        panic!("the change matches both Building subscriptions: {:?}", write.subscription_matches);
+    };
+    let (Some(first_state), Some(second_state)) = (&first.entity_snapshot, &second.entity_snapshot) else {
+        panic!("both matches carry the notified state");
+    };
+    assert!(Arc::ptr_eq(first_state, second_state), "the matches share one notified state");
+    let (Some(first_previous), Some(second_previous)) = (&first.previous_snapshot, &second.previous_snapshot) else {
+        panic!("both matches carry the previous state");
+    };
+    assert!(Arc::ptr_eq(first_previous, second_previous), "the matches share one previous state");
 }

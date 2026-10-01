@@ -1,8 +1,11 @@
 //! Entity execution and background-operation configuration.
 
 use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
+use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+use andromeda_ngsi_ld_representation::payload_census::EntityPayloadBudget;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 use thiserror::Error;
 use toml_comment::TomlComment;
 
@@ -16,6 +19,13 @@ use toml_comment::TomlComment;
 /// claimed job, matching the notifications it still owes, and the settling
 /// statement itself -- before another worker could reclaim the job.
 pub const PENDING_SIDE_EFFECTS_LEASE_MARGIN: Duration = Duration::from_secs(5);
+
+/// The default most JSON values one written entity may hold outside its
+/// geometries and JSON literals.
+const DEFAULT_MAX_ENTITY_JSON_VALUES: NonZeroUsize = NonZeroUsize::MIN.saturating_add(99_999);
+
+/// The default most positions one geometry may hold.
+const DEFAULT_MAX_GEOMETRY_POSITIONS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(99_999);
 
 /// Invalid entity execution configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -140,6 +150,19 @@ pub struct EntityConfig {
     /// (`"5m"`).
     #[toml_comment(inline)]
     pub pending_side_effects_cleanup_interval: HumanDuration,
+    /// Maximum number of JSON values one written entity may hold outside its
+    /// geometries and JSON literals, counted on the compact payload before it
+    /// is expanded. JSON-LD expansion turns every value into an object, so
+    /// this bounds what an entity costs once expanded; an entity over it is
+    /// answered 413. Every replica of a deployment runs the same value.
+    #[toml_comment(inline)]
+    pub max_entity_json_values: NonZeroUsize,
+    /// Maximum number of positions one `GeoProperty` geometry may hold, in a
+    /// written entity and in a query, subscription or registration geometry.
+    /// A written geometry over it is answered 413, a query's 403
+    /// `TooComplexQuery`. Every replica of a deployment runs the same value.
+    #[toml_comment(inline)]
+    pub max_geometry_positions: NonZeroUsize,
 }
 
 impl Default for EntityConfig {
@@ -160,11 +183,30 @@ impl Default for EntityConfig {
             pending_side_effects_base_backoff: HumanDuration::from_secs(2),
             pending_side_effects_dead_letter_after: HumanDuration::from_secs(604_800),
             pending_side_effects_cleanup_interval: HumanDuration::from_secs(300),
+            max_entity_json_values: DEFAULT_MAX_ENTITY_JSON_VALUES,
+            max_geometry_positions: DEFAULT_MAX_GEOMETRY_POSITIONS,
         }
     }
 }
 
 impl EntityConfig {
+    /// The budget a written entity payload is admitted under.
+    #[must_use]
+    pub const fn payload_budget(&self) -> EntityPayloadBudget {
+        EntityPayloadBudget {
+            json_values: JsonValueLimit::new(self.max_entity_json_values),
+            geometry_positions: GeometryPositionLimit::new(self.max_geometry_positions),
+        }
+    }
+
+    /// The limits a geometry standing on its own is admitted under: the
+    /// reference geometry of a query or a subscription, or the geometry of a
+    /// registration.
+    #[must_use]
+    pub const fn geometry_census_limits(&self) -> GeometryCensusLimits {
+        self.payload_budget().geometry_census_limits()
+    }
+
     /// Validate the entity policy and execution limits.
     ///
     /// # Errors
@@ -253,7 +295,7 @@ mod tests {
     use crate::config::{EntityConfig, EntityConfigError};
     use andromeda_configuration_scalars::human_duration::HumanDuration;
     use pretty_assertions::assert_eq;
-    use std::time::Duration;
+    use std::{num::NonZeroUsize, time::Duration};
 
     fn valid_config() -> EntityConfig {
         EntityConfig {
@@ -272,7 +314,24 @@ mod tests {
             pending_side_effects_base_backoff: HumanDuration::from_secs(2),
             pending_side_effects_dead_letter_after: HumanDuration::from_secs(604_800),
             pending_side_effects_cleanup_interval: HumanDuration::from_secs(300),
+            max_entity_json_values: NonZeroUsize::MIN.saturating_add(99_999),
+            max_geometry_positions: NonZeroUsize::MIN.saturating_add(99_999),
         }
+    }
+
+    #[test]
+    fn the_default_budgets_admit_one_hundred_thousand_values_and_positions() {
+        let budget = EntityConfig::default().payload_budget();
+        assert_eq!(budget.json_values.get(), 100_000);
+        assert_eq!(budget.geometry_positions.get(), 100_000);
+    }
+
+    #[test]
+    fn the_budgets_parse_from_toml_and_a_zero_budget_does_not() {
+        let rendered = toml::to_string(&EntityConfig::default()).expect("the defaults render");
+        let parsed: EntityConfig = toml::from_str(&rendered.replace("max_geometry_positions = 100000", "max_geometry_positions = 250000")).expect("parses");
+        assert_eq!(parsed.max_geometry_positions.get(), 250_000);
+        assert!(toml::from_str::<EntityConfig>(&rendered.replace("max_entity_json_values = 100000", "max_entity_json_values = 0")).is_err());
     }
 
     #[test]

@@ -7,8 +7,9 @@
 //! carry are both family-decided. Everything the family does not name as its
 //! value member is metadata and is kept verbatim.
 
-use crate::{error::TemporalError, temporal_invariant::TemporalInvariant};
+use crate::error::TemporalError;
 use andromeda_context_commit::submission_refusal::{RelationshipTargetMember, SubmissionRefusal};
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     time_value::TimeValue,
@@ -128,19 +129,21 @@ fn relationship_value(instance: &Value) -> Result<TemporalValue, TemporalError> 
     }
 }
 
-/// Decode an expanded or encoded `GeoProperty` value.
+/// Decode a `GeoProperty` value held as a JSON literal, encoded as a JSON
+/// string (clause 4.7.2), or expanded into a node.
 fn geometry_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
     let node = first_member(instance, expanded_properties::VALUE.as_str()).ok_or_else(|| TemporalError::from(SubmissionRefusal::GeoPropertyMissingValue))?;
-    let geometry = if let Some(value) = node.get("@value") {
-        match value.as_str() {
-            Some(raw) => serde_json::from_str(raw).map_err(|source| TemporalError::from(SubmissionRefusal::GeoPropertyGeoJson(source)))?,
-            None => Value::clone(value), // clone: the intent owns the geometry value.
+    let geometry = match node.get("@value") {
+        Some(Value::String(raw)) => {
+            let parsed: Value = serde_json::from_str(raw).map_err(|source| TemporalError::from(SubmissionRefusal::GeoPropertyGeoJson(source)))?;
+            Geometry::from_geojson_value(&parsed).ok()
         }
-    } else {
-        let geometry = expanded_geo_node_to_geometry(node).ok_or_else(|| TemporalError::from(SubmissionRefusal::GeoPropertyGeometryInvalid))?;
-        serde_json::to_value(geometry.to_geojson()).map_err(|error| TemporalError::from(TemporalInvariant::GeometrySerialization(error)))?
+        Some(literal) => Geometry::from_geojson_value(literal).ok(),
+        None => expanded_geo_node_to_geometry(node),
     };
-    Ok(TemporalValue::Geometry(geometry))
+    geometry
+        .map(TemporalValue::Geometry)
+        .ok_or_else(|| TemporalError::from(SubmissionRefusal::GeoPropertyGeometryInvalid))
 }
 
 /// Decode one or many `VocabProperty` identifiers.
@@ -385,6 +388,7 @@ fn first_member<'a>(instance: &'a Value, key: &str) -> Option<&'a Value> {
 #[cfg(test)]
 mod tests {
     use crate::attribute_instance_value::{extract_temporal_value, object_list_target_iri};
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
     use andromeda_ngsi_ld_model::temporal::TemporalValue;
     use andromeda_ngsi_ld_query::filter::{quoting::Quoting, scalar::Scalar};
@@ -704,5 +708,66 @@ mod tests {
             let bound = NgsiLdTime::normalise(operand).expect("a normalisable time of day").to_string();
             pretty_assertions::assert_eq!(recorded(literal), TemporalValue::String(bound), "{literal}");
         }
+    }
+
+    /// The Polygon with a hole every geometry decoding below must agree on.
+    fn polygon_with_a_hole() -> Value {
+        json!({
+            "type": "Polygon",
+            "coordinates": [
+                [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0]],
+                [[1.0, 1.0], [1.0, 2.0], [2.0, 2.0], [1.0, 1.0]]
+            ]
+        })
+    }
+
+    /// The geometry a `GeoProperty` instance holding `node` as its value is
+    /// recorded as.
+    fn recorded_geometry(node: &Value) -> Option<Geometry> {
+        let instance = json!({expanded_properties::VALUE.as_str(): [node]});
+        match extract_temporal_value(&instance, AttributeType::GeoProperty).expect("a valid GeoProperty") {
+            TemporalValue::Geometry(geometry) => Some(geometry),
+            TemporalValue::Number(_)
+            | TemporalValue::String(_)
+            | TemporalValue::Boolean(_)
+            | TemporalValue::Object(_)
+            | TemporalValue::DateTime(_)
+            | TemporalValue::Uri(_)
+            | TemporalValue::Scopes(_)
+            | TemporalValue::Tombstone { .. } => None,
+        }
+    }
+
+    /// The geometry the fixture Polygon was written as.
+    fn written_geometry() -> Geometry {
+        Geometry::from_geojson_value(&polygon_with_a_hole()).expect("the fixture is a valid Polygon")
+    }
+
+    #[test]
+    fn an_expanded_geo_property_decodes_into_its_geometry() {
+        let point = |x: f64, y: f64| json!({"@list": [{"@value": x}, {"@value": y}]});
+        let node = json!({
+            "@type": ["https://purl.org/geojson/vocab#Polygon"],
+            "https://purl.org/geojson/vocab#coordinates": [{"@list": [
+                {"@list": [point(0.0, 0.0), point(4.0, 0.0), point(4.0, 4.0), point(0.0, 4.0), point(0.0, 0.0)]},
+                {"@list": [point(1.0, 1.0), point(1.0, 2.0), point(2.0, 2.0), point(1.0, 1.0)]}
+            ]}]
+        });
+        pretty_assertions::assert_eq!(recorded_geometry(&node), Some(written_geometry()));
+    }
+
+    /// A `GeoProperty` value written as a JSON literal: the `GeoJSON` object
+    /// kept whole.
+    #[test]
+    fn a_literal_geo_property_decodes_into_its_geometry() {
+        let node = json!({"@type": "@json", "@value": polygon_with_a_hole()});
+        pretty_assertions::assert_eq!(recorded_geometry(&node), Some(written_geometry()));
+    }
+
+    /// Clause 4.7.2: a geometry may arrive encoded as a JSON string.
+    #[test]
+    fn a_string_encoded_geo_property_decodes_into_its_geometry() {
+        let node = json!({"@value": polygon_with_a_hole().to_string()});
+        pretty_assertions::assert_eq!(recorded_geometry(&node), Some(written_geometry()));
     }
 }

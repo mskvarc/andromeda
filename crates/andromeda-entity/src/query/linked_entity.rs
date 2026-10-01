@@ -364,6 +364,7 @@ fn collect_from_attribute(attr: &Attribute, visited: &IndexSet<Identifier>, seen
 #[cfg(test)]
 mod tests {
     use crate::{
+        config::EntityConfig,
         entity_snapshot::EntitySnapshot,
         port::{query::EntityQueryStore, reader::EntityReader},
         query::{linked_entity::*, remote_linked::RemoteLinkedEntities},
@@ -583,6 +584,7 @@ mod tests {
             SpatialAcceleration::StoreVerified,
             TenantRef::UnnamedDefault,
             remote_linked,
+            EntityConfig::default().geometry_census_limits(),
         )
     }
 

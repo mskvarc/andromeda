@@ -59,7 +59,7 @@ pub(crate) async fn batch_upsert(
         items,
         context,
         errors: mut entity_errors,
-    } = parse_batch_entities(&batch_body, &uri)?;
+    } = parse_batch_entities(&batch_body, &uri).await?;
     // Clause 5.6.8.4 runs clause 5.6.1, or clause 5.6.2 and a replacement where
     // the Entity already exists, "for each of the NGSI-LD Entities included in
     // the input Array": every entity answers for itself, so the clause 5.5.4

@@ -163,7 +163,7 @@ pub(super) fn supervise_tasks(
     // clone: both subscription stores intern attribute lists through the tenant's one dictionary.
     let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
     let csource_subscriptions = Arc::new(CsourceSubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
-    let notification_processor = compose_notification_processor(storage, &services.state.forwarding, transport, &entity_subscriptions);
+    let notification_processor = compose_notification_processor(storage, &services.state.forwarding, transport, &entity_subscriptions, &config.entity);
     // clone: the periodic sweep subscribes to the same change stream so a new or
     // amended timeInterval subscription wakes it, while the event-driven workers
     // own the sender.

@@ -46,6 +46,7 @@ impl EntityMapHttpClassify for EntityError {
             EntityError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, self.to_string()),
             EntityError::Contention { .. } => ClassifiedReport::public(NgsiLdErrorType::Conflict, self.to_string()),
             EntityError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
+            EntityError::PayloadBudget(source) => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, source.to_string()),
             EntityError::JsonLd(source) => classify_jsonld_error(source),
             EntityError::Query(source) => classify_query_error(source),
             EntityError::Request(source) => classify_parameter_error(source),
@@ -92,6 +93,7 @@ impl EntityMapHttpClassify for TemporalError {
             // The delete-by-query bound: an entity-map path never triggers it,
             // but the classification is total over the shared error type.
             TemporalError::TooManyResults { .. } => ClassifiedReport::public(NgsiLdErrorType::TooManyResults, self.to_string()),
+            TemporalError::PayloadBudget(source) => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, source.to_string()),
             TemporalError::JsonLd(source) => classify_jsonld_error(source),
             TemporalError::Query(source) => classify_query_error(source),
             TemporalError::Request(source) => classify_parameter_error(source),

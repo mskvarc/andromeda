@@ -163,10 +163,6 @@ async fn context(_context: ContextUrl) -> StatusCode {
     StatusCode::OK
 }
 
-async fn envelope(_envelope: NgsiLdRequestEnvelope) -> StatusCode {
-    StatusCode::OK
-}
-
 async fn declared_length(_length: DeclaredBodyLength) -> StatusCode {
     StatusCode::OK
 }
@@ -207,7 +203,6 @@ fn nested_api() -> Router {
         .route("/subscriptions", get(tenant))
         .route("/csourceSubscriptions", get(snapshot))
         .route("/csourceRegistrations", get(context))
-        .route("/entityOperations/query", post(envelope))
         .route("/entityOperations/merge", post(envelope_uri))
         .route("/jsonldContexts", post(declared_length))
         .route("/entityOperations/upsert", post(batch))
@@ -243,7 +238,6 @@ fn refused_requests() -> Result<Vec<Request<Body>>, Box<dyn Error>> {
         request(Method::GET, "/subscriptions?limit=5", &[("ngsild-tenant", "")], "")?,
         request(Method::GET, "/csourceSubscriptions", &[("ngsild-snapshot", "not-a-urn")], "")?,
         request(Method::GET, "/csourceRegistrations?type=Vehicle", &malformed_link, "")?,
-        request(Method::POST, "/entityOperations/query", &malformed_link, "")?,
         request(Method::POST, "/jsonldContexts", &[("content-length", "abc")], "")?,
         request(
             Method::POST,

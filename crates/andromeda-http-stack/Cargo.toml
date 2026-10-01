@@ -19,6 +19,7 @@ andromeda-configuration-scalars.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-tenancy.workspace = true
+andromeda-ngsi-ld-number.workspace = true
 axum = "0.8.9"
 axum-helmet = "1.0.2"
 axum-prometheus = "0.10.1"

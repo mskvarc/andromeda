@@ -6,6 +6,7 @@ use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::expanded::mutation::error::ExpandedEntityError;
 use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_representation::payload_census::PayloadBudgetExceeded;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use derive_more::IsVariant;
@@ -59,6 +60,10 @@ pub enum EntityError {
     /// The selected storage capability cannot answer the operation safely.
     #[error("entity operation is not supported: {0}")]
     OperationNotSupported(EntityOperationUnsupported),
+    /// The written payload exceeds the budget an entity is admitted under
+    /// before it is expanded (clause 6.3.2, "Request Entity too large").
+    #[error(transparent)]
+    PayloadBudget(#[from] PayloadBudgetExceeded),
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),

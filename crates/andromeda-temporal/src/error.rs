@@ -11,6 +11,7 @@ use andromeda_entity::error::EntityError;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::temporal::values::TemporalValuesError;
+use andromeda_ngsi_ld_representation::payload_census::PayloadBudgetExceeded;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use thiserror::Error;
@@ -43,6 +44,10 @@ pub enum TemporalError {
         /// The configured upper bound.
         maximum: u64,
     },
+    /// The written payload exceeds the budget an entity is admitted under
+    /// before it is expanded (clause 6.3.2, "Request Entity too large").
+    #[error(transparent)]
+    PayloadBudget(#[from] PayloadBudgetExceeded),
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),
@@ -164,6 +169,7 @@ impl TemporalError {
             | EntityError::AlreadyExists { .. }
             | EntityError::Contention { .. }
             | EntityError::OperationNotSupported(_)
+            | EntityError::PayloadBudget(_)
             | EntityError::JsonLd(_)
             | EntityError::Query(_)
             | EntityError::Request(_)

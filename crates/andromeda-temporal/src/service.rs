@@ -1,10 +1,10 @@
 //! Temporal lifecycle and query policy service.
 
 use crate::{
-    instance_limits::TemporalInstanceLimits,
     linked::candidates::TemporalLinkedCandidate,
     port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator, service_ports::TemporalServicePorts},
     remote_linked::RemoteTemporalLinkedSource,
+    service_limits::TemporalServiceLimits,
 };
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_entity::{
@@ -12,6 +12,7 @@ use andromeda_entity::{
     port::{reader::EntityReader, retry_delay::RetryDelay},
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
 use chrono::{DateTime, Utc};
@@ -45,15 +46,8 @@ pub struct TemporalService {
     /// Raises the notifications a change a temporal write makes to current
     /// state owes, exactly as a Core write's (clause 5.8.6).
     pub(crate) notifier: Arc<ChangeNotifier>,
-    /// The clause 6.3.10 page sizes of instance-returning reads.
-    pub(crate) instance_limits: TemporalInstanceLimits,
-    /// The maximum history instances one delete-by-query may remove before it is
-    /// refused with `TooManyResults` (the `temporal_delete_by_query` extension).
-    pub(crate) delete_by_query_max_matches: u64,
-    /// The maximum distinct aggregation groups one grouped aggregation may
-    /// produce before it is refused with `TooManyResults` (the
-    /// `temporal_aggregation_grouping` extension).
-    pub(crate) aggregation_grouping_max_groups: u64,
+    /// The bounds applied to what a request may ask of the service.
+    pub(crate) limits: TemporalServiceLimits,
     /// Resolution of `objectType`-annotated Linked Entities whose history this
     /// broker does not hold (clause 4.5.23.1). Absent in a composition without
     /// federation, which resolves joins purely against its own history.
@@ -137,9 +131,7 @@ impl TemporalService {
         ports: TemporalServicePorts,
         engine: JsonLdEngine,
         notifier: Arc<ChangeNotifier>,
-        instance_limits: TemporalInstanceLimits,
-        delete_by_query_max_matches: u64,
-        aggregation_grouping_max_groups: u64,
+        limits: TemporalServiceLimits,
         remote_temporal_linked: Option<Arc<dyn RemoteTemporalLinkedSource>>,
     ) -> TemporalService {
         let TemporalServicePorts {
@@ -159,9 +151,7 @@ impl TemporalService {
             retry_delay,
             engine,
             notifier,
-            instance_limits,
-            delete_by_query_max_matches,
-            aggregation_grouping_max_groups,
+            limits,
             remote_temporal_linked,
         }
     }
@@ -170,5 +160,12 @@ impl TemporalService {
     #[must_use]
     pub const fn engine(&self) -> &JsonLdEngine {
         &self.engine
+    }
+
+    /// The limits a temporal query's reference geometry stays within (clause
+    /// 5.5.6).
+    #[must_use]
+    pub const fn reference_limits(&self) -> GeometryCensusLimits {
+        self.limits.payload_budget.geometry_census_limits()
     }
 }

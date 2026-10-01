@@ -5,7 +5,7 @@
 //! are written in the same transaction as the mutation that raised them, which
 //! is what makes a notification crash-consistent with the change it describes.
 
-use crate::{NotificationWriteConfig, change_notifier::ChangeNotifier};
+use crate::{NotificationWriteConfig, change_notifier::ChangeNotifier, deletion_outline::DeletionWatchers, snapshot_supply::SnapshotSupply};
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
@@ -13,6 +13,7 @@ use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::ChangeO
 use andromeda_subscription::change_filters::{ChangedStates, narrow_by_change_filters};
 use chrono::Utc;
 use serde_json::Value;
+use std::sync::Arc;
 use tracing::debug;
 
 /// The entity a mutation changed, as subscription matching addresses it.
@@ -39,22 +40,48 @@ pub(crate) struct ChangedEntity<'a> {
 /// state is also what a `showChanges` notification reports.
 #[derive(Clone, Copy)]
 pub(crate) struct MutationSnapshots<'a> {
-    /// The entity as it stands after the mutation, absent when the mutation
-    /// carries no rendered state.
-    pub current: Option<&'a Value>,
+    /// The entity a matched subscription is filtered and notified with: the
+    /// state the mutation produced, or for a deletion the state it removed.
+    pub current: SnapshotSupply<'a>,
     /// The entity as it stood before the mutation, absent when there was no
     /// previous state.
-    pub previous: Option<&'a Value>,
+    pub previous: Option<&'a Arc<Value>>,
 }
 
 impl ChangeNotifier {
+    /// Whether this process's subscription cache holds a candidate for the
+    /// deletion `change` describes, so the state it removes must be read for
+    /// the notification.
+    ///
+    /// Asked whichever way this broker delivers: a durable match is recorded
+    /// at commit and a live one is matched by the notification worker against
+    /// the published change, and both render the removed state. The cache can
+    /// hold a subscription the shared store's probe does not yet show this
+    /// transaction, and a candidate here is reason enough to read.
+    pub(crate) fn cached_deletion_watchers(&self, entity: ChangedEntity<'_>, change: &EntityChange) -> DeletionWatchers {
+        let Some(subscription_cache) = self.subscription_cache() else {
+            return DeletionWatchers::None;
+        };
+        let event = ChangeEvent::builder()
+            .entity_id(entity.id.clone()) // clone: owned Identifier for ChangeEvent
+            .entity_types(entity.types.to_vec()) // clone: the matched event owns the types it is matched by
+            .change(change.clone()) // clone: the matched event owns the change it is matched as
+            .occurred_at(Utc::now())
+            .origin(ChangeOrigin::Local)
+            .build();
+        if subscription_cache.find_matching(entity.target, &event).matched.is_empty() {
+            DeletionWatchers::None
+        } else {
+            DeletionWatchers::Possible
+        }
+    }
+
     /// Build one record for every subscription `change` is owed to.
     ///
     /// Returns an empty vector when notification recording is not configured:
     /// a live-delivery broker's notification worker evaluates the change itself.
     pub(crate) fn subscription_matches(&self, entity: ChangedEntity<'_>, change: &EntityChange, snapshots: MutationSnapshots<'_>) -> Vec<SubscriptionMatch> {
-        self.recording
-            .as_ref()
+        self.recording()
             .map_or_else(Vec::new, |recording| recording.subscription_matches(entity, change, snapshots))
     }
 }
@@ -71,13 +98,13 @@ impl NotificationWriteConfig {
             types: entity_types,
         } = entity;
         let MutationSnapshots {
-            current: entity_snapshot,
+            current: current_supply,
             previous: previous_snapshot,
         } = snapshots;
 
         let event = ChangeEvent::builder()
             .entity_id(entity_id.clone()) // clone: owned Identifier for ChangeEvent
-            .entity_types(entity_types.to_vec())
+            .entity_types(entity_types.to_vec()) // clone: the matched event owns the types it is matched by
             .change(change.clone()) // clone: the matched event owns the change it is matched as
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
@@ -95,23 +122,29 @@ impl NotificationWriteConfig {
             "Subscription candidate funnel"
         );
         outcome.funnel.record();
+        // A change no subscription is a candidate for owes nothing, and the
+        // state a match is notified with is not built for it.
+        if outcome.matched.is_empty() {
+            return Vec::new();
+        }
 
+        let entity_snapshot = current_supply.materialize();
         let states = ChangedStates {
-            current: entity_snapshot,
-            previous: previous_snapshot,
+            current: entity_snapshot.as_deref(),
+            previous: previous_snapshot.map(|previous| &**previous),
         };
         let matching = narrow_by_change_filters(subscription_cache, target, outcome.matched, change, states, entity_types);
         matching
             .into_iter()
             .map(|sub| {
-                // clone: every entry owns its own copy of the entity id, the
-                // change and the snapshots, all of which are borrowed here.
+                // clone: every entry owns its own copy of the entity id and the
+                // change; the snapshots are shared by reference count.
                 SubscriptionMatch::builder()
                     .subscription_key(sub.key)
                     .entity_id(entity_id.clone())
                     .change(change.clone())
-                    .entity_snapshot(entity_snapshot.cloned())
-                    .previous_snapshot(previous_snapshot.cloned())
+                    .entity_snapshot(entity_snapshot.as_ref().map(Arc::clone))
+                    .previous_snapshot(previous_snapshot.map(Arc::clone))
                     .build()
             })
             .collect()

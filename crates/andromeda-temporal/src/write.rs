@@ -41,6 +41,8 @@ impl TemporalService {
     /// The measured body of [`TemporalService::create_or_update`].
     async fn create_or_update_inner(&self, target: &ContextTarget, mut payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
         normalize_entity_attributes(&mut payload);
+        // Counted before the expansion multiplies the payload.
+        self.limits.payload_budget.admit(&payload)?;
         let expanded = self.engine.expand(payload, context).await?;
         validate_entity_unit_code_admission(&expanded)?;
         validate_expanded_geo_properties(&expanded).map_err(TemporalValidationReason::from)?;
@@ -104,6 +106,8 @@ impl TemporalService {
         }
 
         normalize_entity_attributes(&mut payload);
+        // Counted before the expansion multiplies the payload.
+        self.limits.payload_budget.admit(&payload)?;
         let expanded = self.engine.expand(payload, context).await?;
         validate_entity_unit_code_admission(&expanded)?;
         validate_expanded_geo_properties(&expanded).map_err(TemporalValidationReason::from)?;

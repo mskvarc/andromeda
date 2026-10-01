@@ -4,6 +4,7 @@ use crate::{
     RegistrationService,
     context_source_properties::expand_context_source_properties,
     error::RegistrationError,
+    geometry::admit_registration_geometries,
     identifier::{client_registration_id, generate_registration_id},
     mode_rules::check_conflicts,
     payload::extract_create_params,
@@ -31,6 +32,8 @@ impl RegistrationService {
     /// and [`RegistrationError::Persistence`] when the store rejects the
     /// write.
     pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<Identifier, RegistrationError> {
+        // Counted before the payload is expanded or a geometry built from it.
+        admit_registration_geometries(&payload, self.geometry_limits)?;
         let id = match payload.get("id").and_then(Value::as_str) {
             Some(raw) => {
                 let id = client_registration_id(raw)?;

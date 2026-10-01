@@ -8,7 +8,9 @@ use andromeda_context_registry::{cached_context_invalidation::CachedContextInval
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     port::{
+        deletion_outline::DeletionOutlineReader,
         discovery::EntityDiscoveryStore,
+        entity_types::EntityTypeReader,
         expiry::EntityExpirySource,
         payload_pages::EntityPayloadPages,
         query::EntityQueryStore,
@@ -107,6 +109,8 @@ pub(super) struct EntityStoragePorts {
     pub(super) payload_pages: Arc<dyn EntityPayloadPages>,
     pub(super) expiry: Arc<dyn EntityExpirySource>,
     pub(super) spatial_snapshots: Arc<dyn EntitySpatialSnapshotSource>,
+    pub(super) deletion_outline: Arc<dyn DeletionOutlineReader>,
+    pub(super) entity_types: Arc<dyn EntityTypeReader>,
 }
 
 /// Migrate a tenant whose schema is behind this binary, or upgrade its
@@ -257,7 +261,9 @@ pub(super) async fn initialize_storage(
         discovery: Arc::clone(&entity_repository) as Arc<dyn EntityDiscoveryStore>, // clone: every focused port shares one repository and pool.
         payload_pages: Arc::clone(&entity_repository) as Arc<dyn EntityPayloadPages>, // clone: every focused port shares one repository and pool.
         expiry: Arc::clone(&entity_repository) as Arc<dyn EntityExpirySource>, // clone: every focused port shares one repository and pool.
-        spatial_snapshots: entity_repository as Arc<dyn EntitySpatialSnapshotSource>,
+        spatial_snapshots: Arc::clone(&entity_repository) as Arc<dyn EntitySpatialSnapshotSource>, // clone: every focused port shares one repository and pool.
+        deletion_outline: Arc::clone(&entity_repository) as Arc<dyn DeletionOutlineReader>, // clone: every focused port shares one repository and pool.
+        entity_types: entity_repository as Arc<dyn EntityTypeReader>,
     };
     // clone: the routing projection interns registered attribute names through the tenant's one dictionary.
     let registration_repository = Arc::new(PostgresRegistrationStore::new(&pool, Arc::clone(&attribute_names)));

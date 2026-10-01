@@ -77,7 +77,7 @@ impl TemporalService {
         let geo = self.compile_geo_query(params, &prepared_context).await?;
 
         let format = params.parse_format()?;
-        let page = compile_instance_page(params.last_n, format, self.instance_limits);
+        let page = compile_instance_page(params.last_n, format, self.limits.instance_limits);
         let grouping = compile_grouping(params, format, &expander).await?;
 
         // Clause 5.5.9.1: the opaque pagination cursor is a per-request position
@@ -130,10 +130,11 @@ impl TemporalService {
     }
 
     /// Compile the optional temporal geo selection through the prepared request context.
+    ///
+    /// A reference geometry holding more positions than the broker resolves
+    /// makes the query the `TooComplexQuery` of clause 5.5.6.
     async fn compile_geo_query(&self, params: &TemporalQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, TemporalError> {
-        geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(&self.engine, context))
-            .await
-            .map_err(TemporalError::from)
+        Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(&self.engine, context), self.reference_limits()).await?)
     }
 }
 

@@ -11,6 +11,7 @@ pub mod admitted_temporal_query;
 pub mod api_root;
 pub mod batch_body_refusal;
 pub mod batch_item_refusal;
+pub mod blocking_decode;
 pub mod classification;
 pub mod content_length_precondition;
 pub mod context;
@@ -19,6 +20,7 @@ pub mod entity_batch;
 pub mod entity_id_batch;
 pub mod entity_query;
 pub mod json_payload;
+pub mod json_value_budget;
 pub mod jsonld;
 pub mod language;
 pub mod operation_hit_scope;
@@ -28,6 +30,7 @@ pub mod protocol;
 pub mod query;
 pub mod request_body_limit;
 pub mod request_envelope;
+pub mod request_json_value_limit;
 pub mod request_links;
 pub mod request_payload;
 pub mod response_context_request;
@@ -63,7 +66,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
     ],
-    allow_production_dependencies: ["axum"],
+    allow_production_dependencies: ["axum", "tokio"],
 }
 
 #[cfg(test)]

@@ -57,12 +57,17 @@ mod tests {
         store::RegistrationStore,
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
+    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use futures::future::BoxFuture;
     use pretty_assertions::assert_eq;
     use serde_json::json;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        num::NonZeroUsize,
+        sync::{Arc, Mutex},
+    };
 
     const REGISTRATION_ID: &str = "urn:ngsi-ld:ContextSourceRegistration:removed";
 
@@ -145,6 +150,10 @@ mod tests {
             Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
             engine,
             None,
+            GeometryCensusLimits {
+                positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+            },
         )
         .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>); // clone: the test reads the hook's log
 
@@ -181,6 +190,10 @@ mod tests {
             Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
             engine,
             None,
+            GeometryCensusLimits {
+                positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+            },
         )
         .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>); // clone: the test reads the hook's log
 

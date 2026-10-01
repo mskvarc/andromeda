@@ -1,7 +1,11 @@
 //! Direct PostgreSQL implementations of entity policy ports.
 
+/// Deletion outlines and the deletion-watcher probe.
+mod deletion_outline;
 /// Clause 5.7 discovery reads.
 mod discovery;
+/// The types one entity carries, read from its search row.
+mod entity_types;
 /// Clause 4.22 expiry candidates.
 mod expiry;
 /// Whole entity payloads read a page at a time.

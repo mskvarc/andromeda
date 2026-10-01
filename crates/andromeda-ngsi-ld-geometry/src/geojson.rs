@@ -1,21 +1,39 @@
-//! Decoding and encoding a [`GeometryForm`] as `GeoJSON`.
+//! Encoding a [`GeometryForm`] as `GeoJSON`, and why a value is refused as
+//! one.
 //!
-//! The conversion goes straight between [`GeometryForm`] and
+//! The encoding goes straight from [`GeometryForm`] to
 //! `geojson::GeometryValue`, never through `geo_types`. The `geojson` crate's
 //! own `geo_types` conversion drops every ordinate past the second, because
 //! `geo_types` is two-dimensional by construction, so routing through it would
-//! throw altitude away before this crate ever saw it.
+//! throw altitude away. Decoding reads the compact tree in place (see
+//! [`crate::compact_geojson`]).
 
 use crate::{
     coordinate_path::CoordinatePath,
     form::{GeometryForm, PolygonRings},
     geometry_type::GeometryType,
-    line_string_coordinates::{LineStringCoordinates, LineStringError},
-    linear_ring::{LinearRing, LinearRingError},
+    line_string_coordinates::LineStringError,
+    linear_ring::LinearRingError,
     position::{Position, PositionError},
 };
 use geojson::{GeometryValue, Position as GeoJsonPosition};
+use strum::Display;
 use thiserror::Error;
+
+/// What a `GeoJSON` coordinate array was expected to hold where a non-array
+/// stood instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Display)]
+pub enum CoordinateShape {
+    /// One position.
+    #[strum(serialize = "a position")]
+    Position,
+    /// A list of positions.
+    #[strum(serialize = "a list of positions")]
+    Positions,
+    /// A list of lines or rings, or of polygons.
+    #[strum(serialize = "a list")]
+    List,
+}
 
 /// Failures decoding a `GeoJSON` geometry into the domain model.
 #[derive(Debug, Error)]
@@ -61,11 +79,43 @@ pub enum GeometryError {
         /// Where the misplaced member sits in the geometry's `coordinates`.
         at: CoordinatePath,
     },
-    /// The raw JSON value was not a `GeoJSON` geometry object at all: an unknown
-    /// `type`, a missing or misshapen `coordinates` member, or an ordinate that
-    /// is not a number.
-    #[error("invalid GeoJSON geometry value: {0}")]
-    GeojsonValue(#[from] serde_json::Error),
+    /// The value is not a JSON object, so no `GeoJSON` geometry (IETF RFC 7946
+    /// section 3.1).
+    #[error("a GeoJSON geometry must be an object")]
+    NotAnObject,
+    /// A geometry encoded as a JSON string (ETSI GS CIM 009 v1.9.1 clause
+    /// 4.7.2) is not a JSON text.
+    #[error("the string-encoded GeoJSON geometry is not JSON: {0}")]
+    EncodedNotJson(#[source] serde_json::Error),
+    /// The geometry object carries no string `type` member.
+    #[error("a GeoJSON geometry must carry a string `type`")]
+    MissingType,
+    /// The `type` member names no geometry type RFC 7946 section 1.4 defines.
+    #[error("the GeoJSON geometry `type` is not one RFC 7946 defines")]
+    UnknownType(#[source] strum::ParseError),
+    /// The geometry object carries no `coordinates` member.
+    #[error("a GeoJSON geometry must carry `coordinates`")]
+    MissingCoordinates,
+    /// A `GeometryCollection` carries no `geometries` array.
+    #[error("a GeoJSON GeometryCollection must carry a `geometries` array")]
+    MissingGeometries,
+    /// The `bbox` member is not an array of numbers (RFC 7946 section 5).
+    #[error("a GeoJSON `bbox` must be an array of numbers")]
+    InvalidBbox,
+    /// A compact `coordinates` member held a non-array where an array belongs.
+    #[error("GeoJSON coordinates hold a non-array where {expected} belongs (at {at})")]
+    NotAnArray {
+        /// What the array was to hold.
+        expected: CoordinateShape,
+        /// Where the non-array sits in the geometry's `coordinates`.
+        at: CoordinatePath,
+    },
+    /// A position held a member that is not a number.
+    #[error("a GeoJSON position holds a member that is not a number (at {at})")]
+    NonNumericOrdinate {
+        /// Where the position sits in the geometry's `coordinates`.
+        at: CoordinatePath,
+    },
     /// A JSON coordinate is outside the finite binary64 domain used for
     /// spatial operations.
     #[error("GeoJSON coordinate cannot be represented as a finite 64-bit float")]
@@ -78,46 +128,6 @@ pub enum GeometryError {
 }
 
 impl GeometryForm {
-    /// Decode from a parsed `GeoJSON` geometry value.
-    ///
-    /// A `bbox` or foreign member is not part of the geometry RFC 7946 section
-    /// 3.1 defines and is not carried.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GeometryError::Position`] if any position of the geometry
-    /// carries fewer than two or more than three ordinates or lies off the
-    /// CRS84 axes, [`GeometryError::LineString`] for a `LineString` of fewer
-    /// than two positions, [`GeometryError::LinearRing`] for a Polygon ring
-    /// that is open or holds fewer than four, and
-    /// [`GeometryError::GeometryCollectionUnsupported`] for a `GeometryCollection`,
-    /// which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes.
-    pub fn from_geojson(value: &GeometryValue) -> Result<GeometryForm, GeometryError> {
-        match value {
-            GeometryValue::Point { coordinates } => Ok(GeometryForm::Point(decode_position(coordinates, &[])?)),
-            GeometryValue::MultiPoint { coordinates } => Ok(GeometryForm::MultiPoint(decode_positions(coordinates, &[])?)),
-            GeometryValue::LineString { coordinates } => Ok(GeometryForm::LineString(decode_line_string(coordinates, &[])?)),
-            GeometryValue::MultiLineString { coordinates } => {
-                let line_strings = coordinates
-                    .iter()
-                    .enumerate()
-                    .map(|(line_string, positions)| decode_line_string(positions, &[line_string]))
-                    .collect::<Result<Vec<LineStringCoordinates>, GeometryError>>()?;
-                Ok(GeometryForm::MultiLineString(line_strings))
-            }
-            GeometryValue::Polygon { coordinates } => Ok(GeometryForm::Polygon(decode_rings(coordinates, None)?)),
-            GeometryValue::MultiPolygon { coordinates } => {
-                let polygons = coordinates
-                    .iter()
-                    .enumerate()
-                    .map(|(polygon, rings)| decode_rings(rings, Some(polygon)))
-                    .collect::<Result<Vec<PolygonRings>, GeometryError>>()?;
-                Ok(GeometryForm::MultiPolygon(polygons))
-            }
-            GeometryValue::GeometryCollection { geometries: _ } => Err(GeometryError::GeometryCollectionUnsupported),
-        }
-    }
-
     /// Encode as a `GeoJSON` geometry value.
     ///
     /// Infallible, and faithful to what was decoded: each position renders with
@@ -146,58 +156,6 @@ impl GeometryForm {
     }
 }
 
-/// Decode the position `enclosing` leads to, naming it on refusal.
-fn decode_position(position: &GeoJsonPosition, enclosing: &[usize]) -> Result<Position, GeometryError> {
-    Position::try_from(position).map_err(|source| GeometryError::Position {
-        at: CoordinatePath::new(enclosing.to_vec()),
-        source,
-    })
-}
-
-/// Decode the flat list of `GeoJSON` positions `enclosing` leads to.
-fn decode_positions(positions: &[GeoJsonPosition], enclosing: &[usize]) -> Result<Vec<Position>, GeometryError> {
-    positions
-        .iter()
-        .enumerate()
-        .map(|(index, position)| {
-            Position::try_from(position).map_err(|source| GeometryError::Position {
-                at: CoordinatePath::nested(enclosing, index),
-                source,
-            })
-        })
-        .collect()
-}
-
-/// Decode the positions of the `LineString` `enclosing` leads to.
-fn decode_line_string(positions: &[GeoJsonPosition], enclosing: &[usize]) -> Result<LineStringCoordinates, GeometryError> {
-    LineStringCoordinates::try_new(decode_positions(positions, enclosing)?).map_err(|source| GeometryError::LineString {
-        at: CoordinatePath::new(enclosing.to_vec()),
-        source,
-    })
-}
-
-/// Decode the positions of the Polygon ring `enclosing` leads to.
-fn decode_ring(positions: &[GeoJsonPosition], enclosing: &[usize]) -> Result<LinearRing, GeometryError> {
-    LinearRing::try_new(decode_positions(positions, enclosing)?).map_err(|source| GeometryError::LinearRing {
-        at: CoordinatePath::new(enclosing.to_vec()),
-        source,
-    })
-}
-
-/// Decode the ring list of a `GeoJSON` Polygon, standalone or as the member at
-/// index `polygon` of a `MultiPolygon`.
-fn decode_rings(rings: &[Vec<GeoJsonPosition>], polygon: Option<usize>) -> Result<PolygonRings, GeometryError> {
-    let rings = rings
-        .iter()
-        .enumerate()
-        .map(|(ring, positions)| match polygon {
-            Some(polygon) => decode_ring(positions, &[polygon, ring]),
-            None => decode_ring(positions, &[ring]),
-        })
-        .collect::<Result<Vec<LinearRing>, GeometryError>>()?;
-    Ok(PolygonRings::new(rings))
-}
-
 /// Encode a flat list of positions as `GeoJSON`.
 fn encode_positions(positions: &[Position]) -> Vec<GeoJsonPosition> {
     positions.iter().map(Position::to_geojson).collect()
@@ -221,14 +179,14 @@ mod tests {
     };
     use geojson::{GeometryValue, Position as GeoJsonPosition};
 
-    fn decode(value: serde_json::Value) -> Result<GeometryForm, GeometryError> {
-        let geometry: geojson::Geometry = serde_json::from_value(value)?;
-        GeometryForm::from_geojson(&geometry.value)
+    /// Read `value` as the compact `GeoJSON` geometry every write path reads.
+    fn decode(value: &serde_json::Value) -> Result<GeometryForm, GeometryError> {
+        GeometryForm::from_compact_value(value)
     }
 
     #[test]
     fn a_point_with_four_ordinates_is_a_position_error() {
-        let error = decode(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0] })).expect_err("four ordinates have no defined meaning");
+        let error = decode(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0] })).expect_err("four ordinates have no defined meaning");
         assert!(
             matches!(
                 error,
@@ -243,7 +201,7 @@ mod tests {
 
     #[test]
     fn a_line_string_position_with_one_ordinate_is_a_position_error() {
-        let error = decode(serde_json::json!({ "type": "LineString", "coordinates": [[1.0], [2.0, 3.0]] })).expect_err("one ordinate is not a position");
+        let error = decode(&serde_json::json!({ "type": "LineString", "coordinates": [[1.0], [2.0, 3.0]] })).expect_err("one ordinate is not a position");
         assert!(
             matches!(
                 error,
@@ -256,17 +214,20 @@ mod tests {
         );
     }
 
+    /// The refusal names no part of the client's value: the unknown token
+    /// is not echoed back.
     #[test]
-    fn a_geometry_of_an_unknown_type_is_a_geojson_value_error() {
-        let error = decode(serde_json::json!({ "type": "Nonsense", "coordinates": [] })).expect_err("must reject");
-        assert!(matches!(error, GeometryError::GeojsonValue(_)), "got {error:?}");
+    fn a_geometry_of_an_unknown_type_is_refused_without_echoing_it() {
+        let error = decode(&serde_json::json!({ "type": "Nonsense<script>", "coordinates": [] })).expect_err("must reject");
+        assert!(matches!(error, GeometryError::UnknownType(_)), "got {error:?}");
+        pretty_assertions::assert_eq!(error.to_string(), "the GeoJSON geometry `type` is not one RFC 7946 defines");
     }
 
     #[test]
     fn a_geometry_collection_is_refused_as_a_geoproperty_geometry() {
         // ETSI GS CIM 009 v1.9.1 clause 4.7.1 allows every RFC 7946 geometry
         // except GeometryCollection.
-        let error = decode(serde_json::json!({
+        let error = decode(&serde_json::json!({
             "type": "GeometryCollection",
             "geometries": [{ "type": "Point", "coordinates": [1.0, 2.0] }]
         }))
@@ -276,7 +237,7 @@ mod tests {
 
     #[test]
     fn a_mixed_arity_line_string_keeps_the_arity_of_each_position() {
-        let form = decode(serde_json::json!({ "type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]] })).expect("mixed arity is valid GeoJSON");
+        let form = decode(&serde_json::json!({ "type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]] })).expect("mixed arity is valid GeoJSON");
         pretty_assertions::assert_eq!(form.dimension(), GeometryDimension::TwoD);
         let GeometryValue::LineString { coordinates } = form.to_geojson() else {
             panic!("expected a LineString");
@@ -287,7 +248,7 @@ mod tests {
 
     #[test]
     fn a_line_string_of_one_position_is_refused_with_its_place() {
-        let error = decode(serde_json::json!({ "type": "LineString", "coordinates": [[1.0, 2.0]] })).expect_err("one position traces no line");
+        let error = decode(&serde_json::json!({ "type": "LineString", "coordinates": [[1.0, 2.0]] })).expect_err("one position traces no line");
         assert!(
             matches!(
                 error,
@@ -303,7 +264,7 @@ mod tests {
 
     #[test]
     fn a_short_member_of_a_multi_line_string_is_refused_with_its_index() {
-        let error = decode(serde_json::json!({ "type": "MultiLineString", "coordinates": [[[0.0, 0.0], [1.0, 1.0]], []] }))
+        let error = decode(&serde_json::json!({ "type": "MultiLineString", "coordinates": [[[0.0, 0.0], [1.0, 1.0]], []] }))
             .expect_err("an empty member traces no line");
         assert!(
             matches!(
@@ -316,7 +277,7 @@ mod tests {
 
     #[test]
     fn an_open_polygon_ring_is_refused_with_its_index() {
-        let error = decode(serde_json::json!({
+        let error = decode(&serde_json::json!({
             "type": "Polygon",
             "coordinates": [
                 [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0]],
@@ -336,7 +297,7 @@ mod tests {
 
     #[test]
     fn a_short_ring_of_a_later_polygon_is_refused_with_both_indices() {
-        let error = decode(serde_json::json!({
+        let error = decode(&serde_json::json!({
             "type": "MultiPolygon",
             "coordinates": [
                 [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
@@ -356,12 +317,12 @@ mod tests {
     #[test]
     fn a_polygon_with_no_rings_decodes() {
         // RFC 7946 section 3.1 lets empty coordinates stand for a null geometry.
-        assert!(decode(serde_json::json!({ "type": "Polygon", "coordinates": [] })).is_ok());
+        assert!(decode(&serde_json::json!({ "type": "Polygon", "coordinates": [] })).is_ok());
     }
 
     #[test]
     fn a_position_off_the_axes_is_named_before_the_ring_it_sits_in() {
-        let error = decode(serde_json::json!({ "type": "Polygon", "coordinates": [[[0.0, 0.0], [0.0, 95.0]]] })).expect_err("latitude 95 is no position");
+        let error = decode(&serde_json::json!({ "type": "Polygon", "coordinates": [[[0.0, 0.0], [0.0, 95.0]]] })).expect_err("latitude 95 is no position");
         assert!(
             matches!(
                 error,
@@ -376,7 +337,7 @@ mod tests {
 
     #[test]
     fn a_fully_elevated_polygon_is_three_dimensional() {
-        let form = decode(serde_json::json!({
+        let form = decode(&serde_json::json!({
             "type": "Polygon",
             "coordinates": [[[0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]]]
         }))

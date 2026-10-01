@@ -131,9 +131,45 @@ fn decode_number(row: &PgRow) -> Result<JsonNumber, TemporalStoreError> {
 }
 
 /// Read the geometry column, which the query layer selects as EWKB.
-fn decode_geometry(row: &PgRow) -> Result<Value, TemporalStoreError> {
+fn decode_geometry(row: &PgRow) -> Result<Geometry, TemporalStoreError> {
     let bytes: Vec<u8> = required_column(row, TABLE, HistoryColumn::ValueGeometryEwkb)?;
-    let ewkb = Ewkb::try_from(bytes.as_slice()).map_err(StoredHistoryError::ValueGeometry)?;
-    let geometry = Geometry::try_from(&ewkb).map_err(StoredHistoryError::ValueGeometry)?.to_geojson();
-    Ok(serde_json::to_value(&geometry).map_err(StoredHistoryError::GeoJson)?)
+    Ok(geometry_from_ewkb(&bytes)?)
+}
+
+/// Build the geometry one stored EWKB value encodes.
+fn geometry_from_ewkb(bytes: &[u8]) -> Result<Geometry, StoredHistoryError> {
+    let ewkb = Ewkb::try_from(bytes).map_err(StoredHistoryError::ValueGeometry)?;
+    Geometry::try_from(&ewkb).map_err(StoredHistoryError::ValueGeometry)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::history_row_decode::geometry_from_ewkb;
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
+    use serde_json::json;
+
+    /// The bytes the write path binds for a geometry are the bytes the column
+    /// hands back, so a geometry read back from them is the one written: its
+    /// rings, its hole and the elevation of each elevated position.
+    #[test]
+    fn a_stored_ewkb_geometry_reads_back_as_the_geometry_written() {
+        let written = Geometry::from_geojson_value(&json!({
+            "type": "Polygon",
+            "coordinates": [
+                [[0.0, 0.0, 12.5], [4.0, 0.0, 12.5], [4.0, 4.0, 12.5], [0.0, 4.0, 12.5], [0.0, 0.0, 12.5]],
+                [[1.0, 1.0, 3.0], [1.0, 2.0, 3.0], [2.0, 2.0, 3.0], [1.0, 1.0, 3.0]]
+            ]
+        }))
+        .expect("a valid elevated Polygon with a hole");
+        let bytes = geometry_bytes(Some(&written))
+            .expect("the geometry encodes")
+            .expect("a present geometry binds bytes");
+        pretty_assertions::assert_eq!(geometry_from_ewkb(&bytes).expect("the stored bytes decode"), written);
+    }
+
+    #[test]
+    fn stored_bytes_that_are_no_ewkb_are_refused() {
+        assert!(geometry_from_ewkb(&[0x01, 0x02]).is_err());
+    }
 }

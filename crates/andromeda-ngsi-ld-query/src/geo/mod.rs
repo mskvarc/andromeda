@@ -5,3 +5,5 @@ pub mod compile;
 pub mod default_location_narrowing;
 pub mod input;
 pub mod query;
+pub mod reference_budget;
+pub mod reference_geometry;

@@ -14,11 +14,17 @@
 //! content"; the listener then closes the connection in stages, so the client
 //! reads the refusal before the connection is reset. HTTP/2 and HTTP/3 stop the
 //! upload with a stream reset instead and forbid the header.
+//!
+//! [`RequestPayload`] reads a JSON document an operation parses itself, so it
+//! also holds the payload to the JSON value limit the stack publishes, before
+//! the operation builds a tree from it.
 
 use crate::{
     addressed_uri::addressed_request_uri,
     content_length_precondition::{DeclaredBodyLength, declared_body_length},
+    json_value_budget::refuse_values_past_budget,
     request_body_limit::RequestBodyLimit,
+    request_json_value_limit::RequestJsonValueLimit,
 };
 use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -33,13 +39,15 @@ use axum::{
 };
 
 /// What a client whose payload was refused as too large can do about it.
-const SPLIT_ADVICE: &str = "send the content in smaller requests, a batch operation as several smaller batches";
+pub(crate) const SPLIT_ADVICE: &str = "send the content in smaller requests, a batch operation as several smaller batches";
 
-/// A request payload body, read in full within the broker's size limit.
+/// A JSON request payload body, read in full within the broker's size limit
+/// and counted within its JSON value limit.
 ///
 /// Applies the clause 6.3.4 `Content-Length` precondition first, so a request
 /// that declares no length is the bare 411 the clause requires before anything
-/// is read.
+/// is read. A payload that is no JSON text passes the count, and the parse
+/// that follows refuses it in its operation's own words.
 pub struct RequestPayload(pub Bytes);
 
 impl<S> FromRequest<S> for RequestPayload
@@ -52,7 +60,13 @@ where
         let instance = addressed_request_uri(&request);
         // clone: the precondition's refusal and the payload's each name the request.
         let declared = declared_body_length(request.headers()).map_err(|error| error.into_rejection(instance.clone()))?;
-        buffer_payload(request, state, declared, instance).await.map(RequestPayload)
+        let value_limit = request.extensions().get::<RequestJsonValueLimit>().copied();
+        // clone: a counted payload over its limit names the request too.
+        let body = buffer_payload(request, state, declared, instance.clone()).await?;
+        // Counted before the operation builds a tree, so a payload of too
+        // many values costs its bytes and nothing more.
+        refuse_values_past_budget(&body, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(instance)))?;
+        Ok(RequestPayload(body))
     }
 }
 
@@ -120,7 +134,8 @@ fn closing_http1_connection(refusal: ProblemResponse, version: Version) -> Probl
 
 #[cfg(test)]
 mod tests {
-    use crate::{request_body_limit::RequestBodyLimit, request_payload::RequestPayload};
+    use crate::{request_body_limit::RequestBodyLimit, request_json_value_limit::RequestJsonValueLimit, request_payload::RequestPayload};
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use axum::{
         Extension,
         Router,
@@ -136,7 +151,7 @@ mod tests {
     };
     use futures::stream;
     use serde_json::Value;
-    use std::convert::Infallible;
+    use std::{convert::Infallible, num::NonZeroUsize};
     use tower::ServiceExt;
 
     /// The limit every fixture router enforces.
@@ -290,5 +305,33 @@ mod tests {
 
         pretty_assertions::assert_eq!(status, StatusCode::LENGTH_REQUIRED);
         pretty_assertions::assert_eq!(problem, Value::Null);
+    }
+
+    /// Clause 6.3.2: a JSON payload holding more values than the published
+    /// limit is the 413 "Request Entity too large", counted before the
+    /// operation parses it; one within the limit, and a payload that is no
+    /// JSON text, are read.
+    #[tokio::test]
+    async fn a_payload_past_the_json_value_limit_is_a_413_problem() {
+        let three = RequestJsonValueLimit::new(JsonValueLimit::new(NonZeroUsize::new(3).expect("three is not zero")));
+        let counted = || {
+            Router::new()
+                .route("/ngsi-ld/v1/entityOperations/delete", post(payload_length))
+                .layer(Extension(three))
+        };
+        let request = |body: &'static str| {
+            Request::post("/ngsi-ld/v1/entityOperations/delete")
+                .header(CONTENT_LENGTH, body.len())
+                .body(Body::from(body))
+                .expect("a valid request")
+        };
+
+        let (status, problem) = answer(counted(), request(r#"["urn:a:1","urn:a:2","urn:a:3"]"#)).await;
+        pretty_assertions::assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge");
+        assert!(problem["detail"].as_str().expect("a detail").contains("3 JSON values"), "{problem}");
+
+        pretty_assertions::assert_eq!(answer(counted(), request(r#"["urn:a:1","urn:a:2"]"#)).await.0, StatusCode::OK);
+        pretty_assertions::assert_eq!(answer(counted(), request("not json at all")).await.0, StatusCode::OK);
     }
 }

@@ -155,6 +155,9 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::ParamDatasetIdInvalid { .. }
         | QueryError::ParamEndTimeAtRequired
         | QueryError::ProjectionKeywordWithLinkedTerm { .. } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        // Clause 5.5.6: a query "so complex that cannot be resolved" raises
+        // TooComplexQuery, which Table 6.3.2-1 answers with 403.
+        QueryError::ReferenceGeometryTooComplex { .. } => ClassifiedReport::public(NgsiLdErrorType::TooComplexQuery, error.to_string()),
         // The expander's own failure is the one arm that can still be a broker
         // fault: it carries whatever the JSON-LD processor raised, which
         // includes conditions no request text can provoke.

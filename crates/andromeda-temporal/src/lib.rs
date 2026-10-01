@@ -42,6 +42,8 @@ pub mod remote_linked;
 pub mod requested_identifiers;
 pub mod scope_observation;
 pub mod service;
+/// The bounds one temporal service applies to what a request may ask of it.
+pub mod service_limits;
 /// The physical storage policy an operator sets for temporal history.
 pub mod storage_policy;
 /// The invariants temporal policy relies on.
@@ -65,6 +67,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-commit",
         "andromeda-entity",
         "andromeda-jsonld",
+        "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-number",
@@ -77,7 +80,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-telemetry",
         "andromeda-unit-catalog",
     ],
-    allow_workspace_dev_dependencies: ["andromeda-ngsi-ld-geometry"],
+    allow_workspace_dev_dependencies: [],
     allow_production_dependencies: [],
 }
 

@@ -47,7 +47,8 @@ pub(crate) async fn batch_delete(
     // request provided by a client does not define the 'Content-Length' HTTP
     // header." This operation reads a raw body rather than going through the
     // `JsonLd` extractor, and `RequestPayload` applies the precondition before
-    // it reads the body within the broker's size limit.
+    // it reads the body within the broker's size limit, and counts its values
+    // within the JSON value limit (clause 6.3.2).
     RequestPayload(body): RequestPayload,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;

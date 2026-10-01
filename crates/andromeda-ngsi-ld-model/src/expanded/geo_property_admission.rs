@@ -33,7 +33,7 @@
 use crate::expanded::geo_node::validate_expanded_geo_node;
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReferenceError};
-use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use andromeda_ngsi_ld_vocabulary::{NULL_URI, expanded::properties};
 use serde_json::Value;
 use std::slice::from_ref;
 use thiserror::Error;
@@ -118,16 +118,19 @@ fn is_geo_property(types: Option<&Value>) -> bool {
 ///
 /// A literal `@value` is a whole `GeoJSON` document and is decoded outright, so
 /// its geometry type and coordinates are checked against each other as well as
-/// its positions. The fully expanded node form has no such decoder, and its
-/// positions are checked in place by the same position rule.
+/// its positions; one encoded as a string must parse into a geometry object.
+/// The fully expanded node form has no such decoder, and its positions are
+/// checked in place by the same position rule.
 fn validate_geo_node(attribute_iri: &str, node: &Value) -> Result<(), GeoPropertyRefusal> {
     match node.get("@value") {
-        Some(Value::String(document)) => match serde_json::from_str::<Value>(document) {
-            // A string that is not JSON at all is not this check's business:
-            // it is a `hasValue` the attribute-envelope reading rejects.
-            Err(_not_json) => Ok(()),
-            Ok(parsed) => validate_geojson_document(attribute_iri, &parsed),
-        },
+        // Clause 4.7.2 accepts a geometry encoded as a string "if and only if
+        // it can be parsed into a JSON Object" that is a valid RFC 7946
+        // geometry: any other string is refused, never stored as a value no
+        // spatial reading can use. The NGSI-LD Null is no value but the
+        // instruction to delete the instance (clause 4.5.0), which the
+        // deletion admission reads.
+        Some(Value::String(sentinel)) if sentinel == NULL_URI.as_str() => Ok(()),
+        Some(encoded @ Value::String(_)) => Geometry::from_written_value(encoded).map(drop).map_err(|source| refusal(attribute_iri, source)),
         Some(document @ Value::Object(_)) => validate_geojson_document(attribute_iri, document),
         Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_)) | None => {
             validate_expanded_geo_node(node).map_err(|source| refusal(attribute_iri, source))
@@ -243,5 +246,39 @@ mod tests {
             "GeoProperty 'https://uri.etsi.org/ngsi-ld/location': GeoJSON position latitude 91 is outside [-90, 90]; \
              RFC 7946 section 4 places positions in WGS 84 longitude and latitude, in decimal degrees (at coordinates)"
         );
+    }
+
+    /// Clause 4.7.2: a string is accepted as a geometry if and only if it
+    /// parses into a valid geometry object.
+    #[test]
+    fn a_string_geometry_is_admitted_only_when_it_parses_into_a_geometry_object() {
+        let admitted = location_instance(&Value::String(json!({"type": "Point", "coordinates": [1.0, 2.0]}).to_string()));
+        assert!(validate_instance_geo_property(LOCATION, &admitted).is_ok());
+        for (encoded, refused_as) in [
+            ("not json at all", "EncodedNotJson"),
+            ("[1.0, 2.0]", "NotAnObject"),
+            ("{\"a\": 1}", "MissingType"),
+            ("{\"type\": \"Point\", \"coordinates\": [0.0, 95.0]}", "Position"),
+        ] {
+            let refusal = validate_instance_geo_property(LOCATION, &location_instance(&Value::String(encoded.to_owned()))).expect_err(encoded);
+            let GeoPropertyRefusal::Geometry { source, .. } = &refusal else {
+                panic!("{encoded}: {refusal:?}");
+            };
+            assert!(format!("{source:?}").starts_with(refused_as), "{encoded}: {source:?}");
+        }
+    }
+
+    /// The refusal of a string that is no JSON text names no part of it.
+    #[test]
+    fn a_string_geometry_refusal_does_not_echo_the_string() {
+        let refusal = validate_instance_geo_property(LOCATION, &location_instance(&Value::String("secret <b>".to_owned()))).expect_err("no JSON text");
+        assert!(!refusal.to_string().contains("secret"), "{refusal}");
+    }
+
+    /// The NGSI-LD Null asks for the instance to be deleted; it is no
+    /// string-encoded geometry to refuse.
+    #[test]
+    fn the_ngsi_ld_null_is_no_string_geometry() {
+        assert!(validate_instance_geo_property(LOCATION, &location_instance(&Value::String("urn:ngsi-ld:null".to_owned()))).is_ok());
     }
 }

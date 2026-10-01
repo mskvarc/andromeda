@@ -12,7 +12,23 @@
 use crate::{NotificationWriteConfig, change_sink::EntityChangeSink};
 use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_subscription::cache::SubscriptionCache;
 use std::sync::Arc;
+
+/// Where this process matches a committed change against the subscriptions
+/// it holds.
+pub enum SubscriptionMatching {
+    /// No subscription cache is held: nothing in this process matches a
+    /// change.
+    Absent,
+    /// The notification worker matches every published change once it
+    /// landed; the cache is read at commit only to learn whether a deletion
+    /// may be owed a notification, which decides whether the state it removes
+    /// is read.
+    AtDelivery(Arc<SubscriptionCache>),
+    /// Every match is recorded durably with the write that raised it.
+    AtCommit(NotificationWriteConfig),
+}
 
 /// Raises the notifications one change to current state owes, on both
 /// channels.
@@ -20,20 +36,38 @@ pub struct ChangeNotifier {
     /// Where committed changes are published in-process, absent when nothing
     /// consumes them.
     change_sink: Option<Arc<dyn EntityChangeSink>>,
-    /// Durable matching at commit time, present only on a broker recording
-    /// durable deliveries.
-    pub(crate) recording: Option<NotificationWriteConfig>,
+    /// Where a committed change is matched against subscriptions.
+    pub(crate) matching: SubscriptionMatching,
 }
 
 impl ChangeNotifier {
-    /// A notifier publishing to `change_sink` and recording durable matches
-    /// through `recording` when given.
+    /// A notifier publishing to `change_sink` and matching committed changes
+    /// as `matching` says.
     ///
     /// A live-delivery broker records nothing at commit: its notification
     /// worker evaluates every published change itself.
     #[must_use]
-    pub fn new(change_sink: Option<Arc<dyn EntityChangeSink>>, recording: Option<NotificationWriteConfig>) -> ChangeNotifier {
-        ChangeNotifier { change_sink, recording }
+    pub fn new(change_sink: Option<Arc<dyn EntityChangeSink>>, matching: SubscriptionMatching) -> ChangeNotifier {
+        ChangeNotifier { change_sink, matching }
+    }
+
+    /// The durable matching configuration, present only on a broker recording
+    /// durable deliveries.
+    pub(crate) const fn recording(&self) -> Option<&NotificationWriteConfig> {
+        match &self.matching {
+            SubscriptionMatching::AtCommit(recording) => Some(recording),
+            SubscriptionMatching::Absent | SubscriptionMatching::AtDelivery(_) => None,
+        }
+    }
+
+    /// The subscription cache this process holds, whichever way it matches.
+    pub(crate) const fn subscription_cache(&self) -> Option<&Arc<SubscriptionCache>> {
+        match &self.matching {
+            SubscriptionMatching::Absent => None,
+            SubscriptionMatching::AtDelivery(subscription_cache) | SubscriptionMatching::AtCommit(NotificationWriteConfig { subscription_cache }) => {
+                Some(subscription_cache)
+            }
+        }
     }
 
     /// Publish one change the store has committed.
@@ -55,9 +89,9 @@ impl ChangeNotifier {
     /// them a second time. A live-delivery broker records none at commit, so its
     /// job carries every change and the draining broker notifies them.
     pub(crate) fn owed_change_events(&self, events: Vec<ChangeEvent>) -> Vec<ChangeEvent> {
-        match self.recording {
-            Some(_) => Vec::new(),
-            None => events,
+        match self.matching {
+            SubscriptionMatching::AtCommit(_) => Vec::new(),
+            SubscriptionMatching::Absent | SubscriptionMatching::AtDelivery(_) => events,
         }
     }
 }

@@ -40,6 +40,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-ngsi-ld-geometry",
+        "andromeda-ngsi-ld-number",
         "andromeda-persistence-failure",
     ],
     allow_production_dependencies: ["axum"],

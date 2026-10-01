@@ -18,6 +18,7 @@ use andromeda_ngsi_ld_model::entity_change::EntityChange;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
 use serde_json::Value;
+use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
 /// Database-generated key of a persisted notification event.
@@ -49,10 +50,10 @@ pub struct NotificationEvent {
     pub entity_id: Identifier,
     /// Expanded entity snapshot at the time of the mutation.
     #[builder(default = Default::default())]
-    pub entity_snapshot: Option<Value>,
+    pub entity_snapshot: Option<Arc<Value>>,
     /// Entity state before the mutation, carried for `showChanges` support.
     #[builder(default = Default::default())]
-    pub previous_snapshot: Option<Value>,
+    pub previous_snapshot: Option<Arc<Value>>,
     /// Instant at which the event was recorded.
     pub created_at: DateTime<Utc>,
 }

@@ -106,7 +106,7 @@ fn evolution_write(
     current: Option<&EntitySnapshot>,
 ) -> Result<EvolutionWrite, TemporalError> {
     let now = Utc::now();
-    let fold = fold_into_current_state(current.map(|snapshot| &snapshot.payload), &evolution, now).map_err(|error| match error {
+    let fold = fold_into_current_state(current.map(|snapshot| &*snapshot.payload), &evolution, now).map_err(|error| match error {
         CurrentStateFoldError::DatasetId(InstanceDatasetIdError { source }) => TemporalError::from(SubmissionRefusal::DatasetId(source)),
         CurrentStateFoldError::NotAnEntity => TemporalError::Validation(TemporalValidationReason::EntityNotObject),
     })?;
@@ -131,7 +131,8 @@ fn evolution_write(
             // Clause 4.8: a standing instance takes the write instant as its
             // modifiedAt and keeps the createdAt it had; a new one takes both.
             let previous = current.map(|snapshot| &snapshot.payload);
-            stamp_attribute_instants(&mut document, previous.unwrap_or(&Value::Null), now).map_err(|error| TemporalError::Internal(error.into()))?;
+            stamp_attribute_instants(&mut document, previous.map_or(&Value::Null, |previous| &**previous), now)
+                .map_err(|error| TemporalError::Internal(error.into()))?;
             let document = Arc::new(document);
             let record = EntityRecord::from_expanded(Arc::clone(&document))?; // clone: Arc ref-count bump; the document is also the notification's
             let change = match previous {
@@ -178,7 +179,10 @@ mod tests {
     use crate::evolution_write::{EvolutionWrite, evolution_write};
     use andromeda_context_commit::entity_mutation::EntityMutation;
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_entity::{change_notifier::ChangeNotifier, entity_snapshot::EntitySnapshot};
+    use andromeda_entity::{
+        change_notifier::{ChangeNotifier, SubscriptionMatching},
+        entity_snapshot::EntitySnapshot,
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind};
     use chrono::Utc;
@@ -214,7 +218,7 @@ mod tests {
     /// Current state holding `speed` = 1, observed on 2024-01-01.
     fn standing() -> EntitySnapshot {
         EntitySnapshot {
-            payload: vehicle(&json!({SPEED: [instance(1, "2024-01-01T00:00:00Z")]})),
+            payload: Arc::new(vehicle(&json!({SPEED: [instance(1, "2024-01-01T00:00:00Z")]}))),
             modified_at: Utc::now(),
         }
     }
@@ -223,7 +227,7 @@ mod tests {
     /// durably, as a live-delivery broker does.
     fn written(evolution: &Value, current: Option<&EntitySnapshot>) -> EvolutionWrite {
         evolution_write(
-            &ChangeNotifier::new(None, None),
+            &ChangeNotifier::new(None, SubscriptionMatching::Absent),
             &ContextTarget::Live,
             &entity_id(),
             Arc::new(evolution.clone()),

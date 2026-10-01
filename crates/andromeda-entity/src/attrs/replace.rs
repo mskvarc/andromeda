@@ -21,6 +21,7 @@ use andromeda_ngsi_ld_model::expanded::{
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::Utc;
+use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
@@ -76,7 +77,7 @@ impl EntityService {
         let MutatedEntity { events } = self
             .commit_computed_write(target, &entity_uri, |previous| {
                 let now = Utc::now();
-                let mut existing = previous.clone(); // clone: the replacement mutates its own copy of the stored payload
+                let mut existing = Value::clone(previous); // clone: the replacement mutates its own copy of the stored payload
                 replace_attr(&mut existing, &attr_iri, dataset_id, unwrap_expanded_ref(&expanded))?;
 
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps

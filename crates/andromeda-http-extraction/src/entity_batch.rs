@@ -11,8 +11,11 @@ use crate::{
     addressed_uri::addressed_request_uri,
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
     batch_item_refusal::BatchItemRefusal,
+    blocking_decode::{BlockingDecodePolicy, decode_payload},
     classification::classify_context_link_error,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
+    json_value_budget::refuse_values_past_budget,
+    request_json_value_limit::RequestJsonValueLimit,
     request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
     undecodable_body::UndecodableBody,
@@ -89,6 +92,11 @@ pub struct BatchBody {
     link_context: ContextSpec,
     /// Raw request body bytes.
     body: Bytes,
+    /// The most JSON values the body may hold, when the stack published it.
+    value_limit: Option<RequestJsonValueLimit>,
+    /// How the body is decoded beside the executor, when the stack published
+    /// it.
+    blocking_decode: Option<BlockingDecodePolicy>,
 }
 
 impl BatchBody {
@@ -139,6 +147,8 @@ where
         // the payload reader looks only at the declared length it is handed and
         // the size limit the request's extensions carry, never at a header.
         let headers = take(&mut parts.headers);
+        let value_limit = parts.extensions.get::<RequestJsonValueLimit>().copied();
+        let blocking_decode = parts.extensions.get::<BlockingDecodePolicy>().cloned(); // clone: the body owns its share of the permits
         let req = Request::from_parts(parts, body);
         let body = buffer_payload(req, state, declared, uri.clone()) // clone: an empty payload below names the same request
             .await
@@ -154,6 +164,8 @@ where
             content_kind,
             link_context,
             body,
+            value_limit,
+            blocking_decode,
         })
     }
 }
@@ -259,30 +271,58 @@ fn admit_batch_item(mut item: Value, entity_id: &Uri, content_kind: ContentKind)
 ///
 /// Every decoded entity comes back with the context it is read against: its
 /// own `@context` member for an `application/ld+json` batch, the request's
-/// `Link` context for an `application/json` one.
+/// `Link` context for an `application/json` one. A body at or above the
+/// published decode threshold is decoded on the blocking pool.
 ///
 /// # Errors
 ///
 /// Returns a [`ProblemResponse`] when the request fails as a whole, for one of
-/// the [`BatchBodyRefusal`]s: an unparsable body, a body that is not a
-/// non-empty JSON array, a null array item, or an item without a URI `id`.
-/// Every other failure, an `id` too long to be stored among them, is reported
-/// per entity in the returned [`BatchEntityError`] list, leaving the rest of
-/// the batch intact. The clause 6.3.4 media-type and payload-length refusals
-/// are not among them: [`BatchBody`] raised those before this was reached.
-pub fn parse_batch_entities(batch: &BatchBody, uri: &HttpUri) -> Result<ParsedBatch, ProblemResponse> {
-    let content_kind = batch.content_kind;
-    let items = batch_items(&batch.body, BatchMembers::Entities).map_err(|refusal| refusal.into_problem(uri.clone()))?; // clone: the refusal names the request it answers
+/// the [`BatchBodyRefusal`]s: a body holding more JSON values than the request
+/// limit admits, an unparsable body, a body that is not a non-empty JSON array,
+/// a null array item, or an item without a URI `id`; and an `InternalError`
+/// when the blocking decoding task fails. Every other failure, an `id` too long
+/// to be stored among them, is reported per entity in the returned
+/// [`BatchEntityError`] list, leaving the rest of the batch intact. The clause
+/// 6.3.4 media-type and payload-length refusals are not among them:
+/// [`BatchBody`] raised those before this was reached.
+pub async fn parse_batch_entities(batch: &BatchBody, uri: &HttpUri) -> Result<ParsedBatch, ProblemResponse> {
+    let body = batch.body.clone(); // clone: a reference-count bump; the decode may run on the blocking pool
+    let link_context = batch.link_context.clone(); // clone: the decode may run on the blocking pool, which borrows nothing
+    let (content_kind, value_limit) = (batch.content_kind, batch.value_limit);
+    let instance = uri.clone(); // clone: the decode's refusals name the request it answers
+    decode_payload(batch.blocking_decode.as_ref(), body.len(), move || {
+        decode_batch(&body, content_kind, link_context, value_limit).map_err(|refusal| refusal.into_problem(instance))
+    })
+    .await
+    .map_err(|failure| failure.report().with_instance(uri.clone()))? // clone: the refusal names the request it answers
+}
+
+/// Decode a batch body read under `content_kind` into its entities, each with
+/// the context it is read against.
+///
+/// # Errors
+///
+/// Returns the [`BatchBodyRefusal`] that fails the request as a whole.
+fn decode_batch(
+    body: &Bytes,
+    content_kind: ContentKind,
+    link_context: ContextSpec,
+    value_limit: Option<RequestJsonValueLimit>,
+) -> Result<ParsedBatch, BatchBodyRefusal> {
+    // Counted before the tree is built, so a body of too many values costs
+    // its bytes and nothing more.
+    refuse_values_past_budget(body, value_limit)?;
+    let items = batch_items(body, BatchMembers::Entities)?;
 
     let mut contexts = match content_kind {
-        ContentKind::Json => BatchContexts::shared(batch.link_context.clone()), // clone: every item of a JSON batch shares the request's context
+        ContentKind::Json => BatchContexts::shared(link_context),
         ContentKind::LdJson => BatchContexts::per_entity(),
     };
     let mut admitted = Vec::new();
     let mut errors = Vec::new();
 
     for (index, item) in items.into_iter().enumerate() {
-        let entity_id = batch_entity_id(&item, index).map_err(|refusal| refusal.into_problem(uri.clone()))?; // clone: the refusal names the request it answers
+        let entity_id = batch_entity_id(&item, index)?;
         match admit_batch_item(item, &entity_id, content_kind) {
             Ok((entity, own)) => admitted.push(BatchItem {
                 entity,
@@ -301,11 +341,16 @@ pub fn parse_batch_entities(batch: &BatchBody, uri: &HttpUri) -> Result<ParsedBa
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_batch::{BatchBody, ParsedBatch, parse_batch_entities};
+    use crate::{
+        blocking_decode::BlockingDecodePolicy,
+        entity_batch::{BatchBody, ParsedBatch, parse_batch_entities},
+        request_json_value_limit::RequestJsonValueLimit,
+    };
     use andromeda_http_response::problem_response::ProblemResponse;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
     use andromeda_ngsi_ld_model::entity::Entity;
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::{
         batch_operation::{BatchEntityError, BatchErrorKind},
         error_type::NgsiLdErrorType,
@@ -323,6 +368,7 @@ mod tests {
     };
     use iri_rs::IriBuf;
     use serde_json::json;
+    use std::num::NonZeroUsize;
 
     /// The URI every fixture request addresses.
     fn batch_uri() -> Uri {
@@ -331,8 +377,8 @@ mod tests {
 
     /// The entities and per-entity errors a batch decodes into, read against
     /// the default context.
-    fn parsed(batch: &BatchBody) -> (Vec<Entity>, Vec<BatchEntityError>) {
-        let ParsedBatch { items, errors, .. } = parse_batch_entities(batch, &batch_uri()).expect("batch parses");
+    async fn parsed(batch: &BatchBody) -> (Vec<Entity>, Vec<BatchEntityError>) {
+        let ParsedBatch { items, errors, .. } = parse_batch_entities(batch, &batch_uri()).await.expect("batch parses");
         (items.into_iter().map(|item| item.entity).collect(), errors)
     }
 
@@ -374,7 +420,7 @@ mod tests {
             r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":10}},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","bad name":{"type":"Property","value":20}},{"id":"urn:ngsi-ld:Vehicle:3","type":"Vehicle","speed":{"type":"Property","value":30}}]"#,
         )
         .await;
-        let (entities, errors) = parsed(&batch);
+        let (entities, errors) = parsed(&batch).await;
 
         assert_eq!(entities.len(), 2, "{errors:?}");
         pretty_assertions::assert_eq!(
@@ -391,7 +437,7 @@ mod tests {
         // malformed batch content and fails the whole request as BadRequestData,
         // not the InvalidRequest a missing id raises.
         let batch = json_batch(r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle"},null]"#).await;
-        let error = parse_batch_entities(&batch, &batch_uri()).expect_err("a null item fails the request");
+        let error = parse_batch_entities(&batch, &batch_uri()).await.expect_err("a null item fails the request");
         pretty_assertions::assert_eq!(error.problem().error_type(), NgsiLdErrorType::BadRequestData);
     }
 
@@ -404,7 +450,7 @@ mod tests {
     /// The whole-request refusal a batch body draws.
     async fn request_refusal(body: &str) -> ProblemResponse {
         let batch = json_batch(body).await;
-        match parse_batch_entities(&batch, &batch_uri()) {
+        match parse_batch_entities(&batch, &batch_uri()).await {
             Ok(parsed) => panic!(
                 "the request was to fail as a whole, parsed {} entities and {:?}",
                 parsed.items.len(),
@@ -424,7 +470,7 @@ mod tests {
             r#"[{{"id":"urn:ngsi-ld:Vehicle:A","type":"Vehicle"}},{{"id":"{long_id}","type":"Vehicle"}},{{"id":"urn:ngsi-ld:Vehicle:C","type":"Vehicle"}}]"#
         );
         let batch = json_batch(&body).await;
-        let (entities, errors) = parsed(&batch);
+        let (entities, errors) = parsed(&batch).await;
 
         pretty_assertions::assert_eq!(
             entities.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
@@ -449,7 +495,7 @@ mod tests {
     async fn a_batch_of_one_over_long_id_parses_to_one_error() {
         let body = format!(r#"[{{"id":"{}","type":"Vehicle"}}]"#, urn_of_length(IDENTIFIER_BYTE_LIMIT + 1));
         let batch = json_batch(&body).await;
-        let (entities, errors) = parsed(&batch);
+        let (entities, errors) = parsed(&batch).await;
         assert!(entities.is_empty());
         pretty_assertions::assert_eq!(errors.len(), 1);
     }
@@ -519,7 +565,7 @@ mod tests {
             ),
         ] {
             let batch = batch_of(content_type, body).await;
-            let (entities, errors) = parsed(&batch);
+            let (entities, errors) = parsed(&batch).await;
             pretty_assertions::assert_eq!(
                 entities.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
                 vec!["urn:ngsi-ld:Vehicle:A".to_string()],
@@ -537,7 +583,7 @@ mod tests {
             r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":0.100000000000000005}},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","json":{"type":"JsonProperty","json":{"nested":1e-16384}}},{"id":"urn:ngsi-ld:Vehicle:3","type":"Vehicle","speed":{"type":"Property","value":18446744073709551616}}]"#,
         )
         .await;
-        let (entities, errors) = parsed(&batch);
+        let (entities, errors) = parsed(&batch).await;
 
         assert_eq!(entities.len(), 2, "{errors:?}");
         let encoded = serde_json::to_string(&entities).expect("exact entities");
@@ -559,7 +605,7 @@ mod tests {
         )
         .await;
 
-        let ParsedBatch { items, context, errors } = parse_batch_entities(&batch, &batch_uri()).expect("batch parses");
+        let ParsedBatch { items, context, errors } = parse_batch_entities(&batch, &batch_uri()).await.expect("batch parses");
 
         assert!(errors.is_empty(), "{errors:?}");
         pretty_assertions::assert_eq!(items[0].context.spec().body_context(), Some(&json!({"speed": "https://a.example/speed"})));
@@ -580,7 +626,7 @@ mod tests {
         )
         .await;
 
-        let ParsedBatch { items, context, .. } = parse_batch_entities(&batch, &batch_uri()).expect("batch parses");
+        let ParsedBatch { items, context, .. } = parse_batch_entities(&batch, &batch_uri()).await.expect("batch parses");
 
         let written = json!(["https://a.example/c.jsonld", "https://b.example/c.jsonld", "https://a.example/c.jsonld"]);
         pretty_assertions::assert_eq!(context.body_context(), Some(&written));
@@ -604,7 +650,7 @@ mod tests {
         .await;
         let link = ContextSpec::from_link(IriBuf::new("https://example.com/ctx.jsonld".to_owned()).expect("a valid IRI"));
 
-        let ParsedBatch { items, context, .. } = parse_batch_entities(&batch, &batch_uri()).expect("batch parses");
+        let ParsedBatch { items, context, .. } = parse_batch_entities(&batch, &batch_uri()).await.expect("batch parses");
 
         pretty_assertions::assert_eq!(context, link);
         assert!(items.iter().all(|item| *item.context.spec() == link));
@@ -759,5 +805,75 @@ mod tests {
         let extracted = BatchBody::from_request(request, &()).await.expect("both preconditions are met");
 
         pretty_assertions::assert_eq!(extracted.body.as_ref(), b"[]".as_slice());
+    }
+
+    /// Clause 6.3.2: a batch body holding more JSON values than the published
+    /// limit is too large as a request, so the request is refused whole with
+    /// the 413 rather than entity by entity.
+    #[tokio::test]
+    async fn a_batch_body_past_the_json_value_limit_is_refused_whole() {
+        let body =
+            r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle"},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","n":{"type":"Property","value":[1,2,3]}}]"#;
+        let mut request = Request::builder()
+            .uri(batch_uri())
+            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_LENGTH, body.len())
+            .body(Body::from(body))
+            .expect("request builds");
+        let ten = NonZeroUsize::new(10).expect("ten is not zero");
+        request.extensions_mut().insert(RequestJsonValueLimit::new(JsonValueLimit::new(ten)));
+        let batch = admitted_batch(request).await;
+
+        let refusal = match parse_batch_entities(&batch, &batch_uri()).await {
+            Ok(parsed) => panic!(
+                "the request was to fail as a whole, parsed {} entities and {:?}",
+                parsed.items.len(),
+                parsed.errors
+            ),
+            Err(refusal) => refusal,
+        };
+
+        pretty_assertions::assert_eq!(refusal.problem().error_type(), NgsiLdErrorType::RequestEntityTooLarge);
+        pretty_assertions::assert_eq!(refusal.problem().status_code(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(refusal.problem().detail().contains("10 JSON values"), "{}", refusal.problem().detail());
+        pretty_assertions::assert_eq!(
+            refusal.problem().instance().map(ToString::to_string).as_deref(),
+            Some("/ngsi-ld/v1/entityOperations/create")
+        );
+    }
+
+    /// A batch decoded on the blocking pool is the batch decoded inline: the
+    /// same entities, the same per-entity errors, the same refusal of a body
+    /// that fails as a whole.
+    #[tokio::test]
+    async fn a_batch_is_decoded_alike_on_both_decode_paths() {
+        let bodies = [
+            r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","n":{"type":"Property","value":[0.100000000000000005,18446744073709551616]}},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle"}]"#,
+            r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle"},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","bad key":{"type":"Property","value":1}}]"#,
+            "[1,",
+            "{}",
+        ];
+        for body in bodies {
+            let decoded = |threshold: usize| async move {
+                let mut request = Request::builder()
+                    .uri(batch_uri())
+                    .header(CONTENT_TYPE, "application/json")
+                    .header(CONTENT_LENGTH, body.len())
+                    .body(Body::from(body))
+                    .expect("request builds");
+                request.extensions_mut().insert(BlockingDecodePolicy::new(threshold, NonZeroUsize::MIN));
+                match parse_batch_entities(&admitted_batch(request).await, &batch_uri()).await {
+                    Ok(ParsedBatch { items, errors, .. }) => Ok((
+                        items
+                            .iter()
+                            .map(|item| serde_json::to_value(&item.entity).expect("an entity serializes"))
+                            .collect::<Vec<_>>(),
+                        errors,
+                    )),
+                    Err(refusal) => Err((refusal.problem().status_code(), refusal.problem().detail().to_owned())),
+                }
+            };
+            pretty_assertions::assert_eq!(decoded(0).await, decoded(usize::MAX).await, "{body}");
+        }
     }
 }

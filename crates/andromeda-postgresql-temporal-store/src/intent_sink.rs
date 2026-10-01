@@ -14,9 +14,7 @@ use crate::{
     unit_code_metadata::take_unit_code,
     write_record_persist::persist_write_record,
 };
-use andromeda_context_commit::submission_refusal::SubmissionRefusal;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
@@ -333,10 +331,8 @@ fn stored_value(row: &TemporalHistoryRow) -> Result<AttributeHistoryValue, Tempo
         TemporalValue::Number(value) => Ok(AttributeHistoryValue::Number(value.clone())), // clone: the persisted row owns its exact decimal.
         TemporalValue::String(value) => Ok(AttributeHistoryValue::String(value.clone())), // clone: the persisted row owns the string.
         TemporalValue::Boolean(value) => Ok(AttributeHistoryValue::Boolean(*value)),
-        TemporalValue::Geometry(value) => Ok(AttributeHistoryValue::Geometry(
-            Geometry::from_geojson_value(value).map_err(|_not_a_geometry| TemporalStoreError::Refused(SubmissionRefusal::GeoPropertyGeometryInvalid))?,
-        )),
-        TemporalValue::Object(value) => Ok(AttributeHistoryValue::Object(Value::clone(value))), // clone: the persisted row owns the structured value.
+        TemporalValue::Geometry(geometry) => Ok(AttributeHistoryValue::Geometry(geometry.clone())), // clone: the persisted row owns its geometry.
+        TemporalValue::Object(value) => Ok(AttributeHistoryValue::Object(Value::clone(value))),     // clone: the persisted row owns the structured value.
         TemporalValue::DateTime(value) => Ok(AttributeHistoryValue::DateTime(*value)),
         TemporalValue::Uri(value) => Ok(AttributeHistoryValue::Uri(value.clone())), // clone: the persisted row owns the URI.
         TemporalValue::Tombstone { deleted_at } => Ok(AttributeHistoryValue::Tombstone { deleted_at: *deleted_at }),
@@ -356,12 +352,14 @@ fn persistence(error: impl Into<TemporalStoreError>) -> TemporalError {
 #[cfg(test)]
 mod tests {
     use crate::{
+        attribute_history_value::AttributeHistoryValue,
         error::TemporalStoreError,
-        intent_sink::recording_entity_key,
+        intent_sink::{recording_entity_key, stored_value},
         temporal_catalog_write::TemporalCatalog,
         temporal_store_invariant::TemporalStoreInvariant,
     };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         attribute_type::AttributeType,
@@ -373,6 +371,7 @@ mod tests {
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
     use andromeda_temporal::append_intent::{TemporalAppendEntry, TemporalAppendIntent};
     use chrono::{TimeZone, Utc};
+    use serde_json::json;
     use std::collections::HashMap;
 
     const SPEED: &str = "https://example.com/speed";
@@ -402,21 +401,26 @@ mod tests {
 
     /// One observation of `speed`.
     fn observation() -> TemporalAppendEntry {
-        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
         TemporalAppendEntry::Observation {
-            row: TemporalHistoryRow {
-                attribute_name: SPEED.parse::<AttributeName>().expect("valid attribute name"),
-                attribute_type: AttributeType::Property,
-                dataset_id: None,
-                value: TemporalValue::Number(JsonNumber::from(42)),
-                observed_at: None,
-                recorded_at,
-                created_at: Some(recorded_at),
-                modified_at: Some(recorded_at),
-                instance: InstanceIdentity::generate(),
-                metadata: None,
-                partition_total: None,
-            },
+            row: observed_row(AttributeType::Property, TemporalValue::Number(JsonNumber::from(42))),
+        }
+    }
+
+    /// One observation of `speed`, of family `attribute_type`, holding `value`.
+    fn observed_row(attribute_type: AttributeType, value: TemporalValue) -> TemporalHistoryRow {
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
+        TemporalHistoryRow {
+            attribute_name: SPEED.parse::<AttributeName>().expect("valid attribute name"),
+            attribute_type,
+            dataset_id: None,
+            value,
+            observed_at: None,
+            recorded_at,
+            created_at: Some(recorded_at),
+            modified_at: Some(recorded_at),
+            instance: InstanceIdentity::generate(),
+            metadata: None,
+            partition_total: None,
         }
     }
 
@@ -465,5 +469,15 @@ mod tests {
             let resolved = recording_entity_key(&catalog, &intent(entries)).expect("a resolved key is not an error");
             pretty_assertions::assert_eq!(resolved, Some(entity_key));
         }
+    }
+
+    /// The observation carries the geometry already built, so the row stores
+    /// that geometry as it stands rather than a JSON rendering of it.
+    #[test]
+    fn a_geometry_observation_is_stored_as_its_geometry() {
+        let geometry = Geometry::from_geojson_value(&json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 2.0, 30.0], [3.0, 4.0]]}))
+            .expect("a valid LineString");
+        let row = observed_row(AttributeType::GeoProperty, TemporalValue::Geometry(geometry.clone())); // clone: the test compares the stored value against what it observed
+        pretty_assertions::assert_eq!(stored_value(&row).expect("a geometry is storable"), AttributeHistoryValue::Geometry(geometry));
     }
 }

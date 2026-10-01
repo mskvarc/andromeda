@@ -14,15 +14,10 @@
 
 use crate::{entity::stored_entity_error::StoredEntityError, error::ContextStoreError};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of};
-use andromeda_postgresql_schema::{
-    census::{EntityTypeAttributeCensus, EntityTypeCensus},
-    name_dictionary::{AttributeNames, EntityTypeNames},
-};
+use andromeda_postgresql_schema::census::{EntityTypeAttributeCensus, EntityTypeCensus};
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
-use sea_query::{Cond, Expr, ExprTrait, Func, Iden, JoinType, Query, SelectStatement, SimpleExpr};
+use sea_query::{Cond, Expr, ExprTrait, Func, Iden, Query, SelectStatement, SimpleExpr};
 
 /// Clauses 5.7.8 to 5.7.10: the attribute answers.
 mod attributes;
@@ -48,16 +43,6 @@ pub(super) struct Total;
 #[derive(Iden, Clone, Copy)]
 #[iden = "count"]
 pub(super) struct Count;
-
-/// The `entity_type_names` row a type key is read back through, `n`.
-#[derive(Iden, Clone, Copy)]
-#[iden = "n"]
-pub(super) struct TypeName;
-
-/// The `attribute_names` row an attribute key is read back through, `an`.
-#[derive(Iden, Clone, Copy)]
-#[iden = "an"]
-pub(super) struct AttributeNameRow;
 
 /// The aggregated name array an answer reports, `names`.
 #[derive(Iden, Clone, Copy)]
@@ -97,36 +82,9 @@ pub(super) fn live_instances(target: &ContextTarget, narrowing: Cond) -> SelectS
         .take()
 }
 
-/// `JOIN entity_type_names n ON n.entity_type_name_key = <key>`.
-pub(super) fn join_type_name(statement: &mut SelectStatement, join: JoinType, key: SimpleExpr) {
-    statement.join_as(
-        join,
-        EntityTypeNames::Table,
-        TypeName,
-        Expr::col((TypeName, EntityTypeNames::EntityTypeNameKey)).eq(key),
-    );
-}
-
-/// `JOIN attribute_names an ON an.attribute_name_key = <key>`.
-pub(super) fn join_attribute_name(statement: &mut SelectStatement, join: JoinType, key: SimpleExpr) {
-    statement.join_as(
-        join,
-        AttributeNames::Table,
-        AttributeNameRow,
-        Expr::col((AttributeNameRow, AttributeNames::AttributeNameKey)).eq(key),
-    );
-}
-
 /// The live key of a type in [`LiveTypes`] or [`LiveInstances`].
 pub(super) fn type_key_of(source: impl Iden + 'static) -> SimpleExpr {
     Expr::col((source, EntityTypeCensus::EntityTypeNameKey))
-}
-
-/// The family a stored census code names.
-pub(super) fn stored_family(code: i16) -> Result<AttributeType, ContextStoreError> {
-    AttributeKind::try_from(code)
-        .map(attribute_type_of)
-        .map_err(|error| StoredEntityError::CensusFamily(error).into())
 }
 
 /// A summed count read back as the unsigned count it is: a ledger never sums

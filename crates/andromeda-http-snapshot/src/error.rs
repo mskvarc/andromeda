@@ -44,6 +44,7 @@ fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, error.to_string()),
         EntityError::Contention { .. } => ClassifiedReport::public(NgsiLdErrorType::Conflict, error.to_string()),
         EntityError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
+        EntityError::PayloadBudget(source) => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, source.to_string()),
         EntityError::JsonLd(source) => classify_jsonld_error(source),
         EntityError::Query(source) => classify_query_error(source),
         EntityError::Request(source) => classify_parameter_error(source),
@@ -64,6 +65,7 @@ fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         // A snapshot path never triggers the delete-by-query bound, but the
         // classification is total over the shared error type.
         TemporalError::TooManyResults { .. } => ClassifiedReport::public(NgsiLdErrorType::TooManyResults, error.to_string()),
+        TemporalError::PayloadBudget(source) => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, source.to_string()),
         TemporalError::JsonLd(source) => classify_jsonld_error(source),
         TemporalError::Query(source) => classify_query_error(source),
         TemporalError::Request(source) => classify_parameter_error(source),

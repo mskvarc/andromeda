@@ -47,9 +47,6 @@ pub enum TemporalInvariant {
     /// An attribute IRI the JSON-LD engine expanded is not an attribute name.
     #[error("an expanded attribute IRI is not an attribute name: {0}")]
     ExpandedAttributeName(#[source] NgsiLdReferenceError),
-    /// A geometry the broker decoded cannot be written back as `GeoJSON`.
-    #[error("a decoded geometry cannot be written back as GeoJSON: {0}")]
-    GeometrySerialization(#[source] serde_json::Error),
     /// An entity operation a temporal operation depends on failed.
     #[error("an entity operation a temporal operation depends on failed")]
     EntityOperation,

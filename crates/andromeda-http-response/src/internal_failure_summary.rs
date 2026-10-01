@@ -25,6 +25,8 @@ impl InternalFailureSummary {
     pub const RESPONSE_RENDERING: InternalFailureSummary = InternalFailureSummary::new("failed to render the response representation");
     /// The response payload could not be encoded for transport.
     pub const RESPONSE_ENCODING: InternalFailureSummary = InternalFailureSummary::new("failed to encode the response payload");
+    /// A request payload could not be decoded for a reason of the broker's own.
+    pub const REQUEST_DECODING: InternalFailureSummary = InternalFailureSummary::new("failed to decode the request payload");
     /// A context source could not be reached, or its response could not be used.
     pub const CONTEXT_FEDERATION: InternalFailureSummary =
         InternalFailureSummary::new("a context source could not be reached or its response could not be used");

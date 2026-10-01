@@ -54,7 +54,7 @@ pub(crate) async fn batch_merge(
         items,
         context: _,
         errors: mut entity_errors,
-    } = parse_batch_entities(&batch_body, &uri)?;
+    } = parse_batch_entities(&batch_body, &uri).await?;
     // Clause 5.6.20.4 runs clause 5.6.17 "for each of the NGSI-LD Entities
     // included in the input Array", each entity answering for itself: the
     // clause 5.5.4 validation an entity fails contributes a BatchEntityError of

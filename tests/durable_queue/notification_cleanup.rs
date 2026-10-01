@@ -60,7 +60,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the fan-out"));
     assert_eq!(claimed.len(), 4);
     // clone: the payload is compared again after the claimed batch is consumed.
-    let payload = claimed.first().expect("a claimed delivery").event.entity_snapshot.clone();
+    let payload = claimed.first().expect("a claimed delivery").event.entity_snapshot.as_deref().cloned();
 
     // Four dispositions over one shared event: delivered, obsolete (which the
     // drain acknowledges the same way), retry-exhausted, and retained pending.
@@ -128,8 +128,8 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     let last = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the last delivery"));
     assert_eq!(last.len(), 1);
     assert_eq!(
-        last.first().expect("the last delivery").event.entity_snapshot,
-        payload,
+        last.first().expect("the last delivery").event.entity_snapshot.as_deref(),
+        payload.as_ref(),
         "the last delivery still carries the shared payload"
     );
     queue

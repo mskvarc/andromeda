@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_model::expanded::{
 };
 use chrono::Utc;
 use serde_json::Value;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 /// Whether a `noOverwrite` append of `attrs` onto `entity` can add nothing: the
 /// fragment names at least one attribute and every named attribute is already
@@ -91,7 +91,14 @@ impl EntityService {
         // Hold the per-id locks across the read-modify-write window so two
         // concurrent updates for the same id can't lose each other's writes.
         let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;
-        let existing_map = self.reader.get_batch(target, &prepared_ids).await?;
+        // Shared by the computation and the notification it plans.
+        let existing_map = self
+            .reader
+            .get_batch(target, &prepared_ids)
+            .await?
+            .into_iter()
+            .map(|(id, payload)| (id, Arc::new(payload)))
+            .collect::<HashMap<Identifier, Arc<Value>>>();
         let now = Utc::now();
 
         let mut writes = Vec::with_capacity(prepared.len());
@@ -102,7 +109,7 @@ impl EntityService {
                 errors.push((id, error));
                 continue;
             };
-            let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
+            let mut existing = Value::clone(previous); // clone: the update mutates its own copy of the stored payload
 
             let attrs = unwrap_expanded_ref(&prepared_entity.expanded);
             if overwrite == OverwritePolicy::Preserve {

@@ -3,11 +3,13 @@
 use crate::{
     EntityService,
     batch::execution::BatchExecutionConfig,
-    change_notifier::ChangeNotifier,
+    change_notifier::{ChangeNotifier, SubscriptionMatching},
+    config::EntityConfig,
     error::EntityError,
     port::{
         attribute_history::AttributeDatasetHistory,
         blocking_executor::{BlockingExecutor, BlockingTask},
+        deletion_outline::DeletionOutlineReader,
         reader::EntityReader,
         retry_delay::RetryDelay,
         service_ports::EntityServicePorts,
@@ -63,13 +65,14 @@ fn entity_service(store: &Arc<InMemoryStore>, writes: Arc<dyn ContextCommitter>)
     EntityService::new(
         EntityServicePorts {
             reader: Arc::clone(store) as Arc<dyn EntityReader>, // clone: the service reads the store the test inspects
+            deletion_outline: Arc::clone(store) as Arc<dyn DeletionOutlineReader>, // clone: the service outlines the store the test inspects
             blocking_executor: Arc::new(UnusedBlockingExecutor) as Arc<dyn BlockingExecutor>,
             retry_delay: Arc::new(ImmediateRetry) as Arc<dyn RetryDelay>,
             attribute_history: Arc::new(NoAttributeHistory) as Arc<dyn AttributeDatasetHistory>,
             writes,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds"),
-        Arc::new(ChangeNotifier::new(None, None)),
+        Arc::new(ChangeNotifier::new(None, SubscriptionMatching::Absent)),
         BatchExecutionConfig {
             chunk_concurrency: 1,
             chunk_write_concurrency: 1,
@@ -78,6 +81,7 @@ fn entity_service(store: &Arc<InMemoryStore>, writes: Arc<dyn ContextCommitter>)
             prepare_blocking_threshold: 1024,
             async_side_effect_threshold: None,
         },
+        EntityConfig::default().payload_budget(),
     )
 }
 

@@ -1,6 +1,12 @@
 //! The store the entity service writes to and reads from.
 
-use crate::{entity_snapshot::EntitySnapshot, error::EntityError, port::reader::EntityReader};
+use crate::{
+    deletion_outline::{DeletionOutline, DeletionWatchers},
+    deletion_outline_fixture::outline_of,
+    entity_snapshot::EntitySnapshot,
+    error::EntityError,
+    port::{deletion_outline::DeletionOutlineReader, reader::EntityReader},
+};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_replay::CommitReplay,
@@ -16,7 +22,10 @@ use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 /// An in-memory store holding each entity's expanded payload and version.
 #[derive(Default)]
@@ -46,10 +55,9 @@ impl InMemoryStore {
                 }
             },
             (EntityMutation::Delete, Some(modified_at)) => {
-                let payload = entities.remove(&id).map(|(payload, _)| payload).unwrap_or_default();
+                entities.remove(&id);
                 WriteOutcome::Deleted(DeletedEntity {
                     id,
-                    payload,
                     created_at: modified_at,
                     modified_at,
                     expires_at: None,
@@ -76,6 +84,17 @@ impl ContextCommitter for InMemoryStore {
 }
 
 #[async_trait]
+impl DeletionOutlineReader for InMemoryStore {
+    async fn deletion_outline(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<DeletionOutline>, EntityError> {
+        Ok(self.stored(id).map(|(payload, _)| outline_of(&payload)))
+    }
+
+    async fn deletion_watchers(&self, _target: &ContextTarget) -> Result<DeletionWatchers, EntityError> {
+        Ok(DeletionWatchers::None)
+    }
+}
+
+#[async_trait]
 impl EntityReader for InMemoryStore {
     async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<Value>, EntityError> {
         Ok(self.stored(id).map(|(payload, _)| payload))
@@ -87,7 +106,10 @@ impl EntityReader for InMemoryStore {
     }
 
     async fn get_snapshot(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
-        Ok(self.stored(id).map(|(payload, modified_at)| EntitySnapshot { payload, modified_at }))
+        Ok(self.stored(id).map(|(payload, modified_at)| EntitySnapshot {
+            payload: Arc::new(payload),
+            modified_at,
+        }))
     }
 
     async fn get_snapshot_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
@@ -95,8 +117,15 @@ impl EntityReader for InMemoryStore {
             .iter()
             // clone: the answer owns the identifiers it is keyed by
             .filter_map(|id| {
-                self.stored(id)
-                    .map(|(payload, modified_at)| (id.clone(), EntitySnapshot { payload, modified_at }))
+                self.stored(id).map(|(payload, modified_at)| {
+                    (
+                        id.clone(),
+                        EntitySnapshot {
+                            payload: Arc::new(payload),
+                            modified_at,
+                        },
+                    )
+                })
             })
             .collect())
     }

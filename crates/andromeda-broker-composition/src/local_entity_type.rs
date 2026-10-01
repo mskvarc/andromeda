@@ -1,41 +1,39 @@
 //! The federation write path's local-entity-type resolver, backed by the
-//! tenant's entity reader.
+//! tenant's entity store.
 //!
 //! The federation service decides whether a registration covers a write by the
 //! entity's type. An attribute-level write carries no `type` in its request, so
 //! without this the write is matched against every registration regardless of
 //! the type it declares (clause 5.9.2.4). This adapter reads the local entity's
-//! stored, expanded payload and hands its `@type` back so coverage is decided by
-//! the type the entity actually has.
+//! types from the store, which keeps them beside the payload, so coverage is
+//! decided by the type the entity actually has without decoding the payload.
 
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::port::reader::EntityReader;
+use andromeda_entity::port::entity_types::EntityTypeReader;
 use andromeda_federation::local_entity_type::LocalEntityTypeResolver;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::node::expanded_object_ref;
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
-use serde_json::Value;
 use std::sync::Arc;
 use tracing::warn;
 
-/// Resolves a local entity's expanded type through the tenant's entity reader.
-pub(crate) struct EntityReaderTypeResolver {
-    reader: Arc<dyn EntityReader>,
+/// Resolves a local entity's expanded types through the tenant's entity store.
+pub(crate) struct EntityStoreTypeResolver {
+    types: Arc<dyn EntityTypeReader>,
 }
 
-impl EntityReaderTypeResolver {
-    /// Wrap the tenant's entity reader as the federation write path's type resolver.
-    pub(crate) fn new(reader: Arc<dyn EntityReader>) -> EntityReaderTypeResolver {
-        EntityReaderTypeResolver { reader }
+impl EntityStoreTypeResolver {
+    /// Wrap the tenant's entity type reader as the federation write path's type resolver.
+    pub(crate) fn new(types: Arc<dyn EntityTypeReader>) -> EntityStoreTypeResolver {
+        EntityStoreTypeResolver { types }
     }
 }
 
-impl LocalEntityTypeResolver for EntityReaderTypeResolver {
+impl LocalEntityTypeResolver for EntityStoreTypeResolver {
     fn local_entity_types<'resolver>(&'resolver self, target: &'resolver ContextTarget, id: &'resolver Identifier) -> BoxFuture<'resolver, Vec<IriBuf>> {
         Box::pin(async move {
-            match self.reader.get(target, id).await {
-                Ok(Some(entity)) => expanded_types(&entity),
+            match self.types.entity_types(target, id).await {
+                Ok(Some(types)) => types.iter().filter_map(type_iri).collect(),
                 Ok(None) => Vec::new(),
                 Err(error) => {
                     // A read failure must not become a spurious refusal: fall back
@@ -49,18 +47,8 @@ impl LocalEntityTypeResolver for EntityReaderTypeResolver {
     }
 }
 
-/// Every `@type` IRI of an expanded entity payload. The reader hands back the
-/// stored node wrapped in an array, so it is unwrapped first.
-fn expanded_types(entity: &Value) -> Vec<IriBuf> {
-    let Some(members) = expanded_object_ref(entity) else {
-        return Vec::new();
-    };
-    let Some(types) = members.get("@type").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    types
-        .iter()
-        .filter_map(Value::as_str)
-        .filter_map(|iri| IriBuf::new(iri.to_owned()).ok())
-        .collect()
+/// The IRI an expanded stored type name is; a stored name always is one, and
+/// one that were not would match no registration.
+fn type_iri(name: &EntityTypeName) -> Option<IriBuf> {
+    IriBuf::new(name.as_str().to_owned()).ok()
 }

@@ -6,7 +6,10 @@
 //! three "to fully specify an NGSI-LD Geoquery". One reading,
 //! [`compile_geo_q`], serves both sides: a create or update whose `geoQ` it
 //! refuses is `BadRequestData` (clauses 5.8.1.4 and 5.5.4), and the matcher
-//! compiles the stored `geoQ` with it. Reading them separately is how a
+//! compiles the stored `geoQ` with it. A written `geoQ` is admitted by
+//! [`admit_geo_q`], which takes the census of string-encoded coordinates
+//! before they are parsed and compiles the `geoQ` once for both its validity
+//! and its size. Reading them separately is how a
 //! `geoQ` admission let through (one naming only `georel`) came to compile to
 //! nothing at match time, which the matcher took for "no `geoQ`" and so
 //! notified every entity.
@@ -18,7 +21,14 @@
 //! evaluate admits no entity, and widening it into none would notify a
 //! subscriber of everything.
 
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError, geometry::Geometry, geometry_type::GeometryType};
+use crate::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
+use andromeda_ngsi_ld_geometry::{
+    geo_rel::GeoRelParseError,
+    geojson::GeometryError,
+    geometry::Geometry,
+    geometry_census::{GeometryCensusError, GeometryCensusLimits, text_coordinates_census},
+    geometry_type::GeometryType,
+};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 use andromeda_ngsi_ld_query::geo::query::GeoQuery;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
@@ -136,6 +146,39 @@ pub fn compile_geo_q(geo_q: &Value) -> Result<GeoQuery, GeoQError> {
     Ok(GeoQuery { georel, geometry, geoproperty })
 }
 
+/// Admit the `geoQ` a subscription create body or update fragment writes:
+/// a `GeoQuery` the broker can evaluate, whose reference geometry stays within
+/// `limits` (clause 6.3.2: a written input larger than the broker processes
+/// is "Request Entity too large").
+///
+/// Coordinates encoded as a string (Table 5.2.13-1) are counted from their
+/// text before anything parses them; the `geoQ` is then compiled once, which
+/// both refuses a malformed one and counts the positions of one given as an
+/// array. A payload without a `geoQ`, or whose `geoQ` is `null` -- an update
+/// fragment's request to remove it (clause 5.5.8) -- has nothing to admit.
+///
+/// # Errors
+///
+/// Returns [`SubscriptionError::GeoQTooLarge`] for a reference geometry past
+/// `limits`, and [`SubscriptionError::Validation`] carrying the [`GeoQError`]
+/// for a `geoQ` that is no `GeoQuery`.
+pub fn admit_geo_q(payload: &Value, limits: GeometryCensusLimits) -> Result<(), SubscriptionError> {
+    let Some(geo_q) = payload.get("geoQ").filter(|geo_q| !geo_q.is_null()) else {
+        return Ok(());
+    };
+    if let Some(Value::String(coordinates)) = geo_q.get("coordinates") {
+        match text_coordinates_census(coordinates, limits) {
+            // Text that is no JSON is refused by the compilation below.
+            Ok(_) | Err(GeometryCensusError::Syntax(_)) => {}
+            Err(GeometryCensusError::OverLimit(over)) => return Err(SubscriptionError::GeoQTooLarge { over }),
+        }
+    }
+    let geo_query = compile_geo_q(geo_q).map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::GeoQ(source)))?;
+    limits
+        .admit_positions(geo_query.geometry.form().position_count())
+        .map_err(|over| SubscriptionError::GeoQTooLarge { over })
+}
+
 /// The spatial restriction a subscription's `geoQ` places on matching
 /// (clauses 4.10 and 5.8.6).
 #[derive(Debug)]
@@ -189,11 +232,103 @@ impl SubscriptionGeoFilter {
 
 #[cfg(test)]
 mod tests {
-    use crate::geo_filter::{GeoQError, GeoQMember, SubscriptionGeoFilter, compile_geo_q};
+    use crate::{
+        error::SubscriptionError,
+        geo_filter::{GeoQError, GeoQMember, SubscriptionGeoFilter, admit_geo_q, compile_geo_q},
+        subscription_validation_reason::SubscriptionValidationReason,
+    };
+    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryOverLimit, GeometryPositionLimit};
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-    use serde_json::json;
+    use serde_json::{Value, json};
+    use std::num::NonZeroUsize;
 
     const SUBSCRIPTION: &str = "urn:ngsi-ld:Subscription:test";
+
+    /// Limits of `positions` positions and a hundred other values.
+    fn limits(positions: usize) -> GeometryCensusLimits {
+        GeometryCensusLimits {
+            positions: GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("a positive limit")),
+            values: JsonValueLimit::new(NonZeroUsize::new(100).expect("a positive limit")),
+        }
+    }
+
+    /// The coordinates of a `LineString` of `positions` positions.
+    fn line(positions: usize) -> Value {
+        (0..positions)
+            .map(|index| json!([f64::from(u32::try_from(index).expect("a small fixture index")) * 0.01, 1.0]))
+            .collect()
+    }
+
+    /// A subscription payload whose `geoQ` is a `LineString` with `coordinates`.
+    fn with_line(coordinates: &Value) -> Value {
+        json!({"geoQ": {"georel": "intersects", "geometry": "LineString", "coordinates": coordinates}})
+    }
+
+    #[test]
+    fn a_subscription_geo_q_past_the_position_budget_is_refused() {
+        assert!(admit_geo_q(&with_line(&line(4)), limits(4)).is_ok());
+        let refused = admit_geo_q(&with_line(&line(5)), limits(4)).expect_err("five positions exceed four");
+        assert!(
+            matches!(
+                refused,
+                SubscriptionError::GeoQTooLarge {
+                    over: GeometryOverLimit::Positions { .. }
+                }
+            ),
+            "{refused:?}"
+        );
+        assert!(admit_geo_q(&json!({"geoQ": null}), limits(4)).is_ok());
+        assert!(admit_geo_q(&json!({}), limits(4)).is_ok());
+    }
+
+    /// Table 5.2.13-1: coordinates encoded as a string are counted from their
+    /// text, and refused before they are parsed.
+    #[test]
+    fn string_encoded_coordinates_past_the_budget_are_refused_before_parsing() {
+        assert!(admit_geo_q(&with_line(&Value::String(line(4).to_string())), limits(4)).is_ok());
+        let refused = admit_geo_q(&with_line(&Value::String(line(5).to_string())), limits(4)).expect_err("five positions exceed four");
+        assert!(
+            matches!(
+                refused,
+                SubscriptionError::GeoQTooLarge {
+                    over: GeometryOverLimit::Positions { .. }
+                }
+            ),
+            "{refused:?}"
+        );
+        let empties = Value::String(Value::Array(vec![json!([]); 200]).to_string());
+        let refused = admit_geo_q(&with_line(&empties), limits(4)).expect_err("two hundred lists exceed a hundred values");
+        assert!(
+            matches!(
+                refused,
+                SubscriptionError::GeoQTooLarge {
+                    over: GeometryOverLimit::Values { .. }
+                }
+            ),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_geo_q_is_refused_as_bad_request_data() {
+        let refused = admit_geo_q(&json!({"geoQ": {"georel": "near;maxDistance==2000"}}), limits(4)).expect_err("incomplete");
+        assert!(
+            matches!(
+                refused,
+                SubscriptionError::Validation(SubscriptionValidationReason::GeoQ(GeoQError::MissingMember { .. }))
+            ),
+            "{refused:?}"
+        );
+        let refused = admit_geo_q(&with_line(&json!("[[0, 0], ")), limits(4)).expect_err("not JSON");
+        assert!(
+            matches!(
+                refused,
+                SubscriptionError::Validation(SubscriptionValidationReason::GeoQ(GeoQError::Coordinates { .. }))
+            ),
+            "{refused:?}"
+        );
+    }
 
     #[test]
     fn a_complete_geo_q_compiles_with_location_as_the_default_geoproperty() {

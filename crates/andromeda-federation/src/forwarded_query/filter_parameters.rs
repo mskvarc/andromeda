@@ -70,13 +70,15 @@ impl ForwardedQuery {
         // A geometry that cannot travel is a broken invariant, never a reason to
         // forward the query without its geo filter: the source would answer
         // entities the client's filter excludes.
-        let geometry = serde_json::to_value(&geo.geometry).map_err(FederationInvariant::ForwardedGeometry)?;
-        let (Some(geometry_type), Some(coordinates)) = (geometry.get("type").and_then(Value::as_str), geometry.get("coordinates")) else {
-            return Err(FederationInvariant::ForwardedGeometryShape.into());
+        let (geometry_type, coordinates) = geo.reference.wire_members().map_err(FederationInvariant::ForwardedGeometry)?;
+        // Coordinates still encoded travel as the text they arrived as.
+        let coordinates = match coordinates {
+            Value::String(text) => text,
+            read @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => read.to_string(),
         };
         self.push(ForwardedParameter::Georel, geo.georel.to_string());
         self.push(ForwardedParameter::Geometry, geometry_type.to_string());
-        self.push(ForwardedParameter::Coordinates, coordinates.to_string());
+        self.push(ForwardedParameter::Coordinates, coordinates);
         if let Some(geoproperty) = &geo.geoproperty {
             self.push(ForwardedParameter::Geoproperty, names.geoproperty(geoproperty).await?.to_string());
         }

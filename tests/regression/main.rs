@@ -47,6 +47,8 @@ mod http_binding_details;
 mod http_precondition_details;
 mod inline_join_multi_target_relationship;
 mod invalid_parameter_values;
+mod large_entity_budget;
+mod large_entity_replicas;
 mod list_attribute_families;
 mod list_relationship_representation;
 mod long_uri_references;

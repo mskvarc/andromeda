@@ -2,6 +2,7 @@
 
 mod decode_route;
 pub mod json_pointer;
+pub mod value_census;
 
 use crate::{
     JsonNumber,
@@ -111,7 +112,14 @@ fn canonicalize_at<'a>(value: &'a mut Value, path: &mut Vec<PathSegment<'a>>) ->
 }
 
 /// Validate one number and give it the spelling [`JsonNumber`] renders.
+///
+/// A token already in that spelling whose digits lie within range is left as
+/// it is without building its decimal, which is what keeps a document of
+/// millions of coordinates cheap to admit.
 fn canonicalize_number(number: &mut Number, path: &[PathSegment<'_>]) -> Result<(), JsonNumberPathError> {
+    if NumberToken::parse(number.as_str()).is_some_and(|token| token.is_canonical_within_range()) {
+        return Ok(());
+    }
     let exact = JsonNumber::try_from(&*number).map_err(|source| JsonNumberPathError {
         path: JsonPointer::from_walk(path),
         source,

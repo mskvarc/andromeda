@@ -30,8 +30,17 @@ use crate::config::{
 use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
 use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 use thiserror::Error;
 use toml_comment::TomlComment;
+
+/// The default most JSON values one request payload may hold: ten entities at
+/// the default entity budget, or one geometry of the default position budget
+/// (three values a position) with room around it.
+const DEFAULT_MAX_REQUEST_JSON_VALUES: NonZeroUsize = NonZeroUsize::MIN.saturating_add(999_999);
+
+/// The default most payloads decoded beside the executor at once.
+const DEFAULT_MAX_CONCURRENT_BLOCKING_DECODES: NonZeroUsize = NonZeroUsize::MIN.saturating_add(3);
 
 /// Invalid process-wide HTTP stack configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -59,6 +68,24 @@ pub struct HttpStackConfig {
     /// (`"64 MiB"`).
     #[toml_comment(inline)]
     pub max_request_body: HumanByteSize,
+    /// Maximum number of JSON values one request payload may hold, counted
+    /// before the payload is parsed. Every scalar, array and object is one
+    /// value. A payload's processing cost follows this count rather than its
+    /// bytes; a request over it is answered 413 like one over
+    /// `max_request_body`. Every replica of a deployment runs the same value.
+    #[toml_comment(inline)]
+    pub max_request_json_values: NonZeroUsize,
+    /// Request payload size, in human-readable form (`"256 KiB"`), from which
+    /// the payload is parsed and decoded on the blocking thread pool instead
+    /// of on an executor worker, so a large payload does not stall unrelated
+    /// requests sharing that worker.
+    #[toml_comment(inline)]
+    pub blocking_decode_threshold: HumanByteSize,
+    /// Most payloads decoded on the blocking thread pool at once. A decode
+    /// holds memory in proportion to its payload while it runs; a payload
+    /// waiting for its turn holds only its bytes.
+    #[toml_comment(inline)]
+    pub max_concurrent_blocking_decodes: NonZeroUsize,
     /// Whether the `Forwarded` and `X-Forwarded-Proto` fields of an inbound
     /// request may decide the scheme of the URLs the broker mints from the
     /// request origin.
@@ -90,6 +117,9 @@ impl Default for HttpStackConfig {
         HttpStackConfig {
             request_timeout: HumanDuration::from_secs(30),
             max_request_body: HumanByteSize::mib(64),
+            max_request_json_values: DEFAULT_MAX_REQUEST_JSON_VALUES,
+            blocking_decode_threshold: HumanByteSize::kib(256),
+            max_concurrent_blocking_decodes: DEFAULT_MAX_CONCURRENT_BLOCKING_DECODES,
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
             cors: CorsConfig::default(),
             compression: CompressionConfig::default(),
@@ -135,12 +165,17 @@ mod tests {
     use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
     use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
     use serde::Deserialize;
-    use std::time::Duration;
+    use std::{num::NonZeroUsize, time::Duration};
     use toml_comment::TomlComment;
 
     #[derive(Deserialize)]
     struct BodyHolder {
         max_request_body: HumanByteSize,
+    }
+
+    #[derive(Deserialize)]
+    struct ValueLimitHolder {
+        max_request_json_values: NonZeroUsize,
     }
 
     #[derive(Deserialize)]
@@ -193,6 +228,23 @@ mod tests {
     }
 
     #[test]
+    fn the_default_request_json_value_limit_is_one_million() {
+        pretty_assertions::assert_eq!(HttpStackConfig::default().max_request_json_values.get(), 1_000_000);
+    }
+
+    #[test]
+    fn the_default_blocking_decode_threshold_is_256_kib() {
+        pretty_assertions::assert_eq!(HttpStackConfig::default().blocking_decode_threshold.as_u64(), 262_144);
+    }
+
+    #[test]
+    fn the_request_json_value_limit_parses_and_refuses_zero() {
+        let holder: ValueLimitHolder = toml::from_str("max_request_json_values = 250000").expect("a positive limit parses");
+        pretty_assertions::assert_eq!(holder.max_request_json_values.get(), 250_000);
+        assert!(toml::from_str::<ValueLimitHolder>("max_request_json_values = 0").is_err());
+    }
+
+    #[test]
     fn request_timeout_parses_humantime() {
         let holder: TimeoutHolder = toml::from_str("request_timeout = \"30s\"").expect("timeout parses");
         pretty_assertions::assert_eq!(holder.request_timeout.duration(), Duration::from_secs(30));
@@ -206,6 +258,8 @@ mod tests {
         }
         assert!(rendered.contains("request_timeout = \""), "{rendered}");
         assert!(rendered.contains("max_request_body = \""), "{rendered}");
+        assert!(rendered.contains("max_request_json_values = 1000000"), "{rendered}");
+        assert!(rendered.contains("blocking_decode_threshold = \""), "{rendered}");
     }
 
     #[test]

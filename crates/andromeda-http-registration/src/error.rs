@@ -24,6 +24,9 @@ impl RegistrationHttpClassify for RegistrationError {
             RegistrationError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()),
             RegistrationError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, self.to_string()),
             RegistrationError::Conflict(reason) => ClassifiedReport::public(NgsiLdErrorType::Conflict, reason.to_string()),
+            // Clause 6.3.2: a written input larger than the broker processes
+            // is "Request Entity too large", counted here in positions.
+            RegistrationError::GeometryTooLarge { .. } => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, self.to_string()),
             RegistrationError::JsonLd(source) => classify_jsonld_error(source),
             RegistrationError::Query(source) => classify_query_error(source),
             // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
@@ -90,6 +93,7 @@ pub(crate) fn internal_problem(detail: impl Display, summary: InternalFailureSum
 #[cfg(test)]
 mod tests {
     use crate::error::RegistrationHttpClassify;
+    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryOverLimit, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::{
         identifier::{Identifier, IdentifierParseError},
         uri::UriParseError,
@@ -97,11 +101,13 @@ mod tests {
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_registration::{
+        csr_member::CsrMember,
         error::RegistrationError,
         registration_conflict_reason::RegistrationConflictReason,
         registration_validation_reason::RegistrationValidationReason,
     };
-    use std::error::Error;
+    use axum::http::StatusCode;
+    use std::{error::Error, num::NonZeroUsize};
 
     #[test]
     fn focused_registration_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
@@ -138,5 +144,26 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// Clause 6.3.2: a registration geometry holding more positions than the
+    /// broker accepts in one geometry is the 413 "Request Entity too large",
+    /// naming the member and the limit.
+    #[test]
+    fn a_registration_location_past_the_position_budget_is_a_413() {
+        let one_million = NonZeroUsize::new(1_000_000).expect("one million is not zero");
+        let error = RegistrationError::GeometryTooLarge {
+            member: CsrMember::Location,
+            over: GeometryOverLimit::Positions {
+                limit: GeometryPositionLimit::new(one_million),
+            },
+        };
+
+        let report = error.classify_for_registration_http();
+
+        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::RequestEntityTooLarge);
+        pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(report.detail().contains("location"), "{}", report.detail());
+        assert!(report.detail().contains("1000000"), "{}", report.detail());
     }
 }

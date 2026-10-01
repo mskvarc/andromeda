@@ -1,5 +1,6 @@
-//! Router-level tests of Serve @context (clause 5.13.4) and of the parameters
-//! the `/jsonldContexts` operations accept (clause 6.3.20).
+//! Router-level tests of Serve @context (clause 5.13.4), of the parameters the
+//! `/jsonldContexts` operations accept (clause 6.3.20), and of the payload
+//! limit Create @context (clause 5.13.2) applies (clause 6.3.2).
 
 use crate::{
     routes::ContextRegistryRoutes,
@@ -18,9 +19,11 @@ use andromeda_context_registry::{
     store::{ContextRegistryFuture, ContextRegistryStore},
     stored_context::StoredContext,
 };
+use andromeda_http_extraction::request_json_value_limit::RequestJsonValueLimit;
 use andromeda_jsonld::{context_cache::DownloadedContext, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId, tenant::TenantName};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
+use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::LeasedState, tenant_ref::TenantRef};
 use andromeda_test_harness::resident_tenancy::ResidentTenancy;
 use axum::{
@@ -31,7 +34,7 @@ use axum::{
 };
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 use tower::ServiceExt;
 use url::Url;
 
@@ -268,4 +271,52 @@ async fn the_tenant_parameter_on_any_other_operation_is_invalid_request() {
         pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{method} {uri}");
         pretty_assertions::assert_eq!(problem_type(response).await.as_deref(), Some("InvalidRequest"), "{method} {uri}");
     }
+}
+
+/// The answer to creating `document` under the published JSON value limit of
+/// `values`.
+async fn create_under_value_limit(document: &Value, values: NonZeroUsize) -> Response {
+    let body = serde_json::to_vec(document).expect("a serializable document");
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri("/jsonldContexts")
+        .header("host", "broker.example")
+        .header("content-type", "application/json")
+        .header("content-length", body.len())
+        .body(Body::from(body))
+        .expect("a valid request");
+    request.extensions_mut().insert(RequestJsonValueLimit::new(JsonValueLimit::new(values)));
+    match routes().oneshot(request).await {
+        Ok(response) => response,
+        Err(never) => match never {},
+    }
+}
+
+/// Clause 6.3.2: a context document holding more JSON values than the
+/// published limit is the 413 "Request Entity too large", naming the limit,
+/// before the document is parsed or stored.
+#[tokio::test]
+async fn a_context_document_past_the_json_value_limit_is_a_413() {
+    let two = NonZeroUsize::new(2).expect("two is not zero");
+
+    let response = create_under_value_limit(&hosted_document(), two).await;
+
+    pretty_assertions::assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
+    let problem: Value = serde_json::from_slice(&body).expect("a problem detail");
+    pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge");
+    pretty_assertions::assert_eq!(problem["instance"], "/jsonldContexts");
+    let detail = problem["detail"].as_str().expect("a detail");
+    assert!(detail.contains("2 JSON values"), "{detail}");
+}
+
+/// A context document holding exactly the published number of values is
+/// created.
+#[tokio::test]
+async fn a_context_document_at_the_json_value_limit_is_created() {
+    let three = NonZeroUsize::new(3).expect("three is not zero");
+
+    let response = create_under_value_limit(&hosted_document(), three).await;
+
+    pretty_assertions::assert_eq!(response.status(), StatusCode::CREATED);
 }

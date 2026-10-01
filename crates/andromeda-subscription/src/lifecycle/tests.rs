@@ -13,18 +13,23 @@ use crate::{
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     subscription::{Subscription, SubscriptionStatus},
 };
+use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
+use std::{
+    num::NonZeroUsize,
+    sync::{Arc, Mutex},
+};
 use url::Url;
 
 #[test]
@@ -220,6 +225,10 @@ fn service(log: &DeletionLog, rows_deleted: u64) -> SubscriptionService<CsrSubsc
         CsrSubscriptionVariant::new(engine),
         None,
         Arc::new(AcceptingEndpointValidator),
+        GeometryCensusLimits {
+            positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+            values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+        },
     )
     .with_forwarding_hook(Arc::new(hook))
 }
@@ -385,6 +394,10 @@ async fn written_context_after_update(fragment: Value, context: &ContextSpec) ->
         EntitySubscriptionVariant::new(engine),
         None,
         Arc::new(AcceptingEndpointValidator),
+        GeometryCensusLimits {
+            positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+            values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+        },
     );
     let updated = service
         .update(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:stored"), fragment, context)

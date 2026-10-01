@@ -22,8 +22,8 @@ use crate::temporal::{
     query::{forwarding::ForwardedHistory, page::QueriedPage},
 };
 use andromeda_federation::{config::SplitEntities, temporal_last_n::truncate_to_last_n};
-use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_query::page_window::PageWindow;
+use andromeda_temporal::service::TemporalService;
 use axum::http::Uri;
 use serde_json::Value;
 
@@ -59,13 +59,14 @@ pub(crate) fn defer_split_filters(params: &mut TemporalQueryParameters, filterin
 ///
 /// The classified failure of expanding the deferred `q` or geoquery.
 async fn retain_split_matches(
-    engine: &JsonLdEngine,
+    service: &TemporalService,
     context: &ContextSpec,
     deferred: DeferredSplitFilters,
     entities: Vec<Value>,
     instance: &Uri,
 ) -> Result<Vec<Value>, ProblemResponse> {
     // One preparation serves the deferred `q` and the geoquery alike.
+    let engine = service.engine();
     let prepared_context = engine.prepare_term_context(context);
     let term_expander = ContextualExpander::new(engine, &prepared_context);
     let q_expr = match deferred.q {
@@ -85,7 +86,9 @@ async fn retain_split_matches(
         }
         None => None,
     };
-    let compiled_geo = compile_geo_query(deferred.geo.as_ref(), &term_expander).await.with_instance(instance)?;
+    let compiled_geo = compile_geo_query(deferred.geo.as_ref(), &term_expander, service.reference_limits())
+        .await
+        .with_instance(instance)?;
     let compiled_scope = deferred.scope_q;
 
     let mut retained = Vec::with_capacity(entities.len());
@@ -187,7 +190,7 @@ pub(crate) struct MergedPageCut<'page> {
 /// The classified failure when a deferred filter cannot be compiled or
 /// evaluated against a merged entity.
 pub(crate) async fn cut_merged_page(
-    engine: &JsonLdEngine,
+    service: &TemporalService,
     context: &ContextSpec,
     merged_entities: Vec<Value>,
     cut: MergedPageCut<'_>,
@@ -201,7 +204,7 @@ pub(crate) async fn cut_merged_page(
         local_total,
     } = cut;
     let entities = match filtering {
-        SplitEntities::Split => retain_split_matches(engine, context, deferred, merged_entities, instance).await?,
+        SplitEntities::Split => retain_split_matches(service, context, deferred, merged_entities, instance).await?,
         SplitEntities::Complete => merged_entities,
     };
     match window {

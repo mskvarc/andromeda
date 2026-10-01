@@ -24,6 +24,11 @@ const READER_NESTING_LIMIT: usize = 127;
 /// arbitrary-precision number and raw-value tokens.
 const SERDE_JSON_PRIVATE_MEMBER_PREFIX: &str = "$serde_json::private::";
 
+/// The member name `serde_json`'s reader spells a number token with when it
+/// hands a number that is not a 64-bit integer to a visitor as a one-member
+/// map.
+pub(crate) const SERDE_JSON_PRIVATE_NUMBER_MEMBER: &str = "$serde_json::private::Number";
+
 /// How a JSON value has to be decoded to give the result `serde_json`'s reader
 /// gives for its serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

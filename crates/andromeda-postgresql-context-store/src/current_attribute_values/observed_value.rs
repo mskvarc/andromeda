@@ -8,7 +8,6 @@
 //! becomes a projected one.
 
 use crate::current_attribute_values::row::ProjectedAttributeValue;
-use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
 use serde_json::Value;
 use thiserror::Error;
@@ -23,9 +22,6 @@ pub enum ProjectedValueUnrepresentable {
     /// a tombstone for a value.
     #[error("a deletion is not a projected value; the instance's row is removed instead")]
     Deletion,
-    /// The observation carried a geometry that is not valid `GeoJSON`.
-    #[error(transparent)]
-    Geometry(#[from] GeometryError),
     /// The observation is an Entity's Scope rather than an Attribute value.
     ///
     /// Clause 4.18 makes the Scope "a special scope Property" that clause 4.5.4
@@ -45,7 +41,8 @@ impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
             // clone: the projected row owns the value it writes.
             TemporalValue::String(text) => Ok(ProjectedAttributeValue::String(text.clone())),
             TemporalValue::Boolean(flag) => Ok(ProjectedAttributeValue::Boolean(*flag)),
-            TemporalValue::Geometry(geometry) => Ok(ProjectedAttributeValue::Geometry(Geometry::from_geojson_value(geometry)?)),
+            // clone: the projected row owns the geometry it writes.
+            TemporalValue::Geometry(geometry) => Ok(ProjectedAttributeValue::Geometry(geometry.clone())),
             // clone: the projected row owns the structured value it writes.
             TemporalValue::Object(object) => Ok(ProjectedAttributeValue::Object(Value::clone(object))),
             TemporalValue::DateTime(instant) => Ok(ProjectedAttributeValue::DateTime(*instant)),
@@ -60,6 +57,7 @@ impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
 #[cfg(test)]
 mod tests {
     use crate::current_attribute_values::{observed_value::ProjectedValueUnrepresentable, row::ProjectedAttributeValue};
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_model::temporal::TemporalValue;
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
@@ -82,7 +80,7 @@ mod tests {
             TemporalValue::Number(JsonNumber::try_from(1.5).expect("a finite number")),
             TemporalValue::String("text".to_owned()),
             TemporalValue::Boolean(true),
-            TemporalValue::Geometry(json!({"type": "Point", "coordinates": [1.0, 2.0]})),
+            TemporalValue::Geometry(Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("a point")),
             TemporalValue::Object(json!({"a": 1})),
             TemporalValue::DateTime(instant),
             TemporalValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")),
@@ -111,11 +109,21 @@ mod tests {
         pretty_assertions::assert_eq!(projected, ProjectedAttributeValue::Number(JsonNumber::from(9_007_199_254_740_993_i64)));
     }
 
+    /// The observation carries the geometry already built, so the projection
+    /// writes exactly that geometry: a hole, an elevated position and the
+    /// ordinate count each position arrived with all reach the column.
     #[test]
-    fn a_geometry_that_is_not_geojson_refuses_the_projection() {
-        assert!(matches!(
-            ProjectedAttributeValue::try_from(&TemporalValue::Geometry(json!({"type": "Nonsense"}))),
-            Err(ProjectedValueUnrepresentable::Geometry(_))
-        ));
+    fn a_geometry_observation_projects_to_the_same_geometry() {
+        let geometry = Geometry::from_geojson_value(&json!({
+            "type": "Polygon",
+            "coordinates": [
+                [[0.0, 0.0, 12.5], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0, 12.5]],
+                [[1.0, 1.0], [1.0, 2.0], [2.0, 2.0], [1.0, 1.0]]
+            ]
+        }))
+        .expect("a valid Polygon with a hole");
+        let projected = ProjectedAttributeValue::try_from(&TemporalValue::Geometry(geometry.clone())).expect("a representable observation"); // clone: the test compares the projection against what it projected
+        pretty_assertions::assert_eq!(projected.kind(), ValueKind::Geometry);
+        pretty_assertions::assert_eq!(projected, ProjectedAttributeValue::Geometry(geometry));
     }
 }

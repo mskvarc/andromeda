@@ -1,11 +1,13 @@
 //! Errors produced by context-source registration policy and persistence.
 
 use crate::{
+    csr_member::CsrMember,
     registration_conflict_reason::RegistrationConflictReason,
     registration_invariant::RegistrationInvariant,
     registration_validation_reason::RegistrationValidationReason,
 };
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryOverLimit;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -36,6 +38,16 @@ pub enum RegistrationError {
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),
+    /// A geometry the registration writes holds more positions, or more JSON
+    /// values besides them, than the broker accepts in one geometry (clause
+    /// 6.3.2, "Request Entity too large").
+    #[error("the registration's {member} geometry holds {over}; send a simplified geometry")]
+    GeometryTooLarge {
+        /// The member holding the geometry.
+        member: CsrMember,
+        /// The limit the geometry holds more than.
+        over: GeometryOverLimit,
+    },
     /// Query compilation failed.
     #[error(transparent)]
     Query(#[from] QueryError),

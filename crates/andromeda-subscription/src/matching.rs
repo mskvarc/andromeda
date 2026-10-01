@@ -161,21 +161,25 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
+        compiled::CompiledSubscription,
         error::SubscriptionError,
         geo_filter::{SubscriptionGeoFilter, compile_geo_q},
+        matching::{matches_entity_filters, matches_subscription},
     };
     use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
+    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         expanded::{
             attribute_change::{AttributeChange, AttributeChangeKind},
             instance_key::AttributeInstanceKey,
+            query_match::matches_geo_query,
         },
-        notification::NotificationTrigger,
+        notification::{ChangeOrigin, NotificationTrigger},
         subscription::SubscriptionStatus,
     };
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::{
         error::QueryError,
         geo::{compile::compile_geo_query, input::GeoQueryInput},
@@ -183,13 +187,14 @@ mod tests {
         term_expander::{TermExpander, TermExpansionFailure},
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use chrono::DateTime;
+    use chrono::{DateTime, Utc};
     use futures::executor::block_on;
     use iri_rs::IriBuf;
+    use serde_json::Value;
     use std::{
         fmt::Display,
         future::{Future, ready},
-        num::NonZeroU32,
+        num::{NonZeroU32, NonZeroUsize},
         str::FromStr,
     };
     use url::Url;
@@ -339,7 +344,12 @@ mod tests {
             Some(parse_fixture("location", "geoproperty")),
         )
         .expect("a valid test fixture");
-        let from_request = block_on(compile_geo_query(Some(&request_geo), &LocationExpander))?.expect("the complete request geo fixture did not compile");
+        let limits = GeometryCensusLimits {
+            positions: GeometryPositionLimit::new(NonZeroUsize::MAX),
+            values: JsonValueLimit::new(NonZeroUsize::MAX),
+        };
+        let from_request =
+            block_on(compile_geo_query(Some(&request_geo), &LocationExpander, limits))?.expect("the complete request geo fixture did not compile");
 
         pretty_assertions::assert_eq!(from_subscription, from_request);
         Ok(())

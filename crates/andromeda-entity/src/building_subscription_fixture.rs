@@ -30,44 +30,89 @@ pub(crate) const BUILDING_TYPE_IRI: &str = "https://uri.etsi.org/ngsi-ld/default
 const SUBSCRIPTION_ID: &str = "urn:ngsi-ld:Subscription:durable-test";
 /// The surrogate key the fixture subscription is stored under.
 const SUBSCRIPTION_KEY: i64 = 1;
+/// A second subscription matching every Building change alike.
+const TWIN_SUBSCRIPTION_ID: &str = "urn:ngsi-ld:Subscription:durable-twin";
+/// The surrogate key the second subscription is stored under.
+const TWIN_SUBSCRIPTION_KEY: i64 = 2;
+/// Every trigger clause 5.2.12 defines, so the subscription matches every
+/// change of the Building.
+const EVERY_TRIGGER: &[&str] = &[
+    "entityCreated",
+    "entityUpdated",
+    "entityDeleted",
+    "attributeCreated",
+    "attributeUpdated",
+    "attributeDeleted",
+];
 
 /// A subscription cache for the live branch holding the one Building
 /// subscription.
 pub(crate) async fn building_subscription_cache() -> Arc<SubscriptionCache> {
+    subscription_cache_of(vec![(SUBSCRIPTION_ID, SUBSCRIPTION_KEY)], EVERY_TRIGGER).await
+}
+
+/// A subscription cache for the live branch holding one Building
+/// subscription listening for `entityUpdated` alone, which Table 5.2.12-1
+/// defines to include `attributeDeleted`.
+pub(crate) async fn entity_updated_building_subscription_cache() -> Arc<SubscriptionCache> {
+    subscription_cache_of(vec![(SUBSCRIPTION_ID, SUBSCRIPTION_KEY)], &["entityUpdated"]).await
+}
+
+/// A subscription cache for the live branch holding two Building
+/// subscriptions, so one change matches twice.
+pub(crate) async fn twin_building_subscription_cache() -> Arc<SubscriptionCache> {
+    subscription_cache_of(
+        vec![(SUBSCRIPTION_ID, SUBSCRIPTION_KEY), (TWIN_SUBSCRIPTION_ID, TWIN_SUBSCRIPTION_KEY)],
+        EVERY_TRIGGER,
+    )
+    .await
+}
+
+/// A subscription cache for the live branch loaded with the Building
+/// subscriptions `subscriptions` identifies, each by its identifier and key,
+/// all listening for `triggers`.
+async fn subscription_cache_of(subscriptions: Vec<(&'static str, i64)>, triggers: &'static [&'static str]) -> Arc<SubscriptionCache> {
     let cache = Arc::new(SubscriptionCache::new(TenantRef::UnnamedDefault));
     cache
-        .reload(&ContextTarget::Live, &SingleSubscriptionStore)
+        .reload(&ContextTarget::Live, &FixtureSubscriptionStore { subscriptions, triggers })
         .await
-        .expect("the fixture subscription reloads");
+        .expect("the fixture subscriptions reload");
     cache
 }
 
 /// A subscription store whose only exercised method is `list_active`, which the
-/// cache reloads once to learn the one matching Building subscription.
-struct SingleSubscriptionStore;
-
-fn unused_store_call(method: &str) -> SubscriptionError {
-    panic!("SingleSubscriptionStore::{method} is not exercised by the notification tests")
+/// cache reloads once to learn the matching Building subscriptions.
+struct FixtureSubscriptionStore {
+    /// The identifier and key of each Building subscription `list_active`
+    /// answers with.
+    subscriptions: Vec<(&'static str, i64)>,
+    /// The triggers every one of them listens for.
+    triggers: &'static [&'static str],
 }
 
-/// Build the one stored Building subscription the cache matches against.
+fn unused_store_call(method: &str) -> SubscriptionError {
+    panic!("FixtureSubscriptionStore::{method} is not exercised by the notification tests")
+}
+
+/// Build a stored Building subscription the cache matches against, identified
+/// by `id`, stored under `key` and listening for `triggers`.
 ///
 /// It is stored in expanded form (its selector carries the expanded Building
-/// IRI), explicitly requests all six triggers, and is created in the past so
-/// the clause 5.2.12 `createdAt` guard admits the tests' events.
-fn stored_building_subscription() -> StoredSubscription {
+/// IRI) and is created in the past so the clause 5.2.12 `createdAt` guard
+/// admits the tests' events.
+fn stored_building_subscription(id: &str, key: i64, triggers: &[&str]) -> StoredSubscription {
     let subscription = serde_json::from_value::<Subscription>(json!({
-        "id": SUBSCRIPTION_ID,
+        "id": id,
         "type": "Subscription",
         "entities": [{"type": BUILDING_TYPE_IRI}],
-        "notificationTrigger": ["entityCreated", "entityUpdated", "entityDeleted", "attributeCreated", "attributeUpdated", "attributeDeleted"],
+        "notificationTrigger": triggers,
         "notification": {"endpoint": {"uri": "http://localhost/notify"}},
         "status": "active",
         "createdAt": "2020-01-01T00:00:00Z",
         "modifiedAt": "2020-01-01T00:00:00Z"
     }))
     .expect("a valid fixture subscription");
-    let key = SubscriptionKey::try_from(SUBSCRIPTION_KEY).expect("a valid fixture subscription key");
+    let key = SubscriptionKey::try_from(key).expect("a valid fixture subscription key");
     StoredSubscription { key, subscription }
 }
 
@@ -77,7 +122,7 @@ pub(crate) fn subscription_key() -> SubscriptionKey {
 }
 
 #[async_trait]
-impl SubscriptionStore for SingleSubscriptionStore {
+impl SubscriptionStore for FixtureSubscriptionStore {
     async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
         Err(unused_store_call("get"))
     }
@@ -99,7 +144,11 @@ impl SubscriptionStore for SingleSubscriptionStore {
     }
 
     async fn list_active(&self, _target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
-        Ok(vec![stored_building_subscription()])
+        Ok(self
+            .subscriptions
+            .iter()
+            .map(|(id, key)| stored_building_subscription(id, *key, self.triggers))
+            .collect())
     }
 
     async fn claim_notification_slot(

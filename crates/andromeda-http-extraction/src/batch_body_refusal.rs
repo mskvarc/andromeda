@@ -2,11 +2,13 @@
 //!
 //! Clauses 5.6.7.4 to 5.6.10.4 and 5.6.20.4 report every failure against the
 //! entity it concerns, in a clause 5.2.17 `BatchEntityError`. What remains here
-//! is what has no entity to be reported against: a body that is not JSON, a
+//! is what has no entity to be reported against: a body holding more JSON
+//! values than the broker accepts in one request, a body that is not JSON, a
 //! body that is not a non-empty array, a null item, and an item without a URI
 //! to stand in the error's `entityId`, which Table 5.2.17-1 requires to be a
 //! valid URI.
 
+use crate::json_value_budget::RequestJsonValueBudgetExceeded;
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::uri::UriParseError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -33,6 +35,10 @@ pub enum BatchMembers {
 /// and an `id` that failed to parse can be as long as the request body.
 #[derive(Debug, Error)]
 pub enum BatchBodyRefusal {
+    /// Clause 6.3.2: the payload body holds more JSON values than the broker
+    /// accepts in one request.
+    #[error(transparent)]
+    TooManyValues(#[from] RequestJsonValueBudgetExceeded),
     /// Clause 5.5.4: the payload body is not a JSON document.
     #[error("the request body is not a JSON document: {source}")]
     NotJson {
@@ -89,10 +95,13 @@ impl BatchBodyRefusal {
     /// Clause 5.5.4 raises `InvalidRequest` only for a payload body that "is
     /// not a valid JSON document"; data that is not syntactically correct
     /// according to the API data type definitions -- the array shape, a null
-    /// item, an `id` that is absent or not a URI -- is `BadRequestData`.
+    /// item, an `id` that is absent or not a URI -- is `BadRequestData`; and a
+    /// body larger than the broker accepts is the clause 6.3.2 "Request Entity
+    /// too large".
     #[must_use]
     pub const fn error_type(&self) -> NgsiLdErrorType {
         match self {
+            BatchBodyRefusal::TooManyValues(_) => NgsiLdErrorType::RequestEntityTooLarge,
             BatchBodyRefusal::NotJson { .. } => NgsiLdErrorType::InvalidRequest,
             BatchBodyRefusal::NotAnArray { .. }
             | BatchBodyRefusal::Empty { .. }

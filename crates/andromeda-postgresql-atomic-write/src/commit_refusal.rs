@@ -129,6 +129,7 @@ pub(crate) fn temporal(error: TemporalError) -> CommitError {
         | TemporalError::NotFound(_)
         | TemporalError::OperationNotSupported(_)
         | TemporalError::TooManyResults { .. }
+        | TemporalError::PayloadBudget(_)
         | TemporalError::JsonLd(_)
         | TemporalError::Query(_)
         | TemporalError::Request(_)

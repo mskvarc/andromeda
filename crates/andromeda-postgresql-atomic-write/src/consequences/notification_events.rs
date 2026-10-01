@@ -170,8 +170,8 @@ fn event<'a>(
         change: &group.change.change,
         entity_id: &group.change.entity_id,
         change_attribute_name_keys,
-        entity_snapshot: group.change.entity_snapshot.as_ref(),
-        previous_snapshot: group.change.previous_snapshot.as_ref(),
+        entity_snapshot: group.change.entity_snapshot.as_deref(),
+        previous_snapshot: group.change.previous_snapshot.as_deref(),
         subscription_keys: group.subscriptions,
     })
 }
@@ -196,7 +196,7 @@ mod tests {
     };
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use serde_json::json;
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, ptr, sync::Arc};
 
     const SPEED: &str = "https://example.org/speed";
 
@@ -228,7 +228,7 @@ mod tests {
             .subscription_key(SubscriptionKey::try_from(subscription).expect("a positive subscription key"))
             .entity_id(uri("urn:ngsi-ld:Vehicle:1"))
             .change(change)
-            .entity_snapshot(Some(json!({ "id": "urn:ngsi-ld:Vehicle:1" })))
+            .entity_snapshot(Some(Arc::new(json!({ "id": "urn:ngsi-ld:Vehicle:1" }))))
             .build()
     }
 
@@ -288,8 +288,30 @@ mod tests {
     #[test]
     fn changes_differing_only_in_their_previous_snapshot_are_not_folded_together() {
         let mut second = updated(2);
-        second.previous_snapshot = Some(json!({ "id": "urn:ngsi-ld:Vehicle:1" }));
+        second.previous_snapshot = Some(Arc::new(json!({ "id": "urn:ngsi-ld:Vehicle:1" })));
         assert!(!same_change(&updated(1), &second));
+    }
+
+    /// The matcher hands every subscriber of one change the same snapshot
+    /// allocations, so the fold sees them as one change and the event writes
+    /// the payload it was handed once.
+    #[test]
+    fn changes_sharing_one_snapshot_allocation_fold_together() {
+        let snapshot = Arc::new(json!({ "id": "urn:ngsi-ld:Vehicle:1", "speed": [1, 2, 3] }));
+        let sharing = |subscription: i64| {
+            let mut change = updated(subscription);
+            change.entity_snapshot = Some(Arc::clone(&snapshot));
+            change.previous_snapshot = Some(Arc::clone(&snapshot));
+            change
+        };
+        let written = write(vec![sharing(1), sharing(2), sharing(3)]);
+        let groups = group(&[&written]);
+        pretty_assertions::assert_eq!(groups.len(), 1);
+        pretty_assertions::assert_eq!(groups[0].subscriptions.len(), 3);
+        let dictionary = HashMap::from([(speed(), AttributeNameKey::from(7))]);
+        let row = event(WriteOrdinal::at(0), 0, groups.into_iter().next().expect("one group"), &dictionary).expect("the group becomes one event");
+        assert!(row.entity_snapshot.is_some_and(|written| ptr::eq(written, Arc::as_ptr(&snapshot))));
+        assert!(row.previous_snapshot.is_some_and(|written| ptr::eq(written, Arc::as_ptr(&snapshot))));
     }
 
     #[test]

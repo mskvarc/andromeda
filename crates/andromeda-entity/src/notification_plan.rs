@@ -18,6 +18,7 @@ use crate::{
     change_notifier::ChangeNotifier,
     error::EntityError,
     notification_fanout::{ChangedEntity, MutationSnapshots},
+    snapshot_supply::SnapshotSupply,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
@@ -122,7 +123,7 @@ impl ChangeNotifier {
         entity_types: &[EntityTypeName],
         change: EntityChange,
         entity_snapshot: Option<&Arc<Value>>,
-        previous_snapshot: Option<&Value>,
+        previous_snapshot: Option<&Arc<Value>>,
     ) -> NotificationPlan {
         let snapshot_ref = entity_snapshot.map(|snapshot| &**snapshot);
         let now = Utc::now();
@@ -138,7 +139,7 @@ impl ChangeNotifier {
             types: entity_types,
         };
         let snapshots = MutationSnapshots {
-            current: snapshot_ref,
+            current: entity_snapshot.map_or(SnapshotSupply::Absent, SnapshotSupply::Ready),
             previous: previous_snapshot,
         };
         let matches = self.subscription_matches(mutated, &change, snapshots);
@@ -148,7 +149,7 @@ impl ChangeNotifier {
             .change(change)
             .occurred_at(now)
             .origin(ChangeOrigin::Local)
-            .previous_attributes(previous_snapshot.cloned())
+            .previous_attributes(previous_snapshot.map(Arc::clone))
             .current_payload(entity_snapshot.map(Arc::clone)) // clone: Arc ref-count bump
             .build();
         NotificationPlan { matches, events: vec![event] }

@@ -31,6 +31,9 @@ pub struct EntityIdBatch {
 
 /// Decode the body of a batch delete into the identifiers it names.
 ///
+/// The body was counted against the request's JSON value limit when it was
+/// read (see [`RequestPayload`](crate::request_payload::RequestPayload)).
+///
 /// # Errors
 ///
 /// Returns a [`ProblemResponse`] for the [`BatchBodyRefusal`] that fails the

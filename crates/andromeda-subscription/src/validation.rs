@@ -2,7 +2,8 @@
 //! clauses around it place on a create body or an update fragment, checked
 //! before any of it is expanded or stored.
 
-use crate::{error::SubscriptionError, geo_filter::compile_geo_q, subscription_validation_reason::SubscriptionValidationReason};
+use crate::{error::SubscriptionError, geo_filter::admit_geo_q, subscription_validation_reason::SubscriptionValidationReason};
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_query::{
     filter::{expression::Expr, parser, predicate::Predicate},
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
@@ -18,8 +19,9 @@ fn q_has_comparison(expr: &Expr) -> bool {
     }
 }
 
-/// Validate the common parts of a subscription create payload.
-pub fn validate_create_payload(payload: &Value) -> Result<(), SubscriptionError> {
+/// Validate the common parts of a subscription create payload, admitting its
+/// `geoQ` under `geo_limits`.
+pub fn validate_create_payload(payload: &Value, geo_limits: GeometryCensusLimits) -> Result<(), SubscriptionError> {
     if payload.get("notification").is_none() {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired));
     }
@@ -46,7 +48,7 @@ pub fn validate_create_payload(payload: &Value) -> Result<(), SubscriptionError>
         }
     }
 
-    validate_common_fields(payload)?;
+    validate_common_fields(payload, geo_limits)?;
     validate_subscribed_scope(payload)?;
     Ok(())
 }
@@ -96,8 +98,9 @@ pub fn validate_expires_at_not_in_past(payload: &Value) -> Result<(), Subscripti
     Ok(())
 }
 
-/// Validate fields shared between create and update.
-pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> {
+/// Validate fields shared between create and update, admitting the `geoQ`
+/// under `geo_limits`.
+pub fn validate_common_fields(payload: &Value, geo_limits: GeometryCensusLimits) -> Result<(), SubscriptionError> {
     if let Some(type_val) = payload.get("type")
         && type_val.as_str() != Some("Subscription")
     {
@@ -157,11 +160,7 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         }
     }
 
-    // An update fragment's `null` asks for the `geoQ` to be removed (clause
-    // 5.5.8), which leaves nothing to validate.
-    if let Some(geo_q) = payload.get("geoQ").filter(|geo_q| !geo_q.is_null()) {
-        compile_geo_q(geo_q).map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::GeoQ(source)))?;
-    }
+    admit_geo_q(payload, geo_limits)?;
 
     if let Some(watched) = payload.get("watchedAttributes")
         && let Some(arr) = watched.as_array()
@@ -295,11 +294,22 @@ mod tests {
         subscription_validation_reason::SubscriptionValidationReason,
         validation::{validate_common_fields, validate_create_payload},
     };
+    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use serde_json::json;
+    use std::num::NonZeroUsize;
+
+    /// Limits no fixture of this module reaches.
+    fn limits() -> GeometryCensusLimits {
+        GeometryCensusLimits {
+            positions: GeometryPositionLimit::new(NonZeroUsize::MAX),
+            values: JsonValueLimit::new(NonZeroUsize::MAX),
+        }
+    }
 
     #[test]
     fn an_empty_notification_trigger_is_refused() {
-        let result = validate_common_fields(&json!({"notificationTrigger": []}));
+        let result = validate_common_fields(&json!({"notificationTrigger": []}), limits());
         assert!(
             matches!(
                 &result,
@@ -307,12 +317,12 @@ mod tests {
             ),
             "got {result:?}"
         );
-        assert!(validate_common_fields(&json!({"notificationTrigger": ["entityCreated"]})).is_ok());
+        assert!(validate_common_fields(&json!({"notificationTrigger": ["entityCreated"]}), limits()).is_ok());
     }
 
     #[test]
     fn create_requires_notification_configuration() {
-        let result = validate_create_payload(&serde_json::json!({"type": "Subscription"}));
+        let result = validate_create_payload(&serde_json::json!({"type": "Subscription"}), limits());
         assert!(matches!(
             result,
             Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired))
@@ -327,7 +337,7 @@ mod tests {
     /// well because both paths validate here.
     #[test]
     fn a_subscription_whose_filter_traverses_a_linked_entity_is_rejected() {
-        let result = validate_common_fields(&serde_json::json!({"q": "isParkedIn{category==\"commercial\"}"}));
+        let result = validate_common_fields(&serde_json::json!({"q": "isParkedIn{category==\"commercial\"}"}), limits());
         assert!(
             matches!(
                 &result,
@@ -339,42 +349,51 @@ mod tests {
 
     #[test]
     fn a_traversal_nested_inside_a_boolean_filter_is_rejected_too() {
-        let result = validate_common_fields(&serde_json::json!({"q": "speed>50;isParkedIn{category==\"x\"}"}));
+        let result = validate_common_fields(&serde_json::json!({"q": "speed>50;isParkedIn{category==\"x\"}"}), limits());
         assert!(matches!(result, Err(SubscriptionError::Validation(_))), "got {result:?}");
     }
 
     #[test]
     fn a_filter_that_stays_within_one_entity_is_still_accepted() {
-        let result = validate_common_fields(&serde_json::json!({"q": "speed>50;brandName==\"Mercedes\""}));
+        let result = validate_common_fields(&serde_json::json!({"q": "speed>50;brandName==\"Mercedes\""}), limits());
         assert!(result.is_ok(), "got {result:?}");
     }
 
     #[test]
     fn a_geo_q_reference_geometry_is_validated_at_create_and_update() {
-        let result = validate_common_fields(&serde_json::json!({
-            "geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}
-        }));
+        let result = validate_common_fields(
+            &serde_json::json!({
+                "geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}
+            }),
+            limits(),
+        );
         let error = result.expect_err("clause 4.10 cannot evaluate a geometry RFC 7946 gives no reading of");
         assert!(error.to_string().contains("4 ordinates"), "got {error}");
 
-        let elevated = validate_common_fields(&serde_json::json!({
-            "geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1.0, 2.0, 3.0]}
-        }));
+        let elevated = validate_common_fields(
+            &serde_json::json!({
+                "geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1.0, 2.0, 3.0]}
+            }),
+            limits(),
+        );
         assert!(elevated.is_ok(), "a three-ordinate reference geometry is valid: {elevated:?}");
 
         // Table 5.2.13-1 gives `geometry` and `coordinates` cardinality 1, and
         // clause 5.8.1.4 refuses a create whose cardinalities are not met.
-        let georel_only = validate_common_fields(&serde_json::json!({"geoQ": {"georel": "near;maxDistance==2000"}}));
+        let georel_only = validate_common_fields(&serde_json::json!({"geoQ": {"georel": "near;maxDistance==2000"}}), limits());
         let error = georel_only.expect_err("a geoQ naming only its georel is no GeoQuery");
         assert!(error.to_string().contains("'geometry'"), "got {error}");
 
-        let past_pole = validate_common_fields(&serde_json::json!({
-            "geoQ": {"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [-1, 100]}
-        }));
+        let past_pole = validate_common_fields(
+            &serde_json::json!({
+                "geoQ": {"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [-1, 100]}
+            }),
+            limits(),
+        );
         let error = past_pole.expect_err("latitude 100 is no WGS 84 position");
         assert!(error.to_string().contains("latitude 100 is outside [-90, 90]"), "got {error}");
 
-        let removed = validate_common_fields(&serde_json::json!({"geoQ": null}));
+        let removed = validate_common_fields(&serde_json::json!({"geoQ": null}), limits());
         assert!(removed.is_ok(), "an update removing the geoQ has nothing to validate: {removed:?}");
     }
 
@@ -386,7 +405,7 @@ mod tests {
             "type": "Subscription",
             "notification": {"endpoint": {"uri": "http://127.0.0.1:8085/notify"}}
         });
-        let error = validate_create_payload(&payload).expect_err("clause 5.2.12 requires one of the two");
+        let error = validate_create_payload(&payload, limits()).expect_err("clause 5.2.12 requires one of the two");
         assert!(error.to_string().contains("watchedAttributes"), "got {error}");
     }
 
@@ -401,7 +420,7 @@ mod tests {
             json!({"type": "Subscription", "notification": notification, "localOnly": true}),
         ];
         for payload in variants {
-            let result = validate_create_payload(&payload);
+            let result = validate_create_payload(&payload, limits());
             assert!(result.is_ok(), "{payload} should be accepted: {result:?}");
         }
     }
@@ -412,35 +431,44 @@ mod tests {
     #[test]
     fn a_periodic_subscription_without_entities_is_rejected_unless_it_is_local_only() {
         let notification = json!({"endpoint": {"uri": "http://127.0.0.1:8085/notify"}});
-        let error = validate_create_payload(&json!({
-            "type": "Subscription",
-            "notification": notification,
-            "timeInterval": 5,
-            "watchedAttributes": ["temperature"]
-        }))
+        let error = validate_create_payload(
+            &json!({
+                "type": "Subscription",
+                "notification": notification,
+                "timeInterval": 5,
+                "watchedAttributes": ["temperature"]
+            }),
+            limits(),
+        )
         .expect_err("clause 5.2.12 makes entities mandatory beside timeInterval");
         // `watchedAttributes` beside `timeInterval` is refused first by the
         // mutual exclusion Table 5.2.12-1 states for the pair.
         assert!(error.to_string().contains("mutually exclusive"), "got {error}");
 
-        let error = validate_create_payload(&json!({
-            "type": "Subscription",
-            "notification": notification,
-            "timeInterval": 5,
-            "q": "temperature>20"
-        }))
+        let error = validate_create_payload(
+            &json!({
+                "type": "Subscription",
+                "notification": notification,
+                "timeInterval": 5,
+                "q": "temperature>20"
+            }),
+            limits(),
+        )
         .expect_err("clause 5.2.12 makes entities mandatory beside timeInterval");
         assert!(
             error.to_string().contains("watchedAttributes") || error.to_string().contains("timeInterval"),
             "got {error}"
         );
 
-        let local = validate_create_payload(&json!({
-            "type": "Subscription",
-            "notification": notification,
-            "timeInterval": 5,
-            "localOnly": true
-        }));
+        let local = validate_create_payload(
+            &json!({
+                "type": "Subscription",
+                "notification": notification,
+                "timeInterval": 5,
+                "localOnly": true
+            }),
+            limits(),
+        );
         assert!(local.is_ok(), "local scope lifts the requirement: {local:?}");
     }
 
@@ -456,11 +484,11 @@ mod tests {
                 "entities": [{"type": "Building"}],
                 "notification": {"format": format, "showChanges": true, "endpoint": {"uri": "http://127.0.0.1:8085/notify"}}
             });
-            let error = validate_create_payload(&payload).expect_err("clause 5.2.14.1 forbids the combination");
+            let error = validate_create_payload(&payload, limits()).expect_err("clause 5.2.14.1 forbids the combination");
             assert!(error.to_string().contains("showChanges"), "{format}: {error}");
             // The same fragment is refused on update, which validates the
             // notification it carries the same way.
-            assert!(validate_common_fields(&payload).is_err(), "{format}");
+            assert!(validate_common_fields(&payload, limits()).is_err(), "{format}");
         }
     }
 
@@ -474,14 +502,14 @@ mod tests {
                 "entities": [{"type": "Building"}],
                 "notification": {"format": format, "showChanges": true, "endpoint": {"uri": "http://127.0.0.1:8085/notify"}}
             });
-            let result = validate_create_payload(&payload);
+            let result = validate_create_payload(&payload, limits());
             assert!(result.is_ok(), "{format}: {result:?}");
         }
     }
 
     #[test]
     fn time_interval_and_watched_attributes_are_mutually_exclusive() {
-        let result = validate_common_fields(&serde_json::json!({"timeInterval": 5, "watchedAttributes": ["temperature"]}));
+        let result = validate_common_fields(&serde_json::json!({"timeInterval": 5, "watchedAttributes": ["temperature"]}), limits());
         assert!(matches!(
             result,
             Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithWatchedAttributes))

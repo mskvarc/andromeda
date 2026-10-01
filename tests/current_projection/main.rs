@@ -3,8 +3,8 @@
 //! Covers current projection atomicity and deletion, default dataset
 //! uniqueness, distinct datasets, narrow Entity keys, empty Entity types,
 //! replayed writes, no-op suppression, long strings, instance expiry,
-//! identifier bounds, refused-write isolation, and the consequences of
-//! attribute and Entity writes.
+//! identifier bounds, refused-write isolation, the consequences of attribute
+//! and Entity writes, and the outline a deletion reads instead of the payload.
 //! Each test drives the broker over HTTP (or, for the no-op guard and
 //! refused-write isolation, the broker's own projection statement or
 //! committer) and then reads
@@ -28,6 +28,7 @@ mod broker_committer;
 mod bypass_writes;
 mod datasets;
 mod deletion;
+mod deletion_outline;
 mod entity_keys;
 mod entity_type;
 mod entity_writes;

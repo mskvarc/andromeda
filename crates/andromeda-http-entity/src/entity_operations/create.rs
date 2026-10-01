@@ -55,7 +55,7 @@ pub(crate) async fn batch_create(
         items,
         context,
         errors: mut entity_errors,
-    } = parse_batch_entities(&batch_body, &uri)?;
+    } = parse_batch_entities(&batch_body, &uri).await?;
     // Clause 5.6.7.4 runs clause 5.6.1 "for each of the NGSI-LD Entities
     // included in the input Array", and "if the Entity creation failed, then a
     // new BatchEntityError shall be added to E containing the failed Entity ID

@@ -6,7 +6,13 @@
 //! preconditions and the same size limit as every other payload, and each
 //! refusal is a problem detail rather than the framework's plain text.
 
-use crate::{addressed_uri::addressed_request_uri, content_length_precondition::declared_body_length, request_payload::buffer_payload};
+use crate::{
+    addressed_uri::addressed_request_uri,
+    content_length_precondition::declared_body_length,
+    json_value_budget::refuse_values_past_budget,
+    request_json_value_limit::RequestJsonValueLimit,
+    request_payload::buffer_payload,
+};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{
     extract::{FromRequest, Request},
@@ -37,8 +43,11 @@ where
         if !announces_json(request.headers()) {
             return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
         }
+        let value_limit = request.extensions().get::<RequestJsonValueLimit>().copied();
         // clone: a body that is read but does not decode still names the request.
         let body = buffer_payload(request, state, declared, instance.clone()).await?;
+        // clone: a refused payload names the request, which a parse failure below names too.
+        refuse_values_past_budget(&body, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(instance.clone())))?;
         serde_json::from_slice(&body).map(JsonPayload).map_err(|error| {
             let detail = format!("Invalid JSON: {error}");
             // Clause 5.5.4: a body that is not a JSON document is an invalid
@@ -65,8 +74,10 @@ fn announces_json(headers: &HeaderMap) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::json_payload::JsonPayload;
+    use crate::{json_payload::JsonPayload, request_json_value_limit::RequestJsonValueLimit};
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
         body::Body,
         extract::FromRequest,
@@ -77,6 +88,7 @@ mod tests {
         },
     };
     use serde::Deserialize;
+    use std::num::NonZeroUsize;
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -146,5 +158,34 @@ mod tests {
             Err(ExtractorRejection::Empty(status)) => pretty_assertions::assert_eq!(status, StatusCode::LENGTH_REQUIRED),
             Ok(_) | Err(_) => panic!("an undeclared length must be the bare 411"),
         }
+    }
+
+    /// Clause 6.3.2: a plain JSON payload holding more values than the
+    /// published limit is the 413 "Request Entity too large", before it is
+    /// decoded.
+    #[tokio::test]
+    async fn a_plain_json_payload_past_the_limit_is_refused() {
+        let mut over = request("application/json", r#"{"isActive":true,"extra":[1,2,3]}"#);
+        over.extensions_mut().insert(RequestJsonValueLimit::new(JsonValueLimit::new(NonZeroUsize::MIN)));
+
+        match extract(over).await {
+            Err(ExtractorRejection::Classified(refusal)) => {
+                pretty_assertions::assert_eq!(refusal.problem().error_type(), NgsiLdErrorType::RequestEntityTooLarge);
+                assert!(refusal.problem().detail().contains("1 JSON values"), "{}", refusal.problem().detail());
+            }
+            Ok(_) | Err(_) => panic!("a payload of six values past a limit of one must be refused"),
+        }
+    }
+
+    /// A payload within the published limit is decoded as without one.
+    #[tokio::test]
+    async fn a_plain_json_payload_within_the_limit_is_decoded() {
+        let mut within = request("application/json", r#"{"isActive":true}"#);
+        within
+            .extensions_mut()
+            .insert(RequestJsonValueLimit::new(JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(1))));
+
+        let JsonPayload(toggle) = extract(within).await.expect("two values are within a limit of two");
+        assert!(toggle.is_active);
     }
 }

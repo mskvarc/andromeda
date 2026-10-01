@@ -31,10 +31,6 @@ pub enum FederationInvariant {
     /// to its wire form for a forwarded query.
     #[error("an admitted geo-query geometry cannot be written back to its wire form: {0}")]
     ForwardedGeometry(#[source] serde_json::Error),
-    /// A geo-query geometry admitted under clause 4.10 lost its `type` or its
-    /// `coordinates` on the way back to its wire form.
-    #[error("an admitted geo-query geometry lost its type or coordinates on the way back to its wire form")]
-    ForwardedGeometryShape,
     /// A name spelled for a forwarded request in its forwarding context is not
     /// an NGSI-LD name (clause 4.6.2): the context maps an IRI to text no name
     /// can be.

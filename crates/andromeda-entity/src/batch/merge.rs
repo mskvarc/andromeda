@@ -25,7 +25,8 @@ use andromeda_ngsi_ld_model::expanded::{
     written_observation::AddressedInstances,
 };
 use chrono::Utc;
-use std::sync::Arc;
+use serde_json::Value;
+use std::{collections::HashMap, sync::Arc};
 
 impl EntityService {
     pub(super) async fn batch_merge_chunk(&self, placement: SideEffectPlacement<'_>, chunk: Vec<AdmittedBatchEntity>) -> Result<BatchResult, EntityError> {
@@ -41,7 +42,14 @@ impl EntityService {
         // Hold the per-id locks across the read-modify-write window so two
         // concurrent merges for the same id can't lose each other's writes.
         let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;
-        let existing_map = self.reader.get_batch(target, &prepared_ids).await?;
+        // Shared by the computation and the notification it plans.
+        let existing_map = self
+            .reader
+            .get_batch(target, &prepared_ids)
+            .await?
+            .into_iter()
+            .map(|(id, payload)| (id, Arc::new(payload)))
+            .collect::<HashMap<Identifier, Arc<Value>>>();
         let now = Utc::now();
 
         let mut writes = Vec::with_capacity(prepared.len());
@@ -52,7 +60,7 @@ impl EntityService {
                 errors.push((id, error));
                 continue;
             };
-            let mut existing = previous.clone(); // clone: the merge mutates its own copy of the stored payload
+            let mut existing = Value::clone(previous); // clone: the merge mutates its own copy of the stored payload
 
             if let Err(error) = merge_entity(&mut existing, &prepared_entity.expanded, None) {
                 errors.push((id, error.into()));

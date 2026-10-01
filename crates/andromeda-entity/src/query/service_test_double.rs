@@ -7,6 +7,7 @@
 //! being restated in each test module.
 
 use crate::{
+    config::EntityConfig,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     port::{query::EntityQueryStore, reader::EntityReader},
@@ -17,6 +18,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
@@ -87,6 +89,18 @@ pub(crate) fn service() -> EntityQueryService {
 
 /// The [`service`] test double, narrowing geo queries through `spatial`.
 pub(crate) fn service_narrowing_through(spatial: SpatialAcceleration) -> EntityQueryService {
+    service_with(spatial, EntityConfig::default().geometry_census_limits())
+}
+
+/// The [`service`] test double, resolving reference geometries of at most
+/// what `reference_limits` admits.
+pub(crate) fn service_resolving(reference_limits: GeometryCensusLimits) -> EntityQueryService {
+    service_with(SpatialAcceleration::StoreVerified, reference_limits)
+}
+
+/// The test double narrowing through `spatial` and resolving reference
+/// geometries within `reference_limits`.
+fn service_with(spatial: SpatialAcceleration, reference_limits: GeometryCensusLimits) -> EntityQueryService {
     let store = Arc::new(UnusedStore);
     EntityQueryService::new(
         store.clone() as Arc<dyn EntityReader>, // clone: the test double supplies both focused capabilities
@@ -95,5 +109,6 @@ pub(crate) fn service_narrowing_through(spatial: SpatialAcceleration) -> EntityQ
         spatial,
         TenantRef::UnnamedDefault,
         None,
+        reference_limits,
     )
 }

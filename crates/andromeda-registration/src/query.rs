@@ -138,7 +138,9 @@ impl RegistrationService {
             None => None,
         };
         let mut attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
-        let geo = geo_compile::compile_geo_query(params.geo.0.as_ref(), &expander).await?;
+        // Clause 5.5.6: a reference geometry past the budget makes the
+        // discovery query too complex to resolve.
+        let geo = geo_compile::compile_geo_query(params.geo.0.as_ref(), &expander, self.geometry_limits).await?;
         // Clause 5.10.2.4: the attributes the `q` filter and the geoquery name
         // match registrations exactly as the `attrs` list does, so they join
         // it; the filter itself is not evaluated against a registration.

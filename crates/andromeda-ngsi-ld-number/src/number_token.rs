@@ -4,6 +4,8 @@
 //! alone: no decimal is materialized and nothing is allocated, so a document
 //! walk can ask them of every number it visits.
 
+use crate::{MAX_FRACTIONAL_DIGITS, MAX_INTEGRAL_DIGITS};
+
 /// Whether a token carries a leading minus sign.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Sign {
@@ -120,6 +122,19 @@ impl<'a> NumberToken<'a> {
         }
     }
 
+    /// Whether this token is already the spelling [`JsonNumber`](crate::JsonNumber)
+    /// renders and its value lies within the PostgreSQL `NUMERIC` range,
+    /// decided from its digits alone.
+    ///
+    /// A canonical token carries no exponent and no trailing fractional zero,
+    /// so its integer and fraction digit runs are exactly the integral and
+    /// fractional digits the range is stated over.
+    pub(crate) fn is_canonical_within_range(&self) -> bool {
+        self.is_canonical()
+            && i64::try_from(self.integer.len()).is_ok_and(|digits| digits <= MAX_INTEGRAL_DIGITS)
+            && i64::try_from(self.fraction.map_or(0, str::len)).is_ok_and(|digits| digits <= MAX_FRACTIONAL_DIGITS)
+    }
+
     /// Whether `serde_json`'s reader gives this token back byte for byte when
     /// it reads the token's own serialization.
     ///
@@ -159,8 +174,8 @@ fn split_digits(text: &str) -> (&str, &str) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{JsonNumber, number_token::NumberToken};
-    use serde_json::Value;
+    use crate::{JsonNumber, MAX_FRACTIONAL_DIGITS, number_token::NumberToken};
+    use serde_json::{Number, Value};
     use std::str::FromStr;
 
     /// Tokens covering signs, zeros, 64-bit boundaries, fractions and both
@@ -282,5 +297,25 @@ mod tests {
                 .iter()
                 .all(|token| NumberToken::parse(token).is_some_and(|parsed| !parsed.is_64_bit_integer()))
         );
+    }
+
+    /// The digit fast path agrees with the exact decimal on every token it
+    /// admits: canonical, and accepted by the full range check.
+    #[test]
+    fn a_canonical_token_within_range_is_admitted_without_a_decimal() {
+        for token in ["0", "5", "-5", "21.5", "-0.05", "14.550000001", "18446744073709551616", "0.100000000000000005"] {
+            let parsed = NumberToken::parse(token).expect("a valid token");
+            assert!(parsed.is_canonical_within_range(), "{token}");
+            assert!(JsonNumber::try_from(Number::from_string_unchecked(token.to_owned())).is_ok(), "{token}");
+        }
+    }
+
+    #[test]
+    fn a_token_needing_a_decimal_is_left_to_the_exact_check() {
+        let too_fine = format!("0.{}1", "1".repeat(usize::try_from(MAX_FRACTIONAL_DIGITS).expect("a small constant")));
+        for token in ["-0", "1.50", "1e2", "0.001", too_fine.as_str()] {
+            let parsed = NumberToken::parse(token).expect("a valid token");
+            assert!(!parsed.is_canonical_within_range(), "{token}");
+        }
     }
 }

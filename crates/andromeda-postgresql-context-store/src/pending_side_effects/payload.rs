@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Failure to decode a durable pending-side-effect JSONB payload.
@@ -64,12 +65,14 @@ pub struct PersistedChangeEvent {
     pub instances: Vec<PersistedAttributeChange>,
     /// When the change occurred.
     pub occurred_at: DateTime<Utc>,
-    /// Entity snapshot after the change, if available.
+    /// Entity snapshot after the change, if available, shared with the change
+    /// it was persisted from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub entity_snapshot: Option<Value>,
-    /// Previous attribute values before the change, if available.
+    pub entity_snapshot: Option<Arc<Value>>,
+    /// Previous attribute values before the change, if available, shared with
+    /// the change it was persisted from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub previous_attributes: Option<Value>,
+    pub previous_attributes: Option<Arc<Value>>,
     /// System attributes at the time of the change, if available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sys_attrs_snapshot: Option<PersistedSysAttrs>,
@@ -79,7 +82,7 @@ pub struct PersistedChangeEvent {
     /// notification renders and what its `q`, `geoQ` and `scopeQ` are
     /// evaluated against (clause 5.8.6), whenever the job is drained.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_payload: Option<Value>,
+    pub current_payload: Option<Arc<Value>>,
 }
 
 /// Wire-shape of one Attribute instance a change touched.
@@ -119,6 +122,7 @@ mod tests {
     use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind, notification::ChangeOrigin};
     use chrono::{TimeZone, Utc};
     use serde_json::{Value, json};
+    use std::sync::Arc;
 
     const LIFECYCLES: [EntityLifecycle; 3] = [EntityLifecycle::Created, EntityLifecycle::Modified, EntityLifecycle::Deleted];
     const ORIGINS: [ChangeOrigin; 2] = [ChangeOrigin::Local, ChangeOrigin::Forwarded];
@@ -150,15 +154,15 @@ mod tests {
                         },
                     ],
                     occurred_at,
-                    entity_snapshot: Some(json!({"id": "https://example.org/entities/1"})),
-                    previous_attributes: Some(json!({"temperature": 20})),
+                    entity_snapshot: Some(Arc::new(json!({"id": "https://example.org/entities/1"}))),
+                    previous_attributes: Some(Arc::new(json!({"temperature": 20}))),
                     sys_attrs_snapshot: Some(PersistedSysAttrs {
                         created_at: occurred_at,
                         modified_at: occurred_at,
                         expires_at: None,
                     }),
                     origin,
-                    current_payload: Some(json!({"id": "https://example.org/entities/1", "temperature": 21})),
+                    current_payload: Some(Arc::new(json!({"id": "https://example.org/entities/1", "temperature": 21}))),
                 })
             })
             .collect();
@@ -248,5 +252,27 @@ mod tests {
         pretty_assertions::assert_eq!(encoded["change_events"][2]["lifecycle"], json!("modified"));
         pretty_assertions::assert_eq!(encoded["change_events"][0]["instances"][2]["kind"], json!("deleted"));
         assert!(encoded["change_events"][0]["instances"][0].get("dataset_id").is_none());
+    }
+
+    /// A snapshot is held in an `Arc` so a change and its persisted form share
+    /// one allocation; the stored JSON is the snapshot itself, with no trace of
+    /// the sharing, and one snapshot shared by two members is stored in full
+    /// under each and reads back as two equal values.
+    #[test]
+    fn an_arc_snapshot_is_persisted_as_the_same_json_as_before() {
+        let snapshot = json!({"id": "https://example.org/entities/1", "location": {"type": "Point", "coordinates": [1.5, 2.5]}});
+        let shared = Arc::new(snapshot.clone()); // clone: the test compares the stored JSON against the snapshot it shared
+        let mut job = persisted_job();
+        job.change_events.truncate(1);
+        job.change_events[0].entity_snapshot = Some(Arc::clone(&shared));
+        job.change_events[0].previous_attributes = Some(Arc::clone(&shared));
+        job.change_events[0].current_payload = Some(shared);
+
+        let encoded = serde_json::to_value(&job).expect("payload serialises");
+        for member in ["entity_snapshot", "previous_attributes", "current_payload"] {
+            pretty_assertions::assert_eq!(encoded["change_events"][0][member], snapshot, "{member}");
+        }
+        let decoded = PersistedBatchSideEffectJob::decode(&encoded).expect("payload decodes");
+        pretty_assertions::assert_eq!(decoded, job);
     }
 }

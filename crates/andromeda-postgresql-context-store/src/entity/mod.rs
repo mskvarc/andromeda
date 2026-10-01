@@ -4,6 +4,12 @@
 pub mod census;
 /// Binary COPY path for bulk entity inserts.
 pub mod copy;
+/// The reads that let a deletion skip the payload it removes.
+pub mod deletion_outline;
+/// Reading interned keys back as the names the dictionaries hold.
+pub(crate) mod dictionary_join;
+/// Reading the types one entity carries from its search row.
+pub mod entity_types;
 /// Removing entities and attribute instances whose `expiresAt` has passed.
 pub mod expiry;
 /// The identity the fused entity insert hands back, with its minted key.

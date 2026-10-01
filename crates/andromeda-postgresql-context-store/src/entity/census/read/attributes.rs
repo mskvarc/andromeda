@@ -3,22 +3,9 @@
 
 use crate::{
     entity::{
-        census::read::{
-            AttributeNameRow,
-            Count,
-            LiveInstances,
-            Names,
-            Total,
-            TypeName,
-            join_attribute_name,
-            join_type_name,
-            live_instances,
-            stored_count,
-            stored_family,
-            summed,
-            type_key_of,
-        },
-        mapper::{stored_attribute_name, stored_type_name},
+        census::read::{Count, LiveInstances, Names, Total, live_instances, stored_count, summed, type_key_of},
+        dictionary_join::{AttributeNameRow, TypeName, join_attribute_name, join_type_name},
+        mapper::{stored_attribute_family, stored_attribute_name, stored_type_name},
         repo::EntityRepository,
     },
     error::ContextStoreError,
@@ -100,7 +87,7 @@ fn attribute_summary_of(attr_iri: &AttributeName, rows: &[(i64, Option<i16>, Opt
         attr_iri: attr_iri.clone(), // clone: the summary owns the name it answers for.
         instance_count,
         entity_types: types.into_iter().map(stored_type_name).collect::<Result<_, _>>()?,
-        attribute_types: kinds.into_iter().map(stored_family).collect::<Result<_, _>>()?,
+        attribute_types: kinds.into_iter().map(stored_attribute_family).collect::<Result<_, _>>()?,
     }))
 }
 

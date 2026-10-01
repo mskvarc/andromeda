@@ -6,7 +6,14 @@
 //! positions, and every ring of a Polygon a closed [`LinearRing`] of four or
 //! more, so a geometry that decoded is one every consumer can use as it stands.
 
-use crate::{dimension::GeometryDimension, line_string_coordinates::LineStringCoordinates, linear_ring::LinearRing, position::Position};
+use crate::{
+    dimension::GeometryDimension,
+    geometry_census::PositionCount,
+    geometry_type::GeometryType,
+    line_string_coordinates::LineStringCoordinates,
+    linear_ring::LinearRing,
+    position::Position,
+};
 
 /// The rings of a `GeoJSON` Polygon: an exterior ring followed by zero or more
 /// interior rings (IETF RFC 7946 section 3.1.6).
@@ -63,6 +70,19 @@ pub enum GeometryForm {
 }
 
 impl GeometryForm {
+    /// The `GeoJSON` type of this geometry.
+    #[must_use]
+    pub const fn geometry_type(&self) -> GeometryType {
+        match self {
+            GeometryForm::Point(_) => GeometryType::Point,
+            GeometryForm::MultiPoint(_) => GeometryType::MultiPoint,
+            GeometryForm::LineString(_) => GeometryType::LineString,
+            GeometryForm::MultiLineString(_) => GeometryType::MultiLineString,
+            GeometryForm::Polygon(_) => GeometryType::Polygon,
+            GeometryForm::MultiPolygon(_) => GeometryType::MultiPolygon,
+        }
+    }
+
     /// Whether every position of this geometry carries an altitude.
     ///
     /// [`GeometryDimension::ThreeD`] only when the geometry holds at least one
@@ -74,6 +94,14 @@ impl GeometryForm {
         let mut census = PositionCensus::default();
         self.take_census(&mut census);
         census.dimension()
+    }
+
+    /// How many positions this geometry holds, every ring and member counted.
+    #[must_use]
+    pub fn position_count(&self) -> PositionCount {
+        let mut census = PositionCensus::default();
+        self.take_census(&mut census);
+        PositionCount::new(census.positions)
     }
 
     /// Fold every position of this geometry into the running `census`.

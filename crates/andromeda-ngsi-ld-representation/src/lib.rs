@@ -30,6 +30,10 @@
 //! representation and nothing else, and because every layer that admits a
 //! written attribute has to agree on them.
 //!
+//! [`payload_census`] counts what a written compact payload will cost once
+//! expanded, before the expansion is attempted: what a representation costs is
+//! read off the representation alone.
+//!
 //! [`embedded_context_admission`] is the fourth of those representation rules
 //! and the only one about where a member may stand rather than which members
 //! there may be: clause 5.5.7 admits a user `@context` at the top level of an
@@ -53,6 +57,7 @@ pub mod linked_resolution_failure;
 pub mod merge_representation;
 pub mod normalization;
 pub mod output_only_member;
+pub mod payload_census;
 pub mod proof_seal_admission;
 pub mod response_format;
 pub mod sys_attrs;
@@ -60,6 +65,7 @@ pub mod sys_attrs;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-vocabulary",

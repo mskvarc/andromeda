@@ -10,8 +10,11 @@
 //! lives in `andromeda-postgresql-encoding` alongside the other formats that are
 //! properties of PostgreSQL rather than of NGSI-LD.
 //!
-//! It is a leaf: it names no other crate in this workspace, and it deliberately
-//! knows nothing about persistence, transport or broker policy.
+//! It names one other crate of this workspace, `andromeda-ngsi-ld-number`,
+//! which owns how a JSON text is read and its values counted, so that the
+//! census of a geometry counts the values beside its positions exactly as a
+//! payload's are counted. It deliberately knows nothing about persistence,
+//! transport or broker policy.
 //!
 //! Spatial *indexing* is not here either. An R-tree partitioned by tenant, type
 //! and `GeoProperty` is a broker decision about which entities are worth
@@ -30,13 +33,17 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod compact_geojson;
 pub mod coordinate_path;
 pub mod dimension;
 pub mod distance;
 pub mod form;
 pub mod geo_rel;
 pub mod geojson;
+#[cfg(test)]
+mod geojson_oracle;
 pub mod geometry;
+pub mod geometry_census;
 pub mod geometry_type;
 pub mod line_string_coordinates;
 pub mod linear_ring;
@@ -48,6 +55,7 @@ pub mod relation;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-ngsi-ld-number",
     ],
     allow_workspace_dev_dependencies: [
     ],

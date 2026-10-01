@@ -249,6 +249,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, time_prop::TimeProp, time_rel::TimeRel};
+    use andromeda_ngsi_ld_query::geo::reference_geometry::ReferenceGeometry;
     use chrono::{DateTime, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
 
@@ -340,7 +341,10 @@ mod tests {
         assert!(query.geo_q.is_some());
         let geo = query.geo_q.unwrap();
         pretty_assertions::assert_eq!(geo.georel, GeoRel::Within);
-        pretty_assertions::assert_eq!(serde_json::to_value(geo.geometry.to_geojson()).expect("geometry serializes")["type"], "Polygon");
+        let ReferenceGeometry::Read(geometry) = geo.reference else {
+            panic!("JSON coordinates are read at decoding");
+        };
+        pretty_assertions::assert_eq!(serde_json::to_value(geometry.to_geojson()).expect("geometry serializes")["type"], "Polygon");
         pretty_assertions::assert_eq!(query.scope_q.as_ref().map(ToString::to_string).as_deref(), Some("/Madrid"));
         pretty_assertions::assert_eq!(query.attrs.unwrap().len(), 2);
         pretty_assertions::assert_eq!(query.omit.unwrap().len(), 1);

@@ -84,6 +84,8 @@ impl TemporalService {
         // Clause 5.6.14.4 raises ResourceNotFound for an unknown Entity,
         // Attribute or instance before the Fragment is read, so a Fragment
         // naming another Attribute is refused only once the target is known.
+        // The budget is counted before the expansion multiplies the Fragment.
+        self.limits.payload_budget.admit(&fragment)?;
         let expanded = self.engine.expand(fragment, context).await?;
         let instance_value = fragment_instance(expanded, &attr_iri)?;
         validate_instance_unit_code_admission(attr_iri.as_str(), &instance_value)?;

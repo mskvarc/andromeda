@@ -18,6 +18,7 @@
 #[cfg(test)]
 mod tests {
     use crate::{
+        config::EntityConfig,
         entity_snapshot::EntitySnapshot,
         error::EntityError,
         pagination_outcome::PaginationOutcome,
@@ -266,6 +267,7 @@ mod tests {
             SpatialAcceleration::StoreVerified,
             TenantRef::UnnamedDefault,
             None,
+            EntityConfig::default().geometry_census_limits(),
         )
     }
 

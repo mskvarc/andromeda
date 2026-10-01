@@ -4,6 +4,7 @@
 
 use crate::{entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use std::sync::Arc;
 
@@ -52,6 +53,9 @@ pub struct RegistrationService {
     engine: JsonLdEngine,
     change_sink: Option<Arc<dyn RegistrationChangeSink>>,
     removal_hook: Option<Arc<dyn RegistrationRemovalHook>>,
+    /// The limits a geometry the registration writes, or a query's
+    /// reference geometry, is admitted under.
+    geometry_limits: GeometryCensusLimits,
 }
 
 /// Publishes registration lifecycle changes without coupling policy to a runtime transport.
@@ -69,6 +73,7 @@ impl RegistrationService {
         entity_probe: Arc<dyn RegisteredEntityProbe>,
         engine: JsonLdEngine,
         change_sink: Option<Arc<dyn RegistrationChangeSink>>,
+        geometry_limits: GeometryCensusLimits,
     ) -> RegistrationService {
         RegistrationService {
             repo,
@@ -76,6 +81,7 @@ impl RegistrationService {
             engine,
             change_sink,
             removal_hook: None,
+            geometry_limits,
         }
     }
 
@@ -113,6 +119,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-persistence-failure",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-ngsi-ld-number",
     ],
     allow_production_dependencies: [],
 }

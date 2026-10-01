@@ -6,8 +6,11 @@
 
 use crate::{
     addressed_uri::addressed_request_uri,
+    blocking_decode::{BlockingDecodePolicy, decode_payload},
     classification::classify_context_link_error,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
+    json_value_budget::refuse_values_past_budget,
+    request_json_value_limit::RequestJsonValueLimit,
     request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
     undecodable_body::UndecodableBody,
@@ -16,10 +19,12 @@ use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext};
 use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact, deserialize_exact_document};
 use axum::{
+    body::Bytes,
     extract::{FromRequest, Request},
     http::{StatusCode, Uri},
 };
 use headers::HeaderMapExt;
+use iri_rs::IriBuf;
 use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -64,6 +69,7 @@ struct AdmittedBody {
 }
 
 /// Classify the Content-Type into one of the supported NGSI-LD types.
+#[derive(Clone, Copy)]
 enum ContentKind {
     /// `application/json` — exact type, no suffix
     Json,
@@ -190,14 +196,18 @@ fn undecodable_body(error: &UndecodableBody, uri: Uri) -> ExtractorRejection {
 impl<S, T> FromRequest<S> for JsonLd<T>
 where
     S: Send + Sync,
-    T: DeserializeOwned,
+    T: DeserializeOwned + Send + 'static,
 {
     type Rejection = ExtractorRejection;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let AdmittedBody { document, context, uri } = admit_body(req, state).await?;
-        let value = deserialize_exact(&document).map_err(|source| undecodable_body(&UndecodableBody::of::<T>(&document, source), uri))?;
-        Ok(JsonLd { value, context })
+        read_body(req, state)
+            .await?
+            .decode(|AdmittedBody { document, context, uri }| {
+                let value = deserialize_exact(&document).map_err(|source| undecodable_body(&UndecodableBody::of::<T>(&document, source), uri))?;
+                Ok(JsonLd { value, context })
+            })
+            .await
     }
 }
 
@@ -208,15 +218,115 @@ where
     type Rejection = ExtractorRejection;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let AdmittedBody { document, context, uri } = admit_body(req, state).await?;
-        let document = deserialize_exact_document(document).map_err(|source| undecodable_body(&UndecodableBody::Document { source }, uri))?;
-        Ok(JsonLdDocument { document, context })
+        read_body(req, state)
+            .await?
+            .decode(|AdmittedBody { document, context, uri }| {
+                let document = deserialize_exact_document(document).map_err(|source| undecodable_body(&UndecodableBody::Document { source }, uri))?;
+                Ok(JsonLdDocument { document, context })
+            })
+            .await
     }
 }
 
-/// Apply the clause 6.3.4 and 6.3.5 request preconditions, parse the body,
-/// canonicalize its numbers, and split its `@context` off.
-async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedBody, ExtractorRejection> {
+/// A request body that passed the clause 6.3.4 and 6.3.5 header
+/// preconditions and was read in full, not yet parsed.
+struct ReadBody {
+    /// The payload as received.
+    bytes: Bytes,
+    /// The representation the request announced.
+    content_kind: ContentKind,
+    /// Where the payload's context is named.
+    carrier: PayloadCarrier,
+    /// The context `Link` the request carried, read before the body.
+    link_context: Option<IriBuf>,
+    /// The request URI, the `instance` of any later rejection.
+    uri: Uri,
+    /// The most JSON values the payload may hold, when the stack published it.
+    value_limit: Option<RequestJsonValueLimit>,
+    /// How the payload is decoded beside the executor, when the stack
+    /// published it.
+    blocking_decode: Option<BlockingDecodePolicy>,
+}
+
+impl ReadBody {
+    /// Parse and admit the payload, then hand the admitted body to `finish`,
+    /// all of it on the blocking pool when the payload is large.
+    ///
+    /// # Errors
+    ///
+    /// Returns the refusal of [`ReadBody::admit`] or of `finish`, and an
+    /// `InternalError` when the blocking task fails.
+    async fn decode<T: Send + 'static>(
+        self,
+        finish: impl FnOnce(AdmittedBody) -> Result<T, ExtractorRejection> + Send + 'static,
+    ) -> Result<T, ExtractorRejection> {
+        let uri = self.uri.clone(); // clone: a failed decoding task still names the request
+        let blocking_decode = self.blocking_decode.clone(); // clone: the decode moves the body it was read with
+        decode_payload(blocking_decode.as_ref(), self.bytes.len(), move || self.admit().and_then(finish))
+            .await
+            .map_err(|failure| ExtractorRejection::Classified(failure.report().with_instance(uri)))?
+    }
+
+    /// Count the payload's values against the request limit, parse it,
+    /// canonicalize its numbers, and split its `@context` off.
+    fn admit(self) -> Result<AdmittedBody, ExtractorRejection> {
+        let ReadBody {
+            bytes,
+            content_kind,
+            carrier,
+            link_context,
+            uri,
+            value_limit,
+            blocking_decode: _,
+        } = self;
+        // Counted before the tree is built, so a payload of too many values
+        // costs its bytes and nothing more.
+        // clone: each refusal names the request, which the admitted body keeps naming
+        refuse_values_past_budget(&bytes, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(uri.clone())))?;
+        // clone: as above
+        let mut value: Value =
+            serde_json::from_slice(&bytes).map_err(|error| ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri.clone()))?;
+        drop(bytes);
+        canonicalize_numbers(&mut value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?;
+
+        // Reject empty arrays — not a valid NGSI-LD entity or batch payload
+        if value.as_array().is_some_and(Vec::is_empty) {
+            return Err(ExtractorRejection::bad_request_data("Invalid JSON: expected object, got empty array", uri));
+        }
+
+        // Clause 6.3.21: a profile `Link` announcing the payload's NGSI-LD
+        // version is read by the `PayloadProfile` extractor. This broker
+        // interprets every version the clause 4.3.6.8 tables describe, so no
+        // amendment of the payload is needed for it to be accepted here.
+        // Clause 6.3.5: an application/json body must not carry @context.
+        if matches!(content_kind, ContentKind::Json) && document_has_context(&value) {
+            return Err(ExtractorRejection::bad_request_data("application/json body must not contain @context", uri));
+        }
+
+        if !document_contexts_are_well_formed(&value) {
+            return Err(ExtractorRejection::bad_request_data(
+                "@context must be a string, an object, or an array of those",
+                uri,
+            ));
+        }
+
+        let context = match carrier {
+            PayloadCarrier::LdJsonBody => {
+                ContextSpec::from_body(body_context(&value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?)
+            }
+            PayloadCarrier::LinkHeader => ContextSpec::from_request(link_context.map_or(RequestContext::Default, RequestContext::Link)),
+        };
+
+        // The context is carried by the spec; the member is removed before the body
+        // is decoded into its domain type.
+        strip_context_from_value(&mut value);
+
+        Ok(AdmittedBody { document: value, context, uri })
+    }
+}
+
+/// Apply the clause 6.3.4 and 6.3.5 request preconditions and read the body.
+async fn read_body<S: Send + Sync>(req: Request, state: &S) -> Result<ReadBody, ExtractorRejection> {
     let uri = addressed_request_uri(&req);
     // Clause 6.3.4: the payload length is checked before the payload is
     // looked at, so an absent Content-Length is the bare 411 the clause
@@ -245,6 +355,8 @@ async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedB
     let link_context = RequestLinks::of(&mut parts)
         .and_then(|links| links.context_for(carrier))
         .map_err(|error| ExtractorRejection::Classified(classify_context_link_error(&error).with_instance(uri.clone())))?;
+    let value_limit = parts.extensions.get::<RequestJsonValueLimit>().copied();
+    let blocking_decode = parts.extensions.get::<BlockingDecodePolicy>().cloned(); // clone: the body owns its share of the permits
     let req = Request::from_parts(parts, body);
 
     let bytes = buffer_payload(req, state, declared, uri.clone()).await?;
@@ -253,70 +365,46 @@ async fn admit_body<S: Send + Sync>(req: Request, state: &S) -> Result<AdmittedB
     // no JSON document to read, which is the refusal the `Content-Length`
     // precondition already owns.
     if bytes.is_empty() {
-        return Err(ContentLengthPreconditionError::Empty.into_rejection(uri.clone()));
+        return Err(ContentLengthPreconditionError::Empty.into_rejection(uri));
     }
 
-    let mut value: Value =
-        serde_json::from_slice(&bytes).map_err(|error| ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri.clone()))?;
-    canonicalize_numbers(&mut value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?;
-
-    // Reject empty arrays — not a valid NGSI-LD entity or batch payload
-    if value.as_array().is_some_and(Vec::is_empty) {
-        return Err(ExtractorRejection::bad_request_data(
-            "Invalid JSON: expected object, got empty array",
-            uri.clone(),
-        ));
-    }
-
-    // Clause 6.3.21: a profile `Link` announcing the payload's NGSI-LD
-    // version is read by the `PayloadProfile` extractor. This broker
-    // interprets every version the clause 4.3.6.8 tables describe, so no
-    // amendment of the payload is needed for it to be accepted here.
-    // Clause 6.3.5: an application/json body must not carry @context.
-    if matches!(content_kind, ContentKind::Json) && document_has_context(&value) {
-        return Err(ExtractorRejection::bad_request_data("application/json body must not contain @context", uri));
-    }
-
-    if !document_contexts_are_well_formed(&value) {
-        return Err(ExtractorRejection::bad_request_data(
-            "@context must be a string, an object, or an array of those",
-            uri,
-        ));
-    }
-
-    let context = match carrier {
-        PayloadCarrier::LdJsonBody => {
-            ContextSpec::from_body(body_context(&value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?)
-        }
-        PayloadCarrier::LinkHeader => ContextSpec::from_request(link_context.map_or(RequestContext::Default, RequestContext::Link)),
-    };
-
-    // The context is carried by the spec; the member is removed before the body
-    // is decoded into its domain type.
-    strip_context_from_value(&mut value);
-
-    Ok(AdmittedBody { document: value, context, uri })
+    Ok(ReadBody {
+        bytes,
+        content_kind,
+        carrier,
+        link_context,
+        uri,
+        value_limit,
+        blocking_decode,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::jsonld::{JsonLd, JsonLdDocument};
+    use crate::{
+        blocking_decode::BlockingDecodePolicy,
+        jsonld::{JsonLd, JsonLdDocument},
+        request_json_value_limit::RequestJsonValueLimit,
+    };
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use andromeda_jsonld::request_context::RequestContext;
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
-        body::{Body, HttpBody},
+        body::{Body, HttpBody, to_bytes},
         extract::FromRequest,
         http::{
             HeaderValue,
             Request,
             StatusCode,
-            header::{CONTENT_LENGTH, CONTENT_TYPE, LINK},
+            header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, LINK},
         },
+        response::IntoResponse,
     };
     use iri_rs::IriBuf;
     use serde::de::DeserializeOwned;
     use serde_json::{Value, json};
+    use std::num::NonZeroUsize;
 
     /// Declare the fixed length of a test request's body.
     fn with_content_length(mut request: Request<Body>) -> Request<Body> {
@@ -328,7 +416,7 @@ mod tests {
 
     async fn extract<T>(request: Request<Body>) -> Result<JsonLd<T>, ExtractorRejection>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + Send + 'static,
     {
         JsonLd::<T>::from_request(with_content_length(request), &()).await
     }
@@ -776,6 +864,159 @@ mod tests {
             }
             Ok(extracted) => panic!("accepted the name {}", extracted.value.name),
             Err(other) => panic!("expected BadRequestData, got {other:?}"),
+        }
+    }
+
+    /// `request` carrying the JSON value limit of `values` the stack publishes.
+    fn with_value_limit(mut request: Request<Body>, values: NonZeroUsize) -> Request<Body> {
+        request.extensions_mut().insert(RequestJsonValueLimit::new(JsonValueLimit::new(values)));
+        request
+    }
+
+    /// `request` carrying the blocking decode threshold of `bytes` the stack
+    /// publishes.
+    fn with_decode_threshold(mut request: Request<Body>, bytes: usize) -> Request<Body> {
+        request.extensions_mut().insert(BlockingDecodePolicy::new(bytes, NonZeroUsize::MIN));
+        request
+    }
+
+    /// The status, `Connection` header and parsed problem a rejection answers
+    /// with.
+    async fn answered(rejection: ExtractorRejection) -> (StatusCode, Option<HeaderValue>, Value) {
+        let response = rejection.into_response();
+        let status = response.status();
+        let connection = response.headers().get(CONNECTION).cloned(); // clone: the response is consumed for its body below
+        let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
+        (status, connection, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    /// Clause 6.3.2: a payload holding more JSON values than the published
+    /// limit is the 413 "Request Entity too large", naming the limit. The
+    /// payload was read in full before it was counted, so the connection is
+    /// left open.
+    #[tokio::test]
+    async fn a_body_past_the_json_value_limit_is_a_413_problem_naming_the_limit() {
+        let three = NonZeroUsize::new(3).expect("three is not zero");
+        let request = with_value_limit(json_request(r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":[1,2]}"#), three);
+
+        let rejection = extract_document(request).await.err().expect("six values exceed three");
+        let (status, connection, problem) = answered(rejection).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge");
+        pretty_assertions::assert_eq!(problem["status"], 413);
+        pretty_assertions::assert_eq!(problem["instance"], "/ngsi-ld/v1/entities");
+        let detail = problem["detail"].as_str().expect("a detail");
+        assert!(detail.contains("3 JSON values"), "{detail}");
+        pretty_assertions::assert_eq!(connection, None);
+    }
+
+    /// The typed extraction counts the payload as the untyped one does.
+    #[tokio::test]
+    async fn a_typed_body_past_the_json_value_limit_is_the_same_413() {
+        let three = NonZeroUsize::new(3).expect("three is not zero");
+        let request = with_value_limit(json_request(r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":[1,2]}"#), three);
+
+        let rejection = extract::<Value>(request).await.err().expect("six values exceed three");
+        let (status, _connection, problem) = answered(rejection).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge");
+    }
+
+    /// A payload holding exactly the published number of values is admitted.
+    #[tokio::test]
+    async fn a_body_at_the_json_value_limit_is_admitted() {
+        let six = NonZeroUsize::new(6).expect("six is not zero");
+        let request = with_value_limit(json_request(r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":[1,2]}"#), six);
+
+        assert!(extract_document(request).await.is_ok());
+    }
+
+    /// A router assembled without the stack publishes no limit, and a payload
+    /// read through it is not counted.
+    #[tokio::test]
+    async fn a_body_without_a_published_limit_is_not_budgeted() {
+        let request = json_request(r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]}"#);
+
+        assert!(extract_document(request).await.is_ok());
+    }
+
+    /// What one decode path makes of `body`: the admitted document and its
+    /// context, or the status and problem of its refusal.
+    async fn decoded_at(body: &'static str, threshold: usize) -> Result<(String, RequestContext), (StatusCode, Value)> {
+        match extract_document(with_decode_threshold(json_request(body), threshold)).await {
+            Ok(admitted) => Ok((admitted.document.to_string(), admitted.context.request_context().clone())), // clone: the spec is dropped here
+            Err(rejection) => {
+                let (status, _connection, problem) = answered(rejection).await;
+                Err((status, problem))
+            }
+        }
+    }
+
+    /// Bodies every decode path admits.
+    const ADMITTED_BODIES: [&str; 3] = [
+        r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":[21.5,-7,0,18446744073709551616,0.100000000000000005]}}"#,
+        r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":[1e-7,-2.5e-400,1E+20,1e20,0.00001,1.50]}}"#,
+        r#"[{"id":"urn:ngsi-ld:T:1","type":"T"},{"id":"urn:ngsi-ld:T:2","type":"T","s":"text"}]"#,
+    ];
+
+    /// Bodies every decode path refuses.
+    const REFUSED_BODIES: [&str; 5] = [
+        "[1,",
+        "[]",
+        r#"{"id":"urn:ngsi-ld:T:1","type":"T","p":{"type":"Property","value":[1e-16384]}}"#,
+        r#"{"id":"urn:ngsi-ld:T:1","type":"T","@context":"https://example.org/a"}"#,
+        // The reader's private number member cannot be told from a number
+        // it read, so a body spelling it out is refused.
+        r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":{"b":1,"$serde_json::private::Number":"5"}}}"#,
+    ];
+
+    /// A threshold of zero decodes every payload on the blocking pool, and one
+    /// of `usize::MAX` none: both give the same document.
+    #[tokio::test]
+    async fn a_body_decoded_off_the_executor_is_the_body_decoded_inline() {
+        for body in ADMITTED_BODIES {
+            let off_executor = decoded_at(body, 0).await;
+            let inline = decoded_at(body, usize::MAX).await;
+            assert!(off_executor.is_ok(), "{body}: {off_executor:?}");
+            pretty_assertions::assert_eq!(off_executor, inline, "{body}");
+        }
+    }
+
+    /// A payload refused while it is decoded is refused with the same status
+    /// and problem on the blocking pool as inline.
+    #[tokio::test]
+    async fn a_malformed_body_is_refused_alike_on_both_decode_paths() {
+        for body in REFUSED_BODIES {
+            let off_executor = decoded_at(body, 0).await;
+            let inline = decoded_at(body, usize::MAX).await;
+            assert!(off_executor.is_err(), "{body}: {off_executor:?}");
+            pretty_assertions::assert_eq!(off_executor, inline, "{body}");
+        }
+    }
+
+    /// What the typed decode path makes of `body` as a `T`: the decoded value
+    /// rendered back and its context, or the status and problem of its
+    /// refusal.
+    async fn typed_at(body: &'static str, threshold: usize) -> Result<(String, RequestContext), (StatusCode, Value)> {
+        match extract::<Value>(with_decode_threshold(json_request(body), threshold)).await {
+            Ok(admitted) => Ok((admitted.value.to_string(), admitted.context.request_context().clone())), // clone: the spec is dropped here
+            Err(rejection) => {
+                let (status, _connection, problem) = answered(rejection).await;
+                Err((status, problem))
+            }
+        }
+    }
+
+    /// The typed extraction decodes every body alike on the blocking pool and
+    /// inline, admitting and refusing the same ones the untyped one does.
+    #[tokio::test]
+    async fn a_typed_body_is_decoded_alike_on_both_decode_paths() {
+        for body in ADMITTED_BODIES.into_iter().chain(REFUSED_BODIES) {
+            let off_executor = typed_at(body, 0).await;
+            pretty_assertions::assert_eq!(off_executor, typed_at(body, usize::MAX).await, "{body}");
+            pretty_assertions::assert_eq!(off_executor.is_ok(), decoded_at(body, 0).await.is_ok(), "{body}");
         }
     }
 }

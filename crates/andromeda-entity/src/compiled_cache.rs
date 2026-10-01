@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
     filter::serialize::serialize_attr_path,
-    geo::input::GeoQueryInput,
+    geo::{input::GeoQueryInput, reference_geometry::ReferenceGeometry},
     ordering::{
         collation::IcuCollation,
         geometry::OrderingGeometry,
@@ -181,11 +181,17 @@ fn push_dataset_list(buffer: &mut String, value: Option<&[DatasetSelector]>) {
     }
 }
 
-/// Append a parsed geo-query without retaining URL component strings.
+/// Append a decoded geo-query without retaining URL component strings.
+///
+/// Coordinates still encoded are keyed by their text, so two spellings of one
+/// geometry compile once each.
 fn push_geo_query(buffer: &mut String, value: Option<&GeoQueryInput>) {
     if let Some(value) = value {
         push_field(buffer, Some(&value.georel.to_string()));
-        let geometry = value.geometry.to_geojson().to_string();
+        let geometry = match &value.reference {
+            ReferenceGeometry::Read(geometry) => geometry.to_geojson().to_string(),
+            ReferenceGeometry::Encoded { geometry_type, coordinates } => format!("{geometry_type}{coordinates}"),
+        };
         push_field(buffer, Some(&geometry));
         push_field(buffer, value.geoproperty.as_ref().map(AsRef::<str>::as_ref));
     } else {

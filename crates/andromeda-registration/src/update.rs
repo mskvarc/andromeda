@@ -4,6 +4,7 @@ use crate::{
     RegistrationService,
     context_source_properties::expand_context_source_properties,
     error::RegistrationError,
+    geometry::admit_registration_geometries,
     mode_rules::check_conflicts,
     payload::extract_update_fragment,
     registration_validation_reason::RegistrationValidationReason,
@@ -35,6 +36,8 @@ impl RegistrationService {
     /// serialised, and [`RegistrationError::Persistence`] when the store
     /// rejects the read or the write.
     pub async fn update(&self, id: &Identifier, payload: Value, context: &ContextSpec) -> Result<(), RegistrationError> {
+        // Counted before the fragment is expanded or a geometry built from it.
+        admit_registration_geometries(&payload, self.geometry_limits)?;
         // A fragment may omit `type`, but one it carries has to be the
         // registration type (clause 5.2.9).
         if let Some(type_value) = payload.get("type") {
@@ -91,10 +94,12 @@ mod tests {
         store::RegistrationStore,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use iri_rs::IriBuf;
     use serde_json::json;
-    use std::sync::Arc;
+    use std::{num::NonZeroUsize, sync::Arc};
 
     const REGISTRATION_ID: &str = "urn:ngsi-ld:ContextSourceRegistration:update";
 
@@ -107,6 +112,10 @@ mod tests {
             Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
             engine,
             None,
+            GeometryCensusLimits {
+                positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+            },
         )
     }
 

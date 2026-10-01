@@ -22,9 +22,10 @@ use crate::{
         server_timing::apply_server_timing,
     },
 };
-use andromeda_http_extraction::request_body_limit::RequestBodyLimit;
+use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_body_limit::RequestBodyLimit, request_json_value_limit::RequestJsonValueLimit};
 use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
 use andromeda_http_tenancy::propagation::echo_tenant_header;
+use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use axum::{
     Extension,
     Router,
@@ -71,6 +72,10 @@ pub enum HttpStackBuildError {
 pub struct HttpStack {
     /// API-wide body admission limit.
     request_body_limit: RequestBodyLimit,
+    /// API-wide limit on the JSON values one payload may hold.
+    request_json_value_limit: RequestJsonValueLimit,
+    /// How a payload is decoded beside the executor.
+    blocking_decode: BlockingDecodePolicy,
     /// The operator's forwarded-header trust decision.
     forwarded_headers: ForwardedHeaderTrust,
     /// Maximum wall-clock time for one HTTP request.
@@ -103,8 +108,14 @@ impl HttpStack {
         // saturating fallback keeps a hypothetical 32-bit build from panicking on
         // an over-large configured ceiling rather than silently truncating it.
         let request_body_limit = RequestBodyLimit::new(usize::try_from(config.max_request_body.as_u64()).unwrap_or(usize::MAX));
+        let blocking_decode = BlockingDecodePolicy::new(
+            usize::try_from(config.blocking_decode_threshold.as_u64()).unwrap_or(usize::MAX),
+            config.max_concurrent_blocking_decodes,
+        );
         Ok(HttpStack {
             request_body_limit,
+            request_json_value_limit: RequestJsonValueLimit::new(JsonValueLimit::new(config.max_request_json_values)),
+            blocking_decode,
             forwarded_headers: config.forwarded_headers,
             request_timeout: config.request_timeout.duration(),
             helmet: build_helmet_layer(config.helmet)?,
@@ -128,7 +139,12 @@ impl HttpStack {
             // The limit travels with the request as well as bounding it, so a
             // payload reader refusing a body names the size it would accept.
             .layer(Extension(self.request_body_limit))
-            .layer(DefaultBodyLimit::max(self.request_body_limit.bytes()));
+            .layer(DefaultBodyLimit::max(self.request_body_limit.bytes()))
+            // Every payload parser counts the payload's values against this
+            // limit before it builds a tree, and decodes a payload this large
+            // or larger beside the executor.
+            .layer(Extension(self.request_json_value_limit))
+            .layer(Extension(self.blocking_decode.clone())); // clone: every request shares the stack's decode permits
         if let Some(helmet) = &self.helmet {
             router = router.layer(helmet.clone());
         }
@@ -266,6 +282,7 @@ mod tests {
         stack::HttpStack,
     };
     use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
+    use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_json_value_limit::RequestJsonValueLimit};
     use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
     use axum::{
         Extension,
@@ -278,7 +295,7 @@ mod tests {
         routing::get,
     };
     use enumset::EnumSet;
-    use std::{error::Error, sync::Arc};
+    use std::{error::Error, num::NonZeroUsize, sync::Arc};
     use tokio::sync::Mutex;
     use tower::{Layer, ServiceExt};
 
@@ -287,6 +304,9 @@ mod tests {
         HttpStackConfig {
             request_timeout: HumanDuration::from_secs(30),
             max_request_body: HumanByteSize::kib(1),
+            max_request_json_values: NonZeroUsize::MIN.saturating_add(99),
+            blocking_decode_threshold: HumanByteSize::kib(256),
+            max_concurrent_blocking_decodes: NonZeroUsize::MIN,
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
             cors: CorsConfig {
                 mode: CorsMode::Disabled,
@@ -468,6 +488,30 @@ mod tests {
             let body = to_bytes(response.into_body(), usize::MAX).await?;
             pretty_assertions::assert_eq!(String::from_utf8(body.to_vec())?, declared.to_string());
         }
+        Ok(())
+    }
+
+    /// Every payload extractor reads the value limit and the decode threshold
+    /// from the request, so the API stack has to publish both as configured.
+    #[tokio::test]
+    async fn the_stack_publishes_the_json_value_limit_and_the_decode_threshold() -> Result<(), Box<dyn Error>> {
+        let stack = HttpStack::new(HttpStackConfig {
+            max_request_json_values: NonZeroUsize::MIN.saturating_add(41),
+            blocking_decode_threshold: HumanByteSize::kib(2),
+            ..disabled_config()
+        })?;
+        let router = stack.apply_api(Router::new().route(
+            "/probe",
+            get(
+                |Extension(limit): Extension<RequestJsonValueLimit>, Extension(policy): Extension<BlockingDecodePolicy>| async move {
+                    format!("{} {}", limit.limit(), policy.threshold_bytes())
+                },
+            ),
+        ));
+        let response = router.oneshot(Request::get("/probe").body(Body::empty())?).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        pretty_assertions::assert_eq!(String::from_utf8(body.to_vec())?, "42 2048");
         Ok(())
     }
 

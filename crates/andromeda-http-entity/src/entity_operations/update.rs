@@ -54,7 +54,7 @@ pub(crate) async fn batch_update(
         items,
         context: _,
         errors: mut entity_errors,
-    } = parse_batch_entities(&batch_body, &uri)?;
+    } = parse_batch_entities(&batch_body, &uri).await?;
     // Clause 5.6.9.4 runs clause 5.6.3 "for each of the NGSI-LD Entities
     // included in the input Array", and "if the Entity update failed, then a
     // new BatchEntityError shall be added to E containing the failed Entity ID

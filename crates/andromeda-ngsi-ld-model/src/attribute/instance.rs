@@ -58,7 +58,7 @@ impl Attribute {
             Attribute::Property(p) => serde_json::to_value(&p.value).unwrap_or_default(),
             Attribute::Relationship(r) => serde_json::to_value(&r.object).unwrap_or_default(),
             Attribute::VocabProperty(v) => serde_json::to_value(&v.vocab).unwrap_or_default(),
-            Attribute::GeoProperty(g) => serde_json::json!(g.value),
+            Attribute::GeoProperty(g) => g.value.to_geojson_value(),
             // Serialization of IndexMap<LanguageMapKey, LanguageMapValue> to JSON cannot fail
             // (keys serialize to strings, values to strings or arrays of strings).
             Attribute::LanguageProperty(l) => serde_json::to_value(&l.language_map).unwrap_or_default(),
@@ -143,7 +143,10 @@ impl Attribute {
 ///
 /// A single attribute, a multi-attribute (clause 5.2.5), or a member the broker
 /// carries through without interpreting.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Decoding is `crate::attribute::member_decoding`'s, which reads a member
+/// the way an untagged decoding would without buffering it per variant.
+#[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum AttributeValue {
     /// Exactly one attribute instance.

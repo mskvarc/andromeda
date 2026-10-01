@@ -379,7 +379,7 @@ fn domain_change_event(persisted: PersistedChangeEvent) -> ChangeEvent {
         .previous_attributes(persisted.previous_attributes)
         .sys_attrs_snapshot(sys_attrs_snapshot)
         .origin(persisted.origin)
-        .current_payload(persisted.current_payload.map(Arc::new))
+        .current_payload(persisted.current_payload)
         .build()
 }
 

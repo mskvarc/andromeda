@@ -9,6 +9,7 @@ use crate::{
     query::{EntityQueryService, selector_compilation::compile_entity_selectors},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
@@ -18,7 +19,7 @@ use andromeda_ngsi_ld_query::{
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
     },
-    geo::{compile as geo_compile, query::GeoQuery},
+    geo::{compile as geo_compile, query::GeoQuery, reference_budget::admit_reference_geometry},
     ordering::{
         compiled::ResultOrdering,
         geometry::OrderingGeometry,
@@ -97,7 +98,7 @@ impl EntityQueryService {
         let omit = expand_projection_terms(params.omit.as_deref().unwrap_or_default(), &expander).await?;
 
         let order_by = self.compile_order_terms(params, &prepared_context).await?;
-        let ordering_geometry = compile_ordering_geometry(params);
+        let ordering_geometry = compile_ordering_geometry(params, self.reference_limits)?;
 
         // Clause 5.7.2.4: distance ordering has no reference point without a
         // geo-query or an explicit `orderFrom`.
@@ -215,16 +216,90 @@ impl EntityQueryService {
     }
 
     /// Compile the `georel` / `geometry` / `coordinates` triple (clause 4.10).
+    ///
+    /// # Errors
+    ///
+    /// Returns the query error of the compilation, and the `TooComplexQuery`
+    /// of clause 5.5.6 for a reference geometry larger than the broker
+    /// resolves.
     async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, EntityError> {
-        geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(self.engine(), context))
-            .await
-            .map_err(EntityError::from)
+        Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(self.engine(), context), self.reference_limits).await?)
     }
 }
 
 /// Compile `orderFrom` and `orderGeometry` into the reference geometry a
 /// distance ordering measures from (clause 5.2.43).
-fn compile_ordering_geometry(params: &EntityQueryParameters) -> Option<OrderingGeometry> {
+///
+/// # Errors
+///
+/// Returns the `TooComplexQuery` of clause 5.5.6 for a reference geometry
+/// holding more positions than `limits` admits.
+fn compile_ordering_geometry(params: &EntityQueryParameters, limits: GeometryCensusLimits) -> Result<Option<OrderingGeometry>, EntityError> {
+    let Some(ordering) = &params.ordering.geometry else {
+        return Ok(None);
+    };
+    admit_reference_geometry(&ordering.geometry, limits)?;
     // The compiled query owns the geometry independently of the reusable request parameters.
-    params.ordering.geometry.clone()
+    Ok(Some(ordering.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{error::EntityError, query::service_test_double::service_resolving};
+    use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+    use std::num::NonZeroUsize;
+
+    /// A query for the Vehicles within a square: one ring of five positions.
+    const WITHIN_A_SQUARE: &str =
+        "type=Vehicle&georel=within&geometry=Polygon&coordinates=%5B%5B%5B0%2C0%5D%2C%5B1%2C0%5D%2C%5B1%2C1%5D%2C%5B0%2C1%5D%2C%5B0%2C0%5D%5D%5D";
+    /// A query for the Vehicles ordered by their distance from a line of three
+    /// positions (clause 5.2.43).
+    const ORDERED_FROM_A_LINE: &str = "type=Vehicle&orderFrom=%5B%5B2.3%2C48.8%5D%2C%5B2.4%2C48.9%5D%2C%5B2.5%2C49.0%5D%5D&orderGeometry=LineString";
+
+    fn params(query: &str) -> EntityQueryParameters {
+        serde_urlencoded::from_str(query).expect("a valid query string")
+    }
+
+    fn limit(positions: usize) -> GeometryCensusLimits {
+        GeometryCensusLimits {
+            positions: GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("the fixture limit admits a position")),
+            values: JsonValueLimit::new(NonZeroUsize::MAX),
+        }
+    }
+
+    /// Compile `query` against a broker resolving reference geometries of at
+    /// most `positions` positions.
+    async fn compiled(query: &str, positions: usize) -> Result<(), EntityError> {
+        service_resolving(limit(positions))
+            .compile_query_public(&params(query), &ContextSpec::core_only())
+            .await
+            .map(drop)
+    }
+
+    /// Clause 5.5.6 raises `TooComplexQuery` for a query the broker cannot
+    /// resolve, which is what the error names.
+    fn assert_too_complex(result: Result<(), EntityError>) {
+        let error = result.expect_err("the reference geometry exceeds the budget");
+        assert!(matches!(error, EntityError::Query(QueryError::ReferenceGeometryTooComplex { .. })), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn a_geo_query_within_the_position_budget_compiles() {
+        compiled(WITHIN_A_SQUARE, 5).await.expect("five positions are within a budget of five");
+    }
+
+    #[tokio::test]
+    async fn a_geo_query_past_the_position_budget_is_too_complex() {
+        assert_too_complex(compiled(WITHIN_A_SQUARE, 4).await);
+    }
+
+    #[tokio::test]
+    async fn an_order_from_geometry_past_the_budget_is_too_complex() {
+        compiled(ORDERED_FROM_A_LINE, 3).await.expect("three positions are within a budget of three");
+        assert_too_complex(compiled(ORDERED_FROM_A_LINE, 2).await);
+    }
 }

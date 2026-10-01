@@ -11,6 +11,7 @@ pub mod json_property;
 pub mod language_property;
 pub mod list_property;
 pub mod list_relationship;
+pub mod member_decoding;
 pub mod object_list;
 pub mod one_or_many;
 pub mod property;

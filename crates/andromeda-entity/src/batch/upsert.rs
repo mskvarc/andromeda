@@ -91,11 +91,11 @@ impl EntityService {
         let _id_guards = self.acquire_id_locks(target, &chunk_ids).await;
         let now = Utc::now();
 
-        let snapshots = self.reader.get_snapshot_batch(target, &chunk_ids).await?;
+        let mut snapshots = self.reader.get_snapshot_batch(target, &chunk_ids).await?;
         let mut payloads: HashMap<Identifier, Arc<Value>> = HashMap::with_capacity(prepared.len());
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
-            let write = match snapshots.get(&entity.id) {
+            let write = match snapshots.remove(&entity.id) {
                 Some(snapshot) => {
                     let payload = Arc::new(entity.expanded);
                     self.replacement_write(target, entity.id, &payload, &snapshot.payload, snapshot.modified_at, now)
@@ -136,7 +136,7 @@ impl EntityService {
             self.wait_before_retry(attempt).await;
 
             let retry_ids: Vec<Identifier> = retry.into_iter().map(|(id, _error)| id).collect();
-            let snapshots = self.reader.get_snapshot_batch(target, &retry_ids).await?;
+            let mut snapshots = self.reader.get_snapshot_batch(target, &retry_ids).await?;
             let mut retry_writes = Vec::with_capacity(retry_ids.len());
             for id in retry_ids {
                 let Some(payload) = payloads.get(&id) else {
@@ -144,7 +144,7 @@ impl EntityService {
                 };
                 // clone: `Arc` ref-count bumps; the payload is reused for every
                 // attempt this entity needs.
-                let write = match snapshots.get(&id) {
+                let write = match snapshots.remove(&id) {
                     Some(snapshot) => self.replacement_write(target, id, payload, &snapshot.payload, snapshot.modified_at, now),
                     None => self.chunk_insert_payload(target, id, Arc::clone(payload), Precondition::MustNotExist, now),
                 };
@@ -199,7 +199,14 @@ impl EntityService {
         // upsert-update calls for the same id must not race the snapshot read,
         // the merge, and the write.
         let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;
-        let existing_map = self.reader.get_batch(target, &prepared_ids).await?;
+        // Shared by the computation and the notification it plans.
+        let existing_map = self
+            .reader
+            .get_batch(target, &prepared_ids)
+            .await?
+            .into_iter()
+            .map(|(id, payload)| (id, Arc::new(payload)))
+            .collect::<HashMap<Identifier, Arc<Value>>>();
         let now = Utc::now();
 
         let mut writes = Vec::with_capacity(prepared.len());
@@ -216,7 +223,7 @@ impl EntityService {
                 continue;
             };
 
-            let mut merged = existing.clone(); // clone: the update mutates its own copy of the stored payload
+            let mut merged = Value::clone(existing); // clone: the update mutates its own copy of the stored payload
             let id = entity.id;
             // Upsert update mode applies Update Attributes semantics (clause
             // 5.6.8.4), the same whole-instance overwrite as a single update.
@@ -303,7 +310,7 @@ impl EntityService {
         target: &ContextTarget,
         id: Identifier,
         payload: &Arc<Value>,
-        previous: &Value,
+        previous: &Arc<Value>,
         modified_at: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {

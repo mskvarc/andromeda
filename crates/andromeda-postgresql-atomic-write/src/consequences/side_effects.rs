@@ -16,6 +16,7 @@ use andromeda_postgresql_context_store::pending_side_effects::{
 };
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
+use std::sync::Arc;
 
 /// Persist asynchronous side-effect jobs for landed writes.
 ///
@@ -90,15 +91,15 @@ fn persisted_event(event: &ChangeEvent) -> PersistedChangeEvent {
             })
             .collect(),
         occurred_at: event.occurred_at,
-        entity_snapshot: event.entity_snapshot.as_deref().cloned(),
-        previous_attributes: event.previous_attributes.as_deref().cloned(),
+        entity_snapshot: event.entity_snapshot.as_ref().map(Arc::clone),
+        previous_attributes: event.previous_attributes.as_ref().map(Arc::clone),
         sys_attrs_snapshot: event.sys_attrs_snapshot.as_ref().map(|snapshot| PersistedSysAttrs {
             created_at: snapshot.created_at,
             modified_at: snapshot.modified_at,
             expires_at: snapshot.expires_at,
         }),
         origin: event.origin,
-        current_payload: event.current_payload.as_deref().cloned(),
+        current_payload: event.current_payload.as_ref().map(Arc::clone),
     }
 }
 
@@ -183,7 +184,10 @@ mod tests {
             job.change_events[0].instances[0].dataset_id.as_ref().map(Identifier::as_str),
             Some("urn:dataset:a")
         );
-        pretty_assertions::assert_eq!(job.change_events[1].current_payload, Some(json!([{"@id": "urn:ngsi-ld:Building:2"}])));
+        pretty_assertions::assert_eq!(
+            job.change_events[1].current_payload.as_deref(),
+            Some(&json!([{"@id": "urn:ngsi-ld:Building:2"}]))
+        );
     }
 
     /// A deletion carries no resulting entity, so nothing is stored for it.

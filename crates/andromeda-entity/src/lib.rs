@@ -28,6 +28,11 @@ mod committed_side_effect;
 pub mod compiled_cache;
 /// Entity execution and background-operation configuration.
 pub mod config;
+/// What a deletion needs to know about the entity it removes, short of its payload.
+pub mod deletion_outline;
+/// A deletion-outline reader answering from a fixture payload, for tests.
+#[cfg(test)]
+mod deletion_outline_fixture;
 /// Entity type and attribute discovery operations.
 pub mod discovery;
 /// Screening the identity members of an expanded entity payload.
@@ -63,6 +68,9 @@ pub mod merge_fragment;
 pub mod merge_options;
 /// Whole-entity mutations (clauses 5.6.1 to 5.6.6).
 pub mod mutation;
+/// Payload-read, match and tombstone tests for Delete Entity.
+#[cfg(test)]
+mod mutation_deletion_recording;
 /// Durable-match recording tests for the whole-entity merge and replace paths.
 #[cfg(test)]
 mod mutation_durable_match_recording;
@@ -80,6 +88,7 @@ mod notification_recording_harness;
 mod null_sentinel_admission;
 /// Store-applied or policy-applied pagination state.
 pub mod pagination_outcome;
+/// The budget a written entity payload is admitted under.
 /// Caller-shaped ports consumed by entity policy.
 pub mod port;
 /// Purging attributes from a set of entities.
@@ -93,6 +102,9 @@ pub mod query_outcome;
 pub mod query_residual;
 /// Turning a read plus a computation into an optimistic write.
 pub mod read_modify_write;
+/// The ports a recording entity service is wired to.
+#[cfg(test)]
+mod recording_ports;
 /// Evaluating predicates a store declined to apply.
 pub mod residual_filter;
 /// One named query predicate a store may decline.
@@ -107,6 +119,8 @@ pub mod side_effect_drain;
 pub mod side_effect_notification;
 /// The durable side-effect queue port.
 pub mod side_effect_queue;
+/// The entity state a matched subscription is filtered and notified with.
+mod snapshot_supply;
 /// Which spatial index, if any, a geo query may be narrowed through.
 pub mod spatial_acceleration;
 /// Entity spatial-index consistency configuration.
@@ -138,6 +152,7 @@ use crate::{
     port::{
         attribute_history::AttributeDatasetHistory,
         blocking_executor::BlockingExecutor,
+        deletion_outline::DeletionOutlineReader,
         reader::EntityReader,
         retry_delay::RetryDelay,
         service_ports::EntityServicePorts,
@@ -148,6 +163,7 @@ use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_representation::payload_census::EntityPayloadBudget;
 use andromeda_subscription::cache::SubscriptionCache;
 use async_lock::MutexGuardArc;
 use dashmap::DashMap;
@@ -170,6 +186,8 @@ pub struct EntityService {
     engine: JsonLdEngine,
     notifier: Arc<ChangeNotifier>,
     batch_execution: BatchExecutionConfig,
+    payload_budget: EntityPayloadBudget,
+    deletion_outline: Arc<dyn DeletionOutlineReader>,
     id_locks: Arc<IdLockMap>,
 }
 
@@ -179,13 +197,20 @@ impl EntityService {
     /// `notifier` is shared with every other policy that changes current
     /// state, so a change is notified the same way whichever API made it.
     #[must_use]
-    pub fn new(ports: EntityServicePorts, engine: JsonLdEngine, notifier: Arc<ChangeNotifier>, batch_config: BatchExecutionConfig) -> EntityService {
+    pub fn new(
+        ports: EntityServicePorts,
+        engine: JsonLdEngine,
+        notifier: Arc<ChangeNotifier>,
+        batch_config: BatchExecutionConfig,
+        payload_budget: EntityPayloadBudget,
+    ) -> EntityService {
         let EntityServicePorts {
             reader,
             blocking_executor,
             retry_delay,
             attribute_history,
             writes,
+            deletion_outline,
         } = ports;
         let id_locks: Arc<IdLockMap> = Arc::new(DashMap::new());
         let batch_execution = batch_config.clamped_to_usable_limits();
@@ -199,6 +224,8 @@ impl EntityService {
             engine,
             notifier,
             batch_execution,
+            payload_budget,
+            deletion_outline,
             id_locks,
         }
     }

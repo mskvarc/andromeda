@@ -33,7 +33,7 @@ use crate::{
     scope::pattern_fault::ScopePatternFault,
     term_expander::TermExpansionFailure,
 };
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError, geometry_census::GeometryOverLimit};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::IdentifierParseError,
@@ -238,6 +238,14 @@ pub enum QueryError {
     /// The `geometry`/`coordinates` pair did not form a `GeoJSON` geometry.
     #[error("geo-query reference geometry: {0}")]
     ReferenceGeometry(#[from] GeometryError),
+    /// The reference geometry of a geo-query or a distance ordering holds
+    /// more positions than the broker resolves in one query (clause 5.5.6,
+    /// `TooComplexQuery`).
+    #[error("the reference geometry holds {over}; this broker resolves no query against it, send a simplified geometry")]
+    ReferenceGeometryTooComplex {
+        /// The limit the reference geometry holds more than.
+        over: GeometryOverLimit,
+    },
     /// `georel=near` carried neither `maxDistance` nor `minDistance`.
     #[error("geo: near georel requires maxDistance or minDistance")]
     NearWithoutDistance,

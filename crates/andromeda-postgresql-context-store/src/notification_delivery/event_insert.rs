@@ -169,7 +169,7 @@ fn insert_events_statement(
                 .to_owned(),
         )
         .returning(Query::returning().columns([NotificationEvents::EventKey, NotificationEvents::EventOrdinal]));
-    Ok(statement.clone())
+    Ok(statement)
 }
 
 /// Bind one optional entity snapshot as a JSONB value or SQL `NULL`.
@@ -406,5 +406,22 @@ mod tests {
         let (event_keys, subscription_keys) = owed_deliveries(&events, &inserted);
         pretty_assertions::assert_eq!(event_keys, vec![100, 100, 101]);
         pretty_assertions::assert_eq!(subscription_keys, vec![5, 6, 8]);
+    }
+
+    /// A deletion's match carries the removed state as both the notified and
+    /// the previous state, one shared value: each column is written the same
+    /// JSON.
+    #[test]
+    fn a_deletion_writes_its_one_removed_state_into_both_snapshot_columns() {
+        let entity = entity();
+        let change = change();
+        let removed = json!({"id": "urn:ngsi-ld:Vehicle:1", "speed": {"type": "Property", "value": 80}});
+        let mut deletion = event(&entity, &change, 1, &[1], &removed);
+        deletion.previous_snapshot = Some(&removed);
+        let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &[deletion])
+            .expect("a representable event")
+            .to_string(PostgresQueryBuilder);
+        let written = removed.to_string();
+        assert_eq!(sql.matches(written.as_str()).count(), 2, "{sql}");
     }
 }

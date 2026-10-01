@@ -7,7 +7,7 @@ use crate::{
     },
     tenant_factory::{storage::TenantStorage, tasks::TenantSignals, transport::TenantTransports},
 };
-use andromeda_entity::query::EntityQueryService;
+use andromeda_entity::{config::EntityConfig, query::EntityQueryService};
 use andromeda_federation::FederationService;
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_postgresql_context_store::{
@@ -83,6 +83,7 @@ pub(super) fn compose_subscription_services(
     transports: &TenantTransports,
     edge: Option<DistributedSubscriptionEdge<'_>>,
     entity_query: &Arc<EntityQueryService>,
+    entity_config: &EntityConfig,
 ) -> SubscriptionServices {
     let endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
     let csource = Arc::new(SubscriptionService::new(
@@ -92,6 +93,7 @@ pub(super) fn compose_subscription_services(
         CsrSubscriptionVariant::new(storage.engine.clone()), // clone: the variant expands against its own engine handle.
         Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))), // clone: service and worker each own a sender handle.
         Arc::clone(&endpoint_validator),                     // clone: both subscription services share one endpoint validator.
+        entity_config.geometry_census_limits(),
     ));
     // clone: see above.
     let store = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
@@ -106,6 +108,7 @@ pub(super) fn compose_subscription_services(
             store,
         ))),
         endpoint_validator,
+        entity_config.geometry_census_limits(),
     );
     if let Some(forwarding_service) = &forwarding {
         entity = entity.with_forwarding_hook(Arc::clone(forwarding_service) as Arc<dyn SubscriptionForwardingHook>);

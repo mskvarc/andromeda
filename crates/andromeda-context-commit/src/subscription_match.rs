@@ -4,6 +4,7 @@ use crate::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::EntityChange;
 use serde_json::Value;
+use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
 /// Everything a notification event needs about one subscription that matched.
@@ -20,12 +21,14 @@ pub struct SubscriptionMatch {
     pub entity_id: Identifier,
     /// What the write did to the Entity, which the notification reports.
     pub change: EntityChange,
-    /// Expanded entity snapshot after the mutation.
+    /// Expanded entity snapshot after the mutation, shared by every match of
+    /// the same change.
     #[builder(default = Default::default())]
-    pub entity_snapshot: Option<Value>,
-    /// Expanded entity snapshot before the mutation.
+    pub entity_snapshot: Option<Arc<Value>>,
+    /// Expanded entity snapshot before the mutation, shared by every match of
+    /// the same change.
     #[builder(default = Default::default())]
-    pub previous_snapshot: Option<Value>,
+    pub previous_snapshot: Option<Arc<Value>>,
 }
 
 #[cfg(test)]

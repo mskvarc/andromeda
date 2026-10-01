@@ -15,8 +15,8 @@ use crate::{
     },
     error::ContextStoreError,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_postgresql_codes::entity_key::EntityKey;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, entity_key::EntityKey};
 use std::str::FromStr;
 
 /// Parse a stored entity identifier into a [`Identifier`].
@@ -87,4 +87,17 @@ pub fn stored_type_name(raw: &str) -> Result<EntityTypeName, ContextStoreError> 
 /// never interned.
 pub fn stored_attribute_name(raw: &str) -> Result<AttributeName, ContextStoreError> {
     Ok(AttributeName::from_str(raw).map_err(StoredEntityError::AttributeName)?)
+}
+
+/// Read a stored attribute family code back into the [`AttributeType`] it
+/// names.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::StoredEntity`] when the code is not one the
+/// registry assigned.
+pub fn stored_attribute_family(code: i16) -> Result<AttributeType, ContextStoreError> {
+    AttributeKind::try_from(code)
+        .map(attribute_type_of)
+        .map_err(|error| StoredEntityError::AttributeFamily(error).into())
 }

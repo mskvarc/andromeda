@@ -85,7 +85,7 @@ fn insert_observed_value(instance: &mut Map<String, Value>, row: &TemporalHistor
             }
         }
         TemporalValue::Boolean(flag) => json!([{"@value": flag}]),
-        TemporalValue::Geometry(geometry) => json!([expand_geojson(geometry)]),
+        TemporalValue::Geometry(geometry) => Value::Array(vec![expand_geojson(&geometry.to_geojson_value())]),
         TemporalValue::Object(object) => expanded_structured_value(object, row.attribute_type),
         TemporalValue::DateTime(instant) => expanded_datetime(*instant),
         TemporalValue::Uri(uri) => json!([{"@id": uri}]),
@@ -493,6 +493,33 @@ mod tests {
         pretty_assertions::assert_eq!(
             member(&rendered, AttributeType::GeoProperty.value_key_str()),
             Some(&json!([{"@value": "a"}, {"@value": "b"}]))
+        );
+    }
+
+    /// A geometry observation renders as the expanded `GeoJSON` node JSON-LD
+    /// expansion makes of a geometry under the core context: the type under the
+    /// `GeoJSON` vocabulary and the coordinates as nested lists of value nodes,
+    /// altitude included.
+    #[test]
+    fn a_history_geometry_renders_the_expanded_geojson_node() {
+        let polygon = json!({"type": "Polygon", "coordinates": [[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0, 12.5], [0.0, 0.0]]]});
+        let value: TemporalValue = serde_json::from_value(json!({"geometry": polygon})).expect("a geometry observation");
+        let mut geo = row(value);
+        geo.attribute_type = AttributeType::GeoProperty;
+        let rendered = neutral_row_to_expanded_instance(&geo, SysAttrsInclusion::Strip);
+
+        let position = |ordinates: &[f64]| json!({"@list": ordinates.iter().map(|ordinate| json!({"@value": ordinate})).collect::<Vec<_>>()});
+        pretty_assertions::assert_eq!(
+            member(&rendered, AttributeType::GeoProperty.value_key_str()),
+            Some(&json!([{
+                "@type": ["https://purl.org/geojson/vocab#Polygon"],
+                "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@list": [
+                    position(&[0.0, 0.0]),
+                    position(&[4.0, 0.0]),
+                    position(&[4.0, 4.0, 12.5]),
+                    position(&[0.0, 0.0])
+                ]}]}]
+            }]))
         );
     }
 

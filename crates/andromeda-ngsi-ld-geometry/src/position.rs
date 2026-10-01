@@ -171,11 +171,11 @@ impl Position {
     }
 }
 
-impl TryFrom<&GeoJsonPosition> for Position {
+impl TryFrom<&[f64]> for Position {
     type Error = PositionError;
 
-    fn try_from(position: &GeoJsonPosition) -> Result<Position, PositionError> {
-        match position.as_slice() {
+    fn try_from(ordinates: &[f64]) -> Result<Position, PositionError> {
+        match ordinates {
             [longitude, latitude] => Position::try_new(*longitude, *latitude, None),
             [longitude, latitude, altitude] => Position::try_new(*longitude, *latitude, Some(*altitude)),
             ordinates if ordinates.len() < 2 => Err(PositionError::TooFewOrdinates { ordinates: ordinates.len() }),
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn a_two_ordinate_position_decodes_without_an_altitude() {
-        let position = Position::try_from(&GeoJsonPosition::from([13.38, 52.52])).expect("two ordinates are a valid position");
+        let position = Position::try_from(&[13.38, 52.52][..]).expect("two ordinates are a valid position");
         // The ordinates are carried, not computed, so the decoded values are
         // the very bits the `GeoJSON` position held.
         assert!(
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn a_three_ordinate_position_decodes_with_an_altitude() {
-        let position = Position::try_from(&GeoJsonPosition::from([13.38, 52.52, 34.5])).expect("three ordinates are a valid position");
+        let position = Position::try_from(&[13.38, 52.52, 34.5][..]).expect("three ordinates are a valid position");
         let altitude = position.altitude().expect("a three-ordinate position carries an altitude");
         assert!((altitude - 34.5).abs() < f64::EPSILON, "altitude is carried unchanged: {altitude}");
         pretty_assertions::assert_eq!(position.dimension(), GeometryDimension::ThreeD);
@@ -217,13 +217,13 @@ mod tests {
 
     #[test]
     fn a_one_ordinate_position_is_rejected_as_too_few_ordinates() {
-        let error = Position::try_from(&GeoJsonPosition::from(vec![1.0])).expect_err("one ordinate is not a position");
+        let error = Position::try_from(&[1.0][..]).expect_err("one ordinate is not a position");
         pretty_assertions::assert_eq!(error, PositionError::TooFewOrdinates { ordinates: 1 });
     }
 
     #[test]
     fn a_four_ordinate_position_is_rejected_as_too_many_ordinates() {
-        let error = Position::try_from(&GeoJsonPosition::from([1.0, 2.0, 3.0, 4.0])).expect_err("four ordinates have no defined meaning");
+        let error = Position::try_from(&[1.0, 2.0, 3.0, 4.0][..]).expect_err("four ordinates have no defined meaning");
         pretty_assertions::assert_eq!(error, PositionError::TooManyOrdinates { ordinates: 4 });
     }
 
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn the_ends_of_both_crs84_axes_are_positions() {
         for ordinates in [[180.0, 90.0], [-180.0, -90.0], [0.0, 0.0], [-0.0, -0.0]] {
-            let position = Position::try_from(&GeoJsonPosition::from(ordinates)).expect("an axis end is a position");
+            let position = Position::try_from(&ordinates[..]).expect("an axis end is a position");
             pretty_assertions::assert_eq!(position.to_geojson().as_slice(), &ordinates);
         }
     }
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn a_longitude_past_the_antimeridian_is_rejected_with_its_value() {
         for longitude in [180.000_001, -180.000_001, 360.0] {
-            let error = Position::try_from(&GeoJsonPosition::from([longitude, 0.0])).expect_err("CRS84 longitude ends at 180");
+            let error = Position::try_from(&[longitude, 0.0][..]).expect_err("CRS84 longitude ends at 180");
             pretty_assertions::assert_eq!(error, PositionError::LongitudeOutOfRange { longitude });
         }
     }
@@ -262,20 +262,20 @@ mod tests {
     #[test]
     fn a_latitude_past_a_pole_is_rejected_with_its_value() {
         for latitude in [90.000_001, -90.000_001] {
-            let error = Position::try_from(&GeoJsonPosition::from([0.0, latitude])).expect_err("CRS84 latitude ends at the poles");
+            let error = Position::try_from(&[0.0, latitude][..]).expect_err("CRS84 latitude ends at the poles");
             pretty_assertions::assert_eq!(error, PositionError::LatitudeOutOfRange { latitude });
         }
     }
 
     #[test]
     fn a_position_out_of_range_on_both_axes_reports_its_longitude() {
-        let error = Position::try_from(&GeoJsonPosition::from([1000.0, 2000.0])).expect_err("neither ordinate is on its axis");
+        let error = Position::try_from(&[1000.0, 2000.0][..]).expect_err("neither ordinate is on its axis");
         pretty_assertions::assert_eq!(error, PositionError::LongitudeOutOfRange { longitude: 1000.0 });
     }
 
     #[test]
     fn an_arity_failure_is_reported_before_any_range() {
-        let error = Position::try_from(&GeoJsonPosition::from(vec![1000.0])).expect_err("one ordinate is not a position");
+        let error = Position::try_from(&[1000.0][..]).expect_err("one ordinate is not a position");
         pretty_assertions::assert_eq!(error, PositionError::TooFewOrdinates { ordinates: 1 });
     }
 
@@ -312,8 +312,8 @@ mod tests {
 
     #[test]
     fn a_position_renders_back_to_the_arity_it_was_decoded_from() {
-        let flat = Position::try_from(&GeoJsonPosition::from([1.0, 2.0])).expect("decodes");
-        let tall = Position::try_from(&GeoJsonPosition::from([1.0, 2.0, 3.0])).expect("decodes");
+        let flat = Position::try_from(&[1.0, 2.0][..]).expect("decodes");
+        let tall = Position::try_from(&[1.0, 2.0, 3.0][..]).expect("decodes");
         pretty_assertions::assert_eq!(flat.to_geojson().as_slice(), &[1.0, 2.0]);
         pretty_assertions::assert_eq!(tall.to_geojson().as_slice(), &[1.0, 2.0, 3.0]);
     }

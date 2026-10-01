@@ -141,7 +141,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     completeness.trim(&mut merged.entities, timeproperty);
 
     let (mut entities, total_count) = cut_merged_page(
-        service.engine(),
+        service,
         &context,
         merged.entities,
         MergedPageCut {

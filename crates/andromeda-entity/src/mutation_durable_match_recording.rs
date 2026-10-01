@@ -12,14 +12,19 @@
 
 use crate::{
     admission_fixture::admitted_entity,
+    deletion_outline::DeletionWatchers,
+    deletion_outline_fixture::ProbeAnswer,
     merge_options::MergeOptions,
     notification_recording_harness::{
         CATEGORY_IRI,
+        CachedSubscription,
         NAME_IRI,
+        assert_matches_share_their_snapshots,
         assert_single_match,
         core_context,
         entity_uri,
         live_target,
+        probing_recording_service,
         recording_service,
         single_recorded_write,
     },
@@ -83,4 +88,21 @@ async fn replace_entity_records_the_replacement_diff() {
         &write,
         &[(AttributeChangeKind::Deleted, CATEGORY_IRI), (AttributeChangeKind::Created, NAME_IRI)],
     );
+}
+
+/// Clause 5.8.6 owes one change once to every subscription it matches, and
+/// every one of those notifications describes the same states: they are built
+/// once and shared, not copied per subscription.
+#[tokio::test]
+async fn every_match_of_one_change_shares_one_snapshot() {
+    let observed = probing_recording_service(ProbeAnswer::Answers(DeletionWatchers::Possible), CachedSubscription::BuildingTwice).await;
+    let fragment = patch(json!({"category": {"type": "Property", "value": "retail"}}));
+    let admitted = admitted_entity::<MergeEntity>(&observed.service, &fragment, &core_context()).await;
+    observed
+        .service
+        .merge(&live_target(), &entity_uri(), &fragment, admitted, &core_context(), MergeOptions::default())
+        .await
+        .expect("the merge lands");
+
+    assert_matches_share_their_snapshots(&single_recorded_write(&observed.recorded));
 }

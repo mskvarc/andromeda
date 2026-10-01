@@ -179,7 +179,7 @@ impl TemporalService {
         };
         let timeproperty = compiled.window.timeproperty;
         let cut = PageCut::common(pages.iter().filter_map(|page| PageCut::of_page(&page.rows, timeproperty, direction)));
-        let maximum = self.instance_limits.maximum;
+        let maximum = self.limits.instance_limits.maximum;
         for page in pages {
             let kept = page.rows.iter().filter(|row| cut.is_none_or(|cut| cut.keeps(row, timeproperty)));
             let group = largest_simultaneous_group(kept, timeproperty);
@@ -275,8 +275,8 @@ impl TemporalService {
         // per-entity warning.
         if compiled.representation.format.is_grouped() {
             let groups = rows.len() as u64;
-            if groups > self.aggregation_grouping_max_groups {
-                return Err(TemporalError::too_many_results(groups, self.aggregation_grouping_max_groups));
+            if groups > self.limits.aggregation_grouping_max_groups {
+                return Err(TemporalError::too_many_results(groups, self.limits.aggregation_grouping_max_groups));
             }
         }
         let presence = presence_of(rows.is_empty());

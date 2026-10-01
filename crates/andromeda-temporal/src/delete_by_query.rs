@@ -85,8 +85,8 @@ impl TemporalService {
         // The bound counts instances (what is removed), off the same predicate
         // the delete runs, so an oversized delete is refused before any row goes.
         let matched = self.mutator.count_history_instances(target, &entity_ids, &scope).await?;
-        if matched > self.delete_by_query_max_matches {
-            return Err(TemporalError::too_many_results(matched, self.delete_by_query_max_matches));
+        if matched > self.limits.delete_by_query_max_matches {
+            return Err(TemporalError::too_many_results(matched, self.limits.delete_by_query_max_matches));
         }
 
         if params.is_dry_run() {

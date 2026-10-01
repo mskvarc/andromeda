@@ -71,7 +71,7 @@ pub(super) struct ChunkWrite {
 pub(super) struct UpdatedPayloads<'a> {
     /// The entity as the store holds it before the write. It is also the state
     /// a deletion filter and `showChanges` are evaluated against.
-    pub previous: &'a Value,
+    pub previous: &'a Arc<Value>,
     /// The entity the write stores in its place.
     pub merged: Arc<Value>,
     /// The instances the request addressed, whose resulting state the

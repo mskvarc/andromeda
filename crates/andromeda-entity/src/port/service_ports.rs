@@ -1,6 +1,12 @@
 //! The caller-owned ports entity policy is constructed over.
 
-use crate::port::{attribute_history::AttributeDatasetHistory, blocking_executor::BlockingExecutor, reader::EntityReader, retry_delay::RetryDelay};
+use crate::port::{
+    attribute_history::AttributeDatasetHistory,
+    blocking_executor::BlockingExecutor,
+    deletion_outline::DeletionOutlineReader,
+    reader::EntityReader,
+    retry_delay::RetryDelay,
+};
 use andromeda_context_commit::committer::ContextCommitter;
 use std::sync::Arc;
 
@@ -20,4 +26,6 @@ pub struct EntityServicePorts {
     pub attribute_history: Arc<dyn AttributeDatasetHistory>,
     /// Durable context commits.
     pub writes: Arc<dyn ContextCommitter>,
+    /// What a deletion reads in place of the payload it removes.
+    pub deletion_outline: Arc<dyn DeletionOutlineReader>,
 }

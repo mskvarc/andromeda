@@ -239,12 +239,7 @@ const fn mutation(rows_affected: u64) -> ContextMutation {
 #[cfg(test)]
 mod tests {
     use crate::jsonld_context::registry_store::{insert_statement, insertion, mutation, persistence_error};
-    use andromeda_context_registry::{
-        creation_kind::ContextCreationKind,
-        error::ContextRegistryError,
-        insertion::ContextInsertion,
-        mutation::ContextMutation,
-    };
+    use andromeda_context_registry::{creation_kind::ContextCreationKind, error::ContextRegistryError, insertion::ContextInsertion, mutation::ContextMutation};
     use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
     use sea_query::PostgresQueryBuilder;
     use serde_json::json;
@@ -257,7 +252,8 @@ mod tests {
     #[test]
     fn a_prefixed_tenant_qualified_serving_url_is_stored_byte_for_byte() {
         let identifier: JsonLdContextId = "urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b".parse().expect("an identifier");
-        let minted = "https://gw.example.com/broker/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b?andromedaTenant=acme";
+        let minted =
+            "https://gw.example.com/broker/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b?andromedaTenant=acme";
         let serving_url = Url::parse(minted).expect("a URL");
 
         let sql = insert_statement(&identifier, &json!({ "@context": {} }), &serving_url, ContextCreationKind::ImplicitlyCreated)

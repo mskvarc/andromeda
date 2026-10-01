@@ -4,7 +4,7 @@ use crate::{
     blocking_executor::TokioBlockingExecutor,
     event::{entity_change_sink::BroadcastEntityChangeSink, registration_change_sink::BroadcastRegistrationChangeSink},
     linked_entity_forwarding::ForwardedLinkedEntitySource,
-    local_entity_type::EntityReaderTypeResolver,
+    local_entity_type::EntityStoreTypeResolver,
     registered_entity_probe::EntityStoreRegistrationProbe,
     retry_delay::TokioRetryDelay,
     temporal_linked_forwarding::ForwardedTemporalLinkedSource,
@@ -27,8 +27,9 @@ use andromeda_entity::{
     EntityService,
     NotificationWriteConfig,
     batch::execution::BatchExecutionConfig,
-    change_notifier::ChangeNotifier,
+    change_notifier::{ChangeNotifier, SubscriptionMatching},
     change_sink::EntityChangeSink,
+    config::EntityConfig,
     discovery::EntityDiscoveryService,
     port::{attribute_history::AttributeDatasetHistory, service_ports::EntityServicePorts},
     query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
@@ -49,6 +50,7 @@ use andromeda_temporal::{
     port::{mutator::TemporalMutator, service_ports::TemporalServicePorts},
     remote_linked::RemoteTemporalLinkedSource,
     service::TemporalService,
+    service_limits::TemporalServiceLimits,
 };
 use andromeda_tenancy::context_source_alias::ContextSourceAliases;
 use std::sync::Arc;
@@ -100,7 +102,7 @@ pub(super) fn construct_services(
     let forwarding = Arc::new(
         FederationService::new(
             Arc::clone(&storage.registration_store),
-            Arc::new(EntityReaderTypeResolver::new(Arc::clone(&storage.entity_ports.reader))),
+            Arc::new(EntityStoreTypeResolver::new(Arc::clone(&storage.entity_ports.entity_types))),
             storage.engine.clone(), // clone: each tenant service owns its JSON-LD engine handle.
             aliases.for_tenant(&storage.tenant),
             &config.federation,
@@ -108,7 +110,7 @@ pub(super) fn construct_services(
         .map_err(|error| AssemblyInvariant::Federation(Box::new(error)))?,
     );
     let temporal = compose_temporal_service(config, storage, temporal_ports, &notifier, writes, &forwarding);
-    let entity_query = compose_entity_query_service(storage, &forwarding);
+    let entity_query = compose_entity_query_service(config, storage, &forwarding);
     let context_store = Arc::new(JsonLdContextRepository::new(&storage.pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
     let context_hosting = TenantContextHosting::new(contexts, storage.tenant.clone()); // clone: the hosting names the tenant its URLs qualify
@@ -122,7 +124,7 @@ pub(super) fn construct_services(
         snapshot_delivery_signal,
     );
     let edge = DistributedSubscriptionEdge::resolve(&config.identity, subscription_router, &forwarding, &storage.tenant);
-    let subscriptions = compose_subscription_services(storage, signals, transports, edge, &entity_query);
+    let subscriptions = compose_subscription_services(storage, signals, transports, edge, &entity_query, &config.entity);
     let state = AndromedaState {
         live_target: storage.live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
         entities,
@@ -135,7 +137,7 @@ pub(super) fn construct_services(
         temporal,
         subscriptions: subscriptions.entity,
         context_hosting,
-        csr: compose_registration_service(storage, signals, subscriptions.forwarding.as_ref()),
+        csr: compose_registration_service(storage, signals, subscriptions.forwarding.as_ref(), &config.entity),
         csr_subscriptions: subscriptions.csource,
         forwarding,
         entity_maps: Arc::new(EntityMapService::new(Arc::clone(&storage.entity_map_store))),
@@ -159,12 +161,13 @@ pub(super) fn construct_services(
 /// with live delivery the notification worker evaluates subscriptions itself.
 fn compose_change_notifier(config: &TenantFactoryConfig, storage: &TenantStorage, signals: &TenantSignals) -> Arc<ChangeNotifier> {
     let entity_change_sink = Arc::new(BroadcastEntityChangeSink::new(signals.entity.clone())) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
-    Arc::new(ChangeNotifier::new(
-        Some(entity_change_sink),
-        config.notifications.delivery.is_durable().then(|| NotificationWriteConfig {
-            subscription_cache: Arc::clone(&storage.subscription_cache),
-        }),
-    ))
+    let subscription_cache = Arc::clone(&storage.subscription_cache);
+    let matching = if config.notifications.delivery.is_durable() {
+        SubscriptionMatching::AtCommit(NotificationWriteConfig { subscription_cache })
+    } else {
+        SubscriptionMatching::AtDelivery(subscription_cache)
+    };
+    Arc::new(ChangeNotifier::new(Some(entity_change_sink), matching))
 }
 
 /// Compose the entity policy service every write and read request enters.
@@ -186,6 +189,7 @@ fn compose_entity_service(
             retry_delay: Arc::new(TokioRetryDelay),
             attribute_history,
             writes: Arc::clone(writes),
+            deletion_outline: Arc::clone(&storage.entity_ports.deletion_outline),
         },
         storage.engine.clone(), // clone: entity policy owns its engine handle.
         Arc::clone(notifier),
@@ -197,6 +201,7 @@ fn compose_entity_service(
             prepare_blocking_threshold: config.entity.batch_prepare_blocking_threshold,
             async_side_effect_threshold: config.entity.batch_async_side_effect_threshold,
         },
+        config.entity.payload_budget(),
     ))
 }
 
@@ -220,13 +225,18 @@ fn compose_temporal_service(
         },
         storage.engine.clone(), // clone: temporal policy owns its engine handle.
         Arc::clone(notifier),
-        config.temporal.instance_limits(),
-        // The delete-by-query extension's `TooManyResults` bound; inert unless
-        // the extension is routed, which composition gates separately.
-        config.extensions.temporal_delete_by_query_max_matches,
-        // The grouped-aggregation extension's `TooManyResults` bound; likewise
-        // inert unless the extension is routed.
-        config.extensions.temporal_aggregation_grouping_max_groups,
+        TemporalServiceLimits {
+            instance_limits: config.temporal.instance_limits(),
+            // The delete-by-query extension's `TooManyResults` bound; inert
+            // unless the extension is routed, which composition gates
+            // separately.
+            delete_by_query_max_matches: config.extensions.temporal_delete_by_query_max_matches,
+            // The grouped-aggregation extension's `TooManyResults` bound;
+            // likewise inert unless the extension is routed.
+            aggregation_grouping_max_groups: config.extensions.temporal_aggregation_grouping_max_groups,
+            // A temporal write is admitted under the budget a Core write is.
+            payload_budget: config.entity.payload_budget(),
+        },
         // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
         // Entity whose history this broker does not record is fetched from the
         // context sources registered for it.
@@ -238,7 +248,7 @@ fn compose_temporal_service(
 }
 
 /// Compose the entity query service every entity read is answered from.
-fn compose_entity_query_service(storage: &TenantStorage, forwarding: &Arc<FederationService>) -> Arc<EntityQueryService> {
+fn compose_entity_query_service(config: &TenantFactoryConfig, storage: &TenantStorage, forwarding: &Arc<FederationService>) -> Arc<EntityQueryService> {
     Arc::new(EntityQueryService::new(
         Arc::clone(&storage.entity_ports.reader),
         Arc::clone(&storage.entity_ports.query),
@@ -251,6 +261,7 @@ fn compose_entity_query_service(storage: &TenantStorage, forwarding: &Arc<Federa
             Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
             storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
         )) as Arc<dyn RemoteLinkedEntitySource>),
+        config.entity.geometry_census_limits(),
     ))
 }
 
@@ -304,6 +315,7 @@ fn compose_registration_service(
     storage: &TenantStorage,
     signals: &TenantSignals,
     forwarding: Option<&Arc<SubscriptionForwardingService>>,
+    entity_config: &EntityConfig,
 ) -> Arc<RegistrationService> {
     let probe = Arc::new(EntityStoreRegistrationProbe::new(
         Arc::clone(&storage.entity_ports.reader),
@@ -316,6 +328,7 @@ fn compose_registration_service(
         probe,
         storage.engine.clone(), // clone: registration policy owns its engine handle.
         Some(Arc::new(BroadcastRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.
+        entity_config.geometry_census_limits(),
     );
     Arc::new(match forwarding {
         // clone: request handling, the expiry sweep and subscription forwarding share one service.

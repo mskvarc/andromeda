@@ -112,7 +112,7 @@ impl EntityService {
                     if type_selector.as_ref().is_some_and(|selector| !entity_satisfies(previous, selector)) {
                         return Err(EntityError::not_found(&entity_uri));
                     }
-                    let mut existing = previous.clone(); // clone: the merge mutates its own copy of the stored payload
+                    let mut existing = Value::clone(previous); // clone: the merge mutates its own copy of the stored payload
                     merge_entity(&mut existing, &patch_expanded, options.observed_at)?;
 
                     // Clause 4.8: a merged instance keeps its createdAt and, when its

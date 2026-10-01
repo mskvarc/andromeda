@@ -3,6 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::sync::Arc;
 
 /// One entity's payload together with the version token a
 /// `Precondition::UnchangedSince` compares against.
@@ -13,8 +14,9 @@ use serde_json::Value;
 /// transaction.
 #[derive(Debug)]
 pub struct EntitySnapshot {
-    /// The expanded JSON-LD payload as it stood when it was read.
-    pub payload: Value,
+    /// The expanded JSON-LD payload as it stood when it was read, shared by
+    /// the computation and every notification the write plans from it.
+    pub payload: Arc<Value>,
     /// The entity's clause 4.8 `modifiedAt` at the same instant.
     pub modified_at: DateTime<Utc>,
 }

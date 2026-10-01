@@ -255,6 +255,9 @@ impl EntityService {
     ) -> Result<AdmittedEntity<W>, EntityError> {
         let mut payload = payload.into_payload()?;
         W::WRITE.normalize(&mut payload);
+        // Counted before the expansion multiplies the payload, so a payload
+        // over the budget costs its compact form and nothing more.
+        self.payload_budget.admit(&payload)?;
         let expanded = self.engine.expand(payload, context).await?;
         admit_expanded_entity(&expanded, W::WRITE.null_sentinel_admission())?;
         Ok(AdmittedEntity::new(expanded))
@@ -314,6 +317,7 @@ impl EntityService {
         // `andromeda_jsonld::attribute_fragment`.
         let mut payload = payload;
         normalize_attribute_node(attribute.as_str(), &mut payload);
+        self.payload_budget.admit_attribute(attribute, &payload)?;
         let expanded = expand_attribute_fragment(&self.engine, attribute.as_str(), payload, context).await?;
         admit_expanded_attribute(&expanded, attribute, W::WRITE.null_sentinel_admission())?;
         Ok(AdmittedAttribute::new(attribute, expanded))
@@ -326,7 +330,7 @@ mod tests {
         admission_fixture::admitted_entity,
         batch::UpsertPolicy,
         error::EntityError,
-        notification_recording_harness::recording_service,
+        notification_recording_harness::{budgeted_recording_service, geometry_budget, recording_service},
         null_sentinel_admission::NullSentinelAdmission,
         write_admission::{AttributeWrite, BatchWrite, EntityWrite, admit_expanded_attribute, admit_expanded_entity},
         write_kind::CreateEntity,
@@ -334,6 +338,7 @@ mod tests {
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
     use andromeda_ngsi_ld_model::attribute_strip::AttributeStrip;
+    use andromeda_ngsi_ld_representation::payload_census::PayloadBudgetExceeded;
     use serde_json::{Value, json};
 
     /// An identifier one octet past the identifier bound.
@@ -577,5 +582,67 @@ mod tests {
             .admit_local_remainder(admitted, AttributeStrip::Emptied, remaining_vehicle(&json!("x")), &context)
             .await;
         assert!(remainder.is_none());
+    }
+
+    /// A Vehicle located by a square: one ring of five positions.
+    fn located_vehicle() -> Value {
+        json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "location": {"type": "GeoProperty", "value": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}}
+        })
+    }
+
+    /// A context the offline engine cannot load, so any expansion against it
+    /// fails.
+    fn unloadable_context() -> ContextSpec {
+        ContextSpec::from_body(json!("https://unloadable.example/context.jsonld"))
+    }
+
+    /// The budget is counted on the compact payload before the expansion
+    /// multiplies it: an oversized geometry is refused as such even under a
+    /// context the expansion could never load, while the same payload within
+    /// the budget goes on to the expansion and fails there.
+    #[tokio::test]
+    async fn the_create_admission_refuses_an_oversized_geometry_before_expanding_it() {
+        let refusal = budgeted_recording_service(geometry_budget(4))
+            .admit_remaining_entity::<CreateEntity>(located_vehicle(), &unloadable_context())
+            .await
+            .expect_err("five positions exceed a budget of four");
+        assert!(
+            matches!(refusal, EntityError::PayloadBudget(PayloadBudgetExceeded::GeometryPositions { .. })),
+            "{refusal:?}"
+        );
+
+        let expansion_failure = budgeted_recording_service(geometry_budget(5))
+            .admit_remaining_entity::<CreateEntity>(located_vehicle(), &unloadable_context())
+            .await
+            .expect_err("the context does not load");
+        assert!(matches!(expansion_failure, EntityError::JsonLd(_)), "{expansion_failure:?}");
+    }
+
+    /// Clause 4.5.2.3: a concise `GeoProperty` is its geometry alone, which
+    /// the normalization wraps into the instance the census reads, so its
+    /// positions are budgeted as a normalized one's are.
+    #[tokio::test]
+    async fn a_concise_geo_property_is_budgeted_after_normalization() {
+        let concise = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "location": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}
+        });
+        let refusal = budgeted_recording_service(geometry_budget(4))
+            .admit_remaining_entity::<CreateEntity>(concise.clone(), &unloadable_context()) // clone: the same payload is admitted twice
+            .await
+            .expect_err("five positions exceed a budget of four");
+        assert!(
+            matches!(refusal, EntityError::PayloadBudget(PayloadBudgetExceeded::GeometryPositions { .. })),
+            "{refusal:?}"
+        );
+        let expansion_failure = budgeted_recording_service(geometry_budget(5))
+            .admit_remaining_entity::<CreateEntity>(concise, &unloadable_context())
+            .await
+            .expect_err("the context does not load");
+        assert!(matches!(expansion_failure, EntityError::JsonLd(_)), "{expansion_failure:?}");
     }
 }

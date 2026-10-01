@@ -28,6 +28,9 @@ impl SubscriptionHttpClassify for SubscriptionError {
             SubscriptionError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
             SubscriptionError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()),
             SubscriptionError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, self.to_string()),
+            // Clause 6.3.2: a written input larger than the broker processes
+            // is "Request Entity too large", counted here in positions.
+            SubscriptionError::GeoQTooLarge { .. } => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, self.to_string()),
             SubscriptionError::JsonLd(source) => classify_jsonld_error(source),
             SubscriptionError::ContextHosting(source) => classify_context_hosting_error(source),
             SubscriptionError::Query(source) => classify_query_error(source),
@@ -101,6 +104,7 @@ pub(crate) fn internal_problem(error: &impl Display, summary: InternalFailureSum
 mod tests {
     use crate::error::SubscriptionHttpClassify;
     use andromeda_jsonld::compound_context_host::ContextHostingError;
+    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryOverLimit, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -109,7 +113,7 @@ mod tests {
         http::{StatusCode, Uri, header::RETRY_AFTER},
         response::IntoResponse,
     };
-    use std::error::Error;
+    use std::{error::Error, num::NonZeroUsize};
 
     #[test]
     fn focused_subscription_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
@@ -167,5 +171,24 @@ mod tests {
             pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
             assert!(!report.detail().contains(&cause), "the raw cause leaked: {}", report.detail());
         }
+    }
+
+    /// Clause 6.3.2: a `geoQ` geometry holding more positions than the broker
+    /// accepts in one geometry is the 413 "Request Entity too large", naming
+    /// the count and the limit.
+    #[test]
+    fn a_subscription_geo_q_past_the_position_budget_is_a_413() {
+        let one_million = NonZeroUsize::new(1_000_000).expect("one million is not zero");
+        let error = SubscriptionError::GeoQTooLarge {
+            over: GeometryOverLimit::Positions {
+                limit: GeometryPositionLimit::new(one_million),
+            },
+        };
+
+        let report = error.classify_for_subscription_http();
+
+        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::RequestEntityTooLarge);
+        pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(report.detail().contains("1000000"), "{}", report.detail());
     }
 }
