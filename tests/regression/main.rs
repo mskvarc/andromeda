@@ -86,6 +86,7 @@ mod remote_attribute_revalidation;
 mod replace_entity_identity;
 mod request_entity_too_large;
 mod resting_tenant_obligations;
+mod scope_merge_replacement;
 mod scope_null_sentinel;
 mod scoped_user_context;
 mod store_unavailable_answers;

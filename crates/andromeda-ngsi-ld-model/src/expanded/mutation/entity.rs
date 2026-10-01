@@ -5,8 +5,9 @@ use crate::expanded::{
     dataset_id::{InstanceDatasetIdError, get_instance_dataset_id, position_of_dataset},
     merge::{InstancePatchDepth, deep_merge_attribute, remove_instances_by_dataset},
     mutation::{
-        deletion_sentinel::{member_is_deletion, member_is_scope_deletion},
+        deletion_sentinel::member_is_deletion,
         error::ExpandedEntityError,
+        scope_write::{append_missing_scopes, replace_scope},
         selection::OverwritePolicy,
     },
     node::{expanded_object_mut, expanded_object_ref},
@@ -24,6 +25,9 @@ use std::{borrow::Cow, slice::from_ref};
 /// `default_observed_at` is Table 6.5.3.4-1's `observedAt`: when a merged
 /// instance names no `observedAt` and the instance it merges into carried one,
 /// the instance takes this timestamp.
+///
+/// The entity `scope` member is replaced whole by the fragment's, or removed by
+/// the NGSI-LD Null (clause 5.6.17.4), never merged instance by instance.
 ///
 /// # Errors
 ///
@@ -49,6 +53,17 @@ pub fn merge_entity(entity: &mut Value, patch: &Value, default_observed_at: Opti
             continue;
         }
         if key.starts_with('@') {
+            continue;
+        }
+
+        // Clause 5.6.17.4: "If scope is included in the Fragment and overwrite
+        // is allowed, the scope of the target Entity will become the one
+        // included in the Fragment." Merge Entity takes no noOverwrite option
+        // (clause 5.6.17.3), and clause 4.18 gives scope no datasetId instances
+        // to merge by. The branch also keeps Table 6.5.3.4-1's observedAt off
+        // the non-reified scope.
+        if key == properties::SCOPE.as_str() {
+            replace_scope(entity_obj, value);
             continue;
         }
 
@@ -174,21 +189,9 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
             // prohibition, and neither Append Attributes (clause 5.6.3) nor the
             // batch update of clause 5.6.9 that composes this function is one
             // of them, so both screen the sentinel out before the write runs.
-            if let (Some(Value::Array(existing_scopes)), Some(new_scopes)) = (entity_obj.get_mut(key), value.as_array()) {
-                if no_overwrite {
-                    for s in new_scopes {
-                        if !existing_scopes.contains(s) {
-                            // clone: the incoming scope is borrowed and the array takes ownership.
-                            existing_scopes.push(s.clone());
-                        }
-                    }
-                } else {
-                    // clone: both the key and the value are borrowed from the fragment and stored owned.
-                    entity_obj.insert(key.clone(), value.clone());
-                }
-            } else {
-                // clone: both the key and the value are borrowed from the fragment and stored owned.
-                entity_obj.insert(key.clone(), value.clone());
+            match overwrite {
+                OverwritePolicy::Overwrite => replace_scope(entity_obj, value),
+                OverwritePolicy::Preserve => append_missing_scopes(entity_obj, value),
             }
             continue;
         }
@@ -302,12 +305,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Attr
                 );
                 continue;
             }
-            if member_is_scope_deletion(value) {
-                entity_obj.remove(key);
-            } else {
-                // clone: both the key and the value are borrowed from the fragment and stored owned.
-                entity_obj.insert(key.clone(), value.clone());
-            }
+            replace_scope(entity_obj, value);
             continue;
         }
 
@@ -689,6 +687,166 @@ mod tests {
         merge_entity(&mut entity, &patch, None).expect("merge succeeds");
 
         assert!(entity[0].get(scope_iri()).is_none(), "the scope member is gone: {entity}");
+    }
+
+    /// The expanded `scope` member holding the given paths, one value node each.
+    fn scope(paths: &[&str]) -> Value {
+        Value::Array(paths.iter().map(|path| json!({"@value": path})).collect())
+    }
+
+    /// A camera entity carrying the given scope paths.
+    fn scoped_entity(paths: &[&str]) -> Value {
+        json!([{"@id": "urn:ngsi-ld:Camera:1", scope_iri(): scope(paths)}])
+    }
+
+    /// Merge a fragment carrying only the given scope paths into `entity`.
+    fn merge_scope(entity: &mut Value, paths: &[&str]) {
+        merge_entity(entity, &json!([{scope_iri(): scope(paths)}]), None).expect("merge succeeds");
+    }
+
+    /// Clause 5.6.17.4: the scope of the target "will become the one included
+    /// in the Fragment". Merging the Scopes one by one as datasetId-less
+    /// instances overwrote the first stored path with each fragment path in
+    /// turn and kept the stored tail.
+    #[test]
+    fn merge_replaces_a_scope_array_with_the_fragment_array() {
+        let mut entity = scoped_entity(&["/X/A", "/Y/A", "/Z/A"]);
+
+        merge_scope(&mut entity, &["/A/B", "/C/D"]);
+
+        pretty_assertions::assert_eq!(entity[0][scope_iri()], scope(&["/A/B", "/C/D"]));
+    }
+
+    #[test]
+    fn merge_replaces_a_scope_array_with_a_single_scope() {
+        let mut entity = scoped_entity(&["/X/A", "/Y/A", "/Z/A"]);
+
+        merge_scope(&mut entity, &["/G/H"]);
+
+        pretty_assertions::assert_eq!(entity[0][scope_iri()], scope(&["/G/H"]));
+    }
+
+    #[test]
+    fn merge_replaces_a_single_scope_with_an_array() {
+        let mut entity = scoped_entity(&["/M/N"]);
+
+        merge_scope(&mut entity, &["/A/B", "/C/D"]);
+
+        pretty_assertions::assert_eq!(entity[0][scope_iri()], scope(&["/A/B", "/C/D"]));
+    }
+
+    /// Clause 5.5.12: members of the Fragment that do not appear within the
+    /// target "are added to the target".
+    #[test]
+    fn merge_adds_a_scope_to_an_entity_without_one() {
+        let mut entity = json!([{"@id": "urn:ngsi-ld:Camera:1"}]);
+
+        merge_scope(&mut entity, &["/A/B", "/C/D"]);
+
+        pretty_assertions::assert_eq!(entity[0][scope_iri()], scope(&["/A/B", "/C/D"]));
+    }
+
+    /// A fragment whose first path equals the stored first path still lands
+    /// exactly as given: the stored path it leaves out is gone and the shared
+    /// one keeps its fragment position.
+    #[test]
+    fn merge_with_an_overlapping_scope_takes_the_fragment_exactly() {
+        let mut entity = scoped_entity(&["/X/A", "/Y/A"]);
+
+        merge_scope(&mut entity, &["/X/A", "/Q/R"]);
+
+        pretty_assertions::assert_eq!(entity[0][scope_iri()], scope(&["/X/A", "/Q/R"]));
+    }
+
+    /// Clause 5.5.12 removes a member set to the NGSI-LD Null only when the
+    /// target contains it, so a target without scope is left as it was.
+    #[test]
+    fn merge_of_a_scope_deletion_onto_an_entity_without_scope_changes_nothing() {
+        let original = json!([{"@id": "urn:ngsi-ld:Camera:1"}]);
+        let mut entity = original.clone();
+
+        merge_scope(&mut entity, &["urn:ngsi-ld:null"]);
+
+        pretty_assertions::assert_eq!(entity, original);
+    }
+
+    #[test]
+    fn merge_leaves_the_scope_untouched_when_the_fragment_omits_it() {
+        let mut entity = scoped_entity(&["/X/A", "/Y/A"]);
+        entity[0]["https://example.com/speed"] = json!([property_instance(&json!(10), None)]);
+        let patch = json!([{"https://example.com/speed": [property_instance(&json!(20), None)]}]);
+
+        merge_entity(&mut entity, &patch, None).expect("merge succeeds");
+
+        pretty_assertions::assert_eq!(entity[0][scope_iri()], scope(&["/X/A", "/Y/A"]));
+        pretty_assertions::assert_eq!(speed_entity::values(&entity), vec![20]);
+    }
+
+    /// Clause 4.18 makes scope non-reified, so it cannot carry the
+    /// `observedAt` Table 6.5.3.4-1 stamps on merged attribute instances.
+    #[test]
+    fn a_default_observed_at_never_stamps_the_scope() {
+        let mut observed = property_instance(&json!(10), None);
+        observed["https://uri.etsi.org/ngsi-ld/observedAt"] = json!([{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2020-01-01T00:00:00Z"}]);
+        let mut entity = scoped_entity(&["/X/A", "/Y/A"]);
+        entity[0]["https://example.com/speed"] = json!([observed]);
+        let patch = json!([{scope_iri(): scope(&["/A/B"]), "https://example.com/speed": [property_instance(&json!(11), None)]}]);
+        let at = "2024-02-03T04:05:06Z".parse::<chrono::DateTime<chrono::Utc>>().expect("valid timestamp");
+
+        merge_entity(&mut entity, &patch, Some(at)).expect("merge succeeds");
+
+        pretty_assertions::assert_eq!(entity[0][scope_iri()], scope(&["/A/B"]));
+        pretty_assertions::assert_eq!(
+            speed_instances(&entity)[0]["https://uri.etsi.org/ngsi-ld/observedAt"][0]["@value"],
+            json!("2024-02-03T04:05:06Z")
+        );
+    }
+
+    /// Clause 5.5.12: "all included Entity Types are added, if they are not
+    /// already contained in the type member of the target".
+    #[test]
+    fn merge_adds_entity_types_the_target_lacks_without_duplicating_one() {
+        let mut entity = json!([{"@id": "urn:ngsi-ld:Camera:1", "@type": ["https://example.com/A"]}]);
+        let patch = json!([{"@type": ["https://example.com/A", "https://example.com/B"]}]);
+
+        merge_entity(&mut entity, &patch, None).expect("merge succeeds");
+
+        pretty_assertions::assert_eq!(entity[0]["@type"], json!(["https://example.com/A", "https://example.com/B"]));
+    }
+
+    /// Clause 4.22 gives an entity one `expiresAt`, so merging a new one
+    /// replaces the stored value.
+    #[test]
+    fn merge_replaces_the_entity_expiry() {
+        let expiry = |at: &str| json!([{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": at}]);
+        let mut entity = json!([{"@id": "urn:ngsi-ld:Camera:1", properties::EXPIRES_AT.as_str(): expiry("2030-01-01T00:00:00Z")}]);
+        let patch = json!([{properties::EXPIRES_AT.as_str(): expiry("2031-01-01T00:00:00Z")}]);
+
+        merge_entity(&mut entity, &patch, None).expect("merge succeeds");
+
+        pretty_assertions::assert_eq!(entity[0][properties::EXPIRES_AT.as_str()], expiry("2031-01-01T00:00:00Z"));
+    }
+
+    /// Clause 5.6.3.4 under `noOverwrite` appends only the Scopes the target
+    /// lacks.
+    #[test]
+    fn append_with_preserve_adds_only_the_missing_scopes() {
+        let mut entity = scoped_entity(&["/A/B", "/C/D"]);
+
+        append_entity_attrs(&mut entity, &json!({scope_iri(): scope(&["/A/B", "/E/F"])}), OverwritePolicy::Preserve).expect("append succeeds");
+
+        pretty_assertions::assert_eq!(entity[0][scope_iri()], scope(&["/A/B", "/C/D", "/E/F"]));
+    }
+
+    /// Clause 5.6.3.4 with overwrite allowed: the scope "will become the one
+    /// included in the Fragment".
+    #[test]
+    fn append_with_overwrite_replaces_the_scope() {
+        let mut entity = scoped_entity(&["/A/B", "/C/D"]);
+
+        append_entity_attrs(&mut entity, &json!({scope_iri(): scope(&["/E/F"])}), OverwritePolicy::Overwrite).expect("append succeeds");
+
+        pretty_assertions::assert_eq!(entity[0][scope_iri()], scope(&["/E/F"]));
     }
 
     #[test]
