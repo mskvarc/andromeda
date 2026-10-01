@@ -1,14 +1,14 @@
 -- ============================================================================
--- 0022: Current attribute values
+-- 0023: Current attribute values
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.5.5, 4.6.3, 4.9, 4.10, 4.22, 4.23,
 -- 5.6.6
 --
--- The value each attribute instance of each Entity currently has, one row per
--- Entity, attribute name and `datasetId` (clause 4.5.5), in one typed column
--- per value shape so a `q` comparison reads a single indexed column. The only
--- ownership edge is to `entities`: Core Entity deletion (clause 5.6.6) leaves
--- history standing, so nothing here references the temporal catalog.
+-- The current value of each attribute instance, one row per Entity, attribute
+-- name and `datasetId` (clause 4.5.5), in one typed column per value shape so a
+-- `q` comparison reads a single indexed column. The only ownership edge is to
+-- `entities`: Core Entity deletion (clause 5.6.6) leaves history standing, so
+-- nothing here references the temporal catalog.
 --
 -- Codes:
 --
@@ -18,35 +18,26 @@
 --   value_kind: 1 number, 2 string, 3 boolean, 4 geometry, 5 object,
 --     6 date-time, 7 uri
 --
--- Value kind 0, the tombstone, never appears here: a deleted attribute is an
--- absent row, not a row carrying a marker.
+-- Value kind 0, the tombstone, never appears: a deleted attribute is an absent
+-- row, not a marker.
 --
--- Clause 4.6.3 names three data types, DateTime, Date and Time, whose whole
--- representation is the string, so a value written in one of their lexical
--- forms is projected as that data type. A DateTime lands in
--- `value_date_time`. A Date or a Time lands in `value_string` in its
--- canonical fixed-width form (`YYYY-MM-DD`, `HH:MM:SS.ffffffZ`), so byte order
--- is chronological order and a clause 4.9 comparison orders it correctly.
+-- Clause 4.6.3 DateTime lands in `value_date_time`; Date and Time land in
+-- `value_string` in canonical fixed-width form (`YYYY-MM-DD`,
+-- `HH:MM:SS.ffffffZ`), so byte order is chronological and a clause 4.9
+-- comparison orders them correctly.
 --
--- `expires_at` is the instance's own clause 4.22 `expiresAt`, NULL when the
--- instance never expires. Clause 4.22 makes an attribute "invalid" at that
--- instant while letting its deletion lag ("final deletion will always lag the
--- expiresAt timestamp to a certain extent"), so every read of this table
--- excludes a past-due instance with `expires_at IS NULL OR expires_at > NOW()`
--- and the attribute-expiry sweep deletes the row later. The sweep finds its
--- candidates through `entities.min_attribute_expires_at`, the earliest of these
--- instants per Entity computed from the same payload, so the column carries no
--- index of its own: it is only ever read beside a row another index found, and
--- leaving it unindexed keeps an expiry-only rewrite of a row heap-only.
+-- `expires_at` is the instance's clause 4.22 `expiresAt`, NULL when it never
+-- expires. Every read excludes a past-due instance with
+-- `expires_at IS NULL OR expires_at > NOW()`; the expiry sweep deletes the row
+-- later, finding candidates through `entities.min_attribute_expires_at`. The
+-- column is unindexed: only ever read beside a row another index found, so
+-- leaving it so keeps an expiry-only rewrite heap-only.
 --
--- There is no `modified_at`: nothing reads when a projected value was last
--- written, since `entity_documents.modified_at` carries the Entity's instant.
--- A per-row instant would turn every restatement of an unchanged value into a
--- real row rewrite, which is the write the upsert's no-op guard avoids: an
--- instance whose projection is value-identical is not rewritten at all. The
--- guard compares with each column type's own equality, under which `NUMERIC`
--- ignores scale (`1.0 = 1.00`); no reader renders a projected number, it only
--- compares it.
+-- There is no `modified_at`: `entity_documents.modified_at` carries the
+-- Entity's instant, and a per-row one would turn every restatement of an
+-- unchanged value into a real rewrite, which the upsert's no-op guard avoids by
+-- comparing with each column type's own equality (`NUMERIC` ignores scale,
+-- `1.0 = 1.00`).
 -- ============================================================================
 create table current_attribute_values (
     entity_key bigint not null,

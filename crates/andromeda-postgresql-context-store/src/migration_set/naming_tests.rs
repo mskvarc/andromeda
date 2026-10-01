@@ -134,7 +134,7 @@ fn column_violations(column: &DeclaredColumn) -> Vec<Violation> {
     let checks = [
         (!specification_member && forbidden_words(&column.name, true), Rule::ForbiddenWord),
         (
-            column.is_variable_length() && !column.definition.contains("COMPRESSION lz4"),
+            column.is_variable_length() && !column.definition.to_ascii_uppercase().contains("COMPRESSION LZ4"),
             Rule::MissingCompression,
         ),
         (column.is_identity() && !column.name.ends_with("_key"), Rule::IdentityNotKey),

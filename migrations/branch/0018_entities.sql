@@ -2,11 +2,10 @@
 -- 0018: Entities
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.5.5, 4.7.1, 4.8, 4.10, 4.17, 4.18,
---   4.22, 5.2.23, 5.2.26, 5.2.28, 5.5.9, 5.7.5-5.7.10
+--   4.22, 5.2.23, 5.5.9
 --
 -- Current Entity state, as three rows in three relations sharing
--- `entity_key`, one membership row per type the Entity carries, and the
--- discovery census the entity statements keep beside them. The split
+-- `entity_key`, and one membership row per type the Entity carries. The split
 -- follows the write pattern, not the data model: every attribute write
 -- rewrites the payload, almost none changes the Entity's types, scopes or
 -- geometries, and its identity never changes. The payload therefore lives
@@ -100,8 +99,8 @@ create table entity_search (
     -- `current_attribute_values.attribute_kind` codes). Sorted by key and code,
     -- so a write that lists the same instances in another order does not
     -- rewrite the row. Not indexed: nothing searches them. They are what the
-    -- census below is counted from, and the row they are read back from when
-    -- an update or a delete takes an Entity's instances out of the census.
+    -- discovery census counts, and the row read back when an update or a
+    -- delete takes an Entity's instances out of the census.
     attribute_instance_name_keys integer[] compression lz4 not null,
     attribute_instance_kinds smallint[] compression lz4 not null,
     scope_paths ltree[] compression lz4,
@@ -187,87 +186,4 @@ with (
 
 -- The cascade from `entities` and a type change find an Entity's rows by key.
 create index idx_entity_type_members_entity_key on entity_type_members (entity_key);
-
--- ----------------------------------------------------------------------------
--- The discovery census (clauses 5.7.5-5.7.10)
--- ----------------------------------------------------------------------------
--- Entity type and attribute discovery reports what the Entities that exist
--- carry right now: the types some Entity has and how many Entities have each
--- (clause 5.2.26 `entityCount`), the attributes and attribute families the
--- Entities of each type have (clauses 5.2.25 and 5.2.26), and how many
--- instances each attribute name has across all Entities (Table 5.2.28-1
--- `attributeCount`: a `datasetId` instance counts, an Entity with two types
--- counts once). Answering that from the payloads reads every Entity.
---
--- The three relations below are ledgers of signed changes to those counts.
--- Every statement that inserts, rewrites or deletes `entity_search` rows adds
--- the difference between the rows it wrote and the rows they replaced, read
--- from its own `RETURNING`, in the same statement: an insert adds one Entity
--- to each of its types and one instance per element of its instance arrays, a
--- delete takes them away, an update takes away what the row held and adds what
--- it holds now, and only when the row actually changed. A count is therefore
--- the sum of its rows, exact in every snapshot, and a writer only ever inserts:
--- no counter row is shared between concurrent writers, so none waits on
--- another. The rows of one statement are aggregated first and a zero change is
--- never written.
---
--- A periodic fold replaces the rows of every key that has more than one with
--- their sum, in one statement, so a ledger holds about one row per live key at
--- rest. Correctness never depends on the fold, only the cost of a read does.
---
--- No foreign key to the dictionaries: `entity_search` holds the same keys
--- without one, and a key-share lock per written change is not worth it.
--- Entities per type: `entityCount`, and whether a type exists at all.
-create table entity_type_census (
-    entity_type_name_key integer not null,
-    entity_delta bigint not null,
-    constraint chk_entity_type_census_entity_delta check (entity_delta <> 0)
-)
-with (
-    autovacuum_vacuum_insert_scale_factor = 0.01,
-    autovacuum_vacuum_insert_threshold = 500,
-    autovacuum_vacuum_scale_factor = 0.01,
-    autovacuum_vacuum_threshold = 200,
-    autovacuum_analyze_scale_factor = 0.02,
-    autovacuum_analyze_threshold = 200,
-    autovacuum_vacuum_cost_delay = 0
-);
-
--- Attribute instances per type, attribute name and family: the attributes of
--- a type and their `attributeTypes`, and the types of an attribute.
-create table entity_type_attribute_census (
-    entity_type_name_key integer not null,
-    attribute_name_key integer not null,
-    attribute_kind smallint not null,
-    instance_delta bigint not null,
-    constraint chk_entity_type_attribute_census_attribute_kind check (attribute_kind between 1 and 8),
-    constraint chk_entity_type_attribute_census_instance_delta check (instance_delta <> 0)
-)
-with (
-    autovacuum_vacuum_insert_scale_factor = 0.01,
-    autovacuum_vacuum_insert_threshold = 500,
-    autovacuum_vacuum_scale_factor = 0.01,
-    autovacuum_vacuum_threshold = 200,
-    autovacuum_analyze_scale_factor = 0.02,
-    autovacuum_analyze_threshold = 200,
-    autovacuum_vacuum_cost_delay = 0
-);
-
--- Attribute instances per attribute name across every Entity, whatever its
--- types: `attributeCount`, which the per-type ledger cannot give, since an
--- Entity with two types is counted there under each.
-create table attribute_census (
-    attribute_name_key integer not null,
-    instance_delta bigint not null,
-    constraint chk_attribute_census_instance_delta check (instance_delta <> 0)
-)
-with (
-    autovacuum_vacuum_insert_scale_factor = 0.01,
-    autovacuum_vacuum_insert_threshold = 500,
-    autovacuum_vacuum_scale_factor = 0.01,
-    autovacuum_vacuum_threshold = 200,
-    autovacuum_analyze_scale_factor = 0.02,
-    autovacuum_analyze_threshold = 200,
-    autovacuum_vacuum_cost_delay = 0
-);
 

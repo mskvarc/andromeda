@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0030: Registrations notified to context source subscriptions
+-- 0031: Registrations notified to context source subscriptions
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 5.3.3, 5.11.2.4, 5.11.3.4, 5.11.7
 --

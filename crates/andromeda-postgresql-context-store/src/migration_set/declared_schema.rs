@@ -47,7 +47,7 @@ impl DeclaredColumn {
 
     /// Whether the column is an identity the database generates.
     pub(super) fn is_identity(&self) -> bool {
-        self.definition.contains("AS IDENTITY")
+        contains_ci(&self.definition, "AS IDENTITY")
     }
 }
 
@@ -128,15 +128,15 @@ impl DeclaredSchema {
 
     /// Records whatever objects `statement` declares.
     fn read_statement(&mut self, statement: &str) {
-        if let Some(rest) = statement.strip_prefix("CREATE TABLE ") {
+        if let Some(rest) = strip_prefix_ci(statement, "CREATE TABLE ") {
             self.read_create_table(rest);
-        } else if let Some(rest) = statement.strip_prefix("ALTER TABLE ") {
+        } else if let Some(rest) = strip_prefix_ci(statement, "ALTER TABLE ") {
             self.read_alter_table(rest);
-        } else if let Some(rest) = statement.strip_prefix("CREATE UNIQUE INDEX ") {
+        } else if let Some(rest) = strip_prefix_ci(statement, "CREATE UNIQUE INDEX ") {
             self.read_index(rest, IndexKind::Unique);
-        } else if let Some(rest) = statement.strip_prefix("CREATE INDEX ") {
+        } else if let Some(rest) = strip_prefix_ci(statement, "CREATE INDEX ") {
             self.read_index(rest, IndexKind::Plain);
-        } else if let Some(rest) = statement.strip_prefix("CREATE STATISTICS ") {
+        } else if let Some(rest) = strip_prefix_ci(statement, "CREATE STATISTICS ") {
             self.read_statistics(rest);
         }
     }
@@ -149,7 +149,7 @@ impl DeclaredSchema {
         let table = table.trim().to_owned();
         let body = &body[..closing_parenthesis(body)];
         for item in top_level_items(body) {
-            match item.strip_prefix("CONSTRAINT ") {
+            match strip_prefix_ci(item, "CONSTRAINT ") {
                 Some(constraint) => self.read_constraint(&table, constraint),
                 None => self.read_column(&table, item),
             }
@@ -163,9 +163,9 @@ impl DeclaredSchema {
             return;
         };
         for action in top_level_items(actions) {
-            if let Some(column) = action.strip_prefix("ADD COLUMN ") {
+            if let Some(column) = strip_prefix_ci(action, "ADD COLUMN ") {
                 self.read_column(table, column);
-            } else if let Some(constraint) = action.strip_prefix("ADD CONSTRAINT ") {
+            } else if let Some(constraint) = strip_prefix_ci(action, "ADD CONSTRAINT ") {
                 self.read_constraint(table, constraint);
             }
         }
@@ -189,21 +189,21 @@ impl DeclaredSchema {
             return;
         };
         let definition = definition.trim();
-        let kind = if definition.starts_with("PRIMARY KEY") {
+        let kind = if starts_with_ci(definition, "PRIMARY KEY") {
             ConstraintKind::PrimaryKey
-        } else if definition.starts_with("UNIQUE") {
+        } else if starts_with_ci(definition, "UNIQUE") {
             ConstraintKind::Unique
-        } else if definition.starts_with("FOREIGN KEY") {
+        } else if starts_with_ci(definition, "FOREIGN KEY") {
             ConstraintKind::ForeignKey
-        } else if definition.starts_with("CHECK") {
+        } else if starts_with_ci(definition, "CHECK") {
             ConstraintKind::Check
         } else {
             return;
         };
         let (columns, referenced_columns) = match kind {
             ConstraintKind::PrimaryKey | ConstraintKind::Unique => (first_column_list(definition), Vec::new()),
-            ConstraintKind::ForeignKey => match definition.split_once("REFERENCES") {
-                Some((own, referenced)) => (first_column_list(own), first_column_list(referenced)),
+            ConstraintKind::ForeignKey => match find_ci(definition, "REFERENCES") {
+                Some(at) => (first_column_list(&definition[..at]), first_column_list(&definition[at + "REFERENCES".len()..])),
                 None => (first_column_list(definition), Vec::new()),
             },
             ConstraintKind::Check => (Vec::new(), Vec::new()),
@@ -220,9 +220,12 @@ impl DeclaredSchema {
     /// Reads `<name> ON <table> ...`.
     fn read_index(&mut self, rest: &str, kind: IndexKind) {
         let mut words = rest.split_whitespace();
-        let (Some(name), Some("ON"), Some(table)) = (words.next(), words.next(), words.next()) else {
+        let (Some(name), Some(on), Some(table)) = (words.next(), words.next(), words.next()) else {
             return;
         };
+        if !on.eq_ignore_ascii_case("ON") {
+            return;
+        }
         let table = table.split_once('(').map_or(table, |(table, _)| table);
         self.indexes.push(DeclaredIndex {
             table: table.to_owned(),
@@ -234,7 +237,7 @@ impl DeclaredSchema {
     /// Reads `<name> (...) ON <columns> FROM <table>`.
     fn read_statistics(&mut self, rest: &str) {
         let name = rest.split_whitespace().next().unwrap_or_default();
-        let table = rest.rsplit_once("FROM").map(|(_, table)| table.trim()).unwrap_or_default();
+        let table = rfind_ci(rest, "FROM").map(|at| rest[at + "FROM".len()..].trim()).unwrap_or_default();
         if !name.is_empty() && !table.is_empty() {
             self.indexes.push(DeclaredIndex {
                 table: table.to_owned(),
@@ -243,6 +246,38 @@ impl DeclaredSchema {
             });
         }
     }
+}
+
+/// `text` with `prefix` stripped from its start, ignoring ASCII case, or `None`
+/// when `text` does not begin with it. SQL keywords are canonically lower case,
+/// but the reader matches them whatever case a statement is written in.
+fn strip_prefix_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix).then(|| &text[prefix.len()..])
+}
+
+/// Whether `text` begins with `prefix`, ignoring ASCII case.
+fn starts_with_ci(text: &str, prefix: &str) -> bool {
+    text.get(..prefix.len()).is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+}
+
+/// The byte offset of the first occurrence of `needle` in `text`, ignoring
+/// ASCII case. `to_ascii_uppercase` preserves byte length, so the offset indexes
+/// `text` as well as its upper-cased copy.
+fn find_ci(text: &str, needle: &str) -> Option<usize> {
+    text.to_ascii_uppercase().find(&needle.to_ascii_uppercase())
+}
+
+/// Whether `text` contains `needle`, ignoring ASCII case.
+fn contains_ci(text: &str, needle: &str) -> bool {
+    find_ci(text, needle).is_some()
+}
+
+/// The byte offset of the last occurrence of `needle` in `text`, ignoring ASCII
+/// case. `to_ascii_uppercase` preserves byte length, so the offset indexes
+/// `text` as well as its upper-cased copy.
+fn rfind_ci(text: &str, needle: &str) -> Option<usize> {
+    text.to_ascii_uppercase().rfind(&needle.to_ascii_uppercase())
 }
 
 /// `sql` with every `--` comment removed.

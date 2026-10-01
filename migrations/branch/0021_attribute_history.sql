@@ -1,12 +1,12 @@
 -- ============================================================================
--- 0020: Attribute history
+-- 0021: Attribute history
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.5.0, 4.5.7, 4.5.8, 4.9, 4.11,
 --   5.2.21, 5.6.14, 5.6.15, 5.7.4
 --
--- One row per recorded attribute instance. The live copy of this table is a
--- hypertable partitioned on `recorded_at`, while a Snapshot's copy stays a
--- plain table, so every statement here holds for both shapes.
+-- One row per recorded attribute instance. The live copy is a hypertable
+-- partitioned on `recorded_at`; a Snapshot's copy stays a plain table, so every
+-- statement here holds for both shapes.
 --
 -- Codes:
 --
@@ -17,26 +17,25 @@
 --     5 object, 6 date-time, 7 uri
 --
 -- `recorded_at` is the write clock and is never rendered. `observed_at`,
--- `created_at`, `modified_at` and `deleted_at` are the four axes clause
--- 5.2.21 admits as a `timeproperty`, each written only from what was
--- observed, so a time filter selects exactly the requested column: a row with
--- no `observedAt` matches no `observedAt` filter (clause 4.11).
+-- `created_at`, `modified_at` and `deleted_at` are the four axes clause 5.2.21
+-- admits as a `timeproperty`, each written only from what was observed, so a
+-- time filter selects exactly the requested column: a row with no `observedAt`
+-- matches no `observedAt` filter (clause 4.11).
 --
--- A tombstone carries `deleted_at` and no typed value; the NGSI-LD null is
--- synthesised when it is rendered, never stored as though a client had sent
--- it. `attribute_kind` is present on a tombstone too, because the synthesised
--- null takes the shape its family dictates: a value for a Property, an object
--- for a Relationship, a language map for a LanguageProperty (clauses 4.5.0,
--- 4.5.7, 4.5.8).
+-- A tombstone carries `deleted_at` and no typed value; its NGSI-LD null is
+-- synthesised at render time, never stored. `attribute_kind` is kept so the
+-- null takes its family's shape: a value for a Property, an object for a
+-- Relationship, a language map for a LanguageProperty (clauses 4.5.0, 4.5.7,
+-- 4.5.8).
 --
--- An instance identifier is stored in one of two columns. A broker-minted one
--- is kept as its UUID and rendered through the permanently stable template
--- `urn:ngsi-ld:attribute:instance:{uuid}`; a client-supplied one is kept
--- exactly as received, because clause 4.5.7 hands it back to the client.
+-- An instance identifier sits in one of two columns: a broker-minted one as its
+-- UUID, rendered through the stable template
+-- `urn:ngsi-ld:attribute:instance:{uuid}`; a client-supplied one exactly as
+-- received, because clause 4.5.7 hands it back to the client.
 --
--- `stream_key` and `unit_code_id` carry no foreign keys. TimescaleDB re-adds
--- a hypertable's foreign keys on every chunk under `SHARE ROW EXCLUSIVE`,
--- which deadlocks against concurrent upserts on the referenced table.
+-- `stream_key` and `unit_code_id` carry no foreign keys. TimescaleDB re-adds a
+-- hypertable's foreign keys on every chunk under `SHARE ROW EXCLUSIVE`, which
+-- deadlocks against concurrent upserts on the referenced table.
 -- ============================================================================
 create table attribute_history (
     recorded_at timestamptz not null,

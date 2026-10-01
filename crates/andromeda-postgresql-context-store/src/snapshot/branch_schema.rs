@@ -192,7 +192,7 @@ mod tests {
                     .sql
                     .as_str()
                     .lines()
-                    .filter_map(|line| line.strip_prefix("CREATE TABLE "))
+                    .filter_map(|line| line.get(..13).filter(|head| head.eq_ignore_ascii_case("create table ")).map(|_| &line[13..]))
                     .filter_map(|rest| rest.split_whitespace().next())
                     .map(ToOwned::to_owned)
                     .collect::<Vec<_>>()

@@ -34,7 +34,7 @@ pub struct LeasedSideEffect {
     /// -- which the claim that reclaimed the job counted.
     ///
     /// Decoded from `pending_side_effects.attempt_count`, an `INTEGER` column
-    /// (migration 0025), so this is `i32` to match its SQL width; the sibling
+    /// (migration 0026), so this is `i32` to match its SQL width; the sibling
     /// notification and temporal queues carry the same-width counter.
     pub attempts: i32,
     /// The work to perform.

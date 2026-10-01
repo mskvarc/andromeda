@@ -174,9 +174,11 @@ mod tests {
     /// refusal matches the declared name rather than one PostgreSQL generated.
     #[test]
     fn the_duplicate_id_refusal_names_the_constraint_migration_0012_declares() {
-        let declaration = format!("CONSTRAINT {PK_CONTEXT_SOURCE_REGISTRATIONS} PRIMARY KEY (id)");
+        let declaration = format!("CONSTRAINT {PK_CONTEXT_SOURCE_REGISTRATIONS} PRIMARY KEY (id)").to_ascii_uppercase();
         assert!(
-            tenant_migrator().iter().any(|migration| migration.sql.as_str().contains(&declaration)),
+            tenant_migrator()
+                .iter()
+                .any(|migration| migration.sql.as_str().to_ascii_uppercase().contains(&declaration)),
             "{declaration}"
         );
     }

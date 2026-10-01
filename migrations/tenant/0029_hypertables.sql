@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0028: Temporal hypertables
+-- 0029: Temporal hypertables
 -- ============================================================================
 -- Converts the live `attribute_history` and `scope_history` into TimescaleDB
 -- hypertables partitioned on `recorded_at`. A Snapshot schema keeps both as

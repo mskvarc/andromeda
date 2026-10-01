@@ -7,7 +7,7 @@
 //! literal disagrees with the constant fails the build rather than surfacing as
 //! a constraint violation on a request the parser admitted.
 
-use crate::migration_set::declared_schema::every_migration_sql;
+use crate::migration_set::declared_schema::{DeclaredSchema, every_migration_sql};
 use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
 use andromeda_postgresql_schema::{projected_string_column::INDEXED_STRING_BYTE_LIMIT, projected_uri_column::INDEXED_URI_BYTE_LIMIT};
 use pretty_assertions::assert_eq;
@@ -96,15 +96,6 @@ fn octet_length_bounds(sql: &str) -> Vec<OctetLengthBound> {
         .collect()
 }
 
-/// Every name a migration declares with `CONSTRAINT <name>`.
-fn declared_constraint_names(sql: &str) -> Vec<&str> {
-    sql.split("CONSTRAINT ")
-        .skip(1)
-        .filter_map(|rest| rest.split(|character: char| character.is_whitespace()).next())
-        .filter(|name| !name.is_empty())
-        .collect()
-}
-
 #[test]
 fn every_octet_length_bound_in_the_migrations_equals_its_rust_constant() {
     let bounds: Vec<OctetLengthBound> = every_migration_sql().into_iter().flat_map(octet_length_bounds).collect();
@@ -138,7 +129,8 @@ fn every_octet_length_bound_in_the_migrations_equals_its_rust_constant() {
 
 #[test]
 fn every_identifier_column_declares_its_length_constraint() {
-    let declared: Vec<&str> = every_migration_sql().into_iter().flat_map(declared_constraint_names).collect();
+    let schema = DeclaredSchema::of_every_migration();
+    let declared: Vec<&str> = schema.constraints.iter().map(|constraint| constraint.name.as_str()).collect();
     for constraint in IDENTIFIER_LENGTH_CONSTRAINTS.into_iter().chain(PROJECTED_URI_CONSTRAINTS) {
         assert!(declared.contains(&constraint), "no migration declares {constraint}");
     }
@@ -146,11 +138,12 @@ fn every_identifier_column_declares_its_length_constraint() {
 
 #[test]
 fn every_declared_constraint_name_fits_a_postgresql_identifier() {
-    for name in every_migration_sql().into_iter().flat_map(declared_constraint_names) {
+    for constraint in DeclaredSchema::of_every_migration().constraints {
         assert!(
-            name.len() <= POSTGRESQL_IDENTIFIER_BYTE_LIMIT,
-            "{name} is {} bytes, which PostgreSQL would truncate",
-            name.len()
+            constraint.name.len() <= POSTGRESQL_IDENTIFIER_BYTE_LIMIT,
+            "{} is {} bytes, which PostgreSQL would truncate",
+            constraint.name,
+            constraint.name.len()
         );
     }
 }

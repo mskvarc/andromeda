@@ -21,7 +21,7 @@ use crate::current::CurrentAttributeValues;
 ///
 /// 1024 leaves the `(attribute_name_key, value_uri)` entry of
 /// `idx_cav_value_uri` well inside the 2704 bytes a B-tree entry may take. A
-/// unit test in `migration_set` pins the literal migration 0022 states to this
+/// unit test in `migration_set` pins the literal migration 0023 states to this
 /// constant, and another pins it to the identifier bound.
 pub const INDEXED_URI_BYTE_LIMIT: usize = 1024;
 

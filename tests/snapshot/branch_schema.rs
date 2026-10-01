@@ -37,7 +37,7 @@ use std::{borrow::Cow, env, time::Duration};
 use tokio::time::timeout;
 
 /// The foreign keys from live branch relations into the tenant-global
-/// dictionaries, which the live-only tenant migration 0029 declares and no
+/// dictionaries, which the live-only tenant migration 0030 declares and no
 /// Snapshot branch carries.
 const LIVE_ONLY_DICTIONARY_REFERENCES: [&str; 5] = [
     "fk_attribute_history_instance_claims_attribute_name",
