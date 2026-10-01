@@ -54,7 +54,7 @@ const ARRIVAL: Duration = Duration::from_secs(30);
 const QUIET: Duration = Duration::from_secs(8);
 
 /// A client of the second replica bound to the tenant of `scope`.
-fn second_replica(scope: &TenantScopedEnvironment) -> TestClient {
+pub(crate) fn second_replica(scope: &TenantScopedEnvironment) -> TestClient {
     let root = var(SECOND_BROKER_ENV).unwrap_or_else(|_| DEFAULT_SECOND_BROKER.to_owned());
     let endpoint = BrokerEndpoint::parse(root).expect("the second replica's URL parses");
     TestClient::new(endpoint, Some(TenantName::parse(scope.tenant()).expect("the private tenant is a tenant name")))

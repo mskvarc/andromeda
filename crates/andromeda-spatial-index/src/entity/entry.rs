@@ -1,7 +1,7 @@
 //! One entity's geometry, as the tree holds it.
 
 use crate::partitioned_rtree::Indexed;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::{geometry::Geometry, great_circle::great_circle_bounds};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use rstar::{AABB, RTreeObject};
 
@@ -11,6 +11,12 @@ use rstar::{AABB, RTreeObject};
 /// The envelope is computed once at construction rather than per query: the
 /// R-tree asks for it on every comparison, and recomputing a bounding
 /// rectangle from a polygon each time is what the prefilter exists to avoid.
+///
+/// It is the geometry's great-circle bounds rather than its planar bounding
+/// rectangle. `near` measures along great-circle edges, which bow past the
+/// vertices of a long edge, and an entry whose box stopped at its vertices
+/// would be missing from a `near` candidate set its bulge belongs in. The box
+/// still contains the planar rectangle, so the planar relations lose nothing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpatialEntry {
     /// Identifier of the entity whose geoproperty this entry represents.
@@ -21,7 +27,7 @@ pub struct SpatialEntry {
     pub entity_id: Identifier,
     /// The entity geometry.
     pub geometry: Geometry,
-    /// Axis-aligned bounding box of the geometry.
+    /// Axis-aligned box covering the geometry read with great-circle edges.
     pub envelope: AABB<[f64; 2]>,
 }
 
@@ -34,7 +40,7 @@ impl SpatialEntry {
     /// the exact predicate's answer the same.
     #[must_use]
     pub fn new(entity_id: Identifier, geometry: Geometry) -> Option<SpatialEntry> {
-        let rect = geometry.bounding_rect()?;
+        let rect = great_circle_bounds(&geometry)?;
         let envelope = AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]);
         Some(SpatialEntry { entity_id, geometry, envelope })
     }

@@ -53,6 +53,7 @@ mod list_attribute_families;
 mod list_relationship_representation;
 mod long_uri_references;
 mod minimal_query_parameters;
+mod near_minimum_distance;
 mod non_ascii_identifiers;
 mod notification_creation_context;
 mod notification_per_write;

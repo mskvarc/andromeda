@@ -28,7 +28,11 @@
 //! planar computation engine underneath it: no maintained Rust crate offers
 //! geographic predicates over three-dimensional coordinates, and none is
 //! needed, because clause 4.10 evaluates its predicates on the horizontal
-//! plane regardless. [`planar`] holds that projection and the reasoning.
+//! plane regardless. [`planar`] holds that projection and the reasoning. `near`
+//! alone is measured on the earth rather than on the plane, along great-circle
+//! edges and on the WGS 84 spheroid through `geo`'s geodesic primitives:
+//! [`proximity`] holds that measure, [`great_circle`] the extent of a geometry
+//! read that way and [`near_envelope`] the region a distance can reach.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -36,7 +40,6 @@
 pub mod compact_geojson;
 pub mod coordinate_path;
 pub mod dimension;
-pub mod distance;
 pub mod form;
 pub mod geo_rel;
 pub mod geojson;
@@ -45,11 +48,14 @@ mod geojson_oracle;
 pub mod geometry;
 pub mod geometry_census;
 pub mod geometry_type;
+pub mod great_circle;
 pub mod line_string_coordinates;
 pub mod linear_ring;
+pub mod near_envelope;
 pub mod planar;
 pub mod position;
 pub mod positive_distance;
+pub mod proximity;
 pub mod relation;
 
 #[cfg(test)]

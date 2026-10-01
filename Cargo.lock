@@ -1150,6 +1150,7 @@ dependencies = [
  "geojson",
  "jsonld-expandable-core",
  "pretty_assertions",
+ "rstar 0.13.0",
  "serde",
  "serde_json",
  "strum",

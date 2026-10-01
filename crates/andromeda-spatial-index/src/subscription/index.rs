@@ -6,7 +6,7 @@ use crate::{
     partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking},
     subscription::entry::SubEntry,
 };
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, great_circle::great_circle_bounds, relation::matches};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use rstar::{AABB, Envelope, RTree};
 
@@ -52,7 +52,9 @@ impl SpatialSubscriptionIndex {
     /// 4.10 predicate before it is returned, so the caller needs no second
     /// pass.
     pub fn candidates(&self, key: &SpatialKey, entity_geometry: &Geometry) -> Vec<Identifier> {
-        let Some(rect) = entity_geometry.bounding_rect() else {
+        // Great-circle bounds, so a `near` subscription is found beside the
+        // bulge of a long entity edge as well as beside its vertices.
+        let Some(rect) = great_circle_bounds(entity_geometry) else {
             return Vec::new();
         };
         let envelope = AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]);
@@ -91,15 +93,15 @@ fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &Geometry, envelope: &
         }
     }
 
-    // `disjoint` and every `near` variant match entries the envelope test
-    // discards: `disjoint` matches away from the reference, and a `near`
-    // with only a `minDistance` (or one whose grown envelope still falls
-    // short) matches arbitrarily far from it. Both need the whole
-    // partition, mirroring the entity index's `candidates_for`. The scan
-    // only touches entries the envelope pass missed, so no entry is
-    // considered twice.
+    // `disjoint` and a `near` with only a `minDistance` match entries the
+    // envelope test discards: `disjoint` matches away from the reference, and
+    // a `minDistance` alone arbitrarily far from it. Both need the whole
+    // partition, mirroring the entity index's `candidates_for`. A `near` with a
+    // `maxDistance` does not: its envelope covers every point within that
+    // distance. The scan only touches entries the envelope pass missed, so no
+    // entry is considered twice.
     for entry in tree {
-        if matches!(entry.georel, GeoRel::Disjoint | GeoRel::Near { .. })
+        if matches!(entry.georel, GeoRel::Disjoint | GeoRel::Near { max_distance: None, .. })
             && !entry.envelope.intersects(envelope)
             && matches(&entry.georel, entity_geometry, &entry.ref_geometry)
         {
@@ -290,5 +292,67 @@ mod tests {
         let width = entry.envelope.upper()[0] - entry.envelope.lower()[0];
         let height = entry.envelope.upper()[1] - entry.envelope.lower()[1];
         assert!(width > height * 1.9, "longitude grow {width} should be ~2x latitude grow {height} at 60N");
+    }
+
+    fn near(max_distance: Option<&str>, min_distance: Option<&str>) -> GeoRel {
+        GeoRel::Near {
+            max_distance: max_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
+            min_distance: min_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
+        }
+    }
+
+    /// Bremen, the reference point the minimum-distance fixtures sit around.
+    fn bremen() -> Geometry {
+        point(8.8072, 53.0758)
+    }
+
+    /// A square whose west wall is 100.06 m east of Bremen and whose centroid
+    /// is 170.10 m east of it.
+    fn east_square() -> Geometry {
+        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![
+            LinearRing::try_new(
+                [
+                    (8.808_693, 53.075_171),
+                    (8.810_783, 53.075_171),
+                    (8.810_783, 53.076_429),
+                    (8.808_693, 53.076_429),
+                    (8.808_693, 53.075_171),
+                ]
+                .into_iter()
+                .map(|(x, y)| Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"))
+                .collect(),
+            )
+            .expect("a test square is a closed ring"),
+        ])))
+    }
+
+    /// Clause 4.10 `near` measures the minimum distance, so a building whose
+    /// nearest wall is in range is notified for though its centroid is not.
+    #[test]
+    fn a_near_subscription_matches_a_polygon_whose_nearest_wall_is_in_range() {
+        let index = SpatialSubscriptionIndex::new();
+        index.insert(key(), entry("sub-max", bremen(), near(Some("150"), None)));
+        pretty_assertions::assert_eq!(index.candidates(&key(), &east_square()), vec![uri("sub-max")]);
+    }
+
+    #[test]
+    fn a_min_distance_subscription_ignores_a_polygon_whose_nearest_wall_is_too_close() {
+        let index = SpatialSubscriptionIndex::new();
+        index.insert(key(), entry("sub-min", bremen(), near(None, Some("150"))));
+        assert_eq!(index.candidates(&key(), &east_square()), [] as [Identifier; 0]);
+    }
+
+    #[test]
+    fn a_min_distance_only_subscription_is_still_found_far_away() {
+        let index = SpatialSubscriptionIndex::new();
+        index.insert(key(), entry("sub-far", point(0.0, 0.0), near(None, Some("1000"))));
+        pretty_assertions::assert_eq!(index.candidates(&key(), &point(50.0, 50.0)), vec![uri("sub-far")]);
+    }
+
+    #[test]
+    fn a_near_subscription_across_the_antimeridian_matches_the_other_side() {
+        let index = SpatialSubscriptionIndex::new();
+        index.insert(key(), entry("sub-fiji", point(179.999, -17.0), near(Some("300"), None)));
+        pretty_assertions::assert_eq!(index.candidates(&key(), &point(-179.9995, -17.0)), vec![uri("sub-fiji")]);
     }
 }

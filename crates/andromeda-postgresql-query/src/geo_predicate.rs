@@ -23,7 +23,13 @@ use crate::{
     error::RenderError,
     location_instances::any_location_instance,
 };
-use andromeda_ngsi_ld_geometry::{distance::grow_lonlat_bounds_metres, geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
+use andromeda_ngsi_ld_geometry::{
+    geo_rel::GeoRel,
+    geometry::Geometry,
+    great_circle::great_circle_bounds,
+    near_envelope::NearEnvelope,
+    positive_distance::PositiveDistance,
+};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
@@ -134,7 +140,7 @@ pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &R
         Envelope::Instances { correlation } => {
             let mut probe = *correlation;
             probe.expr(existence_marker());
-            if let Some(prefilter) = near_envelope_prefilter(geo, planar) {
+            if let Some(prefilter) = near_envelope_prefilter(geo, &planar) {
                 probe.and_where(prefilter);
             }
             probe.and_where(spatial);
@@ -148,13 +154,20 @@ pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &R
 /// relation.
 ///
 /// `near` measures on the spheroid over a `geometry` column cast to
-/// `geography`, which reaches no index. The reference geometry's box grown by
-/// `maxDistance` never under-covers (see [`grow_lonlat_bounds_metres`]), so the
-/// test only discards geometries the relation would reject and the exact
-/// distance is still evaluated on what it keeps. A `near` with only a
+/// `geography`, which reaches no index. The [`NearEnvelope`] around the
+/// reference geometry's great-circle bounds covers every point within
+/// `maxDistance` of it on the spheroid, so the test discards no geometry a
+/// vertex of which the relation could match, and the exact distance is still
+/// evaluated on what it keeps. Where the envelope wraps across the
+/// antimeridian it is tested as its two halves. A `near` with only a
 /// `minDistance` matches geometries arbitrarily far from the reference and
 /// admits no box.
-pub(crate) fn near_envelope_prefilter(geo: &GeoQuery, geometry: SimpleExpr) -> Option<SimpleExpr> {
+///
+/// The test compares the stored geometry's planar box, which bounds its
+/// vertices only. A stored edge long enough for its great circle to bow past
+/// its vertices towards the reference can therefore still be discarded;
+/// `docs/near-distance-model.md` sets out that residual and what closes it.
+pub(crate) fn near_envelope_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> Option<SimpleExpr> {
     let GeoRel::Near {
         max_distance: Some(max_distance),
         ..
@@ -162,9 +175,13 @@ pub(crate) fn near_envelope_prefilter(geo: &GeoQuery, geometry: SimpleExpr) -> O
     else {
         return None;
     };
-    let rect = geo.geometry.bounding_rect()?;
-    let (min, max) = grow_lonlat_bounds_metres([rect.min().x, rect.min().y], [rect.max().x, rect.max().y], max_distance.metres());
-    Some(bounding_boxes_overlap(geometry, st_make_envelope(min, max)))
+    let envelope = NearEnvelope::around(great_circle_bounds(&geo.geometry)?, *max_distance);
+    envelope
+        .rects()
+        .iter()
+        // clone: each rectangle of a split envelope tests the same column
+        .map(|rect| bounding_boxes_overlap(geometry.clone(), st_make_envelope([rect.min().x, rect.min().y], [rect.max().x, rect.max().y])))
+        .reduce(ExprTrait::or)
 }
 
 /// The topological or distance relation of a geo query as a boolean SQL
@@ -295,13 +312,23 @@ fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Opti
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::DocumentsRef};
-    use andromeda_ngsi_ld_geometry::dimension::GeometryDimension;
+    use crate::{
+        attribute_name_key::AttributeNameKey,
+        dictionary::resolved_names::ResolvedNames,
+        entity_row_refs::{DocumentsRef, EntityRowRefs},
+        error::RenderError,
+        geo_predicate::{GeometrySource, condition},
+    };
+    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::{
+        error::QueryError,
+        geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
+    };
+    use andromeda_postgresql_encoding::ewkb::encode;
     use andromeda_postgresql_schema::current::Entities;
     use pretty_assertions::{assert_eq, assert_ne};
-    use sea_query::{PostgresQueryBuilder, Query, Value, Values};
+    use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, Value, Values};
     use std::{str::FromStr, sync::LazyLock};
 
     /// The unaliased entity rows the entity path filters.
@@ -582,6 +609,64 @@ mod tests {
             sql.contains("\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope("),
             "the cast column reaches no index, so a box the geometry GiST answers prefilters it: {sql}"
         );
+    }
+
+    /// A `near` query on a custom `GeoProperty` at the given reference point.
+    fn near_query(longitude: f64, latitude: f64, max_distance: Option<&str>, min_distance: Option<&str>) -> GeoQuery {
+        GeoQuery {
+            georel: GeoRel::Near {
+                max_distance: max_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
+                min_distance: min_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
+            },
+            geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [longitude, latitude] })).expect("point parses"),
+            geoproperty: name(CUSTOM_GEOPROPERTY),
+        }
+    }
+
+    /// The doubles a statement binds, in order.
+    fn bound_doubles(values: &Values) -> Vec<f64> {
+        values
+            .0
+            .iter()
+            .filter_map(|value| if let Value::Double(Some(double)) = value { Some(*double) } else { None })
+            .collect()
+    }
+
+    /// A reference by the antimeridian reaches both its sides, so the box
+    /// test is the disjunction of the envelope's two halves rather than one box
+    /// that stops at the seam.
+    #[test]
+    fn a_near_prefilter_across_the_antimeridian_tests_both_halves() {
+        let geo = near_query(179.999, -17.0, Some("300"), None);
+        let (sql, values) = render_parameterised(condition(&geo, entity_source(), &resolved_custom()).expect("renders"));
+        assert_eq!(sql.matches("\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope(").count(), 2, "{sql}");
+        assert!(sql.contains(")) OR (\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope("), "{sql}");
+        let doubles = bound_doubles(&values);
+        assert!(doubles.contains(&180.0) && doubles.contains(&-180.0), "{doubles:?}");
+    }
+
+    /// `near` is measured on the spheroid, where 5 000 m due north of the
+    /// equator is latitude 0.045 218 4; a box grown on the sphere stopped at
+    /// 0.044 966 and discarded what lay between.
+    #[test]
+    fn a_near_prefilter_covers_the_spheroidal_reach_of_the_reference() {
+        let geo = near_query(0.0, 0.0, Some("5000"), None);
+        let (_, values) = render_parameterised(condition(&geo, entity_source(), &resolved_custom()).expect("renders"));
+        // The distance itself binds as a double too; the box's ordinates are
+        // the ones that are latitudes.
+        let north = bound_doubles(&values)
+            .into_iter()
+            .filter(|double| double.abs() <= 90.0)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(north >= 0.045_218, "the box reaches latitude {north}");
+    }
+
+    #[test]
+    fn a_min_distance_only_near_renders_no_prefilter() {
+        let geo = near_query(1.0, 2.0, None, Some("1000"));
+        let sql = render(condition(&geo, entity_source(), &resolved_custom()).expect("renders"));
+        assert!(!sql.contains("&&"), "{sql}");
+        assert!(sql.contains("ST_Distance"), "{sql}");
     }
 
     /// The instance subquery correlates to whichever alias the enclosing

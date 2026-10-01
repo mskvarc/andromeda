@@ -137,8 +137,7 @@ fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: Attr
         .and_where(SeaExpr::col((instance.clone(), CurrentAttributeValues::DatasetId)).is_not_null())
         .and_where(instance_stands(SeaExpr::col((instance, CurrentAttributeValues::ExpiresAt))))
         .and_where(SeaExpr::expr(geometry.clone()).is_not_null()); // clone: the column is read by the presence test and the relation
-    if let Some(prefilter) = near_envelope_prefilter(geo, geometry.clone()) {
-        // clone: the column is read by the prefilter and the relation
+    if let Some(prefilter) = near_envelope_prefilter(geo, &geometry) {
         arm.and_where(prefilter);
     }
     arm.and_where(relation_expression(
@@ -304,6 +303,31 @@ mod tests {
         assert!(sql.contains(r#"ST_DWithin("geo_default"."location_geography","#), "{sql}");
         assert!(sql.contains(r#""geo_location_instance"."value_geometry" && ST_MakeEnvelope("#), "{sql}");
         assert!(sql.contains(r#"ST_DWithin("geo_location_instance"."value_geometry"::geography,"#), "{sql}");
+    }
+
+    /// A reference by the antimeridian reaches both its sides, so the
+    /// `datasetId` instances are prefiltered by both halves of the envelope.
+    #[test]
+    fn the_dataset_instance_arm_prefilters_both_sides_of_the_antimeridian() {
+        let geo = GeoQuery {
+            georel: near("300"),
+            geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [179.999, -17.0] })).expect("point parses"),
+            geoproperty: LOCATION.parse().expect("valid attribute name"),
+        };
+        let (sql, _) = render(
+            any_location_instance(
+                &geo,
+                &unaliased(),
+                &DefaultLocationNarrowing::Unnarrowed,
+                Some(AttributeNameKey::from(LOCATION_KEY)),
+            )
+            .expect("renders"),
+        );
+        assert_eq!(
+            sql.matches(r#""geo_location_instance"."value_geometry" && ST_MakeEnvelope("#).count(),
+            2,
+            "{sql}"
+        );
     }
 
     /// The arms read the statement's branch schema, so a Snapshot query never

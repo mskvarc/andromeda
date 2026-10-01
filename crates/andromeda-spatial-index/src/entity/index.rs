@@ -5,7 +5,7 @@ use crate::{
     key::SpatialKey,
     partitioned_rtree::{PartitionedRTree, WriteTracking},
 };
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, great_circle::great_circle_bounds, near_envelope::NearEnvelope, relation::matches};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use dashmap::DashSet;
@@ -69,13 +69,16 @@ impl SpatialEntityIndex {
         self.tree.current_generation()
     }
 
-    /// Evaluate a `georel` filter against one partition.
+    /// The entities of one partition that may satisfy a `georel` filter, for
+    /// the store to decide.
     ///
-    /// `None` means the partition's scope has not been seeded, which is not the
-    /// same answer as an empty set: the caller falls through to the store
-    /// rather than reporting that nothing matched. A seeded scope with no
-    /// partition for the key answers with the empty set, because its rebuild
-    /// found no entity of that type conveying the `GeoProperty`.
+    /// `None` means the index declines to narrow, which is not the same answer
+    /// as an empty set: the caller falls through to the store rather than
+    /// reporting that nothing matched. It declines when the partition's scope
+    /// has not been seeded, and for a `near` with only a `minDistance`, which
+    /// no envelope can bound. A seeded scope with no partition for the key
+    /// answers with the empty set, because its rebuild found no entity of that
+    /// type conveying the `GeoProperty`.
     pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &Geometry) -> Option<HashSet<Identifier>> {
         let scope = SeedScope {
             tenant: key.tenant.clone(),           // clone: the seed lookup owns its tenant
@@ -84,7 +87,12 @@ impl SpatialEntityIndex {
         if !self.seeded.contains(&scope) {
             return None;
         }
-        Some(self.tree.read_partition(key, |tree| evaluate(tree, georel, reference)).unwrap_or_default())
+        let candidates = candidates_for(georel, reference)?;
+        Some(
+            self.tree
+                .read_partition(key, |tree| evaluate(tree, georel, reference, &candidates))
+                .unwrap_or_default(),
+        )
     }
 
     /// Replace every entry of one entity with the geometries it now conveys,
@@ -145,25 +153,45 @@ fn entries_of(entity_id: &Identifier, placements: impl IntoIterator<Item = (Spat
 
 /// Which entries of a partition a relation has to be evaluated against.
 ///
-/// The R-tree can only rule out entries whose bounding box misses the
-/// reference geometry's, which is sound for the containment and intersection
-/// relations and unsound for the two that match *away* from the reference.
+/// The R-tree can only rule out entries whose box misses a region the relation
+/// can reach, which is sound for the containment and intersection relations
+/// and for `near` up to a `maxDistance`, and unsound for the ones that match
+/// *away* from the reference.
 enum Candidates {
     /// Every entry in the partition.
     WholePartition,
-    /// Only the entries whose envelope meets the reference envelope.
-    EnvelopeIntersecting,
+    /// Only the entries whose envelope meets the region.
+    Envelope(NearEnvelope),
 }
 
-/// Candidate set a relation admits.
-const fn candidates_for(georel: &GeoRel) -> Candidates {
+/// The candidate set a relation admits, or `None` when the index should not
+/// narrow at all.
+///
+/// A reference with no coordinates has no region, so every entry is a
+/// candidate.
+fn candidates_for(georel: &GeoRel, reference: &Geometry) -> Option<Candidates> {
     match georel {
-        // No bounding-box cutoff is sound for `near`: `minDistance` matches
-        // entries that are arbitrarily far from the reference envelope.
-        GeoRel::Near { .. } |
         // `disjoint` matches precisely the entries the envelope test discards.
-        GeoRel::Disjoint => Candidates::WholePartition,
-        GeoRel::Within | GeoRel::Contains | GeoRel::Intersects | GeoRel::Equals | GeoRel::Overlaps => Candidates::EnvelopeIntersecting,
+        GeoRel::Disjoint => Some(Candidates::WholePartition),
+        // A `minDistance` alone matches entries arbitrarily far from the
+        // reference, so no envelope bounds it, and every entry of the partition
+        // would be a candidate the store has to bind and re-check. Declining
+        // lets the store evaluate the relation over its own rows instead.
+        GeoRel::Near { max_distance: None, .. } => None,
+        // Clause 4.10 `near` with a `maxDistance` reaches only what lies within
+        // that distance of the reference, measured along great-circle edges on
+        // the spheroid; the envelope covers all of it.
+        GeoRel::Near {
+            max_distance: Some(max_distance),
+            ..
+        } => Some(great_circle_bounds(reference).map_or(Candidates::WholePartition, |rect| {
+            Candidates::Envelope(NearEnvelope::around(rect, *max_distance))
+        })),
+        GeoRel::Within | GeoRel::Contains | GeoRel::Intersects | GeoRel::Equals | GeoRel::Overlaps => Some(
+            reference
+                .bounding_rect()
+                .map_or(Candidates::WholePartition, |rect| Candidates::Envelope(NearEnvelope::Single(rect))),
+        ),
     }
 }
 
@@ -172,7 +200,7 @@ const fn candidates_for(georel: &GeoRel) -> Candidates {
 ///
 /// The index is an optimisation, so it may hand the store more candidates than
 /// match but never fewer. That rules the in-memory predicate out wherever its
-/// reading is strictly stronger than the store's.
+/// reading is not the store's to the last bit.
 enum Refinement {
     /// The in-memory relation is the predicate the store applies.
     Exact,
@@ -188,19 +216,34 @@ const fn refinement_for(georel: &GeoRel) -> Refinement {
         // boundaries and is therefore strictly stronger than the `ST_Equals`
         // set equality the store applies. Refining with it would drop entities
         // the store counts as equal.
-        GeoRel::Equals => Refinement::EnvelopeOnly,
-        GeoRel::Within | GeoRel::Contains | GeoRel::Intersects | GeoRel::Disjoint | GeoRel::Overlaps | GeoRel::Near { .. } => Refinement::Exact,
+        GeoRel::Equals |
+        // The in-memory `near` measures what `geography` measures, but decides
+        // containment on the plane and runs its own geodesic arithmetic, so a
+        // pair at the threshold can fall either side of it. The store
+        // re-applies the relation to every candidate anyway, and refining
+        // would make an answer depend on two implementations agreeing exactly,
+        // which is how a centroid reading of `near` once dropped every building
+        // whose middle was out of range but whose nearest wall was not.
+        GeoRel::Near { .. } => Refinement::EnvelopeOnly,
+        GeoRel::Within | GeoRel::Contains | GeoRel::Intersects | GeoRel::Disjoint | GeoRel::Overlaps => Refinement::Exact,
     }
 }
 
 /// Run the clause 4.10 predicate over whichever candidates the relation admits.
-fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry) -> HashSet<Identifier> {
-    let candidates: Vec<&SpatialEntry> = match candidates_for(georel) {
+///
+/// An entry that straddles the antimeridian can meet both halves of a split
+/// envelope; the set reports it once.
+fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry, candidates: &Candidates) -> HashSet<Identifier> {
+    let entries: Vec<&SpatialEntry> = match candidates {
         Candidates::WholePartition => tree.iter().collect(),
-        Candidates::EnvelopeIntersecting => tree.locate_in_envelope_intersecting(geometry_envelope(reference)).collect(),
+        Candidates::Envelope(envelope) => envelope
+            .rects()
+            .iter()
+            .flat_map(|rect| tree.locate_in_envelope_intersecting(AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y])))
+            .collect(),
     };
 
-    candidates
+    entries
         .into_iter()
         .filter(|entry| match refinement_for(georel) {
             Refinement::Exact => matches(georel, &entry.geometry, reference),
@@ -209,16 +252,6 @@ fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry) -
         // clone: the returned set owns its identifiers, which outlive the tree borrow
         .map(|entry| entry.entity_id.clone())
         .collect()
-}
-
-/// The envelope of a reference geometry, or one covering the plane when it has
-/// none — which turns the prefilter into a full scan rather than into an empty
-/// answer.
-fn geometry_envelope(geometry: &Geometry) -> AABB<[f64; 2]> {
-    match geometry.bounding_rect() {
-        Some(rect) => AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]),
-        None => AABB::from_corners([f64::NEG_INFINITY, f64::NEG_INFINITY], [f64::INFINITY, f64::INFINITY]),
-    }
 }
 
 #[cfg(test)]
@@ -348,20 +381,107 @@ mod tests {
         assert_eq!(index.query(&key(), &loose, &point(0.0, 0.0)), Some(HashSet::from([id])));
     }
 
+    fn near(max_distance: Option<&str>, min_distance: Option<&str>) -> GeoRel {
+        GeoRel::Near {
+            max_distance: max_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
+            min_distance: min_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
+        }
+    }
+
+    /// A polygon whose rings are the given longitude/latitude boxes.
+    fn boxes(rings: &[(f64, f64, f64, f64)]) -> Vec<PolygonRings> {
+        rings
+            .iter()
+            .map(|&(west, south, east, north)| {
+                PolygonRings::new(vec![
+                    LinearRing::try_new(
+                        [(west, south), (east, south), (east, north), (west, north), (west, south)]
+                            .into_iter()
+                            .map(|(x, y)| Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"))
+                            .collect(),
+                    )
+                    .expect("a test box is a closed ring"),
+                ])
+            })
+            .collect()
+    }
+
+    /// Bremen, the reference point the minimum-distance fixtures sit around.
+    fn bremen() -> Geometry {
+        point(8.8072, 53.0758)
+    }
+
+    /// The `minDistance` half of a band is the store's to decide: the index
+    /// hands it every entry within the `maxDistance` envelope.
     #[test]
-    fn near_matches_only_inside_the_band_the_two_distances_describe() {
+    fn near_with_both_bounds_returns_the_max_distance_envelope_candidates() {
         let index = seeded();
+        let close = uri("urn:ngsi-ld:Vehicle:100m");
         let inside = uri("urn:ngsi-ld:Vehicle:500m");
         // ~0.001 degrees is ~111 m at the equator.
-        index.replace_entity(uri("urn:ngsi-ld:Vehicle:100m"), [(key(), point(0.0009, 0.0))]);
+        index.replace_entity(close.clone(), [(key(), point(0.0009, 0.0))]);
         index.replace_entity(inside.clone(), [(key(), point(0.0045, 0.0))]);
         index.replace_entity(uri("urn:ngsi-ld:Vehicle:2000m"), [(key(), point(0.018, 0.0))]);
 
-        let georel = GeoRel::Near {
-            max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
-            min_distance: Some(PositiveDistance::from_str("300").expect("positive distance")),
-        };
-        assert_eq!(index.query(&key(), &georel, &point(0.0, 0.0)), Some(HashSet::from([inside])));
+        assert_eq!(
+            index.query(&key(), &near(Some("1000"), Some("300")), &point(0.0, 0.0)),
+            Some(HashSet::from([close, inside]))
+        );
+    }
+
+    /// Clause 4.10 `near` measures the minimum distance: a building whose
+    /// nearest wall is 100.06 m away is within 150 m, though its centroid is
+    /// 170.10 m away.
+    #[test]
+    fn near_finds_a_polygon_whose_nearest_wall_is_in_range() {
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Building:east");
+        let east_square = Geometry::new(GeometryForm::Polygon(boxes(&[(8.808_693, 53.075_171, 8.810_783, 53.076_429)]).remove(0)));
+        index.replace_entity(id.clone(), [(key(), east_square)]);
+        assert_eq!(index.query(&key(), &near(Some("150"), None), &bremen()), Some(HashSet::from([id])));
+    }
+
+    /// Whether an envelope candidate is within the distance is the store's
+    /// decision, so a point inside the box but outside the circle is handed on.
+    #[test]
+    fn near_hands_the_store_every_envelope_candidate() {
+        let index = seeded();
+        // About 184 m from Bremen, in the corner of the 150 m box.
+        let id = uri("urn:ngsi-ld:Building:corner");
+        index.replace_entity(id.clone(), [(key(), point(8.8091, 53.0770))]);
+        assert_eq!(index.query(&key(), &near(Some("150"), None), &bremen()), Some(HashSet::from([id])));
+    }
+
+    #[test]
+    fn a_min_distance_only_near_declines_to_narrow() {
+        let index = seeded();
+        index.replace_entity(uri("urn:ngsi-ld:Building:any"), [(key(), bremen())]);
+        assert_eq!(index.query(&key(), &near(None, Some("150")), &bremen()), None);
+    }
+
+    #[test]
+    fn near_across_the_antimeridian_finds_entries_on_both_sides() {
+        let index = seeded();
+        let east = uri("urn:ngsi-ld:Building:east-of-180");
+        let west = uri("urn:ngsi-ld:Building:west-of-180");
+        index.replace_entity(east.clone(), [(key(), point(179.9995, -17.0))]);
+        index.replace_entity(west.clone(), [(key(), point(-179.9995, -17.0))]);
+        assert_eq!(
+            index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0)),
+            Some(HashSet::from([east, west]))
+        );
+    }
+
+    #[test]
+    fn a_seam_straddling_entry_is_reported_once() {
+        let index = seeded();
+        let id = uri("urn:ngsi-ld:Building:straddling");
+        let cut = Geometry::new(GeometryForm::MultiPolygon(boxes(&[
+            (179.9990, -17.0005, 180.0, -16.9995),
+            (-180.0, -17.0005, -179.9990, -16.9995),
+        ])));
+        index.replace_entity(id.clone(), [(key(), cut)]);
+        assert_eq!(index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0)), Some(HashSet::from([id])));
     }
 
     #[test]

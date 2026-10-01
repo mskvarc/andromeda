@@ -62,8 +62,10 @@ impl EntityQueryService {
     /// re-applies the clause 4.10 relation to every one.
     ///
     /// Returns the query unchanged when it is not geo-accelerable, when no index
-    /// may narrow it, or for a Snapshot branch, which the live index does not
-    /// describe; the store then evaluates every instance in full.
+    /// may narrow it, when the index declines the relation -- a `near` with
+    /// only a `minDistance`, which no envelope bounds -- or for a Snapshot
+    /// branch, which the live index does not describe; the store then
+    /// evaluates every instance in full.
     ///
     /// [`SpatialAcceleration`]: crate::spatial_acceleration::SpatialAcceleration
     pub(crate) async fn spatial_prefilter(&self, target: &ContextTarget, compiled: &Arc<CompiledEntityQuery>) -> Arc<CompiledEntityQuery> {

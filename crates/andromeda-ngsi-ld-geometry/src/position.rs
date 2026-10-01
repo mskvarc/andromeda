@@ -15,7 +15,7 @@
 //! "a valid Geometry" under RFC 7946, and clause 4.10 holds a reference
 //! geometry to RFC 7946 section 3.1.1. Left in, such a value would mean three
 //! different things: the planar georels read it as given, `PostGIS` geography
-//! silently wraps or reflects it for `near`, and the in-memory Haversine turns
+//! silently wraps or reflects it for `near`, and the in-memory distance turns
 //! a latitude past a pole into a wrong or NaN distance. Altitude is height
 //! above or below the ellipsoid and has no such bound.
 
