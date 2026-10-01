@@ -7,8 +7,8 @@
 //! `RequestEntityTooLarge`, and clause 5.5.6 makes a query "so complex that
 //! cannot be resolved by an NGSI-LD system" a `TooComplexQuery`, which Table
 //! 6.3.2-1 answers 403. The broker therefore budgets the JSON values of one
-//! request (1,000,000 by default), the JSON values of one entity outside its
-//! geometries and JSON literals (100,000) and the positions of one geometry
+//! request (4,000,000 by default), the JSON values of one entity outside its
+//! geometries and JSON literals (1,000,000) and the positions of one geometry
 //! (100,000), refusing what exceeds them before it is expanded, while a
 //! geometry at the budget is created, read, queried and deleted intact.
 //!
@@ -28,10 +28,10 @@ use std::{f64::consts::TAU, fmt::Write, time::Duration};
 pub(crate) const GEOMETRY_POSITIONS: usize = 100_000;
 
 /// The default budget of JSON values in one entity.
-const ENTITY_JSON_VALUES: usize = 100_000;
+const ENTITY_JSON_VALUES: usize = 1_000_000;
 
 /// The default budget of JSON values in one request.
-const REQUEST_JSON_VALUES: usize = 1_000_000;
+const REQUEST_JSON_VALUES: usize = 4_000_000;
 
 /// How long one exchange of a large payload may take.
 pub(crate) const LARGE_EXCHANGE: Duration = Duration::from_secs(300);

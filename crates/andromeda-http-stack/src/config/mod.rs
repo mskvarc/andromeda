@@ -34,10 +34,10 @@ use std::num::NonZeroUsize;
 use thiserror::Error;
 use toml_comment::TomlComment;
 
-/// The default most JSON values one request payload may hold: ten entities at
+/// The default most JSON values one request payload may hold: four entities at
 /// the default entity budget, or one geometry of the default position budget
-/// (three values a position) with room around it.
-const DEFAULT_MAX_REQUEST_JSON_VALUES: NonZeroUsize = NonZeroUsize::MIN.saturating_add(999_999);
+/// (three values a position) with ample room around it.
+const DEFAULT_MAX_REQUEST_JSON_VALUES: NonZeroUsize = NonZeroUsize::MIN.saturating_add(3_999_999);
 
 /// The default most payloads decoded beside the executor at once.
 const DEFAULT_MAX_CONCURRENT_BLOCKING_DECODES: NonZeroUsize = NonZeroUsize::MIN.saturating_add(3);
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn the_default_request_json_value_limit_is_one_million() {
-        pretty_assertions::assert_eq!(HttpStackConfig::default().max_request_json_values.get(), 1_000_000);
+        pretty_assertions::assert_eq!(HttpStackConfig::default().max_request_json_values.get(), 4_000_000);
     }
 
     #[test]
@@ -258,7 +258,7 @@ mod tests {
         }
         assert!(rendered.contains("request_timeout = \""), "{rendered}");
         assert!(rendered.contains("max_request_body = \""), "{rendered}");
-        assert!(rendered.contains("max_request_json_values = 1000000"), "{rendered}");
+        assert!(rendered.contains("max_request_json_values = 4000000"), "{rendered}");
         assert!(rendered.contains("blocking_decode_threshold = \""), "{rendered}");
     }
 
