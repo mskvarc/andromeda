@@ -31,20 +31,29 @@ pub enum EntityMapError {
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
+    /// The datastore could not be reached, or the connection to it was lost.
+    ///
+    /// Not a fault of the request: nothing of it is known to have persisted, so
+    /// the identical request can be sent again once the store is back. It is
+    /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore is temporarily unavailable; retry shortly")]
+    StoreUnavailable,
     /// Policy generated a value that violated a domain invariant.
     #[error("entity map invariant failed: {0}")]
     Invariant(#[from] EntityMapInvariant),
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
-/// A saturated store is backpressure the client can retry, so it keeps its own
-/// retryable category; every other failure is a storage fault.
+/// A saturated store and a store that cannot be reached are conditions the
+/// client can retry, so each keeps its own retryable category; every other
+/// failure is a storage fault.
 impl From<PersistenceFailure> for EntityMapError {
     fn from(failure: PersistenceFailure) -> EntityMapError {
         match failure {
             PersistenceFailure::Saturated => EntityMapError::StoreSaturated,
+            PersistenceFailure::Unavailable => EntityMapError::StoreUnavailable,
             fault @ (PersistenceFailure::RolledBack
-            | PersistenceFailure::Unavailable
+            | PersistenceFailure::Misconfigured
             | PersistenceFailure::ConstraintViolated
             | PersistenceFailure::StatementRejected
             | PersistenceFailure::RecordMissing
@@ -77,6 +86,20 @@ mod tests {
         assert!(matches!(
             EntityMapError::from(PersistenceFailure::Undecodable),
             EntityMapError::Persistence(PersistenceFailure::Undecodable)
+        ));
+    }
+
+    /// A store that cannot be reached is retryable, answered 503 rather than
+    /// the 500 of a fault; a configuration no retry mends stays a fault.
+    #[test]
+    fn an_unreachable_store_keeps_its_retryable_category() {
+        assert!(matches!(
+            EntityMapError::from(PersistenceFailure::Unavailable),
+            EntityMapError::StoreUnavailable
+        ));
+        assert!(matches!(
+            EntityMapError::from(PersistenceFailure::Misconfigured),
+            EntityMapError::Persistence(PersistenceFailure::Misconfigured)
         ));
     }
 }

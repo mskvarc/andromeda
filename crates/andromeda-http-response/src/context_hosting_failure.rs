@@ -7,40 +7,26 @@
 //! fails; how it fails depends on why, and every route binding classifies it
 //! the same way.
 
-use crate::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
+use crate::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, store_failure::classify_store_failure};
 use andromeda_jsonld::compound_context_host::ContextHostingError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 
 /// The summary disclosed for a hosting failure the client cannot act on.
 const CONTEXT_HOSTING: InternalFailureSummary = InternalFailureSummary::new("the response @context could not be hosted");
 
 /// Classify a compound request context that could not be hosted.
 ///
-/// A saturated store and a write the store kept rolling back are backpressure
-/// the client can retry, answered 503 with `Retry-After`; a request naming no
+/// A saturated store, a write the store kept rolling back and a store that
+/// cannot be reached are conditions the client can retry, answered 503 with
+/// `Retry-After`; a request naming no
 /// authority is the client's malformed request, answered 400; everything else
 /// is a broker fault, logged here and answered 500.
 #[must_use]
 pub fn classify_context_hosting_error(error: &ContextHostingError) -> ClassifiedReport {
     match error {
         ContextHostingError::NoRequestAuthority => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
-        ContextHostingError::Persistence(PersistenceFailure::Saturated) => ClassifiedReport::store_saturated(error.to_string()),
-        ContextHostingError::Persistence(PersistenceFailure::RolledBack) => ClassifiedReport::transaction_contended(error.to_string()),
-        ContextHostingError::Persistence(
-            PersistenceFailure::Unavailable
-            | PersistenceFailure::ConstraintViolated
-            | PersistenceFailure::StatementRejected
-            | PersistenceFailure::RecordMissing
-            | PersistenceFailure::Undecodable
-            | PersistenceFailure::Unencodable
-            | PersistenceFailure::StatementUnbuildable
-            | PersistenceFailure::CapacityExceeded
-            | PersistenceFailure::SchemaMismatch
-            | PersistenceFailure::ContractBroken,
-        )
-        | ContextHostingError::NoHost
-        | ContextHostingError::MintedUrlNotIri(_) => ClassifiedReport::internal(error, CONTEXT_HOSTING),
+        ContextHostingError::Persistence(failure) => classify_store_failure(*failure, error, CONTEXT_HOSTING),
+        ContextHostingError::NoHost | ContextHostingError::MintedUrlNotIri(_) => ClassifiedReport::internal(error, CONTEXT_HOSTING),
     }
 }
 
@@ -50,6 +36,17 @@ mod tests {
     use andromeda_jsonld::compound_context_host::ContextHostingError;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use std::time::Duration;
+
+    #[test]
+    fn an_unreachable_store_is_a_retryable_503() {
+        let report = classify_context_hosting_error(&ContextHostingError::Persistence(PersistenceFailure::Unavailable));
+        pretty_assertions::assert_eq!(report.classification(), ProblemClassification::ServiceUnavailable);
+        pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(5)));
+        let report = classify_context_hosting_error(&ContextHostingError::Persistence(PersistenceFailure::Misconfigured));
+        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
+        pretty_assertions::assert_eq!(report.retry_after(), None);
+    }
 
     #[test]
     fn a_saturated_or_contended_store_is_a_retryable_503() {
@@ -70,7 +67,10 @@ mod tests {
 
     #[test]
     fn a_missing_host_or_a_store_fault_is_an_internal_error() {
-        for error in [ContextHostingError::NoHost, ContextHostingError::Persistence(PersistenceFailure::Unavailable)] {
+        for error in [
+            ContextHostingError::NoHost,
+            ContextHostingError::Persistence(PersistenceFailure::StatementRejected),
+        ] {
             pretty_assertions::assert_eq!(classify_context_hosting_error(&error).error_type(), NgsiLdErrorType::InternalError);
         }
     }

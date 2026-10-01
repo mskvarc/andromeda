@@ -1,8 +1,14 @@
 //! Exhaustive HTTP classification for context-source registration failures.
 
 use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
-use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
+use andromeda_http_response::{
+    classified_report::ClassifiedReport,
+    internal_failure_summary::InternalFailureSummary,
+    jsonld_failure::classify_jsonld_error,
+    parameter_failure::classify_parameter_error,
+    problem_response::ProblemResponse,
+    query_failure::classify_query_error,
+};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
@@ -31,6 +37,7 @@ impl RegistrationHttpClassify for RegistrationError {
             RegistrationError::Query(source) => classify_query_error(source),
             // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
             RegistrationError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
+            RegistrationError::StoreUnavailable => ClassifiedReport::store_unavailable(self.to_string()),
             RegistrationError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the registration store is unavailable")),
             RegistrationError::Representation(_) | RegistrationError::Internal(_) => {
                 ClassifiedReport::internal(self, InternalFailureSummary::new("internal registration error"))
@@ -130,14 +137,17 @@ mod tests {
                 RegistrationError::Conflict(RegistrationConflictReason::LocalEntityMatchesRedirect),
                 NgsiLdErrorType::Conflict,
             ),
-            (RegistrationError::Persistence(PersistenceFailure::Unavailable), NgsiLdErrorType::InternalError),
+            (
+                RegistrationError::Persistence(PersistenceFailure::StatementRejected),
+                NgsiLdErrorType::InternalError,
+            ),
         ] {
             let report = error.classify_for_registration_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
                 pretty_assertions::assert_eq!(report.detail(), "the registration store is unavailable");
                 assert!(
-                    !report.detail().contains(&PersistenceFailure::Unavailable.to_string()),
+                    !report.detail().contains(&PersistenceFailure::StatementRejected.to_string()),
                     "the raw cause leaked: {}",
                     report.detail()
                 );
@@ -165,5 +175,18 @@ mod tests {
         pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::PAYLOAD_TOO_LARGE);
         assert!(report.detail().contains("location"), "{}", report.detail());
         assert!(report.detail().contains("1000000"), "{}", report.detail());
+    }
+
+    /// Clause 5.5.6 with RFC 7231 6.6.4: a store that cannot be reached is a
+    /// retryable 503 with `Retry-After`, never the 500 of a fault.
+    #[test]
+    fn an_unreachable_store_is_a_retryable_503() {
+        use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
+        use std::time::Duration;
+
+        let report = RegistrationError::StoreUnavailable.classify_for_registration_http();
+        pretty_assertions::assert_eq!(report.classification(), ProblemClassification::ServiceUnavailable);
+        pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(5)));
+        pretty_assertions::assert_eq!(report.detail(), "the datastore is temporarily unavailable; retry shortly");
     }
 }

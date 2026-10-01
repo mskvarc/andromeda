@@ -93,6 +93,13 @@ pub enum EntityError {
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
+    /// The datastore could not be reached, or the connection to it was lost.
+    ///
+    /// Not a fault of the request: nothing of it is known to have persisted, so
+    /// the identical request can be sent again once the store is back. It is
+    /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore is temporarily unavailable; retry shortly")]
+    StoreUnavailable,
     /// The datastore rolled the write back to break a deadlock or a
     /// serialization conflict with a concurrent transaction, on every attempt
     /// the committer made.
@@ -120,6 +127,7 @@ impl From<CommitError> for EntityError {
             // `Commit` variant.
             CommitError::StoreSaturated => EntityError::StoreSaturated,
             CommitError::TransactionContended => EntityError::TransactionContended,
+            CommitError::StoreUnavailable => EntityError::StoreUnavailable,
             failure @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence(_)
             | CommitError::Invariant(_)
@@ -130,15 +138,17 @@ impl From<CommitError> for EntityError {
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
-/// A saturated store and a transaction rolled back under contention are
-/// backpressure the client can retry, so each keeps its own retryable category;
-/// only a fault becomes [`EntityError::Persistence`].
+/// A saturated store, a transaction rolled back under contention and a store
+/// that cannot be reached are conditions the client can retry, so each keeps
+/// its own retryable category; only a fault becomes
+/// [`EntityError::Persistence`].
 impl From<PersistenceFailure> for EntityError {
     fn from(failure: PersistenceFailure) -> EntityError {
         match failure {
             PersistenceFailure::Saturated => EntityError::StoreSaturated,
+            PersistenceFailure::Unavailable => EntityError::StoreUnavailable,
             PersistenceFailure::RolledBack => EntityError::TransactionContended,
-            fault @ (PersistenceFailure::Unavailable
+            fault @ (PersistenceFailure::Misconfigured
             | PersistenceFailure::ConstraintViolated
             | PersistenceFailure::StatementRejected
             | PersistenceFailure::RecordMissing
@@ -218,5 +228,21 @@ mod tests {
             error,
             EntityError::Validation(EntityValidationReason::CommitRefused(SubmissionRefusal::UnitCodeUnregistered))
         ));
+    }
+
+    /// A store that cannot be reached is retryable, answered 503 rather than
+    /// the 500 of a fault; a configuration no retry mends stays a fault.
+    #[test]
+    fn an_unreachable_store_keeps_its_retryable_category() {
+        assert!(matches!(EntityError::from(PersistenceFailure::Unavailable), EntityError::StoreUnavailable));
+        assert!(matches!(
+            EntityError::from(PersistenceFailure::Misconfigured),
+            EntityError::Persistence(PersistenceFailure::Misconfigured)
+        ));
+    }
+
+    #[test]
+    fn an_unreachable_store_at_commit_stays_retryable() {
+        assert!(matches!(EntityError::from(CommitError::StoreUnavailable), EntityError::StoreUnavailable));
     }
 }

@@ -1,8 +1,14 @@
-//! Exhaustive HTTP classification of failures owned by entity policy.
+//! Exhaustive HTTP classification of failures owned by entity policy, shared
+//! by every binding that answers one.
 
+use crate::{
+    classified_report::ClassifiedReport,
+    internal_failure_summary::InternalFailureSummary,
+    jsonld_failure::classify_jsonld_error,
+    parameter_failure::classify_parameter_error,
+    query_failure::classify_query_error,
+};
 use andromeda_entity::error::EntityError;
-use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
 /// Classify one entity-policy failure for both single and batch HTTP reporting.
@@ -34,6 +40,9 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         // Nothing of the write persisted and it can be sent again unchanged:
         // a conflict with concurrent transactions is not a broker fault.
         EntityError::TransactionContended => ClassifiedReport::transaction_contended(error.to_string()),
+        // The store could not be reached: nothing of the request is known to
+        // have persisted, and it can be sent again once the store is back.
+        EntityError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         EntityError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to commit the entity write")),
         EntityError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the entity store is unavailable")),
         EntityError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal entity error")),
@@ -42,7 +51,7 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_error::classify_entity_error;
+    use crate::{batch_projection::batch_entity_error, entity_failure::classify_entity_error};
     use andromeda_entity::{
         entity_invariant::EntityInvariant,
         entity_operation_unsupported::EntityOperationUnsupported,
@@ -50,7 +59,6 @@ mod tests {
         error::EntityError,
         residual_predicate::ResidualPredicate,
     };
-    use andromeda_http_response::batch_projection::batch_entity_error;
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryOverLimit, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
@@ -117,8 +125,8 @@ mod tests {
     fn internal_entity_variants_never_disclose_their_detail() {
         for (error, secret, expected_detail) in [
             (
-                EntityError::Persistence(PersistenceFailure::Unavailable),
-                "unreachable",
+                EntityError::Persistence(PersistenceFailure::StatementRejected),
+                "rejected",
                 "the entity store is unavailable",
             ),
             (
@@ -154,11 +162,16 @@ mod tests {
     #[test]
     fn a_load_shed_answer_is_a_503_internal_error_with_retry_after() {
         // Clause 5.5.6: a failure the client did not cause -- a saturated pool,
-        // a transaction every retry lost to a concurrent one -- is an
+        // a transaction every retry lost to a concurrent one, a store that
+        // cannot be reached -- is an
         // InternalError, and clause 5.5.3 allows no `type` outside clause
         // 5.5.2. Only the binding status says the identical request can be
-        // sent again shortly.
-        for source in [EntityError::StoreSaturated, EntityError::TransactionContended] {
+        // sent again shortly, and `Retry-After` how soon.
+        for (source, retry_after) in [
+            (EntityError::StoreSaturated, Duration::from_secs(1)),
+            (EntityError::TransactionContended, Duration::from_secs(1)),
+            (EntityError::StoreUnavailable, Duration::from_secs(5)),
+        ] {
             let report = classify_entity_error(&source);
             let classification = report.classification();
             pretty_assertions::assert_eq!(classification, ProblemClassification::ServiceUnavailable, "{source}");
@@ -169,7 +182,7 @@ mod tests {
             );
             pretty_assertions::assert_eq!(classification.title(), NgsiLdErrorType::InternalError.title(), "{source}");
             pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE, "{source}");
-            pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(1)), "{source}");
+            pretty_assertions::assert_eq!(report.retry_after(), Some(retry_after), "{source}");
         }
     }
 

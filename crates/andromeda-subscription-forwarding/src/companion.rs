@@ -362,6 +362,7 @@ fn into_subscription_error(error: SubscriptionForwardingError) -> SubscriptionEr
         // Saturation stays saturation across the boundary so it is still shed as
         // a 503 rather than folded into a persistence fault.
         SubscriptionForwardingError::StoreSaturated => SubscriptionError::StoreSaturated,
+        SubscriptionForwardingError::StoreUnavailable => SubscriptionError::StoreUnavailable,
         SubscriptionForwardingError::Persistence(failure) => SubscriptionError::from(failure),
         SubscriptionForwardingError::JsonLd(error) => SubscriptionError::JsonLd(error),
         SubscriptionForwardingError::Representation(error) => SubscriptionError::Representation(error),

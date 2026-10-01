@@ -79,7 +79,7 @@ pub(crate) async fn apply(
         .enumerate()
         .map(|(position, group)| event(base, position, group, &dictionary))
         .collect::<Result<Vec<NewNotificationEvent<'_>>, CommitError>>()?;
-    insert_events_in_tx(tx, target, record, &events).await.map_err(context_store)?;
+    insert_events_in_tx(tx, target, record, &events).await.map_err(|error| context_store(error))?;
     let advance = u32::try_from(events.len()).map_err(|error| CommitError::from(CommitInvariant::ConsequenceCount(error)))?;
     let next = base
         .advanced_by(advance)

@@ -87,6 +87,7 @@ mod request_entity_too_large;
 mod resting_tenant_obligations;
 mod scope_null_sentinel;
 mod scoped_user_context;
+mod store_unavailable_answers;
 mod subscription_endpoint_members;
 mod subscription_expiry_notifications;
 mod subscription_filter_encoding;

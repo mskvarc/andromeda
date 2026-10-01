@@ -1,12 +1,14 @@
 //! Exhaustive HTTP classification for subscription failures.
 
 use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
-use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
     context_hosting_failure::classify_context_hosting_error,
     internal_failure_summary::InternalFailureSummary,
+    jsonld_failure::classify_jsonld_error,
+    parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
+    query_failure::classify_query_error,
 };
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -36,6 +38,7 @@ impl SubscriptionHttpClassify for SubscriptionError {
             SubscriptionError::Query(source) => classify_query_error(source),
             // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
             SubscriptionError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
+            SubscriptionError::StoreUnavailable => ClassifiedReport::store_unavailable(self.to_string()),
             SubscriptionError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the subscription store is unavailable")),
             SubscriptionError::Representation(_) | SubscriptionError::Internal(_) => {
                 ClassifiedReport::internal(self, InternalFailureSummary::new("internal subscription error"))
@@ -130,14 +133,17 @@ mod tests {
                 NgsiLdErrorType::ResourceNotFound,
             ),
             (SubscriptionError::AlreadyExists { identifier }, NgsiLdErrorType::AlreadyExists),
-            (SubscriptionError::Persistence(PersistenceFailure::Unavailable), NgsiLdErrorType::InternalError),
+            (
+                SubscriptionError::Persistence(PersistenceFailure::StatementRejected),
+                NgsiLdErrorType::InternalError,
+            ),
         ] {
             let report = error.classify_for_subscription_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
                 pretty_assertions::assert_eq!(report.detail(), "the subscription store is unavailable");
                 assert!(
-                    !report.detail().contains(&PersistenceFailure::Unavailable.to_string()),
+                    !report.detail().contains(&PersistenceFailure::StatementRejected.to_string()),
                     "the raw cause leaked: {}",
                     report.detail()
                 );
@@ -165,7 +171,10 @@ mod tests {
     /// 500 `InternalError`, with the cause kept from the detail.
     #[test]
     fn a_missing_or_failed_context_host_is_an_internal_error_without_its_cause() {
-        for error in [ContextHostingError::NoHost, ContextHostingError::Persistence(PersistenceFailure::Unavailable)] {
+        for error in [
+            ContextHostingError::NoHost,
+            ContextHostingError::Persistence(PersistenceFailure::StatementRejected),
+        ] {
             let cause = error.to_string();
             let report = SubscriptionError::ContextHosting(error).classify_for_subscription_http();
             pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
@@ -190,5 +199,18 @@ mod tests {
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::RequestEntityTooLarge);
         pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::PAYLOAD_TOO_LARGE);
         assert!(report.detail().contains("1000000"), "{}", report.detail());
+    }
+
+    /// Clause 5.5.6 with RFC 7231 6.6.4: a store that cannot be reached is a
+    /// retryable 503 with `Retry-After`, never the 500 of a fault.
+    #[test]
+    fn an_unreachable_store_is_a_retryable_503() {
+        use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
+        use std::time::Duration;
+
+        let report = SubscriptionError::StoreUnavailable.classify_for_subscription_http();
+        pretty_assertions::assert_eq!(report.classification(), ProblemClassification::ServiceUnavailable);
+        pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(5)));
+        pretty_assertions::assert_eq!(report.detail(), "the datastore is temporarily unavailable; retry shortly");
     }
 }

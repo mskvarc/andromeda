@@ -7,10 +7,11 @@ use crate::{
     state::TenancyRouteState,
     tenant_response::{build_tenant, keyset_from_cursor},
 };
-use andromeda_http_extraction::{classification::classify_parameter_error, query::ValidatedQuery};
+use andromeda_http_extraction::query::ValidatedQuery;
 use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_results_count::NgsiLdResultsCount};
 use andromeda_http_response::{
     pagination::{CursorPointers, PageLinks, append_pagination_links},
+    parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;

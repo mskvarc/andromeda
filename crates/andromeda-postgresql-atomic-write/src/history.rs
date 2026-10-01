@@ -15,5 +15,5 @@ pub(crate) async fn apply(
     record: &WriteRecord,
     intents: &[TemporalAppendIntent],
 ) -> Result<(), AttemptFailure> {
-    recorder.record_intents_in_tx(tx, target, record, intents).await.map_err(history)
+    recorder.record_intents_in_tx(tx, target, record, intents).await.map_err(|error| history(error))
 }

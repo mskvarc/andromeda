@@ -45,6 +45,7 @@ impl AttemptFailure {
             whole @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence(_)
             | CommitError::StoreSaturated
+            | CommitError::StoreUnavailable
             | CommitError::TransactionContended
             | CommitError::ReplayLeaseLost { .. }
             | CommitError::Invariant(_)

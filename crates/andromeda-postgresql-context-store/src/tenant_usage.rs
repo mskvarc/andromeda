@@ -8,7 +8,7 @@
 use crate::{store_fault::persistence_failure, tenant_database::DatabaseUrl};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_pool::configure_pool_options;
+use andromeda_postgresql_pool::pool_options::configure_pool_options;
 use andromeda_postgresql_schema::{current::EntitySearch, snapshot::Snapshots};
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,

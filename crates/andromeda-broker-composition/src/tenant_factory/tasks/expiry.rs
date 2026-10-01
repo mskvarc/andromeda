@@ -317,7 +317,7 @@ fn register_entity_map_expiry(
 
 const fn classify_entity_map_failure(error: EntityMapError) -> TaskFailure<EntityMapError> {
     let class = match &error {
-        EntityMapError::Persistence(_) | EntityMapError::StoreSaturated => FailureClass::Transient,
+        EntityMapError::Persistence(_) | EntityMapError::StoreSaturated | EntityMapError::StoreUnavailable => FailureClass::Transient,
         EntityMapError::Invariant(_) => FailureClass::InvariantViolation,
         EntityMapError::NotFound { .. } | EntityMapError::RequestChanged { .. } => FailureClass::Permanent,
     };

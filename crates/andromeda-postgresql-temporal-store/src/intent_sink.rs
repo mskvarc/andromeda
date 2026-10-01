@@ -196,8 +196,8 @@ impl IntentRows {
 #[async_trait]
 impl TemporalHistorySink for PostgresTemporalHistorySink {
     async fn append(&self, target: &ContextTarget, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
-        let mut tx = self.repository.pool.begin().await.map_err(persistence)?;
-        persist_write_record(&mut tx, &intent.record).await.map_err(persistence)?;
+        let mut tx = self.repository.pool.begin().await.map_err(|error| persistence(error))?;
+        persist_write_record(&mut tx, &intent.record).await.map_err(|error| persistence(error))?;
         // No claim gate: a replay of the same intent always reaches this call
         // again, and its rows collide with the ones the first attempt wrote on
         // their row-level `ON CONFLICT ... DO NOTHING` constraints instead of
@@ -205,8 +205,8 @@ impl TemporalHistorySink for PostgresTemporalHistorySink {
         // path the native commit drives many entities through.
         PostgresTemporalHistorySink::append_entries_batch(&self.repository, &mut tx, target, slice::from_ref(intent))
             .await
-            .map_err(persistence)?;
-        tx.commit().await.map_err(persistence)?;
+            .map_err(|error| persistence(error))?;
+        tx.commit().await.map_err(|error| persistence(error))?;
         Ok(())
     }
 }

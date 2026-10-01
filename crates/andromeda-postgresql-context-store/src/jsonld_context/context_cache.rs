@@ -74,12 +74,12 @@ impl ContextCache for JsonLdContextRepository {
             payload.clone(), // clone: the bound value owns the JSON for the round trip
             lifetime.as_seconds(),
         )
-        .map_err(write_failure)?;
+        .map_err(|error| write_failure(error))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .execute(&self.pool)
             .await
-            .map_err(write_failure)?;
+            .map_err(|error| write_failure(error))?;
         Ok(())
     }
 }
@@ -114,7 +114,7 @@ fn write_failure(error: impl StoreFault) -> ContextCacheError {
 /// from it would add nothing. A refresh of the same URL keeps the identifier
 /// the first download minted, since the upsert leaves the `id` column alone.
 fn cached_context_identifier() -> Result<JsonLdContextId, ContextCacheError> {
-    JsonLdContextId::mint().map_err(write_failure)
+    JsonLdContextId::mint().map_err(|error| write_failure(error))
 }
 
 #[cfg(test)]

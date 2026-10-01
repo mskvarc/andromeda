@@ -70,6 +70,13 @@ pub enum SnapshotError {
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
+    /// The datastore could not be reached, or the connection to it was lost.
+    ///
+    /// Not a fault of the request: nothing of it is known to have persisted, so
+    /// the identical request can be sent again once the store is back. It is
+    /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore is temporarily unavailable; retry shortly")]
+    StoreUnavailable,
     /// A transaction lost a deadlock or serialization race and was rolled back.
     ///
     /// Not a fault: PostgreSQL aborts the whole transaction (SQLSTATE 40P01 or
@@ -86,15 +93,17 @@ pub enum SnapshotError {
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
-/// A saturated store and a transaction rolled back under contention are
-/// backpressure the client can retry, so each keeps its own retryable category;
-/// only a fault becomes [`SnapshotError::Persistence`].
+/// A saturated store, a transaction rolled back under contention and a store
+/// that cannot be reached are conditions the client can retry, so each keeps
+/// its own retryable category; only a fault becomes
+/// [`SnapshotError::Persistence`].
 impl From<PersistenceFailure> for SnapshotError {
     fn from(failure: PersistenceFailure) -> SnapshotError {
         match failure {
             PersistenceFailure::Saturated => SnapshotError::StoreSaturated,
+            PersistenceFailure::Unavailable => SnapshotError::StoreUnavailable,
             PersistenceFailure::RolledBack => SnapshotError::Contended,
-            fault @ (PersistenceFailure::Unavailable
+            fault @ (PersistenceFailure::Misconfigured
             | PersistenceFailure::ConstraintViolated
             | PersistenceFailure::StatementRejected
             | PersistenceFailure::RecordMissing
@@ -177,15 +186,15 @@ impl SnapshotError {
 
     /// Whether a fresh attempt at the operation that failed could succeed.
     ///
-    /// A lost deadlock or serialization race, a saturated pool and a store
-    /// failure (a dropped connection among them) are transient, whether the
+    /// A lost deadlock or serialization race, a saturated pool, an unreachable
+    /// store and a store failure are transient, whether the
     /// snapshot store or an embedded entity or temporal operation met them.
     /// Everything else is decided by the request or by the stored state, so
     /// repeating it repeats the failure.
     #[must_use]
     pub const fn recurrence(&self) -> Recurrence {
         match self {
-            SnapshotError::Contended | SnapshotError::StoreSaturated | SnapshotError::Persistence(_) => Recurrence::Transient,
+            SnapshotError::Contended | SnapshotError::StoreSaturated | SnapshotError::StoreUnavailable | SnapshotError::Persistence(_) => Recurrence::Transient,
             SnapshotError::Entity(error) => entity_recurrence(error),
             SnapshotError::Temporal(error) => temporal_recurrence(error),
             SnapshotError::Validation(_)
@@ -202,9 +211,12 @@ impl SnapshotError {
 }
 
 /// Whether a fresh attempt at an entity operation could succeed: only a lost
-/// race or a saturated pool clears on its own.
+/// race, a saturated pool or an unreachable store clears on its own.
 pub(crate) const fn entity_recurrence(error: &EntityError) -> Recurrence {
-    if matches!(error, EntityError::TransactionContended | EntityError::StoreSaturated) {
+    if matches!(
+        error,
+        EntityError::TransactionContended | EntityError::StoreSaturated | EntityError::StoreUnavailable
+    ) {
         Recurrence::Transient
     } else {
         Recurrence::Persistent
@@ -212,9 +224,12 @@ pub(crate) const fn entity_recurrence(error: &EntityError) -> Recurrence {
 }
 
 /// Whether a fresh attempt at a temporal operation could succeed: only a lost
-/// race or a saturated pool clears on its own.
+/// race, a saturated pool or an unreachable store clears on its own.
 pub(crate) const fn temporal_recurrence(error: &TemporalError) -> Recurrence {
-    if matches!(error, TemporalError::TransactionContended | TemporalError::StoreSaturated) {
+    if matches!(
+        error,
+        TemporalError::TransactionContended | TemporalError::StoreSaturated | TemporalError::StoreUnavailable
+    ) {
         Recurrence::Transient
     } else {
         Recurrence::Persistent
@@ -234,15 +249,18 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn contention_saturation_and_store_failures_are_transient() {
+    fn contention_saturation_unavailability_and_store_failures_are_transient() {
         for error in [
             SnapshotError::Contended,
             SnapshotError::StoreSaturated,
             SnapshotError::from(PersistenceFailure::Unavailable),
+            SnapshotError::from(PersistenceFailure::StatementRejected),
             SnapshotError::from(EntityError::TransactionContended),
             SnapshotError::from(EntityError::StoreSaturated),
+            SnapshotError::from(EntityError::StoreUnavailable),
             SnapshotError::from(TemporalError::TransactionContended),
             SnapshotError::from(TemporalError::StoreSaturated),
+            SnapshotError::from(TemporalError::StoreUnavailable),
         ] {
             assert_eq!(error.recurrence(), Recurrence::Transient, "{error}");
         }
@@ -258,5 +276,16 @@ mod tests {
         ] {
             assert_eq!(error.recurrence(), Recurrence::Persistent, "{error}");
         }
+    }
+
+    /// A store that cannot be reached is retryable, answered 503 rather than
+    /// the 500 of a fault; a configuration no retry mends stays a fault.
+    #[test]
+    fn an_unreachable_store_keeps_its_retryable_category() {
+        assert!(matches!(SnapshotError::from(PersistenceFailure::Unavailable), SnapshotError::StoreUnavailable));
+        assert!(matches!(
+            SnapshotError::from(PersistenceFailure::Misconfigured),
+            SnapshotError::Persistence(PersistenceFailure::Misconfigured)
+        ));
     }
 }

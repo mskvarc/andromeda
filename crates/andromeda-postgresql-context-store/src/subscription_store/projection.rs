@@ -96,7 +96,7 @@ pub(super) async fn count_of_kind(pool: &sqlx::PgPool, target: &ContextTarget, k
     let row: (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_one(pool)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(row.0)
 }
 

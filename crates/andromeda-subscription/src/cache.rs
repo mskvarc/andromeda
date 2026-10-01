@@ -445,7 +445,7 @@ mod tests {
             )
             .await;
 
-        assert!(matches!(refreshed, Err(SubscriptionError::Persistence(_))), "{refreshed:?}");
+        assert!(matches!(refreshed, Err(SubscriptionError::StoreUnavailable)), "{refreshed:?}");
         assert!(cache.get(&target, &id).is_some(), "an unanswered refresh must not drop the cached subscription");
         Ok(())
     }

@@ -29,7 +29,7 @@ use andromeda_federation::{
     request::{EntityMapInUse, QueryDelivery, TriggeringRequest},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_http_response::declined_representation::single_source_declined;
+use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -200,8 +200,10 @@ impl QueryForwarding<'_> {
 
     /// One forwarding phase over the registrations `mode_filter` admits.
     ///
-    /// A forwarding that could not run at all leaves the query with the local
-    /// answer; a phase whose sources answer with more entities than the request
+    /// A forwarding that failed at its sources leaves the query with the local
+    /// answer, but one that could not read the registrations to forward to,
+    /// because this broker's own store is saturated or unreachable, fails the
+    /// query rather than hide every source; a phase whose sources answer with more entities than the request
     /// may gather refuses the query, because a truncated collection would make
     /// its page window and `NGSILD-Results-Count` silently wrong (clauses 4.12
     /// and 6.3.13).
@@ -232,6 +234,10 @@ impl QueryForwarding<'_> {
             Ok(outcome) => Ok(outcome),
             Err(QueryForwardingError::TooManyResults(exceeded)) => Err(public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), self.uri)),
             Err(QueryForwardingError::Federation(error)) => {
+                if let Some(report) = local_federation_failure(&error) {
+                    // clone: the problem response owns the request URI it names
+                    return Err(report.with_instance(self.uri.clone()));
+                }
                 warn!(%error, "context source forwarding failed during the entity query");
                 Ok(ForwardReadOutcome::empty())
             }

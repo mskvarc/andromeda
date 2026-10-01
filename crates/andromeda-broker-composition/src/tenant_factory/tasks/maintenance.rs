@@ -254,9 +254,10 @@ pub(super) const fn classify_subscription_expiry_failure(error: SubscriptionErro
     let class = match &error {
         // A store of hosted `@context`s that failed a write fails for the
         // reasons any store does, so it is retried like the subscription store.
-        SubscriptionError::Persistence(_) | SubscriptionError::StoreSaturated | SubscriptionError::ContextHosting(ContextHostingError::Persistence(_)) => {
-            FailureClass::Transient
-        }
+        SubscriptionError::Persistence(_)
+        | SubscriptionError::StoreSaturated
+        | SubscriptionError::StoreUnavailable
+        | SubscriptionError::ContextHosting(ContextHostingError::Persistence(_)) => FailureClass::Transient,
         SubscriptionError::Internal(_) => FailureClass::InvariantViolation,
         SubscriptionError::Validation(_)
         | SubscriptionError::NotFound { .. }
@@ -272,7 +273,7 @@ pub(super) const fn classify_subscription_expiry_failure(error: SubscriptionErro
 
 pub(super) const fn classify_registration_expiry_failure(error: RegistrationError) -> TaskFailure<RegistrationError> {
     let class = match &error {
-        RegistrationError::Persistence(_) | RegistrationError::StoreSaturated => FailureClass::Transient,
+        RegistrationError::Persistence(_) | RegistrationError::StoreSaturated | RegistrationError::StoreUnavailable => FailureClass::Transient,
         RegistrationError::Internal(_) => FailureClass::InvariantViolation,
         RegistrationError::Validation(_)
         | RegistrationError::NotFound { .. }
@@ -292,6 +293,7 @@ pub(super) const fn classify_entity_expiry_failure(error: EntityError) -> TaskFa
         EntityError::Commit(_)
         | EntityError::Persistence(_)
         | EntityError::StoreSaturated
+        | EntityError::StoreUnavailable
         | EntityError::TransactionContended
         | EntityError::Contention { identifier: _, attempts: _ } => FailureClass::Transient,
         EntityError::Internal(_) => FailureClass::InvariantViolation,

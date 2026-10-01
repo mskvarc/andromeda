@@ -5,20 +5,23 @@
 //! [`PersistenceFailure::record`], so the backend's detail reaches the log and
 //! never the value a port hands to policy, and from there to a client.
 
+use crate::retryability::{RetryCause, Retryability};
 use derive_more::IsVariant;
 use std::{fmt::Display, panic::Location};
 use thiserror::Error;
 
 /// The class of failure a persistence adapter met, independent of its backend.
 ///
-/// Two variants are backpressure rather than faults. [`Saturated`] and
-/// [`RolledBack`] describe load and contention: the operation did not persist
-/// and can run again unchanged, so each port routes them to its own retryable
+/// Three variants are retryable rather than faults. [`Saturated`] describes
+/// load, [`RolledBack`] contention and [`Unavailable`] a store that cannot be
+/// reached: nothing of the operation is known to have persisted and it can be
+/// sent again unchanged, so each port routes them to its own retryable
 /// category instead of its fault category. Every other variant is a fault the
 /// client cannot act on.
 ///
 /// [`Saturated`]: PersistenceFailure::Saturated
 /// [`RolledBack`]: PersistenceFailure::RolledBack
+/// [`Unavailable`]: PersistenceFailure::Unavailable
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error, IsVariant)]
 pub enum PersistenceFailure {
     /// No connection to the store became free within the acquire deadline, or
@@ -29,9 +32,15 @@ pub enum PersistenceFailure {
     /// serialization conflict with a concurrent transaction.
     #[error("the store rolled the transaction back under contention")]
     RolledBack,
-    /// The store could not be reached, or the connection to it failed.
+    /// The store could not be reached right now, or the connection to it was
+    /// lost: nothing of the operation is known to have persisted and it can be
+    /// sent again once the store is back.
     #[error("the store is unreachable")]
     Unavailable,
+    /// The adapter's own connection configuration is unusable, which no retry
+    /// can mend.
+    #[error("the store connection configuration is unusable")]
+    Misconfigured,
     /// The store refused a write that would violate one of its integrity
     /// constraints.
     #[error("the store refused a write that violates an integrity constraint")]
@@ -68,16 +77,24 @@ impl PersistenceFailure {
     ///
     /// The cause is logged with the caller's source location so an operator can
     /// find the classifying site; only the classification travels onward.
-    /// Backpressure is expected under load and is logged at debug level, every
-    /// fault at error level.
+    /// Backpressure is expected under load and is logged at debug level. An
+    /// unreachable store is not a broker fault but an operator must see the
+    /// outage, so it is logged at warn level. Every fault is logged at error
+    /// level.
     #[track_caller]
     #[must_use]
     pub fn record(self, cause: &dyn Display) -> PersistenceFailure {
         let location = Location::caller();
-        if self.is_backpressure() {
-            tracing::debug!(failure = %self, %cause, %location, "persistence adapter backpressure");
-        } else {
-            tracing::error!(failure = %self, %cause, %location, "persistence adapter failure");
+        match self.retryability() {
+            Retryability::Retryable(RetryCause::Saturated | RetryCause::Contended) => {
+                tracing::debug!(failure = %self, %cause, %location, "persistence adapter backpressure");
+            }
+            Retryability::Retryable(RetryCause::Unreachable) => {
+                tracing::warn!(failure = %self, %cause, %location, "persistence adapter unavailable");
+            }
+            Retryability::Fault => {
+                tracing::error!(failure = %self, %cause, %location, "persistence adapter failure");
+            }
         }
         self
     }
@@ -98,11 +115,35 @@ impl PersistenceFailure {
     pub const fn is_backpressure(self) -> bool {
         matches!(self, PersistenceFailure::Saturated | PersistenceFailure::RolledBack)
     }
+
+    /// Whether the operation can be sent again unchanged, and why, or whether
+    /// the failure is a fault no retry mends.
+    #[must_use]
+    pub const fn retryability(self) -> Retryability {
+        match self {
+            PersistenceFailure::Saturated => Retryability::Retryable(RetryCause::Saturated),
+            PersistenceFailure::RolledBack => Retryability::Retryable(RetryCause::Contended),
+            PersistenceFailure::Unavailable => Retryability::Retryable(RetryCause::Unreachable),
+            PersistenceFailure::Misconfigured
+            | PersistenceFailure::ConstraintViolated
+            | PersistenceFailure::StatementRejected
+            | PersistenceFailure::RecordMissing
+            | PersistenceFailure::Undecodable
+            | PersistenceFailure::Unencodable
+            | PersistenceFailure::StatementUnbuildable
+            | PersistenceFailure::CapacityExceeded
+            | PersistenceFailure::SchemaMismatch
+            | PersistenceFailure::ContractBroken => Retryability::Fault,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::persistence_failure::PersistenceFailure;
+    use crate::{
+        persistence_failure::PersistenceFailure,
+        retryability::{RetryCause, Retryability},
+    };
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -112,9 +153,10 @@ mod tests {
     }
 
     #[test]
-    fn every_other_failure_is_a_fault() {
+    fn every_other_failure_is_not_backpressure() {
         for failure in [
             PersistenceFailure::Unavailable,
+            PersistenceFailure::Misconfigured,
             PersistenceFailure::ConstraintViolated,
             PersistenceFailure::StatementRejected,
             PersistenceFailure::RecordMissing,
@@ -127,6 +169,41 @@ mod tests {
         ] {
             assert!(!failure.is_backpressure(), "{failure}");
         }
+    }
+
+    #[test]
+    fn unavailability_is_retryable_as_an_unreachable_store() {
+        assert_eq!(PersistenceFailure::Unavailable.retryability(), Retryability::Retryable(RetryCause::Unreachable));
+        assert_eq!(PersistenceFailure::Saturated.retryability(), Retryability::Retryable(RetryCause::Saturated));
+        assert_eq!(PersistenceFailure::RolledBack.retryability(), Retryability::Retryable(RetryCause::Contended));
+    }
+
+    #[test]
+    fn misconfiguration_and_every_other_fault_are_faults() {
+        for failure in [
+            PersistenceFailure::Misconfigured,
+            PersistenceFailure::ConstraintViolated,
+            PersistenceFailure::StatementRejected,
+            PersistenceFailure::RecordMissing,
+            PersistenceFailure::Undecodable,
+            PersistenceFailure::Unencodable,
+            PersistenceFailure::StatementUnbuildable,
+            PersistenceFailure::CapacityExceeded,
+            PersistenceFailure::SchemaMismatch,
+            PersistenceFailure::ContractBroken,
+        ] {
+            assert_eq!(failure.retryability(), Retryability::Fault, "{failure}");
+        }
+    }
+
+    #[test]
+    fn unavailability_is_not_backpressure() {
+        assert!(!PersistenceFailure::Unavailable.is_backpressure());
+    }
+
+    #[test]
+    fn the_misconfigured_rendering_names_no_backend_detail() {
+        assert_eq!(PersistenceFailure::Misconfigured.to_string(), "the store connection configuration is unusable");
     }
 
     #[test]

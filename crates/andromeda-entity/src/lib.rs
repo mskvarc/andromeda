@@ -119,6 +119,8 @@ pub mod side_effect_drain;
 pub mod side_effect_notification;
 /// The durable side-effect queue port.
 pub mod side_effect_queue;
+/// The writes a drained side-effect job replays.
+mod side_effect_replay;
 /// The entity state a matched subscription is filtered and notified with.
 mod snapshot_supply;
 /// Which spatial index, if any, a geo query may be narrowed through.

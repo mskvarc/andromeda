@@ -90,7 +90,7 @@ pub(super) const fn mutation_outcome(rows_affected: u64) -> RegistrationMutation
 
 /// Convert PostgreSQL's signed count representation to the policy-owned count.
 pub(super) fn registration_count(total: i64) -> Result<u64, RegistrationError> {
-    u64::try_from(total).map_err(persistence_error)
+    u64::try_from(total).map_err(|error| persistence_error(error))
 }
 
 #[async_trait]
@@ -156,6 +156,19 @@ mod tests {
     };
     use andromeda_registration::{error::RegistrationError, store::mutation::RegistrationMutation};
     use pretty_assertions::assert_eq;
+    use std::{
+        fmt::Debug,
+        sync::{Arc, Mutex},
+    };
+    use tracing::{
+        Event,
+        Metadata,
+        Subscriber,
+        callsite::rebuild_interest_cache,
+        field::{Field, Visit},
+        span::{Attributes, Id, Record},
+        subscriber::with_default,
+    };
 
     /// Migration 0012 names every constraint, so the duplicate-identifier
     /// refusal matches the declared name rather than one PostgreSQL generated.
@@ -196,5 +209,78 @@ mod tests {
         use crate::csource_registration::registration_store::persistence_error;
         assert!(matches!(persistence_error(sqlx::Error::PoolTimedOut), RegistrationError::StoreSaturated));
         assert!(matches!(persistence_error(sqlx::Error::RowNotFound), RegistrationError::Persistence(_)));
+    }
+
+    #[test]
+    fn a_lost_connection_becomes_store_unavailable() {
+        use crate::csource_registration::registration_store::persistence_error;
+        use std::io::{Error as IoError, ErrorKind};
+        assert!(matches!(
+            persistence_error(sqlx::Error::Io(IoError::from(ErrorKind::ConnectionReset))),
+            RegistrationError::StoreUnavailable
+        ));
+        assert!(matches!(persistence_error(sqlx::Error::RowNotFound), RegistrationError::Persistence(_)));
+    }
+
+    /// Every location the classification is recorded with.
+    struct RecordedLocations {
+        locations: Arc<Mutex<Vec<String>>>,
+    }
+
+    /// Collects the `location` field of every event.
+    struct LocationVisitor<'a>(&'a mut Vec<String>);
+
+    impl Visit for LocationVisitor<'_> {
+        fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
+            if field.name() == "location" {
+                self.0.push(format!("{value:?}"));
+            }
+        }
+    }
+
+    impl Subscriber for RecordedLocations {
+        fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _span: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &Id, _values: &Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+        fn event(&self, event: &Event<'_>) {
+            if let Ok(mut locations) = self.locations.lock() {
+                event.record(&mut LocationVisitor(&mut locations));
+            }
+        }
+
+        fn enter(&self, _span: &Id) {}
+
+        fn exit(&self, _span: &Id) {}
+    }
+
+    /// The classification is recorded at the statement that failed, which is
+    /// the operator's only pointer to it during an outage: a store call site
+    /// reaches the helper through a closure, never by passing the helper to
+    /// `map_err` by name, which would record a location inside `core`.
+    #[test]
+    fn the_failure_is_recorded_at_the_store_call_site() {
+        use crate::csource_registration::registration_store::persistence_error;
+        let locations = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = RecordedLocations {
+            locations: Arc::clone(&locations),
+        };
+        with_default(subscriber, || {
+            rebuild_interest_cache();
+            let failed: Result<(), sqlx::Error> = Err(sqlx::Error::RowNotFound);
+            failed.map_err(|error| persistence_error(error))
+        })
+        .expect_err("the statement failed");
+        let locations = locations.lock().expect("the test lock is not poisoned");
+        assert!(!locations.is_empty(), "the failure was not recorded");
+        assert!(locations.iter().all(|location| location.contains("registration_store.rs")), "{locations:?}");
     }
 }

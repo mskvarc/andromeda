@@ -46,29 +46,24 @@ use crate::{
     error::EntityError,
     side_effect_notification::{SideEffectNotificationRoute, owed_subscription_matches},
     side_effect_queue::{DeadLetterAttempt, LeasedSideEffect, SideEffectQueue},
+    side_effect_replay::replay_writes,
 };
 use andromeda_context_commit::{
-    atomic_write::AtomicWrite,
     batch_side_effect_job::BatchSideEffectJob,
     commit_replay::CommitReplay,
     committer::ContextCommitter,
     context_change_event::ContextChangeEvent,
-    entity_mutation::EntityMutation,
     error::CommitError,
-    history_record::HistoryRecord,
     job_lease::JobLease,
     lease_acknowledgement::LeaseAcknowledgement,
     lease_holder::LeaseHolder,
     lease_pass_clock::LeasePassClock,
     side_effect_job_id::SideEffectJobId,
-    subscription_match::SubscriptionMatch,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 /// Policy-owned retry and lease configuration for durable side effects.
 #[derive(Debug)]
@@ -314,6 +309,7 @@ impl EntitySideEffectDrain {
                 | CommitError::Submission { .. }
                 | CommitError::Persistence(_)
                 | CommitError::StoreSaturated
+                | CommitError::StoreUnavailable
                 | CommitError::TransactionContended
                 | CommitError::Invariant(_)
                 | CommitError::UnexpectedOutcomeCount { .. }),
@@ -355,49 +351,6 @@ impl EntitySideEffectDrain {
     }
 }
 
-/// The writes one job replays: one per entity, carrying the observations still
-/// owed to its Temporal Evolution and the durable matches its owed changes are
-/// due.
-///
-/// A commit names each entity once, so an owed match joins its entity's
-/// observation write, and an entity with no observation to record -- a deleted
-/// one -- gets a write of its own. Neither changes the entity row. Observation
-/// writes keep their stored order and the matches keep theirs, which is what
-/// numbers the replay's rows the same way on every attempt.
-fn replay_writes(temporal_entities: Vec<(Arc<Identifier>, Arc<Value>)>, owed: Vec<SubscriptionMatch>) -> Vec<AtomicWrite> {
-    let mut writes: Vec<AtomicWrite> = temporal_entities
-        .into_iter()
-        .map(|(identifier, expanded)| {
-            AtomicWrite::builder()
-                .entity_id(identifier)
-                .entity(EntityMutation::None)
-                .history(vec![HistoryRecord::Observations(expanded)])
-                .build()
-        })
-        .collect();
-    let mut positions: HashMap<Arc<Identifier>, usize> = writes
-        .iter()
-        .enumerate()
-        .map(|(position, write)| (Arc::clone(&write.entity_id), position)) // clone: Arc ref-count bump
-        .collect();
-    for matched in owed {
-        if let Some(write) = positions.get(&matched.entity_id).and_then(|position| writes.get_mut(*position)) {
-            write.subscription_matches.push(matched);
-        } else {
-            let identifier = Arc::new(matched.entity_id.clone()); // clone: the write owns the identifier the match also keeps.
-            positions.insert(Arc::clone(&identifier), writes.len()); // clone: Arc ref-count bump
-            writes.push(
-                AtomicWrite::builder()
-                    .entity_id(identifier)
-                    .entity(EntityMutation::None)
-                    .subscription_matches(vec![matched])
-                    .build(),
-            );
-        }
-    }
-    writes
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -405,7 +358,7 @@ mod tests {
         building_subscription_fixture::{BUILDING_TYPE_IRI, building_subscription_cache, subscription_key},
         change_sink::EntityChangeSink,
         error::EntityError,
-        side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig, replay_writes},
+        side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
         side_effect_notification::SideEffectNotificationRoute,
         side_effect_queue::{DeadLetterAttempt, LeasedSideEffect, SideEffectQueue},
     };
@@ -417,12 +370,10 @@ mod tests {
         committer::{CommitFuture, ContextCommitter},
         context_change_event::ContextChangeEvent,
         error::CommitError,
-        history_record::HistoryRecord,
         job_lease::JobLease,
         lease_acknowledgement::LeaseAcknowledgement,
         lease_holder::LeaseHolder,
         side_effect_job_id::SideEffectJobId,
-        subscription_match::SubscriptionMatch,
         write_id::WriteId,
         write_ordinal::WriteOrdinal,
         write_outcome::WriteOutcome,
@@ -1007,14 +958,6 @@ mod tests {
         }
     }
 
-    fn matched(id: &str) -> SubscriptionMatch {
-        SubscriptionMatch::builder()
-            .subscription_key(subscription_key())
-            .entity_id(uri(id))
-            .change(EntityChange::new(EntityLifecycle::Deleted, Vec::new()))
-            .build()
-    }
-
     /// A job a live-delivery broker queued owes its changes' notifications. A
     /// durable-delivery broker draining it queues the matched deliveries in the
     /// replay commit, joined to the entity's observation write, rather than
@@ -1107,28 +1050,5 @@ mod tests {
         pretty_assertions::assert_eq!(published.len(), 1);
         pretty_assertions::assert_eq!(published[0].event.current_payload.as_deref(), Some(&building(id)));
         Ok(())
-    }
-
-    /// A deleted entity has no observation to replay, so its owed match gets a
-    /// write of its own that leaves the entity row alone.
-    #[test]
-    fn an_owed_match_without_an_observation_write_gets_its_own_write() {
-        let observed = "urn:ngsi-ld:Building:observed";
-        let deleted = "urn:ngsi-ld:Building:deleted";
-        let writes = replay_writes(
-            vec![(Arc::new(uri(observed)), Arc::new(building(observed)))],
-            vec![matched(deleted), matched(observed), matched(deleted)],
-        );
-
-        let shape: Vec<(String, usize, usize)> = writes
-            .iter()
-            .map(|write| (write.entity_id.as_str().to_owned(), write.history.len(), write.subscription_matches.len()))
-            .collect();
-        pretty_assertions::assert_eq!(shape, vec![(observed.to_owned(), 1, 1), (deleted.to_owned(), 0, 2)]);
-        assert!(
-            writes.iter().all(|write| write.entity.record().is_none() && !write.entity.is_insert()),
-            "a replay never changes the entity row"
-        );
-        assert!(matches!(writes[0].history[0], HistoryRecord::Observations(_)));
     }
 }

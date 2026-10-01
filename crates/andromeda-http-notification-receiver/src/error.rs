@@ -24,6 +24,7 @@ pub(crate) fn classify_forwarding(error: &SubscriptionForwardingError, instance:
         SubscriptionForwardingError::UnknownSubscription { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
         SubscriptionForwardingError::Representation(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         SubscriptionForwardingError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
+        SubscriptionForwardingError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         SubscriptionForwardingError::Subscription(_)
         | SubscriptionForwardingError::Federation(_)
         | SubscriptionForwardingError::Registration(_)
@@ -38,4 +39,32 @@ pub(crate) fn classify_forwarding(error: &SubscriptionForwardingError, instance:
 /// A request-shape failure the receiver reports as `BadRequestData`.
 pub(crate) fn bad_request_data(detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
     ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail).with_instance(instance.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::classify_forwarding;
+    use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use andromeda_subscription_forwarding::error::SubscriptionForwardingError;
+    use axum::http::Uri;
+
+    fn instance() -> Uri {
+        Uri::from_static("/ngsi-ld/v1/csourceNotify")
+    }
+
+    /// Clause 5.5.6 with RFC 7231 6.6.4: a saturated or unreachable store is a
+    /// retryable 503; a store fault stays an internal 500.
+    #[test]
+    fn an_unreachable_store_is_a_retryable_503() {
+        for error in [SubscriptionForwardingError::StoreSaturated, SubscriptionForwardingError::StoreUnavailable] {
+            let response = classify_forwarding(&error, &instance());
+            pretty_assertions::assert_eq!(response.problem().classification(), ProblemClassification::ServiceUnavailable, "{error}");
+        }
+        let fault = classify_forwarding(&SubscriptionForwardingError::Persistence(PersistenceFailure::StatementRejected), &instance());
+        pretty_assertions::assert_eq!(
+            fault.problem().classification(),
+            ProblemClassification::Category(NgsiLdErrorType::InternalError)
+        );
+    }
 }

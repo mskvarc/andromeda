@@ -58,7 +58,7 @@ use andromeda_postgresql_context_store::{
     tenant_usage::PostgresTenantUsageProbe,
     tenant_wake_schedule::PostgresTenantWakeSchedule,
 };
-use andromeda_postgresql_pool::configure_pool_options;
+use andromeda_postgresql_pool::pool_options::configure_pool_options;
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_telemetry::{error::TelemetryError, recorder::TelemetryRecorder};

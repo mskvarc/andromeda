@@ -12,8 +12,7 @@
 //! walk reports a context that does not resolve, which clause 5.5.2 answers with
 //! `LdContextNotAvailable`.
 
-use andromeda_http_extraction::classification::classify_jsonld_error;
-use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_http_response::{jsonld_failure::classify_jsonld_error, problem_response::ProblemResponse};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, scoped_context_admission::reject_scoped_user_contexts};
 use axum::http::Uri as HttpUri;
 

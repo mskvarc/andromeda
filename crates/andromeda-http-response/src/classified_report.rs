@@ -22,6 +22,14 @@ const STORE_SATURATED_RETRY_AFTER: Duration = Duration::from_secs(1);
 /// from the contenders it collided with.
 const TRANSACTION_CONTENDED_RETRY_AFTER: Duration = Duration::from_secs(1);
 
+/// The `Retry-After` delay attached to a 503 for a datastore that cannot be
+/// reached.
+///
+/// A restart, failover or pooler reconnect takes seconds, and a pooler caches a
+/// failed server login for its retry window; a one-second hint would multiply
+/// the load on a store that is coming back.
+const STORE_UNAVAILABLE_RETRY_AFTER: Duration = Duration::from_secs(5);
+
 /// A classified, client-safe failure without request-boundary state.
 ///
 /// Route bindings construct public reports from deliberate detail or use [`ClassifiedReport::internal`] to log a typed source exactly once and replace its disclosure with a coarse, client-safe operation summary.
@@ -78,6 +86,21 @@ impl ClassifiedReport {
     /// `ServiceUnavailable` classification handling applies.
     pub fn transaction_contended(detail: impl Into<String>) -> ClassifiedReport {
         ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, detail).with_retry_after(TRANSACTION_CONTENDED_RETRY_AFTER)
+    }
+
+    /// Report a datastore that could not be reached as a 503 Service
+    /// Unavailable with a `Retry-After`.
+    ///
+    /// For a request that met a store which was restarting, failing over or
+    /// cut off, or whose connection was lost under it. Nothing of the request
+    /// is known to have persisted, and every write the broker offers is
+    /// idempotent in the store or answers a repeat with `AlreadyExists`, so it
+    /// can be sent again once the store is back: answered 503 with its fixed
+    /// detail disclosed. The problem type stays `InternalError` (clause 5.5.6
+    /// names database timeouts among its cases); clause 6.3.2 admits the HTTP
+    /// binding's own 503.
+    pub fn store_unavailable(detail: impl Into<String>) -> ClassifiedReport {
+        ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, detail).with_retry_after(STORE_UNAVAILABLE_RETRY_AFTER)
     }
 
     /// Mask an internal failure with a vetted operation summary after logging its typed source at the disclosure boundary.
@@ -202,6 +225,20 @@ mod tests {
         pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(1)));
         // The detail is disclosed, not sanitized: it names backpressure, not a fault.
         assert!(report.detail().contains("saturated"), "{}", report.detail());
+    }
+
+    #[test]
+    fn store_unavailability_is_a_503_with_a_five_second_retry_after() {
+        use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
+        use axum::http::StatusCode;
+        use std::time::Duration;
+
+        let report = ClassifiedReport::store_unavailable("the datastore is temporarily unavailable; retry shortly");
+        pretty_assertions::assert_eq!(report.classification(), ProblemClassification::ServiceUnavailable);
+        pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::SERVICE_UNAVAILABLE);
+        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
+        pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(5)));
+        pretty_assertions::assert_eq!(report.detail(), "the datastore is temporarily unavailable; retry shortly");
     }
 
     #[test]

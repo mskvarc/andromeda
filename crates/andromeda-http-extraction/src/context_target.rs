@@ -6,6 +6,7 @@ use andromeda_http_response::{
     classified_report::ClassifiedReport,
     internal_failure_summary::InternalFailureSummary,
     problem_response::ProblemResponse,
+    store_failure::classify_store_failure,
     tenant_state_rejection::TenantStateRejection,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -56,6 +57,10 @@ pub enum ContextTargetResolutionError {
     Internal,
 }
 
+/// The summary disclosed for a Snapshot target that could not be resolved for
+/// a reason the client cannot act on.
+const TARGET_RESOLUTION: InternalFailureSummary = InternalFailureSummary::new("failed to resolve the request's snapshot target");
+
 impl ContextTargetResolutionError {
     /// Convert a target-resolution failure into its request-bound HTTP problem.
     fn into_problem(self, instance: Uri) -> ProblemResponse {
@@ -72,9 +77,8 @@ impl ContextTargetResolutionError {
                 ClassifiedReport::public(NgsiLdErrorType::InternalError, self.to_string()).with_instance(instance)
             }
             ContextTargetResolutionError::Saturated => ClassifiedReport::store_saturated(self.to_string()).with_instance(instance),
-            ContextTargetResolutionError::Persistence(_) | ContextTargetResolutionError::Internal => {
-                ClassifiedReport::internal(&self, InternalFailureSummary::new("failed to resolve the request's snapshot target")).with_instance(instance)
-            }
+            ContextTargetResolutionError::Persistence(failure) => classify_store_failure(failure, &self, TARGET_RESOLUTION).with_instance(instance),
+            ContextTargetResolutionError::Internal => ClassifiedReport::internal(&self, TARGET_RESOLUTION).with_instance(instance),
         }
     }
 }
@@ -187,5 +191,31 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let (services, target, snapshot) = resolve(parts, state, TenantCreationPolicy::CreateOnDemand).await?;
         Ok(ProvisionableTargetedTenantState { services, target, snapshot })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context_target::ContextTargetResolutionError;
+    use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use axum::http::Uri;
+
+    fn instance() -> Uri {
+        Uri::from_static("/ngsi-ld/v1/entities")
+    }
+
+    /// Clause 5.5.6 with RFC 7231 6.6.4: a Snapshot control record that cannot
+    /// be read because the store is unreachable is a retryable 503; a store
+    /// fault stays an internal 500.
+    #[test]
+    fn an_unreachable_snapshot_store_is_a_retryable_503() {
+        let unavailable = ContextTargetResolutionError::Persistence(PersistenceFailure::Unavailable).into_problem(instance());
+        pretty_assertions::assert_eq!(unavailable.problem().classification(), ProblemClassification::ServiceUnavailable);
+        let fault = ContextTargetResolutionError::Persistence(PersistenceFailure::Undecodable).into_problem(instance());
+        pretty_assertions::assert_eq!(
+            fault.problem().classification(),
+            ProblemClassification::Category(NgsiLdErrorType::InternalError)
+        );
     }
 }

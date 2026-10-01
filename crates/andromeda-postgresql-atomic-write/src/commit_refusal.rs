@@ -9,10 +9,13 @@
 //! prevent. The store types already carry the distinction, so it is translated
 //! here once rather than re-derived — or lost — in each phase.
 //!
-//! Two failures are neither: a saturated pool, and a transaction PostgreSQL
-//! rolled back to break a deadlock or a serialization conflict. Both leave
-//! nothing behind and the identical write can run again, so each keeps a
-//! category of its own; the second is what the committer re-runs.
+//! Three failures are neither: a saturated pool, a transaction PostgreSQL
+//! rolled back to break a deadlock or a serialization conflict, and a store
+//! that could not be reached or whose connection was lost. None is known to
+//! leave anything behind and the identical write can be sent again, so each
+//! keeps a category of its own; only the second is what the committer re-runs,
+//! because a connection lost while awaiting `COMMIT` leaves the outcome unknown
+//! and only the client can decide to send the write again.
 
 use crate::attempt_failure::{AttemptFailure, RefusedWrite};
 use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
@@ -28,7 +31,9 @@ use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 /// commit transaction.
 ///
 /// A pool-acquire timeout at `BEGIN` or `COMMIT` becomes
-/// [`CommitError::StoreSaturated`] (a 503) rather than a persistence fault.
+/// [`CommitError::StoreSaturated`] and a lost connection
+/// [`CommitError::StoreUnavailable`] (both a 503) rather than a persistence
+/// fault.
 #[track_caller]
 pub(crate) fn database(error: &sqlx::Error) -> CommitError {
     CommitError::from(classify(error).record(error))
@@ -123,6 +128,7 @@ pub(crate) fn temporal(error: TemporalError) -> CommitError {
         TemporalError::Validation(TemporalValidationReason::Refused(refusal)) => CommitError::Submission(refusal),
         // Pool saturation is backpressure the client can retry, not a fault.
         TemporalError::StoreSaturated => CommitError::StoreSaturated,
+        TemporalError::StoreUnavailable => CommitError::StoreUnavailable,
         TemporalError::TransactionContended => CommitError::TransactionContended,
         TemporalError::Persistence(failure) => CommitError::Persistence(failure),
         other @ (TemporalError::Validation(_)
@@ -259,7 +265,7 @@ mod tests {
 
     #[test]
     fn a_temporal_persistence_fault_stays_a_persistence_failure() {
-        let error = temporal(TemporalError::Persistence(PersistenceFailure::Unavailable));
+        let error = temporal(TemporalError::Persistence(PersistenceFailure::StatementRejected));
         assert!(matches!(error, CommitError::Persistence(_)), "{error}");
     }
 
@@ -296,6 +302,25 @@ mod tests {
         assert!(matches!(
             name_lookup(&NameLookupError::from(sqlx::Error::PoolTimedOut)),
             CommitError::StoreSaturated
+        ));
+    }
+
+    /// A connection lost under the commit, or a store that cannot be reached,
+    /// is a retryable 503 from every phase that can meet it, never the
+    /// persistence fault a broker malfunction earns.
+    #[test]
+    fn a_store_lost_mid_commit_is_unavailable() {
+        use crate::commit_refusal::database;
+        use std::io::{Error as IoError, ErrorKind};
+        assert!(matches!(
+            database(&sqlx::Error::Io(IoError::from(ErrorKind::ConnectionReset))),
+            CommitError::StoreUnavailable
+        ));
+        assert!(matches!(database(&sqlx::Error::PoolClosed), CommitError::StoreUnavailable));
+        assert!(matches!(temporal(TemporalError::StoreUnavailable), CommitError::StoreUnavailable));
+        assert!(matches!(
+            name_lookup(&NameLookupError::Statement(sqlx::Error::Io(IoError::from(ErrorKind::UnexpectedEof)))),
+            CommitError::StoreUnavailable
         ));
     }
 

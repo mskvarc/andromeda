@@ -5,8 +5,8 @@
 //! selection criterion must narrow the query (clause 5.14.5.4), which is the
 //! validation a temporal query itself undergoes.
 
-use crate::{addressed_uri::addressed_uri, classification::classify_parameter_error, query::classify_query_parse_error};
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use crate::{addressed_uri::addressed_uri, query::classify_query_parse_error};
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, parameter_failure::classify_parameter_error};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::future::{Future, ready};

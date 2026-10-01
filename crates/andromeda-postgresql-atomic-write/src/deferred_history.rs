@@ -12,5 +12,5 @@ use sqlx::{Postgres, Transaction};
 /// ([`HistoryPlacement::Queued`](crate::history_mode::HistoryPlacement::Queued)),
 /// so the intents always go to the live branch's queue.
 pub(crate) async fn apply(tx: &mut Transaction<'_, Postgres>, intents: &[TemporalAppendIntent]) -> Result<(), CommitError> {
-    PostgresTemporalIntentStore::enqueue_in_tx(tx, intents).await.map_err(temporal)
+    PostgresTemporalIntentStore::enqueue_in_tx(tx, intents).await.map_err(|error| temporal(error))
 }

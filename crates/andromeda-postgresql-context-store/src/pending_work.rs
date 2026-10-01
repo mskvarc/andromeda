@@ -35,7 +35,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_model::{snapshot::SnapshotStatus, subscription::SubscriptionStatus};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
-use andromeda_postgresql_pool::{configure_pool_options, is_pool_saturated};
+use andromeda_postgresql_pool::{pool_options::configure_pool_options, saturation::is_pool_saturated};
 use andromeda_postgresql_schema::{
     csr::Csr,
     current::Entities,

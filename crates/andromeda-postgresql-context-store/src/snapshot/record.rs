@@ -85,7 +85,7 @@ where
     let raw = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(executor)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     raw.map(|raw| SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error))))
         .transpose()
 }
@@ -98,8 +98,8 @@ pub(crate) async fn read_snapshot(pool: &PgPool, id: &Identifier) -> Result<Opti
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(pool)
         .await
-        .map_err(persistence_error)?;
-    row.as_ref().map(row_to_snapshot).transpose().map_err(persistence_error)
+        .map_err(|error| persistence_error(error))?;
+    row.as_ref().map(row_to_snapshot).transpose().map_err(|error| persistence_error(error))
 }
 
 /// Whether a snapshot with this URI exists.
@@ -134,7 +134,7 @@ pub(crate) async fn update_snapshot_metadata(
     receiver_info: MetadataChange<serde_json::Value>,
     new_expires_at: Option<DateTime<Utc>>,
 ) -> Result<u64, SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(persistence_error)?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
     let mut statement = Query::update();
     statement
         .table(Snapshots::Table)
@@ -173,12 +173,12 @@ pub(crate) async fn update_snapshot_metadata(
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut *transaction)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     if result.rows_affected() == 1 {
         bump_modified_at(&mut transaction, id).await?;
         enqueue_terminal_notification(&mut transaction, id).await?;
     }
-    transaction.commit().await.map_err(persistence_error)?;
+    transaction.commit().await.map_err(|error| persistence_error(error))?;
     Ok(result.rows_affected())
 }
 
@@ -193,7 +193,7 @@ async fn bump_modified_at(transaction: &mut Transaction<'_, Postgres>, id: &Iden
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut **transaction)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(())
 }
 
@@ -218,9 +218,9 @@ pub(crate) async fn update_status(
     queries_details: Option<&[ExecutionResultDetails]>,
     temporal_queries_details: Option<&[ExecutionResultDetails]>,
 ) -> Result<u64, SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(persistence_error)?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
     let Some(snapshot_key) = snapshot_key_of(&mut *transaction, id).await? else {
-        transaction.rollback().await.map_err(persistence_error)?;
+        transaction.rollback().await.map_err(|error| persistence_error(error))?;
         return Ok(0);
     };
     let statement = Query::update()
@@ -246,7 +246,7 @@ pub(crate) async fn update_status(
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut *transaction)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     if result.rows_affected() == 1 {
         enqueue_terminal_notification(&mut transaction, id).await?;
         let published = if status == SnapshotStatus::Failure {
@@ -254,9 +254,9 @@ pub(crate) async fn update_status(
         } else {
             promote_staging_schema(&mut transaction, snapshot_key).await
         };
-        published.map_err(persistence_error)?;
+        published.map_err(|error| persistence_error(error))?;
     }
-    transaction.commit().await.map_err(persistence_error)?;
+    transaction.commit().await.map_err(|error| persistence_error(error))?;
     Ok(result.rows_affected())
 }
 
@@ -266,10 +266,10 @@ pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPu
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(pool)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     let mut ids = Vec::with_capacity(rows.len());
     for row in &rows {
-        let raw: String = row.try_get("id").map_err(persistence_error)?;
+        let raw: String = row.try_get("id").map_err(|error| persistence_error(error))?;
         let parsed = raw.parse::<Identifier>().map_err(|e| SnapshotError::from(undecodable(&e)))?;
         ids.push(parsed);
     }
@@ -287,7 +287,7 @@ pub(crate) async fn touch_last_used(pool: &PgPool, id: &Identifier) -> Result<()
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(())
 }
 

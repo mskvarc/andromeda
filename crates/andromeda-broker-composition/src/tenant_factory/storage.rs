@@ -39,7 +39,7 @@ use andromeda_postgresql_context_store::{
     tenant_migration::{TenantSchemaState, migrate_single_tenant_db, tenant_schema_state, upgrade_single_tenant_snapshot_branches},
 };
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup, schema_epoch::read_established_epoch};
-use andromeda_postgresql_pool::configure_pool_options;
+use andromeda_postgresql_pool::pool_options::configure_pool_options;
 use andromeda_postgresql_temporal_store::{
     bulk_write_mode::BulkWriteMode as TemporalBulkWriteMode,
     columnstore_capability::ColumnstoreSupport,

@@ -17,7 +17,7 @@ use crate::{
     schema_ddl::database_settings::set_database_synchronous_commit,
     snapshot::branch_upgrade::{BranchUpgradeReport, upgrade_snapshot_branches},
 };
-use andromeda_postgresql_pool::configure_pool_options;
+use andromeda_postgresql_pool::pool_options::configure_pool_options;
 use andromeda_postgresql_seaquery::advisory_lock::advisory_xact_lock;
 use sea_query::{Expr, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;

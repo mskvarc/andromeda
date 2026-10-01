@@ -1,7 +1,7 @@
 //! Typed handlers for the NGSI-LD Temporal API.
 
 use crate::{
-    error::{TemporalResultExt as ResultInstanceExt, classify_temporal_error},
+    error::TemporalResultExt as ResultInstanceExt,
     state::{TemporalTenantState as TenantState, TemporalTenantStateOrCreate as TenantStateOrCreate},
 };
 use andromeda_federation::{
@@ -27,6 +27,7 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
     provision::{LocalOutcome, provision_response},
     single::NgsiLdResponse,
+    temporal_failure::classify_temporal_error,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{

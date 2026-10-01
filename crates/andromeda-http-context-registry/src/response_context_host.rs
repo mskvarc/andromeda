@@ -53,13 +53,14 @@ impl CompoundContextHost for ResponseContextHost<'_> {
 
 /// The hosting failure a Context Registry failure amounts to.
 ///
-/// A saturated store stays backpressure the client can retry and a store fault
-/// stays that fault; every other registry failure means the registry broke its
+/// A saturated store stays backpressure the client can retry, an unreachable
+/// store stays retryable and a store fault stays that fault; every other registry failure means the registry broke its
 /// own contract while storing a wrapper the broker built, which is recorded
 /// here with its detail and reported as such.
 fn hosting_failure(error: &ContextRegistryError) -> ContextHostingError {
     match error {
         ContextRegistryError::StoreSaturated => ContextHostingError::Persistence(PersistenceFailure::Saturated),
+        ContextRegistryError::StoreUnavailable => ContextHostingError::Persistence(PersistenceFailure::Unavailable),
         ContextRegistryError::Persistence(failure) => ContextHostingError::Persistence(*failure),
         ContextRegistryError::MissingTopLevelContext
         | ContextRegistryError::NotFound { .. }
@@ -81,14 +82,18 @@ mod tests {
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 
     #[test]
-    fn a_saturated_store_stays_retryable_and_a_store_fault_stays_that_fault() {
+    fn a_saturated_or_unreachable_store_stays_retryable_and_a_store_fault_stays_that_fault() {
         assert!(matches!(
             hosting_failure(&ContextRegistryError::StoreSaturated),
             ContextHostingError::Persistence(PersistenceFailure::Saturated)
         ));
         assert!(matches!(
-            hosting_failure(&ContextRegistryError::Persistence(PersistenceFailure::Unavailable)),
+            hosting_failure(&ContextRegistryError::StoreUnavailable),
             ContextHostingError::Persistence(PersistenceFailure::Unavailable)
+        ));
+        assert!(matches!(
+            hosting_failure(&ContextRegistryError::Persistence(PersistenceFailure::StatementRejected)),
+            ContextHostingError::Persistence(PersistenceFailure::StatementRejected)
         ));
     }
 

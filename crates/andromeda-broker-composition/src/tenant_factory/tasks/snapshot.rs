@@ -285,7 +285,9 @@ fn register_snapshot_status_cleanup(
 /// Classify a snapshot policy failure at the task boundary.
 const fn classify_snapshot_failure(error: SnapshotError) -> TaskFailure<SnapshotError> {
     let class = match &error {
-        SnapshotError::Persistence { .. } | SnapshotError::StoreSaturated | SnapshotError::Contended => FailureClass::Transient,
+        SnapshotError::Persistence { .. } | SnapshotError::StoreSaturated | SnapshotError::StoreUnavailable | SnapshotError::Contended => {
+            FailureClass::Transient
+        }
         SnapshotError::Internal { .. } => FailureClass::InvariantViolation,
         SnapshotError::Validation { .. }
         | SnapshotError::NotFound { .. }

@@ -40,8 +40,8 @@ pub(super) async fn find_expired(store: &PostgresRegistrationStore, cutoff: Date
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(&store.pool)
         .await
-        .map_err(persistence_error)?;
-    rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
+        .map_err(|error| persistence_error(error))?;
+    rows.iter().map(|row| row_to_csr(row).map_err(|error| persistence_error(error))).collect()
 }
 
 /// Whether a registration with `id` exists.
@@ -56,7 +56,7 @@ pub(super) async fn exists(store: &PostgresRegistrationStore, id: &Identifier) -
     let row: (bool,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_one(&store.pool)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(row.0)
 }
 
@@ -71,9 +71,9 @@ pub(super) async fn get(store: &PostgresRegistrationStore, id: &Identifier) -> R
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(&store.pool)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     match row {
-        Some(row) => Ok(Some(row_to_csr(&row).map_err(persistence_error)?)),
+        Some(row) => Ok(Some(row_to_csr(&row).map_err(|error| persistence_error(error))?)),
         None => Ok(None),
     }
 }
@@ -85,7 +85,7 @@ pub(super) async fn list(store: &PostgresRegistrationStore, pagination: Paginati
     let count_row: (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
         .fetch_one(&store.pool)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     let mut select = registration_select();
     select
         .cond_where(not_expired())
@@ -96,10 +96,10 @@ pub(super) async fn list(store: &PostgresRegistrationStore, pagination: Paginati
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(&store.pool)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     let csrs = rows
         .iter()
-        .map(|row| row_to_csr(row).map_err(persistence_error))
+        .map(|row| row_to_csr(row).map_err(|error| persistence_error(error)))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(RegistrationPage {
         registrations: csrs,
@@ -109,20 +109,20 @@ pub(super) async fn list(store: &PostgresRegistrationStore, pagination: Paginati
 
 /// Run a compiled discovery query: its page and its total (clause 5.10.2).
 pub(super) async fn query_compiled(store: &PostgresRegistrationStore, compiled: &CompiledCsrQuery) -> Result<RegistrationPage, RegistrationError> {
-    let built = csr_sql::build_csr_query(compiled).map_err(persistence_error)?;
+    let built = csr_sql::build_csr_query(compiled).map_err(|error| persistence_error(error))?;
     let (count_sql, count_values) = built.count.build_sqlx(PostgresQueryBuilder);
     let (total,): (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
         .fetch_one(&store.pool)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     let (sql, values) = built.select.build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(&store.pool)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     let mut csrs = rows
         .iter()
-        .map(|row| row_to_csr(row).map_err(persistence_error))
+        .map(|row| row_to_csr(row).map_err(|error| persistence_error(error)))
         .collect::<Result<Vec<_>, _>>()?;
     // Clause 5.5.9.1: a backward or from-end keyset page was read descending so
     // a single `id` index scan could serve it; it is reversed here to the
@@ -155,8 +155,8 @@ pub(super) async fn find_matching(
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(&store.pool)
         .await
-        .map_err(persistence_error)?;
-    rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
+        .map_err(|error| persistence_error(error))?;
+    rows.iter().map(|row| row_to_csr(row).map_err(|error| persistence_error(error))).collect()
 }
 
 /// The unexpired proxied registrations that may collide with an `(entity, attributes)` footprint (clauses 4.3.6.3, 5.9.2.4), a superset decided by the caller.
@@ -183,8 +183,8 @@ pub(super) async fn find_overlapping(
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(&store.pool)
         .await
-        .map_err(persistence_error)?;
-    rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
+        .map_err(|error| persistence_error(error))?;
+    rows.iter().map(|row| row_to_csr(row).map_err(|error| persistence_error(error))).collect()
 }
 
 /// One keyset page of unexpired registrations, ordered by identifier.
@@ -203,6 +203,6 @@ pub(super) async fn find_all_active(
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(&store.pool)
         .await
-        .map_err(persistence_error)?;
-    rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
+        .map_err(|error| persistence_error(error))?;
+    rows.iter().map(|row| row_to_csr(row).map_err(|error| persistence_error(error))).collect()
 }

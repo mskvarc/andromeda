@@ -51,7 +51,7 @@ pub(crate) async fn apply(
     }
     PendingSideEffectsRepository::enqueue_in_tx(tx, record, base_ordinal, &merged)
         .await
-        .map_err(context_store)?;
+        .map_err(|error| context_store(error))?;
     Ok(ConsequenceWrite::Written)
 }
 

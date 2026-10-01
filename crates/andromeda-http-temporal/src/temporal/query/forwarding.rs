@@ -23,7 +23,11 @@ use andromeda_federation::{
     query_forwarding_error::QueryForwardingError,
     request::{EntityMapInUse, SourcePaging, TriggeringRequest},
 };
-use andromeda_http_response::{classified_report::ClassifiedReport, declined_representation::single_source_declined};
+use andromeda_http_response::{
+    classified_report::ClassifiedReport,
+    declined_representation::single_source_declined,
+    forwarding_failure::local_federation_failure,
+};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::http::Uri;
@@ -182,12 +186,18 @@ pub(crate) async fn forward_temporal_history(
         .await;
     // A truncated collection would make the page window and
     // `NGSILD-Results-Count` silently wrong, so exceeding the budget refuses
-    // the query (clauses 4.12 and 6.3.13); a forwarding that could not run at
-    // all leaves the query with the local answer.
+    // the query (clauses 4.12 and 6.3.13); a forwarding that failed at its
+    // sources leaves the query with the local answer, but one that could not
+    // read the registrations because this broker's store is saturated or
+    // unreachable fails it rather than hide every source.
     let outcome = match forwarded {
         Ok(outcome) => outcome,
         Err(QueryForwardingError::TooManyResults(exceeded)) => return Err(too_many_results(exceeded, instance)),
         Err(QueryForwardingError::Federation(error)) => {
+            if let Some(report) = local_federation_failure(&error) {
+                // clone: the problem response owns the request URI it names
+                return Err(report.with_instance(instance.clone()));
+            }
             warn!(%error, "context source forwarding failed during the temporal query");
             ForwardReadOutcome::empty()
         }

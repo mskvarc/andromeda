@@ -1,7 +1,7 @@
 //! How a `sqlx` error is classified into the backend-neutral failure a port
 //! carries.
 
-use crate::{is_pool_saturated, is_transaction_rolled_back};
+use crate::{saturation::is_pool_saturated, store_unavailability::is_store_unavailable, transaction_rollback::is_transaction_rolled_back};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use sqlx::error::DatabaseError;
 
@@ -18,8 +18,9 @@ pub fn persistence_failure(error: &sqlx::Error) -> PersistenceFailure {
 
 /// The failure class of a `sqlx` error, without recording it.
 ///
-/// Backpressure is recognised first, so a saturated pool or pooler and a
-/// deadlock or serialization victim are never reported as faults.
+/// The retryable conditions are recognised first, in this order: a saturated
+/// pool or pooler, a deadlock or serialization victim, and a store that cannot
+/// be reached. None of them is ever reported as a fault.
 #[must_use]
 pub fn classify(error: &sqlx::Error) -> PersistenceFailure {
     if is_pool_saturated(error) {
@@ -28,17 +29,21 @@ pub fn classify(error: &sqlx::Error) -> PersistenceFailure {
     if is_transaction_rolled_back(error) {
         return PersistenceFailure::RolledBack;
     }
+    if is_store_unavailable(error) {
+        return PersistenceFailure::Unavailable;
+    }
     match error {
         sqlx::Error::Database(database) => classify_database_error(database.as_ref()),
+        // Every shape these take is recognised above; they are listed so that
+        // a shape the predicates miss is still the store being unreachable.
         sqlx::Error::Io(_)
         | sqlx::Error::Tls(_)
         | sqlx::Error::Protocol(_)
         | sqlx::Error::PoolTimedOut
         | sqlx::Error::PoolClosed
         | sqlx::Error::WorkerCrashed
-        | sqlx::Error::BeginFailed
-        | sqlx::Error::Configuration(_)
-        | sqlx::Error::ConfigFile(_) => PersistenceFailure::Unavailable,
+        | sqlx::Error::BeginFailed => PersistenceFailure::Unavailable,
+        sqlx::Error::Configuration(_) | sqlx::Error::ConfigFile(_) => PersistenceFailure::Misconfigured,
         sqlx::Error::RowNotFound => PersistenceFailure::RecordMissing,
         sqlx::Error::TypeNotFound { .. }
         | sqlx::Error::ColumnIndexOutOfBounds { .. }
@@ -58,14 +63,14 @@ pub fn classify(error: &sqlx::Error) -> PersistenceFailure {
 /// The failure class of an error the database itself reported, by SQLSTATE
 /// class: `23` integrity constraint violations, `42` syntax or access-rule
 /// violations (an undefined relation or column is a schema drift), `22` data
-/// exceptions (a value the database cannot take), `08` connection exceptions.
+/// exceptions (a value the database cannot take). Connection exceptions are
+/// the store being unreachable and are decided before this.
 fn classify_database_error(error: &dyn DatabaseError) -> PersistenceFailure {
     let code = error.code();
     match code.as_deref().and_then(|code| code.get(..2)) {
         Some("23") => PersistenceFailure::ConstraintViolated,
         Some("42") => PersistenceFailure::SchemaMismatch,
         Some("22") => PersistenceFailure::Unencodable,
-        Some("08") => PersistenceFailure::Unavailable,
         Some(_) | None => PersistenceFailure::StatementRejected,
     }
 }
@@ -102,6 +107,31 @@ mod tests {
             classify(&FakeDatabaseError::new("connection failure", "08006").into_sqlx()),
             PersistenceFailure::Unavailable
         );
+    }
+
+    #[test]
+    fn a_server_going_away_classifies_as_unavailable() {
+        assert_eq!(
+            classify(&FakeDatabaseError::new("terminating connection due to administrator command", "57P01").into_sqlx()),
+            PersistenceFailure::Unavailable
+        );
+    }
+
+    #[test]
+    fn a_pooler_login_failure_classifies_as_unavailable() {
+        assert_eq!(
+            classify(&FakeDatabaseError::new("server login has been failing, try again later (server_login_retry)", "08P01").into_sqlx()),
+            PersistenceFailure::Unavailable
+        );
+        assert_eq!(
+            classify(&FakeDatabaseError::new("query_wait_timeout", "08P01").into_sqlx()),
+            PersistenceFailure::Saturated
+        );
+    }
+
+    #[test]
+    fn connection_configuration_errors_are_misconfiguration() {
+        assert_eq!(classify(&sqlx::Error::Configuration("invalid port".into())), PersistenceFailure::Misconfigured);
     }
 
     #[test]

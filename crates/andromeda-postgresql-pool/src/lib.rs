@@ -1,12 +1,14 @@
-//! Shared PostgreSQL connection-pool tuning and saturation detection.
+//! Shared PostgreSQL connection-pool tuning and driver-error classification.
 //!
 //! Every pool the broker opens — the main request pool, per-tenant serving
 //! pools, and the one-connection migration and maintenance pools — is built
-//! from [`configure_pool_options`] so durability-neutral tuning (idle reclaim,
-//! no warm minimum, the acquire deadline) is decided once rather than per call
-//! site. The crate is a leaf below the context and temporal stores: it knows
-//! `sqlx` and nothing else, so both stores can share it without either
-//! depending on the other.
+//! from [`configure_pool_options`](crate::pool_options::configure_pool_options)
+//! so durability-neutral tuning (idle reclaim, no warm minimum, the acquire
+//! deadline) is decided once rather than per call site. The crate also decides
+//! which driver errors are retryable store conditions (saturation, a rolled
+//! back transaction, an unreachable store) rather than faults. It is a leaf
+//! below the context and temporal stores: it knows `sqlx` and nothing else, so
+//! both stores can share it without either depending on the other.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -16,143 +18,14 @@
 mod fake_database_error;
 /// How a `sqlx` error is classified into the failure a port carries.
 pub mod persistence_classification;
-
-use sqlx::{error::DatabaseError, postgres::PgPoolOptions};
-use std::{
-    io::{Error as IoError, ErrorKind},
-    time::Duration,
-};
-
-/// How long an idle connection is kept before the pool closes it.
-///
-/// Tenant pools outlive their bursts by design (the runtime cache holds them
-/// for minutes), so without this every tenant a broker ever touched would pin
-/// its full pool against the server's `max_connections`.
-const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Build a [`PgPoolOptions`] with the broker's shared pool tuning.
-///
-/// Centralised so every pool the broker opens reclaims idle connections on the
-/// same schedule, keeps none warm, and fails a checkout that cannot be served
-/// within `acquire_timeout` rather than blocking until the request deadline.
-/// The acquire deadline is what turns pool exhaustion into a fast, typed
-/// backpressure signal ([`is_pool_saturated`]) instead of a stalled request:
-/// the caller sets it below the HTTP request timeout so a saturated pool
-/// surfaces as a 503 with `Retry-After` before the request itself times out.
-///
-/// Durability (`synchronous_commit`) is not set on the connection: it is a
-/// per-database default installed once with `ALTER DATABASE ... SET`, so a
-/// connection borrowed from a transaction-pooling proxy inherits it without any
-/// session `SET` that the proxy could leak to the next client.
-#[must_use]
-pub fn configure_pool_options(max_connections: u32, acquire_timeout: Duration) -> PgPoolOptions {
-    PgPoolOptions::new()
-        .min_connections(0)
-        .max_connections(max_connections)
-        .idle_timeout(POOL_IDLE_TIMEOUT)
-        .acquire_timeout(acquire_timeout)
-}
-
-/// `PgBouncer`'s message when it disconnects a client whose transaction could
-/// not be assigned a server backend within `query_wait_timeout`.
-///
-/// This is the pooled-deployment form of pool exhaustion: the fleet-wide backend
-/// budget (`max_user_connections`) is spent, so the pooler queues the client and,
-/// once the wait elapses, closes it with a FATAL carrying this message under
-/// SQLSTATE `08P01`. That code is shared with genuine protocol violations, so the
-/// message -- not the code -- is what identifies pooler backpressure.
-const POOLER_QUERY_WAIT_TIMEOUT: &str = "query_wait_timeout";
-
-/// Whether a [`sqlx::Error`] reports that a connection could not be obtained
-/// because the pool -- the broker's own or a transaction pooler in front of
-/// PostgreSQL -- is at capacity.
-///
-/// This is backpressure, not a fault: the request never ran and can be retried
-/// unchanged, so callers turn it into a 503 with `Retry-After` rather than a 500.
-/// Two shapes count as saturation:
-///
-/// - [`sqlx::Error::PoolTimedOut`]: the broker's own pool could not hand out a
-///   connection within its acquire deadline.
-/// - a [`sqlx::Error::Database`] carrying `PgBouncer`'s [`POOLER_QUERY_WAIT_TIMEOUT`]
-///   message: the pooler could not assign a server backend within its
-///   `query_wait_timeout` and closed the client. Without this, pooled-mode
-///   saturation surfaces as a raw database error and is answered 500, defeating
-///   the very backpressure contract the pooler tier exists to prove.
-/// - a [`sqlx::Error::Io`] reporting that the host has no local socket to open
-///   another connection ([`is_connection_resource_exhausted`]): a working set
-///   larger than the runtime cache churns per-tenant pools fast enough to exhaust
-///   the host's ephemeral ports, which is load, not a transport fault.
-/// - a [`sqlx::Error::Database`] whose SQLSTATE says the server is going away or
-///   not yet accepting work ([`is_server_unavailable`]): an administrator
-///   terminated the backend, the server is recovering from a crash, or it is
-///   starting or shutting down. The backend's transaction was rolled back with
-///   it, so nothing of the request persisted and it can be retried unchanged.
-///
-/// Every other `sqlx::Error` -- a closed pool, a crashed worker, any other
-/// protocol or database error, or any other I/O fault -- is a genuine failure and
-/// is not saturation.
-#[must_use]
-pub fn is_pool_saturated(error: &sqlx::Error) -> bool {
-    if matches!(error, sqlx::Error::PoolTimedOut) {
-        return true;
-    }
-    if let sqlx::Error::Database(database_error) = error {
-        return is_pooler_backpressure(database_error.as_ref()) || is_server_unavailable(database_error.as_ref());
-    }
-    if let sqlx::Error::Io(io_error) = error {
-        return is_connection_resource_exhausted(io_error);
-    }
-    false
-}
-
-/// Whether a database error is a transaction pooler's saturation signal.
-///
-/// Matches `PgBouncer`'s [`POOLER_QUERY_WAIT_TIMEOUT`] message rather than its
-/// SQLSTATE, which it shares with unrelated protocol violations.
-fn is_pooler_backpressure(error: &dyn DatabaseError) -> bool {
-    error.message().contains(POOLER_QUERY_WAIT_TIMEOUT)
-}
-
-/// Whether a database error says the server cannot serve the request right now.
-///
-/// SQLSTATE 57P01 (`admin_shutdown`: the backend was terminated by an
-/// administrator), 57P02 (`crash_shutdown`: another backend crashed and the
-/// server is resetting) and 57P03 (`cannot_connect_now`: the server is starting
-/// up or shutting down) all describe the server, not the request.
-fn is_server_unavailable(error: &dyn DatabaseError) -> bool {
-    error.code().is_some_and(|code| matches!(code.as_ref(), "57P01" | "57P02" | "57P03"))
-}
-
-/// Whether a `sqlx` error is a transient transaction rollback that re-running
-/// the transaction can clear.
-///
-/// PostgreSQL rolls the whole transaction back on a deadlock (SQLSTATE 40P01) or
-/// a serialization failure (40001) and reports it to whichever transaction it
-/// chose as the victim, so the operation is safely retryable from a fresh
-/// transaction rather than a fault. The caller owns the bounded retry budget.
-#[must_use]
-pub fn is_transaction_rolled_back(error: &sqlx::Error) -> bool {
-    error
-        .as_database_error()
-        .and_then(DatabaseError::code)
-        .is_some_and(|code| matches!(code.as_ref(), "40001" | "40P01"))
-}
-
-/// Whether an I/O error is the host running out of the local sockets a new
-/// connection needs, rather than a genuine transport fault.
-///
-/// A working set larger than the runtime cache opens and closes per-tenant pools
-/// continuously; the churn can exhaust the host's ephemeral ports
-/// (`EADDRNOTAVAIL`) or transiently collide on one (`EADDRINUSE`). Both are
-/// load-induced and clear as the churn subsides and sockets leave `TIME_WAIT`, so
-/// the request is shed as retryable backpressure rather than reported an internal
-/// fault. A persistent misconfiguration fails every connection alike at startup;
-/// only load makes this appear intermittently mid-flight. Any other I/O error --
-/// a reset, a broken pipe, an unexpected EOF -- may be a real transport failure
-/// and is left a fault.
-fn is_connection_resource_exhausted(error: &IoError) -> bool {
-    matches!(error.kind(), ErrorKind::AddrNotAvailable | ErrorKind::AddrInUse)
-}
+/// The broker's shared pool tuning.
+pub mod pool_options;
+/// Whether a driver error is the pool or the pooler at capacity.
+pub mod saturation;
+/// Whether a driver error says the store cannot be reached right now.
+pub mod store_unavailability;
+/// Whether a driver error is a transaction rolled back under contention.
+pub mod transaction_rollback;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
@@ -163,112 +36,3 @@ andromeda_architecture_checks::dependency_boundary! {
 
 #[cfg(test)]
 andromeda_architecture_checks::forbid_sql!();
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        POOL_IDLE_TIMEOUT,
-        POOLER_QUERY_WAIT_TIMEOUT,
-        configure_pool_options,
-        fake_database_error::FakeDatabaseError,
-        is_pool_saturated,
-        is_pooler_backpressure,
-        is_transaction_rolled_back,
-    };
-    use std::{
-        io::{Error as IoError, ErrorKind},
-        time::Duration,
-    };
-
-    /// A PgBouncer-shaped database error: SQLSTATE `08P01` with the given message.
-    fn pgbouncer_error(message: &str) -> sqlx::Error {
-        FakeDatabaseError::new(message, "08P01").into_sqlx()
-    }
-
-    #[test]
-    fn pool_options_reclaim_idle_connections_keep_none_warm_and_bound_the_acquire() {
-        let options = configure_pool_options(7, Duration::from_secs(5));
-        assert_eq!(options.get_max_connections(), 7);
-        assert_eq!(options.get_min_connections(), 0);
-        assert_eq!(options.get_idle_timeout(), Some(POOL_IDLE_TIMEOUT));
-        assert_eq!(options.get_acquire_timeout(), Duration::from_secs(5));
-    }
-
-    #[test]
-    fn a_pool_acquire_timeout_is_a_saturation_signal() {
-        assert!(is_pool_saturated(&sqlx::Error::PoolTimedOut));
-    }
-
-    #[test]
-    fn a_pgbouncer_query_wait_timeout_is_a_saturation_signal() {
-        // PgBouncer closes a client it queued past query_wait_timeout with this
-        // message under SQLSTATE 08P01: pooled-mode pool exhaustion, answered 503,
-        // not the 500 an unrecognised database error would produce.
-        let error = FakeDatabaseError::new(POOLER_QUERY_WAIT_TIMEOUT, "08P01");
-        assert!(is_pooler_backpressure(&error));
-        assert!(is_pool_saturated(&pgbouncer_error(POOLER_QUERY_WAIT_TIMEOUT)));
-    }
-
-    #[test]
-    fn a_database_error_sharing_the_sqlstate_is_not_saturation() {
-        // 08P01 (protocol_violation) is shared with genuine protocol faults, so a
-        // database error under that code with an unrelated message is a real
-        // failure, not backpressure: the message is what distinguishes them.
-        assert!(!is_pool_saturated(&pgbouncer_error("insufficient data left in message")));
-    }
-
-    #[test]
-    fn ephemeral_port_exhaustion_is_a_saturation_signal() {
-        // The host cannot allocate a local socket for another connection under the
-        // pool churn of a working set larger than the cache: load, not a fault.
-        assert!(is_pool_saturated(&sqlx::Error::Io(IoError::from(ErrorKind::AddrNotAvailable))));
-        assert!(is_pool_saturated(&sqlx::Error::Io(IoError::from(ErrorKind::AddrInUse))));
-    }
-
-    #[test]
-    fn an_ordinary_io_fault_is_not_saturation() {
-        // A reset, a broken pipe or an unexpected EOF may be a genuine transport
-        // failure, so it stays a fault rather than being shed as retryable.
-        assert!(!is_pool_saturated(&sqlx::Error::Io(IoError::from(ErrorKind::ConnectionReset))));
-        assert!(!is_pool_saturated(&sqlx::Error::Io(IoError::from(ErrorKind::UnexpectedEof))));
-        assert!(!is_pool_saturated(&sqlx::Error::Io(IoError::from(ErrorKind::BrokenPipe))));
-    }
-
-    #[test]
-    fn a_closed_pool_or_row_absence_is_not_saturation() {
-        assert!(!is_pool_saturated(&sqlx::Error::PoolClosed));
-        assert!(!is_pool_saturated(&sqlx::Error::RowNotFound));
-        assert!(!is_pool_saturated(&sqlx::Error::WorkerCrashed));
-    }
-
-    /// A database error reporting the given SQLSTATE.
-    fn database_error(code: &str) -> sqlx::Error {
-        FakeDatabaseError::new("contended", code).into_sqlx()
-    }
-
-    #[test]
-    fn a_server_going_away_or_not_yet_accepting_work_is_saturation() {
-        // A backend an administrator terminated, a crash reset and a server
-        // starting or stopping are answered 503, not the 500 a fault earns.
-        for code in ["57P01", "57P02", "57P03"] {
-            assert!(is_pool_saturated(&database_error(code)), "{code}");
-        }
-        assert!(!is_pool_saturated(&database_error("57014")), "a statement timeout is not the server going away");
-        assert!(!is_pool_saturated(&database_error("23505")));
-    }
-
-    #[test]
-    fn a_deadlock_or_serialization_failure_is_a_transaction_rollback() {
-        // PostgreSQL rolls the victim transaction back whole on a deadlock (40P01)
-        // or a serialization failure (40001), so re-running it can clear the race.
-        assert!(is_transaction_rolled_back(&database_error("40P01")));
-        assert!(is_transaction_rolled_back(&database_error("40001")));
-    }
-
-    #[test]
-    fn an_unrelated_database_error_or_transport_fault_is_not_a_transaction_rollback() {
-        assert!(!is_transaction_rolled_back(&database_error("23505")));
-        assert!(!is_transaction_rolled_back(&sqlx::Error::PoolTimedOut));
-        assert!(!is_transaction_rolled_back(&sqlx::Error::RowNotFound));
-    }
-}

@@ -18,11 +18,11 @@ impl EntityMapStore for EntityMapRepository {
             // The control record and its children land in one transaction, so
             // a follow-up page on another instance never sees a map without
             // its entries.
-            let mut transaction = self.pool().begin().await.map_err(persistence_error)?;
+            let mut transaction = self.pool().begin().await.map_err(|error| persistence_error(error))?;
             delete_map_row(&mut transaction, &map.id).await?;
             insert_map_row(&mut transaction, map).await?;
             insert_children(&mut transaction, map).await?;
-            transaction.commit().await.map_err(persistence_error)?;
+            transaction.commit().await.map_err(|error| persistence_error(error))?;
             Ok(())
         })
     }
@@ -34,7 +34,7 @@ impl EntityMapStore for EntityMapRepository {
             };
             let entries = read_entries(self.pool(), identifier).await?;
             let links = read_links(self.pool(), identifier).await?;
-            let map = rows_to_entity_map(identifier.clone(), &control, entries, links).map_err(persistence_error)?; // clone: the map owns its identifier
+            let map = rows_to_entity_map(identifier.clone(), &control, entries, links).map_err(|error| persistence_error(error))?; // clone: the map owns its identifier
             Ok(Some(map))
         })
     }

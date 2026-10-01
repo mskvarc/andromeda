@@ -1,16 +1,20 @@
 //! Focused classification helpers for every non-entity policy consumed by entity routes.
 
-use crate::entity_error::classify_entity_error;
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
 use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
-use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
+use andromeda_http_extraction::classification::classify_tenancy_error;
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
+    entity_failure::classify_entity_error,
+    entity_map_failure::classify_entity_map_error,
+    forwarding_failure::classify_federation_error,
     internal_failure_summary::InternalFailureSummary,
+    jsonld_failure::classify_jsonld_error,
+    parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
-    provision::classify_forwarding_error,
+    query_failure::classify_query_error,
 };
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -34,37 +38,13 @@ impl EntityHttpClassify for EntityError {
 
 impl EntityHttpClassify for EntityMapError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
-        match self {
-            EntityMapError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()),
-            // Clause 5.5.14 with clause 6.3.20: parameters incompatible with
-            // the request that created the map are an invalid request.
-            EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
-            EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            EntityMapError::Persistence(_) | EntityMapError::Invariant(_) => {
-                ClassifiedReport::internal(self, InternalFailureSummary::new("the entity store is unavailable"))
-            }
-        }
+        classify_entity_map_error(self)
     }
 }
 
 impl EntityHttpClassify for FederationError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
-        match self {
-            FederationError::JsonLd(source) => classify_jsonld_error(source),
-            FederationError::Query(source) => classify_query_error(source),
-            // Clause 6.3.17: the failures of a forwarded request carry their
-            // own status and the most informative detail available.
-            FederationError::Conflict { .. }
-            | FederationError::OperationNotSupported { .. }
-            | FederationError::LoopDetected { .. }
-            | FederationError::GatewayTimeout { .. }
-            | FederationError::RemoteNotFound { .. }
-            | FederationError::BadGateway { .. }
-            | FederationError::Registration(_)
-            | FederationError::Representation(_)
-            | FederationError::ForwardedBody(_)
-            | FederationError::Internal(_) => classify_forwarding_error(self),
-        }
+        classify_federation_error(self)
     }
 }
 

@@ -50,7 +50,7 @@ pub(crate) async fn read_branch_condition(pool: &PgPool, id: &Identifier) -> Res
     let stored = sqlx::query_scalar_with::<_, i32, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(pool)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(stored.map(|version| condition_of(version, current)))
 }
 

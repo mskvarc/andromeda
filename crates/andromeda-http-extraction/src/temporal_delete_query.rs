@@ -8,8 +8,8 @@
 //! window check). The `TooManyResults` bound is not an extraction concern — it
 //! turns on a pre-count the service runs — so it is not decided here.
 
-use crate::{addressed_uri::addressed_uri, classification::classify_parameter_error, query::classify_query_parse_error};
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use crate::{addressed_uri::addressed_uri, query::classify_query_parse_error};
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, parameter_failure::classify_parameter_error};
 use andromeda_ngsi_ld_request::query::temporal::delete_parameters::TemporalDeleteParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::future::{Future, ready};

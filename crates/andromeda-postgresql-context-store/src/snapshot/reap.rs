@@ -48,7 +48,7 @@ pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Identifier) -> Result<u6
 /// Delete one Snapshot's control record and branch schema in a single
 /// transaction, returning the number of control rows removed.
 async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(persistence_error)?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
     let statement = Query::select()
         .column(Snapshots::SnapshotKey)
         .from(Snapshots::Table)
@@ -59,15 +59,15 @@ async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, Sna
     let Some(raw) = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(persistence_error)?
+        .map_err(|error| persistence_error(error))?
     else {
-        transaction.rollback().await.map_err(persistence_error)?;
+        transaction.rollback().await.map_err(|error| persistence_error(error))?;
         return Ok(0);
     };
     let snapshot_key = SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error)))?;
     reap_branch(&mut transaction, snapshot_key).await?;
     let deleted = delete_control_record(&mut transaction, snapshot_key).await?;
-    transaction.commit().await.map_err(persistence_error)?;
+    transaction.commit().await.map_err(|error| persistence_error(error))?;
     Ok(deleted)
 }
 
@@ -86,7 +86,7 @@ pub(crate) async fn delete_expired_snapshots(pool: &PgPool, cutoff: DateTime<Utc
 /// Delete every Snapshot past `cutoff` and its branch schema in a single
 /// transaction, returning the number of control rows removed.
 async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(persistence_error)?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
     let statement = Query::select()
         .column(Snapshots::SnapshotKey)
         .from(Snapshots::Table)
@@ -97,9 +97,9 @@ async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> 
     let rows = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(&mut *transaction)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     if rows.is_empty() {
-        transaction.rollback().await.map_err(persistence_error)?;
+        transaction.rollback().await.map_err(|error| persistence_error(error))?;
         return Ok(0);
     }
     let mut deleted = 0;
@@ -108,7 +108,7 @@ async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> 
         reap_branch(&mut transaction, snapshot_key).await?;
         deleted += delete_control_record(&mut transaction, snapshot_key).await?;
     }
-    transaction.commit().await.map_err(persistence_error)?;
+    transaction.commit().await.map_err(|error| persistence_error(error))?;
     Ok(deleted)
 }
 
@@ -118,10 +118,10 @@ async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> 
 pub(crate) async fn reap_branch(transaction: &mut Transaction<'_, Postgres>, snapshot_key: SnapshotKey) -> Result<(), SnapshotError> {
     drop_branch_schema(transaction, snapshot_key, SnapshotBranch::Published)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     drop_branch_schema(transaction, snapshot_key, SnapshotBranch::Staging)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(())
 }
 
@@ -135,6 +135,6 @@ pub(crate) async fn delete_control_record(transaction: &mut Transaction<'_, Post
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut **transaction)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(result.rows_affected())
 }

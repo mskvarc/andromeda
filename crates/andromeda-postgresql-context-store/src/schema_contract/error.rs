@@ -6,7 +6,7 @@ use crate::schema_contract::{
     server_encoding::ServerEncoding,
     server_requirements::{ExtensionPresence, ExtensionVersion, ExtensionVersionError, PostgresVersion},
 };
-use andromeda_postgresql_pool::is_pool_saturated;
+use andromeda_postgresql_pool::saturation::is_pool_saturated;
 
 /// Why a tenant database is not the one this binary was built against.
 ///

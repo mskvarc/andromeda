@@ -46,7 +46,10 @@ pub(super) async fn intern_attribute_lists(
     if names.is_empty() {
         return Ok(InternedAttributeLists::default());
     }
-    let keys = attribute_names.resolve_or_create(connection, &names).await.map_err(persistence_error)?;
+    let keys = attribute_names
+        .resolve_or_create(connection, &names)
+        .await
+        .map_err(|error| persistence_error(error))?;
     Ok(InternedAttributeLists {
         watched_attributes: keys_of(fields.watched_attributes, &keys)?,
         expand_values: keys_of(fields.expand_values, &keys)?,

@@ -227,6 +227,7 @@ fn branch_commit_failure(error: CommitError) -> Result<ExecutionResultDetails, S
     match error {
         CommitError::TransactionContended => Err(SnapshotError::Contended),
         CommitError::StoreSaturated => Err(SnapshotError::StoreSaturated),
+        CommitError::StoreUnavailable => Err(SnapshotError::StoreUnavailable),
         failure @ (CommitError::Submission { .. }
         | CommitError::DuplicateEntity { .. }
         | CommitError::Persistence { .. }

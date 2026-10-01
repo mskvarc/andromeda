@@ -74,6 +74,13 @@ pub enum TemporalError {
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
+    /// The datastore could not be reached, or the connection to it was lost.
+    ///
+    /// Not a fault of the request: nothing of it is known to have persisted, so
+    /// the identical request can be sent again once the store is back. It is
+    /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore is temporarily unavailable; retry shortly")]
+    StoreUnavailable,
     /// The datastore rolled the transaction back to break a deadlock or a
     /// serialization conflict with a concurrent transaction.
     ///
@@ -103,6 +110,7 @@ impl From<CommitError> for TemporalError {
             // `Commit` variant.
             CommitError::StoreSaturated => TemporalError::StoreSaturated,
             CommitError::TransactionContended => TemporalError::TransactionContended,
+            CommitError::StoreUnavailable => TemporalError::StoreUnavailable,
             failure @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence(_)
             | CommitError::Invariant(_)
@@ -113,15 +121,17 @@ impl From<CommitError> for TemporalError {
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
-/// A saturated store and a transaction rolled back under contention are
-/// backpressure the client can retry, so each keeps its own retryable category;
-/// only a fault becomes [`TemporalError::Persistence`].
+/// A saturated store, a transaction rolled back under contention and a store
+/// that cannot be reached are conditions the client can retry, so each keeps
+/// its own retryable category; only a fault becomes
+/// [`TemporalError::Persistence`].
 impl From<PersistenceFailure> for TemporalError {
     fn from(failure: PersistenceFailure) -> TemporalError {
         match failure {
             PersistenceFailure::Saturated => TemporalError::StoreSaturated,
+            PersistenceFailure::Unavailable => TemporalError::StoreUnavailable,
             PersistenceFailure::RolledBack => TemporalError::TransactionContended,
-            fault @ (PersistenceFailure::Unavailable
+            fault @ (PersistenceFailure::Misconfigured
             | PersistenceFailure::ConstraintViolated
             | PersistenceFailure::StatementRejected
             | PersistenceFailure::RecordMissing
@@ -159,6 +169,7 @@ impl TemporalError {
     pub fn from_entity_failure(error: EntityError) -> TemporalError {
         match error {
             EntityError::StoreSaturated => TemporalError::StoreSaturated,
+            EntityError::StoreUnavailable => TemporalError::StoreUnavailable,
             EntityError::TransactionContended => TemporalError::TransactionContended,
             EntityError::Persistence(failure) => TemporalError::Persistence(failure),
             other @ (EntityError::Validation(_)
@@ -186,5 +197,22 @@ impl TemporalError {
     #[must_use]
     pub const fn is_not_found(&self) -> bool {
         matches!(self, TemporalError::NotFound(_))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::TemporalError;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+
+    /// A store that cannot be reached is retryable, answered 503 rather than
+    /// the 500 of a fault; a configuration no retry mends stays a fault.
+    #[test]
+    fn an_unreachable_store_keeps_its_retryable_category() {
+        assert!(matches!(TemporalError::from(PersistenceFailure::Unavailable), TemporalError::StoreUnavailable));
+        assert!(matches!(
+            TemporalError::from(PersistenceFailure::Misconfigured),
+            TemporalError::Persistence(PersistenceFailure::Misconfigured)
+        ));
     }
 }

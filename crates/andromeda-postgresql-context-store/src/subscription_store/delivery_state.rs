@@ -71,7 +71,7 @@ pub fn state_insert_sql(target: &ContextTarget) -> Result<String, SubscriptionEr
         .into_table(table_of(target, SubscriptionDeliveryState::Table))
         .columns([SubscriptionDeliveryState::SubscriptionKey])
         .values([external_placeholder(1)])
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
 

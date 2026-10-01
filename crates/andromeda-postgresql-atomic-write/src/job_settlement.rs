@@ -43,7 +43,10 @@ use sqlx::{Postgres, Transaction};
 /// Returns [`CommitError::ReplayLeaseLost`] when the job is no longer leased to
 /// `lease.holder`, and the classified store failure when the statement fails.
 pub(crate) async fn settle(tx: &mut Transaction<'_, Postgres>, lease: JobLease) -> Result<(), CommitError> {
-    match PendingSideEffectsRepository::settle_in_tx(tx, lease).await.map_err(context_store)? {
+    match PendingSideEffectsRepository::settle_in_tx(tx, lease)
+        .await
+        .map_err(|error| context_store(error))?
+    {
         LeaseAcknowledgement::Applied => Ok(()),
         LeaseAcknowledgement::Lost => Err(CommitError::ReplayLeaseLost { job: lease.job }),
     }

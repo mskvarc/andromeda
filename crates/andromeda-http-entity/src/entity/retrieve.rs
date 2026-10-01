@@ -258,8 +258,9 @@ pub(crate) async fn get(
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity::retrieve::local_entity_for_forwarding, entity_error::classify_entity_error};
+    use crate::entity::retrieve::local_entity_for_forwarding;
     use andromeda_entity::error::EntityError;
+    use andromeda_http_response::entity_failure::classify_entity_error;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
 

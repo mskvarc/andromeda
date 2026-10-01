@@ -40,7 +40,7 @@ use andromeda_federation::{
     temporal_last_n::truncate_to_last_n,
 };
 use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
-use andromeda_http_response::declined_representation::single_source_declined;
+use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
 use andromeda_temporal::{
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,
@@ -120,7 +120,8 @@ pub(crate) struct RetrievalSources<'a> {
 ///
 /// The Table 6.4.3.2-3 `NotImplemented` answer when the one source holding all
 /// the data declined the requested representation, the classified failure of
-/// the local read or of the map store, and `ResourceNotFound` when the entity
+/// the local read or of the map store, the 503 of a registration store that
+/// is saturated or unreachable, and `ResourceNotFound` when the entity
 /// is held neither locally nor by any matching registration (clause 5.7.3.4).
 pub(crate) async fn distributed_retrieval(
     sources: RetrievalSources<'_>,
@@ -150,11 +151,18 @@ pub(crate) async fn distributed_retrieval(
                 entity_map: EntityMapInUse::from(&map_use),
             },
         )
-        .await
-        .unwrap_or_else(|error| {
+        .await;
+    let forwarded = match forwarded {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if let Some(report) = local_federation_failure(&error) {
+                // clone: the problem response owns the request URI it names
+                return Err(report.with_instance(instance.clone()));
+            }
             warn!(%error, "context source forwarding failed during the temporal retrieval");
             ForwardReadOutcome::empty()
-        });
+        }
+    };
     if let Some(status) = forwarded.sources.single_source_status {
         return Err(single_source_declined(status, instance));
     }

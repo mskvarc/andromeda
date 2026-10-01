@@ -87,9 +87,11 @@ pub(crate) async fn apply(
     // Removals run first so that a mutation which both ends one instance and
     // restates another leaves the second standing. No grain appears on both
     // sides: an instance the mutation gives a value to is not one it removed.
-    delete_instances_in_tx(tx, target, &work.removals).await.map_err(context_store)?;
-    upsert_projection_in_tx(tx, target, &work.upserts).await.map_err(context_store)?;
-    insert_minted_projection_in_tx(tx, target, &work.minted).await.map_err(context_store)?;
+    delete_instances_in_tx(tx, target, &work.removals).await.map_err(|error| context_store(error))?;
+    upsert_projection_in_tx(tx, target, &work.upserts).await.map_err(|error| context_store(error))?;
+    insert_minted_projection_in_tx(tx, target, &work.minted)
+        .await
+        .map_err(|error| context_store(error))?;
     Ok(())
 }
 
@@ -124,7 +126,7 @@ fn collect(
                             expires_at: row.metadata.as_ref().and_then(instance_expires_at),
                         };
                         match entity {
-                            ProjectedEntityKey::Minted(minted) => work.minted.push(minted, projected).map_err(context_store)?,
+                            ProjectedEntityKey::Minted(minted) => work.minted.push(minted, projected).map_err(|error| context_store(error))?,
                             ProjectedEntityKey::Existing(_) => work.upserts.push(projected),
                         }
                     }

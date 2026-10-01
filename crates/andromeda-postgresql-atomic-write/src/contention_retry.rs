@@ -97,13 +97,24 @@ mod tests {
     async fn a_failure_other_than_contention_is_never_run_again() {
         let runs = Cell::new(0);
         let outcome = rerun_while_contended(attempt_contended_for(0, &runs, || {
-            Err(AttemptFailure::Failed(CommitError::Persistence(PersistenceFailure::Unavailable)))
+            Err(AttemptFailure::Failed(CommitError::Persistence(PersistenceFailure::StatementRejected)))
         }))
         .await;
         assert!(matches!(outcome, Err(AttemptFailure::Failed(CommitError::Persistence(_)))), "{outcome:?}");
         pretty_assertions::assert_eq!(runs.get(), 1);
         let saturated = rerun_while_contended(|| ready(Err::<u32, AttemptFailure>(AttemptFailure::Failed(CommitError::StoreSaturated)))).await;
         assert!(matches!(saturated, Err(AttemptFailure::Failed(CommitError::StoreSaturated))), "{saturated:?}");
+    }
+
+    /// A connection lost while awaiting `COMMIT` leaves the outcome unknown, so
+    /// the committer reports it rather than run the write again behind the
+    /// client's back.
+    #[tokio::test(start_paused = true)]
+    async fn an_unreachable_store_is_not_re_run() {
+        let runs = Cell::new(0);
+        let outcome = rerun_while_contended(attempt_contended_for(0, &runs, || Err(AttemptFailure::Failed(CommitError::StoreUnavailable)))).await;
+        assert!(matches!(outcome, Err(AttemptFailure::Failed(CommitError::StoreUnavailable))), "{outcome:?}");
+        pretty_assertions::assert_eq!(runs.get(), 1);
     }
 
     /// A refused write is the committer's to set aside, not a conflict to run

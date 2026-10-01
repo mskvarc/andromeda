@@ -9,6 +9,8 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-entity.workspace = true
+andromeda-entity-map.workspace = true
 andromeda-federation.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-jsonld.workspace = true
@@ -17,8 +19,11 @@ andromeda-ngsi-ld-problem-details.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
+andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-persistence-failure.workspace = true
+andromeda-registration.workspace = true
+andromeda-temporal.workspace = true
 axum = "0.8.9"
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["display"] }
@@ -32,6 +37,9 @@ url = "2.5.8"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-context-commit.workspace = true
+andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-number.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.1", features = ["macros", "rt"] }

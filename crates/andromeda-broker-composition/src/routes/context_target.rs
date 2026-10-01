@@ -3,6 +3,7 @@
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_extraction::context_target::{ContextTargetResolutionError, SnapshotTargetResolver};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_snapshot::{error::SnapshotError, service::SnapshotService};
 use futures::future::BoxFuture;
 use std::sync::Arc;
@@ -28,6 +29,7 @@ impl SnapshotTargetResolver for BrokerSnapshotTargetResolver {
                 SnapshotError::Quarantined { identifier } => ContextTargetResolutionError::Quarantined { identifier },
                 SnapshotError::StoreSaturated | SnapshotError::Contended => ContextTargetResolutionError::Saturated,
                 SnapshotError::Persistence(failure) => ContextTargetResolutionError::Persistence(failure),
+                SnapshotError::StoreUnavailable => ContextTargetResolutionError::Persistence(PersistenceFailure::Unavailable),
                 other @ (SnapshotError::Validation(_)
                 | SnapshotError::AlreadyExists { .. }
                 | SnapshotError::Entity(_)

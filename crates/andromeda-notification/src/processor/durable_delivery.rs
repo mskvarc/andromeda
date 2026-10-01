@@ -309,7 +309,7 @@ mod tests {
         match disposition {
             DeliveryDisposition::RetryableFailure { detail } => {
                 assert!(detail.contains("urn:ngsi-ld:Subscription:1"), "{detail}");
-                assert!(detail.contains("the store is unreachable"), "{detail}");
+                assert!(detail.contains("the datastore is temporarily unavailable"), "{detail}");
             }
             other @ (DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete | DeliveryDisposition::TerminalFailure { .. }) => {
                 panic!("an unreadable subscription must be retried, got {other:?}")

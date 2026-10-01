@@ -16,7 +16,7 @@ use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
-use andromeda_postgresql_pool::{is_pool_saturated, is_transaction_rolled_back, persistence_classification::classify};
+use andromeda_postgresql_pool::{persistence_classification::classify, saturation::is_pool_saturated, transaction_rollback::is_transaction_rolled_back};
 use andromeda_postgresql_query::error::RenderError;
 use sea_query::error::Error as SeaQueryError;
 use sqlx::migrate::MigrateError;

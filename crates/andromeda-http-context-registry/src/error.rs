@@ -20,6 +20,7 @@ pub fn classify_context_registry_error(error: &ContextRegistryError) -> Classifi
         ContextRegistryError::ContextUnavailable { .. } => ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string()),
         // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
         ContextRegistryError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
+        ContextRegistryError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         ContextRegistryError::MissingSourceUrl { .. }
         | ContextRegistryError::Persistence { .. }
         | ContextRegistryError::Representation { .. }
@@ -46,7 +47,7 @@ impl<T> ContextRegistryResultExt<T> for Result<T, ContextRegistryError> {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_context_registry_error;
+    use crate::error::classify_context_registry_error;
     use andromeda_context_registry::{error::ContextRegistryError, identifier::ContextIdentifier};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -65,7 +66,7 @@ mod tests {
             ),
             (ContextRegistryError::CoreContextDeletion, NgsiLdErrorType::BadRequestData),
             (
-                ContextRegistryError::Persistence(PersistenceFailure::Unavailable),
+                ContextRegistryError::Persistence(PersistenceFailure::StatementRejected),
                 NgsiLdErrorType::InternalError,
             ),
         ] {
@@ -74,11 +75,24 @@ mod tests {
             if expected == NgsiLdErrorType::InternalError {
                 pretty_assertions::assert_eq!(report.detail(), "internal context-registry error");
                 assert!(
-                    !report.detail().contains(&PersistenceFailure::Unavailable.to_string()),
+                    !report.detail().contains(&PersistenceFailure::StatementRejected.to_string()),
                     "the raw cause leaked: {}",
                     report.detail()
                 );
             }
         }
+    }
+
+    /// Clause 5.5.6 with RFC 7231 6.6.4: a store that cannot be reached is a
+    /// retryable 503 with `Retry-After`, never the 500 of a fault.
+    #[test]
+    fn an_unreachable_store_is_a_retryable_503() {
+        use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
+        use std::time::Duration;
+
+        let report = classify_context_registry_error(&ContextRegistryError::StoreUnavailable);
+        pretty_assertions::assert_eq!(report.classification(), ProblemClassification::ServiceUnavailable);
+        pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(5)));
+        pretty_assertions::assert_eq!(report.detail(), "the datastore is temporarily unavailable; retry shortly");
     }
 }

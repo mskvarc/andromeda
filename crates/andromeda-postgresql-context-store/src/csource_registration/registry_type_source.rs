@@ -174,7 +174,7 @@ impl PostgresRegistrationStore {
         let rows: Vec<(Vec<String>, Option<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.pool)
             .await
-            .map_err(persistence_error)?;
+            .map_err(|error| persistence_error(error))?;
         Ok(rows
             .into_iter()
             .map(|(entity_types, attribute_name)| RegisteredPair { entity_types, attribute_name })

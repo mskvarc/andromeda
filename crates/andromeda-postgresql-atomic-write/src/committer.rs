@@ -156,7 +156,7 @@ impl PostgresAtomicCommitter {
             EntityInsertMode::Unnest => EntityRepository::create_batch_in_tx(tx, target, &columns).await,
             EntityInsertMode::CopyStaging => create_batch_via_copy_in_tx(tx, target, &columns).await,
         }
-        .map_err(entity_statement)?;
+        .map_err(|error| entity_statement(error))?;
         record_minted(keys, inserted);
         for (index, write) in inserts {
             outcomes[*index] = Some(insert_outcome(write.precondition, returned_flag(keys, write.entity_id.as_ref())));
@@ -181,7 +181,7 @@ impl PostgresAtomicCommitter {
         let expected = expectations(updates);
         let saved = EntityRepository::save_batch_in_tx(tx, target, &columns, &expected)
             .await
-            .map_err(entity_statement)?;
+            .map_err(|error| entity_statement(error))?;
         record_keys(keys, saved);
         for (index, write) in updates {
             outcomes[*index] = Some(update_outcome(write.precondition, returned_flag(keys, write.entity_id.as_ref())));
@@ -207,7 +207,7 @@ impl PostgresAtomicCommitter {
         let expected = expectations(deletes);
         let mut snapshots: HashMap<Identifier, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, target, &ids, &expected)
             .await
-            .map_err(context_store)?
+            .map_err(|error| context_store(error))?
             .into_iter()
             .map(|entity| (entity.id.clone(), entity)) // clone: both the lookup key and returned snapshot own the identifier.
             .collect();
@@ -241,7 +241,9 @@ async fn resolve_untouched_keys(
     if ids.is_empty() {
         return Ok(());
     }
-    let resolved = EntityRepository::keys_by_ids_in_tx(tx, target, &ids).await.map_err(context_store)?;
+    let resolved = EntityRepository::keys_by_ids_in_tx(tx, target, &ids)
+        .await
+        .map_err(|error| context_store(error))?;
     record_keys(keys, resolved);
     Ok(())
 }

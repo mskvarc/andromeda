@@ -16,11 +16,12 @@
 //! already sit above the response crate.
 
 use crate::tenant_context_hosting::TenantContextHosting;
-use andromeda_http_extraction::{api_root::ApiRoot, classification::classify_jsonld_error};
+use andromeda_http_extraction::api_root::ApiRoot;
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
     context_hosting_failure::classify_context_hosting_error,
+    jsonld_failure::classify_jsonld_error,
     render::{RenderingPreferences, start_rendering, start_rendering_temporal},
 };
 use andromeda_jsonld::{compound_context_host::ContextHostingError, context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError};
@@ -161,7 +162,7 @@ mod tests {
             classify_response_context_error(&saturated).classification(),
             ProblemClassification::ServiceUnavailable
         );
-        let fault = ResponseContextError::from(ContextHostingError::Persistence(PersistenceFailure::Unavailable));
+        let fault = ResponseContextError::from(ContextHostingError::Persistence(PersistenceFailure::StatementRejected));
         pretty_assertions::assert_eq!(classify_response_context_error(&fault).error_type(), NgsiLdErrorType::InternalError);
     }
 }

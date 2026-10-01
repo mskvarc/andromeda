@@ -13,6 +13,8 @@
 
 /// The closed classification of a store failure and its operator record.
 pub mod persistence_failure;
+/// Whether a store failure can be retried unchanged, and why.
+pub mod retryability;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

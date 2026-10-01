@@ -1,5 +1,4 @@
 use crate::{
-    entity_error::classify_entity_error,
     entity_operations::forwarded::{
         ForwardedBatch,
         created_remotely,
@@ -33,6 +32,7 @@ use andromeda_http_headers::{preference::RespondMode, preference_applied::Prefer
 use andromeda_http_response::{
     batch::NgsiLdBatchResponse,
     batch_projection::batch_operation_result,
+    entity_failure::classify_entity_error,
     problem_response::ProblemResponse,
     render::start_rendering_partial_success,
 };

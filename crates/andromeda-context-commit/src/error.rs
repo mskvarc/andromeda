@@ -36,6 +36,13 @@ pub enum CommitError {
     /// 503 with `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
+    /// The datastore could not be reached, or the connection to it was lost.
+    ///
+    /// Not a fault of the request: nothing of it is known to have persisted, so
+    /// the identical request can be sent again once the store is back. It is
+    /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore is temporarily unavailable; retry shortly")]
+    StoreUnavailable,
     /// The datastore rolled the commit transaction back to break a deadlock or
     /// a serialization conflict with a concurrent transaction.
     ///
@@ -72,15 +79,17 @@ pub enum CommitError {
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
-/// A saturated store and a transaction rolled back under contention are
-/// backpressure the client can retry, so each keeps its own retryable category;
-/// only a fault becomes [`CommitError::Persistence`].
+/// A saturated store, a transaction rolled back under contention and a store
+/// that cannot be reached are conditions the client can retry, so each keeps
+/// its own retryable category; only a fault becomes
+/// [`CommitError::Persistence`].
 impl From<PersistenceFailure> for CommitError {
     fn from(failure: PersistenceFailure) -> CommitError {
         match failure {
             PersistenceFailure::Saturated => CommitError::StoreSaturated,
+            PersistenceFailure::Unavailable => CommitError::StoreUnavailable,
             PersistenceFailure::RolledBack => CommitError::TransactionContended,
-            fault @ (PersistenceFailure::Unavailable
+            fault @ (PersistenceFailure::Misconfigured
             | PersistenceFailure::ConstraintViolated
             | PersistenceFailure::StatementRejected
             | PersistenceFailure::RecordMissing
@@ -101,8 +110,8 @@ mod tests {
 
     #[test]
     fn persistence_errors_remain_backend_neutral() {
-        let error = CommitError::from(PersistenceFailure::Unavailable);
-        pretty_assertions::assert_eq!(error.to_string(), "atomic context commit failed: the store is unreachable");
+        let error = CommitError::from(PersistenceFailure::Undecodable);
+        pretty_assertions::assert_eq!(error.to_string(), "atomic context commit failed: a stored value could not be decoded");
     }
 
     #[test]
@@ -120,5 +129,16 @@ mod tests {
             error.to_string(),
             "atomic context commit refused the submission: an entity write carried no type, but at least one is required"
         );
+    }
+
+    /// A store that cannot be reached is retryable, answered 503 rather than
+    /// the 500 of a fault; a configuration no retry mends stays a fault.
+    #[test]
+    fn an_unreachable_store_keeps_its_retryable_category() {
+        assert!(matches!(CommitError::from(PersistenceFailure::Unavailable), CommitError::StoreUnavailable));
+        assert!(matches!(
+            CommitError::from(PersistenceFailure::Misconfigured),
+            CommitError::Persistence(PersistenceFailure::Misconfigured)
+        ));
     }
 }

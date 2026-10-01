@@ -10,11 +10,12 @@
 //! admission itself is the route's: it is installed as a request extension of
 //! the [`TemporalQueryAdmission`] type the binding names.
 
-use crate::{addressed_uri::addressed_uri, classification::classify_parameter_error, jsonld::JsonLd, query::ValidatedQuery};
+use crate::{addressed_uri::addressed_uri, jsonld::JsonLd, query::ValidatedQuery};
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
     extraction_rejection::ExtractorRejection,
     internal_failure_summary::InternalFailureSummary,
+    parameter_failure::classify_parameter_error,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::query::body::Query;

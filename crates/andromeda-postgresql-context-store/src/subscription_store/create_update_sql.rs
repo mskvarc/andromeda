@@ -244,7 +244,7 @@ pub fn entity_create_sql(target: &ContextTarget) -> Result<String, SubscriptionE
             now(),
             now(),
         ])
-        .map_err(persistence_error)?
+        .map_err(|error| persistence_error(error))?
         .returning(Query::returning().column(Subscriptions::SubscriptionKey));
     Ok(insert.to_string(PostgresQueryBuilder))
 }
@@ -340,7 +340,7 @@ pub fn csource_create_sql(target: &ContextTarget) -> Result<String, Subscription
             now(),
             now(),
         ])
-        .map_err(persistence_error)?
+        .map_err(|error| persistence_error(error))?
         .returning(Query::returning().column(Subscriptions::SubscriptionKey));
     Ok(insert.to_string(PostgresQueryBuilder))
 }

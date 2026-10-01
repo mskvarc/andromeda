@@ -6,7 +6,6 @@
 
 pub mod attribute;
 mod entity;
-pub mod entity_error;
 mod entity_operations;
 pub mod entity_type;
 pub mod error;

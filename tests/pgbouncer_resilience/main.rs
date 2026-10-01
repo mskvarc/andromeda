@@ -2,12 +2,17 @@
 //! load loses no request, a pause stalls then resumes cleanly, terminated
 //! server backends are replaced, pool saturation is a 503 with Retry-After
 //! rather than a 500 -- including when it is the name dictionary lookup that
-//! finds the pool saturated -- and a killed database pool recovers.
+//! finds the pool saturated -- a killed database pool recovers, and the outage
+//! a killed pool causes is answered 503 rather than 500 ([`store_outage`]).
 //!
 //! Everything drives the pooled `broker` and the pooler admin console on the
 //! `pgbouncer` stack.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
+
+#[path = "../support/context_source_adapter.rs"]
+pub mod context_source_adapter;
+mod store_outage;
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::pooler_probe::{

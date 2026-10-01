@@ -21,7 +21,7 @@ use andromeda_postgresql_context_store::{
     schema_contract::{contract::current_tenant_schema_contract, schema_metadata::verify_schema_contract},
     tenant_database::DatabaseUrl,
 };
-use andromeda_postgresql_pool::configure_pool_options;
+use andromeda_postgresql_pool::pool_options::configure_pool_options;
 use andromeda_telemetry::maintenance::{MaintenanceDecision, record_decision};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, PgPool};

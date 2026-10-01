@@ -36,6 +36,7 @@ impl RegistrationRemovalHook for SubscriptionForwardingService {
                 .map_err(|error: SubscriptionForwardingError| match error {
                     SubscriptionForwardingError::Persistence(failure) => RegistrationError::from(failure),
                     SubscriptionForwardingError::StoreSaturated => RegistrationError::StoreSaturated,
+                    SubscriptionForwardingError::StoreUnavailable => RegistrationError::StoreUnavailable,
                     other @ (SubscriptionForwardingError::Subscription(_)
                     | SubscriptionForwardingError::Federation(_)
                     | SubscriptionForwardingError::Registration(_)

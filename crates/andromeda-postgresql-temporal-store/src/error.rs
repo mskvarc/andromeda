@@ -287,8 +287,14 @@ mod tests {
 
     #[test]
     fn another_database_failure_stays_a_persistence_fault() {
-        let persistence = TemporalError::from(TemporalStoreError::Database(sqlx::Error::PoolClosed));
-        assert!(matches!(persistence, TemporalError::Persistence(PersistenceFailure::Unavailable)));
+        let persistence = TemporalError::from(TemporalStoreError::Database(sqlx::Error::RowNotFound));
+        assert!(matches!(persistence, TemporalError::Persistence(PersistenceFailure::RecordMissing)));
+    }
+
+    #[test]
+    fn a_closed_pool_is_the_store_being_unavailable() {
+        let unavailable = TemporalError::from(TemporalStoreError::Database(sqlx::Error::PoolClosed));
+        assert!(matches!(unavailable, TemporalError::StoreUnavailable));
     }
 
     #[test]

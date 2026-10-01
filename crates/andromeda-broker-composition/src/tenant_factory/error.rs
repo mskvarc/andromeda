@@ -4,7 +4,7 @@ use crate::tenant_factory::assembly_invariant::AssemblyInvariant;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_context_store::error::ContextStoreError;
-use andromeda_postgresql_pool::{is_pool_saturated, persistence_classification::classify};
+use andromeda_postgresql_pool::{persistence_classification::classify, saturation::is_pool_saturated};
 use andromeda_postgresql_temporal_store::error::TemporalStoreError;
 use andromeda_tenancy::runtime_build_failure::RuntimeBuildFailure;
 use sqlx::{Error as SqlxError, migrate::MigrateError};

@@ -1,5 +1,4 @@
 use crate::{
-    entity_error::classify_entity_error,
     error::{EntityResultExt, public_error},
     join::{JoinRequest, ResolvedJoin},
     request_projection::RequestProjection,
@@ -29,9 +28,11 @@ use andromeda_http_extraction::{
 use andromeda_http_response::{
     batch_projection::{batch_operation_result, forwarded_write_error},
     collection::NgsiLdCollectionResponse,
+    entity_failure::classify_entity_error,
+    forwarding_failure::classify_forwarding_error,
     linked_resolution_warning::with_linked_resolution_warnings,
     problem_response::ProblemResponse,
-    provision::{LocalOutcome, classify_forwarding_error, multi_status, provision_response},
+    provision::{LocalOutcome, multi_status, provision_response},
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};

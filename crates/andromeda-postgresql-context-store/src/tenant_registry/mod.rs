@@ -26,7 +26,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
-use andromeda_postgresql_pool::{configure_pool_options, is_pool_saturated};
+use andromeda_postgresql_pool::{pool_options::configure_pool_options, saturation::is_pool_saturated};
 use andromeda_tenancy::{
     config::TenancyConfig,
     database::TenantDatabase,

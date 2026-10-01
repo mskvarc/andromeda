@@ -41,7 +41,7 @@ fn control_insert_sql() -> Result<String, SnapshotError> {
         .into_table(Snapshots::Table)
         .columns(control_columns())
         .values((1..=11).map(external_placeholder))
-        .map_err(persistence_error)?
+        .map_err(|error| persistence_error(error))?
         .returning_col(Snapshots::SnapshotKey);
     Ok(insert.to_string(PostgresQueryBuilder))
 }
@@ -62,7 +62,7 @@ fn preparation_insert_sql() -> Result<String, SnapshotError> {
             SnapshotPreparation::BranchSchemaVersion,
         ])
         .values((1..=7).map(external_placeholder))
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
 
@@ -71,7 +71,7 @@ fn preparation_insert_sql() -> Result<String, SnapshotError> {
 /// into being only when the preparation renames the staging schema.
 pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<'_>) -> Result<(), SnapshotError> {
     let branch_version = current_version()?;
-    let mut tx = pool.begin().await.map_err(persistence_error)?;
+    let mut tx = pool.begin().await.map_err(|error| persistence_error(error))?;
     let control_sql = control_insert_sql()?;
     let snapshot_key_raw: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(control_sql.as_str()))
         .bind(params.id.as_str())
@@ -100,11 +100,11 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
         .bind(branch_version.get())
         .execute(&mut *tx)
         .await
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     create_branch_schema(&mut tx, snapshot_key, SnapshotBranch::Staging)
         .await
-        .map_err(persistence_error)?;
-    tx.commit().await.map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
+    tx.commit().await.map_err(|error| persistence_error(error))?;
     Ok(())
 }
 

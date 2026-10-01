@@ -11,7 +11,11 @@ use andromeda_federation::{
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_http_response::{declined_representation::single_source_declined, problem_response::ProblemResponse};
+use andromeda_http_response::{
+    declined_representation::single_source_declined,
+    forwarding_failure::local_federation_failure,
+    problem_response::ProblemResponse,
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -60,9 +64,10 @@ impl RetrieveForwarding<'_> {
     /// # Errors
     ///
     /// Returns the answer of the one proxied source that declined the
-    /// representation (Table 6.4.3.2-3), which is the operation's answer.
+    /// representation (Table 6.4.3.2-3), which is the operation's answer, and
+    /// the 503 of a registration store that is saturated or unreachable.
     pub(crate) async fn run(&self, local_entity: Option<Entity>) -> Result<ForwardedRetrieval, ProblemResponse> {
-        let primary = self.phase(CsrModeFilter::ExcludeAuxiliary).await;
+        let primary = self.phase(CsrModeFilter::ExcludeAuxiliary).await?;
         if let Some(status) = primary.sources.single_source_status {
             return Err(single_source_declined(status, self.uri));
         }
@@ -74,7 +79,7 @@ impl RetrieveForwarding<'_> {
         // only supplement existing data (clause 4.3.6.2).
         let entity = match merged {
             Some(merged) => {
-                let auxiliary = self.phase(CsrModeFilter::AuxiliaryOnly).await;
+                let auxiliary = self.phase(CsrModeFilter::AuxiliaryOnly).await?;
                 warnings.extend(collect_warnings(&auxiliary.results));
                 contributions.extend(contributions_of(&auxiliary.results));
                 merge_retrieve_results(Some(merged), auxiliary.results)
@@ -89,8 +94,14 @@ impl RetrieveForwarding<'_> {
     }
 
     /// One forwarding phase over the registrations `mode_filter` admits.
-    async fn phase(&self, mode_filter: CsrModeFilter) -> ForwardReadOutcome<ForwardedEntities> {
-        self.forwarding
+    ///
+    /// A source that could not be reached leaves the phase empty; a phase that
+    /// could not read the registrations to forward to, because this broker's
+    /// own store is saturated or unreachable, fails the retrieval rather than
+    /// hide every source.
+    async fn phase(&self, mode_filter: CsrModeFilter) -> Result<ForwardReadOutcome<ForwardedEntities>, ProblemResponse> {
+        let forwarded = self
+            .forwarding
             .forward_retrieve(
                 self.target,
                 ForwardRetrieveRequest {
@@ -106,12 +117,19 @@ impl RetrieveForwarding<'_> {
                     entity_map: self.entity_map,
                 },
             )
-            .await
-            .unwrap_or_else(|error| {
+            .await;
+        match forwarded {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                if let Some(report) = local_federation_failure(&error) {
+                    // clone: the problem response owns the request URI it names
+                    return Err(report.with_instance(self.uri.clone()));
+                }
                 // Retrieve forwarding is best-effort: a source that cannot be
                 // reached is a warning, not a failure.
                 warn!(%error, "context source forwarding failed during the entity retrieval");
-                ForwardReadOutcome::empty()
-            })
+                Ok(ForwardReadOutcome::empty())
+            }
+        }
     }
 }

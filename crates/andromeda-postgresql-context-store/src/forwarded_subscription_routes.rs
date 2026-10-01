@@ -113,11 +113,13 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let (sql, values) = register_statement(minted, tenant).map_err(persistence_error)?.build_sqlx(PostgresQueryBuilder);
+            let (sql, values) = register_statement(minted, tenant)
+                .map_err(|error| persistence_error(error))?
+                .build_sqlx(PostgresQueryBuilder);
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(&self.pool)
                 .await
-                .map_err(persistence_error)?;
+                .map_err(|error| persistence_error(error))?;
             Ok(())
         })
     }
@@ -136,12 +138,12 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
             let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .fetch_optional(&self.pool)
                 .await
-                .map_err(persistence_error)?;
+                .map_err(|error| persistence_error(error))?;
             let Some(row) = row else {
                 return Ok(None);
             };
             // The unnamed default tenant's row carries no name.
-            let tenant: Option<String> = row.try_get("name").map_err(persistence_error)?;
+            let tenant: Option<String> = row.try_get("name").map_err(|error| persistence_error(error))?;
             let tenant = tenant
                 .map(|name| name.parse::<TenantName>())
                 .transpose()
@@ -164,7 +166,7 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(&self.pool)
                 .await
-                .map_err(persistence_error)?;
+                .map_err(|error| persistence_error(error))?;
             Ok(())
         })
     }

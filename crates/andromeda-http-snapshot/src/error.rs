@@ -1,12 +1,16 @@
 //! Exhaustive HTTP classification for snapshot failures.
 
-use andromeda_entity::error::EntityError;
-use andromeda_federation::error::FederationError;
-use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
+use andromeda_http_response::{
+    classified_report::ClassifiedReport,
+    entity_failure::classify_entity_error,
+    forwarding_failure::classify_federation_error,
+    internal_failure_summary::InternalFailureSummary,
+    parameter_failure::classify_parameter_error,
+    problem_response::ProblemResponse,
+    temporal_failure::classify_temporal_error,
+};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_snapshot::{error::SnapshotError, service::purge::SnapshotPurgeFailure};
-use andromeda_temporal::error::TemporalError;
 use axum::http::Uri;
 use std::{fmt::Display, time::Duration};
 
@@ -28,70 +32,10 @@ pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
         SnapshotError::Federation(source) => classify_federation_error(source),
         SnapshotError::Request(source) => classify_parameter_error(source),
         SnapshotError::StoreSaturated | SnapshotError::Contended => ClassifiedReport::store_saturated(error.to_string()),
+        SnapshotError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         SnapshotError::Representation(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to render the snapshot")),
         SnapshotError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the snapshot store is unavailable")),
         SnapshotError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal snapshot error")),
-    }
-}
-
-fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
-    match error {
-        EntityError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
-        EntityError::NotFound { .. } | EntityError::TypeNotFound { .. } | EntityError::AttributeNotFound { .. } => {
-            ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string())
-        }
-        EntityError::MemberNotFound(reason) => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, reason.to_string()),
-        EntityError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, error.to_string()),
-        EntityError::Contention { .. } => ClassifiedReport::public(NgsiLdErrorType::Conflict, error.to_string()),
-        EntityError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
-        EntityError::PayloadBudget(source) => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, source.to_string()),
-        EntityError::JsonLd(source) => classify_jsonld_error(source),
-        EntityError::Query(source) => classify_query_error(source),
-        EntityError::Request(source) => classify_parameter_error(source),
-        EntityError::Representation(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-        EntityError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
-        EntityError::TransactionContended => ClassifiedReport::transaction_contended(error.to_string()),
-        EntityError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to commit the entity write")),
-        EntityError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the entity store is unavailable")),
-        EntityError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal entity error")),
-    }
-}
-
-fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
-    match error {
-        TemporalError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
-        TemporalError::NotFound(reason) => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, reason.to_string()),
-        TemporalError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
-        // A snapshot path never triggers the delete-by-query bound, but the
-        // classification is total over the shared error type.
-        TemporalError::TooManyResults { .. } => ClassifiedReport::public(NgsiLdErrorType::TooManyResults, error.to_string()),
-        TemporalError::PayloadBudget(source) => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, source.to_string()),
-        TemporalError::JsonLd(source) => classify_jsonld_error(source),
-        TemporalError::Query(source) => classify_query_error(source),
-        TemporalError::Request(source) => classify_parameter_error(source),
-        TemporalError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
-        TemporalError::TransactionContended => ClassifiedReport::transaction_contended(error.to_string()),
-        TemporalError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to persist temporal history")),
-        TemporalError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the temporal store is unavailable")),
-        TemporalError::Rendering(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to render the temporal representation")),
-        TemporalError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal temporal error")),
-    }
-}
-
-fn classify_federation_error(error: &FederationError) -> ClassifiedReport {
-    match error {
-        FederationError::Conflict(reason) => ClassifiedReport::public(NgsiLdErrorType::Conflict, reason.to_string()),
-        FederationError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
-        FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, error.to_string()),
-        FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, error.to_string()),
-        FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, error.to_string()),
-        FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, error.to_string()),
-        FederationError::JsonLd(source) => classify_jsonld_error(source),
-        FederationError::Query(source) => classify_query_error(source),
-        FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal(_) => {
-            ClassifiedReport::internal(error, InternalFailureSummary::CONTEXT_FEDERATION)
-        }
-        FederationError::ForwardedBody(_) => ClassifiedReport::internal(error, InternalFailureSummary::RESPONSE_ENCODING),
     }
 }
 
@@ -145,7 +89,10 @@ mod tests {
                 NgsiLdErrorType::ResourceNotFound,
             ),
             (SnapshotError::AlreadyExists { identifier }, NgsiLdErrorType::AlreadyExists),
-            (SnapshotError::Persistence(PersistenceFailure::Unavailable), NgsiLdErrorType::InternalError),
+            (
+                SnapshotError::Persistence(PersistenceFailure::StatementRejected),
+                NgsiLdErrorType::InternalError,
+            ),
             (
                 SnapshotError::Internal(SnapshotInvariant::LeaseDeadlineOverflow),
                 NgsiLdErrorType::InternalError,
@@ -173,6 +120,7 @@ mod tests {
                 | SnapshotError::Request(_)
                 | SnapshotError::Representation(_)
                 | SnapshotError::StoreSaturated
+                | SnapshotError::StoreUnavailable
                 | SnapshotError::Contended => {}
             }
         }
@@ -188,5 +136,18 @@ mod tests {
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
         assert!(report.detail().contains("urn:ngsi-ld:Snapshot:quarantined"), "{}", report.detail());
         Ok(())
+    }
+
+    /// Clause 5.5.6 with RFC 7231 6.6.4: a store that cannot be reached is a
+    /// retryable 503 with `Retry-After`, never the 500 of a fault.
+    #[test]
+    fn an_unreachable_store_is_a_retryable_503() {
+        use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
+        use std::time::Duration;
+
+        let report = classify_snapshot_error(&SnapshotError::StoreUnavailable);
+        pretty_assertions::assert_eq!(report.classification(), ProblemClassification::ServiceUnavailable);
+        pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(5)));
+        pretty_assertions::assert_eq!(report.detail(), "the datastore is temporarily unavailable; retry shortly");
     }
 }

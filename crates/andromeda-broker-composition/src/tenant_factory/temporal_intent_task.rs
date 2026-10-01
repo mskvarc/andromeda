@@ -128,9 +128,11 @@ pub(super) fn register_temporal_intent_drain(
 /// Exhaustively classify temporal policy failures at composition.
 const fn classify_temporal_drain_failure(error: TemporalError) -> TaskFailure<TemporalError> {
     let class = match &error {
-        TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::StoreSaturated | TemporalError::TransactionContended => {
-            FailureClass::Transient
-        }
+        TemporalError::Commit(_)
+        | TemporalError::Persistence(_)
+        | TemporalError::StoreSaturated
+        | TemporalError::StoreUnavailable
+        | TemporalError::TransactionContended => FailureClass::Transient,
         TemporalError::Internal(_) => FailureClass::InvariantViolation,
         TemporalError::Validation(_)
         | TemporalError::NotFound(_)

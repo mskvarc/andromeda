@@ -81,6 +81,7 @@ impl EntityStoreRegistrationProbe {
 fn probe_error(error: &EntityError) -> RegistrationError {
     match error {
         EntityError::StoreSaturated | EntityError::TransactionContended => RegistrationError::StoreSaturated,
+        EntityError::StoreUnavailable => RegistrationError::StoreUnavailable,
         EntityError::Persistence(failure) => RegistrationError::from(*failure),
         other @ (EntityError::Validation(_)
         | EntityError::NotFound { .. }

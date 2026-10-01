@@ -95,7 +95,7 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
             now(),
             now(),
         ])
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
 
@@ -147,7 +147,7 @@ pub(super) fn delivery_state_insert_sql() -> Result<String, RegistrationError> {
         .into_table(RegistrationDeliveryState::Table)
         .columns([RegistrationDeliveryState::RegistrationId, RegistrationDeliveryState::Status])
         .values([external_placeholder(1), SeaExpr::val(stored_status(CsrStatus::Ok).code())])
-        .map_err(persistence_error)?;
+        .map_err(|error| persistence_error(error))?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
 
