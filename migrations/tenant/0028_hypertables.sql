@@ -17,7 +17,9 @@
 -- only chunks still receiving rows keep their index pages hot, so a shorter
 -- chunk bounds that working set however far back the history reaches.
 -- ============================================================================
+select
+    create_hypertable('attribute_history', by_range('recorded_at', interval '7 days'), create_default_indexes => false);
 
-SELECT create_hypertable('attribute_history', by_range('recorded_at', INTERVAL '7 days'), create_default_indexes => false);
+select
+    create_hypertable('scope_history', by_range('recorded_at', interval '7 days'), create_default_indexes => false);
 
-SELECT create_hypertable('scope_history', by_range('recorded_at', INTERVAL '7 days'), create_default_indexes => false);

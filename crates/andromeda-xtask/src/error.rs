@@ -119,6 +119,42 @@ pub(crate) enum XtaskError {
     /// A `--strict` run recorded failing test cases, so the run fails as a gate.
     #[error("{0} conformance test case(s) failed")]
     EtsiTestsFailed(usize),
+    /// `pg_format` is not installed or not on `PATH`.
+    #[error("pg_format was not found on PATH; install it with 'brew install pgformatter'")]
+    PgFormatMissing,
+    /// `pg_format` exited non-zero while formatting a migration.
+    #[error("pg_format failed to format {0}")]
+    PgFormatFailed(PathBuf),
+    /// `pg_format` emitted output that is not valid UTF-8.
+    #[error("pg_format produced non-UTF-8 output for {0}")]
+    PgFormatOutputNotUtf8(PathBuf),
+    /// The identity-cache fixup pattern failed to compile.
+    #[error("failed to compile the SQL identity-cache fixup pattern: {0}")]
+    SqlFixupPattern(#[source] regex::Error),
+    /// The migrations directory could not be walked.
+    #[error("failed to walk the migrations directory: {0}")]
+    SqlDiscover(#[source] walkdir::Error),
+    /// A migration could not be read for formatting.
+    #[error("failed to read the migration {path}: {source}")]
+    SqlRead {
+        /// The migration that could not be read.
+        path: PathBuf,
+        /// Why reading it failed.
+        #[source]
+        source: io::Error,
+    },
+    /// A reformatted migration could not be written back.
+    #[error("failed to write the migration {path}: {source}")]
+    SqlWrite {
+        /// The migration that could not be written.
+        path: PathBuf,
+        /// Why writing it failed.
+        #[source]
+        source: io::Error,
+    },
+    /// One or more migrations are not in canonical format under `--check`.
+    #[error("{0} migration(s) are not formatted; run 'cargo xtask format-sql' to fix")]
+    SqlFormatDrift(usize),
     /// An underlying process could not be spawned or waited on.
     #[error("process error: {0}")]
     Io(#[from] io::Error),

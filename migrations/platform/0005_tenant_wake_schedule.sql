@@ -9,27 +9,25 @@
 -- rather than in a broker's memory, a wake survives the eviction of the
 -- runtime that scheduled it and is never duplicated across replicas.
 -- ============================================================================
-
-CREATE TABLE tenant_wake_schedule (
-    tenant_key BIGINT NOT NULL,
+create table tenant_wake_schedule (
+    tenant_key bigint not null,
     -- NULL when the last probe found no work; the tenant then stays dormant
     -- until a later probe finds some.
-    wake_at TIMESTAMPTZ,
+    wake_at timestamptz,
     -- When the row was last written. Crash-recovery reconciliation re-probes
     -- the least recently probed tenants first, so every tenant is eventually
     -- re-probed.
-    probed_at TIMESTAMPTZ NOT NULL,
-    CONSTRAINT pk_tenant_wake_schedule PRIMARY KEY (tenant_key),
-    CONSTRAINT fk_tenant_wake_schedule_tenant FOREIGN KEY (tenant_key)
-        REFERENCES tenants(tenant_key) ON DELETE CASCADE
+    probed_at timestamptz not null,
+    constraint pk_tenant_wake_schedule primary key (tenant_key),
+    constraint fk_tenant_wake_schedule_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade
 );
 
 -- The wake claim: due tenants in `wake_at` order. Only pending wakes are
 -- indexed, so it stays small when most tenants have nothing due.
-CREATE INDEX idx_tenant_wake_schedule_wake_at
-    ON tenant_wake_schedule (wake_at)
-    WHERE wake_at IS NOT NULL;
+create index idx_tenant_wake_schedule_wake_at on tenant_wake_schedule (wake_at)
+where
+    wake_at is not null;
 
 -- Reconciliation's least-recently-probed ordering.
-CREATE INDEX idx_tenant_wake_schedule_probed_at
-    ON tenant_wake_schedule (probed_at);
+create index idx_tenant_wake_schedule_probed_at on tenant_wake_schedule (probed_at);
+

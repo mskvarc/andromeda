@@ -24,50 +24,39 @@
 --     12 subscription_delivery_state
 --   last_action_result: 1 succeeded, 2 failed
 -- ============================================================================
-
-CREATE TABLE postgresql_maintenance_tenants (
-    tenant_key BIGINT NOT NULL,
-    last_inspected_at TIMESTAMPTZ,
-    consecutive_failures INTEGER NOT NULL DEFAULT 0,
-    last_result SMALLINT,
-    CONSTRAINT pk_postgresql_maintenance_tenants PRIMARY KEY (tenant_key),
-    CONSTRAINT fk_postgresql_maintenance_tenants_tenant FOREIGN KEY (tenant_key)
-        REFERENCES tenants(tenant_key) ON DELETE CASCADE,
-    CONSTRAINT chk_postgresql_maintenance_tenants_failures_non_negative
-        CHECK (consecutive_failures >= 0),
-    CONSTRAINT chk_postgresql_maintenance_tenants_last_result
-        CHECK (last_result IS NULL OR last_result BETWEEN 1 AND 20)
+create table postgresql_maintenance_tenants (
+    tenant_key bigint not null,
+    last_inspected_at timestamptz,
+    consecutive_failures integer not null default 0,
+    last_result smallint,
+    constraint pk_postgresql_maintenance_tenants primary key (tenant_key),
+    constraint fk_postgresql_maintenance_tenants_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
+    constraint chk_postgresql_maintenance_tenants_failures_non_negative check (consecutive_failures >= 0),
+    constraint chk_postgresql_maintenance_tenants_last_result check (last_result is null or last_result between 1 and 20)
 );
 
-CREATE TABLE postgresql_maintenance_targets (
-    tenant_key BIGINT NOT NULL,
-    last_sampled_at TIMESTAMPTZ,
-    cooldown_until TIMESTAMPTZ,
-    last_action_at TIMESTAMPTZ,
-    last_before_bytes BIGINT,
-    last_after_bytes BIGINT,
-    consecutive_breaches INTEGER NOT NULL DEFAULT 0,
-    consecutive_failures INTEGER NOT NULL DEFAULT 0,
-    target SMALLINT NOT NULL,
-    last_action_result SMALLINT,
-    is_action_pending BOOLEAN NOT NULL DEFAULT FALSE,
-    CONSTRAINT pk_postgresql_maintenance_targets PRIMARY KEY (tenant_key, target),
-    CONSTRAINT fk_postgresql_maintenance_targets_tenant FOREIGN KEY (tenant_key)
-        REFERENCES tenants(tenant_key) ON DELETE CASCADE,
-    CONSTRAINT chk_postgresql_maintenance_targets_target
-        CHECK (target BETWEEN 1 AND 12),
-    CONSTRAINT chk_postgresql_maintenance_targets_last_action_result
-        CHECK (last_action_result IS NULL OR last_action_result BETWEEN 1 AND 2),
-    CONSTRAINT chk_postgresql_maintenance_targets_breaches_non_negative
-        CHECK (consecutive_breaches >= 0),
-    CONSTRAINT chk_postgresql_maintenance_targets_failures_non_negative
-        CHECK (consecutive_failures >= 0),
-    CONSTRAINT chk_postgresql_maintenance_targets_sizes_non_negative
-        CHECK ((last_before_bytes IS NULL OR last_before_bytes >= 0)
-            AND (last_after_bytes IS NULL OR last_after_bytes >= 0))
+create table postgresql_maintenance_targets (
+    tenant_key bigint not null,
+    last_sampled_at timestamptz,
+    cooldown_until timestamptz,
+    last_action_at timestamptz,
+    last_before_bytes bigint,
+    last_after_bytes bigint,
+    consecutive_breaches integer not null default 0,
+    consecutive_failures integer not null default 0,
+    target smallint not null,
+    last_action_result smallint,
+    is_action_pending boolean not null default false,
+    constraint pk_postgresql_maintenance_targets primary key (tenant_key, target),
+    constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
+    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 12),
+    constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 2),
+    constraint chk_postgresql_maintenance_targets_breaches_non_negative check (consecutive_breaches >= 0),
+    constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),
+    constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0))
 );
 
 -- Tenant selection: never-inspected tenants first, then the least recently
 -- inspected.
-CREATE INDEX idx_postgresql_maintenance_tenants_last_inspected_at
-    ON postgresql_maintenance_tenants (last_inspected_at NULLS FIRST, tenant_key);
+create index idx_postgresql_maintenance_tenants_last_inspected_at on postgresql_maintenance_tenants (last_inspected_at nulls first, tenant_key);
+

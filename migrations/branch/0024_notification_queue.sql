@@ -23,44 +23,42 @@
 -- An event that no Subscription matches is never written, so no stored event
 -- is without a delivery until its deliveries have been reaped.
 -- ============================================================================
-
 -- One row per change, written in the Entity's own transaction and never
 -- updated. Claims never touch it, so its payloads are read from a heap no
 -- queue traffic churns. It is reached only by primary key from a claimed
 -- delivery, or by write identity when a replay checks whether its events are
 -- already there.
-CREATE TABLE notification_events (
-    event_key BIGINT GENERATED ALWAYS AS IDENTITY,
-    created_at TIMESTAMPTZ NOT NULL,
+create table notification_events (
+    event_key bigint generated always as identity,
+    created_at timestamptz not null,
     -- The event's deterministic position within its write. With `write_id`
     -- it makes a replayed write insert nothing rather than announce a change
     -- a second time.
-    event_ordinal INTEGER NOT NULL,
-    lifecycle SMALLINT NOT NULL,
-    write_id UUID NOT NULL,
+    event_ordinal integer not null,
+    lifecycle smallint not null,
+    write_id uuid not null,
     -- No foreign key: clause 5.6.6 deletion notifies about an Entity that no
     -- longer exists, and a reference would either forbid that row or cascade
     -- away the announcement of the deletion.
-    entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+    entity_id text compression lz4 collate "C" not null,
     -- One element per changed Attribute instance, position for position:
     -- its transition, its `attribute_names` key and its `datasetId` (NULL
     -- for the default instance). Empty, never NULL, for a change that
     -- touched no instance: an Entity created or deleted with no Attribute.
-    change_kinds SMALLINT[] COMPRESSION lz4 NOT NULL,
-    change_attribute_name_keys INTEGER[] COMPRESSION lz4 NOT NULL,
-    change_dataset_ids TEXT[] COMPRESSION lz4 COLLATE "C" NOT NULL,
-    entity_snapshot JSONB COMPRESSION lz4,
-    previous_snapshot JSONB COMPRESSION lz4,
-    CONSTRAINT pk_notification_events PRIMARY KEY (event_key),
-    CONSTRAINT uq_notification_events_write_identity UNIQUE (write_id, event_ordinal),
-    CONSTRAINT chk_notification_events_event_ordinal CHECK (event_ordinal >= 0),
-    CONSTRAINT chk_notification_events_lifecycle CHECK (lifecycle BETWEEN 1 AND 3),
-    CONSTRAINT chk_notification_events_change_kinds CHECK (change_kinds <@ ARRAY[1, 2, 3]::SMALLINT[]),
-    CONSTRAINT chk_notification_events_change_arity CHECK (
-        cardinality(change_attribute_name_keys) = cardinality(change_kinds)
-        AND cardinality(change_dataset_ids) = cardinality(change_kinds)),
-    CONSTRAINT chk_notification_events_entity_id_length CHECK (octet_length(entity_id) <= 1024)
-) WITH (
+    change_kinds smallint[] compression lz4 not null,
+    change_attribute_name_keys integer[] compression lz4 not null,
+    change_dataset_ids text[] compression lz4 collate "C" not null,
+    entity_snapshot jsonb compression lz4,
+    previous_snapshot jsonb compression lz4,
+    constraint pk_notification_events primary key (event_key),
+    constraint uq_notification_events_write_identity unique (write_id, event_ordinal),
+    constraint chk_notification_events_event_ordinal check (event_ordinal >= 0),
+    constraint chk_notification_events_lifecycle check (lifecycle between 1 and 3),
+    constraint chk_notification_events_change_kinds check (change_kinds <@ array[1, 2, 3]::smallint[]),
+    constraint chk_notification_events_change_arity check (cardinality(change_attribute_name_keys) = cardinality(change_kinds) and cardinality(change_dataset_ids) = cardinality(change_kinds)),
+    constraint chk_notification_events_entity_id_length check (octet_length(entity_id) <= 1024)
+)
+with (
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
@@ -70,35 +68,27 @@ CREATE TABLE notification_events (
 
 -- The queue state, one row per matched Subscription, and the only relation a
 -- claim scans, locks or updates.
-CREATE TABLE notification_deliveries (
-    delivery_key BIGINT GENERATED ALWAYS AS IDENTITY,
-    event_key BIGINT NOT NULL,
-    subscription_key BIGINT NOT NULL,
-    next_attempt_at TIMESTAMPTZ NOT NULL,
-    attempt_count INTEGER NOT NULL DEFAULT 0,
-    claimed_at TIMESTAMPTZ,
-    lease_until TIMESTAMPTZ,
-    delivered_at TIMESTAMPTZ,
-    exhausted_at TIMESTAMPTZ,
-    claimed_by UUID,
-    last_error TEXT COMPRESSION lz4,
-    CONSTRAINT pk_notification_deliveries PRIMARY KEY (delivery_key),
-    CONSTRAINT fk_notification_deliveries_event
-        FOREIGN KEY (event_key)
-        REFERENCES notification_events(event_key) ON DELETE CASCADE,
-    CONSTRAINT fk_notification_deliveries_subscription
-        FOREIGN KEY (subscription_key)
-        REFERENCES subscriptions(subscription_key) ON DELETE CASCADE,
-    CONSTRAINT chk_notification_deliveries_attempt_count_non_negative
-        CHECK (attempt_count >= 0),
-    CONSTRAINT chk_notification_deliveries_claim_coherent
-        CHECK (num_nonnulls(claimed_at, claimed_by, lease_until) IN (0, 3)),
-    CONSTRAINT chk_notification_deliveries_exhausted_state CHECK (
-        exhausted_at IS NULL
-        OR (delivered_at IS NULL AND num_nonnulls(claimed_at, claimed_by, lease_until) = 0)),
-    CONSTRAINT chk_notification_deliveries_last_error_length
-        CHECK (last_error IS NULL OR char_length(last_error) <= 2048)
-) WITH (
+create table notification_deliveries (
+    delivery_key bigint generated always as identity,
+    event_key bigint not null,
+    subscription_key bigint not null,
+    next_attempt_at timestamptz not null,
+    attempt_count integer not null default 0,
+    claimed_at timestamptz,
+    lease_until timestamptz,
+    delivered_at timestamptz,
+    exhausted_at timestamptz,
+    claimed_by uuid,
+    last_error text compression lz4,
+    constraint pk_notification_deliveries primary key (delivery_key),
+    constraint fk_notification_deliveries_event foreign key (event_key) references notification_events (event_key) on delete cascade,
+    constraint fk_notification_deliveries_subscription foreign key (subscription_key) references subscriptions (subscription_key) on delete cascade,
+    constraint chk_notification_deliveries_attempt_count_non_negative check (attempt_count >= 0),
+    constraint chk_notification_deliveries_claim_coherent check (num_nonnulls (claimed_at, claimed_by, lease_until) in (0, 3)),
+    constraint chk_notification_deliveries_exhausted_state check (exhausted_at is null or (delivered_at is null and num_nonnulls (claimed_at, claimed_by, lease_until) = 0)),
+    constraint chk_notification_deliveries_last_error_length check (last_error is null or char_length(last_error) <= 2048)
+)
+with (
     fillfactor = 80,
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,
@@ -110,24 +100,23 @@ CREATE TABLE notification_deliveries (
 -- The claim: rows still in the queue, due and unheld, in the order they became
 -- claimable. The expression is the later of when a row is due and when its
 -- lease lapses, so a claim is one range scan as deep as its batch.
-CREATE INDEX idx_notification_deliveries_claim
-    ON notification_deliveries (GREATEST(next_attempt_at, COALESCE(lease_until, '-infinity'::timestamptz)), delivery_key)
-    WHERE delivered_at IS NULL AND exhausted_at IS NULL;
+create index idx_notification_deliveries_claim on notification_deliveries (greatest(next_attempt_at, coalesce(lease_until, '-infinity'::timestamptz)), delivery_key)
+where
+    delivered_at is null and exhausted_at is null;
 
 -- The reap of delivered rows.
-CREATE INDEX idx_notification_deliveries_delivered_at
-    ON notification_deliveries (delivered_at)
-    WHERE delivered_at IS NOT NULL;
+create index idx_notification_deliveries_delivered_at on notification_deliveries (delivered_at)
+where
+    delivered_at is not null;
 
 -- The reap of dead-lettered rows.
-CREATE INDEX idx_notification_deliveries_exhausted_at
-    ON notification_deliveries (exhausted_at)
-    WHERE exhausted_at IS NOT NULL;
+create index idx_notification_deliveries_exhausted_at on notification_deliveries (exhausted_at)
+where
+    exhausted_at is not null;
 
-CREATE INDEX idx_notification_deliveries_subscription
-    ON notification_deliveries (subscription_key);
+create index idx_notification_deliveries_subscription on notification_deliveries (subscription_key);
 
 -- The event cascade, and the check the reap runs for events whose last
 -- delivery it removed.
-CREATE INDEX idx_notification_deliveries_event
-    ON notification_deliveries (event_key);
+create index idx_notification_deliveries_event on notification_deliveries (event_key);
+

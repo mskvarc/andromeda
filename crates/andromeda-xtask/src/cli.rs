@@ -5,6 +5,7 @@ use crate::{
     error::XtaskError,
     etsi::EtsiArgs,
     lifecycle::{self, BrokerMode},
+    sql_format::{self, FormatMode},
     stack::{OwnedSuite, STACKS, Stack, StackName, Suite, stack_for_suite},
     test_binaries::build,
 };
@@ -37,6 +38,7 @@ impl Cli {
             Command::Itest(arguments) => arguments.execute(),
             Command::Etsi(arguments) => arguments.execute(),
             Command::BuildTests(arguments) => arguments.execute(),
+            Command::FormatSql(arguments) => arguments.execute(),
         }
     }
 }
@@ -50,6 +52,24 @@ enum Command {
     Etsi(EtsiArgs),
     /// Compile every integration-test suite once and package the binaries for CI fan-out.
     BuildTests(BuildTestsArgs),
+    /// Reformat the SQL migrations with `pg_format`, or check them under `--check`.
+    FormatSql(FormatSqlArgs),
+}
+
+/// Arguments to `xtask format-sql`.
+#[derive(Args)]
+struct FormatSqlArgs {
+    /// Report migrations that are not canonically formatted and fail instead of rewriting them.
+    #[arg(long)]
+    check: bool,
+}
+
+impl FormatSqlArgs {
+    /// Reformat the migrations in place, or verify them without writing.
+    fn execute(self) -> Result<(), XtaskError> {
+        let mode = if self.check { FormatMode::Check } else { FormatMode::Write };
+        sql_format::run(mode)
+    }
 }
 
 /// Arguments to `xtask build-tests`.

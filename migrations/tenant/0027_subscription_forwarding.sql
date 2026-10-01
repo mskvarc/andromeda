@@ -17,43 +17,33 @@
 -- owning row and issues the remote deletions from what it read, so a cascade
 -- only clears rows whose teardown has already been captured.
 -- ============================================================================
-
-CREATE TABLE subscription_companions (
-    local_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+create table subscription_companions (
+    local_subscription_id text compression lz4 collate "C" not null,
     -- The context source registration subscription this broker minted.
-    companion_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_subscription_companions PRIMARY KEY (local_subscription_id),
-    CONSTRAINT uq_subscription_companions_companion UNIQUE (companion_subscription_id),
-    CONSTRAINT fk_subscription_companions_local FOREIGN KEY (local_subscription_id)
-        REFERENCES subscriptions(id) ON DELETE CASCADE,
-    CONSTRAINT fk_subscription_companions_companion FOREIGN KEY (companion_subscription_id)
-        REFERENCES subscriptions(id) ON DELETE CASCADE,
-    CONSTRAINT chk_subscription_companions_local_subscription_id_length
-        CHECK (octet_length(local_subscription_id) <= 1024),
-    CONSTRAINT chk_subscription_companions_companion_subscription_id_length
-        CHECK (octet_length(companion_subscription_id) <= 1024)
+    companion_subscription_id text compression lz4 collate "C" not null,
+    constraint pk_subscription_companions primary key (local_subscription_id),
+    constraint uq_subscription_companions_companion unique (companion_subscription_id),
+    constraint fk_subscription_companions_local foreign key (local_subscription_id) references subscriptions (id) on delete cascade,
+    constraint fk_subscription_companions_companion foreign key (companion_subscription_id) references subscriptions (id) on delete cascade,
+    constraint chk_subscription_companions_local_subscription_id_length check (octet_length(local_subscription_id) <= 1024),
+    constraint chk_subscription_companions_companion_subscription_id_length check (octet_length(companion_subscription_id) <= 1024)
 );
 
-CREATE TABLE forwarded_subscriptions (
-    local_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+create table forwarded_subscriptions (
+    local_subscription_id text compression lz4 collate "C" not null,
     -- The registration whose context source holds the copy.
-    registration_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+    registration_id text compression lz4 collate "C" not null,
     -- The identifier the copy carries at the context source.
-    remote_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_forwarded_subscriptions PRIMARY KEY (local_subscription_id, registration_id),
-    CONSTRAINT uq_forwarded_subscriptions_remote UNIQUE (remote_subscription_id),
-    CONSTRAINT fk_forwarded_subscriptions_local FOREIGN KEY (local_subscription_id)
-        REFERENCES subscriptions(id) ON DELETE CASCADE,
-    CONSTRAINT fk_forwarded_subscriptions_registration FOREIGN KEY (registration_id)
-        REFERENCES context_source_registrations(id) ON DELETE CASCADE,
-    CONSTRAINT chk_forwarded_subscriptions_local_subscription_id_length
-        CHECK (octet_length(local_subscription_id) <= 1024),
-    CONSTRAINT chk_forwarded_subscriptions_registration_id_length
-        CHECK (octet_length(registration_id) <= 1024),
-    CONSTRAINT chk_forwarded_subscriptions_remote_subscription_id_length
-        CHECK (octet_length(remote_subscription_id) <= 1024)
+    remote_subscription_id text compression lz4 collate "C" not null,
+    constraint pk_forwarded_subscriptions primary key (local_subscription_id, registration_id),
+    constraint uq_forwarded_subscriptions_remote unique (remote_subscription_id),
+    constraint fk_forwarded_subscriptions_local foreign key (local_subscription_id) references subscriptions (id) on delete cascade,
+    constraint fk_forwarded_subscriptions_registration foreign key (registration_id) references context_source_registrations (id) on delete cascade,
+    constraint chk_forwarded_subscriptions_local_subscription_id_length check (octet_length(local_subscription_id) <= 1024),
+    constraint chk_forwarded_subscriptions_registration_id_length check (octet_length(registration_id) <= 1024),
+    constraint chk_forwarded_subscriptions_remote_subscription_id_length check (octet_length(remote_subscription_id) <= 1024)
 );
 
 -- The registration cascade, and the per-registration read that precedes it.
-CREATE INDEX idx_forwarded_subscriptions_registration
-    ON forwarded_subscriptions (registration_id);
+create index idx_forwarded_subscriptions_registration on forwarded_subscriptions (registration_id);
+

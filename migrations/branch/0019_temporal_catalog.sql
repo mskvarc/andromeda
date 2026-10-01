@@ -13,38 +13,35 @@
 -- history the specification requires to survive; the Entity's URI is carried
 -- here independently.
 -- ============================================================================
-
-CREATE TABLE temporal_entities (
-    temporal_entity_key BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 32),
-    created_at TIMESTAMPTZ NOT NULL,
-    modified_at TIMESTAMPTZ NOT NULL,
-    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+create table temporal_entities (
+    temporal_entity_key bigint generated always as identity (cache 32),
+    created_at timestamptz not null,
+    modified_at timestamptz not null,
+    id text compression lz4 collate "C" not null,
     -- `entity_type_names` keys.
-    entity_type_name_keys INTEGER[] COMPRESSION lz4 NOT NULL,
-    CONSTRAINT pk_temporal_entities PRIMARY KEY (temporal_entity_key),
-    CONSTRAINT uq_temporal_entities_id UNIQUE (id),
-    CONSTRAINT chk_temporal_entities_entity_type_name_keys_present CHECK (cardinality(entity_type_name_keys) > 0),
-    CONSTRAINT chk_temporal_entities_id_length CHECK (octet_length(id) <= 1024)
+    entity_type_name_keys integer[] compression lz4 not null,
+    constraint pk_temporal_entities primary key (temporal_entity_key),
+    constraint uq_temporal_entities_id unique (id),
+    constraint chk_temporal_entities_entity_type_name_keys_present check (cardinality(entity_type_name_keys) > 0),
+    constraint chk_temporal_entities_id_length check (octet_length(id) <= 1024)
 );
 
-CREATE INDEX idx_temporal_entities_entity_type_name_keys ON temporal_entities USING GIN (entity_type_name_keys);
+create index idx_temporal_entities_entity_type_name_keys on temporal_entities using gin (entity_type_name_keys);
 
-CREATE INDEX idx_temporal_entities_id_trgm ON temporal_entities USING GIN (id gin_trgm_ops);
+create index idx_temporal_entities_id_trgm on temporal_entities using gin (id gin_trgm_ops);
 
-CREATE TABLE temporal_attribute_streams (
+create table temporal_attribute_streams (
     -- Minted when the write path first inserts the grain and read back in the
     -- same transaction; never rendered.
-    stream_key BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 32),
-    temporal_entity_key BIGINT NOT NULL,
-    attribute_name_key INTEGER NOT NULL,
-    dataset_id TEXT COMPRESSION lz4 COLLATE "C",
-    CONSTRAINT pk_temporal_attribute_streams PRIMARY KEY (stream_key),
+    stream_key bigint generated always as identity (cache 32),
+    temporal_entity_key bigint not null,
+    attribute_name_key integer not null,
+    dataset_id text compression lz4 collate "C",
+    constraint pk_temporal_attribute_streams primary key (stream_key),
     -- `INCLUDE (stream_key)` makes stream resolution index-only: every append
     -- resolves its grain to a stream key, the hottest catalog read there is.
-    CONSTRAINT uq_temporal_attribute_streams_grain
-        UNIQUE NULLS NOT DISTINCT (temporal_entity_key, attribute_name_key, dataset_id) INCLUDE (stream_key),
-    CONSTRAINT fk_temporal_attribute_streams_temporal_entity
-        FOREIGN KEY (temporal_entity_key)
-        REFERENCES temporal_entities(temporal_entity_key) ON DELETE CASCADE,
-    CONSTRAINT chk_temporal_attribute_streams_dataset_id_length CHECK (octet_length(dataset_id) <= 1024)
+    constraint uq_temporal_attribute_streams_grain unique nulls not distinct (temporal_entity_key, attribute_name_key, dataset_id) include (stream_key),
+    constraint fk_temporal_attribute_streams_temporal_entity foreign key (temporal_entity_key) references temporal_entities (temporal_entity_key) on delete cascade,
+    constraint chk_temporal_attribute_streams_dataset_id_length check (octet_length(dataset_id) <= 1024)
 );
+

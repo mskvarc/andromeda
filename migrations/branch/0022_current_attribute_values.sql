@@ -48,75 +48,53 @@
 -- ignores scale (`1.0 = 1.00`); no reader renders a projected number, it only
 -- compares it.
 -- ============================================================================
-
-CREATE TABLE current_attribute_values (
-    entity_key BIGINT NOT NULL,
+create table current_attribute_values (
+    entity_key bigint not null,
     -- `attribute_names` key.
-    attribute_name_key INTEGER NOT NULL,
-    attribute_kind SMALLINT NOT NULL,
-    value_kind SMALLINT NOT NULL,
-    value_date_time TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ,
-    unit_code_id SMALLINT,
-    value_boolean BOOLEAN,
-    dataset_id TEXT COMPRESSION lz4 COLLATE "C",
+    attribute_name_key integer not null,
+    attribute_kind smallint not null,
+    value_kind smallint not null,
+    value_date_time timestamptz,
+    expires_at timestamptz,
+    unit_code_id smallint,
+    value_boolean boolean,
+    dataset_id text compression lz4 collate "C",
     -- `NUMERIC`, not `DOUBLE PRECISION`: JSON numbers are stored exactly, and
     -- a comparison beyond 2^53 stays correct without falling back to the
     -- payload.
-    value_number NUMERIC COMPRESSION lz4,
-    value_string TEXT COMPRESSION lz4 COLLATE "C",
-    value_geometry geometry COMPRESSION lz4,
-    value_object JSONB COMPRESSION lz4,
+    value_number numeric compression lz4,
+    value_string text compression lz4 collate "C",
+    value_geometry geometry compression lz4,
+    value_object jsonb compression lz4,
     -- A Relationship object no longer than an identifier may be, so every
     -- object naming a local Entity sits here, where a traversal joins it.
-    value_uri TEXT COMPRESSION lz4 COLLATE "C",
+    value_uri text compression lz4 collate "C",
     -- A String too long for the B-tree on `value_string`. The two length
     -- checks give every String exactly one column, so an equality reads only
     -- the column its operand would occupy.
-    value_long_text TEXT COMPRESSION lz4 COLLATE "C",
+    value_long_text text compression lz4 collate "C",
     -- A Relationship object too long for the B-tree on `value_uri`: clause
     -- 4.6.2 sets no length on a URI. The same two-check placement as the
     -- String overflow.
-    value_long_uri TEXT COMPRESSION lz4 COLLATE "C",
-    CONSTRAINT fk_current_attribute_values_entity
-        FOREIGN KEY (entity_key)
-        REFERENCES entities(entity_key) ON DELETE CASCADE,
+    value_long_uri text compression lz4 collate "C",
+    constraint fk_current_attribute_values_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
     -- The grain has a nullable `dataset_id`, so it is a unique constraint and
     -- the table has no primary key. It is the upsert's conflict target and the
     -- access path of every Entity-correlated `q` probe.
-    CONSTRAINT uq_current_attribute_values_grain
-        UNIQUE NULLS NOT DISTINCT (entity_key, attribute_name_key, dataset_id),
-    CONSTRAINT chk_current_attribute_values_attribute_kind
-        CHECK (attribute_kind BETWEEN 1 AND 8),
-    CONSTRAINT chk_current_attribute_values_value_presence CHECK (
-        num_nonnulls(value_number, value_string, value_boolean, value_geometry,
-                     value_object, value_date_time, value_uri, value_long_text,
-                     value_long_uri) = 1),
-    CONSTRAINT chk_current_attribute_values_value_kind_column CHECK (
-        (value_kind = 1 AND value_number IS NOT NULL)
-        OR (value_kind = 2 AND num_nonnulls(value_string, value_long_text) = 1)
-        OR (value_kind = 3 AND value_boolean IS NOT NULL)
-        OR (value_kind = 4 AND value_geometry IS NOT NULL)
-        OR (value_kind = 5 AND value_object IS NOT NULL)
-        OR (value_kind = 6 AND value_date_time IS NOT NULL)
-        OR (value_kind = 7 AND num_nonnulls(value_uri, value_long_uri) = 1)),
-    CONSTRAINT chk_current_attribute_values_value_geometry_valid
-        CHECK (value_geometry IS NULL OR ST_IsValid(value_geometry)),
-    CONSTRAINT chk_current_attribute_values_value_geometry_srid
-        CHECK (value_geometry IS NULL OR ST_SRID(value_geometry) = 4326),
-    CONSTRAINT chk_current_attribute_values_value_geometry_zm
-        CHECK (value_geometry IS NULL OR ST_Zmflag(value_geometry) IN (0, 2)),
-    CONSTRAINT chk_current_attribute_values_value_string_length
-        CHECK (octet_length(value_string) <= 2048),
-    CONSTRAINT chk_current_attribute_values_value_long_text_length
-        CHECK (octet_length(value_long_text) > 2048),
-    CONSTRAINT chk_current_attribute_values_value_uri_length
-        CHECK (octet_length(value_uri) <= 1024),
-    CONSTRAINT chk_current_attribute_values_value_long_uri_length
-        CHECK (octet_length(value_long_uri) > 1024),
-    CONSTRAINT chk_current_attribute_values_dataset_id_length
-        CHECK (octet_length(dataset_id) <= 1024)
-) WITH (
+    constraint uq_current_attribute_values_grain unique nulls not distinct (entity_key, attribute_name_key, dataset_id),
+    constraint chk_current_attribute_values_attribute_kind check (attribute_kind between 1 and 8),
+    constraint chk_current_attribute_values_value_presence check (num_nonnulls (value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri, value_long_text, value_long_uri) = 1),
+    constraint chk_current_attribute_values_value_kind_column check ((value_kind = 1 and value_number is not null) or (value_kind = 2 and num_nonnulls (value_string, value_long_text) = 1) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and num_nonnulls (value_uri, value_long_uri) = 1)),
+    constraint chk_current_attribute_values_value_geometry_valid check (value_geometry is null or st_isvalid(value_geometry)),
+    constraint chk_current_attribute_values_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
+    constraint chk_current_attribute_values_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
+    constraint chk_current_attribute_values_value_string_length check (octet_length(value_string) <= 2048),
+    constraint chk_current_attribute_values_value_long_text_length check (octet_length(value_long_text) > 2048),
+    constraint chk_current_attribute_values_value_uri_length check (octet_length(value_uri) <= 1024),
+    constraint chk_current_attribute_values_value_long_uri_length check (octet_length(value_long_uri) > 1024),
+    constraint chk_current_attribute_values_dataset_id_length check (octet_length(dataset_id) <= 1024)
+)
+with (
     fillfactor = 80,
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,
@@ -127,76 +105,70 @@ CREATE TABLE current_attribute_values (
 
 -- One partial B-tree per typed column, led by the attribute key, for plans
 -- that drive from the attribute side.
-CREATE INDEX idx_cav_value_number
-    ON current_attribute_values (attribute_name_key, value_number)
-    WHERE value_number IS NOT NULL;
+create index idx_cav_value_number on current_attribute_values (attribute_name_key, value_number)
+where
+    value_number is not null;
 
-CREATE INDEX idx_cav_value_string
-    ON current_attribute_values (attribute_name_key, value_string)
-    WHERE value_string IS NOT NULL;
+create index idx_cav_value_string on current_attribute_values (attribute_name_key, value_string)
+where
+    value_string is not null;
 
 -- Unanchored `~=` and `!~=` patterns (clause 4.9). `fastupdate = off`: the
 -- projection is written inside the Entity's transaction, and a GIN pending
 -- list would put its flush latency on the request path.
-CREATE INDEX idx_cav_value_string_trgm
-    ON current_attribute_values USING GIN (attribute_name_key int4_ops, value_string gin_trgm_ops)
-    WITH (fastupdate = off)
-    WHERE value_string IS NOT NULL;
+create index idx_cav_value_string_trgm on current_attribute_values using gin (attribute_name_key int4_ops, value_string gin_trgm_ops) with (fastupdate = off)
+where
+    value_string is not null;
 
-CREATE INDEX idx_cav_value_boolean
-    ON current_attribute_values (attribute_name_key, value_boolean)
-    WHERE value_boolean IS NOT NULL;
+create index idx_cav_value_boolean on current_attribute_values (attribute_name_key, value_boolean)
+where
+    value_boolean is not null;
 
-CREATE INDEX idx_cav_value_date_time
-    ON current_attribute_values (attribute_name_key, value_date_time)
-    WHERE value_date_time IS NOT NULL;
+create index idx_cav_value_date_time on current_attribute_values (attribute_name_key, value_date_time)
+where
+    value_date_time is not null;
 
-CREATE INDEX idx_cav_value_uri
-    ON current_attribute_values (attribute_name_key, value_uri)
-    WHERE value_uri IS NOT NULL;
+create index idx_cav_value_uri on current_attribute_values (attribute_name_key, value_uri)
+where
+    value_uri is not null;
 
 -- A long String is too long to key a B-tree on, so a `q` comparison over it
 -- drives from the attribute key alone and filters the value on the heap.
-CREATE INDEX idx_cav_value_long_text
-    ON current_attribute_values (attribute_name_key)
-    WHERE value_long_text IS NOT NULL;
+create index idx_cav_value_long_text on current_attribute_values (attribute_name_key)
+where
+    value_long_text is not null;
 
 -- Patterns over long Strings, and their equality, which `gin_trgm_ops` also
 -- serves. Neither long-text index is a maintenance target: they cover rare
 -- values, and vacuuming the table reclaims their dead entries.
-CREATE INDEX idx_cav_value_long_text_trgm
-    ON current_attribute_values USING GIN (attribute_name_key int4_ops, value_long_text gin_trgm_ops)
-    WITH (fastupdate = off)
-    WHERE value_long_text IS NOT NULL;
+create index idx_cav_value_long_text_trgm on current_attribute_values using gin (attribute_name_key int4_ops, value_long_text gin_trgm_ops) with (fastupdate = off)
+where
+    value_long_text is not null;
 
 -- A long Relationship object is too long to key a B-tree on, so a `q`
 -- equality over it drives from the attribute key alone and filters the value
 -- on the heap. Like the long-text indexes it covers rare values and is not a
 -- maintenance target.
-CREATE INDEX idx_cav_value_long_uri
-    ON current_attribute_values (attribute_name_key)
-    WHERE value_long_uri IS NOT NULL;
+create index idx_cav_value_long_uri on current_attribute_values (attribute_name_key)
+where
+    value_long_uri is not null;
 
 -- The containment arm of every `q` equality (clause 4.9).
-CREATE INDEX idx_cav_value_object
-    ON current_attribute_values USING GIN (attribute_name_key int4_ops, value_object jsonb_path_ops)
-    WITH (fastupdate = off)
-    WHERE value_object IS NOT NULL;
+create index idx_cav_value_object on current_attribute_values using gin (attribute_name_key int4_ops, value_object jsonb_path_ops) with (fastupdate = off)
+where
+    value_object is not null;
 
 -- Geo-queries against a named GeoProperty (clause 4.10).
-CREATE INDEX idx_cav_value_geometry
-    ON current_attribute_values USING GIST (attribute_name_key, value_geometry)
-    WHERE value_geometry IS NOT NULL;
+create index idx_cav_value_geometry on current_attribute_values using gist (attribute_name_key, value_geometry)
+where
+    value_geometry is not null;
 
 -- The correlated instance lookup and the distance ordering of clause 4.23.
-CREATE INDEX idx_cav_entity_geometry
-    ON current_attribute_values (attribute_name_key, entity_key)
-    WHERE value_geometry IS NOT NULL;
+create index idx_cav_entity_geometry on current_attribute_values (attribute_name_key, entity_key)
+where
+    value_geometry is not null;
 
-CREATE STATISTICS stx_cav_attribute_value_kind (dependencies, ndistinct)
-    ON attribute_name_key, value_kind
-    FROM current_attribute_values;
+create statistics stx_cav_attribute_value_kind (dependencies, ndistinct) on attribute_name_key, value_kind from current_attribute_values;
 
-CREATE STATISTICS stx_cav_entity_attribute (dependencies, ndistinct)
-    ON entity_key, attribute_name_key
-    FROM current_attribute_values;
+create statistics stx_cav_entity_attribute (dependencies, ndistinct) on entity_key, attribute_name_key from current_attribute_values;
+

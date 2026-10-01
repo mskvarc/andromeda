@@ -10,8 +10,12 @@
 -- The function lives in `public`, and a Snapshot schema reaches it through
 -- its search path, so one definition serves every branch.
 -- ============================================================================
+create or replace function geom_to_geog (g geometry)
+    returns geography
+    language sql
+    immutable strict parallel safe
+    as $$
+    select
+        g::geography
+$$;
 
-CREATE OR REPLACE FUNCTION geom_to_geog(g geometry)
-RETURNS geography
-LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT g::geography $$;

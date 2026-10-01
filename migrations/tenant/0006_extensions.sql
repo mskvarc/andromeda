@@ -19,31 +19,42 @@
 --   pgstattuple: relation bloat diagnostics for the opt-in maintenance
 --     controller, installed only when the server provides it
 -- ============================================================================
+create extension if not exists postgis;
 
-CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-CREATE EXTENSION IF NOT EXISTS ltree;
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE EXTENSION IF NOT EXISTS btree_gist;
-CREATE EXTENSION IF NOT EXISTS btree_gin;
+create extension if not exists timescaledb;
 
-DO $$
-BEGIN
-    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE NOTICE 'pg_stat_statements requires shared_preload_libraries -- skipping';
-END
+create extension if not exists ltree;
+
+create extension if not exists pg_trgm;
+
+create extension if not exists btree_gist;
+
+create extension if not exists btree_gin;
+
+do $$
+begin
+    create extension if not exists pg_stat_statements;
+exception
+    when others then
+        raise notice 'pg_stat_statements requires shared_preload_libraries -- skipping';
+end
 $$;
 
 -- pgstattuple ships with PostgreSQL, but managed installations may omit its
 -- control file; without it the maintenance controller reports a capability
 -- deferral for the database. Installing it grants the broker role neither
 -- execution nor `MAINTAIN`: both remain the operator's decision.
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pgstattuple') THEN
-        CREATE EXTENSION IF NOT EXISTS pgstattuple;
-    END IF;
-END
+do $$
+begin
+    if exists (
+        select
+            1
+        from
+            pg_available_extensions
+        where
+            name = 'pgstattuple') then
+    create extension if not exists pgstattuple;
+end if;
+end
 $$;
+

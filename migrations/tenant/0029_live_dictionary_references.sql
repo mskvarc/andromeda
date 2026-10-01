@@ -23,26 +23,16 @@
 -- never delete or re-key a row, and a Snapshot is cloned from live rows whose
 -- keys these constraints have already checked.
 -- ============================================================================
+alter table temporal_attribute_streams
+    add constraint fk_temporal_attribute_streams_attribute_name foreign key (attribute_name_key) references attribute_names (attribute_name_key);
 
-ALTER TABLE temporal_attribute_streams
-    ADD CONSTRAINT fk_temporal_attribute_streams_attribute_name
-        FOREIGN KEY (attribute_name_key)
-        REFERENCES attribute_names(attribute_name_key);
+alter table attribute_history_instance_claims
+    add constraint fk_attribute_history_instance_claims_attribute_name foreign key (attribute_name_key) references attribute_names (attribute_name_key);
 
-ALTER TABLE attribute_history_instance_claims
-    ADD CONSTRAINT fk_attribute_history_instance_claims_attribute_name
-        FOREIGN KEY (attribute_name_key)
-        REFERENCES attribute_names(attribute_name_key);
+alter table entity_type_members
+    add constraint fk_entity_type_members_entity_type_name foreign key (entity_type_name_key) references entity_type_names (entity_type_name_key);
 
-ALTER TABLE entity_type_members
-    ADD CONSTRAINT fk_entity_type_members_entity_type_name
-        FOREIGN KEY (entity_type_name_key)
-        REFERENCES entity_type_names(entity_type_name_key);
+alter table current_attribute_values
+    add constraint fk_current_attribute_values_attribute_name foreign key (attribute_name_key) references attribute_names (attribute_name_key),
+    add constraint fk_current_attribute_values_unit_code foreign key (unit_code_id) references unit_codes (id);
 
-ALTER TABLE current_attribute_values
-    ADD CONSTRAINT fk_current_attribute_values_attribute_name
-        FOREIGN KEY (attribute_name_key)
-        REFERENCES attribute_names(attribute_name_key),
-    ADD CONSTRAINT fk_current_attribute_values_unit_code
-        FOREIGN KEY (unit_code_id)
-        REFERENCES unit_codes(id);

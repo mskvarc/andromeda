@@ -16,22 +16,17 @@
 -- notification and a registration change evaluated at the same moment never
 -- both report one registration.
 -- ============================================================================
-
-CREATE TABLE subscription_notified_registrations (
-    subscription_key BIGINT NOT NULL,
+create table subscription_notified_registrations (
+    subscription_key bigint not null,
     -- References no registration: the row outlives the registration's
     -- deletion until the `noLongerMatching` notification it owes is claimed.
-    registration_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_subscription_notified_registrations
-        PRIMARY KEY (subscription_key, registration_id),
-    CONSTRAINT fk_subscription_notified_registrations_subscription
-        FOREIGN KEY (subscription_key)
-        REFERENCES subscriptions(subscription_key) ON DELETE CASCADE,
-    CONSTRAINT chk_subscription_notified_registrations_registration_id_length
-        CHECK (octet_length(registration_id) <= 1024)
+    registration_id text compression lz4 collate "C" not null,
+    constraint pk_subscription_notified_registrations primary key (subscription_key, registration_id),
+    constraint fk_subscription_notified_registrations_subscription foreign key (subscription_key) references subscriptions (subscription_key) on delete cascade,
+    constraint chk_subscription_notified_registrations_registration_id_length check (octet_length(registration_id) <= 1024)
 );
 
 -- The subscriptions a changed registration was notified to, read before each
 -- withdrawal.
-CREATE INDEX idx_subscription_notified_registrations_registration
-    ON subscription_notified_registrations (registration_id);
+create index idx_subscription_notified_registrations_registration on subscription_notified_registrations (registration_id);
+

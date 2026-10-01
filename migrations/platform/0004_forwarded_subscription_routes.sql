@@ -11,17 +11,14 @@
 -- the receiving broker finds the tenant database to continue in. The unnamed
 -- default tenant has routes like any other.
 -- ============================================================================
-
-CREATE TABLE forwarded_subscription_routes (
-    tenant_key BIGINT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    minted_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_forwarded_subscription_routes PRIMARY KEY (minted_subscription_id),
-    CONSTRAINT fk_forwarded_subscription_routes_tenant FOREIGN KEY (tenant_key)
-        REFERENCES tenants(tenant_key) ON DELETE CASCADE,
-    CONSTRAINT chk_forwarded_subscription_routes_minted_id_length
-        CHECK (octet_length(minted_subscription_id) <= 1024)
+create table forwarded_subscription_routes (
+    tenant_key bigint not null,
+    created_at timestamptz not null default now(),
+    minted_subscription_id text compression lz4 collate "C" not null,
+    constraint pk_forwarded_subscription_routes primary key (minted_subscription_id),
+    constraint fk_forwarded_subscription_routes_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
+    constraint chk_forwarded_subscription_routes_minted_id_length check (octet_length(minted_subscription_id) <= 1024)
 );
 
-CREATE INDEX idx_forwarded_subscription_routes_tenant
-    ON forwarded_subscription_routes (tenant_key);
+create index idx_forwarded_subscription_routes_tenant on forwarded_subscription_routes (tenant_key);
+

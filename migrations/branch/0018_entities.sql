@@ -13,22 +13,22 @@
 -- apart from every indexed column, so a payload write stays a heap-only update
 -- and leaves the type, scope and geometry index entries untouched.
 -- ============================================================================
-
 -- Identity and lifecycle.
-CREATE TABLE entities (
-    entity_key BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 32),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ,
+create table entities (
+    entity_key bigint generated always as identity (cache 32),
+    created_at timestamptz not null default now(),
+    expires_at timestamptz,
     -- The earliest `expiresAt` any attribute instance of the payload carries,
     -- NULL when none expires. The attribute-expiry sweep ranges over it
     -- instead of walking every payload, then re-reads each candidate's
     -- payload and decides per instance.
-    min_attribute_expires_at TIMESTAMPTZ,
-    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_entities PRIMARY KEY (entity_key),
-    CONSTRAINT uq_entities_id UNIQUE (id),
-    CONSTRAINT chk_entities_id_length CHECK (octet_length(id) <= 1024)
-) WITH (
+    min_attribute_expires_at timestamptz,
+    id text compression lz4 collate "C" not null,
+    constraint pk_entities primary key (entity_key),
+    constraint uq_entities_id unique (id),
+    constraint chk_entities_id_length check (octet_length(id) <= 1024)
+)
+with (
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
@@ -36,29 +36,30 @@ CREATE TABLE entities (
     autovacuum_vacuum_cost_delay = 0
 );
 
-CREATE INDEX idx_entities_expires_at ON entities (expires_at)
-    WHERE expires_at IS NOT NULL;
+create index idx_entities_expires_at on entities (expires_at)
+where
+    expires_at is not null;
 
-CREATE INDEX idx_entities_min_attribute_expires_at ON entities (min_attribute_expires_at)
-    WHERE min_attribute_expires_at IS NOT NULL;
+create index idx_entities_min_attribute_expires_at on entities (min_attribute_expires_at)
+where
+    min_attribute_expires_at is not null;
 
-CREATE INDEX idx_entities_id_trgm ON entities USING GIN (id gin_trgm_ops);
+create index idx_entities_id_trgm on entities using gin (id gin_trgm_ops);
 
 -- The payload and its version token. It has no index but its primary key,
 -- and must never gain one: every payload write is an update of this row, and
 -- any index would stop those updates being heap-only.
-CREATE TABLE entity_documents (
-    entity_key BIGINT NOT NULL,
+create table entity_documents (
+    entity_key bigint not null,
     -- Clause 4.8 `modifiedAt`, kept here because it moves with the payload:
     -- the same statement stamps both, and it is the compare-and-set token an
     -- optimistic overwrite states.
-    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    payload JSONB COMPRESSION lz4 NOT NULL,
-    CONSTRAINT pk_entity_documents PRIMARY KEY (entity_key),
-    CONSTRAINT fk_entity_documents_entity
-        FOREIGN KEY (entity_key)
-        REFERENCES entities(entity_key) ON DELETE CASCADE
-) WITH (
+    modified_at timestamptz not null default now(),
+    payload jsonb compression lz4 not null,
+    constraint pk_entity_documents primary key (entity_key),
+    constraint fk_entity_documents_entity foreign key (entity_key) references entities (entity_key) on delete cascade
+)
+with (
     fillfactor = 70,
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,
@@ -73,8 +74,8 @@ CREATE TABLE entity_documents (
 -- entities is here, and a row is rewritten only when one of these columns
 -- changes. It keeps the default fillfactor: its updates are rare, and they
 -- rewrite indexed columns anyway.
-CREATE TABLE entity_search (
-    entity_key BIGINT NOT NULL,
+create table entity_search (
+    entity_key bigint not null,
     -- The `xid8` of the transaction that last wrote the row: the insert takes
     -- it from the default and every update sets it. A broker that keeps an
     -- in-memory spatial index reads the rows written at or above the `xmin`
@@ -82,17 +83,17 @@ CREATE TABLE entity_search (
     -- whichever process committed it; an `xid8` never wraps, and a
     -- transaction below a snapshot's `xmin` had finished before the snapshot
     -- was taken.
-    written_xid XID8 NOT NULL DEFAULT pg_current_xact_id(),
+    written_xid xid8 not null default pg_current_xact_id(),
     -- The clause 4.22 `expiresAt` of the hoisted default `location` instance,
     -- NULL when it carries none. A geo-query reads the hoisted instance only
     -- while this is NULL or ahead of NOW(): clause 4.22 invalidates that one
     -- instance at its own expiry, whatever the Entity's other `location`
     -- instances carry in `current_attribute_values`.
-    location_expires_at TIMESTAMPTZ,
+    location_expires_at timestamptz,
     -- `entity_type_names` keys.
-    entity_type_name_keys INTEGER[] COMPRESSION lz4 NOT NULL,
+    entity_type_name_keys integer[] compression lz4 not null,
     -- `attribute_names` keys.
-    attribute_name_keys INTEGER[] COMPRESSION lz4 NOT NULL,
+    attribute_name_keys integer[] compression lz4 not null,
     -- One element per attribute instance the payload carries (clause 4.5.5:
     -- a `datasetId` instance is its own element): its `attribute_names` key,
     -- and at the same position its attribute family code (the
@@ -101,41 +102,29 @@ CREATE TABLE entity_search (
     -- rewrite the row. Not indexed: nothing searches them. They are what the
     -- census below is counted from, and the row they are read back from when
     -- an update or a delete takes an Entity's instances out of the census.
-    attribute_instance_name_keys INTEGER[] COMPRESSION lz4 NOT NULL,
-    attribute_instance_kinds SMALLINT[] COMPRESSION lz4 NOT NULL,
-    scope_paths ltree[] COMPRESSION lz4,
-    location geometry COMPRESSION lz4,
-    location_geography geography COMPRESSION lz4 GENERATED ALWAYS AS (geom_to_geog(location)) STORED,
-    observation_space geometry COMPRESSION lz4,
-    operation_space geometry COMPRESSION lz4,
-    CONSTRAINT pk_entity_search PRIMARY KEY (entity_key),
-    CONSTRAINT fk_entity_search_entity
-        FOREIGN KEY (entity_key)
-        REFERENCES entities(entity_key) ON DELETE CASCADE,
-    CONSTRAINT chk_entity_search_entity_type_name_keys_present CHECK (cardinality(entity_type_name_keys) > 0),
-    CONSTRAINT chk_entity_search_attribute_instances_aligned
-        CHECK (cardinality(attribute_instance_name_keys) = cardinality(attribute_instance_kinds)),
-    CONSTRAINT chk_entity_search_attribute_instance_kinds
-        CHECK (attribute_instance_kinds <@ '{1,2,3,4,5,6,7,8}'::SMALLINT[]),
-    CONSTRAINT chk_entity_search_location_valid
-        CHECK (location IS NULL OR ST_IsValid(location)),
-    CONSTRAINT chk_entity_search_location_srid
-        CHECK (location IS NULL OR ST_SRID(location) = 4326),
-    CONSTRAINT chk_entity_search_location_zm
-        CHECK (location IS NULL OR ST_Zmflag(location) IN (0, 2)),
-    CONSTRAINT chk_entity_search_observation_space_valid
-        CHECK (observation_space IS NULL OR ST_IsValid(observation_space)),
-    CONSTRAINT chk_entity_search_observation_space_srid
-        CHECK (observation_space IS NULL OR ST_SRID(observation_space) = 4326),
-    CONSTRAINT chk_entity_search_observation_space_zm
-        CHECK (observation_space IS NULL OR ST_Zmflag(observation_space) IN (0, 2)),
-    CONSTRAINT chk_entity_search_operation_space_valid
-        CHECK (operation_space IS NULL OR ST_IsValid(operation_space)),
-    CONSTRAINT chk_entity_search_operation_space_srid
-        CHECK (operation_space IS NULL OR ST_SRID(operation_space) = 4326),
-    CONSTRAINT chk_entity_search_operation_space_zm
-        CHECK (operation_space IS NULL OR ST_Zmflag(operation_space) IN (0, 2))
-) WITH (
+    attribute_instance_name_keys integer[] compression lz4 not null,
+    attribute_instance_kinds smallint[] compression lz4 not null,
+    scope_paths ltree[] compression lz4,
+    location geometry compression lz4,
+    location_geography geography compression lz4 generated always as (geom_to_geog(location)) stored,
+    observation_space geometry compression lz4,
+    operation_space geometry compression lz4,
+    constraint pk_entity_search primary key (entity_key),
+    constraint fk_entity_search_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
+    constraint chk_entity_search_entity_type_name_keys_present check (cardinality(entity_type_name_keys) > 0),
+    constraint chk_entity_search_attribute_instances_aligned check (cardinality(attribute_instance_name_keys) = cardinality(attribute_instance_kinds)),
+    constraint chk_entity_search_attribute_instance_kinds check (attribute_instance_kinds <@ '{1,2,3,4,5,6,7,8}'::smallint[]),
+    constraint chk_entity_search_location_valid check (location is null or st_isvalid(location)),
+    constraint chk_entity_search_location_srid check (location is null or st_srid(location) = 4326),
+    constraint chk_entity_search_location_zm check (location is null or st_zmflag(location) in (0, 2)),
+    constraint chk_entity_search_observation_space_valid check (observation_space is null or st_isvalid(observation_space)),
+    constraint chk_entity_search_observation_space_srid check (observation_space is null or st_srid(observation_space) = 4326),
+    constraint chk_entity_search_observation_space_zm check (observation_space is null or st_zmflag(observation_space) in (0, 2)),
+    constraint chk_entity_search_operation_space_valid check (operation_space is null or st_isvalid(operation_space)),
+    constraint chk_entity_search_operation_space_srid check (operation_space is null or st_srid(operation_space) = 4326),
+    constraint chk_entity_search_operation_space_zm check (operation_space is null or st_zmflag(operation_space) in (0, 2))
+)
+with (
     autovacuum_vacuum_scale_factor = 0.02,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
@@ -143,28 +132,33 @@ CREATE TABLE entity_search (
     autovacuum_vacuum_cost_delay = 0
 );
 
-CREATE INDEX idx_entity_search_entity_type_name_keys ON entity_search USING GIN (entity_type_name_keys);
+create index idx_entity_search_entity_type_name_keys on entity_search using gin (entity_type_name_keys);
 
-CREATE INDEX idx_entity_search_attribute_name_keys ON entity_search USING GIN (attribute_name_keys);
+create index idx_entity_search_attribute_name_keys on entity_search using gin (attribute_name_keys);
 
-CREATE INDEX idx_entity_search_scope_paths ON entity_search USING GIST (scope_paths);
+create index idx_entity_search_scope_paths on entity_search using gist (scope_paths);
 
-CREATE INDEX idx_entity_search_location ON entity_search USING GIST (location)
-    WHERE location IS NOT NULL;
+create index idx_entity_search_location on entity_search using gist (location)
+where
+    location is not null;
 
-CREATE INDEX idx_entity_search_location_geography ON entity_search USING GIST (location_geography)
-    WHERE location_geography IS NOT NULL;
+create index idx_entity_search_location_geography on entity_search using gist (location_geography)
+where
+    location_geography is not null;
 
-CREATE INDEX idx_entity_search_observation_space ON entity_search USING GIST (observation_space)
-    WHERE observation_space IS NOT NULL;
+create index idx_entity_search_observation_space on entity_search using gist (observation_space)
+where
+    observation_space is not null;
 
-CREATE INDEX idx_entity_search_operation_space ON entity_search USING GIST (operation_space)
-    WHERE operation_space IS NOT NULL;
+create index idx_entity_search_operation_space on entity_search using gist (operation_space)
+where
+    operation_space is not null;
 
 -- The spatial index catch-up: a range scan over recently written rows.
-CREATE INDEX idx_entity_search_written_xid ON entity_search (written_xid);
+create index idx_entity_search_written_xid on entity_search (written_xid);
 
-ALTER TABLE entity_search ALTER COLUMN entity_type_name_keys SET STATISTICS 1000;
+alter table entity_search
+    alter column entity_type_name_keys set statistics 1000;
 
 -- One row per type an Entity carries (clause 4.17 selects on membership),
 -- keyed by type and then identifier. A type selection pages by walking one
@@ -174,15 +168,14 @@ ALTER TABLE entity_search ALTER COLUMN entity_type_name_keys SET STATISTICS 1000
 -- Entity whose identifier sorts ahead of the type's first. The key carries
 -- `entity_key` so the walk never visits the heap, and the insert-driven vacuum
 -- keeps the visibility map current enough for that to hold.
-CREATE TABLE entity_type_members (
-    entity_key BIGINT NOT NULL,
-    entity_type_name_key INTEGER NOT NULL,
-    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_entity_type_members PRIMARY KEY (entity_type_name_key, id) INCLUDE (entity_key),
-    CONSTRAINT fk_entity_type_members_entity
-        FOREIGN KEY (entity_key)
-        REFERENCES entities(entity_key) ON DELETE CASCADE
-) WITH (
+create table entity_type_members (
+    entity_key bigint not null,
+    entity_type_name_key integer not null,
+    id text compression lz4 collate "C" not null,
+    constraint pk_entity_type_members primary key (entity_type_name_key, id) include (entity_key),
+    constraint fk_entity_type_members_entity foreign key (entity_key) references entities (entity_key) on delete cascade
+)
+with (
     autovacuum_vacuum_insert_scale_factor = 0.01,
     autovacuum_vacuum_insert_threshold = 500,
     autovacuum_vacuum_scale_factor = 0.02,
@@ -193,7 +186,7 @@ CREATE TABLE entity_type_members (
 );
 
 -- The cascade from `entities` and a type change find an Entity's rows by key.
-CREATE INDEX idx_entity_type_members_entity_key ON entity_type_members (entity_key);
+create index idx_entity_type_members_entity_key on entity_type_members (entity_key);
 
 -- ----------------------------------------------------------------------------
 -- The discovery census (clauses 5.7.5-5.7.10)
@@ -224,13 +217,13 @@ CREATE INDEX idx_entity_type_members_entity_key ON entity_type_members (entity_k
 --
 -- No foreign key to the dictionaries: `entity_search` holds the same keys
 -- without one, and a key-share lock per written change is not worth it.
-
 -- Entities per type: `entityCount`, and whether a type exists at all.
-CREATE TABLE entity_type_census (
-    entity_type_name_key INTEGER NOT NULL,
-    entity_delta BIGINT NOT NULL,
-    CONSTRAINT chk_entity_type_census_entity_delta CHECK (entity_delta <> 0)
-) WITH (
+create table entity_type_census (
+    entity_type_name_key integer not null,
+    entity_delta bigint not null,
+    constraint chk_entity_type_census_entity_delta check (entity_delta <> 0)
+)
+with (
     autovacuum_vacuum_insert_scale_factor = 0.01,
     autovacuum_vacuum_insert_threshold = 500,
     autovacuum_vacuum_scale_factor = 0.01,
@@ -242,14 +235,15 @@ CREATE TABLE entity_type_census (
 
 -- Attribute instances per type, attribute name and family: the attributes of
 -- a type and their `attributeTypes`, and the types of an attribute.
-CREATE TABLE entity_type_attribute_census (
-    entity_type_name_key INTEGER NOT NULL,
-    attribute_name_key INTEGER NOT NULL,
-    attribute_kind SMALLINT NOT NULL,
-    instance_delta BIGINT NOT NULL,
-    CONSTRAINT chk_entity_type_attribute_census_attribute_kind CHECK (attribute_kind BETWEEN 1 AND 8),
-    CONSTRAINT chk_entity_type_attribute_census_instance_delta CHECK (instance_delta <> 0)
-) WITH (
+create table entity_type_attribute_census (
+    entity_type_name_key integer not null,
+    attribute_name_key integer not null,
+    attribute_kind smallint not null,
+    instance_delta bigint not null,
+    constraint chk_entity_type_attribute_census_attribute_kind check (attribute_kind between 1 and 8),
+    constraint chk_entity_type_attribute_census_instance_delta check (instance_delta <> 0)
+)
+with (
     autovacuum_vacuum_insert_scale_factor = 0.01,
     autovacuum_vacuum_insert_threshold = 500,
     autovacuum_vacuum_scale_factor = 0.01,
@@ -262,11 +256,12 @@ CREATE TABLE entity_type_attribute_census (
 -- Attribute instances per attribute name across every Entity, whatever its
 -- types: `attributeCount`, which the per-type ledger cannot give, since an
 -- Entity with two types is counted there under each.
-CREATE TABLE attribute_census (
-    attribute_name_key INTEGER NOT NULL,
-    instance_delta BIGINT NOT NULL,
-    CONSTRAINT chk_attribute_census_instance_delta CHECK (instance_delta <> 0)
-) WITH (
+create table attribute_census (
+    attribute_name_key integer not null,
+    instance_delta bigint not null,
+    constraint chk_attribute_census_instance_delta check (instance_delta <> 0)
+)
+with (
     autovacuum_vacuum_insert_scale_factor = 0.01,
     autovacuum_vacuum_insert_threshold = 500,
     autovacuum_vacuum_scale_factor = 0.01,
@@ -275,3 +270,4 @@ CREATE TABLE attribute_census (
     autovacuum_analyze_threshold = 200,
     autovacuum_vacuum_cost_delay = 0
 );
+

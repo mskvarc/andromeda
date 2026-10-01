@@ -16,37 +16,39 @@
 --
 -- There is no conversion factor: the broker never converts between units.
 -- ============================================================================
-
-CREATE TABLE unit_codes (
-    id SMALLINT NOT NULL,
-    first_revision SMALLINT NOT NULL,
+create table unit_codes (
+    id smallint not null,
+    first_revision smallint not null,
     -- The Recommendation 20 revision that withdrew the code. A withdrawn code
     -- still resolves; it is no longer offered.
-    retired_revision SMALLINT,
-    code TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_unit_codes PRIMARY KEY (id),
-    CONSTRAINT uq_unit_codes_code UNIQUE (code),
-    CONSTRAINT chk_unit_codes_id_positive CHECK (id > 0),
-    CONSTRAINT chk_unit_codes_code_shape CHECK (code ~ '^[A-Z0-9]{2,3}$'),
-    CONSTRAINT chk_unit_codes_retired_after_first CHECK (retired_revision IS NULL OR retired_revision > first_revision)
+    retired_revision smallint,
+    code text compression lz4 collate "C" not null,
+    constraint pk_unit_codes primary key (id),
+    constraint uq_unit_codes_code unique (code),
+    constraint chk_unit_codes_id_positive check (id > 0),
+    constraint chk_unit_codes_code_shape check (code ~ '^[A-Z0-9]{2,3}$'),
+    constraint chk_unit_codes_retired_after_first check (retired_revision is null or retired_revision > first_revision)
 );
 
-REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON unit_codes FROM PUBLIC;
-GRANT SELECT ON unit_codes TO PUBLIC;
+revoke insert, update, delete, truncate on unit_codes from public;
+
+grant select on unit_codes to public;
 
 -- Which source the seeded assignment was rendered from. The digest tells an
 -- operator whether two tenants were seeded from the same Recommendation 20
 -- workbook, which the revision number alone cannot.
-CREATE TABLE unit_code_catalog_metadata (
-    rec20_revision SMALLINT NOT NULL,
-    generated_at TIMESTAMPTZ NOT NULL,
-    singleton BOOLEAN NOT NULL DEFAULT TRUE,
-    source_sha256 TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_unit_code_catalog_metadata PRIMARY KEY (singleton),
-    CONSTRAINT chk_unit_code_catalog_metadata_singleton CHECK (singleton),
-    CONSTRAINT chk_unit_code_catalog_metadata_revision_positive CHECK (rec20_revision > 0),
-    CONSTRAINT chk_unit_code_catalog_metadata_digest_hex CHECK (source_sha256 ~ '^[0-9a-f]{64}$')
+create table unit_code_catalog_metadata (
+    rec20_revision smallint not null,
+    generated_at timestamptz not null,
+    singleton boolean not null default true,
+    source_sha256 text compression lz4 collate "C" not null,
+    constraint pk_unit_code_catalog_metadata primary key (singleton),
+    constraint chk_unit_code_catalog_metadata_singleton check (singleton),
+    constraint chk_unit_code_catalog_metadata_revision_positive check (rec20_revision > 0),
+    constraint chk_unit_code_catalog_metadata_digest_hex check (source_sha256 ~ '^[0-9a-f]{64}$')
 );
 
-REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON unit_code_catalog_metadata FROM PUBLIC;
-GRANT SELECT ON unit_code_catalog_metadata TO PUBLIC;
+revoke insert, update, delete, truncate on unit_code_catalog_metadata from public;
+
+grant select on unit_code_catalog_metadata to public;
+

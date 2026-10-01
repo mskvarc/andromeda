@@ -14,35 +14,35 @@
 -- A remote context whose URL exceeds the identifier bound is served without
 -- being cached.
 -- ============================================================================
-
-CREATE TABLE jsonld_contexts (
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_usage TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    number_of_hits BIGINT NOT NULL DEFAULT 0,
-    kind SMALLINT NOT NULL,
+create table jsonld_contexts (
+    created_at timestamptz not null default now(),
+    last_usage timestamptz not null default now(),
+    number_of_hits bigint not null default 0,
+    kind smallint not null,
     -- When a cached context must be fetched again.
-    expires_at TIMESTAMPTZ,
-    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+    expires_at timestamptz,
+    id text compression lz4 collate "C" not null,
     -- The URL the context was fetched from. Unique, so one remote context is
     -- cached once; NULL for a hosted or implicitly created context with no
     -- origin, and never NULL for a cached one.
-    url TEXT COMPRESSION lz4 COLLATE "C",
+    url text compression lz4 collate "C",
     -- The URL a cached context was finally read from, after redirects and a
     -- JSON-LD alternate link: the base its own relative references resolve
     -- against. NULL for a context the broker stores itself, which was never
     -- read from anywhere. Nothing looks a row up by it or orders by it, so it
     -- has no index, no length bound and no byte-wise collation.
-    document_url TEXT COMPRESSION lz4,
-    payload JSONB COMPRESSION lz4 NOT NULL,
-    extra_info JSONB COMPRESSION lz4,
-    CONSTRAINT pk_jsonld_contexts PRIMARY KEY (id),
-    CONSTRAINT uq_jsonld_contexts_url UNIQUE (url),
-    CONSTRAINT chk_jsonld_contexts_kind CHECK (kind BETWEEN 1 AND 3),
-    CONSTRAINT chk_jsonld_contexts_cached_has_url CHECK (kind <> 1 OR url IS NOT NULL),
-    CONSTRAINT chk_jsonld_contexts_document_url_kind CHECK ((kind = 1) = (document_url IS NOT NULL)),
-    CONSTRAINT chk_jsonld_contexts_id_length CHECK (octet_length(id) <= 1024),
-    CONSTRAINT chk_jsonld_contexts_url_length CHECK (octet_length(url) <= 1024)
+    document_url text compression lz4,
+    payload jsonb compression lz4 not null,
+    extra_info jsonb compression lz4,
+    constraint pk_jsonld_contexts primary key (id),
+    constraint uq_jsonld_contexts_url unique (url),
+    constraint chk_jsonld_contexts_kind check (kind between 1 and 3),
+    constraint chk_jsonld_contexts_cached_has_url check (kind <> 1 or url is not null),
+    constraint chk_jsonld_contexts_document_url_kind check ((kind = 1) = (document_url is not null)),
+    constraint chk_jsonld_contexts_id_length check (octet_length(id) <= 1024),
+    constraint chk_jsonld_contexts_url_length check (octet_length(url) <= 1024)
 );
 
 -- The list operation (clause 5.13.3) filters by kind.
-CREATE INDEX idx_jsonld_contexts_kind ON jsonld_contexts(kind);
+create index idx_jsonld_contexts_kind on jsonld_contexts (kind);
+

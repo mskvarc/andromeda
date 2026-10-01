@@ -38,92 +38,69 @@
 -- a hypertable's foreign keys on every chunk under `SHARE ROW EXCLUSIVE`,
 -- which deadlocks against concurrent upserts on the referenced table.
 -- ============================================================================
-
-CREATE TABLE attribute_history (
-    recorded_at TIMESTAMPTZ NOT NULL,
-    write_id UUID NOT NULL,
-    stream_key BIGINT NOT NULL,
-    write_ordinal INTEGER NOT NULL,
-    attribute_kind SMALLINT NOT NULL,
-    value_kind SMALLINT NOT NULL,
-    observed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ,
-    modified_at TIMESTAMPTZ,
-    deleted_at TIMESTAMPTZ,
-    value_date_time TIMESTAMPTZ,
-    generated_instance_id UUID,
-    unit_code_id SMALLINT,
-    value_boolean BOOLEAN,
-    verbatim_instance_id TEXT COMPRESSION lz4 COLLATE "C",
-    value_number NUMERIC COMPRESSION lz4,
-    value_string TEXT COMPRESSION lz4 COLLATE "C",
-    value_geometry geometry COMPRESSION lz4,
-    value_object JSONB COMPRESSION lz4,
-    value_uri TEXT COMPRESSION lz4 COLLATE "C",
-    metadata JSONB COMPRESSION lz4,
-    CONSTRAINT uq_attribute_history_write_identity UNIQUE (recorded_at, write_id, write_ordinal),
-    CONSTRAINT chk_attribute_history_write_ordinal CHECK (write_ordinal >= 0),
-    CONSTRAINT chk_attribute_history_attribute_kind CHECK (attribute_kind BETWEEN 1 AND 8),
-    CONSTRAINT chk_attribute_history_instance_identity
-        CHECK (num_nonnulls(generated_instance_id, verbatim_instance_id) = 1),
-    CONSTRAINT chk_attribute_history_verbatim_instance_id_length
-        CHECK (octet_length(verbatim_instance_id) <= 1024),
-    CONSTRAINT chk_attribute_history_value_presence CHECK (
-        (value_kind = 0
-            AND deleted_at IS NOT NULL
-            AND num_nonnulls(value_number, value_string, value_boolean, value_geometry,
-                             value_object, value_date_time, value_uri) = 0)
-        OR
-        (value_kind <> 0
-            AND num_nonnulls(value_number, value_string, value_boolean, value_geometry,
-                             value_object, value_date_time, value_uri) = 1)),
+create table attribute_history (
+    recorded_at timestamptz not null,
+    write_id uuid not null,
+    stream_key bigint not null,
+    write_ordinal integer not null,
+    attribute_kind smallint not null,
+    value_kind smallint not null,
+    observed_at timestamptz,
+    created_at timestamptz,
+    modified_at timestamptz,
+    deleted_at timestamptz,
+    value_date_time timestamptz,
+    generated_instance_id uuid,
+    unit_code_id smallint,
+    value_boolean boolean,
+    verbatim_instance_id text compression lz4 collate "C",
+    value_number numeric compression lz4,
+    value_string text compression lz4 collate "C",
+    value_geometry geometry compression lz4,
+    value_object jsonb compression lz4,
+    value_uri text compression lz4 collate "C",
+    metadata jsonb compression lz4,
+    constraint uq_attribute_history_write_identity unique (recorded_at, write_id, write_ordinal),
+    constraint chk_attribute_history_write_ordinal check (write_ordinal >= 0),
+    constraint chk_attribute_history_attribute_kind check (attribute_kind between 1 and 8),
+    constraint chk_attribute_history_instance_identity check (num_nonnulls (generated_instance_id, verbatim_instance_id) = 1),
+    constraint chk_attribute_history_verbatim_instance_id_length check (octet_length(verbatim_instance_id) <= 1024),
+    constraint chk_attribute_history_value_presence check ((value_kind = 0 and deleted_at is not null and num_nonnulls (value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 0) or (value_kind <> 0 and num_nonnulls (value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 1)),
     -- Pins `value_kind` to the populated column, so a value whose declared
     -- shape disagrees with where it sits cannot be stored and is never
     -- repaired by guessing. It also bounds `value_kind` to its codes.
-    CONSTRAINT chk_attribute_history_value_kind_column CHECK (
-        value_kind = 0
-        OR (value_kind = 1 AND value_number IS NOT NULL)
-        OR (value_kind = 2 AND value_string IS NOT NULL)
-        OR (value_kind = 3 AND value_boolean IS NOT NULL)
-        OR (value_kind = 4 AND value_geometry IS NOT NULL)
-        OR (value_kind = 5 AND value_object IS NOT NULL)
-        OR (value_kind = 6 AND value_date_time IS NOT NULL)
-        OR (value_kind = 7 AND value_uri IS NOT NULL)),
-    CONSTRAINT chk_attribute_history_value_geometry_valid
-        CHECK (value_geometry IS NULL OR ST_IsValid(value_geometry)),
-    CONSTRAINT chk_attribute_history_value_geometry_srid
-        CHECK (value_geometry IS NULL OR ST_SRID(value_geometry) = 4326),
-    CONSTRAINT chk_attribute_history_value_geometry_zm
-        CHECK (value_geometry IS NULL OR ST_Zmflag(value_geometry) IN (0, 2))
+    constraint chk_attribute_history_value_kind_column check (value_kind = 0 or (value_kind = 1 and value_number is not null) or (value_kind = 2 and value_string is not null) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and value_uri is not null)),
+    constraint chk_attribute_history_value_geometry_valid check (value_geometry is null or st_isvalid(value_geometry)),
+    constraint chk_attribute_history_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
+    constraint chk_attribute_history_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2))
 );
 
-CREATE INDEX idx_attribute_history_stream_recorded_at
-    ON attribute_history (stream_key, recorded_at DESC);
+create index idx_attribute_history_stream_recorded_at on attribute_history (stream_key, recorded_at desc);
 
-CREATE INDEX idx_attribute_history_stream_observed_at
-    ON attribute_history (stream_key, observed_at DESC)
-    WHERE observed_at IS NOT NULL;
+create index idx_attribute_history_stream_observed_at on attribute_history (stream_key, observed_at desc)
+where
+    observed_at is not null;
 
 -- A deletion with no `observedAt` is placed at its `deleted_at`; the
 -- instance-in-effect probe of a temporal `q` seeks the latest one per stream.
 -- The predicate names `observed_at` so that a generic plan, which cannot see
 -- the bound instant, still prices the index by how few rows it holds.
-CREATE INDEX idx_attribute_history_stream_deletion
-    ON attribute_history (stream_key, deleted_at DESC)
-    WHERE deleted_at IS NOT NULL AND observed_at IS NULL;
+create index idx_attribute_history_stream_deletion on attribute_history (stream_key, deleted_at desc)
+where
+    deleted_at is not null and observed_at is null;
 
-CREATE INDEX idx_attribute_history_stream_generated_instance
-    ON attribute_history (stream_key, generated_instance_id)
-    WHERE generated_instance_id IS NOT NULL;
+create index idx_attribute_history_stream_generated_instance on attribute_history (stream_key, generated_instance_id)
+where
+    generated_instance_id is not null;
 
 -- A lookup only; `attribute_history_instance_claims` carries the uniqueness.
-CREATE INDEX idx_attribute_history_stream_verbatim_instance
-    ON attribute_history (stream_key, verbatim_instance_id)
-    WHERE verbatim_instance_id IS NOT NULL;
+create index idx_attribute_history_stream_verbatim_instance on attribute_history (stream_key, verbatim_instance_id)
+where
+    verbatim_instance_id is not null;
 
-CREATE INDEX idx_attribute_history_value_geometry
-    ON attribute_history USING GIST (value_geometry)
-    WHERE value_geometry IS NOT NULL;
+create index idx_attribute_history_value_geometry on attribute_history using gist (value_geometry)
+where
+    value_geometry is not null;
 
 -- One BRIN summary per semantic time axis. A window on `recorded_at` is
 -- answered by chunk exclusion, and the B-trees above lead with `stream_key`,
@@ -140,17 +117,13 @@ CREATE INDEX idx_attribute_history_value_geometry
 -- by one, so a `WHERE ... IS NOT NULL` predicate saves nothing, and
 -- TimescaleDB's columnstore skips partial indexes when it chooses which
 -- columns get a min/max summary on a compressed chunk.
-CREATE INDEX idx_attribute_history_observed_at_brin
-    ON attribute_history USING BRIN (observed_at timestamptz_minmax_multi_ops);
+create index idx_attribute_history_observed_at_brin on attribute_history using brin (observed_at timestamptz_minmax_multi_ops);
 
-CREATE INDEX idx_attribute_history_created_at_brin
-    ON attribute_history USING BRIN (created_at timestamptz_minmax_multi_ops);
+create index idx_attribute_history_created_at_brin on attribute_history using brin (created_at timestamptz_minmax_multi_ops);
 
-CREATE INDEX idx_attribute_history_modified_at_brin
-    ON attribute_history USING BRIN (modified_at timestamptz_minmax_multi_ops);
+create index idx_attribute_history_modified_at_brin on attribute_history using brin (modified_at timestamptz_minmax_multi_ops);
 
-CREATE INDEX idx_attribute_history_deleted_at_brin
-    ON attribute_history USING BRIN (deleted_at timestamptz_minmax_multi_ops);
+create index idx_attribute_history_deleted_at_brin on attribute_history using brin (deleted_at timestamptz_minmax_multi_ops);
 
 -- Clauses 5.6.14 and 5.6.15 name an instance by Entity, attribute and
 -- `instanceId` only, so a client-supplied one must be unique across one
@@ -166,15 +139,12 @@ CREATE INDEX idx_attribute_history_deleted_at_brin
 -- written, and released when that row is removed, by the delete that
 -- precedes a replacing write or by instance deletion (clause 5.6.15). A
 -- broker-minted identifier is unique by construction and never claims a row.
-CREATE TABLE attribute_history_instance_claims (
-    temporal_entity_key BIGINT NOT NULL,
-    attribute_name_key INTEGER NOT NULL,
-    verbatim_instance_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_attribute_history_instance_claims
-        PRIMARY KEY (temporal_entity_key, attribute_name_key, verbatim_instance_id),
-    CONSTRAINT fk_attribute_history_instance_claims_temporal_entity
-        FOREIGN KEY (temporal_entity_key)
-        REFERENCES temporal_entities(temporal_entity_key) ON DELETE CASCADE,
-    CONSTRAINT chk_attribute_history_instance_claims_id_length
-        CHECK (octet_length(verbatim_instance_id) <= 1024)
+create table attribute_history_instance_claims (
+    temporal_entity_key bigint not null,
+    attribute_name_key integer not null,
+    verbatim_instance_id text compression lz4 collate "C" not null,
+    constraint pk_attribute_history_instance_claims primary key (temporal_entity_key, attribute_name_key, verbatim_instance_id),
+    constraint fk_attribute_history_instance_claims_temporal_entity foreign key (temporal_entity_key) references temporal_entities (temporal_entity_key) on delete cascade,
+    constraint chk_attribute_history_instance_claims_id_length check (octet_length(verbatim_instance_id) <= 1024)
 );
+

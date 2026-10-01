@@ -1,0 +1,8 @@
+by_range
+create_hypertable
+geom_to_geog
+GREATEST
+pg_current_xact_id
+ST_IsValid
+ST_SRID
+ST_Zmflag

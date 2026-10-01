@@ -14,6 +14,7 @@ mod etsi;
 mod lifecycle;
 mod local_broker;
 mod readiness;
+mod sql_format;
 mod stack;
 mod test_binaries;
 

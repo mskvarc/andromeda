@@ -16,19 +16,19 @@
 -- Neither dictionary ever deletes or re-keys a row, so a key, once minted,
 -- names the same IRI for the life of the tenant.
 -- ============================================================================
-
-CREATE TABLE attribute_names (
-    attribute_name_key INTEGER GENERATED ALWAYS AS IDENTITY,
-    name TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_attribute_names PRIMARY KEY (attribute_name_key),
-    CONSTRAINT uq_attribute_names_name UNIQUE (name),
-    CONSTRAINT chk_attribute_names_name_length CHECK (char_length(name) >= 1 AND octet_length(name) <= 1024)
+create table attribute_names (
+    attribute_name_key integer generated always as identity,
+    name text compression lz4 collate "C" not null,
+    constraint pk_attribute_names primary key (attribute_name_key),
+    constraint uq_attribute_names_name unique (name),
+    constraint chk_attribute_names_name_length check (char_length(name) >= 1 and octet_length(name) <= 1024)
 );
 
-CREATE TABLE entity_type_names (
-    entity_type_name_key INTEGER GENERATED ALWAYS AS IDENTITY,
-    name TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_entity_type_names PRIMARY KEY (entity_type_name_key),
-    CONSTRAINT uq_entity_type_names_name UNIQUE (name),
-    CONSTRAINT chk_entity_type_names_name_length CHECK (char_length(name) >= 1 AND octet_length(name) <= 1024)
+create table entity_type_names (
+    entity_type_name_key integer generated always as identity,
+    name text compression lz4 collate "C" not null,
+    constraint pk_entity_type_names primary key (entity_type_name_key),
+    constraint uq_entity_type_names_name unique (name),
+    constraint chk_entity_type_names_name_length check (char_length(name) >= 1 and octet_length(name) <= 1024)
 );
+

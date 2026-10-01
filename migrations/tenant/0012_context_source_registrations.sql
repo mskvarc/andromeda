@@ -38,109 +38,96 @@
 -- `ContextSourceRegistration` (clause 5.2.9), so the broker renders the
 -- constant rather than storing it on every row.
 -- ============================================================================
-
-CREATE TABLE context_source_registrations (
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+create table context_source_registrations (
+    created_at timestamptz not null default now(),
+    modified_at timestamptz not null default now(),
     -- NULL means the registration never expires.
-    expires_at TIMESTAMPTZ,
-    mode SMALLINT NOT NULL,
-    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    registration_name TEXT COMPRESSION lz4,
-    description TEXT COMPRESSION lz4,
+    expires_at timestamptz,
+    mode smallint not null,
+    id text compression lz4 collate "C" not null,
+    registration_name text compression lz4,
+    description text compression lz4,
     -- The authority for every response body, rendered back verbatim.
     -- `registration_information` is its routing projection.
-    information JSONB COMPRESSION lz4 NOT NULL,
+    information jsonb compression lz4 not null,
     -- Each `idPattern` in `information`, keyed by the text as written, mapped
     -- to the restatement the broker renders for this engine: every embedded
     -- option applied and every class written out, so `~` here reads the
     -- pattern as the broker's in-memory engine does (clause 4.9; PostgreSQL's
     -- own `(?i)` folds only ASCII). NULL when `information` declares none.
     -- The broker writes it beside `information`; nothing here derives it.
-    entity_id_pattern_forms JSONB COMPRESSION lz4,
+    entity_id_pattern_forms jsonb compression lz4,
     -- The revision of the broker's rendering that produced
     -- `entity_id_pattern_forms`, NULL exactly when it is. A broker renders
     -- again, when it opens the tenant, every row an older revision produced.
-    entity_id_pattern_forms_revision SMALLINT,
+    entity_id_pattern_forms_revision smallint,
     -- The tenant to address at the context source; NULL means its default
     -- tenant.
-    tenant TEXT COMPRESSION lz4,
-    observation_interval JSONB COMPRESSION lz4,
-    management_interval JSONB COMPRESSION lz4,
-    location geometry COMPRESSION lz4,
-    observation_space geometry COMPRESSION lz4,
-    operation_space geometry COMPRESSION lz4,
-    endpoint TEXT COMPRESSION lz4 NOT NULL,
+    tenant text compression lz4,
+    observation_interval jsonb compression lz4,
+    management_interval jsonb compression lz4,
+    location geometry compression lz4,
+    observation_space geometry compression lz4,
+    operation_space geometry compression lz4,
+    endpoint text compression lz4 not null,
     -- The media type the broker sends as `Accept` to this context source.
-    accept TEXT COMPRESSION lz4,
+    accept text compression lz4,
     -- NULL is the absent member, which reads as the clause 5.2.9 default,
     -- `federationOps`.
-    operations SMALLINT[] COMPRESSION lz4,
+    operations smallint[] compression lz4,
     -- Stored in the label-path encoding of `entity_search.scope_paths`, so a
     -- clause 4.19 `scopeQ` against registrations compiles to the same `lquery`
     -- match that selects entities.
-    scope ltree[] COMPRESSION lz4,
-    refresh_rate TEXT COMPRESSION lz4,
-    management JSONB COMPRESSION lz4,
-    context_source_info JSONB COMPRESSION lz4,
+    scope ltree[] compression lz4,
+    refresh_rate text compression lz4,
+    management jsonb compression lz4,
+    context_source_info jsonb compression lz4,
     -- Members outside Table 5.2.9-1, kept for the representation and for `q`
     -- filtering.
-    additional_properties JSONB COMPRESSION lz4,
+    additional_properties jsonb compression lz4,
     -- Table 5.2.9-1 `datasetId`: each element a URI, or `@none` for the
     -- default instance (clause 4.5.5). Unindexed: nothing preselects
     -- registrations by dataset.
-    dataset_id TEXT[] COMPRESSION lz4,
+    dataset_id text[] compression lz4,
     -- The `@context` the registration was created under.
-    jsonld_context TEXT COMPRESSION lz4,
-    context_source_alias TEXT COMPRESSION lz4,
-    CONSTRAINT pk_context_source_registrations PRIMARY KEY (id),
-    CONSTRAINT chk_context_source_registrations_id_length CHECK (octet_length(id) <= 1024),
-    CONSTRAINT chk_csr_mode CHECK (mode BETWEEN 1 AND 4),
-    CONSTRAINT chk_csr_entity_id_pattern_forms_object CHECK (
-        entity_id_pattern_forms IS NULL OR jsonb_typeof(entity_id_pattern_forms) = 'object'),
-    CONSTRAINT chk_csr_entity_id_pattern_forms_revision CHECK (
-        (entity_id_pattern_forms IS NULL) = (entity_id_pattern_forms_revision IS NULL)),
-    CONSTRAINT chk_csr_operations CHECK (
-        operations IS NULL
-        OR (cardinality(operations) > 0
-            AND array_position(operations, NULL) IS NULL
-            AND 1 <= ALL (operations)
-            AND 48 >= ALL (operations))),
-    CONSTRAINT chk_csr_location_valid
-        CHECK (location IS NULL OR ST_IsValid(location)),
-    CONSTRAINT chk_csr_location_srid
-        CHECK (location IS NULL OR ST_SRID(location) = 4326),
-    CONSTRAINT chk_csr_location_zm
-        CHECK (location IS NULL OR ST_Zmflag(location) IN (0, 2)),
-    CONSTRAINT chk_csr_observation_space_valid
-        CHECK (observation_space IS NULL OR ST_IsValid(observation_space)),
-    CONSTRAINT chk_csr_observation_space_srid
-        CHECK (observation_space IS NULL OR ST_SRID(observation_space) = 4326),
-    CONSTRAINT chk_csr_observation_space_zm
-        CHECK (observation_space IS NULL OR ST_Zmflag(observation_space) IN (0, 2)),
-    CONSTRAINT chk_csr_operation_space_valid
-        CHECK (operation_space IS NULL OR ST_IsValid(operation_space)),
-    CONSTRAINT chk_csr_operation_space_srid
-        CHECK (operation_space IS NULL OR ST_SRID(operation_space) = 4326),
-    CONSTRAINT chk_csr_operation_space_zm
-        CHECK (operation_space IS NULL OR ST_Zmflag(operation_space) IN (0, 2))
+    jsonld_context text compression lz4,
+    context_source_alias text compression lz4,
+    constraint pk_context_source_registrations primary key (id),
+    constraint chk_context_source_registrations_id_length check (octet_length(id) <= 1024),
+    constraint chk_csr_mode check (mode between 1 and 4),
+    constraint chk_csr_entity_id_pattern_forms_object check (entity_id_pattern_forms is null or jsonb_typeof(entity_id_pattern_forms) = 'object'),
+    constraint chk_csr_entity_id_pattern_forms_revision check ((entity_id_pattern_forms is null) = (entity_id_pattern_forms_revision is null)),
+    constraint chk_csr_operations check (operations is null or (cardinality(operations) > 0 and array_position(operations, null) is null and 1 <= all (operations) and 48 >= all (operations))),
+    constraint chk_csr_location_valid check (location is null or st_isvalid(location)),
+    constraint chk_csr_location_srid check (location is null or st_srid(location) = 4326),
+    constraint chk_csr_location_zm check (location is null or st_zmflag(location) in (0, 2)),
+    constraint chk_csr_observation_space_valid check (observation_space is null or st_isvalid(observation_space)),
+    constraint chk_csr_observation_space_srid check (observation_space is null or st_srid(observation_space) = 4326),
+    constraint chk_csr_observation_space_zm check (observation_space is null or st_zmflag(observation_space) in (0, 2)),
+    constraint chk_csr_operation_space_valid check (operation_space is null or st_isvalid(operation_space)),
+    constraint chk_csr_operation_space_srid check (operation_space is null or st_srid(operation_space) = 4326),
+    constraint chk_csr_operation_space_zm check (operation_space is null or st_zmflag(operation_space) in (0, 2))
 );
 
 -- The three spatial indexes preselect registrations by geography for
 -- distributed operations and discovery.
-CREATE INDEX idx_csr_location ON context_source_registrations USING GIST (location)
-    WHERE location IS NOT NULL;
+create index idx_csr_location on context_source_registrations using gist (location)
+where
+    location is not null;
 
-CREATE INDEX idx_csr_observation_space ON context_source_registrations USING GIST (observation_space)
-    WHERE observation_space IS NOT NULL;
+create index idx_csr_observation_space on context_source_registrations using gist (observation_space)
+where
+    observation_space is not null;
 
-CREATE INDEX idx_csr_operation_space ON context_source_registrations USING GIST (operation_space)
-    WHERE operation_space IS NOT NULL;
+create index idx_csr_operation_space on context_source_registrations using gist (operation_space)
+where
+    operation_space is not null;
 
-CREATE INDEX idx_csr_scope ON context_source_registrations USING GIST (scope);
+create index idx_csr_scope on context_source_registrations using gist (scope);
 
-CREATE INDEX idx_csr_expires_at ON context_source_registrations (expires_at)
-    WHERE expires_at IS NOT NULL;
+create index idx_csr_expires_at on context_source_registrations (expires_at)
+where
+    expires_at is not null;
 
 -- The forwarding statistics and health of clause 5.2.9. Every forwarded
 -- request moves them, so they live apart from the registration's wide row.
@@ -148,23 +135,23 @@ CREATE INDEX idx_csr_expires_at ON context_source_registrations (expires_at)
 -- test `status` through a primary-key join on registrations the routing
 -- projection has already narrowed, so a `status` index would have no scan to
 -- speed up.
-CREATE TABLE registration_delivery_state (
-    last_success TIMESTAMPTZ,
-    last_failure TIMESTAMPTZ,
-    times_sent INTEGER NOT NULL DEFAULT 0,
-    times_failed INTEGER NOT NULL DEFAULT 0,
-    status SMALLINT NOT NULL,
-    registration_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_registration_delivery_state PRIMARY KEY (registration_id),
-    CONSTRAINT fk_registration_delivery_state_registration FOREIGN KEY (registration_id)
-        REFERENCES context_source_registrations(id) ON DELETE CASCADE,
-    CONSTRAINT chk_registration_delivery_state_registration_id_length CHECK (octet_length(registration_id) <= 1024),
+create table registration_delivery_state (
+    last_success timestamptz,
+    last_failure timestamptz,
+    times_sent integer not null default 0,
+    times_failed integer not null default 0,
+    status smallint not null,
+    registration_id text compression lz4 collate "C" not null,
+    constraint pk_registration_delivery_state primary key (registration_id),
+    constraint fk_registration_delivery_state_registration foreign key (registration_id) references context_source_registrations (id) on delete cascade,
+    constraint chk_registration_delivery_state_registration_id_length check (octet_length(registration_id) <= 1024),
     -- The counters floor at zero. A counter that has not moved is rendered as
     -- an absent member, but the column holds a value before it first advances.
-    CONSTRAINT chk_registration_delivery_state_times_sent_non_negative CHECK (times_sent >= 0),
-    CONSTRAINT chk_registration_delivery_state_times_failed_non_negative CHECK (times_failed >= 0),
-    CONSTRAINT chk_registration_delivery_state_status CHECK (status BETWEEN 1 AND 2)
-) WITH (
+    constraint chk_registration_delivery_state_times_sent_non_negative check (times_sent >= 0),
+    constraint chk_registration_delivery_state_times_failed_non_negative check (times_failed >= 0),
+    constraint chk_registration_delivery_state_status check (status between 1 and 2)
+)
+with (
     fillfactor = 50,
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 100,
@@ -172,3 +159,4 @@ CREATE TABLE registration_delivery_state (
     autovacuum_analyze_threshold = 100,
     autovacuum_vacuum_cost_delay = 0
 );
+

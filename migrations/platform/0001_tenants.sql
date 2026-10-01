@@ -16,22 +16,22 @@
 -- no name, and a name would make it addressable by one. The unique partial
 -- index admits at most one such row.
 -- ============================================================================
-
-CREATE TABLE tenants (
-    tenant_key BIGINT GENERATED ALWAYS AS IDENTITY,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    status SMALLINT NOT NULL,
-    is_unnamed_default BOOLEAN NOT NULL DEFAULT FALSE,
-    name TEXT COMPRESSION lz4 COLLATE "C",
-    database_name TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-    CONSTRAINT pk_tenants PRIMARY KEY (tenant_key),
-    CONSTRAINT uq_tenants_name UNIQUE (name),
-    CONSTRAINT uq_tenants_database_name UNIQUE (database_name),
-    CONSTRAINT chk_tenants_unnamed_default_has_no_name CHECK ((name IS NULL) = is_unnamed_default),
-    CONSTRAINT chk_tenants_status CHECK (status BETWEEN 1 AND 2)
+create table tenants (
+    tenant_key bigint generated always as identity,
+    created_at timestamptz not null default now(),
+    modified_at timestamptz not null default now(),
+    status smallint not null,
+    is_unnamed_default boolean not null default false,
+    name text compression lz4 collate "C",
+    database_name text compression lz4 collate "C" not null,
+    constraint pk_tenants primary key (tenant_key),
+    constraint uq_tenants_name unique (name),
+    constraint uq_tenants_database_name unique (database_name),
+    constraint chk_tenants_unnamed_default_has_no_name check ((name is null) = is_unnamed_default),
+    constraint chk_tenants_status check (status between 1 and 2)
 );
 
-CREATE UNIQUE INDEX uq_tenants_unnamed_default
-    ON tenants (is_unnamed_default)
-    WHERE is_unnamed_default = TRUE;
+create unique index uq_tenants_unnamed_default on tenants (is_unnamed_default)
+where
+    is_unnamed_default = true;
+
