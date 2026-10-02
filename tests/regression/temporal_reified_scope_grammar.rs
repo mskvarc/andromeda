@@ -147,7 +147,7 @@ async fn regression_r54_a_reified_scope_within_the_grammar_is_recorded() {
 
     let id = scope.id("Vehicle:reified-scope-valid");
     let created = client
-        .create_temporal_entity(&evolution(&id, &reified_scope(&json!(["/Madrid/Gardens", "CompanyA"]))))
+        .create_temporal_entity(&evolution(&id, &reified_scope(&json!(["/Madrid/Gardens", "/CompanyA"]))))
         .await
         .expect("create temporal entity request");
     assert_eq!(created.status, StatusCode::CREATED, "temporal create: {:?}", created.body);
@@ -155,7 +155,7 @@ async fn regression_r54_a_reified_scope_within_the_grammar_is_recorded() {
     let recorded = history(client, &id).await;
     let instances = recorded["scope"].as_array().expect("the reified Scope history");
     assert_eq!(instances.len(), 1, "{recorded}");
-    assert_eq!(instances[0]["value"], json!(["/Madrid/Gardens", "CompanyA"]), "{recorded}");
+    assert_eq!(instances[0]["value"], json!(["/Madrid/Gardens", "/CompanyA"]), "{recorded}");
 
     scope.finish().await.expect("cleanup");
 }
