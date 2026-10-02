@@ -251,3 +251,29 @@ fn a_datetime_property_value_outside_the_clause_4_6_3_form_is_refused() {
         assert!(matches!(error, TemporalError::Validation { .. }), "{raw}: {error:?}");
     }
 }
+
+/// Clause 4.18: a reified Scope whose value breaks the scope grammar is no
+/// Scope, and preparing it is refused rather than recording nothing.
+#[test]
+fn a_reified_scope_outside_the_scope_grammar_is_refused() {
+    let scope: AttributeName = expanded_properties::SCOPE.as_str().parse().expect("valid attribute name");
+    let reified = EntityDocument::new(
+        None,
+        Vec::new(),
+        None,
+        None,
+        IndexMap::from([(
+            scope,
+            AttributeMember::Instances(vec![reified_scope(&json!([{"@value": "/a-b"}]), "2020-06-01T00:00:00Z")]),
+        )]),
+    );
+    let error = prepare(
+        &entity_id(),
+        &[],
+        &[HistoryRecord::EvolutionInstances(Arc::new(reified))],
+        record(recorded_at()),
+        WriteOrdinal::at(0),
+    )
+    .expect_err("`/a-b` is no scope path");
+    assert!(matches!(error, TemporalError::Validation { .. }), "{error:?}");
+}

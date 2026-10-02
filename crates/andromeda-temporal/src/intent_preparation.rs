@@ -5,22 +5,13 @@ use crate::{
     error::TemporalError,
     observed_instance::ObservedInstance,
     observed_selection::ObservedSelection,
+    reified_scope::scope_observations,
     scope_observation::ScopeObservation,
 };
 use andromeda_context_commit::{history_record::HistoryRecord, submission_refusal::SubmissionRefusal, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_entity::{
-    document::{
-        EntityDocument,
-        EntityDocumentParts,
-        attribute_member::AttributeMember,
-        instance_document::InstanceDocument,
-        slot::Slot,
-        written_value::{ValueSlot, WrittenValue},
-    },
-    expanded_value::ExpandedValue,
-    literal::LiteralValue,
-    ngsi_ld_null::is_ngsi_ld_null,
-    value_mode::Fragment,
+    document::{EntityDocument, EntityDocumentParts, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
+    refusal::EntityRefusal,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -29,7 +20,6 @@ use andromeda_ngsi_ld_lexicon::{
     instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
     ngsi_ld_date_time::NgsiLdDateTime,
-    scope::path::ScopePath,
 };
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
@@ -123,7 +113,7 @@ fn append_document_entries(document: EntityDocument, recorded_at: DateTime<Utc>,
             continue;
         };
         if attribute_name.as_str() == expanded_properties::SCOPE.as_str() {
-            for instance in instances {
+            for instance in &instances {
                 append_reified_scope(instance, recorded_at, entries)?;
             }
             continue;
@@ -186,13 +176,10 @@ fn scope_entry(observation: ScopeObservation, observed_at: DateTime<Utc>) -> Tem
 /// Clause 4.5.6 represents the Scope of a Temporal Evolution as "a temporal
 /// representation of a Property", whose `value` holds the paths and whose
 /// `observedAt` dates them; one the client did not date is dated at the write.
-/// The scope grammar of clause 4.18 admits `urn:ngsi-ld:null` and reserves it
-/// for a deleted scope, so that value records the end of the entity's scope
-/// rather than a path named after it. A value that is no scope path is not a
-/// Scope and is left out.
-fn append_reified_scope(instance: InstanceDocument, recorded_at: DateTime<Utc>, entries: &mut Vec<TemporalAppendEntry>) -> Result<(), TemporalError> {
-    let parts = instance.into_parts();
-    let observed_at = match parts.observed_at {
+/// What the `value` states is read by `crate::reified_scope`, which the write
+/// already held the instance to.
+fn append_reified_scope(instance: &InstanceDocument, recorded_at: DateTime<Utc>, entries: &mut Vec<TemporalAppendEntry>) -> Result<(), TemporalError> {
+    let observed_at = match instance.observed_at() {
         Some(Slot::Set(text)) => text
             .as_str()
             .parse::<NgsiLdDateTime>()
@@ -200,37 +187,9 @@ fn append_reified_scope(instance: InstanceDocument, recorded_at: DateTime<Utc>, 
             .map_err(|source| TemporalError::from(SubmissionRefusal::ObservedAt(source)))?,
         Some(Slot::Remove) | None => recorded_at,
     };
-    match parts.value {
-        ValueSlot::Set(WrittenValue::Value(values)) => {
-            entries.extend(values.iter().filter_map(scope_value).map(|observation| scope_entry(observation, observed_at)));
-        }
-        ValueSlot::Remove(_) => entries.push(scope_entry(ScopeObservation::Deleted, observed_at)),
-        ValueSlot::Absent
-        | ValueSlot::Set(
-            WrittenValue::Geometry(_)
-            | WrittenValue::Object(_)
-            | WrittenValue::LanguageMap(_)
-            | WrittenValue::Vocab(_)
-            | WrittenValue::Json(_)
-            | WrittenValue::ValueList(_)
-            | WrittenValue::ObjectList(_),
-        ) => {}
-    }
+    let observations = scope_observations(instance.value()).map_err(|refusal| TemporalError::from(EntityRefusal::Scope(refusal)))?;
+    entries.extend(observations.into_iter().map(|observation| scope_entry(observation, observed_at)));
     Ok(())
-}
-
-/// What one value of a reified scope instance says about the Scope.
-fn scope_value(value: &ExpandedValue<Fragment>) -> Option<ScopeObservation> {
-    let ExpandedValue::Literal(literal) = value else {
-        return None;
-    };
-    let LiteralValue::String(text) = literal.value() else {
-        return None;
-    };
-    if is_ngsi_ld_null(text) {
-        return Some(ScopeObservation::Deleted);
-    }
-    text.parse::<ScopePath>().ok().map(ScopeObservation::Path)
 }
 
 #[cfg(test)]

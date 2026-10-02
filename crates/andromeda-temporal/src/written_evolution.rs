@@ -15,12 +15,16 @@
 use crate::{
     error::TemporalError,
     plural_member_unfold::unfold_plural_members,
+    reified_scope::scope_observations,
     temporal_validation_reason::TemporalValidationReason,
     unit_code_admission::admit_document_unit_codes,
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_entity::document_census::admit_entity_document;
-use andromeda_ngsi_ld_entity::document::{EntityDocument, EntityDocumentParts, attribute_member::AttributeMember};
+use andromeda_ngsi_ld_entity::{
+    document::{EntityDocument, EntityDocumentParts, attribute_member::AttributeMember},
+    refusal::EntityRefusal,
+};
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_representation::payload_budget::{EntityPayloadBudget, PayloadBudgetExceeded};
@@ -113,14 +117,17 @@ impl WrittenEvolution {
 }
 
 /// Expand each reified Scope instance as the attribute instance it is, into a
-/// document holding them under the scope IRI alone.
+/// document holding them under the scope IRI alone, refusing an instance that
+/// states no Scope (`crate::reified_scope`).
 async fn expand_reified_scope(expansion: &EntityExpansion<'_>, instances: Vec<Value>) -> Result<EntityDocument, TemporalError> {
     let written_name = compact_properties::SCOPE
         .parse::<AttributeName>()
         .map_err(|source| TemporalError::from(TemporalValidationReason::AttributeName { source }))?;
     let mut expanded = Vec::with_capacity(instances.len());
     for instance in instances {
-        expanded.push(expansion.attribute_fragment(&written_name, instance).await?.into_parts().1);
+        let instance = expansion.attribute_fragment(&written_name, instance).await?.into_parts().1;
+        scope_observations(instance.value()).map_err(|refusal| TemporalError::from(EntityRefusal::Scope(refusal)))?;
+        expanded.push(instance);
     }
     let scope = expanded_properties::SCOPE
         .as_str()

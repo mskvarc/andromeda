@@ -27,10 +27,10 @@ use andromeda_ngsi_ld_entity::{
     member_role::MemberRole,
     member_shape::MemberShape,
     refusal::EntityRefusal,
-    scope_refusal::ScopeRefusal,
+    scope_slot::{ScopeItem, scope_slot},
     scopes::Scopes,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, scope::path::ScopePath};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use indexmap::IndexMap;
 
@@ -60,7 +60,7 @@ pub fn entity_document(node: Option<ExpandedNode>) -> Result<EntityDocument, Ent
     for (name, items) in node.members {
         let iri = name.as_str();
         if iri == properties::SCOPE.as_str() {
-            scope = Some(scope_slot(&items)?);
+            scope = Some(scope_member(&items)?);
         } else if iri == properties::EXPIRES_AT.as_str() {
             expires_at = Some(entity_expiry(&items)?);
         } else if [properties::CREATED_AT, properties::MODIFIED_AT, properties::DELETED_AT]
@@ -125,33 +125,13 @@ pub fn attribute_member(name: &AttributeName, items: Vec<ExpandedItem>) -> Resul
 
 /// Read the `scope` member (clause 4.18): its paths, or its deletion by the
 /// NGSI-LD Null alone.
-fn scope_slot(items: &[ExpandedItem]) -> Result<Slot<Scopes>, EntityRefusal> {
-    if is_sole_null(items) {
-        return Ok(Slot::Remove);
-    }
-    let nulls = items.iter().filter(|item| is_null(item)).count();
-    if nulls > 1 {
-        return Err(EntityRefusal::Scope(ScopeRefusal::RepeatedNull));
-    }
-    if nulls == 1 {
-        return Err(EntityRefusal::Scope(ScopeRefusal::NullBesidePath));
-    }
-    let paths = items
-        .iter()
-        .map(|item| match item {
-            ExpandedItem::Value(value) => value
-                .as_str()
-                .ok_or(EntityRefusal::Scope(ScopeRefusal::NotAString))?
-                .parse::<ScopePath>()
-                .map_err(|source| EntityRefusal::Scope(ScopeRefusal::NotAScopePath { source })),
-            ExpandedItem::Node(_) | ExpandedItem::Json(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_) => {
-                Err(EntityRefusal::Scope(ScopeRefusal::NotAString))
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Scopes::try_from_paths(paths)
-        .map(Slot::Set)
-        .map_err(|_| EntityRefusal::Scope(ScopeRefusal::Empty))
+fn scope_member(items: &[ExpandedItem]) -> Result<Slot<Scopes>, EntityRefusal> {
+    scope_slot(items.iter().map(|item| match item {
+        item if is_null(item) => ScopeItem::Null,
+        ExpandedItem::Value(value) => value.as_str().map_or(ScopeItem::NotAString, ScopeItem::Text),
+        ExpandedItem::Node(_) | ExpandedItem::Json(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_) => ScopeItem::NotAString,
+    }))
+    .map_err(EntityRefusal::Scope)
 }
 
 /// Read the entity-level `expiresAt` (clause 4.22): its date-time, or its

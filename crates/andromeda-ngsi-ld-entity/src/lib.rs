@@ -54,6 +54,7 @@ pub mod reads;
 pub mod refusal;
 mod refusal_wording;
 pub mod scope_refusal;
+pub mod scope_slot;
 pub mod scopes;
 pub mod syntax_category;
 pub mod system_instant;

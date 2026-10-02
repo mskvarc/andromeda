@@ -107,7 +107,7 @@ impl<'de> Visitor<'de> for EntityNodeSeed<'_> {
                 }
                 ObjectKey::Type => types = entity_types(map.next_value::<TypeEntries>()?).map_err(refuse)?,
                 ObjectKey::Name(name) => match MemberRole::of(name.as_str()) {
-                    MemberRole::Scope => scope_member = Some(scope(map.next_value_seed(elements)?).map_err(refuse)?),
+                    MemberRole::Scope => scope_member = Some(scope(&map.next_value_seed(elements)?).map_err(refuse)?),
                     MemberRole::ExpiresAt => expires_at = Some(date_time(map.next_value_seed(elements)?, None, MemberShape::EntityExpiresAt).map_err(refuse)?),
                     MemberRole::Attribute => {
                         let member = map.next_value_seed(AttributeMemberSeed {

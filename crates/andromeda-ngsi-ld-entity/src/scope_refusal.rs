@@ -26,4 +26,9 @@ pub enum ScopeRefusal {
     /// The member lists no path at all.
     #[error("the scope member lists no scope path")]
     Empty,
+    /// A reified Scope instance carries its value under a member other than a
+    /// Property's `value`; clause 4.5.6 makes it "a temporal representation of
+    /// a Property".
+    #[error("a reified scope is a Property, so it carries its scope paths under `value`")]
+    NotAProperty,
 }

@@ -17,13 +17,13 @@ use crate::{
     member_shape::MemberShape,
     node_id::NodeId,
     refusal::EntityRefusal,
-    scope_refusal::ScopeRefusal,
+    scope_slot::{ScopeItem, scope_slot},
     scopes::Scopes,
     system_instant::SystemInstant,
     unit_code::UnitCode,
     value_mode::Fragment,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference, scope::path::ScopePath};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_vocabulary::expanded::classes;
 use andromeda_unit_catalog::expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal};
 
@@ -185,34 +185,18 @@ pub(crate) fn value_type(elements: Vec<Decoded>, attribute: &AttributeName) -> R
 }
 
 /// The entity `scope` (clause 4.18): its paths, or its deletion.
-pub(crate) fn scope(elements: Vec<Decoded>) -> Result<Slot<Scopes>, EntityRefusal> {
-    let mut paths = Vec::with_capacity(elements.len());
-    let mut deletions = 0_usize;
-    for element in elements {
-        match element {
-            Decoded::Null => deletions += 1,
-            Decoded::Value(ExpandedValue::Literal(literal)) => {
-                let LiteralValue::String(text) = literal.value() else {
-                    return Err(EntityRefusal::Scope(ScopeRefusal::NotAString));
-                };
-                let path = text
-                    .parse::<ScopePath>()
-                    .map_err(|source| EntityRefusal::Scope(ScopeRefusal::NotAScopePath { source }))?;
-                paths.push(path);
-            }
-            Decoded::Value(ExpandedValue::Node(_) | ExpandedValue::Json(_) | ExpandedValue::List(_)) | Decoded::TaggedNull(_) | Decoded::NullList => {
-                return Err(EntityRefusal::Scope(ScopeRefusal::NotAString));
-            }
+pub(crate) fn scope(elements: &[Decoded]) -> Result<Slot<Scopes>, EntityRefusal> {
+    scope_slot(elements.iter().map(|element| match element {
+        Decoded::Null => ScopeItem::Null,
+        Decoded::Value(ExpandedValue::Literal(literal)) => match literal.value() {
+            LiteralValue::String(text) => ScopeItem::Text(text),
+            LiteralValue::Number(_) | LiteralValue::Boolean(_) => ScopeItem::NotAString,
+        },
+        Decoded::Value(ExpandedValue::Node(_) | ExpandedValue::Json(_) | ExpandedValue::List(_)) | Decoded::TaggedNull(_) | Decoded::NullList => {
+            ScopeItem::NotAString
         }
-    }
-    match (deletions, paths.is_empty()) {
-        (0, _) => Scopes::try_from_paths(paths)
-            .map(Slot::Set)
-            .map_err(|_| EntityRefusal::Scope(ScopeRefusal::Empty)),
-        (_, false) => Err(EntityRefusal::Scope(ScopeRefusal::NullBesidePath)),
-        (1, true) => Ok(Slot::Remove),
-        (_, true) => Err(EntityRefusal::Scope(ScopeRefusal::RepeatedNull)),
-    }
+    }))
+    .map_err(EntityRefusal::Scope)
 }
 
 /// The values of a data-integrity seal (clause 4.5.2.2), which carry no

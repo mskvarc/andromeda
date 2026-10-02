@@ -40,6 +40,8 @@ pub mod pending_overlay;
 mod plural_member_unfold;
 pub mod port;
 mod read;
+/// What one reified Scope instance of a Temporal Evolution states.
+mod reified_scope;
 /// The non-local half of Linked Entity resolution for the temporal API.
 pub mod remote_linked;
 /// Whether the identifiers a request specified narrow a listing of what it matches.
