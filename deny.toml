@@ -12,7 +12,7 @@ allow = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Un
 name = "webpki-root-certs"
 allow = ["CDLA-Permissive-2.0"]
 
-# The LLVM exception only waives Apache-2.0 attribution terms for compiled output; build-time archive writer behind stacker.
+# The LLVM exception only adds permissions to Apache-2.0; build-time archive writer for psm behind stacker.
 [[licenses.exceptions]]
 name = "ar_archive_writer"
 allow = ["Apache-2.0 WITH LLVM-exception"]

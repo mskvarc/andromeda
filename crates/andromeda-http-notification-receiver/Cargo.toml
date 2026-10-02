@@ -19,7 +19,7 @@ andromeda-subscription-forwarding.workspace = true
 andromeda-tenancy.workspace = true
 axum = "0.8.9"
 futures = "0.3.34"
-headers = "0.4.1"
+headers = "0.4.2"
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 thiserror = "2.0.21"
 

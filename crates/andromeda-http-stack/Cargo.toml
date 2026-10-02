@@ -25,7 +25,7 @@ axum-helmet = "1.0.2"
 axum-prometheus = "0.10.1"
 axum-server-timing = "3.0.1"
 enumset = { version = "1.1.14", features = ["serde"] }
-headers = "0.4.1"
+headers = "0.4.2"
 serde = { version = "1.0.229", features = ["derive"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"

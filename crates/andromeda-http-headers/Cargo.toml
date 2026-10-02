@@ -14,7 +14,7 @@ andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["constructor", "display", "from", "into"] }
-headers = "0.4.1"
+headers = "0.4.2"
 http = "1.5.0"
 httpdate = "1.0.3"
 iri-rs = "3.4.1"

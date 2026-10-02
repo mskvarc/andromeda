@@ -27,6 +27,6 @@ typed-builder = "0.23.2"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-headers = "0.4.1"
+headers = "0.4.2"
 http = "1.5.0"
 pretty_assertions = "1.4.1"

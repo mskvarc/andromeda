@@ -20,7 +20,7 @@ async-trait = "0.1.92"
 backon = "1.6.0"
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["display"] }
-headers = "0.4.1"
+headers = "0.4.2"
 humantime = "2.4.0"
 ip_network = "0.4.1"
 iri-rs = "3.4.1"

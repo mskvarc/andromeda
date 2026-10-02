@@ -50,7 +50,7 @@ andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 andromeda-unit-catalog.workspace = true
 async-trait = "0.1.92"
-bigdecimal = "0.4.10"
+bigdecimal = "0.4.11"
 chrono = { version = "0.4.45", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["add", "add_assign", "display", "is_variant"] }
 futures = "0.3.34"

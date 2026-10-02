@@ -23,7 +23,7 @@ andromeda-persistence-failure.workspace = true
 andromeda-tenancy.workspace = true
 axum = "0.8.9"
 futures = "0.3.34"
-headers = "0.4.1"
+headers = "0.4.2"
 iri-rs = { version = "3.4.1", features = ["static"] }
 mediatype = "0.23.0"
 serde = "1.0.229"
