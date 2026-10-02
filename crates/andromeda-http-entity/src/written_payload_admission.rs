@@ -55,25 +55,30 @@
 //!
 //! What the screening expanded is what the local write stores: each admission
 //! hands back the admitted payload `andromeda_entity` defines, and the write
-//! path consumes it rather than expanding the payload again.
+//! path consumes it rather than expanding the payload again. A payload the
+//! extractor decoded into its typed compact form is screened and expanded from
+//! that form, never rendered back into JSON for either.
 
-use crate::error::EntityHttpClassify;
+use crate::{
+    compact_screening::{CompactRefusal, screen_compact_entity, screen_compact_patch},
+    error::EntityHttpClassify,
+};
 use andromeda_entity::{
     EntityService,
-    admitted_write::{AdmittedAttribute, AdmittedEntity},
-    batch::admitted_batch::{AdmittedBatch, RenderedEntity},
+    admitted_write::{AdmittedAttribute, AdmittedEntity, WritePayload},
+    batch::admitted_batch::{AdmittedBatch, SubmittedEntity},
     error::EntityError,
     write_kind::{AttributeWriteKind, BatchWriteKind, EntityWriteKind},
 };
 use andromeda_http_extraction::entity_batch::BatchItem;
-use andromeda_http_response::{batch_projection::batch_entity_error, classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
+use andromeda_http_response::{batch_projection::batch_entity_error, classified_report::ClassifiedReport};
 use andromeda_jsonld::{batch_contexts::BatchContextId, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_representation::{
-    attribute_type_validation::{AttributeTypeError, validate_attribute_node, validate_fragment_attribute_types},
-    embedded_context_admission::{EmbeddedContextError, reject_embedded_contexts_in_attribute, reject_embedded_contexts_in_fragment},
+    attribute_type_validation::{validate_attribute_node, validate_fragment_attribute_types},
+    embedded_context_admission::{reject_embedded_contexts_in_attribute, reject_embedded_contexts_in_fragment},
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -81,16 +86,9 @@ use thiserror::Error;
 /// Why a payload a client wrote is not admitted.
 #[derive(Debug, Error)]
 pub(crate) enum WrittenPayloadRefusal {
-    /// The decoded entity could not be rendered back into the compact
-    /// representation the pre-expansion rules are stated over.
-    #[error("the entity representation could not be rendered for validation: {0}")]
-    Rendering(#[from] serde_json::Error),
-    /// An attribute node is not one clauses 5.2.4 and 4.5.2.2 admit.
+    /// The compact payload breaks clause 5.2.4, 4.5.2.2 or 5.5.7.
     #[error(transparent)]
-    AttributeType(#[from] AttributeTypeError),
-    /// A `@context` stands below the top level of the document (clause 5.5.7).
-    #[error(transparent)]
-    EmbeddedContext(#[from] EmbeddedContextError),
+    Compact(#[from] CompactRefusal),
     /// The expanded payload puts an NGSI-LD Null, a `scope`, an attribute
     /// envelope or a geometry where the operation does not admit it.
     #[error(transparent)]
@@ -100,17 +98,44 @@ pub(crate) enum WrittenPayloadRefusal {
 impl EntityHttpClassify for WrittenPayloadRefusal {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
         match self {
-            // Clause 5.5.6: a failure of the broker's own is an InternalError,
-            // logged at the disclosure boundary rather than handed to the client.
-            WrittenPayloadRefusal::Rendering(source) => ClassifiedReport::internal(source, InternalFailureSummary::RESPONSE_RENDERING),
             // Clause 5.5.4: data that is not syntactically correct according to
-            // the API data type definitions is BadRequestData.
-            WrittenPayloadRefusal::AttributeType(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-            // Clause 5.5.7: a part of the user @context outside the document's
-            // top level "should result in an error of type BadRequestData".
-            WrittenPayloadRefusal::EmbeddedContext(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
+            // the API data type definitions is BadRequestData, and clause 5.5.7
+            // gives a part of the user @context outside the document's top
+            // level the same type.
+            WrittenPayloadRefusal::Compact(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             WrittenPayloadRefusal::Placement(source) => source.classify_for_entity_http(),
         }
+    }
+}
+
+/// An entity-shaped payload as the transport decoded it, which the compact
+/// half of the screening reads before the expanded half runs.
+pub(crate) trait WrittenEntityPayload: WritePayload {
+    /// Screen the payload under the rules decidable only on its compact form.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first refusal of clause 5.2.4, 4.5.2.2 or 5.5.7.
+    fn screen(&self) -> Result<(), CompactRefusal>;
+}
+
+impl WrittenEntityPayload for Value {
+    fn screen(&self) -> Result<(), CompactRefusal> {
+        validate_fragment_attribute_types(self)?;
+        reject_embedded_contexts_in_fragment(self)?;
+        Ok(())
+    }
+}
+
+impl WrittenEntityPayload for &Entity {
+    fn screen(&self) -> Result<(), CompactRefusal> {
+        screen_compact_entity(self)
+    }
+}
+
+impl WrittenEntityPayload for &EntityPatch {
+    fn screen(&self) -> Result<(), CompactRefusal> {
+        screen_compact_patch(self)
     }
 }
 
@@ -123,11 +148,10 @@ impl EntityHttpClassify for WrittenPayloadRefusal {
 /// the first placement clause 5.5.4 refuses for `W`.
 pub(crate) async fn admit_written_entity<W: EntityWriteKind>(
     service: &EntityService,
-    payload: Value,
+    payload: impl WrittenEntityPayload,
     context: &ContextSpec,
 ) -> Result<AdmittedEntity<W>, WrittenPayloadRefusal> {
-    validate_fragment_attribute_types(&payload)?;
-    reject_embedded_contexts_in_fragment(&payload)?;
+    payload.screen()?;
     Ok(service.admit_entity_write(payload, context).await?)
 }
 
@@ -143,8 +167,8 @@ pub(crate) async fn admit_written_attribute<'a, W: AttributeWriteKind>(
     payload: Value,
     context: &ContextSpec,
 ) -> Result<AdmittedAttribute<'a, W>, WrittenPayloadRefusal> {
-    validate_attribute_node(attribute.as_str(), &payload)?;
-    reject_embedded_contexts_in_attribute(attribute.as_str(), &payload)?;
+    validate_attribute_node(attribute.as_str(), &payload).map_err(CompactRefusal::from)?;
+    reject_embedded_contexts_in_attribute(attribute.as_str(), &payload).map_err(CompactRefusal::from)?;
     Ok(service.admit_attribute_write(attribute, payload, context).await?)
 }
 
@@ -173,8 +197,8 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
     items: Vec<BatchItem>,
     refused: &mut Vec<BatchEntityError>,
 ) -> Result<AdmittedBatch<W>, WrittenPayloadRefusal> {
-    let rendered = screened_batch_entities(async |context: &ContextSpec| service.admit_write_context(context).await, items, refused).await?;
-    let (admitted, placements) = service.admit_batch_write(kind, rendered).await;
+    let submitted = screened_batch_entities(async |context: &ContextSpec| service.admit_write_context(context).await, items, refused).await?;
+    let (admitted, placements) = service.admit_batch_write(kind, submitted).await;
     for (id, error) in placements {
         refused.push(batch_entity_error(
             id.into(),
@@ -196,9 +220,9 @@ async fn screened_batch_entities(
     mut admit_context: impl AsyncFnMut(&ContextSpec) -> Result<(), EntityError>,
     items: Vec<BatchItem>,
     refused: &mut Vec<BatchEntityError>,
-) -> Result<Vec<RenderedEntity>, WrittenPayloadRefusal> {
+) -> Result<Vec<SubmittedEntity>, WrittenPayloadRefusal> {
     let mut decided: Vec<(BatchContextId, ContextAdmission)> = Vec::new();
-    let mut rendered = Vec::with_capacity(items.len());
+    let mut submitted = Vec::with_capacity(items.len());
     for BatchItem { entity, context } in items {
         let position = if let Some(position) = decided.iter().position(|(seen, _)| *seen == context.id()) {
             position
@@ -211,16 +235,16 @@ async fn screened_batch_entities(
             refused.push(batch_entity_error(entity.id.into(), refusal, EntityHttpClassify::classify_for_entity_http));
             continue;
         }
-        match render_and_validate(&entity) {
-            Ok(representation) => rendered.push(RenderedEntity {
-                entity,
-                representation,
-                context,
-            }),
-            Err(refusal) => refused.push(batch_entity_error(entity.id.into(), &refusal, EntityHttpClassify::classify_for_entity_http)),
+        match screen_compact_entity(&entity) {
+            Ok(()) => submitted.push(SubmittedEntity { entity, context }),
+            Err(refusal) => refused.push(batch_entity_error(
+                entity.id.into(),
+                &WrittenPayloadRefusal::Compact(refusal),
+                EntityHttpClassify::classify_for_entity_http,
+            )),
         }
     }
-    Ok(rendered)
+    Ok(submitted)
 }
 
 /// What the clause 5.5.7 admission of one context a batch names decided.
@@ -253,24 +277,12 @@ fn context_admission(outcome: Result<(), EntityError>) -> Result<ContextAdmissio
     }
 }
 
-/// The compact half of the admission for one decoded entity, answering the
-/// compact JSON the expanded half then prepares.
-///
-/// An entity-shaped payload is decoded into an [`Entity`] before any handler
-/// runs, so the compact JSON the pre-expansion rules are stated over is
-/// recovered by rendering that entity back. A member the model does not name
-/// survives the decode verbatim, which is exactly what a forged seal is, and
-/// comes back unchanged.
-fn render_and_validate(entity: &Entity) -> Result<Value, WrittenPayloadRefusal> {
-    let representation: Value = serde_json::to_value(entity)?;
-    validate_fragment_attribute_types(&representation)?;
-    reject_embedded_contexts_in_fragment(&representation)?;
-    Ok(representation)
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::written_payload_admission::{WrittenPayloadRefusal, render_and_validate, screened_batch_entities};
+    use crate::{
+        compact_screening::{CompactRefusal, screen_compact_entity},
+        written_payload_admission::{WrittenPayloadRefusal, screened_batch_entities},
+    };
     use andromeda_entity::error::EntityError;
     use andromeda_http_extraction::entity_batch::BatchItem;
     use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec, context_term::ContextTerm, error::JsonLdError};
@@ -409,7 +421,7 @@ mod tests {
             "belongsTo": {"type": "Relationship", "object": "urn:ngsi-ld:Site:1"},
             "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.5]}}
         });
-        assert!(render_and_validate(&entity(&payload)).is_ok());
+        assert!(screen_compact_entity(&entity(&payload)).is_ok());
     }
 
     /// Clause 4.5.3.2, "Prohibited": on a Relationship in the normalized
@@ -423,7 +435,7 @@ mod tests {
                 "type": "Building",
                 "belongsTo": {"type": "Relationship", "object": "urn:ngsi-ld:Site:1", member: "urn:ngsi-ld:Building:1"}
             });
-            let refusal = render_and_validate(&entity(&payload)).expect_err("a seal on a Relationship is refused");
+            let refusal = screen_compact_entity(&entity(&payload)).expect_err("a seal on a Relationship is refused");
             assert!(refusal.to_string().contains(member), "{member}: {refusal}");
         }
     }
@@ -439,7 +451,7 @@ mod tests {
                 "type": "Building",
                 "belongsTo": {"object": "urn:ngsi-ld:Site:1", member: "urn:ngsi-ld:Building:1"}
             });
-            let refusal = render_and_validate(&entity(&payload)).expect_err("a seal on a concise Relationship is refused");
+            let refusal = screen_compact_entity(&entity(&payload)).expect_err("a seal on a concise Relationship is refused");
             assert!(refusal.to_string().contains(member), "{member}: {refusal}");
         }
     }
@@ -463,7 +475,7 @@ mod tests {
                 }
             }
         });
-        assert!(render_and_validate(&entity(&payload)).is_ok());
+        assert!(screen_compact_entity(&entity(&payload)).is_ok());
     }
 
     /// Clause 5.2.4: a node declaring a token outside the eight attribute
@@ -475,9 +487,9 @@ mod tests {
             "type": "Building",
             "temperature": {"type": "NotAnAttributeType", "value": 21.5}
         });
-        let refusal = render_and_validate(&entity(&payload)).expect_err("an unknown attribute type is refused");
+        let refusal = screen_compact_entity(&entity(&payload)).expect_err("an unknown attribute type is refused");
         assert!(
-            matches!(refusal, WrittenPayloadRefusal::AttributeType(AttributeTypeError::NotAnAttributeType { .. })),
+            matches!(refusal, CompactRefusal::AttributeType(AttributeTypeError::NotAnAttributeType { .. })),
             "{refusal:?}"
         );
         assert!(refusal.to_string().contains("/temperature"), "{refusal}");

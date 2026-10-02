@@ -3,6 +3,7 @@
 use crate::{
     attribute_instance_merge::{MergePolicy, merge_entity_attributes},
     entity_revalidation::refusal_warning,
+    error::FederationError,
     outcome::{ForwardedEntities, ForwardedTemporalEntities, ForwardedWriteResult},
     transient_entity_conflict::differentiate_transient_versions,
 };
@@ -197,6 +198,19 @@ pub fn strip_attributes_from_value(fragment: &mut Value, attributes: &[Attribute
         object.remove(attribute.as_str());
     }
     AttributeStrip::from_counts(before, object.len())
+}
+
+/// The part of a forwarded attribute fragment that stays local: `payload`,
+/// the fragment as [`ProvisionPlan::payload`](crate::provision_plan::ProvisionPlan::payload)
+/// serialised it, read back without `attributes`.
+///
+/// # Errors
+///
+/// Returns [`FederationError::ForwardedBody`] when `payload` is no JSON text.
+pub fn local_remainder_of_payload(payload: &[u8], attributes: &[AttributeName]) -> Result<(Value, AttributeStrip), FederationError> {
+    let mut remainder: Value = serde_json::from_slice(payload).map_err(FederationError::ForwardedBody)?;
+    let strip = strip_attributes_from_value(&mut remainder, attributes);
+    Ok((remainder, strip))
 }
 
 #[cfg(test)]

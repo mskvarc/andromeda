@@ -7,7 +7,9 @@
 //! `sqlx` decode failure and is reported as one, naming the column itself.
 
 use andromeda_context_commit::write_ordinal::WriteOrdinalOutOfRange;
+use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError, scope::path::ScopePathError, uri::UriParseError};
+use andromeda_ngsi_ld_model::temporal::structured_value_codec::StoredValueError;
 use andromeda_ngsi_ld_number::JsonNumberError;
 use andromeda_postgresql_codes::registry::UnknownCompactCode;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
@@ -151,6 +153,17 @@ pub enum StoredHistoryError {
     /// A Number value is outside the broker's documented numeric range.
     #[error("a stored attribute_history value_number is not a representable number: {0}")]
     ValueNumber(#[source] JsonNumberError),
+    /// A structured value is not the stored JSON of a value of its family.
+    ///
+    /// Boxed, as is [`StoredHistoryError::Metadata`]: the refusal is the
+    /// widest member, and inlining it would enlarge every temporal store
+    /// `Result`.
+    #[error("a stored attribute_history value_object is not a value of its family: {0}")]
+    ValueObject(#[source] Box<StoredValueError>),
+    /// A stored metadata document is not the expanded members of an instance
+    /// of its family.
+    #[error("a stored attribute_history metadata is not the members of an instance: {0}")]
+    Metadata(#[source] Box<EntityRefusal>),
     /// A Geometry value is not EWKB the broker writes.
     #[error("a stored attribute_history value_geometry_ewkb is not a geometry: {0}")]
     ValueGeometry(#[source] EwkbError),

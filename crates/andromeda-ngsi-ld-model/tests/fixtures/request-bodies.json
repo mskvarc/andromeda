@@ -1,0 +1,492 @@
+[
+ {
+  "source": "tests/annex_c/comparison.rs",
+  "kind": "patch",
+  "text": "{\n            \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n            \"createdAt\": \"2026-01-01T00:00:00Z\",\n            \"brandName\": {\"type\": \"Property\", \"value\": \"Mercedes\", \"modifiedAt\": \"2026-01-01T00:00:00Z\"}\n        }"
+ },
+ {
+  "source": "tests/annex_c/comparison.rs",
+  "kind": "patch",
+  "text": "{\n            \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n            \"brandName\": {\"type\": \"Property\", \"value\": \"Mercedes\"}\n        }"
+ },
+ {
+  "source": "tests/annex_c/date_representation.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:Vehicle:B9211\", \"type\": \"Vehicle\",\n        \"speed\": {\"type\": \"Property\", \"value\": 55,\n                  \"observedAt\": {\"type\": \"Property\", \"value\": \"2018-12-04T12:00:00Z\",\n                                 \"accuracy\": {\"type\": \"Property\", \"value\": 0.9}}}\n    }"
+ },
+ {
+  "source": "tests/annex_c/date_representation.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:Vehicle:B9211\", \"type\": \"Vehicle\",\n        \"testedAt\": {\"type\": \"Property\", \"value\": \"2018-12-04T12:00:00Z\"}\n    }"
+ },
+ {
+  "source": "tests/annex_c/digital_signature.rs",
+  "kind": "patch",
+  "text": "{\"location\": {\"type\": \"GeoProperty\", \"value\": {\"type\": \"Point\", \"coordinates\": [1.0, 2.0]}}}"
+ },
+ {
+  "source": "tests/discovery/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:AttributeList:randomUUID\",\n        \"type\": \"AttributeList\",\n        \"attributeList\": [\n            \"https://ngsi-ld-test-suite/context#airQualityLevel\",\n            \"https://ngsi-ld-test-suite/context#almostFull\",\n            \"https://ngsi-ld-test-suite/context#name\",\n            \"https://ngsi-ld-test-suite/context#subCategory\"\n        ]\n    }"
+ },
+ {
+  "source": "tests/discovery/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:AttributeList:randomUUID\",\n        \"type\": \"AttributeList\",\n        \"attributeList\": [\"name\", \"subCategory\", \"airQualityLevel\", \"almostFull\"]\n    }"
+ },
+ {
+  "source": "tests/discovery/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:EntityTypeList:randomUUID\",\n        \"type\": \"EntityTypeList\",\n        \"typeList\": [\n            \"https://ngsi-ld-test-suite/context#Building\",\n            \"https://ngsi-ld-test-suite/context#Vehicle\"\n        ]\n    }"
+ },
+ {
+  "source": "tests/discovery/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:EntityTypeList:randomUUID\",\n        \"type\": \"EntityTypeList\",\n        \"typeList\": [\"Building\", \"Vehicle\"]\n    }"
+ },
+ {
+  "source": "tests/discovery/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"https://ngsi-ld-test-suite/context#airQualityLevel\",\n        \"type\": \"Attribute\",\n        \"attributeName\": \"airQualityLevel\",\n        \"attributeCount\": 1,\n        \"attributeTypes\": [\"Property\"],\n        \"typeNames\": [\"Building\"]\n    }"
+ },
+ {
+  "source": "tests/discovery/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"https://ngsi-ld-test-suite/context#Building\",\n        \"type\": \"EntityTypeInfo\",\n        \"typeName\": \"Building\",\n        \"entityCount\": 2,\n        \"attributeDetails\": [\n            {\n                \"id\": \"https://ngsi-ld-test-suite/context#name\",\n                \"type\": \"Attribute\",\n                \"attributeName\": \"name\",\n                \"attributeTypes\": [\"Property\"]\n            },\n            {\n                \"id\": \"https://ngsi-ld-test-suite/context#subCategory\",\n                \"type\": \"Attribute\",\n                \"attributeName\": \"subCategory\",\n                \"attributeTypes\": [\"Property\"]\n            },\n            {\n                \"id\": \"https://ngsi-ld-test-suite/context#airQualityLevel\",\n                \"type\": \"Attribute\",\n                \"attributeName\": \"airQualityLevel\",\n                \"attributeTypes\": [\"Property\"]\n            },\n            {\n                \"id\": \"https://ngsi-ld-test-suite/context#almostFull\",\n                \"type\": \"Attribute\",\n                \"attributeName\": \"almostFull\",\n                \"attributeTypes\": [\"Property\"]\n            }\n        ]\n    }"
+ },
+ {
+  "source": "tests/distop/compaction/forwarding_context.rs",
+  "kind": "patch",
+  "text": "{ \"spd\": { \"type\": \"Property\", \"value\": 9 } }"
+ },
+ {
+  "source": "tests/distop/map/data_shapes.rs",
+  "kind": "entity",
+  "text": "{ \"id\": \"urn:ngsi-ld:EntityMap:remote\", \"type\": \"EntityMap\", \"entityMap\": {}, \"linkedMaps\": {} }"
+ },
+ {
+  "source": "tests/distop/reg/csr_source_identity.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:ContextSourceIdentity:peer\",\n        \"type\": \"Vehicle\",\n        \"contextSourceAlias\": \"peer\",\n        \"contextSourceUptime\": \"PT1H\",\n        \"contextSourceTimeAt\": \"2026-01-01T00:00:00Z\"\n    }"
+ },
+ {
+  "source": "tests/distop/reg/csr_source_identity.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:ContextSourceIdentity:peer\",\n        \"type\": \"ContextSourceIdentity\",\n        \"contextSourceAlias\": \"\",\n        \"contextSourceUptime\": \"PT1H\",\n        \"contextSourceTimeAt\": \"2026-01-01T00:00:00Z\"\n    }"
+ },
+ {
+  "source": "tests/distop/reg/csr_source_identity.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:ContextSourceIdentity:peer\",\n        \"type\": \"ContextSourceIdentity\",\n        \"contextSourceAlias\": \"peer\",\n        \"contextSourceUptime\": \"1 hour\",\n        \"contextSourceTimeAt\": \"2026-01-01T00:00:00Z\"\n    }"
+ },
+ {
+  "source": "tests/distop/reg/csr_source_identity.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:ContextSourceIdentity:peer\",\n        \"type\": \"ContextSourceIdentity\",\n        \"contextSourceAlias\": \"peer\",\n        \"contextSourceUptime\": \"PT1H\",\n        \"contextSourceTimeAt\": \"not-a-date\"\n    }"
+ },
+ {
+  "source": "tests/distop/reg/csr_validation.rs",
+  "kind": "entity",
+  "text": "{ \"type\": \"Vehicle\", \"id\": \"not a uri\" }"
+ },
+ {
+  "source": "tests/distop_attributes/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:AttributeList:mock\",\n        \"type\": \"AttributeList\",\n        \"attributeList\": [\"speed\"]\n    }"
+ },
+ {
+  "source": "tests/distop_attributes/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:AttributeList:mock\",\n        \"type\": \"AttributeList\",\n        \"attributeList\": [\"brandName\"]\n    }"
+ },
+ {
+  "source": "tests/distop_attributes/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"brandName\",\n        \"type\": \"Attribute\",\n        \"attributeName\": \"brandName\",\n        \"typeNames\": [\"Drone\"]\n    }"
+ },
+ {
+  "source": "tests/distop_entity_attributes/helpers.rs",
+  "kind": "patch",
+  "text": "{\n        \"speed\": {\n            \"type\": \"Property\",\n            \"value\": 120\n        },\n        \"isParked\": {\n            \"type\": \"Relationship\",\n            \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown2\",\n            \"observedAt\": \"2018-01-01T12:00:00Z\"\n        }\n    }"
+ },
+ {
+  "source": "tests/distop_entity_attributes/helpers.rs",
+  "kind": "patch",
+  "text": "{\n        \"speed\": {\n            \"type\": \"Property\",\n            \"value\": 200\n        }\n    }"
+ },
+ {
+  "source": "tests/distop_entity_attributes/helpers.rs",
+  "kind": "patch",
+  "text": "{\n        \"brandName\": {\n            \"type\": \"Property\",\n            \"value\": \"BMW\"\n        }\n    }"
+ },
+ {
+  "source": "tests/distop_types/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:EntityTypeList:mock\",\n        \"type\": \"EntityTypeList\",\n        \"typeList\": [\"Vehicle\"]\n    }"
+ },
+ {
+  "source": "tests/distop_types/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:EntityTypeList:mock\",\n        \"type\": \"EntityTypeList\",\n        \"typeList\": [\"Drone\"]\n    }"
+ },
+ {
+  "source": "tests/distop_types/main.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"Vehicle\",\n        \"type\": \"EntityTypeInfo\",\n        \"typeName\": \"Vehicle\",\n        \"entityCount\": 5,\n        \"attributeNames\": [\"extraAttr\"]\n    }"
+ },
+ {
+  "source": "tests/entity_attributes/append.rs",
+  "kind": "patch",
+  "text": "{\n        \"observationSpace\": {\n            \"type\": \"GeoProperty\",\n            \"value\": {\n                \"type\": \"Polygon\",\n                \"coordinates\": [[[13.35, 52.51], [13.40, 52.51], [13.40, 52.56], [13.35, 52.56], [13.35, 52.51]]]\n            }\n        }\n    }"
+ },
+ {
+  "source": "tests/entity_attributes/append.rs",
+  "kind": "patch",
+  "text": "{\n        \"operationSpace\": {\n            \"type\": \"GeoProperty\",\n            \"value\": {\n                \"type\": \"Polygon\",\n                \"coordinates\": [[[13.30, 52.50], [13.45, 52.50], [13.45, 52.58], [13.30, 52.58], [13.30, 52.50]]]\n            }\n        }\n    }"
+ },
+ {
+  "source": "tests/jsonld_context/link_context/carriers.rs",
+  "kind": "patch",
+  "text": "{ \"speed\": { \"type\": \"Property\", \"value\": 2 } }"
+ },
+ {
+  "source": "tests/regression/entity_map_source_declined.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:EntityMap:remote-source\",\n        \"type\": \"EntityMap\",\n        \"entityMap\": {},\n        \"linkedMaps\": {}\n    }"
+ },
+ {
+  "source": "tests/regression/null_sentinel_deletion.rs",
+  "kind": "entity",
+  "text": "{\"id\": \"some-id\", \"type\": \"some-type\", \"null\": null}"
+ },
+ {
+  "source": "tests/regression/transient_entity_conflict.rs",
+  "kind": "patch",
+  "text": "{\"speed\": {\"type\": \"Property\", \"value\": 60}}"
+ },
+ {
+  "source": "tests/regression/transient_entity_conflict.rs",
+  "kind": "patch",
+  "text": "{\"fuelLevel\": {\"type\": \"Property\", \"value\": 70}}"
+ },
+ {
+  "source": "tests/regression/transient_entity_conflict.rs",
+  "kind": "patch",
+  "text": "{\"tyrePressure\": {\"type\": \"Property\", \"value\": 2}}"
+ },
+ {
+  "source": "tests/regression/transient_entity_conflict.rs",
+  "kind": "patch",
+  "text": "{\n                    \"location\": {\"type\": \"GeoProperty\", \"value\": {\"type\": \"Point\", \"coordinates\": [1, 2]}},\n                    \"observationSpace\": {\"type\": \"GeoProperty\", \"value\": {\"type\": \"Point\", \"coordinates\": [3, 4]}},\n                    \"operationSpace\": {\"type\": \"GeoProperty\", \"value\": {\"type\": \"Point\", \"coordinates\": [5, 6]}}\n                }"
+ },
+ {
+  "source": "tests/regression/transient_entity_conflict.rs",
+  "kind": "patch",
+  "text": "{\"speed\": {\"type\": \"Property\", \"value\": 60}, \"vendorNote\": \"carried through verbatim\"}"
+ },
+ {
+  "source": "tests/snapshot/lifecycle.rs",
+  "kind": "entity",
+  "text": "{\"id\": \"urn:ngsi-ld:Vehicle:clone-fault\", \"type\": \"Vehicle\", \"@context\": \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"}"
+ },
+ {
+  "source": "tests/snapshot/model_protocol.rs",
+  "kind": "entity",
+  "text": "{\"id\": \"not a URI\", \"type\": \"Snapshot\", \"snapshotQueries\": []}"
+ },
+ {
+  "source": "tests/snapshot/model_protocol.rs",
+  "kind": "entity",
+  "text": "{\"id\": \"urn:ngsi-ld:Snapshot:test-present-empty\", \"type\": \"Snapshot\", \"snapshotQueries\": []}"
+ },
+ {
+  "source": "tests/snapshot/model_protocol.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:Vehicle:result-details\",\n        \"type\": \"https://example.org/ResultVehicle\",\n        \"speed\": {\"type\": \"Property\", \"value\": 10},\n        \"@context\": \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    }"
+ },
+ {
+  "source": "tests/snapshot/model_protocol.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:ContextSourceRegistration:snapshot-failed-result\",\n        \"type\": \"ContextSourceRegistration\",\n        \"endpoint\": \"http://host.docker.internal:1\",\n        \"information\": [{\"entities\": [{\"type\": \"https://example.org/FailedResultType\"}]}],\n        \"operations\": [\"queryEntity\"],\n        \"@context\": \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    }"
+ },
+ {
+  "source": "tests/snapshot/model_protocol.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:Vehicle:notification-result\",\n        \"type\": \"https://example.org/NotificationResultVehicle\",\n        \"@context\": \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    }"
+ },
+ {
+  "source": "tests/snapshot/model_protocol.rs",
+  "kind": "entity",
+  "text": "{\n        \"id\": \"urn:ngsi-ld:ContextSourceRegistration:snapshot-notification-failure\",\n        \"type\": \"ContextSourceRegistration\",\n        \"endpoint\": \"http://host.docker.internal:1\",\n        \"information\": [{\"entities\": [{\"type\": \"https://example.org/NotificationFailureType\"}]}],\n        \"operations\": [\"queryEntity\"],\n        \"@context\": \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    }"
+ },
+ {
+  "source": "tests/snapshot/model_protocol.rs",
+  "kind": "entity",
+  "text": "{\"id\": \"urn:ngsi-ld:Snapshot:json-link\", \"type\": \"Snapshot\", \"snapshotQueries\": []}"
+ },
+ {
+  "source": "tests/temporal_semantics/kind_history.rs",
+  "kind": "patch",
+  "text": "{ \"signal\": { \"type\": \"Relationship\", \"object\": \"urn:ngsi-ld:Thing:1\", \"observedAt\": \"2021-02-01T00:00:00Z\" } }"
+ },
+ {
+  "source": "tests/temporal_semantics/kind_history.rs",
+  "kind": "patch",
+  "text": "{ \"signal\": { \"type\": \"Property\", \"value\": \"amber\", \"observedAt\": \"2021-03-01T00:00:00Z\" } }"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-10-places.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Place:27182\",\n    \"type\": \"Place\",\n    \"address\": {\n      \"type\": \"Property\",\n      \"value\": \"Pariser Platz, Berlin, Germany\",\n      \"valueType\": \"String\"\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Place:31415\",\n    \"type\": \"Place\",\n    \"address\": {\n      \"type\": \"Property\",\n      \"value\": {\n        \"street\": \"Straße des 17. Juni\",\n        \"city\": \"Berlin\",\n        \"country\": \"Germany\"\n      },\n      \"valueType\": \"PostalAddress\"\n    }\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-11-signed-store.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Store:002\",\n  \"type\": \"Store\",\n  \"address\": {\n    \"type\": \"Property\",\n    \"value\": {\n      \"streetAddress\": [\n        \"Tiger Street 4\",\n        \"al\"\n      ],\n      \"addressRegion\": \"Metropolis\",\n      \"addressLocality\": \"Cat City\",\n      \"postalCode\": \"42420\"\n    },\n    \"ngsildproof\": {\n      \"type\": \"Property\",\n      \"entityIdSealed\": \"urn:ngsi-ld:Store:002\",\n      \"entityTypeSealed\": \"Store\",\n      \"value\": {\n        \"type\": \"DataIntegrityProof\",\n        \"created\": \"2025-01-27T21:02:24Z\",\n        \"verificationMethod\": \"https://example.edu/issuers/565049#z6MkwXG2WjeQnN....Hc6SaVWoT\",\n        \"cryptosuite\": \"eddsa-rdfc-2022\",\n        \"proofPurpose\": \"assertionMethod\",\n        \"proofValue\": \"z3XrH3diVCqpVHXkE7WbnictqyQCkJBGTx....NRTzmuoWU1Y2FyqGfSV9eS\"\n      }\n    }\n  },\n  \"location\": {\n    \"type\": \"GeoProperty\",\n    \"value\": {\n      \"type\": \"Point\",\n      \"coordinates\": [\n        57.5522,\n        -20.3484\n      ]\n    }\n  },\n  \"@context\": \"https://uri.etsi.org/ngsi-ld/primer/store-context.jsonld\"\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-1-linked-entities.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"type\": \"OffStreetParking\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Top Parking\"\n    },\n    \"operatedBy\": {\n      \"type\": \"Relationship\",\n      \"object\": \"urn:ngsi-ld:Company:BigParkingCorp\"\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Person:Alice\",\n    \"type\": \"Person\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Alice\"\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Person:Bob\",\n    \"type\": \"Person\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Bob\"\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Antwerp\",\n    \"type\": \"City\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Antwerp\"\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Rotterdam\",\n    \"type\": \"City\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Rotterdam\"\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Amsterdam\",\n    \"type\": \"City\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Amsterdam\"\n    }\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-concise-flattened.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n    \"type\": \"Vehicle\",\n    \"brandName\": \"Mercedes\",\n    \"street\": {\n      \"languageMap\": {\n        \"fr\": \"Grand Place\",\n        \"nl\": \"Grote Markt\"\n      }\n    },\n    \"isParked\": {\n      \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n      \"objectType\": \"OffStreetParking\",\n      \"observedAt\": \"2017-07-29T12:00:04Z\",\n      \"providedBy\": {\n        \"object\": \"urn:ngsi-ld:Person:Bob\"\n      }\n    },\n    \"category\": {\n      \"vocab\": \"non-commercial\"\n    },\n    \"tyreTreadDepths\": {\n      \"valueList\": [\n        300,\n        300,\n        120,\n        6\n      ],\n      \"valueType\": \"Integer\"\n    },\n    \"passengers\": {\n      \"objectType\": \"Person\",\n      \"object\": [\n        \"urn:ngsi-ld:Person:Alice\",\n        \"urn:ngsi-ld:Person:Bob\"\n      ]\n    },\n    \"route\": {\n      \"objectType\": \"City\",\n      \"objectList\": [\n        \"urn:ngsi-ld:City:Antwerp\",\n        \"urn:ngsi-ld:City:Rotterdam\",\n        \"urn:ngsi-ld:City:Amsterdam\"\n      ]\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"type\": \"OffStreetParking\",\n    \"name\": \"Top Parking\",\n    \"operatedBy\": {\n      \"object\": \"urn:ngsi-ld:Company:BigParkingCorp\"\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Person:Alice\",\n    \"type\": \"Person\",\n    \"name\": \"Alice\",\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Person:Bob\",\n    \"type\": \"Person\",\n    \"name\": \"Bob\",\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Antwerp\",\n    \"type\": \"City\",\n    \"name\": \"Antwerp\",\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Rotterdam\",\n    \"type\": \"City\",\n    \"name\": \"Rotterdam\",\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Amsterdam\",\n    \"type\": \"City\",\n    \"name\": \"Amsterdam\",\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-concise-inline.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"brandName\": \"Mercedes\",\n  \"street\": {\n    \"languageMap\": {\n      \"fr\": \"Grand Place\",\n      \"nl\": \"Grote Markt\"\n    }\n  },\n  \"isParked\": {\n    \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"objectType\": \"OffStreetParking\",\n    \"observedAt\": \"2017-07-29T12:00:04Z\",\n    \"providedBy\": {\n      \"object\": \"urn:ngsi-ld:Person:Bob\"\n    },\n    \"entity\": {\n      \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n      \"type\": \"OffStreetParking\",\n      \"name\": \"Top Parking\",\n      \"operatedBy\": {\n        \"object\": \"urn:ngsi-ld:Company:BigParkingCorp\"\n      }\n    }\n  },\n  \"category\": {\n    \"vocab\": \"non-commercial\"\n  },\n  \"tyreTreadDepths\": {\n    \"valueList\": [\n      300,\n      300,\n      120,\n      6\n    ],\n    \"valueType\": \"Integer\"\n  },\n  \"passengers\": {\n    \"objectType\": \"Person\",\n    \"object\": [\n      \"urn:ngsi-ld:Person:Alice\",\n      \"urn:ngsi-ld:Person:Bob\"\n    ],\n    \"entity\": [\n      {\n        \"id\": \"urn:ngsi-ld:Person:Alice\",\n        \"type\": \"Person\",\n        \"name\": \"Alice\"\n      },\n      {\n        \"id\": \"urn:ngsi-ld:Person:Bob\",\n        \"type\": \"Person\",\n        \"name\": \"Bob\"\n      }\n    ]\n  },\n  \"route\": {\n    \"objectType\": \"City\",\n    \"objectList\": [\n      \"urn:ngsi-ld:City:Antwerp\",\n      \"urn:ngsi-ld:City:Rotterdam\",\n      \"urn:ngsi-ld:City:Amsterdam\"\n    ],\n    \"entityList\": [\n      {\n        \"id\": \"urn:ngsi-ld:City:Antwerp\",\n        \"type\": \"City\",\n        \"name\": \"Antwerp\"\n      },\n      {\n        \"id\": \"urn:ngsi-ld:City:Rotterdam\",\n        \"type\": \"City\",\n        \"name\": \"Rotterdam\"\n      },\n      {\n        \"id\": \"urn:ngsi-ld:City:Amsterdam\",\n        \"type\": \"City\",\n        \"name\": \"Amsterdam\"\n      }\n    ]\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-concise-language-filter.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"brandName\": \"Mercedes\",\n  \"street\": {\n    \"value\": \"Grand Place\",\n    \"lang\": \"fr\"\n  },\n  \"isParked\": {\n    \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"objectType\": \"OffStreetParking\",\n    \"observedAt\": \"2017-07-29T12:00:04Z\",\n    \"providedBy\": {\n      \"object\": \"urn:ngsi-ld:Person:Bob\"\n    }\n  },\n  \"category\": {\n    \"vocab\": \"non-commercial\"\n  },\n  \"tyreTreadDepths\": {\n    \"valueList\": [\n      300,\n      300,\n      120,\n      6\n    ],\n    \"valueType\": \"Integer\"\n  },\n  \"passengers\": {\n    \"objectType\": \"Person\",\n    \"object\": [\n      \"urn:ngsi-ld:Person:Alice\",\n      \"urn:ngsi-ld:Person:Bob\"\n    ]\n  },\n  \"route\": {\n    \"objectType\": \"City\",\n    \"objectList\": [\n      \"urn:ngsi-ld:City:Antwerp\",\n      \"urn:ngsi-ld:City:Rotterdam\",\n      \"urn:ngsi-ld:City:Amsterdam\"\n    ]\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-concise.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"brandName\": \"Mercedes\",\n  \"street\": {\n    \"languageMap\": {\n      \"fr\": \"Grand Place\",\n      \"nl\": \"Grote Markt\"\n    }\n  },\n  \"isParked\": {\n    \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"objectType\": \"OffStreetParking\",\n    \"observedAt\": \"2017-07-29T12:00:04Z\",\n    \"providedBy\": {\n      \"object\": \"urn:ngsi-ld:Person:Bob\"\n    }\n  },\n  \"category\": {\n    \"vocab\": \"non-commercial\"\n  },\n  \"tyreTreadDepths\": {\n    \"valueList\": [\n      300,\n      300,\n      120,\n      6\n    ],\n    \"valueType\": \"Integer\"\n  },\n  \"passengers\": {\n    \"objectType\": \"Person\",\n    \"object\": [\n      \"urn:ngsi-ld:Person:Alice\",\n      \"urn:ngsi-ld:Person:Bob\"\n    ]\n  },\n  \"route\": {\n    \"objectType\": \"City\",\n    \"objectList\": [\n      \"urn:ngsi-ld:City:Antwerp\",\n      \"urn:ngsi-ld:City:Rotterdam\",\n      \"urn:ngsi-ld:City:Amsterdam\"\n    ]\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-multi-attribute.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"speed\": [\n    {\n      \"type\": \"Property\",\n      \"value\": 55,\n      \"source\": {\n        \"type\": \"Property\",\n        \"value\": \"Speedometer\"\n      },\n      \"datasetId\": \"urn:ngsi-ld:Property:speedometerA4567-speed\"\n    },\n    {\n      \"type\": \"Property\",\n      \"value\": 54.5,\n      \"source\": {\n        \"type\": \"Property\",\n        \"value\": \"GPS\"\n      },\n      \"datasetId\": \"urn:ngsi-ld:Property:gpsBxyz123-speed\"\n    }\n  ],\n  \"@context\": [\n    {\n      \"Vehicle\": \"http://example.org/Vehicle\",\n      \"speed\": \"http://example.org/speed\",\n      \"source\": \"http://example.org/hasSource\"\n    },\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-normalized-flattened.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n    \"type\": \"Vehicle\",\n    \"brandName\": {\n      \"type\": \"Property\",\n      \"value\": \"Mercedes\"\n    },\n    \"street\": {\n      \"type\": \"LanguageProperty\",\n      \"languageMap\": {\n        \"fr\": \"Grand Place\",\n        \"nl\": \"Grote Markt\"\n      }\n    },\n    \"isParked\": {\n      \"type\": \"Relationship\",\n      \"objectType\": \"OffStreetParking\",\n      \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n      \"observedAt\": \"2017-07-29T12:00:04Z\",\n      \"providedBy\": {\n        \"type\": \"Relationship\",\n        \"object\": \"urn:ngsi-ld:Person:Bob\"\n      }\n    },\n    \"category\": {\n      \"type\": \"VocabProperty\",\n      \"vocab\": \"non-commercial\"\n    },\n    \"tyreTreadDepths\": {\n      \"type\": \"ListProperty\",\n      \"valueList\": [\n        300,\n        300,\n        120,\n        6\n      ],\n      \"valueType\": \"Integer\"\n    },\n    \"passengers\": {\n      \"type\": \"Relationship\",\n      \"objectType\": \"Person\",\n      \"object\": [\n        \"urn:ngsi-ld:Person:Alice\",\n        \"urn:ngsi-ld:Person:Bob\"\n      ]\n    },\n    \"route\": {\n      \"type\": \"ListRelationship\",\n      \"objectType\": \"City\",\n      \"objectList\": [\n        {\n          \"object\": \"urn:ngsi-ld:City:Antwerp\"\n        },\n        {\n          \"object\": \"urn:ngsi-ld:City:Rotterdam\"\n        },\n        {\n          \"object\": \"urn:ngsi-ld:City:Amsterdam\"\n        }\n      ]\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"type\": \"OffStreetParking\",\n    \"name\": {\n      \"value\": \"Top Parking\",\n      \"type\": \"Property\"\n    },\n    \"operatedBy\": {\n      \"object\": \"urn:ngsi-ld:Company:BigParkingCorp\",\n      \"type\": \"Relationship\"\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Person:Alice\",\n    \"type\": \"Person\",\n    \"name\": {\n      \"value\": \"Alice\",\n      \"type\": \"Property\"\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Person:Bob\",\n    \"type\": \"Person\",\n    \"name\": {\n      \"value\": \"Bob\",\n      \"type\": \"Property\"\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Antwerp\",\n    \"type\": \"City\",\n    \"name\": {\n      \"value\": \"Antwerp\",\n      \"type\": \"Property\"\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Rotterdam\",\n    \"type\": \"City\",\n    \"name\": {\n      \"value\": \"Rotterdam\",\n      \"type\": \"Property\"\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Amsterdam\",\n    \"type\": \"City\",\n    \"name\": {\n      \"value\": \"Amsterdam\",\n      \"type\": \"Property\"\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-normalized-inline.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"brandName\": {\n    \"type\": \"Property\",\n    \"value\": \"Mercedes\"\n  },\n  \"street\": {\n    \"type\": \"LanguageProperty\",\n    \"languageMap\": {\n      \"fr\": \"Grand Place\",\n      \"nl\": \"Grote Markt\"\n    }\n  },\n  \"isParked\": {\n    \"type\": \"Relationship\",\n    \"objectType\": \"OffStreetParking\",\n    \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"observedAt\": \"2017-07-29T12:00:04Z\",\n    \"providedBy\": {\n      \"type\": \"Relationship\",\n      \"object\": \"urn:ngsi-ld:Person:Bob\"\n    },\n    \"entity\": {\n      \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n      \"type\": \"OffStreetParking\",\n      \"name\": {\n        \"value\": \"Top Parking\",\n        \"type\": \"Property\"\n      },\n      \"operatedBy\": {\n        \"object\": \"urn:ngsi-ld:Company:BigParkingCorp\",\n        \"type\": \"Relationship\"\n      }\n    }\n  },\n  \"category\": {\n    \"type\": \"VocabProperty\",\n    \"vocab\": \"non-commercial\"\n  },\n  \"tyreTreadDepths\": {\n    \"type\": \"ListProperty\",\n    \"valueList\": [\n      300,\n      300,\n      120,\n      6\n    ],\n    \"valueType\": \"Integer\"\n  },\n  \"passengers\": {\n    \"type\": \"Relationship\",\n    \"objectType\": \"Person\",\n    \"object\": [\n      \"urn:ngsi-ld:Person:Alice\",\n      \"urn:ngsi-ld:Person:Bob\"\n    ],\n    \"entity\": [\n      {\n        \"id\": \"urn:ngsi-ld:Person:Alice\",\n        \"type\": \"Person\",\n        \"name\": {\n          \"value\": \"Alice\",\n          \"type\": \"Property\"\n        }\n      },\n      {\n        \"id\": \"urn:ngsi-ld:Person:Bob\",\n        \"type\": \"Person\",\n        \"name\": {\n          \"value\": \"Bob\",\n          \"type\": \"Property\"\n        }\n      }\n    ]\n  },\n  \"route\": {\n    \"type\": \"ListRelationship\",\n    \"objectType\": \"City\",\n    \"objectList\": [\n      {\n        \"object\": \"urn:ngsi-ld:City:Antwerp\"\n      },\n      {\n        \"object\": \"urn:ngsi-ld:City:Rotterdam\"\n      },\n      {\n        \"object\": \"urn:ngsi-ld:City:Amsterdam\"\n      }\n    ],\n    \"entityList\": [\n      {\n        \"id\": \"urn:ngsi-ld:City:Antwerp\",\n        \"type\": \"City\",\n        \"name\": {\n          \"value\": \"Antwerp\",\n          \"type\": \"Property\"\n        }\n      },\n      {\n        \"id\": \"urn:ngsi-ld:City:Rotterdam\",\n        \"type\": \"City\",\n        \"name\": {\n          \"value\": \"Rotterdam\",\n          \"type\": \"Property\"\n        }\n      },\n      {\n        \"id\": \"urn:ngsi-ld:City:Amsterdam\",\n        \"type\": \"City\",\n        \"name\": {\n          \"value\": \"Amsterdam\",\n          \"type\": \"Property\"\n        }\n      }\n    ]\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-normalized-language-filter.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"brandName\": {\n    \"type\": \"Property\",\n    \"value\": \"Mercedes\"\n  },\n  \"street\": {\n    \"type\": \"Property\",\n    \"value\": \"Grand Place\",\n    \"lang\": \"fr\"\n  },\n  \"isParked\": {\n    \"type\": \"Relationship\",\n    \"objectType\": \"OffStreetParking\",\n    \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"observedAt\": \"2017-07-29T12:00:04Z\",\n    \"providedBy\": {\n      \"type\": \"Relationship\",\n      \"object\": \"urn:ngsi-ld:Person:Bob\"\n    }\n  },\n  \"category\": {\n    \"type\": \"VocabProperty\",\n    \"vocab\": \"non-commercial\"\n  },\n  \"tyreTreadDepths\": {\n    \"type\": \"ListProperty\",\n    \"valueList\": [\n      300,\n      300,\n      120,\n      6\n    ],\n    \"valueType\": \"Integer\"\n  },\n  \"passengers\": {\n    \"type\": \"Relationship\",\n    \"objectType\": \"Person\",\n    \"object\": [\n      \"urn:ngsi-ld:Person:Alice\",\n      \"urn:ngsi-ld:Person:Bob\"\n    ]\n  },\n  \"route\": {\n    \"type\": \"ListRelationship\",\n    \"objectType\": \"City\",\n    \"objectList\": [\n      {\n        \"object\": \"urn:ngsi-ld:City:Antwerp\"\n      },\n      {\n        \"object\": \"urn:ngsi-ld:City:Rotterdam\"\n      },\n      {\n        \"object\": \"urn:ngsi-ld:City:Amsterdam\"\n      }\n    ]\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-normalized-unitless.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"brandName\": {\n    \"type\": \"Property\",\n    \"value\": \"Mercedes\"\n  },\n  \"street\": {\n    \"type\": \"LanguageProperty\",\n    \"languageMap\": {\n      \"fr\": \"Grand Place\",\n      \"nl\": \"Grote Markt\"\n    }\n  },\n  \"isParked\": {\n    \"type\": \"Relationship\",\n    \"objectType\": \"OffStreetParking\",\n    \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"observedAt\": \"2017-07-29T12:00:04Z\",\n    \"providedBy\": {\n      \"type\": \"Relationship\",\n      \"object\": \"urn:ngsi-ld:Person:Bob\"\n    }\n  },\n  \"category\": {\n    \"type\": \"VocabProperty\",\n    \"vocab\": \"non-commercial\"\n  },\n  \"tyreTreadDepths\": {\n    \"type\": \"ListProperty\",\n    \"valueList\": [\n      300,\n      300,\n      120,\n      6\n    ],\n    \"valueType\": \"Integer\"\n  },\n  \"passengers\": {\n    \"type\": \"Relationship\",\n    \"objectType\": \"Person\",\n    \"object\": [\n      \"urn:ngsi-ld:Person:Alice\",\n      \"urn:ngsi-ld:Person:Bob\"\n    ]\n  },\n  \"route\": {\n    \"type\": \"ListRelationship\",\n    \"objectType\": \"City\",\n    \"objectList\": [\n      {\n        \"object\": \"urn:ngsi-ld:City:Antwerp\"\n      },\n      {\n        \"object\": \"urn:ngsi-ld:City:Rotterdam\"\n      },\n      {\n        \"object\": \"urn:ngsi-ld:City:Amsterdam\"\n      }\n    ]\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-normalized.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"brandName\": {\n    \"type\": \"Property\",\n    \"value\": \"Mercedes\"\n  },\n  \"street\": {\n    \"type\": \"LanguageProperty\",\n    \"languageMap\": {\n      \"fr\": \"Grand Place\",\n      \"nl\": \"Grote Markt\"\n    }\n  },\n  \"isParked\": {\n    \"type\": \"Relationship\",\n    \"objectType\": \"OffStreetParking\",\n    \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"observedAt\": \"2017-07-29T12:00:04Z\",\n    \"providedBy\": {\n      \"type\": \"Relationship\",\n      \"object\": \"urn:ngsi-ld:Person:Bob\"\n    }\n  },\n  \"category\": {\n    \"type\": \"VocabProperty\",\n    \"vocab\": \"non-commercial\"\n  },\n  \"tyreTreadDepths\": {\n    \"type\": \"ListProperty\",\n    \"valueList\": [\n      300,\n      300,\n      120,\n      6\n    ],\n    \"valueType\": \"Integer\",\n    \"unitCode\": \"MMT\"\n  },\n  \"passengers\": {\n    \"type\": \"Relationship\",\n    \"objectType\": \"Person\",\n    \"object\": [\n      \"urn:ngsi-ld:Person:Alice\",\n      \"urn:ngsi-ld:Person:Bob\"\n    ]\n  },\n  \"route\": {\n    \"type\": \"ListRelationship\",\n    \"objectType\": \"City\",\n    \"objectList\": [\n      {\n        \"object\": \"urn:ngsi-ld:City:Antwerp\"\n      },\n      {\n        \"object\": \"urn:ngsi-ld:City:Rotterdam\"\n      },\n      {\n        \"object\": \"urn:ngsi-ld:City:Amsterdam\"\n      }\n    ]\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-simplified-flattened.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n    \"type\": \"Vehicle\",\n    \"brandName\": \"Mercedes\",\n    \"street\": {\n      \"languageMap\": {\n        \"fr\": \"Grand Place\",\n        \"nl\": \"Grote Markt\"\n      }\n    },\n    \"isParked\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"category\": {\n      \"vocab\": \"non-commercial\"\n    },\n    \"tyreTreadDepths\": [\n      300,\n      300,\n      120,\n      6\n    ],\n    \"passengers\": [\n      \"urn:ngsi-ld:Person:Alice\",\n      \"urn:ngsi-ld:Person:Bob\"\n    ],\n    \"route\": [\n      \"urn:ngsi-ld:City:Antwerp\",\n      \"urn:ngsi-ld:City:Rotterdam\",\n      \"urn:ngsi-ld:City:Amsterdam\"\n    ],\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"type\": \"OffStreetParking\",\n    \"name\": \"Top Parking\",\n    \"operatedBy\": \"urn:ngsi-ld:Company:BigParkingCorp\"\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Person:Alice\",\n    \"type\": \"Person\",\n    \"name\": \"Alice\"\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Person:Bob\",\n    \"type\": \"Person\",\n    \"name\": \"Bob\"\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Antwerp\",\n    \"type\": \"City\",\n    \"name\": \"Antwerp\"\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Rotterdam\",\n    \"type\": \"City\",\n    \"name\": \"Rotterdam\"\n  },\n  {\n    \"id\": \"urn:ngsi-ld:City:Amsterdam\",\n    \"type\": \"City\",\n    \"name\": \"Amsterdam\"\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-simplified-inline.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"brandName\": \"Mercedes\",\n  \"street\": {\n    \"languageMap\": {\n      \"fr\": \"Grand Place\",\n      \"nl\": \"Grote Markt\"\n    }\n  },\n  \"isParked\": {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"type\": \"OffStreetParking\",\n    \"name\": \"Top Parking\",\n    \"operatedBy\": \"urn:ngsi-ld:Company:BigParkingCorp\"\n  },\n  \"category\": {\n    \"vocab\": \"non-commercial\"\n  },\n  \"tyreTreadDepths\": [\n    300,\n    300,\n    120,\n    6\n  ],\n  \"passengers\": [\n    {\n      \"id\": \"urn:ngsi-ld:Person:Alice\",\n      \"type\": \"Person\",\n      \"name\": \"Alice\"\n    },\n    {\n      \"id\": \"urn:ngsi-ld:Person:Bob\",\n      \"type\": \"Person\",\n      \"name\": \"Bob\"\n    }\n  ],\n  \"route\": [\n    {\n      \"id\": \"urn:ngsi-ld:City:Antwerp\",\n      \"type\": \"City\",\n      \"name\": \"Antwerp\"\n    },\n    {\n      \"id\": \"urn:ngsi-ld:City:Rotterdam\",\n      \"type\": \"City\",\n      \"name\": \"Rotterdam\"\n    },\n    {\n      \"id\": \"urn:ngsi-ld:City:Amsterdam\",\n      \"type\": \"City\",\n      \"name\": \"Amsterdam\"\n    }\n  ],\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-simplified-language-filter.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"brandName\": \"Mercedes\",\n  \"street\": \"Grand Place\",\n  \"isParked\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"category\": {\n    \"vocab\": \"non-commercial\"\n  },\n  \"tyreTreadDepths\": [\n    300,\n    300,\n    120,\n    6\n  ],\n  \"passengers\": [\n    \"urn:ngsi-ld:Person:Alice\",\n    \"urn:ngsi-ld:Person:Bob\"\n  ],\n  \"route\": [\n    \"urn:ngsi-ld:City:Antwerp\",\n    \"urn:ngsi-ld:City:Rotterdam\",\n    \"urn:ngsi-ld:City:Amsterdam\"\n  ],\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-simplified-multi-attribute.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"speed\": {\n    \"dataset\": {\n      \"urn:ngsi-ld:Property:speedometerA4567-speed\": 55,\n      \"urn:ngsi-ld:Property:gpsBxyz123-speed\": 54.5\n    }\n  },\n  \"@context\": [\n    {\n      \"Vehicle\": \"http://example.org/Vehicle\",\n      \"speed\": \"http://example.org/speed\"\n    },\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-2-simplified.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"brandName\": \"Mercedes\",\n  \"street\": {\n    \"languageMap\": {\n      \"fr\": \"Grand Place\",\n      \"nl\": \"Grote Markt\"\n    }\n  },\n  \"isParked\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"category\": {\n    \"vocab\": \"non-commercial\"\n  },\n  \"tyreTreadDepths\": [\n    300,\n    300,\n    120,\n    6\n  ],\n  \"passengers\": [\n    \"urn:ngsi-ld:Person:Alice\",\n    \"urn:ngsi-ld:Person:Bob\"\n  ],\n  \"route\": [\n    \"urn:ngsi-ld:City:Antwerp\",\n    \"urn:ngsi-ld:City:Rotterdam\",\n    \"urn:ngsi-ld:City:Amsterdam\"\n  ],\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-3-concise.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"type\": \"OffStreetParking\",\n  \"name\": \"Downtown One\",\n  \"availableSpotNumber\": {\n    \"value\": 121,\n    \"observedAt\": \"2017-07-29T12:05:02Z\",\n    \"reliability\": 0.7,\n    \"providedBy\": {\n      \"object\": \"urn:ngsi-ld:Camera:C1\"\n    }\n  },\n  \"totalSpotNumber\": 200,\n  \"location\": {\n    \"type\": \"Point\",\n    \"coordinates\": [\n      -8.5,\n      41.2\n    ]\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-3-geojson-concise.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"type\": \"Feature\",\n  \"geometry\": {\n    \"type\": \"Point\",\n    \"coordinates\": [\n      -8.5,\n      41.2\n    ]\n  },\n  \"properties\": {\n    \"type\": \"OffStreetParking\",\n    \"name\": \"Downtown One\",\n    \"availableSpotNumber\": {\n      \"value\": 121,\n      \"observedAt\": \"2017-07-29T12:05:02Z\",\n      \"reliability\": 0.7,\n      \"providedBy\": {\n        \"object\": \"urn:ngsi-ld:Camera:C1\"\n      }\n    },\n    \"location\": {\n      \"type\": \"Point\",\n      \"coordinates\": [\n        -8.5,\n        41.2\n      ]\n    },\n    \"totalSpotNumber\": 200\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-3-geojson-normalized.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"type\": \"Feature\",\n  \"geometry\": {\n    \"type\": \"Point\",\n    \"coordinates\": [\n      -8.5,\n      41.2\n    ]\n  },\n  \"properties\": {\n    \"type\": \"OffStreetParking\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Downtown One\"\n    },\n    \"availableSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 121,\n      \"observedAt\": \"2017-07-29T12:05:02Z\",\n      \"reliability\": {\n        \"type\": \"Property\",\n        \"value\": 0.7\n      },\n      \"providedBy\": {\n        \"type\": \"Relationship\",\n        \"object\": \"urn:ngsi-ld:Camera:C1\"\n      }\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.5,\n          41.2\n        ]\n      }\n    },\n    \"totalSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 200\n    }\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-3-geojson-simplified.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"type\": \"Feature\",\n  \"geometry\": {\n    \"type\": \"Point\",\n    \"coordinates\": [\n      -8.5,\n      41.2\n    ]\n  },\n  \"properties\": {\n    \"type\": \"OffStreetParking\",\n    \"name\": \"Downtown One\",\n    \"availableSpotNumber\": 121,\n    \"totalSpotNumber\": 200,\n    \"location\": {\n      \"type\": \"Point\",\n      \"coordinates\": [\n        -8.5,\n        41.2\n      ]\n    }\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-3-normalized.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"type\": \"OffStreetParking\",\n  \"name\": {\n    \"type\": \"Property\",\n    \"value\": \"Downtown One\"\n  },\n  \"availableSpotNumber\": {\n    \"type\": \"Property\",\n    \"value\": 121,\n    \"observedAt\": \"2017-07-29T12:05:02Z\",\n    \"reliability\": {\n      \"type\": \"Property\",\n      \"value\": 0.7\n    },\n    \"providedBy\": {\n      \"type\": \"Relationship\",\n      \"object\": \"urn:ngsi-ld:Camera:C1\"\n    }\n  },\n  \"totalSpotNumber\": {\n    \"type\": \"Property\",\n    \"value\": 200\n  },\n  \"location\": {\n    \"type\": \"GeoProperty\",\n    \"value\": {\n      \"type\": \"Point\",\n      \"coordinates\": [\n        -8.5,\n        41.2\n      ]\n    }\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-3-parking-seed.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"type\": \"OffStreetParking\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Downtown One\"\n    },\n    \"availableSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 121,\n      \"observedAt\": \"2017-07-29T12:05:02Z\",\n      \"reliability\": {\n        \"type\": \"Property\",\n        \"value\": 0.7\n      },\n      \"providedBy\": {\n        \"type\": \"Relationship\",\n        \"object\": \"urn:ngsi-ld:Camera:C1\"\n      }\n    },\n    \"totalSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 200\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.5,\n          41.2\n        ]\n      }\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown2\",\n    \"type\": \"OffStreetParking\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Downtown Two\"\n    },\n    \"availableSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 99,\n      \"observedAt\": \"2017-07-29T12:05:02Z\",\n      \"reliability\": {\n        \"type\": \"Property\",\n        \"value\": 0.8\n      },\n      \"providedBy\": {\n        \"type\": \"Relationship\",\n        \"object\": \"urn:ngsi-ld:Camera:C2\"\n      }\n    },\n    \"totalSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 100\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.51,\n          41.1\n        ]\n      }\n    }\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-2-3-simplified.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"type\": \"OffStreetParking\",\n  \"name\": \"Downtown One\",\n  \"availableSpotNumber\": 121,\n  \"totalSpotNumber\": 200,\n  \"location\": {\n    \"type\": \"Point\",\n    \"coordinates\": [\n      -8.5,\n      41.2\n    ]\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-3-registration.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:ContextSourceRegistration:csr1a3456\",\n  \"type\": \"ContextSourceRegistration\",\n  \"information\": [\n    {\n      \"entities\": [\n        {\n          \"id\": \"urn:ngsi-ld:Vehicle:A456\",\n          \"type\": \"Vehicle\"\n        }\n      ],\n      \"propertyNames\": [\n        \"brandName\",\n        \"speed\"\n      ],\n      \"relationshipNames\": [\n        \"isParked\"\n      ]\n    },\n    {\n      \"entities\": [\n        {\n          \"idPattern\": \".*downtown$\",\n          \"type\": \"OffStreetParking\"\n        },\n        {\n          \"idPattern\": \".*47$\",\n          \"type\": \"OffStreetParking\"\n        }\n      ],\n      \"propertyNames\": [\n        \"availableSpotNumber\",\n        \"totalSpotNumber\"\n      ],\n      \"relationshipNames\": [\n        \"isNextToBuilding\"\n      ]\n    }\n  ],\n  \"endpoint\": \"http://my.csource.org:1026\",\n  \"location\": {\n    \"type\": \"Polygon\",\n    \"coordinates\": [\n      [\n        [\n          100.0,\n          0.0\n        ],\n        [\n          101.0,\n          0.0\n        ],\n        [\n          101.0,\n          1.0\n        ],\n        [\n          100.0,\n          1.0\n        ],\n        [\n          100.0,\n          0.0\n        ]\n      ]\n    ]\n  },\n  \"managementInterval\": {\n    \"startAt\": \"2017-11-29T14:53:15Z\"\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/commonTerms.jsonld\",\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-4-subscription.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Subscription:mySubscription\",\n  \"type\": \"Subscription\",\n  \"entities\": [\n    {\n      \"type\": \"Vehicle\"\n    }\n  ],\n  \"watchedAttributes\": [\n    \"speed\"\n  ],\n  \"q\": \"speed>50\",\n  \"geoQ\": {\n    \"georel\": \"near;maxDistance==2000\",\n    \"geometry\": \"Point\",\n    \"coordinates\": [\n      -1,\n      100\n    ]\n  },\n  \"notification\": {\n    \"attributes\": [\n      \"speed\"\n    ],\n    \"format\": \"keyValues\",\n    \"endpoint\": {\n      \"uri\": \"http://my.endpoint.org/notify\",\n      \"accept\": \"application/json\"\n    }\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-11-attribute-details.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"http://example.org/parking/availableSpotNumber\",\n    \"type\": \"Attribute\",\n    \"attributeName\": \"availableSpotNumber\",\n    \"typeNames\": [\n      \"OffStreetParking\"\n    ]\n  },\n  {\n    \"id\": \"http://example.org/vehicle/brandName\",\n    \"type\": \"Attribute\",\n    \"attributeName\": \"brandName\",\n    \"typeNames\": [\n      \"Vehicle\"\n    ]\n  },\n  {\n    \"id\": \"http://example.org/common/isNextToBuilding\",\n    \"type\": \"Attribute\",\n    \"attributeName\": \"isNextToBuilding\",\n    \"typeNames\": [\n      \"OffStreetParking\"\n    ]\n  },\n  {\n    \"id\": \"http://example.org/common/isParked\",\n    \"type\": \"Attribute\",\n    \"attributeName\": \"isParked\",\n    \"typeNames\": [\n      \"Vehicle\"\n    ]\n  },\n  {\n    \"id\": \"https://uri.etsi.org/ngsi-ld/location\",\n    \"type\": \"Attribute\",\n    \"attributeName\": \"location\",\n    \"typeNames\": [\n      \"OffStreetParking\",\n      \"Vehicle\",\n      \"http://example.org/parking/ParkingSpot\"\n    ]\n  },\n  {\n    \"id\": \"http://example.org/vehicle/speed\",\n    \"type\": \"Attribute\",\n    \"attributeName\": \"speed\",\n    \"typeNames\": [\n      \"Vehicle\"\n    ]\n  },\n  {\n    \"id\": \"http://example.org/parking/status\",\n    \"type\": \"Attribute\",\n    \"attributeName\": \"http://example.org/parking/status\",\n    \"typeNames\": [\n      \"http://example.org/parking/ParkingSpot\"\n    ]\n  },\n  {\n    \"id\": \"http://example.org/parking/totalSpotNumber\",\n    \"type\": \"Attribute\",\n    \"attributeName\": \"totalSpotNumber\",\n    \"typeNames\": [\n      \"OffStreetParking\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-12-attribute-information.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"http://example.org/vehicle/brandName\",\n  \"type\": \"Attribute\",\n  \"attributeName\": \"brandName\",\n  \"attributeTypes\": [\n    \"Property\"\n  ],\n  \"typeNames\": [\n    \"Vehicle\"\n  ],\n  \"attributeCount\": 2\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-13-marque-seed.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n  \"type\": \"Vehicle\",\n  \"marque\": {\n    \"type\": \"LanguageProperty\",\n    \"languageMap\": {\n      \"en-GB\": \"Vauxhall Viva\",\n      \"en\": \"Vauxhall Viva\",\n      \"de\": \"Opel Karl\"\n    }\n  }\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-13-query-answer.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n    \"type\": \"Vehicle\",\n    \"marque\": \"Opel Karl\",\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-14-aggregated-answer.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:B9211\",\n    \"type\": \"Vehicle\",\n    \"speed\": {\n      \"type\": \"Property\",\n      \"max\": [\n        [\n          120,\n          \"2018-08-01T12:00:00Z\",\n          \"2018-08-01T12:04:00Z\"\n        ],\n        [\n          100,\n          \"2018-08-01T12:04:00Z\",\n          \"2018-08-01T12:08:00Z\"\n        ]\n      ],\n      \"avg\": [\n        [\n          120,\n          \"2018-08-01T12:00:00Z\",\n          \"2018-08-01T12:04:00Z\"\n        ],\n        [\n          90,\n          \"2018-08-01T12:04:00Z\",\n          \"2018-08-01T12:08:00Z\"\n        ]\n      ]\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-15-query-answer.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"type\": \"OffStreetParking\",\n    \"scope\": \"/Madrid/Centro\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Downtown One\"\n    },\n    \"availableSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 121,\n      \"observedAt\": \"2017-07-29T12:05:02Z\",\n      \"reliability\": {\n        \"type\": \"Property\",\n        \"value\": 0.7\n      },\n      \"providedBy\": {\n        \"type\": \"Relationship\",\n        \"object\": \"urn:ngsi-ld:Camera:C1\"\n      }\n    },\n    \"totalSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 200\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.5,\n          41.2\n        ]\n      }\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Corte4\",\n    \"type\": \"OffStreetParking\",\n    \"scope\": [\n      \"/Madrid/Cortes\",\n      \"/Company894/UnitC\"\n    ],\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Corte4\"\n    },\n    \"availableSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 121,\n      \"observedAt\": \"2017-07-29T12:05:02Z\",\n      \"reliability\": {\n        \"type\": \"Property\",\n        \"value\": 0.7\n      },\n      \"providedBy\": {\n        \"type\": \"Relationship\",\n        \"object\": \"urn:ngsi-ld:Camera:C1\"\n      }\n    },\n    \"totalSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 100\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.6,\n          41.3\n        ]\n      }\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-15-scope-seed.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"type\": \"OffStreetParking\",\n    \"scope\": \"/Madrid/Centro\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Downtown One\"\n    },\n    \"availableSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 121,\n      \"observedAt\": \"2017-07-29T12:05:02Z\",\n      \"reliability\": {\n        \"type\": \"Property\",\n        \"value\": 0.7\n      },\n      \"providedBy\": {\n        \"type\": \"Relationship\",\n        \"object\": \"urn:ngsi-ld:Camera:C1\"\n      }\n    },\n    \"totalSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 200\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.5,\n          41.2\n        ]\n      }\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Corte4\",\n    \"type\": \"OffStreetParking\",\n    \"scope\": [\n      \"/Madrid/Cortes\",\n      \"/Company894/UnitC\"\n    ],\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Corte4\"\n    },\n    \"availableSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 121,\n      \"observedAt\": \"2017-07-29T12:05:02Z\",\n      \"reliability\": {\n        \"type\": \"Property\",\n        \"value\": 0.7\n      },\n      \"providedBy\": {\n        \"type\": \"Relationship\",\n        \"object\": \"urn:ngsi-ld:Camera:C1\"\n      }\n    },\n    \"totalSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 100\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.6,\n          41.3\n        ]\n      }\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Salamanca7\",\n    \"type\": \"OffStreetParking\",\n    \"scope\": \"/Madrid/Salamanca\",\n    \"name\": {\n      \"type\": \"Property\",\n      \"value\": \"Salamanca7\"\n    },\n    \"availableSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 121,\n      \"observedAt\": \"2017-07-29T12:05:02Z\",\n      \"reliability\": {\n        \"type\": \"Property\",\n        \"value\": 0.7\n      },\n      \"providedBy\": {\n        \"type\": \"Relationship\",\n        \"object\": \"urn:ngsi-ld:Camera:C1\"\n      }\n    },\n    \"totalSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 50\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.7,\n          41.4\n        ]\n      }\n    }\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-16-temporal-answer.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:A8311\",\n    \"type\": \"Vehicle\",\n    \"scope\": {\n      \"type\": \"Property\",\n      \"values\": [\n        [\n          [\n            \"/Madrid/Centro\",\n            \"/Company123/UnitA\"\n          ],\n          \"2018-08-01T12:10:00Z\"\n        ]\n      ]\n    },\n    \"speed\": {\n      \"type\": \"Property\",\n      \"values\": [\n        [\n          40,\n          \"2018-08-01T12:12:00Z\"\n        ],\n        [\n          60,\n          \"2018-08-01T12:14:00Z\"\n        ],\n        [\n          50,\n          \"2018-08-01T12:16:00Z\"\n        ]\n      ]\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:B9211\",\n    \"type\": \"Vehicle\",\n    \"scope\": {\n      \"type\": \"Property\",\n      \"values\": [\n        [\n          \"/Madrid/Centro\",\n          \"2018-08-01T11:00:00Z\"\n        ]\n      ]\n    },\n    \"speed\": {\n      \"type\": \"Property\",\n      \"values\": [\n        [\n          30,\n          \"2018-08-01T12:03:00Z\"\n        ],\n        [\n          60,\n          \"2018-08-01T12:05:00Z\"\n        ],\n        [\n          50,\n          \"2018-08-01T12:07:00Z\"\n        ]\n      ]\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-3-query-answer.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:B9211\",\n    \"type\": \"Vehicle\",\n    \"brandName\": \"Volvo\",\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:C7788\",\n    \"type\": \"Vehicle\",\n    \"brandName\": \"Renault\",\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-3-vehicles-seed.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:A456\",\n    \"type\": \"Vehicle\",\n    \"brandName\": {\n      \"type\": \"Property\",\n      \"value\": \"Mercedes\"\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:B9211\",\n    \"type\": \"Vehicle\",\n    \"brandName\": {\n      \"type\": \"Property\",\n      \"value\": \"Volvo\"\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:C7788\",\n    \"type\": \"Vehicle\",\n    \"brandName\": {\n      \"type\": \"Property\",\n      \"value\": \"Renault\"\n    }\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-5-temporal-answer.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:B9211\",\n    \"type\": \"Vehicle\",\n    \"speed\": [\n      {\n        \"type\": \"Property\",\n        \"value\": 120,\n        \"observedAt\": \"2018-08-01T12:03:00Z\"\n      },\n      {\n        \"type\": \"Property\",\n        \"value\": 80,\n        \"observedAt\": \"2018-08-01T12:05:00Z\"\n      },\n      {\n        \"type\": \"Property\",\n        \"value\": 100,\n        \"observedAt\": \"2018-08-01T12:07:00Z\"\n      }\n    ],\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-5-temporal-seed.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:B9211\",\n  \"type\": \"Vehicle\",\n  \"brandName\": [\n    {\n      \"type\": \"Property\",\n      \"value\": \"Volvo\",\n      \"observedAt\": \"2018-08-01T11:00:00Z\"\n    }\n  ],\n  \"speed\": [\n    {\n      \"type\": \"Property\",\n      \"value\": 120,\n      \"observedAt\": \"2018-08-01T12:03:00Z\"\n    },\n    {\n      \"type\": \"Property\",\n      \"value\": 80,\n      \"observedAt\": \"2018-08-01T12:05:00Z\"\n    },\n    {\n      \"type\": \"Property\",\n      \"value\": 100,\n      \"observedAt\": \"2018-08-01T12:07:00Z\"\n    }\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-6-temporal-values-answer.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:B9211\",\n    \"type\": \"Vehicle\",\n    \"speed\": {\n      \"type\": \"Property\",\n      \"values\": [\n        [\n          120,\n          \"2018-08-01T12:03:00Z\"\n        ],\n        [\n          80,\n          \"2018-08-01T12:05:00Z\"\n        ],\n        [\n          100,\n          \"2018-08-01T12:07:00Z\"\n        ]\n      ]\n    },\n    \"@context\": [\n      \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n      \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-7-discovery-seed.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:A4567\",\n    \"type\": \"Vehicle\",\n    \"brandName\": {\n      \"type\": \"Property\",\n      \"value\": \"Mercedes\"\n    },\n    \"speed\": {\n      \"type\": \"Property\",\n      \"value\": 55\n    },\n    \"isParked\": {\n      \"type\": \"Relationship\",\n      \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\"\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.5,\n          41.2\n        ]\n      }\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:Vehicle:B9211\",\n    \"type\": \"Vehicle\",\n    \"brandName\": {\n      \"type\": \"Property\",\n      \"value\": \"Volvo\"\n    },\n    \"speed\": {\n      \"type\": \"Property\",\n      \"value\": 60\n    },\n    \"isParked\": {\n      \"type\": \"Relationship\",\n      \"object\": \"urn:ngsi-ld:OffStreetParking:Downtown1\"\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.6,\n          41.3\n        ]\n      }\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n    \"type\": \"OffStreetParking\",\n    \"availableSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 121\n    },\n    \"totalSpotNumber\": {\n      \"type\": \"Property\",\n      \"value\": 200\n    },\n    \"isNextToBuilding\": {\n      \"type\": \"Relationship\",\n      \"object\": \"urn:ngsi-ld:Building:B1\"\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.5,\n          41.2\n        ]\n      }\n    }\n  },\n  {\n    \"id\": \"urn:ngsi-ld:ParkingSpot:S1\",\n    \"type\": \"http://example.org/parking/ParkingSpot\",\n    \"http://example.org/parking/status\": {\n      \"type\": \"Property\",\n      \"value\": \"free\"\n    },\n    \"location\": {\n      \"type\": \"GeoProperty\",\n      \"value\": {\n        \"type\": \"Point\",\n        \"coordinates\": [\n          -8.5,\n          41.2\n        ]\n      }\n    }\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-8-entity-type-details.json",
+  "kind": "entity-array",
+  "text": "[\n  {\n    \"id\": \"http://example.org/vehicle/Vehicle\",\n    \"type\": \"EntityType\",\n    \"typeName\": \"Vehicle\",\n    \"attributeNames\": [\n      \"brandName\",\n      \"isParked\",\n      \"location\",\n      \"speed\"\n    ]\n  },\n  {\n    \"id\": \"http://example.org/parking/OffStreetParking\",\n    \"type\": \"EntityType\",\n    \"typeName\": \"OffStreetParking\",\n    \"attributeNames\": [\n      \"availableSpotNumber\",\n      \"isNextToBuilding\",\n      \"location\",\n      \"totalSpotNumber\"\n    ]\n  },\n  {\n    \"id\": \"http://example.org/parking/ParkingSpot\",\n    \"type\": \"EntityType\",\n    \"typeName\": \"http://example.org/parking/ParkingSpot\",\n    \"attributeNames\": [\n      \"location\",\n      \"http://example.org/parking/status\"\n    ]\n  }\n]"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-5-9-entity-type-information.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"http://example.org/vehicle/Vehicle\",\n  \"type\": \"EntityTypeInfo\",\n  \"typeName\": \"Vehicle\",\n  \"entityCount\": 2,\n  \"attributeDetails\": [\n    {\n      \"id\": \"http://example.org/vehicle/brandName\",\n      \"type\": \"Attribute\",\n      \"attributeName\": \"brandName\",\n      \"attributeTypes\": [\n        \"Property\"\n      ]\n    },\n    {\n      \"id\": \"http://example.org/common/isParked\",\n      \"type\": \"Attribute\",\n      \"attributeName\": \"isParked\",\n      \"attributeTypes\": [\n        \"Relationship\"\n      ]\n    },\n    {\n      \"id\": \"https://uri.etsi.org/ngsi-ld/location\",\n      \"type\": \"Attribute\",\n      \"attributeName\": \"location\",\n      \"attributeTypes\": [\n        \"GeoProperty\"\n      ]\n    },\n    {\n      \"id\": \"http://example.org/vehicle/speed\",\n      \"type\": \"Attribute\",\n      \"attributeName\": \"speed\",\n      \"attributeTypes\": [\n        \"Property\"\n      ]\n    }\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-6-typed-value.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:B9211\",\n  \"type\": \"Vehicle\",\n  \"testedAt\": {\n    \"type\": \"Property\",\n    \"value\": {\n      \"@type\": \"DateTime\",\n      \"@value\": \"2018-12-04T12:00:00Z\"\n    }\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-6-value-type.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:B9211\",\n  \"type\": \"Vehicle\",\n  \"testedAt\": {\n    \"type\": \"Property\",\n    \"value\": \"2018-12-04T12:00:00Z\",\n    \"valueType\": \"DateTime\"\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/vehicle.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-7-abbreviated-answer.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"type\": \"OffP\",\n  \"http://example.org/parking/name\": {\n    \"type\": \"Property\",\n    \"value\": \"Downtown One\"\n  },\n  \"ava\": {\n    \"type\": \"Property\",\n    \"value\": 121,\n    \"observedAt\": \"2017-07-29T12:05:02Z\"\n  },\n  \"total\": {\n    \"type\": \"Property\",\n    \"value\": 200\n  }\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-7-created-entity.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"type\": \"OffStreetParking\",\n  \"name\": {\n    \"type\": \"Property\",\n    \"value\": \"Downtown One\"\n  },\n  \"availableSpotNumber\": {\n    \"type\": \"Property\",\n    \"value\": 121,\n    \"observedAt\": \"2017-07-29T12:05:02Z\"\n  },\n  \"totalSpotNumber\": {\n    \"type\": \"Property\",\n    \"value\": 200\n  },\n  \"@context\": [\n    \"http://example.org/ngsi-ld/latest/parking.jsonld\",\n    \"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld\"\n  ]\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-7-unmatched-answer.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:OffStreetParking:Downtown1\",\n  \"type\": \"http://example.org/parking/OffStreetParking\",\n  \"http://example.org/parking/name\": {\n    \"type\": \"Property\",\n    \"value\": \"Downtown One\"\n  },\n  \"http://example.org/parking/availableSpotNumber\": {\n    \"type\": \"Property\",\n    \"value\": 121,\n    \"observedAt\": \"2017-07-29T12:05:02Z\"\n  },\n  \"http://example.org/parking/totalSpotNumber\": {\n    \"type\": \"Property\",\n    \"value\": 200\n  }\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-8-vehicle.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Vehicle:V1\",\n  \"type\": \"Vehicle\",\n  \"builtYear\": {\n    \"type\": \"Property\",\n    \"value\": \"2014\"\n  },\n  \"speed\": {\n    \"type\": \"Property\",\n    \"value\": 121,\n    \"observedAt\": \"2017-07-29T12:05:02Z\"\n  }\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-9-colliding-building.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Building:B1\",\n  \"type\": \"Building\",\n  \"name\": {\n    \"type\": \"Property\",\n    \"value\": \"Empire State\"\n  },\n  \"location\": {\n    \"type\": \"Property\",\n    \"value\": \"20 West 34th Street, New York City, NY 10001\"\n  }\n}"
+ },
+ {
+  "source": "tests/annex_c/corpus/c-9-prefixed-building.json",
+  "kind": "entity",
+  "text": "{\n  \"id\": \"urn:ngsi-ld:Building:B1\",\n  \"type\": \"Building\",\n  \"name\": {\n    \"type\": \"Property\",\n    \"value\": \"Empire State\"\n  },\n  \"schema:location\": {\n    \"type\": \"Property\",\n    \"value\": \"20 West 34th Street, New York City, NY 10001\"\n  }\n}"
+ }
+]

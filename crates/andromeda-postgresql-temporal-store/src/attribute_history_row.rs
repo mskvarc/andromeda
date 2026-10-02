@@ -6,7 +6,7 @@ use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::Stre
 use andromeda_temporal::append_intent::TemporalObservationIdentity;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
+use serde_json::value::RawValue;
 use uuid::Uuid;
 
 /// One attribute-history observation as the hypertable stores it.
@@ -43,8 +43,9 @@ pub struct AttributeHistoryRow {
     pub instance: InstanceIdentity,
     /// Catalog identity of the instance's `unitCode`, absent when it declares none.
     pub unit_code_id: Option<UnitCodeId>,
-    /// Retained expanded members, with `unitCode` already lifted into its column.
-    pub metadata: Option<Value>,
+    /// The stored JSON of the instance's metadata, with `unitCode` already
+    /// lifted into its column.
+    pub metadata: Option<Box<RawValue>>,
 }
 
 impl AttributeHistoryRow {

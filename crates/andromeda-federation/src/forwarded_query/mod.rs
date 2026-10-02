@@ -360,7 +360,9 @@ mod tests {
         let engine = offline_engine();
         let context = ContextSpec::none();
         let resolver = TermResolver::new(&engine, &context);
-        let names = ForwardedNames::new(&engine, &resolver, &context, Rewording::AsInbound);
+        let names = ForwardedNames::prepare(&engine, &resolver, &context, Rewording::AsInbound)
+            .await
+            .expect("the forwarding context processes");
         ForwardedQuery::for_registration(client, registration, split, None, &names)
             .await
             .expect("narrowing succeeds")
@@ -371,7 +373,9 @@ mod tests {
         let engine = offline_engine();
         let context = ContextSpec::none();
         let resolver = TermResolver::new(&engine, &context);
-        let names = ForwardedNames::new(&engine, &resolver, &context, Rewording::AsInbound);
+        let names = ForwardedNames::prepare(&engine, &resolver, &context, Rewording::AsInbound)
+            .await
+            .expect("the forwarding context processes");
         ForwardedQuery::for_registration(client, registration, split, Some(page), &names)
             .await
             .expect("narrowing succeeds")
@@ -388,7 +392,9 @@ mod tests {
         let engine = offline_engine();
         let context = ContextSpec::from_body(body_context);
         let resolver = TermResolver::new(&engine, &context);
-        let names = ForwardedNames::new(&engine, &resolver, &context, Rewording::AsInbound);
+        let names = ForwardedNames::prepare(&engine, &resolver, &context, Rewording::AsInbound)
+            .await
+            .expect("the forwarding context processes");
         ForwardedQuery::for_registration(client, registration, split, None, &names)
             .await
             .expect("narrowing succeeds")
@@ -746,7 +752,9 @@ mod tests {
         let inbound = ContextSpec::from_body(aliased_context());
         let forwarding = ContextSpec::from_body(json!({ "velocity": ALIASED_SPEED, "Car": ALIASED_VEHICLE }));
         let resolver = TermResolver::new(&engine, &inbound);
-        let names = ForwardedNames::new(&engine, &resolver, &forwarding, Rewording::Reword);
+        let names = ForwardedNames::prepare(&engine, &resolver, &forwarding, Rewording::Reword)
+            .await
+            .expect("the forwarding context processes");
 
         let block = registration(&json!([{"entities": [{"type": ALIASED_VEHICLE}], "propertyNames": [ALIASED_SPEED]}]));
         let query = entity_query("type=Veh&attrs=spd&q=spd%3E1&jsonKeys=spd&csf=spd%3D%3D1");

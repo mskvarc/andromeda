@@ -24,7 +24,7 @@ use crate::{
     write_kind::{AppendAttributes, PartialUpdateAttribute, ReplaceAttribute, UpdateAttributes},
 };
 use andromeda_context_commit::history_record::HistoryRecord;
-use andromeda_ngsi_ld_model::expanded::mutation::selection::OverwritePolicy;
+use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -37,13 +37,14 @@ async fn partial_update_attr_records_the_patched_instance_keeping_its_untouched_
     let attribute = attribute_name("category");
     let admitted = admitted_attribute::<PartialUpdateAttribute>(&service, &attribute, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .partial_update_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
+        .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
         .await
         .expect("the partial update lands");
 
     let write = single_recorded_write(&recorded);
     assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
-    let category = observed_default_instance(recorded_observation(&write).expect("an observation"), CATEGORY_IRI);
+    let observation = recorded_observation(&write).expect("an observation");
+    let category = observed_default_instance(&observation, CATEGORY_IRI);
     assert_eq!(category[properties::VALUE.as_str()][0]["@value"], json!("retail"));
     assert_eq!(
         category[ACCURACY_IRI][0][properties::VALUE.as_str()][0]["@value"],
@@ -66,15 +67,15 @@ async fn partial_update_attr_does_not_record_a_fragment_sub_property_as_an_entit
     )
     .await;
     service
-        .partial_update_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
+        .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
         .await
         .expect("the partial update lands");
 
     let write = single_recorded_write(&recorded);
     let observation = recorded_observation(&write).expect("an observation");
-    assert_eq!(observed_attributes(observation).into_iter().collect::<Vec<_>>(), vec![CATEGORY_IRI.to_owned()]);
+    assert_eq!(observed_attributes(&observation).into_iter().collect::<Vec<_>>(), vec![CATEGORY_IRI.to_owned()]);
     assert!(
-        observed_default_instance(observation, CATEGORY_IRI).get(NAME_IRI).is_some(),
+        observed_default_instance(&observation, CATEGORY_IRI).get(NAME_IRI).is_some(),
         "the sub-Property is recorded inside the instance it belongs to"
     );
 }
@@ -88,7 +89,7 @@ async fn partial_update_attr_to_the_null_sentinel_records_only_the_tombstone() {
     let admitted =
         admitted_attribute::<PartialUpdateAttribute>(&service, &attribute, json!({"type": "Property", "value": "urn:ngsi-ld:null"}), &core_context()).await;
     service
-        .partial_update_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
+        .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
         .await
         .expect("the deleting partial update lands");
 
@@ -109,13 +110,14 @@ async fn replace_attr_records_the_stored_replacement() {
     let attribute = attribute_name("category");
     let admitted = admitted_attribute::<ReplaceAttribute>(&service, &attribute, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .replace_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
+        .replace_attr(&live_target(), &entity_uri(), None, admitted)
         .await
         .expect("the replace lands");
 
     let write = single_recorded_write(&recorded);
     assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
-    let category = observed_default_instance(recorded_observation(&write).expect("an observation"), CATEGORY_IRI);
+    let observation = recorded_observation(&write).expect("an observation");
+    let category = observed_default_instance(&observation, CATEGORY_IRI);
     assert_eq!(category[properties::VALUE.as_str()][0]["@value"], json!("retail"));
     assert!(category.get(ACCURACY_IRI).is_none(), "the replacement drops the sub-Property");
     assert!(
@@ -133,7 +135,8 @@ async fn update_attrs_records_the_whole_instance_it_wrote() {
 
     let write = single_recorded_write(&recorded);
     assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
-    let category = observed_default_instance(recorded_observation(&write).expect("an observation"), CATEGORY_IRI);
+    let observation = recorded_observation(&write).expect("an observation");
+    let category = observed_default_instance(&observation, CATEGORY_IRI);
     assert!(category.get(ACCURACY_IRI).is_none(), "the whole-instance overwrite drops the sub-Property");
 }
 

@@ -11,10 +11,12 @@ use crate::{
     document_context::apply_context,
     engine::{
         builder::JsonLdEngineBuilder,
-        compaction_context_cache::CompactionContextCache,
+        compaction_context::CompactionContext,
         context_url::{canonical_context_urls, context_urls_of, resolve_relative_context_urls},
+        expansion_context::ExpansionContext,
+        processed_context_cache::ProcessedContextCache,
         term_lookup::TermCache,
-        term_map::{user_term::UserTermTableCache, vocabulary::CoreVocabulary},
+        user_context_scan::UserContextScanCache,
     },
     error::JsonLdError,
     hit_counter::HitCounter,
@@ -37,29 +39,25 @@ pub struct JsonLdEngine {
     term_cache: TermCache,
     /// Clause 5.13.3.5 access counts, when a durable cache is attached.
     hit_counter: Option<Arc<HitCounter>>,
-    /// Parsed request contexts, kept per URL for the life of the engine.
-    user_term_tables: Arc<UserTermTableCache>,
-    /// Processed compaction contexts built only from embedded documents.
-    compaction_contexts: CompactionContextCache,
-    /// Generated vocabulary IRIs validated once during engine construction.
-    core_vocabulary: Arc<CoreVocabulary>,
+    /// Scanned request contexts, kept per URL for the life of the engine.
+    user_context_scans: Arc<UserContextScanCache>,
+    /// Processed compaction contexts, kept while their documents stay current.
+    compaction_contexts: Arc<ProcessedContextCache<CompactionContext>>,
+    /// Processed expansion contexts naming a document the broker does not
+    /// embed, kept while their documents stay current.
+    expansion_contexts: Arc<ProcessedContextCache<ExpansionContext>>,
 }
 
 impl JsonLdEngine {
     /// Assemble an engine. Reached through [`JsonLdEngineBuilder`].
-    pub(crate) fn assembled(
-        loader: HttpContextLoader,
-        term_cache: TermCache,
-        hit_counter: Option<Arc<HitCounter>>,
-        core_vocabulary: CoreVocabulary,
-    ) -> JsonLdEngine {
+    pub(crate) fn assembled(loader: HttpContextLoader, term_cache: TermCache, hit_counter: Option<Arc<HitCounter>>) -> JsonLdEngine {
         JsonLdEngine {
             loader: Arc::new(loader),
             term_cache,
             hit_counter,
-            user_term_tables: Arc::new(UserTermTableCache::default()),
-            compaction_contexts: CompactionContextCache::new(),
-            core_vocabulary: Arc::new(core_vocabulary),
+            user_context_scans: Arc::new(UserContextScanCache::default()),
+            compaction_contexts: Arc::new(ProcessedContextCache::new()),
+            expansion_contexts: Arc::new(ProcessedContextCache::new()),
         }
     }
 
@@ -67,11 +65,6 @@ impl JsonLdEngine {
     #[must_use]
     pub fn builder() -> JsonLdEngineBuilder {
         JsonLdEngineBuilder::new()
-    }
-
-    /// The generated vocabulary after construction-time IRI validation.
-    pub(crate) fn core_vocabulary(&self) -> &CoreVocabulary {
-        &self.core_vocabulary
     }
 
     /// The shared access counter, when one is attached.
@@ -84,7 +77,7 @@ impl JsonLdEngine {
         self.hit_counter.clone() // clone: Arc ref-count bump
     }
 
-    /// The context loader, for the batch term table.
+    /// The context loader.
     pub(crate) fn loader(&self) -> &HttpContextLoader {
         &self.loader
     }
@@ -101,25 +94,30 @@ impl JsonLdEngine {
     }
 
     /// The processed compaction contexts kept on this engine.
-    pub(crate) const fn compaction_contexts(&self) -> &CompactionContextCache {
+    pub(crate) fn compaction_contexts(&self) -> &ProcessedContextCache<CompactionContext> {
         &self.compaction_contexts
     }
 
-    /// The parsed request contexts kept on this engine.
-    pub(crate) fn user_term_tables(&self) -> &UserTermTableCache {
-        &self.user_term_tables
+    /// The processed expansion contexts kept on this engine.
+    pub(crate) fn expansion_contexts(&self) -> &ProcessedContextCache<ExpansionContext> {
+        &self.expansion_contexts
+    }
+
+    /// The scanned request contexts kept on this engine.
+    pub(crate) fn user_context_scans(&self) -> &UserContextScanCache {
+        &self.user_context_scans
     }
 
     /// Invalidate every in-process cache entry for a context URL.
     ///
-    /// Drops the URL from the moka document cache and from the parsed term
-    /// tables, so a context that was just deleted or reloaded is re-resolved on
+    /// Drops the URL from the moka document cache and from the scanned
+    /// contexts, so a context that was just deleted or reloaded is re-resolved on
     /// next use rather than served from memory. The durable L2 cache is the
     /// caller's to update (a delete removes its row, a reload replaces its
     /// payload).
     pub async fn invalidate_context(&self, url: &IriBuf) {
         self.loader.invalidate(url).await;
-        self.user_term_tables.remove(url);
+        self.user_context_scans.remove(url);
     }
 
     /// The single-term expansion cache.
@@ -203,17 +201,6 @@ impl JsonLdEngine {
     /// loaded with.
     pub async fn notification_body_context(&self, jsonld_context: Option<&IriBuf>) -> Result<Value, JsonLdError> {
         notification_body_context(jsonld_context, self.loader.as_ref()).await
-    }
-
-    /// Resolve a context URL to its payload through the full pipeline.
-    ///
-    /// # Errors
-    ///
-    /// Returns a context-loading variant when the URL does not resolve.
-    pub async fn resolve_context(&self, url: impl AsRef<str>) -> Result<Value, JsonLdError> {
-        let url = IriBuf::new(url.as_ref().to_owned()).map_err(JsonLdError::ContextUrlNotIri)?;
-        let value = self.loader.load_value(&url).await?;
-        Ok(jsonld_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
     }
 
     /// Fetch a context from its source, bypassing every cache.

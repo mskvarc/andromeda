@@ -8,7 +8,12 @@
 //! dropped. Whatever remains is delivered to the local endpoint under the local
 //! subscription's identifier.
 
-use crate::{error::SubscriptionForwardingError, forwarding_invariant::ForwardingInvariant, service::SubscriptionForwardingService};
+use crate::{
+    error::SubscriptionForwardingError,
+    forwarding_invariant::ForwardingInvariant,
+    received_entity::ReceivedEntity,
+    service::SubscriptionForwardingService,
+};
 use andromeda_delivery::{
     endpoint::transport::parse_endpoint_transport,
     notification_context::NotificationContext,
@@ -29,14 +34,9 @@ use andromeda_federation::{
     outcome::ForwardedEntities,
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
-use andromeda_jsonld::{
-    context_spec::ContextSpec,
-    engine::{
-        context_compactor::ContextCompactor,
-        expanded_input::ExpandedInput,
-        options::{CompactOptions, ContextStripping},
-    },
-};
+use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
@@ -49,7 +49,7 @@ use andromeda_ngsi_ld_render::{
     notification_conformance::amend_notification_entities,
     notification_data::notification_data,
 };
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use andromeda_subscription::{
     compilation::compile_subscription,
@@ -122,21 +122,80 @@ impl SubscriptionForwardingService {
         merge_retrieve_results(Some(received), sources).ok_or_else(|| ForwardingInvariant::MergeProducedNothing.into())
     }
 
-    /// One entity of the inbound notification, re-spelled from the sender's
-    /// context (`inbound`) into the local subscription's, the one `local`
-    /// compacts against.
-    async fn received_under(&self, value: &Value, inbound: &ContextSpec, local: &ContextCompactor<'_>) -> Result<Entity, SubscriptionForwardingError> {
-        // clone: expansion consumes the value while the notification stays borrowed
-        let expanded = self.engine.expand(value.clone(), inbound).await?;
-        let compacted = local
-            .compact(
-                ExpandedInput::Canonical(expanded),
-                CompactOptions {
-                    strip_context: ContextStripping::Strip,
-                },
-            )
-            .await?;
-        Ok(serde_json::from_value(compacted)?)
+    /// One re-assembled entity of the notification under the local context,
+    /// or `None` when it cannot be read or the local subscription's filters
+    /// drop it (clause 5.8.6).
+    ///
+    /// A complete entity is filtered on the document it expanded to under the
+    /// sender's context; a split one is completed first and filtered on the
+    /// completed entity, expanded once under the local context.
+    async fn reassembled(
+        &self,
+        received: &ReceivedEntity,
+        reading: &ReassemblyReading<'_, '_>,
+        sender: &Identifier,
+    ) -> Result<Option<Entity>, SubscriptionForwardingError> {
+        if matches!(reading.completion, Completion::Complete) && !matches_entity_filters(reading.compiled, &received.document) {
+            return Ok(None);
+        }
+        let part = match received.respelled(reading.local_compactor).await {
+            Ok(entity) => entity,
+            Err(error) => {
+                warn!(%error, "inbound notification carried an entity that does not parse");
+                return Ok(None);
+            }
+        };
+        match &reading.completion {
+            Completion::Complete => Ok(Some(part)),
+            Completion::Split(local_expansion) => {
+                let merged = self.reassemble_entity(part, sender, reading.local_context).await?;
+                let document = local_expansion
+                    .entity(&merged, Normalization::Entity)
+                    .await
+                    .map_err(ForwardingInvariant::LocalExpansion)?;
+                Ok(matches_entity_filters(reading.compiled, &document).then_some(merged))
+            }
+        }
+    }
+
+    /// Every entity of an inbound notification re-assembled for the local
+    /// subscription and rendered in its `format`; an entity that cannot be
+    /// read, or that the local filters drop, leaves the copy (clause 5.8.6).
+    async fn reassembled_entities(
+        &self,
+        received_entities: &[Value],
+        inbound: &EntityExpansion<'_>,
+        reading: &ReassemblyReading<'_, '_>,
+        sender: &Identifier,
+        format: ResponseFormat,
+        local: &Identifier,
+    ) -> Result<Vec<Value>, SubscriptionForwardingError> {
+        let local_terms = self.engine.prepare_term_context(reading.local_context);
+        let mut local_expansions = AttributeExpansions::new(&self.engine, &local_terms);
+        let wanted = notification_attribute_iris(reading.compiled);
+        let mut data = Vec::with_capacity(received_entities.len());
+        for value in received_entities {
+            let received = match ReceivedEntity::read(value, inbound).await {
+                Ok(received) => received,
+                Err(error) => {
+                    warn!(subscription = %local, %error, "inbound notification carried an entity that does not parse");
+                    continue;
+                }
+            };
+            // Clause 5.8.6: entities failing the local filters leave the copy.
+            let Some(mut entity) = self.reassembled(&received, reading, sender).await? else {
+                continue;
+            };
+            // `id` and `type` stay whatever the projection lists: Table 5.2.4-1
+            // makes both mandatory, so the copy's `data` carries Entities.
+            narrow_entity(&mut entity, reading.compiled, wanted.as_deref(), &mut local_expansions).await?;
+            let rendered = EntityRenderer::new(&entity)
+                .with_mode(format)
+                .render()
+                .map_err(ForwardingInvariant::Rendering)?;
+            data.push(rendered);
+        }
+        Ok(data)
     }
 
     /// Handle a notification arriving under a forwarded copy's identifier.
@@ -196,37 +255,32 @@ impl SubscriptionForwardingService {
         let local_context = ContextSpec::for_subscription_context(subscription.delivery.jsonld_context.as_ref());
 
         let format = subscription.notification.format.unwrap_or_default();
-        let local_compactor = self.engine.compactor(&local_context);
-        let local_terms = self.engine.prepare_term_context(&local_context);
-        let mut local_expansions = AttributeExpansions::new(&self.engine, &local_terms);
-        let wanted = notification_attribute_iris(&compiled);
-        let mut data = Vec::with_capacity(received_entities.len());
-        for value in received_entities {
-            let received = match self.received_under(value, context, &local_compactor).await {
-                Ok(entity) => entity,
-                Err(error) => {
-                    warn!(subscription = %local, %error, "inbound notification carried an entity that does not parse");
-                    continue;
-                }
-            };
-            let mut entity = match split {
-                SplitEntities::Split => self.reassemble_entity(received, &sender, &local_context).await?,
-                SplitEntities::Complete => received,
-            };
-            // Clause 5.8.6: entities failing the local filters leave the copy.
-            let expanded = self.engine.expand(serde_json::to_value(&entity)?, &local_context).await?;
-            if !matches_entity_filters(&compiled, &expanded) {
-                continue;
+        let inbound = match EntityExpansion::prepare(&self.engine, context).await {
+            Ok(inbound) => inbound,
+            Err(error) => {
+                warn!(subscription = %local, %error, "inbound notification names a context its entities cannot be read under");
+                return Ok(());
             }
-            // `id` and `type` stay whatever the projection lists: Table 5.2.4-1
-            // makes both mandatory, so the copy's `data` carries Entities.
-            narrow_entity(&mut entity, &compiled, wanted.as_deref(), &mut local_expansions).await?;
-            let rendered = EntityRenderer::new(&entity)
-                .with_mode(format)
-                .render()
-                .map_err(ForwardingInvariant::Rendering)?;
-            data.push(rendered);
-        }
+        };
+        let context_compactor = self.engine.compactor(&local_context);
+        let local_compactor = EntityCompactor::new(&context_compactor);
+        let completion = match split {
+            SplitEntities::Complete => Completion::Complete,
+            SplitEntities::Split => Completion::Split(
+                EntityExpansion::prepare(&self.engine, &local_context)
+                    .await
+                    .map_err(ForwardingInvariant::LocalExpansion)?,
+            ),
+        };
+        let reading = ReassemblyReading {
+            completion,
+            compiled: &compiled,
+            local_context: &local_context,
+            local_compactor: &local_compactor,
+        };
+        let data = self
+            .reassembled_entities(received_entities, &inbound, &reading, &sender, format, &local)
+            .await?;
         // Clause 5.8.6: the copy is sent to the local subscription's endpoint,
         // so it is the local subscription's `ngsildConformance` that the copy's
         // Entities are amended to -- after the format rendering, which is where
@@ -275,6 +329,31 @@ impl SubscriptionForwardingService {
         }
         Ok(())
     }
+}
+
+/// How the entities of one inbound notification are read for the local
+/// subscription.
+struct ReassemblyReading<'r, 'c> {
+    /// Whether the entities are completed from their other holders.
+    completion: Completion<'r>,
+    /// The local subscription, whose filters decide what the copy carries.
+    compiled: &'r CompiledSubscription,
+    /// The local subscription's context.
+    local_context: &'r ContextSpec,
+    /// The compactor of the local subscription's context.
+    local_compactor: &'r EntityCompactor<'c>,
+}
+
+/// Whether the entities of an inbound notification are completed from their
+/// other holders (clause 5.8.6 split entities).
+enum Completion<'e> {
+    /// Every source holds complete entities: the received entity is the
+    /// entity.
+    Complete,
+    /// An entity may be split across holders: the received part is completed,
+    /// and the completed entity is expanded under the local context for the
+    /// local filters.
+    Split(EntityExpansion<'e>),
 }
 
 /// The attributes the local subscription's `notification.attributes` names,

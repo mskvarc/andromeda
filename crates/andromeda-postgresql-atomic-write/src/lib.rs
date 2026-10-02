@@ -39,9 +39,9 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-context-space",
         "andromeda-context-commit",
+        "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
-        "andromeda-ngsi-ld-number",
         "andromeda-persistence-failure",
         "andromeda-postgresql-branch",
         "andromeda-postgresql-name-dictionary",
@@ -54,10 +54,10 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-temporal-store",
         "andromeda-telemetry",
         "andromeda-temporal",
-        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
-        "andromeda-ngsi-ld-geometry",
+        "andromeda-ngsi-ld-number",
+        "andromeda-unit-catalog",
     ],
     // `tokio` for the backoff between runs of a commit PostgreSQL rolled back
     // as a deadlock or serialization victim (`contention_retry`).

@@ -34,9 +34,9 @@ use crate::{
 use andromeda_context_commit::{atomic_write::AtomicWrite, precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_entity::{instance::Instance, operation::selection::OverwritePolicy, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::selection::OverwritePolicy};
-use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use andromeda_ngsi_ld_model::entity::Entity;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -355,8 +355,13 @@ async fn a_batch_delete_superseded_by_another_writer_ends_the_instance_it_added(
 }
 
 /// The `modifiedAt` the write stamped on the instance of `attribute`.
-fn stamped_modified_at(write: &AtomicWrite, attribute: &str) -> Value {
-    write.entity.record().expect("the write stores a payload").payload[term(attribute)][0][properties::MODIFIED_AT.as_str()].clone() // clone: the test owns the stamp it compares
+fn stamped_modified_at(write: &AtomicWrite, attribute: &str) -> Option<SystemInstant> {
+    let state = &write.entity.record().expect("the write stores a state").state;
+    state
+        .attributes()
+        .get(&term(attribute))
+        .and_then(|instances| instances.get(None))
+        .and_then(Instance::modified_at)
 }
 
 /// Clause 5.5.11.0: "All Entities and Attributes in the batch will get the
@@ -372,6 +377,6 @@ async fn a_retried_attempt_stamps_the_batch_instant_the_first_attempt_stamped() 
     let writes = contended.store.submitted_for(&id);
     assert_eq!(writes.len(), 2);
     let first = stamped_modified_at(&writes[0], "m");
-    assert!(first.is_array(), "the merged instance is stamped: {first}");
+    assert!(first.is_some(), "the merged instance is stamped");
     assert_eq!(stamped_modified_at(&writes[1], "m"), first);
 }

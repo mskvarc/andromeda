@@ -23,7 +23,8 @@ use andromeda_context_commit::{
     history_record::HistoryRecord,
     precondition::Precondition,
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity::Entity;
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
@@ -50,16 +51,21 @@ fn property_instance(value: i64) -> Value {
     })
 }
 
-/// The stored, expanded Building `id` holding a Property for each of
+/// The stored Building `id` holding a Property of `value` for each of
 /// `attributes`.
-pub(crate) fn stored_building(id: &Identifier, attributes: &[&str]) -> Value {
+fn building_with(id: &Identifier, attributes: &[&str], value: i64) -> EntityState {
     let mut payload = Map::new();
     payload.insert("@id".to_owned(), json!(id.as_str()));
     payload.insert("@type".to_owned(), json!([BUILDING_TYPE_IRI]));
     for attribute in attributes {
-        payload.insert(term(attribute), json!([property_instance(1)]));
+        payload.insert(term(attribute), json!([property_instance(value)]));
     }
-    Value::Object(payload)
+    EntityState::from_slice(&serde_json::to_vec(&Value::Array(vec![Value::Object(payload)])).expect("JSON")).expect("the fixture is a stored entity")
+}
+
+/// The stored Building `id` holding a Property for each of `attributes`.
+pub(crate) fn stored_building(id: &Identifier, attributes: &[&str]) -> EntityState {
+    building_with(id, attributes, 1)
 }
 
 /// The request Building `id`, in compact form, carrying `attributes`.
@@ -72,26 +78,21 @@ pub(crate) fn request_building(id: &Identifier, attributes: &Value) -> Entity {
     serde_json::from_value(entity).expect("the fixture entity is valid")
 }
 
-/// The attribute terms an expanded payload carries, sorted.
-pub(crate) fn attribute_terms(payload: &Value) -> Vec<String> {
-    let object = match payload {
-        Value::Array(nodes) => nodes.first().and_then(Value::as_object),
-        Value::Object(object) => Some(object),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    };
-    let mut terms: Vec<String> = object
-        .into_iter()
-        .flat_map(Map::keys)
-        .filter_map(|key| key.strip_prefix(DEFAULT_VOCABULARY))
+/// The attribute terms a stored entity carries, sorted.
+pub(crate) fn attribute_terms(state: &EntityState) -> Vec<String> {
+    let mut terms: Vec<String> = state
+        .attributes()
+        .names()
+        .filter_map(|name| name.as_str().strip_prefix(DEFAULT_VOCABULARY))
         .map(str::to_owned)
         .collect();
     terms.sort_unstable();
     terms
 }
 
-/// The attribute terms the payload `write` stores carries.
+/// The attribute terms the state `write` stores carries.
 pub(crate) fn written_terms(write: &AtomicWrite) -> Vec<String> {
-    attribute_terms(&write.entity.record().expect("the write stores a payload").payload)
+    attribute_terms(&write.entity.record().expect("the write stores a state").state)
 }
 
 /// The attribute terms whose instances `write` records as ended, sorted.
@@ -122,14 +123,15 @@ pub(crate) fn held_version(write: &AtomicWrite) -> DateTime<Utc> {
 /// before the next commit, and records the version it left the Building at.
 pub(crate) fn adds_attribute(id: &Identifier, attribute: &str, version: &Arc<Mutex<Option<DateTime<Utc>>>>) -> ConcurrentWriter {
     let id = id.clone(); // clone: the writer outlives the borrow
-    let member = term(attribute);
+    let member: AttributeName = term(attribute).parse().expect("a valid attribute name");
+    let addition = building_with(&id, &[attribute], 2);
     let version = Arc::clone(version); // clone: the test reads the version the writer records
     ConcurrentWriter::BeforeNextCommit(Box::new(move |rows: &mut StoredRows| {
-        let mut payload = rows.payload(&id).cloned().unwrap_or_else(|| stored_building(&id, &[])); // clone: the writer stores a changed copy
-        if let Some(object) = payload.as_object_mut() {
-            object.insert(member, json!([property_instance(2)]));
-        }
-        rows.put(&id, payload);
+        // clone: the writer stores a changed copy sharing what it leaves alone
+        let mut state = rows.payload(&id).map_or_else(|| stored_building(&id, &[]), |stored| EntityState::clone(stored));
+        let added = addition.attributes().get_shared(member.as_str()).expect("the addition holds the attribute");
+        state.attributes_mut().insert_shared(member, Arc::clone(added));
+        rows.put(&id, Arc::new(state));
         *version.lock().expect("the version lock is not poisoned") = rows.version(&id);
     }))
 }

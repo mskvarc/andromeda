@@ -34,9 +34,9 @@ use andromeda_context_commit::{
     write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
+use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use dashmap::DashMap;
 use std::sync::Arc;
 
@@ -72,15 +72,15 @@ impl SpatialIndexingCommitter {
         if target.snapshot().is_some() {
             return self.commit_inner(target, writes, replay).await;
         }
-        let changes: Vec<IndexChange> = writes.iter().map(|write| IndexChange::of(write, &self.placement)).collect();
+        let changes: Vec<IndexChange> = writes.iter().map(IndexChange::of).collect();
         let entities: Vec<Identifier> = changes.iter().filter_map(IndexChange::entity).cloned().collect(); // clone: the lock map owns the identifiers it locks
         let _guards = acquire_id_locks_in(&self.locks, target, &entities).await;
         for change in &changes {
-            change.anticipate(&self.index);
+            change.anticipate(&self.index, &self.placement);
         }
         let outcomes = self.commit_inner(target, writes, replay).await?;
         for (change, outcome) in changes.into_iter().zip(&outcomes) {
-            change.settle(&self.index, outcome);
+            change.settle(&self.index, &self.placement, outcome);
         }
         Ok(outcomes)
     }
@@ -112,8 +112,9 @@ enum IndexChange {
     Restate {
         /// The entity written.
         entity_id: Identifier,
-        /// The partitions the entity's location occupies once the write lands.
-        placements: Vec<(SpatialKey, Geometry)>,
+        /// The state the write commits, shared with it: the partitions its
+        /// location occupies are read off it, borrowing its geometry.
+        state: Arc<EntityState>,
     },
     /// The write deletes the entity.
     Remove {
@@ -126,12 +127,12 @@ enum IndexChange {
 
 impl IndexChange {
     /// The index change one write makes if it lands.
-    fn of(write: &AtomicWrite, placement: &LocationPlacement) -> IndexChange {
+    fn of(write: &AtomicWrite) -> IndexChange {
         let entity_id = || (*write.entity_id).clone(); // clone: the index owns the identifier the write shares
         match &write.entity {
             EntityMutation::Insert(record) | EntityMutation::Update(record) => IndexChange::Restate {
                 entity_id: entity_id(),
-                placements: placement.of(&record.projection.types, record.projection.location.as_ref()),
+                state: Arc::clone(&record.state),
             },
             EntityMutation::Delete => IndexChange::Remove { entity_id: entity_id() },
             EntityMutation::None => IndexChange::Unchanged,
@@ -148,11 +149,11 @@ impl IndexChange {
 
     /// Make the entity reachable wherever the write may leave it, before the
     /// write commits.
-    fn anticipate(&self, index: &SpatialEntityIndex) {
+    fn anticipate(&self, index: &SpatialEntityIndex, placement: &LocationPlacement) {
         match self {
-            IndexChange::Restate { entity_id, placements } => {
-                // clone: the settled replacement needs the same identifier and placements once the outcome is known
-                index.anticipate_entity(entity_id.clone(), placements.clone());
+            IndexChange::Restate { entity_id, state } => {
+                // clone: the settled replacement needs the same identifier once the outcome is known
+                index.anticipate_entity(entity_id.clone(), placement.of(state.types().as_slice(), state.location_geometry()));
             }
             // Keeping the entity's current entries until the deletion lands is
             // what keeps it reachable if the deletion does not.
@@ -161,9 +162,11 @@ impl IndexChange {
     }
 
     /// Settle the index to what the write actually did.
-    fn settle(self, index: &SpatialEntityIndex, outcome: &WriteOutcome) {
+    fn settle(self, index: &SpatialEntityIndex, placement: &LocationPlacement, outcome: &WriteOutcome) {
         match (self, outcome) {
-            (IndexChange::Restate { entity_id, placements }, WriteOutcome::Created | WriteOutcome::Updated) => index.replace_entity(entity_id, placements),
+            (IndexChange::Restate { entity_id, state }, WriteOutcome::Created | WriteOutcome::Updated) => {
+                index.replace_entity(entity_id, placement.of(state.types().as_slice(), state.location_geometry()));
+            }
             (IndexChange::Remove { entity_id }, WriteOutcome::Deleted(_)) => index.remove(&entity_id),
             // A write that did not land leaves the store as it was; whatever it
             // anticipated only widens a candidate set until the entity's next
@@ -198,10 +201,10 @@ mod tests {
         write_outcome::WriteOutcome,
     };
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_geometry::{
         form::{GeometryForm, PolygonRings},
         geo_rel::GeoRel,
-        geometry::Geometry,
         linear_ring::LinearRing,
         position::Position,
     };
@@ -248,19 +251,25 @@ mod tests {
         "urn:ngsi-ld:Vehicle:A".parse().expect("a well-formed URI")
     }
 
-    fn point(x: f64) -> Geometry {
-        Geometry::new(GeometryForm::Point(
-            Position::try_new(x, 0.0, None).expect("a test position lies on the CRS84 axes"),
-        ))
-    }
-
+    /// A vehicle whose default `location` is the Point `(x, 0)`.
     fn located_at(x: f64) -> EntityMutation {
+        let document = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:A",
+            "@type": ["https://example.org/Vehicle"],
+            "https://uri.etsi.org/ngsi-ld/location": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@type": ["https://purl.org/geojson/vocab#Point"],
+                    "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": x}, {"@value": 0.0}]}]
+                }]
+            }]
+        }]);
+        let state = EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes");
         let projection = SearchProjection {
             types: vec!["https://example.org/Vehicle".parse().expect("a well-formed type")],
-            location: Some(point(x)),
             ..SearchProjection::default()
         };
-        EntityMutation::Update(EntityRecord::from_parts(Arc::new(json!([{}])), projection, None, None))
+        EntityMutation::Update(EntityRecord::from_parts(Arc::new(state), projection, None, None))
     }
 
     fn write(entity: EntityMutation) -> AtomicWrite {
@@ -289,7 +298,7 @@ mod tests {
             IriBuf::new("https://example.org/Vehicle".to_owned()).expect("a well-formed IRI"),
             "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         );
-        let square = Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![
+        let square = GeometryForm::Polygon(PolygonRings::new(vec![
             LinearRing::try_new(vec![
                 Position::try_new(x - 1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
                 Position::try_new(x + 1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
@@ -298,7 +307,7 @@ mod tests {
                 Position::try_new(x - 1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
             ])
             .expect("a test square is a closed ring"),
-        ])));
+        ]));
         index.query(&key, &GeoRel::Within, &square)
     }
 

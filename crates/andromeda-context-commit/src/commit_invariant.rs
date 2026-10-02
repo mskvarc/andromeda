@@ -5,8 +5,7 @@
 //! broken one is answered `InternalError` and its detail stays in the log.
 
 use crate::write_ordinal::WriteOrdinalOutOfRange;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::{dataset_id::InstanceDatasetIdError, entity_member::ExpandedMemberError};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReferenceError};
 use derive_more::Display;
 use std::num::TryFromIntError;
 use thiserror::Error;
@@ -14,14 +13,11 @@ use thiserror::Error;
 /// A commit-protocol invariant that did not hold.
 #[derive(Debug, Error)]
 pub enum CommitInvariant {
-    /// An entity the broker already admitted carries an instance whose
-    /// `datasetId` no longer reads as an identifier.
-    #[error("an admitted entity carries an unreadable datasetId: {0}")]
-    AdmittedDatasetId(#[from] InstanceDatasetIdError),
-    /// An entity the broker already admitted carries a type or attribute name
-    /// that no longer reads as one.
-    #[error("an admitted entity carries an unreadable member: {0}")]
-    AdmittedMember(#[from] ExpandedMemberError),
+    /// The expanded name of a member NGSI-LD reserves on an entity (`scope`,
+    /// the entity's `expiresAt`) did not read as the attribute name the search
+    /// projection lists it under.
+    #[error("the expanded name of a reserved entity member does not read as an attribute name: {0}")]
+    ReservedMemberName(#[source] NgsiLdReferenceError),
     /// A Snapshot branch commit carried a deferred side-effect job, which only
     /// the live branch defers.
     #[error("a Snapshot branch commit carries a deferred side-effect job; only the live branch defers side effects")]

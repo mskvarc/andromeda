@@ -3,6 +3,8 @@
 use crate::notification_invariant::NotificationInvariant;
 use andromeda_entity::error::EntityError;
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
+use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_registration::error::RegistrationError;
 use andromeda_subscription::error::SubscriptionError;
@@ -22,9 +24,17 @@ pub enum NotificationError {
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),
+    /// A notified entity could not be compacted under the subscription's
+    /// context, nor under the core context.
+    #[error(transparent)]
+    Compaction(#[from] CompactionError),
     /// A notification value could not be represented.
     #[error("notification representation failed: {0}")]
     Representation(#[source] serde_json::Error),
+    /// A notified entity could not be written in the subscription's
+    /// `notification.format`.
+    #[error(transparent)]
+    Rendering(#[from] RenderError),
     /// Durable notification persistence failed.
     #[error("notification persistence failed: {0}")]
     Persistence(#[from] PersistenceFailure),

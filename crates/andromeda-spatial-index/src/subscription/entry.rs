@@ -1,7 +1,7 @@
 //! One subscription's geo filter, as the tree holds it.
 
 use crate::partitioned_rtree::Indexed;
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, great_circle::great_circle_bounds, near_envelope::NearEnvelope};
+use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, great_circle::great_circle_bounds, near_envelope::NearEnvelope, planar::PlanarGeometry};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use rstar::{AABB, RTreeObject};
 
@@ -21,8 +21,10 @@ use rstar::{AABB, RTreeObject};
 pub struct SubEntry {
     /// Subscription identifier.
     pub subscription_id: Identifier,
-    /// The reference geometry the subscription filters against.
-    pub ref_geometry: Geometry,
+    /// The horizontal projection of the reference geometry the subscription
+    /// filters against, projected once here rather than at every entity
+    /// change the entry is a candidate for.
+    pub ref_geometry: PlanarGeometry,
     /// The relation the subscription asked for.
     pub georel: GeoRel,
     /// Bounding box used for candidate pruning.
@@ -37,7 +39,8 @@ impl SubEntry {
     /// this crate indexes geo filters, and knowing what else a subscription
     /// carries would make an R-tree a subscription cache.
     #[must_use]
-    pub fn new(subscription_id: Identifier, ref_geometry: Geometry, georel: GeoRel) -> Option<SubEntry> {
+    pub fn new(subscription_id: Identifier, ref_geometry: &GeometryForm, georel: GeoRel) -> Option<SubEntry> {
+        let ref_geometry = PlanarGeometry::project(ref_geometry);
         let bounds = great_circle_bounds(&ref_geometry)?;
         let rect = match &georel {
             GeoRel::Near {

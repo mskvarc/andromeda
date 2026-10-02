@@ -1,0 +1,8 @@
+{
+    "@context": {
+        "OffStreetParking": "http://example.org/parking/OffStreetParking",
+        "availableSpotNumber": "http://example.org/parking/availableSpotNumber",
+        "totalSpotNumber": "http://example.org/parking/totalSpotNumber",
+        "name": "http://example.org/parking/name"
+    }
+}

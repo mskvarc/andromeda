@@ -7,6 +7,7 @@
 
 use crate::{
     FederationService,
+    document_rewording::DocumentVocabulary,
     error::FederationError,
     forwarded_payload::{ItemBody, OutgoingBody},
     forwarding_context::BodyPresence,
@@ -32,7 +33,7 @@ pub(crate) struct PlannedWrite<'a> {
     /// The HTTP method.
     pub(crate) method: reqwest::Method,
     /// The body narrowed to what the registration covers.
-    pub(crate) body: Option<Vec<u8>>,
+    pub(crate) body: Option<PlannedBody>,
     /// The attributes an exclusive registration claims from the payload.
     pub(crate) proxied_attrs: Vec<AttributeName>,
     /// The context of the triggering request.
@@ -45,6 +46,15 @@ pub(crate) struct PlannedWrite<'a> {
     pub(crate) linked_map: Option<Identifier>,
 }
 
+/// The body of one planned write.
+pub(crate) struct PlannedBody {
+    /// The serialised document.
+    pub(crate) bytes: Vec<u8>,
+    /// What kind of document it is, which decides where its names sit when it
+    /// is spelled in the forwarding context.
+    pub(crate) vocabulary: DocumentVocabulary,
+}
+
 /// What one forwarded write carries, and the context each part of it was
 /// submitted under.
 pub(crate) enum WritePayload<'a> {
@@ -55,12 +65,14 @@ pub(crate) enum WritePayload<'a> {
     Document {
         /// The serialised document.
         bytes: &'a [u8],
+        /// What kind of document it is.
+        vocabulary: DocumentVocabulary,
         /// The context it was submitted under.
         context: &'a ContextSpec,
     },
     /// A batch array whose entities each carry the context they were
     /// submitted under.
-    Items(&'a [ItemBody<'a>]),
+    Items(Vec<ItemBody<'a>>),
 }
 
 /// One forwarded write request, as [`FederationService::forward_write`] sends it.
@@ -105,8 +117,12 @@ impl FederationService {
             linked_map,
         } = write;
         let mode = registration.access.mode.unwrap_or_default();
-        let payload = match body.as_deref() {
-            Some(bytes) => WritePayload::Document { bytes, context },
+        let payload = match &body {
+            Some(PlannedBody { bytes, vocabulary }) => WritePayload::Document {
+                bytes,
+                vocabulary: *vocabulary,
+                context,
+            },
             None => WritePayload::Empty(context),
         };
         let outcome = self
@@ -162,8 +178,9 @@ impl FederationService {
                 self.payload_for(registration, context, None).await,
                 single_write_naming(registration, context, BodyPresence::Absent),
             ),
-            WritePayload::Document { bytes, context } => (
-                self.payload_for(registration, context, Some(OutgoingBody::Document(bytes))).await,
+            WritePayload::Document { bytes, vocabulary, context } => (
+                self.payload_for(registration, context, Some(OutgoingBody::Document { bytes, vocabulary }))
+                    .await,
                 single_write_naming(registration, context, BodyPresence::Present),
             ),
             WritePayload::Items(items) => (self.payload_for_items(registration, items).await, Ok(None)),

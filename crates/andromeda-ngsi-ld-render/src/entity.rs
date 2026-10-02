@@ -1,51 +1,41 @@
-//! The clause 4.5.1 rendering of a typed [`Entity`].
+//! The clause 4.5 rendering of one typed [`Entity`] as a JSON document.
 //!
-//! [`EntityRenderer`] is the whole pipeline in one place — language
-//! negotiation, `join=inline`, and the concise or simplified transformation —
-//! so that no caller reaches for a stage of it directly and no caller can run
-//! the stages in a different order. Each stage lives in its own module; this
-//! one owns only the order they run in.
+//! [`EntityRenderer`] is for the callers that need the rendered entity as a
+//! document to transform further -- a notification shaped as a document, a
+//! re-assembled notification of a forwarded subscription, an entity nested
+//! into a document by an inline join. It writes the entity with the very walk a
+//! response body is written by ([`crate::entity_body`]), the clause 4.15
+//! negotiation and the clause 4.21 structural rule included, and leaves every
+//! Relationship target as the store holds it: whoever finishes the document
+//! decodes them once, at the presentation boundary ([`crate::uri_decoding`]).
 
 use crate::{
-    concise::concise_value,
+    entity_body::{
+        member_walk::MemberWalk,
+        typed_entity::{IdentifierMember, TypedEntity},
+    },
     error::{RenderError, RenderedShape},
-    inline_join::apply_inline_join,
-    language_negotiation::render_attribute_value,
-    nested_projection::LinkedProjection,
-    simplify::{simplify_entity, simplify_value},
     structural_projection::StructuralProjection,
+    uri_decoding::UriDecoding,
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use indexmap::IndexMap;
 use serde::Serialize;
 use serde_json::Value;
 
-/// Render an entity to a response value, applying the optional NGSI-LD `lang`
-/// filter, `join=inline`, and concise/simplified transformation at the
-/// presentation boundary.
-///
-/// The rendering pipeline executes in order:
-/// 1. Serialize entity (with language filter if set)
-/// 2. Apply inline join (if linked entities provided)
-/// 3. Apply concise/simplified transformation (if mode != Normalized)
+/// Render an entity to a JSON document, applying the optional NGSI-LD `lang`
+/// filter, the clause 4.5 representation and the clause 4.21 structural rule.
 pub struct EntityRenderer<'a> {
     /// The resource being rendered.
     entity: &'a Entity,
     /// The `lang` filter to negotiate language properties against, if any.
     language_filter: Option<&'a LanguageFilter>,
-    /// The entities `join=inline` resolves relationships against, if any.
-    inline_linked_entities: Option<&'a IndexMap<Identifier, Entity>>,
     /// The clause 4.5.1 rendering to produce.
     mode: ResponseFormat,
     /// The clause 4.21 `pick`/`omit` structural-member rule to apply to
     /// the rendered value's `id`, `type` and `scope` keys, if any.
     structural_projection: Option<StructuralProjection<'a>>,
-    /// The clause 4.21 nested sub-projections `join=inline` applies to the
-    /// linked entities it nests, if any.
-    linked_projection: Option<LinkedProjection<'a>>,
 }
 
 impl<'a> EntityRenderer<'a> {
@@ -55,10 +45,8 @@ impl<'a> EntityRenderer<'a> {
         EntityRenderer {
             entity,
             language_filter: None,
-            inline_linked_entities: None,
             mode: ResponseFormat::Normalized,
             structural_projection: None,
-            linked_projection: None,
         }
     }
 
@@ -69,13 +57,6 @@ impl<'a> EntityRenderer<'a> {
     #[must_use]
     pub const fn with_optional_language_filter(mut self, filter: Option<&'a LanguageFilter>) -> Self {
         self.language_filter = filter;
-        self
-    }
-
-    /// Set linked entities for `join=inline` expansion (NGSI-LD clause 4.5.23).
-    #[must_use]
-    pub const fn with_inline_linked_entities(mut self, linked: &'a IndexMap<Identifier, Entity>) -> Self {
-        self.inline_linked_entities = Some(linked);
         self
     }
 
@@ -96,151 +77,28 @@ impl<'a> EntityRenderer<'a> {
         self.structural_projection = projection;
         self
     }
-
-    /// Set the clause 4.21 nested sub-projections `join=inline` applies to the
-    /// linked entities it nests.
-    ///
-    /// Takes an `Option` so a caller that may or may not have a projection has
-    /// one spelling to reach for; `None` narrows nothing.
-    #[must_use]
-    pub const fn with_optional_linked_projection(mut self, projection: Option<LinkedProjection<'a>>) -> Self {
-        self.linked_projection = projection;
-        self
-    }
-}
-
-/// Render a sequence of entities to the flat clause-4.5.23 collection, the
-/// matching entities ahead of the entities the traversal reached.
-///
-/// `join=flat` returns the root entities and their resolved linked entities side
-/// by side in one array — unlike `join=inline`, which nests the linked entities
-/// inside each root. Both read paths (single-entity retrieval and query) share
-/// this, so the flat shape is assembled in one place rather than hand-rolled at
-/// each endpoint. A response with no join passes an empty `linked`.
-///
-/// The two groups are taken separately because they are narrowed by different
-/// terms, not by different rules: `root_projection` is what the *request*
-/// selected, whereas each linked entity carries the clause 4.21 sub-projection
-/// of the Relationship that reached it. Clause 5.7.1.5 applies the restriction
-/// "to all Entities in the payload in the case of Linked Entity retrieval", so
-/// the structural half of the rule runs on both — the attribute half of a
-/// linked entity's own is already applied to the typed entity by the time it
-/// gets here.
-///
-/// # Errors
-///
-/// Returns [`RenderError::Serialization`] when any entity cannot be
-/// turned into a JSON value.
-pub fn render_flat_join<'a>(
-    roots: impl IntoIterator<Item = &'a Entity>,
-    linked: impl IntoIterator<Item = (&'a Entity, Option<StructuralProjection<'a>>)>,
-    language_filter: Option<&'a LanguageFilter>,
-    mode: ResponseFormat,
-    root_projection: Option<StructuralProjection<'a>>,
-) -> Result<Vec<Value>, RenderError> {
-    let rendered_roots = roots.into_iter().map(|entity| {
-        EntityRenderer::new(entity)
-            .with_optional_language_filter(language_filter)
-            .with_mode(mode)
-            .with_optional_structural_projection(root_projection)
-            .render()
-    });
-    let rendered_linked = linked.into_iter().map(|(entity, projection)| {
-        EntityRenderer::new(entity)
-            .with_optional_language_filter(language_filter)
-            .with_mode(mode)
-            .with_optional_structural_projection(projection)
-            .render()
-    });
-    rendered_roots.chain(rendered_linked).collect()
 }
 
 impl EntityRenderer<'_> {
-    /// Execute the full rendering pipeline and return the JSON value.
-    ///
-    /// Pipeline order:
-    /// 1. Serialize entity (with language negotiation if filter set)
-    /// 2. Apply inline join (if linked entities provided)
-    /// 3. Apply concise/simplified transformation (if mode != Normalized)
+    /// Render the entity as a JSON document.
     ///
     /// # Errors
     ///
     /// Returns [`RenderError::Serialization`] when the entity cannot be turned
     /// into a JSON value.
     pub fn render(self) -> Result<Value, RenderError> {
-        // Fast path: simplified without language filter, inline join or a
-        // structural projection can use the domain-level simplify()
-        // directly, avoiding a full serialize round-trip.
-        if self.mode.is_simplified() && self.language_filter.is_none() && self.inline_linked_entities.is_none() && self.structural_projection.is_none() {
-            return Ok(simplify_entity(self.entity));
-        }
-
-        // Step 1: serialize the whole entity, then -- when a language filter is
-        // set -- re-render only the members the filter touches. The
-        // serialization already carries every entity member (id, type, scope,
-        // the system timestamps, and anything the model later gains), so a new
-        // member cannot be silently dropped here the way a hand-listed rebuild
-        // would drop it. The rebuild that this replaces was the drop hazard: it
-        // enumerated the members it knew and nothing else.
-        let mut value = serialize_value(self.entity)?;
-        if self.language_filter.is_some()
-            && let Value::Object(map) = &mut value
-        {
-            // The four clause-4.8 timestamps keep the whole-second spelling the
-            // rest of the render crate uses; unifying timestamp spellings across
-            // paths is a separate concern and is not decided here.
-            if let Some(expires_at) = &self.entity.expires_at {
-                map.insert("expiresAt".to_string(), Value::String(sub_second(*expires_at)));
-            }
-            if let Some(created_at) = &self.entity.created_at {
-                map.insert("createdAt".to_string(), Value::String(sub_second(*created_at)));
-            }
-            if let Some(modified_at) = &self.entity.modified_at {
-                map.insert("modifiedAt".to_string(), Value::String(sub_second(*modified_at)));
-            }
-            if let Some(deleted_at) = &self.entity.deleted_at {
-                map.insert("deletedAt".to_string(), Value::String(sub_second(*deleted_at)));
-            }
-            // The geo-properties and every other attribute are re-rendered so a
-            // language map inside them is negotiated; a non-language attribute
-            // renders identically to its serialization.
-            if let Some(location) = &self.entity.location {
-                map.insert("location".to_string(), render_attribute_value(location, self.language_filter)?);
-            }
-            if let Some(observation_space) = &self.entity.observation_space {
-                map.insert("observationSpace".to_string(), render_attribute_value(observation_space, self.language_filter)?);
-            }
-            if let Some(operation_space) = &self.entity.operation_space {
-                map.insert("operationSpace".to_string(), render_attribute_value(operation_space, self.language_filter)?);
-            }
-            for (key, attr) in &self.entity.attrs {
-                map.insert(key.to_string(), render_attribute_value(attr, self.language_filter)?);
-            }
-        }
-
-        // Step 2: inline join
-        if let Some(linked) = self.inline_linked_entities {
-            apply_inline_join(&mut value, linked, self.language_filter, self.linked_projection)?;
-        }
-
-        // Step 3: concise/simplified transformation
-        match self.mode {
-            ResponseFormat::Normalized => {}
-            ResponseFormat::Concise => {
-                value = concise_value(value);
-            }
-            // Clause 4.5.4 gives `keyValues` and `simplified` one rendering.
-            ResponseFormat::KeyValues | ResponseFormat::Simplified => {
-                value = simplify_value(value);
-            }
-        }
-
-        // Step 4: clause 4.21 structural-member pruning
-        if let Some(projection) = self.structural_projection {
-            projection.prune(&mut value);
-        }
-
-        Ok(value)
+        serialize_value(&TypedEntity {
+            entity: self.entity,
+            format: self.mode,
+            walk: MemberWalk::new(UriDecoding::Keep, self.language_filter),
+            projection: self.structural_projection,
+            identifier: IdentifierMember::Written,
+            context: None,
+            stamped: None,
+            join: None,
+            narrowing: None,
+            changes: None,
+        })
     }
 }
 
@@ -258,19 +116,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        entity::{EntityRenderer, render_flat_join},
-        simplify::simplify_entity,
-        structural_projection::StructuralProjection,
-    };
+    use crate::{entity::EntityRenderer, simplify::simplify_entity, structural_projection::StructuralProjection};
     use andromeda_http_headers::language::LanguageFilter;
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-    use indexmap::IndexMap;
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
-    use std::iter::once;
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
@@ -278,85 +130,6 @@ mod tests {
 
     fn parse_entity(value: Value) -> Entity {
         serde_json::from_value(value).expect("entity")
-    }
-
-    #[test]
-    fn render_flat_join_renders_the_roots_ahead_of_the_linked_entities() {
-        // Clause 4.5.23 `join=flat`: the roots come first, then the entities
-        // the traversal reached, each rendered independently.
-        let root = parse_entity(json!({"id": "urn:ngsi-ld:A:1", "type": "A"}));
-        let mut linked = IndexMap::new();
-        linked.insert("urn:ngsi-ld:B:1".to_string(), parse_entity(json!({"id": "urn:ngsi-ld:B:1", "type": "B"})));
-        let rendered = render_flat_join(
-            once(&root),
-            linked.values().map(|entity| (entity, None)),
-            None,
-            ResponseFormat::Normalized,
-            None,
-        )
-        .expect("renders");
-        pretty_assertions::assert_eq!(rendered.len(), 2);
-        pretty_assertions::assert_eq!(rendered[0]["id"], "urn:ngsi-ld:A:1");
-        pretty_assertions::assert_eq!(rendered[1]["id"], "urn:ngsi-ld:B:1");
-    }
-
-    /// Clause 5.7.1.5 applies a restrictive list "to all Entities in the
-    /// payload in the case of Linked Entity retrieval", so a linked entity
-    /// reached by a nested sub-projection is narrowed by that sub-projection's
-    /// own terms -- `id` and `type` included -- and not by the request's.
-    #[test]
-    fn render_flat_join_narrows_each_entity_by_the_rule_that_governs_it() {
-        let root = parse_entity(json!({"id": "urn:ngsi-ld:A:2", "type": "A"}));
-        let linked = parse_entity(json!({"id": "urn:ngsi-ld:B:2", "type": "B"}));
-        let requested = Projection {
-            pick: vec![ProjectionTerm::Attribute {
-                iri: iri("https://example.com/speed"),
-                linked: Vec::new(),
-            }],
-            omit: Vec::new(),
-        };
-        let nested = Projection {
-            pick: vec![ProjectionTerm::Id],
-            omit: Vec::new(),
-        };
-
-        let rendered = render_flat_join(
-            once(&root),
-            once((&linked, Some(StructuralProjection::from(&nested)))),
-            None,
-            ResponseFormat::Normalized,
-            Some(StructuralProjection::from(&requested)),
-        )
-        .expect("renders");
-
-        assert!(!rendered[0].as_object().expect("an entity object").contains_key("id"));
-        pretty_assertions::assert_eq!(rendered[1]["id"], "urn:ngsi-ld:B:2");
-        assert!(!rendered[1].as_object().expect("an entity object").contains_key("type"));
-    }
-
-    /// A linked entity no nested sub-projection reached is narrowed by nothing
-    /// and renders whole, whatever the request selected of its own entities.
-    #[test]
-    fn render_flat_join_leaves_an_ungoverned_linked_entity_whole() {
-        let root = parse_entity(json!({"id": "urn:ngsi-ld:A:3", "type": "A"}));
-        let linked = parse_entity(json!({"id": "urn:ngsi-ld:B:3", "type": "B"}));
-        let requested = Projection {
-            pick: vec![ProjectionTerm::Id],
-            omit: Vec::new(),
-        };
-
-        let rendered = render_flat_join(
-            once(&root),
-            once((&linked, None)),
-            None,
-            ResponseFormat::Normalized,
-            Some(StructuralProjection::from(&requested)),
-        )
-        .expect("renders");
-
-        assert!(!rendered[0].as_object().expect("an entity object").contains_key("type"));
-        pretty_assertions::assert_eq!(rendered[1]["id"], "urn:ngsi-ld:B:3");
-        pretty_assertions::assert_eq!(rendered[1]["type"], "B");
     }
 
     #[test]

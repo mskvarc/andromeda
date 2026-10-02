@@ -1,6 +1,7 @@
 //! Direct PostgreSQL implementation of the entity side-effect queue port.
 
 use crate::{
+    jsonb_text::JsonbText,
     pending_side_effects::{
         payload::{PersistedBatchSideEffectJob, PersistedChangeEvent},
         repo::PendingSideEffectsRepository,
@@ -22,11 +23,8 @@ use andromeda_entity::{
     error::EntityError,
     side_effect_queue::{DeadLetterAttempt, LeasedSideEffect, SideEffectQueue},
 };
-use andromeda_ngsi_ld_model::{
-    entity_change::EntityChange,
-    expanded::{attribute_change::AttributeChange, instance_key::AttributeInstanceKey},
-    notification::SysAttrsSnapshot,
-};
+use andromeda_ngsi_ld_entity::reads::{attribute_change::AttributeChange, attribute_instance_key::AttributeInstanceKey};
+use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::SysAttrsSnapshot};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use andromeda_postgresql_seaquery::interval::make_interval_secs;
@@ -48,7 +46,6 @@ use sea_query::{
     UpdateStatement,
 };
 use sea_query_sqlx::SqlxBinder;
-use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
 use std::sync::Arc;
 use tracing::error;
@@ -160,8 +157,8 @@ impl PendingSideEffectsRepository {
 
 /// Decode one claimed row into the leased job the entity policy consumes.
 fn leased_effect(id: SideEffectJobId, row: &PgRow) -> Result<LeasedSideEffect, EntityError> {
-    let payload: Value = row.get("payload");
-    let job = decode_job(&payload)?;
+    let payload: JsonbText<'_> = row.try_get("payload").map_err(|error| EntityError::from(undecodable(&error)))?;
+    let job = decode_job(payload)?;
     let write_id = WriteId::from_uuid(row.get("write_id"));
     let recorded_at: DateTime<Utc> = row.get("recorded_at");
     let record = WriteRecord::restored(write_id, recorded_at);
@@ -333,8 +330,8 @@ fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
 }
 
 /// Decode one persisted queue payload into the semantic side-effect job.
-fn decode_job(payload: &Value) -> Result<BatchSideEffectJob, EntityError> {
-    let persisted = PersistedBatchSideEffectJob::decode(payload).map_err(|error| EntityError::from(undecodable(&error)))?;
+fn decode_job(payload: JsonbText<'_>) -> Result<BatchSideEffectJob, EntityError> {
+    let persisted = PersistedBatchSideEffectJob::decode(payload.as_bytes()).map_err(|error| EntityError::from(undecodable(&error)))?;
     Ok(persisted_to_domain(persisted))
 }
 
@@ -343,7 +340,7 @@ fn persisted_to_domain(persisted: PersistedBatchSideEffectJob) -> BatchSideEffec
     let temporal_entities = persisted
         .temporal_entities
         .into_iter()
-        .map(|temporal| (Arc::new(temporal.id), Arc::new(temporal.expanded)))
+        .map(|temporal| (Arc::new(temporal.id), temporal.expanded))
         .collect();
     let change_events = persisted.change_events.into_iter().map(domain_change_event).collect();
     BatchSideEffectJob {

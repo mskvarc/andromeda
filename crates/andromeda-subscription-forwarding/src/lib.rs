@@ -25,6 +25,8 @@ pub mod mapping;
 mod minted_subscription_id;
 /// Re-assembling an inbound notification for the local subscriber.
 pub mod reassembly;
+/// One entity of an inbound notification in the typed model.
+mod received_entity;
 /// The notification endpoint this broker advertises to context sources.
 pub mod receiver;
 /// Reducing a subscription to what one registration matches.
@@ -42,8 +44,12 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-entity",
         "andromeda-federation",
         "andromeda-jsonld",
+        "andromeda-ngsi-ld-compaction",
+        "andromeda-ngsi-ld-entity",
+        "andromeda-ngsi-ld-expansion",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",

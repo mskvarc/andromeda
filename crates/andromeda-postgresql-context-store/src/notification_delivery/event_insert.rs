@@ -9,6 +9,7 @@ use crate::{
 };
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{
@@ -16,14 +17,14 @@ use andromeda_postgresql_schema::{
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{
+    cast::cast,
     pg_array::nullable_text_array,
     pg_type::PostgresType,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, Expr, ExprTrait, InsertStatement, JoinType, LockType, OnConflict, PostgresQueryBuilder, Query};
+use sea_query::{Alias, Expr, ExprTrait, InsertStatement, JoinType, LockType, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
-use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
@@ -55,7 +56,8 @@ use uuid::Uuid;
 /// # Errors
 ///
 /// Returns [`ContextStoreError::OrdinalOutOfRange`] when an event ordinal is outside the
-/// range storage represents, and [`ContextStoreError::Database`] when a
+/// range storage represents, [`ContextStoreError::PayloadEncoding`] when a
+/// snapshot cannot be encoded, and [`ContextStoreError::Database`] when a
 /// statement fails.
 pub async fn insert_events_in_tx(
     tx: &mut Transaction<'_, Postgres>,
@@ -133,6 +135,9 @@ fn insert_events_statement(
         NotificationEvents::ChangeDatasetIds,
         NotificationEvents::EntitySnapshot,
         NotificationEvents::PreviousSnapshot,
+        NotificationEvents::EntityCreatedAt,
+        NotificationEvents::EntityModifiedAt,
+        NotificationEvents::EntityExpiresAt,
     ]);
     for event in events {
         let event_ordinal = event.ordinal.as_i32()?;
@@ -155,11 +160,11 @@ fn insert_events_statement(
             // A default instance's `datasetId` is a NULL element, which one
             // bound array cannot carry.
             nullable_text_array(&change_dataset_ids),
-            // The snapshot is bound by value because a bound parameter owns
-            // its data; the entity state cannot be borrowed into the wire
-            // buffer.
-            snapshot_value(event.entity_snapshot),
-            snapshot_value(event.previous_snapshot),
+            snapshot_value(event.entity_snapshot)?,
+            snapshot_value(event.previous_snapshot)?,
+            event.sys_attrs_snapshot.map(|sys_attrs| sys_attrs.created_at).into(),
+            event.sys_attrs_snapshot.map(|sys_attrs| sys_attrs.modified_at).into(),
+            event.sys_attrs_snapshot.and_then(|sys_attrs| sys_attrs.expires_at).into(),
         ])?;
     }
     statement
@@ -172,9 +177,18 @@ fn insert_events_statement(
     Ok(statement)
 }
 
-/// Bind one optional entity snapshot as a JSONB value or SQL `NULL`.
-fn snapshot_value(snapshot: Option<&Value>) -> sea_query::SimpleExpr {
-    Expr::val(snapshot.cloned())
+/// Bind one optional entity snapshot as its stored document or SQL `NULL`.
+///
+/// The state is encoded once by the entity state codec and the text is cast
+/// to `jsonb` by the server, so no JSON tree is built on the way.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::PayloadEncoding`] when the state cannot be
+/// encoded, which the codec never does in practice.
+fn snapshot_value(snapshot: Option<&EntityState>) -> Result<SimpleExpr, ContextStoreError> {
+    let text = snapshot.map(serde_json::to_string).transpose().map_err(ContextStoreError::PayloadEncoding)?;
+    Ok(cast(Expr::val(text), PostgresType::Jsonb))
 }
 
 /// The `UNNEST(…) AS p(event_key, subscription_key)` source the delivery
@@ -257,19 +271,23 @@ mod tests {
     };
     use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_entity::{
+        entity_state::EntityState,
+        entity_types::EntityTypes,
+        reads::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            attribute_instance_key::AttributeInstanceKey,
+        },
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
-        expanded::{
-            attribute_change::{AttributeChange, AttributeChangeKind},
-            instance_key::AttributeInstanceKey,
-        },
+        notification::SysAttrsSnapshot,
     };
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use andromeda_postgresql_seaquery::unnest::apply_column_alias;
-    use chrono::Utc;
+    use chrono::{TimeZone, Utc};
     use sea_query::PostgresQueryBuilder;
-    use serde_json::json;
     use uuid::Uuid;
 
     fn target() -> ContextTarget {
@@ -278,6 +296,11 @@ mod tests {
 
     fn entity() -> Identifier {
         "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI")
+    }
+
+    /// The `Vehicle` entity the events record a change of.
+    fn vehicle() -> EntityState {
+        EntityState::new(entity(), EntityTypes::one("https://example.org/Vehicle".parse().expect("a valid type name")))
     }
 
     fn subscription(key: i64) -> SubscriptionKey {
@@ -303,13 +326,7 @@ mod tests {
         )
     }
 
-    fn event<'a>(
-        entity: &'a Identifier,
-        change: &'a EntityChange,
-        ordinal: u32,
-        subscriptions: &[i64],
-        snapshot: &'a serde_json::Value,
-    ) -> NewNotificationEvent<'a> {
+    fn event<'a>(entity: &'a Identifier, change: &'a EntityChange, ordinal: u32, subscriptions: &[i64], snapshot: &'a EntityState) -> NewNotificationEvent<'a> {
         NewNotificationEvent {
             ordinal: WriteOrdinal::at(ordinal),
             change,
@@ -317,6 +334,7 @@ mod tests {
             change_attribute_name_keys: vec![AttributeNameKey::from(7), AttributeNameKey::from(9)],
             entity_snapshot: Some(snapshot),
             previous_snapshot: None,
+            sys_attrs_snapshot: None,
             subscription_keys: subscriptions.iter().map(|key| subscription(*key)).collect(),
         }
     }
@@ -324,7 +342,7 @@ mod tests {
     #[test]
     fn a_replayed_write_inserts_no_second_copy_of_an_event_it_already_wrote() {
         let entity = entity();
-        let snapshot = json!({ "id": "urn:ngsi-ld:Vehicle:1" });
+        let snapshot = vehicle();
         let change = change();
         let events = [event(&entity, &change, 3, &[1], &snapshot)];
         let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &events)
@@ -338,7 +356,7 @@ mod tests {
     fn the_event_insert_carries_every_changed_instance_position_for_position() {
         let entity = entity();
         let change = change();
-        let snapshot = json!({ "id": "urn:ngsi-ld:Vehicle:1" });
+        let snapshot = vehicle();
         let events = [event(&entity, &change, 3, &[1], &snapshot)];
         let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &events)
             .expect("a representable event")
@@ -356,7 +374,7 @@ mod tests {
     #[test]
     fn an_ordinal_beyond_the_stored_range_fails_rather_than_wrapping() {
         let entity = entity();
-        let snapshot = json!({});
+        let snapshot = vehicle();
         let change = change();
         let event = event(&entity, &change, u32::MAX, &[1], &snapshot);
         assert!(insert_events_statement(&target(), Utc::now(), Uuid::nil(), &[event]).is_err());
@@ -395,7 +413,7 @@ mod tests {
     #[test]
     fn the_owed_pairs_follow_event_then_matcher_order_and_skip_events_a_replay_did_not_write() {
         let entity = entity();
-        let snapshot = json!({});
+        let snapshot = vehicle();
         let change = change();
         let events = [
             event(&entity, &change, 3, &[5, 6], &snapshot),
@@ -415,13 +433,53 @@ mod tests {
     fn a_deletion_writes_its_one_removed_state_into_both_snapshot_columns() {
         let entity = entity();
         let change = change();
-        let removed = json!({"id": "urn:ngsi-ld:Vehicle:1", "speed": {"type": "Property", "value": 80}});
+        let removed = vehicle();
         let mut deletion = event(&entity, &change, 1, &[1], &removed);
         deletion.previous_snapshot = Some(&removed);
         let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &[deletion])
             .expect("a representable event")
             .to_string(PostgresQueryBuilder);
-        let written = removed.to_string();
-        assert_eq!(sql.matches(written.as_str()).count(), 2, "{sql}");
+        let written = String::from_utf8(removed.to_vec().expect("the state encodes")).expect("the encoding is UTF-8");
+        assert_eq!(sql.matches(format!("'{written}'::jsonb").as_str()).count(), 2, "{sql}");
+    }
+
+    /// A deletion's removed entity can no longer be read back at delivery, so
+    /// its clause 4.8 system attributes are written beside its snapshot.
+    #[test]
+    fn a_deletion_writes_the_removed_entitys_system_attributes() {
+        let entity = entity();
+        let change = change();
+        let removed = vehicle();
+        let created_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
+        let modified_at = Utc.timestamp_opt(1_700_000_100, 0).single().expect("a representable instant");
+        let sys_attrs = SysAttrsSnapshot {
+            created_at,
+            modified_at,
+            expires_at: None,
+        };
+        let mut deletion = event(&entity, &change, 1, &[1], &removed);
+        deletion.sys_attrs_snapshot = Some(&sys_attrs);
+        let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &[deletion])
+            .expect("a representable event")
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""entity_created_at", "entity_modified_at", "entity_expires_at""#), "{sql}");
+        assert!(
+            sql.contains("'2023-11-14 22:13:20.000000 +00:00', '2023-11-14 22:15:00.000000 +00:00', NULL)"),
+            "{sql}"
+        );
+    }
+
+    /// A change that leaves the entity in place stores no system attributes
+    /// and no snapshot it was not handed.
+    #[test]
+    fn a_change_without_system_attributes_stores_nulls() {
+        let entity = entity();
+        let change = change();
+        let current = vehicle();
+        let event = event(&entity, &change, 1, &[1], &current);
+        let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &[event])
+            .expect("a representable event")
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains("NULL::jsonb, NULL, NULL, NULL)"), "{sql}");
     }
 }

@@ -1,78 +1,168 @@
-//! Per-event memoization for notification compaction and linked-entity resolution.
+//! Per-event memoization of notification renderings and linked-entity
+//! resolutions.
+//!
+//! One committed change is notified to every subscription it reaches, and most
+//! of them ask for the same thing: the same state of the entity, selected the
+//! same way, compacted under the same context. Each distinct rendering is
+//! computed once per change and shared, which is why a key names everything a
+//! rendering depends on and nothing else.
 
-use crate::error::NotificationError;
+use crate::{error::NotificationError, processor::payload::selection::Selection};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
-use andromeda_jsonld::{
-    context_spec::ContextSpec,
-    engine::{
-        context_compactor::ContextCompactor,
-        expanded_input::ExpandedInput,
-        options::{CompactOptions, ContextStripping},
-    },
-    error::JsonLdError,
-};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use indexmap::IndexMap;
-use serde_json::Value;
+use iri_rs::IriBuf;
 use std::{
-    collections::{HashSet, hash_map::DefaultHasher},
+    collections::HashSet,
     hash::{Hash, Hasher},
     num::NonZeroU32,
     slice::from_ref,
     sync::Arc,
 };
-use tracing::{debug, warn};
+use tracing::warn;
 
-/// Cached linked entities in both indexed and serialized form.
-#[derive(Debug)]
-pub(super) struct ResolvedLinkedEntities {
-    pub(super) by_id: Arc<IndexMap<Identifier, Entity>>,
-    pub(super) as_values: Arc<Vec<Value>>,
+/// The Linked Entities one notified entity reaches, keyed by identifier in the
+/// traversal's first-encounter order (clause 4.5.23.3).
+pub(super) type LinkedEntities = Arc<IndexMap<Identifier, Entity>>;
+
+/// Which state of one change a rendering is read from.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum NotifiedSource {
+    /// The state the notification is about: the entity as the write left it,
+    /// or as a deletion removed it.
+    Notified,
+    /// The state before the write.
+    Previous,
+}
+
+/// The instant a state is read at.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum Reading {
+    /// As it stands at that instant: an instance past its `expiresAt` is no
+    /// longer part of it (clause 4.22).
+    StandingAt(DateTime<Utc>),
+    /// As it was recorded, every instance included: what an instance held
+    /// before a change is reported whatever became of it since.
+    AsRecorded,
+}
+
+/// The clause 4.8 system-attribute inclusion a rendering was made with, as a
+/// key member.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct InstantsKey(SysAttrsInclusion);
+
+// `SysAttrsInclusion` derives no `Hash`, so the key hashes the variant it holds;
+// the match names every variant, so a new one cannot hash like another.
+impl Hash for InstantsKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let included = match self.0 {
+            SysAttrsInclusion::Include => true,
+            SysAttrsInclusion::Strip => false,
+        };
+        included.hash(state);
+    }
+}
+
+/// Everything one compaction of a notified state depends on.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct RenderingKey {
+    /// The state compacted.
+    source: NotifiedSource,
+    /// What of it is compacted.
+    selection: Selection,
+    /// The subscription's `jsonldContext`, `None` for the core context.
+    context: Option<IriBuf>,
+    /// Whether the instances' system attributes are written.
+    instants: InstantsKey,
+    /// The instant the state is read at.
+    reading: Reading,
+}
+
+impl RenderingKey {
+    /// The key of compacting `selection` of `source` under `context`.
+    pub(crate) fn new(source: NotifiedSource, selection: Selection, context: Option<&IriBuf>, sys_attrs: SysAttrsInclusion, reading: Reading) -> RenderingKey {
+        RenderingKey {
+            source,
+            selection,
+            context: context.cloned(), // clone: the key owns the context it names
+            instants: InstantsKey(sys_attrs),
+            reading,
+        }
+    }
+}
+
+/// Everything one linked-entity resolution depends on.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct LinkedKey {
+    /// The entity whose links are followed.
+    entity: Identifier,
+    /// How many levels are followed (clause 4.5.23).
+    join_level: NonZeroU32,
+    /// Whether the linked entities carry their system attributes.
+    instants: InstantsKey,
+    /// The subscription's `jsonldContext`, `None` for the core context.
+    context: Option<IriBuf>,
 }
 
 /// Cache shared across every notification produced for one change event.
 ///
-/// Both maps are keyed by a 64-bit structural hash rather than by the inputs
-/// themselves: the compaction key covers a whole entity document plus its
-/// context, which would be far more expensive to store and compare than the
-/// work it saves. A collision would therefore serve one subscriber a payload
-/// computed for another, which is why the hash is over every discriminating
-/// input; at the handful of distinct payloads one change event produces, the
-/// probability is negligible against the cost of keying by the documents.
+/// The entry guards are never held across an await: a miss computes outside
+/// the map and races another notification to insert, the first insert winning
+/// and every notification then reading the entry that won.
 #[derive(Default)]
 pub(crate) struct NotificationCompactionCache {
-    entries: DashMap<u64, Value>,
-    linked_entities: DashMap<u64, ResolvedLinkedEntities>,
+    renderings: DashMap<RenderingKey, Arc<Entity>>,
+    linked_entities: DashMap<LinkedKey, LinkedEntities>,
 }
 
+impl NotificationCompactionCache {
+    /// The rendering `key` names, computed by `compact` on its first request.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of `compact`, which leaves nothing cached.
+    pub(crate) async fn rendering<F, C>(&self, key: RenderingKey, compact: C) -> Result<Arc<Entity>, NotificationError>
+    where
+        C: FnOnce() -> F + Send,
+        F: Future<Output = Result<Entity, NotificationError>> + Send,
+    {
+        if let Some(hit) = self.renderings.get(&key) {
+            return Ok(Arc::clone(&hit));
+        }
+        let rendered = Arc::new(compact().await?);
+        Ok(Arc::clone(&self.renderings.entry(key).or_insert(rendered)))
+    }
+}
+
+/// The entities `main_entity` links to, resolved once per change for every
+/// notification asking for the same join.
 pub(super) async fn resolve_linked_cached(
     target: &ContextTarget,
     entity_query: &EntityQueryService,
     main_entity: &Entity,
     join_level: NonZeroU32,
     sys_attrs: SysAttrsInclusion,
-    context: &ContextSpec,
-    cache: Option<&NotificationCompactionCache>,
-) -> Result<ResolvedLinkedEntities, NotificationError> {
-    let key = linked_resolution_cache_key(main_entity, join_level, sys_attrs, context);
-    // The map reference is confined to this block: no entry guard may be held
-    // across the resolution await below, which is why a miss computes outside
-    // the map and races another notification to insert rather than holding the
-    // shard while it works.
-    if let Some(cache) = cache
-        && let Some(hit) = cache.linked_entities.get(&key)
-    {
-        return Ok(ResolvedLinkedEntities {
-            by_id: Arc::clone(&hit.by_id),
-            as_values: Arc::clone(&hit.as_values),
-        });
+    context: (&ContextSpec, Option<&IriBuf>),
+    cache: &NotificationCompactionCache,
+) -> Result<LinkedEntities, NotificationError> {
+    let (spec, context_iri) = context;
+    let key = LinkedKey {
+        entity: main_entity.id.clone(), // clone: the key owns the identifier it names
+        join_level,
+        instants: InstantsKey(sys_attrs),
+        context: context_iri.cloned(), // clone: the key owns the context it names
+    };
+    if let Some(hit) = cache.linked_entities.get(&key) {
+        return Ok(Arc::clone(&hit));
     }
     let resolution = entity_query
-        .resolve_linked_entities(target, from_ref(main_entity), join_level, sys_attrs, context, &HashSet::new())
+        .resolve_linked_entities(target, from_ref(main_entity), join_level, sys_attrs, spec, &HashSet::new())
         .await
         .map_err(NotificationError::from)?;
     // A notification has no response to carry a clause 6.3.17 warning on, so an
@@ -86,179 +176,49 @@ pub(super) async fn resolve_linked_cached(
             "linked entity left unresolved in a notification payload"
         );
     }
-    let linked_map = resolution.entities;
-    let values = linked_entities_as_values(&linked_map);
-    let resolved = ResolvedLinkedEntities {
-        by_id: Arc::new(linked_map),
-        as_values: Arc::new(values),
-    };
-    if let Some(cache) = cache {
-        cache.linked_entities.entry(key).or_insert_with(|| ResolvedLinkedEntities {
-            by_id: Arc::clone(&resolved.by_id),
-            as_values: Arc::clone(&resolved.as_values),
-        });
-    }
-    Ok(resolved)
-}
-
-/// Serialize a resolved linked-entity map to its `join=flat` append order.
-///
-/// [`EntityQueryService::resolve_linked_entities`] guarantees `linked_map`'s
-/// iteration order is the traversal's first-encounter order (clause 4.5.23.3),
-/// and `IndexMap::values` walks a map in that same insertion order, so the
-/// values collected here carry that order forward unchanged. An entity that
-/// fails to serialize is dropped rather than failing the whole notification.
-fn linked_entities_as_values(linked_map: &IndexMap<Identifier, Entity>) -> Vec<Value> {
-    linked_map
-        .values()
-        .filter_map(|entity| match serde_json::to_value(entity) {
-            Ok(value) => Some(value),
-            Err(error) => {
-                debug!(%error, "failed to serialize linked notification entity");
-                None
-            }
-        })
-        .collect()
-}
-
-pub(super) async fn compact_entity_with_cache(
-    compactor: &ContextCompactor<'_>,
-    entity: &Value,
-    strip_context: ContextStripping,
-    cache: Option<&NotificationCompactionCache>,
-) -> Result<Value, JsonLdError> {
-    let Some(cache) = cache else {
-        // clone: compaction consumes the document while the notification keeps the entity
-        return compactor
-            .compact(ExpandedInput::Assembled(entity.clone()), CompactOptions { strip_context })
-            .await;
-    };
-    let key = compaction_cache_key(entity, compactor.context(), strip_context);
-    // As in the linked resolution above, the entry guard never spans the
-    // compaction await: a miss compacts outside the map, and two notifications
-    // that miss together each compact and one insert wins.
-    if let Some(hit) = cache.entries.get(&key) {
-        return Ok(hit.clone()); // clone: the caller owns its payload, the cache keeps serving the entry
-    }
-    // clone: compaction consumes the document while the notification keeps the entity
-    let compacted = compactor
-        .compact(ExpandedInput::Assembled(entity.clone()), CompactOptions { strip_context })
-        .await?;
-    // clone: the cached entry stays behind for the notifications still to come
-    Ok(cache.entries.entry(key).or_insert(compacted).clone())
-}
-
-fn linked_resolution_cache_key(main_entity: &Entity, join_level: NonZeroU32, sys_attrs: SysAttrsInclusion, context: &ContextSpec) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    main_entity.id.hash(&mut hasher);
-    hasher.write_u32(join_level.get());
-    hasher.write_u8(match sys_attrs {
-        SysAttrsInclusion::Include => 1,
-        SysAttrsInclusion::Strip => 0,
-    });
-    hash_optional_context(context, &mut hasher);
-    hasher.finish()
-}
-
-fn compaction_cache_key(entity: &Value, context: &ContextSpec, strip_context: ContextStripping) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    hash_json_value(entity, &mut hasher);
-    hash_optional_context(context, &mut hasher);
-    strip_context.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn hash_optional_context(context: &ContextSpec, hasher: &mut impl Hasher) {
-    match context.to_context_value() {
-        Some(value) => {
-            hasher.write_u8(1);
-            hash_json_value(&value, hasher);
-        }
-        None => hasher.write_u8(0),
-    }
-}
-
-fn hash_json_value(value: &Value, hasher: &mut impl Hasher) {
-    match value {
-        Value::Null => hasher.write_u8(0),
-        Value::Bool(value) => {
-            hasher.write_u8(1);
-            hasher.write_u8(u8::from(*value));
-        }
-        Value::Number(value) => {
-            hasher.write_u8(2);
-            if let Some(integer) = value.as_i64() {
-                hasher.write_i64(integer);
-            } else if let Some(integer) = value.as_u64() {
-                hasher.write_u64(integer);
-            } else if let Some(float) = value.as_f64() {
-                hasher.write_u64(float.to_bits());
-            }
-        }
-        Value::String(value) => {
-            hasher.write_u8(3);
-            hasher.write(value.as_bytes());
-        }
-        Value::Array(values) => {
-            hasher.write_u8(4);
-            hasher.write_usize(values.len());
-            for value in values {
-                hash_json_value(value, hasher);
-            }
-        }
-        Value::Object(object) => {
-            hasher.write_u8(5);
-            hasher.write_usize(object.len());
-            object.iter().for_each(|(key, value)| {
-                hasher.write(key.as_bytes());
-                hash_json_value(value, hasher);
-            });
-        }
-    }
+    let linked = Arc::new(resolution.entities);
+    Ok(Arc::clone(&cache.linked_entities.entry(key).or_insert(linked)))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::processor::payload::cache::{hash_json_value, linked_entities_as_values};
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use crate::processor::payload::{
+        cache::{NotificationCompactionCache, NotifiedSource, Reading, RenderingKey},
+        selection::Selection,
+    };
     use andromeda_ngsi_ld_model::entity::Entity;
-    use indexmap::IndexMap;
+    use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use serde_json::json;
-    use std::{collections::hash_map::DefaultHasher, hash::Hasher};
-
-    fn uri(value: &str) -> Identifier {
-        value.parse().expect("valid URI")
-    }
+    use std::sync::Arc;
 
     fn entity(id: &str) -> Entity {
         serde_json::from_value(json!({"id": id, "type": "Thing"})).expect("entity")
     }
 
-    #[test]
-    fn structural_hash_is_stable_for_equal_values() {
-        let value = json!({"a": [1, true, null]});
-        let mut first = DefaultHasher::new();
-        let mut second = DefaultHasher::new();
-        hash_json_value(&value, &mut first);
-        hash_json_value(&value, &mut second);
-        pretty_assertions::assert_eq!(first.finish(), second.finish());
+    fn key(sys_attrs: SysAttrsInclusion) -> RenderingKey {
+        RenderingKey::new(NotifiedSource::Notified, Selection::Whole, None, sys_attrs, Reading::AsRecorded)
     }
 
-    /// `linked_entities_as_values` must not reorder its input: the map's
-    /// iteration order is the traversal's first-encounter order (clause
-    /// 4.5.23.3), and the `join=flat` append in
-    /// `crate::processor::payload::build_notification_data` relies on
-    /// `as_values` carrying that order forward unchanged.
-    #[test]
-    fn as_values_preserves_the_indexmaps_traversal_encounter_order() {
-        let mut linked_map = IndexMap::new();
-        linked_map.insert(uri("urn:ngsi-ld:T:C"), entity("urn:ngsi-ld:T:C"));
-        linked_map.insert(uri("urn:ngsi-ld:T:B"), entity("urn:ngsi-ld:T:B"));
-        linked_map.insert(uri("urn:ngsi-ld:T:D"), entity("urn:ngsi-ld:T:D"));
-
-        let values = linked_entities_as_values(&linked_map);
-
-        let ids: Vec<&str> = values.iter().map(|value| value["id"].as_str().expect("id present")).collect();
-        pretty_assertions::assert_eq!(ids, vec!["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B", "urn:ngsi-ld:T:D"]);
+    /// A rendering is computed on its first request and served from the cache
+    /// to every later request of the same key; a key differing in anything
+    /// the rendering depends on is computed on its own.
+    #[tokio::test]
+    async fn a_rendering_is_computed_once_per_key() {
+        let cache = NotificationCompactionCache::default();
+        let first = cache
+            .rendering(key(SysAttrsInclusion::Strip), || async { Ok(entity("urn:ngsi-ld:T:1")) })
+            .await
+            .expect("the first rendering");
+        let second = cache
+            .rendering(key(SysAttrsInclusion::Strip), || async { Ok(entity("urn:ngsi-ld:T:recomputed")) })
+            .await
+            .expect("the cached rendering");
+        assert!(Arc::ptr_eq(&first, &second), "a cached rendering is not computed again");
+        pretty_assertions::assert_eq!(second.id.as_str(), "urn:ngsi-ld:T:1");
+        let other = cache
+            .rendering(key(SysAttrsInclusion::Include), || async { Ok(entity("urn:ngsi-ld:T:2")) })
+            .await
+            .expect("another rendering");
+        pretty_assertions::assert_eq!(other.id.as_str(), "urn:ngsi-ld:T:2");
     }
 }

@@ -114,7 +114,7 @@ impl EntityQueryService {
             // contribute an empty candidate set, which is indistinguishable from
             // that type having no default instance in range. The store then
             // evaluates every instance in full.
-            union.extend(index.query(&key, &accelerable.geo.georel, &accelerable.geo.geometry)?);
+            union.extend(index.query(&key, &accelerable.geo.georel, accelerable.geo.geometry.form())?);
         }
         Some(union)
     }

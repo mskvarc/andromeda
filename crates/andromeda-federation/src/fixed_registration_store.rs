@@ -6,9 +6,10 @@
 //! the superset preselect it is allowed to be; every other call answers
 //! nothing.
 
-use crate::local_entity_type::LocalEntityTypeResolver;
+use crate::{FederationService, config::FederationConfig, local_entity_type::LocalEntityTypeResolver};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
 use andromeda_registration::{
@@ -19,6 +20,20 @@ use andromeda_registration::{
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
+use std::sync::Arc;
+
+/// A forwarding service choosing among `registrations`, holding no entity of
+/// its own and resolving only embedded contexts, never the network.
+pub(crate) fn offline_service(registrations: Vec<ContextSourceRegistration>) -> FederationService {
+    FederationService::new(
+        Arc::new(FixedRegistrationStore::new(registrations)),
+        Arc::new(NoLocalEntities),
+        JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"),
+        ContextSourcePseudonym::new("andromeda-test").expect("a valid alias"),
+        &FederationConfig::default(),
+    )
+    .expect("the service builds")
+}
 
 /// A store holding a fixed registration list.
 pub(crate) struct FixedRegistrationStore {

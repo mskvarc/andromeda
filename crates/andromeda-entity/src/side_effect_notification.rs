@@ -50,7 +50,7 @@ pub(crate) fn owed_subscription_matches(recording: &NotificationWriteConfig, tar
 /// A creation or update carries the entity the write left behind, which is both
 /// what is filtered and what is notified. A deletion carries no resulting
 /// entity, only what was removed: the match stores that with its clause 4.8
-/// system attributes embedded, because the row is gone by delivery time and
+/// system attributes beside it, because the row is gone by delivery time and
 /// `createdAt` and `modifiedAt` can no longer be read back (clause 5.8.6).
 fn change_matches(recording: &NotificationWriteConfig, target: &ContextTarget, change: &ChangeEvent) -> Vec<SubscriptionMatch> {
     let current = match (change.current_payload.as_ref(), change.change.lifecycle, change.entity_snapshot.as_ref()) {
@@ -84,19 +84,21 @@ mod tests {
     };
     use andromeda_context_commit::change_event::ChangeEvent;
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_entity::{
+        entity_state::EntityState,
+        reads::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            attribute_instance_key::AttributeInstanceKey,
+        },
+    };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
-        expanded::{
-            attribute_change::{AttributeChange, AttributeChangeKind},
-            instance_key::AttributeInstanceKey,
-        },
         notification::{ChangeOrigin, SysAttrsSnapshot},
     };
-    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::sync::Arc;
 
     const ENTITY_ID: &str = "urn:ngsi-ld:Building:owed";
@@ -108,15 +110,16 @@ mod tests {
         }
     }
 
-    fn building(category: &str) -> Value {
-        json!([{
+    fn building(category: &str) -> EntityState {
+        let stored = json!([{
             "@id": ENTITY_ID,
             "@type": [BUILDING_TYPE_IRI],
             CATEGORY_IRI: [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": category}]
             }]
-        }])
+        }]);
+        EntityState::from_slice(stored.to_string().as_bytes()).expect("the fixture is a stored entity")
     }
 
     /// A change through `lifecycle` that `kind`s the `category` instance.
@@ -164,24 +167,25 @@ mod tests {
     }
 
     /// A deletion carries only what was removed; the match stores it with the
-    /// clause 4.8 system attributes embedded, as the committing broker would.
+    /// clause 4.8 system attributes beside it, as the committing broker would.
     #[tokio::test]
     async fn an_owed_deletion_matches_with_the_removed_entity_and_its_system_attributes() {
         let instant = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a valid instant");
         let mut deleted = change(EntityLifecycle::Deleted, AttributeChangeKind::Deleted, &[BUILDING_TYPE_IRI]);
         deleted.entity_snapshot = Some(Arc::new(building("office")));
         deleted.previous_attributes = Some(Arc::new(building("office")));
-        deleted.sys_attrs_snapshot = Some(SysAttrsSnapshot {
+        let sys_attrs = SysAttrsSnapshot {
             created_at: instant,
             modified_at: instant,
             expires_at: None,
-        });
+        };
+        deleted.sys_attrs_snapshot = Some(sys_attrs.clone()); // clone: compared with what the match stores
 
         let matches = owed_subscription_matches(&recording().await, &ContextTarget::Live, &[deleted]);
 
         assert_eq!(matches.len(), 1);
-        let stored = matches[0].entity_snapshot.as_ref().expect("the deletion stores the removed entity");
-        assert!(stored[0].get(expanded_properties::CREATED_AT.as_str()).is_some(), "{stored}");
+        assert_eq!(matches[0].entity_snapshot.as_deref(), Some(&building("office")));
+        assert_eq!(matches[0].sys_attrs_snapshot, Some(sys_attrs));
         assert_eq!(matches[0].previous_snapshot.as_deref(), Some(&building("office")));
     }
 

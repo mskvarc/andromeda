@@ -8,12 +8,19 @@
 //! source's own pages carry no relation to the local ones: a source entity is
 //! merged onto the local page that holds the same entity, and every source
 //! entity no local page held is captured after the last one.
+//!
+//! A local entity is captured as the stored state the query selected, written
+//! into the Snapshot's branch as stored. Only an entity a source also answered
+//! for, or one only a source holds, goes through the compact merge
+//! ([`crate::executor::forwarded_capture`]).
 
 use crate::{
     error::SnapshotError,
     executor::{
         SnapshotExecutor,
+        captured_state::narrow_captured,
         execution::entity_query_failure,
+        forwarded_capture::{ForwardedCapture, MergedCaptureError},
         status::{failure_detail, success_detail},
         translation::entity_parameters,
     },
@@ -30,10 +37,12 @@ use andromeda_federation::{
     request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, QueryDelivery, TriggeringRequest},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity::Entity, query::body::Query, snapshot::ExecutionResultDetails};
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
-use std::collections::HashSet;
+use chrono::{DateTime, Utc};
+use std::{collections::HashSet, sync::Arc};
 use tracing::warn;
 
 /// What walking every matching Context Source came to.
@@ -56,12 +65,12 @@ impl PendingSources {
     /// Take out of every answer the entities one local page holds, keeping
     /// each answer's registration and mode so the merge treats them as the
     /// answer they came from (clause 4.3.6.2).
-    fn claim(&mut self, local: &[Entity]) -> Vec<ForwardedEntities> {
-        let held: HashSet<&str> = local.iter().map(|entity| entity.id.as_str()).collect();
+    fn claim<'i>(&mut self, local: impl IntoIterator<Item = &'i Identifier>) -> Vec<ForwardedEntities> {
+        let held: HashSet<&Identifier> = local.into_iter().collect();
         self.answers
             .iter_mut()
             .filter_map(|answer| {
-                let (claimed, kept): (Vec<Entity>, Vec<Entity>) = answer.entities.drain(..).partition(|entity| held.contains(entity.id.as_str()));
+                let (claimed, kept): (Vec<Entity>, Vec<Entity>) = answer.entities.drain(..).partition(|entity| held.contains(&entity.id));
                 answer.entities = kept;
                 (!claimed.is_empty()).then(|| ForwardedEntities {
                     registration_id: answer.registration_id.clone(), // clone: the claimed part names the registration the rest still names
@@ -126,6 +135,7 @@ impl SnapshotExecutor {
         }
         let every_source_failed = !collect_warnings(&pending.answers).is_empty() && !pending.holds_entities();
 
+        let capture = ForwardedCapture::new(self.sources.entity_query.engine(), context);
         let mut ledger = CaptureLedger {
             captured: HashSet::new(),
             materialized: materialized_entities,
@@ -135,14 +145,18 @@ impl SnapshotExecutor {
             params.limit = Some(self.capture_page_size);
             params.offset = Some(offset);
             params.count = Some(true);
-            let (entities, _) = match self.sources.entity_query.query(&self.sources.live_target, &params, context).await {
+            let (rows, _) = match self.sources.entity_query.query_states(&self.sources.live_target, &params, context).await {
                 Ok(result) => result,
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot entity query failed");
                     return entity_query_failure(error);
                 }
             };
-            let local_page_len = entities.len();
+            // The page statement decoded each state into its own allocation,
+            // so taking it out of its `Arc` never copies; the entity-level
+            // system times read beside it are not part of a captured entity.
+            let mut states: Vec<EntityState> = rows.into_iter().map(|row| Arc::unwrap_or_clone(row.state)).collect();
+            let local_page_len = states.len();
             if offset == 0 && local_page_len == 0 {
                 if let Some(error) = &forwarding_failure {
                     return Ok(failure_detail(format!(
@@ -155,13 +169,16 @@ impl SnapshotExecutor {
                     ));
                 }
             }
-            let claimed = pending.claim(&entities);
-            let entities = if claimed.is_empty() {
-                entities
-            } else {
-                EntityQueryService::merge_with_forwarded(entities, claimed, None)
+            let captured_at = Utc::now();
+            for state in &mut states {
+                narrow_captured(state, captured_at, params.dataset_id.as_deref());
+            }
+            let claimed = pending.claim(states.iter().map(EntityState::id));
+            let states = match merge_claimed(&capture, states, claimed, captured_at).await {
+                Ok(states) => states,
+                Err(error) => return Ok(failure_detail(error.to_string())),
             };
-            if let Some(failure) = self.capture_page(target, snapshot_id, index, context, entities, &mut ledger).await? {
+            if let Some(failure) = self.capture_page(target, snapshot_id, index, states, &mut ledger).await? {
                 return Ok(failure);
             }
             if local_page_len < self.capture_page_size as usize {
@@ -178,7 +195,11 @@ impl SnapshotExecutor {
         let mut remaining = remaining.into_iter().peekable();
         while remaining.peek().is_some() {
             let page = remaining.by_ref().take(self.capture_page_size as usize).collect();
-            if let Some(failure) = self.capture_page(target, snapshot_id, index, context, page, &mut ledger).await? {
+            let states = match capture.states(page).await {
+                Ok(states) => states,
+                Err(error) => return Ok(failure_detail(error.to_string())),
+            };
+            if let Some(failure) = self.capture_page(target, snapshot_id, index, states, &mut ledger).await? {
                 return Ok(failure);
             }
         }
@@ -216,51 +237,66 @@ impl SnapshotExecutor {
         }
     }
 
-    /// Expand and persist one page of captured entities, skipping those an
-    /// earlier query of the Snapshot already materialized, and answering the
-    /// failure recorded for the query when the page could not be written.
+    /// Persist one page of captured states, skipping those an earlier query of
+    /// the Snapshot already materialized, and answering the failure recorded
+    /// for the query when the page could not be written.
     async fn capture_page(
         &self,
         target: &ContextTarget,
         snapshot_id: &Identifier,
         index: usize,
-        context: &ContextSpec,
-        entities: Vec<Entity>,
+        states: Vec<EntityState>,
         ledger: &mut CaptureLedger<'_>,
     ) -> Result<Option<ExecutionResultDetails>, SnapshotError> {
-        let mut pairs = Vec::with_capacity(entities.len());
-        for entity in entities {
-            let identifier = entity.id.clone(); // clone: the atomic write and result accounting independently own the identifier.
-            let compact = match serde_json::to_value(entity) {
-                Ok(compact) => compact,
-                Err(error) => return Ok(Some(failure_detail(format!("Failed to serialize captured entity: {error}")))),
-            };
-            let expanded = match self.sources.entity_query.engine().expand(compact, context).await {
-                Ok(expanded) => expanded,
-                Err(error) => return Ok(Some(failure_detail(format!("Failed to expand captured entity: {error}")))),
-            };
-            pairs.push((identifier, expanded));
-        }
-        let new_pairs = pairs.iter().filter(|(id, _)| !ledger.materialized.contains(id)).cloned().collect::<Vec<_>>();
-        let detail = self.persist_current_results(target, snapshot_id, index, &new_pairs).await?;
+        // clone: the ledger keeps every captured identifier once the states move into the branch write
+        let identifiers = states.iter().map(|state| state.id().clone()).collect::<Vec<_>>();
+        let fresh = states.into_iter().filter(|state| !ledger.materialized.contains(state.id())).collect::<Vec<_>>();
+        let detail = self.persist_current_results(target, snapshot_id, index, fresh).await?;
         if detail.problem_details.is_some() {
             return Ok(Some(detail));
         }
-        ledger.captured.extend(pairs.into_iter().map(|(id, _)| id));
-        ledger.materialized.extend(new_pairs.into_iter().map(|(id, _)| id));
+        for identifier in identifiers {
+            ledger.materialized.insert(identifier.clone()); // clone: both ledgers own the identifier
+            ledger.captured.insert(identifier);
+        }
         Ok(None)
     }
+}
+
+/// One local page's states, the ones a source also answered for merged with
+/// what it answered; the others stay as stored.
+async fn merge_claimed(
+    capture: &ForwardedCapture<'_>,
+    states: Vec<EntityState>,
+    claimed: Vec<ForwardedEntities>,
+    captured_at: DateTime<Utc>,
+) -> Result<Vec<EntityState>, MergedCaptureError> {
+    if claimed.is_empty() {
+        return Ok(states);
+    }
+    let (answered, unanswered): (Vec<EntityState>, Vec<EntityState>) = {
+        let answered_ids: HashSet<&Identifier> = claimed.iter().flat_map(|answer| answer.entities.iter().map(|entity| &entity.id)).collect();
+        states.into_iter().partition(|state| answered_ids.contains(state.id()))
+    };
+    let mut merged = capture.merged(&answered, claimed, captured_at).await?;
+    merged.extend(unanswered);
+    Ok(merged)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::executor::entity_capture::PendingSources;
     use andromeda_federation::outcome::ForwardedEntities;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
     use serde_json::json;
 
     fn entity(id: &str) -> Entity {
         serde_json::from_value(json!({"id": id, "type": "Vehicle"})).expect("a valid entity")
+    }
+
+    fn identifier(id: &str) -> Identifier {
+        id.parse().expect("a valid identifier")
     }
 
     fn answer(ids: &[&str]) -> ForwardedEntities {
@@ -287,7 +323,8 @@ mod tests {
         let mut pending = PendingSources {
             answers: vec![answer(&["urn:a", "urn:b", "urn:c"]), answer(&["urn:c", "urn:d"])],
         };
-        let claimed = pending.claim(&[entity("urn:c"), entity("urn:x")]);
+        let local = [identifier("urn:c"), identifier("urn:x")];
+        let claimed = pending.claim(&local);
         pretty_assertions::assert_eq!(ids(&claimed), vec!["urn:c", "urn:c"]);
         pretty_assertions::assert_eq!(ids(&pending.answers), vec!["urn:a", "urn:b", "urn:d"]);
         assert!(pending.holds_entities());
@@ -299,7 +336,8 @@ mod tests {
         let mut pending = PendingSources {
             answers: vec![answer(&["urn:a"])],
         };
-        let claimed = pending.claim(&[entity("urn:a")]);
+        let local = [identifier("urn:a")];
+        let claimed = pending.claim(&local);
         pretty_assertions::assert_eq!(ids(&claimed), vec!["urn:a"]);
         assert!(!pending.holds_entities());
     }

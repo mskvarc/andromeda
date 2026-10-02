@@ -318,7 +318,6 @@ fn compose_registration_service(
     entity_config: &EntityConfig,
 ) -> Arc<RegistrationService> {
     let probe = Arc::new(EntityStoreRegistrationProbe::new(
-        Arc::clone(&storage.entity_ports.reader),
         Arc::clone(&storage.entity_ports.query),
         storage.engine.clone(),      // clone: the probe compiles registration selectors against its own engine handle.
         storage.live_target.clone(), // clone: admission inspects the tenant's live branch.

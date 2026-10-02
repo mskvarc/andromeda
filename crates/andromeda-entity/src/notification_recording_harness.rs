@@ -38,15 +38,15 @@ use crate::{
 use andromeda_context_commit::{atomic_write::AtomicWrite, change_event::ChangeEvent, committer::ContextCommitter, context_change_event::ContextChangeEvent};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::attribute_change::AttributeChangeKind;
-use andromeda_ngsi_ld_representation::payload_census::EntityPayloadBudget;
+use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{
     collections::HashSet,
     num::NonZeroUsize,
@@ -63,11 +63,11 @@ pub(crate) const NAME_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/
 /// prove a whole-instance overwrite drops an unmentioned sub-attribute.
 pub(crate) const ACCURACY_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/accuracy";
 
-/// The Building payload the reader returns, expanded and carrying one `category`
-/// Property so the update, partial-update, delete and replace operations have an
-/// attribute to act on.
-pub(crate) fn building_snapshot() -> Value {
-    json!({
+/// The Building the reader returns, carrying one `category` Property so the
+/// update, partial-update, delete and replace operations have an attribute to
+/// act on.
+pub(crate) fn building_snapshot() -> EntityState {
+    let stored = json!([{
         "@id": ENTITY_ID,
         "@type": [BUILDING_TYPE_IRI],
         CATEGORY_IRI: [{
@@ -78,7 +78,8 @@ pub(crate) fn building_snapshot() -> Value {
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "high"}]
             }]
         }]
-    })
+    }]);
+    EntityState::from_slice(&serde_json::to_vec(&stored).expect("the fixture is JSON")).expect("the fixture is a stored entity")
 }
 
 /// An entity service of a durable-delivery broker wired to the recording
@@ -119,13 +120,13 @@ pub(crate) fn budgeted_recording_service(budget: EntityPayloadBudget) -> EntityS
 }
 
 /// An entity service under observation: what it committed, how many whole
-/// payloads it read, and every change it published.
+/// states it read, and every change it published.
 pub(crate) struct ObservedService {
     /// The service under test.
     pub(crate) service: EntityService,
     /// The writes it committed.
     pub(crate) recorded: Arc<Mutex<Vec<AtomicWrite>>>,
-    /// How many whole payloads it read.
+    /// How many whole states it read.
     pub(crate) payload_reads: Arc<AtomicUsize>,
     /// The changes it published.
     pub(crate) published: Arc<Mutex<Vec<ChangeEvent>>>,
@@ -221,10 +222,11 @@ fn recording_service_with(
     let (committer, recorded) = RecordingCommitter::new();
     let payload_reads = Arc::new(AtomicUsize::new(0));
     let modified_at = Utc::now();
+    let building = Arc::new(building_snapshot());
     let service = EntityService::new(
         EntityServicePorts {
             reader: Arc::new(SnapshotReader {
-                payload: building_snapshot(),
+                state: Arc::clone(&building), // clone: the reader and the outline serve the one fixture
                 modified_at,
                 payload_reads: Arc::clone(&payload_reads), // clone: the test reads the count the reader keeps
             }) as Arc<dyn EntityReader>,
@@ -233,7 +235,7 @@ fn recording_service_with(
             attribute_history: Arc::new(UnusedAttributeHistory) as Arc<dyn AttributeDatasetHistory>,
             writes: Arc::new(committer) as Arc<dyn ContextCommitter>,
             deletion_outline: Arc::new(PayloadOutline {
-                payload: building_snapshot(),
+                state: building,
                 modified_at,
                 probe,
             }) as Arc<dyn DeletionOutlineReader>,

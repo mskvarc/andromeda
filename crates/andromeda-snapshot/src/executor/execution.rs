@@ -31,6 +31,7 @@ use andromeda_federation::{
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
 use andromeda_temporal::error::TemporalError;
@@ -98,7 +99,7 @@ impl SnapshotExecutor {
             };
             let remote_page_full = forwarded.iter().any(|source| source.entities.len() >= self.capture_page_size as usize);
             let entities = merge_temporal_query_results(result.entities, forwarded);
-            let pairs = entities
+            let (identifiers, values): (Vec<Identifier>, Vec<Value>) = entities
                 .into_iter()
                 .filter_map(|value| {
                     let raw = value.get("id").and_then(Value::as_str)?;
@@ -110,12 +111,12 @@ impl SnapshotExecutor {
                         }
                     }
                 })
-                .collect::<Vec<_>>();
-            let detail = self.persist_temporal_results(target, snapshot_id, index, &pairs).await?;
+                .unzip();
+            let detail = self.persist_temporal_results(target, snapshot_id, index, values).await?;
             if detail.problem_details.is_some() {
                 return Ok(detail);
             }
-            captured.extend(pairs.into_iter().map(|(id, _)| id));
+            captured.extend(identifiers);
             if local_page_len < self.capture_page_size as usize && !remote_page_full {
                 break;
             }
@@ -127,22 +128,26 @@ impl SnapshotExecutor {
         Ok(success_detail(captured.len()))
     }
 
+    /// Write captured states into the Snapshot's branch as they are, each
+    /// through the canonical codec (clause 5.16.1.4).
     pub(super) async fn persist_current_results(
         &self,
         target: &ContextTarget,
         snapshot_id: &Identifier,
         index: usize,
-        pairs: &[(Identifier, Value)],
+        states: Vec<EntityState>,
     ) -> Result<ExecutionResultDetails, SnapshotError> {
-        if pairs.is_empty() {
+        if states.is_empty() {
             return Ok(success_detail(0));
         }
-        let writes = pairs
-            .iter()
-            .map(|(entity_id, data)| {
+        let captured = states.len();
+        let writes = states
+            .into_iter()
+            .map(|state| {
+                let entity_id = Arc::new(state.id().clone()); // clone: the write owns its validated entity identity beside the state
                 Ok(AtomicWrite::builder()
-                    .entity_id(Arc::new(entity_id.clone())) // clone: the write owns its validated entity identity.
-                    .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::new(data.clone()))?)) // clone: captured state is owned by the branch write.
+                    .entity_id(entity_id)
+                    .entity(EntityMutation::Insert(EntityRecord::from_state(Arc::new(state))?))
                     .build())
             })
             .collect::<Result<Vec<AtomicWrite>, CommitError>>();
@@ -167,7 +172,7 @@ impl SnapshotExecutor {
             error!(snapshot_id = %snapshot_id, query_index = index, %refusal, "A captured Snapshot result was refused");
             return branch_commit_failure(CommitError::Submission(refusal));
         }
-        Ok(success_detail(pairs.len()))
+        Ok(success_detail(captured))
     }
 
     async fn persist_temporal_results(
@@ -175,15 +180,16 @@ impl SnapshotExecutor {
         target: &ContextTarget,
         snapshot_id: &Identifier,
         index: usize,
-        pairs: &[(Identifier, Value)],
+        values: Vec<Value>,
     ) -> Result<ExecutionResultDetails, SnapshotError> {
-        for (_, data) in pairs {
-            if let Err(error) = self.sources.temporal.create_or_update(target, data.clone(), &ContextSpec::core_only()).await {
+        let captured = values.len();
+        for data in values {
+            if let Err(error) = self.sources.temporal.create_or_update(target, data, &ContextSpec::core_only()).await {
                 error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize temporal Snapshot results");
                 return temporal_failure(error, "Failed to store temporal results: ");
             }
         }
-        Ok(success_detail(pairs.len()))
+        Ok(success_detail(captured))
     }
 }
 

@@ -1,26 +1,30 @@
 //! Validated notification delivery records and their mapper errors.
 
-use crate::notification_delivery::change_code::{change_kind_of, lifecycle_of};
+use crate::{
+    jsonb_text::JsonbText,
+    notification_delivery::change_code::{change_kind_of, lifecycle_of},
+};
 use andromeda_context_commit::{
     subscription_key::SubscriptionKey,
     write_id::WriteId,
     write_ordinal::{WriteOrdinal, WriteOrdinalOutOfRange},
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    reads::{attribute_change::AttributeChange, attribute_instance_key::AttributeInstanceKey},
+    refusal::EntityRefusal,
+};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
 };
-use andromeda_ngsi_ld_model::{
-    entity_change::EntityChange,
-    expanded::{attribute_change::AttributeChange, instance_key::AttributeInstanceKey},
-};
+use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::SysAttrsSnapshot};
 use andromeda_notification::delivery_entry::DeliveryKey;
 use andromeda_postgresql_codes::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode, registry::UnknownCompactCode};
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -52,10 +56,12 @@ pub struct ClaimedDelivery {
     pub change: EntityChange,
     /// Entity whose change the event records.
     pub entity_id: Identifier,
-    /// Expanded entity state after the change.
-    pub entity_snapshot: Option<Value>,
-    /// Expanded entity state before the change, for `showChanges`.
-    pub previous_snapshot: Option<Value>,
+    /// Entity state after the change, or the state a deletion removed.
+    pub entity_snapshot: Option<EntityState>,
+    /// Entity state before the change, for `showChanges`.
+    pub previous_snapshot: Option<EntityState>,
+    /// The clause 4.8 system attributes of an entity a deletion removed.
+    pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
     /// Instant the event was recorded.
     pub created_at: DateTime<Utc>,
 }
@@ -139,6 +145,17 @@ pub enum ClaimedDeliveryError {
         #[source]
         source: IdentifierParseError,
     },
+    /// A stored entity snapshot no longer decodes as an entity state.
+    #[error("carries an unreadable entity snapshot")]
+    UnreadableSnapshot {
+        /// Why the stored document is not an entity state.
+        #[source]
+        source: EntityRefusal,
+    },
+    /// The removed entity's `createdAt` and `modifiedAt` are not stored
+    /// together, which the event's own check constraint rules out.
+    #[error("carries an incomplete set of entity system attributes")]
+    IncompleteSystemAttributes,
 }
 
 /// SQL decode shape of one claimed delivery joined to its event.
@@ -146,7 +163,7 @@ pub enum ClaimedDeliveryError {
 /// Crate-private so unvalidated database text cannot cross the persistence
 /// boundary.
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct RawClaimedDeliveryRow {
+pub(crate) struct RawClaimedDeliveryRow<'r> {
     /// Database-generated delivery key.
     delivery_key: i64,
     /// Raw subscription identifier decoded by the row mapper.
@@ -176,10 +193,16 @@ pub(crate) struct RawClaimedDeliveryRow {
     /// Dataset discriminator of each changed instance, `None` for the default
     /// instance.
     change_dataset_ids: Vec<Option<String>>,
-    /// Entity state after the change, stored as JSONB.
-    entity_snapshot: Option<Value>,
-    /// Entity state before the change, stored as JSONB.
-    previous_snapshot: Option<Value>,
+    /// Entity state after the change, as the stored document's JSON text.
+    entity_snapshot: Option<JsonbText<'r>>,
+    /// Entity state before the change, as the stored document's JSON text.
+    previous_snapshot: Option<JsonbText<'r>>,
+    /// Clause 4.8 `createdAt` of an entity a deletion removed.
+    entity_created_at: Option<DateTime<Utc>>,
+    /// Clause 4.8 `modifiedAt` of an entity a deletion removed.
+    entity_modified_at: Option<DateTime<Utc>>,
+    /// Clause 4.22 `expiresAt` of an entity a deletion removed.
+    entity_expires_at: Option<DateTime<Utc>>,
     /// Instant the event was recorded.
     created_at: DateTime<Utc>,
 }
@@ -200,7 +223,7 @@ impl ClaimedDelivery {
     /// value, or the per-instance arrays disagree in length,
     /// carrying the branch and key the leased row's acknowledgement addresses.
     /// It is boxed because it is rare and far wider than the success path.
-    pub(crate) fn from_row(row: RawClaimedDeliveryRow, target: &ContextTarget) -> Result<ClaimedDelivery, Box<UnreadableClaimedDelivery>> {
+    pub(crate) fn from_row(row: RawClaimedDeliveryRow<'_>, target: &ContextTarget) -> Result<ClaimedDelivery, Box<UnreadableClaimedDelivery>> {
         let delivery_key = DeliveryKey::from(row.delivery_key);
         ClaimedDelivery::decode(row, target).map_err(|reason| {
             Box::new(UnreadableClaimedDelivery {
@@ -212,7 +235,7 @@ impl ClaimedDelivery {
     }
 
     /// Validate every stored value of one claimed row.
-    fn decode(row: RawClaimedDeliveryRow, target: &ContextTarget) -> Result<ClaimedDelivery, ClaimedDeliveryError> {
+    fn decode(row: RawClaimedDeliveryRow<'_>, target: &ContextTarget) -> Result<ClaimedDelivery, ClaimedDeliveryError> {
         let subscription_id = row
             .subscription_id
             .parse()
@@ -220,6 +243,9 @@ impl ClaimedDelivery {
         let entity_id = row.entity_id.parse().map_err(|source| ClaimedDeliveryError::InvalidEntityId { source })?;
         let event_ordinal = WriteOrdinal::try_from(row.event_ordinal).map_err(|source| ClaimedDeliveryError::InvalidEventOrdinal { source })?;
         let change = decode_change(row.lifecycle, row.change_kinds, row.change_attributes, row.change_dataset_ids)?;
+        let entity_snapshot = row.entity_snapshot.map(decode_snapshot).transpose()?;
+        let previous_snapshot = row.previous_snapshot.map(decode_snapshot).transpose()?;
+        let sys_attrs_snapshot = decode_system_attributes(row.entity_created_at, row.entity_modified_at, row.entity_expires_at)?;
         Ok(ClaimedDelivery {
             target: target.clone(), // clone: every row of the claim answers for the one branch it was drained from.
             delivery_key: DeliveryKey::from(row.delivery_key),
@@ -231,10 +257,34 @@ impl ClaimedDelivery {
             event_ordinal,
             change,
             entity_id,
-            entity_snapshot: row.entity_snapshot,
-            previous_snapshot: row.previous_snapshot,
+            entity_snapshot,
+            previous_snapshot,
+            sys_attrs_snapshot,
             created_at: row.created_at,
         })
+    }
+}
+
+/// Decode one stored snapshot into the entity state it was written from.
+fn decode_snapshot(text: JsonbText<'_>) -> Result<EntityState, ClaimedDeliveryError> {
+    EntityState::from_slice(text.as_bytes()).map_err(|source| ClaimedDeliveryError::UnreadableSnapshot { source })
+}
+
+/// Read the removed entity's stored system attributes back: none, or a
+/// `createdAt` and `modifiedAt` together with the optional `expiresAt`.
+const fn decode_system_attributes(
+    created_at: Option<DateTime<Utc>>,
+    modified_at: Option<DateTime<Utc>>,
+    expires_at: Option<DateTime<Utc>>,
+) -> Result<Option<SysAttrsSnapshot>, ClaimedDeliveryError> {
+    match (created_at, modified_at, expires_at) {
+        (Some(created_at), Some(modified_at), expires_at) => Ok(Some(SysAttrsSnapshot {
+            created_at,
+            modified_at,
+            expires_at,
+        })),
+        (None, None, None) => Ok(None),
+        (Some(_), None, _) | (None, Some(_), _) | (None, None, Some(_)) => Err(ClaimedDeliveryError::IncompleteSystemAttributes),
     }
 }
 
@@ -289,26 +339,32 @@ pub struct NewNotificationEvent<'a> {
     /// Dictionary key of each changed instance's attribute, position for
     /// position with `change.instances`.
     pub change_attribute_name_keys: Vec<AttributeNameKey>,
-    /// Expanded entity state after the change.
-    pub entity_snapshot: Option<&'a Value>,
-    /// Expanded entity state before the change, for `showChanges`.
-    pub previous_snapshot: Option<&'a Value>,
+    /// Entity state after the change, or the state a deletion removed.
+    pub entity_snapshot: Option<&'a EntityState>,
+    /// Entity state before the change, for `showChanges`.
+    pub previous_snapshot: Option<&'a EntityState>,
+    /// The clause 4.8 system attributes of an entity a deletion removed.
+    pub sys_attrs_snapshot: Option<&'a SysAttrsSnapshot>,
     /// Subscriptions this event is due to, in matcher order.
     pub subscription_keys: Vec<SubscriptionKey>,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_delivery::rows::{ClaimedDelivery, ClaimedDeliveryError, RawClaimedDeliveryRow, UnreadableClaimedDelivery};
+    use crate::{
+        jsonb_text::JsonbText,
+        notification_delivery::rows::{ClaimedDelivery, ClaimedDeliveryError, RawClaimedDeliveryRow, UnreadableClaimedDelivery},
+    };
     use andromeda_context_commit::write_ordinal::WriteOrdinal;
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes, reads::attribute_change::AttributeChangeKind};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind};
+    use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
     use andromeda_notification::delivery_entry::DeliveryKey;
     use chrono::Utc;
     use uuid::Uuid;
 
-    fn row() -> RawClaimedDeliveryRow {
+    fn row() -> RawClaimedDeliveryRow<'static> {
         RawClaimedDeliveryRow {
             delivery_key: 7,
             subscription_id: "urn:ngsi-ld:Subscription:1".to_owned(),
@@ -324,8 +380,59 @@ mod tests {
             change_dataset_ids: vec![None, Some("urn:ngsi-ld:Dataset:a".to_owned())],
             entity_snapshot: None,
             previous_snapshot: None,
+            entity_created_at: None,
+            entity_modified_at: None,
+            entity_expires_at: None,
             created_at: Utc::now(),
         }
+    }
+
+    /// A stored snapshot reads back as the entity state it was written from,
+    /// and the removed entity's system attributes travel beside it.
+    #[test]
+    fn a_stored_snapshot_and_its_system_attributes_read_back_typed() {
+        let state = EntityState::new(
+            "https://example.org/entities/1".parse().expect("a valid entity URI"),
+            EntityTypes::one("https://example.org/Building".parse().expect("a valid type name")),
+        );
+        let encoded = state.to_vec().expect("the state encodes");
+        let mut raw: RawClaimedDeliveryRow<'_> = row();
+        raw.entity_snapshot = Some(JsonbText::new(&encoded));
+        let removed_at = Utc::now();
+        raw.entity_created_at = Some(removed_at);
+        raw.entity_modified_at = Some(removed_at);
+        let record = ClaimedDelivery::from_row(raw, &ContextTarget::Live).expect("a valid claimed delivery");
+        pretty_assertions::assert_eq!(record.entity_snapshot, Some(state));
+        assert!(record.previous_snapshot.is_none());
+        let sys_attrs = record.sys_attrs_snapshot.expect("the stored system attributes");
+        pretty_assertions::assert_eq!(sys_attrs.created_at, removed_at);
+        assert!(sys_attrs.expires_at.is_none());
+    }
+
+    #[test]
+    fn a_snapshot_that_is_no_entity_state_is_rejected() {
+        let mut raw = row();
+        raw.previous_snapshot = Some(JsonbText::new(br#"[{"@id":"urn:ngsi-ld:A"}]"#));
+        assert!(matches!(
+            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
+            Err(UnreadableClaimedDelivery {
+                reason: ClaimedDeliveryError::UnreadableSnapshot { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_creation_instant_without_a_modification_instant_is_rejected() {
+        let mut raw = row();
+        raw.entity_created_at = Some(Utc::now());
+        assert!(matches!(
+            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
+            Err(UnreadableClaimedDelivery {
+                reason: ClaimedDeliveryError::IncompleteSystemAttributes,
+                ..
+            })
+        ));
     }
 
     #[test]

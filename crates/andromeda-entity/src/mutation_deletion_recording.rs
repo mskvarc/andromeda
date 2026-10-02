@@ -3,8 +3,8 @@
 //!
 //! These tests delete the harness Building under every combination of what the
 //! shared store's watcher probe answers and what this process's subscription
-//! cache holds, and read off the recording committer, the payload-read count
-//! and the change sink what the deletion did: whether it read the payload, the
+//! cache holds, and read off the recording committer, the state-read count
+//! and the change sink what the deletion did: whether it read the state, the
 //! matches it recorded (clause 5.8.6), the tombstones it recorded (clauses
 //! 4.5.7 and 4.5.8) and the change it published.
 
@@ -26,11 +26,13 @@ use crate::{
     },
 };
 use andromeda_context_commit::{change_event::ChangeEvent, history_record::HistoryRecord};
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_model::{
-    entity_change::{EntityChange, EntityLifecycle},
-    expanded::{attribute_change::AttributeChangeKind, instance_key::AttributeInstanceKey, removed_instance::RemovedAttributeInstance},
+use andromeda_ngsi_ld_entity::reads::{
+    attribute_change::AttributeChangeKind,
+    attribute_instance_key::AttributeInstanceKey,
+    removed_instance::RemovedAttributeInstance,
 };
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use pretty_assertions::assert_eq;
 use std::sync::{Arc, Mutex, atomic::Ordering};
 
@@ -58,7 +60,7 @@ fn assert_building_deletion(change: &EntityChange) {
 }
 
 #[tokio::test]
-async fn a_deletion_no_subscription_watches_never_reads_the_removed_payload() {
+async fn a_deletion_no_subscription_watches_never_reads_the_removed_state() {
     let observed = deleted_through(ProbeAnswer::Answers(DeletionWatchers::None), CachedSubscription::None).await;
 
     assert_eq!(observed.payload_reads.load(Ordering::Relaxed), 0);
@@ -72,7 +74,7 @@ async fn a_deletion_no_subscription_watches_never_reads_the_removed_payload() {
 /// Clauses 4.5.7 and 4.5.8: the Building's one default-dataset `category`
 /// Property ends with it, and it held no Scope to end. Which tombstones an
 /// outline of many instances, datasets and a Scope records is proven where
-/// the tombstones are built, against the removed payload.
+/// the tombstones are built, against the removed state.
 #[tokio::test]
 async fn a_deletion_no_subscription_watches_records_the_tombstones_of_its_outline() {
     let observed = deleted_through(ProbeAnswer::Answers(DeletionWatchers::None), CachedSubscription::None).await;
@@ -92,7 +94,7 @@ async fn a_deletion_no_subscription_watches_records_the_tombstones_of_its_outlin
 }
 
 #[tokio::test]
-async fn a_deletion_reads_the_removed_payload_when_only_the_store_knows_a_watcher() {
+async fn a_deletion_reads_the_removed_state_when_only_the_store_knows_a_watcher() {
     let observed = deleted_through(ProbeAnswer::Answers(DeletionWatchers::Possible), CachedSubscription::None).await;
 
     assert_eq!(observed.payload_reads.load(Ordering::Relaxed), 1);
@@ -107,7 +109,7 @@ async fn a_deletion_reads_the_removed_payload_when_only_the_store_knows_a_watche
 }
 
 #[tokio::test]
-async fn a_deletion_reads_the_removed_payload_when_only_this_process_caches_a_watcher() {
+async fn a_deletion_reads_the_removed_state_when_only_this_process_caches_a_watcher() {
     let observed = deleted_through(ProbeAnswer::Answers(DeletionWatchers::None), CachedSubscription::Building).await;
 
     assert_eq!(observed.payload_reads.load(Ordering::Relaxed), 1);
@@ -118,7 +120,7 @@ async fn a_deletion_reads_the_removed_payload_when_only_this_process_caches_a_wa
 /// An empty cache would answer that no subscription watches, so only the
 /// failed probe makes this deletion read the state it removes.
 #[tokio::test]
-async fn a_failed_watcher_probe_reads_the_removed_payload() {
+async fn a_failed_watcher_probe_reads_the_removed_state() {
     let observed = deleted_through(ProbeAnswer::Fails, CachedSubscription::None).await;
 
     assert_eq!(observed.payload_reads.load(Ordering::Relaxed), 1);
@@ -134,7 +136,7 @@ async fn a_failed_watcher_probe_reads_the_removed_payload() {
 /// carries; the cache answers for the subscription however the store's probe
 /// answered.
 #[tokio::test]
-async fn a_live_delivery_deletion_reads_the_removed_payload_for_an_entity_updated_subscription() {
+async fn a_live_delivery_deletion_reads_the_removed_state_for_an_entity_updated_subscription() {
     let observed = probing_live_service(ProbeAnswer::Answers(DeletionWatchers::None), CachedSubscription::BuildingOnEntityUpdated).await;
     observed.service.delete(&live_target(), &entity_uri()).await.expect("the deletion lands");
 
@@ -146,7 +148,7 @@ async fn a_live_delivery_deletion_reads_the_removed_payload_for_an_entity_update
 }
 
 #[tokio::test]
-async fn a_live_delivery_deletion_no_subscription_watches_never_reads_the_removed_payload() {
+async fn a_live_delivery_deletion_no_subscription_watches_never_reads_the_removed_state() {
     let observed = probing_live_service(ProbeAnswer::Answers(DeletionWatchers::None), CachedSubscription::None).await;
     observed.service.delete(&live_target(), &entity_uri()).await.expect("the deletion lands");
 
@@ -200,9 +202,9 @@ async fn every_match_of_one_deletion_shares_one_removed_state() {
     assert_matches_share_their_snapshots(&single_recorded_write(&observed.recorded));
 }
 
-/// By delivery time the deleted row is gone, so the durable match stores the
-/// removed state with its clause 4.8 system attributes already embedded
-/// (clause 5.8.6), while the previous state stays the removed state as read.
+/// By delivery time the deleted row is gone, so the durable match carries the
+/// removed state's clause 4.8 system attributes beside it (clause 5.8.6),
+/// while the notified and the previous state stay the removed state as read.
 #[tokio::test]
 async fn a_deletion_durable_match_still_carries_the_removed_system_attributes() {
     let observed = deleted_through(ProbeAnswer::Answers(DeletionWatchers::Possible), CachedSubscription::Building).await;
@@ -212,7 +214,6 @@ async fn a_deletion_durable_match_still_carries_the_removed_system_attributes() 
     let (Some(notified), Some(previous)) = (&matched.entity_snapshot, &matched.previous_snapshot) else {
         panic!("the match carries the removed state");
     };
-    let notified_text = notified.to_string();
-    assert!(notified_text.contains("createdAt") && notified_text.contains("modifiedAt"), "{notified_text}");
-    assert!(!previous.to_string().contains("createdAt"), "{previous}");
+    assert!(Arc::ptr_eq(notified, previous), "the notified state is the removed one, shared");
+    assert!(matched.sys_attrs_snapshot.is_some(), "the match carries the removed system attributes");
 }

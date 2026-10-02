@@ -47,6 +47,12 @@ impl JsonPointer {
         )
     }
 
+    /// The pointer through these owned segments, root first.
+    #[must_use]
+    pub const fn from_segments(segments: Vec<JsonPointerSegment>) -> JsonPointer {
+        JsonPointer(segments)
+    }
+
     /// The segments from the document root to the located node.
     #[must_use]
     pub fn segments(&self) -> &[JsonPointerSegment] {

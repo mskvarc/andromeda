@@ -3,22 +3,21 @@
 use crate::{
     EntityService,
     admitted_write::AdmittedEntity,
-    attrs::attribute_write::payload_write,
     error::EntityError,
-    expanded_member::{unwrap_expanded_ref, written_attribute_names, written_entity_types},
-    notification_plan::modification,
+    modification_write::ModificationWrite,
     write_kind::UpdateAttributes,
+    written_members::{member_attribute_names, written_member_names},
 };
 use andromeda_context_commit::{change_event::ChangeEvent, history_record::mutation_history};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::{
-    attribute_system_time::stamp_attribute_instants,
-    mutation::{entity::update_entity_attrs, error::ExpandedEntityError, selection::OverwritePolicy},
-    written_observation::AddressedInstances,
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    history::written_observation::AddressedInstances,
+    operation::selection::OverwritePolicy,
+    system_instant::SystemInstant,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use chrono::Utc;
-use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
@@ -41,7 +40,7 @@ impl EntityService {
     /// the entity already held and this request never mentioned is not reported
     /// as updated.
     ///
-    /// The update is computed from a payload read outside the writing
+    /// The update is computed from a state read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
     ///
@@ -59,39 +58,28 @@ impl EntityService {
         id: &Identifier,
         admitted: AdmittedEntity<UpdateAttributes>,
     ) -> Result<(Vec<AttributeName>, Vec<AttributeName>), EntityError> {
-        let entity_uri = id.clone(); // clone: notification and computed write own the identifier
-        let expanded = Arc::new(admitted.into_expanded());
+        let fragment = admitted.into_document();
         // Clause 5.6.2.5 reports the attributes this request asked for, so the
         // set is read from the fragment before the write merges it away.
-        let requested = written_attribute_names(unwrap_expanded_ref(&expanded))?;
+        let requested = written_member_names(&fragment)?;
         let (events, not_updated): (Vec<ChangeEvent>, Vec<AttributeName>) = self
-            .commit_computed_write(target, &entity_uri, |previous| {
-                let now = Utc::now();
-                let mut existing = Value::clone(previous); // clone: the update mutates its own copy of the stored payload
-                let not_updated = update_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded))?;
-
+            .commit_computed_write(target, id, |previous| {
+                let mut updated = EntityState::clone(previous); // clone: shares every attribute the update leaves alone
+                let not_updated = member_attribute_names(updated.update_attributes(&fragment)?)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
-
                 // its createdAt across the read-modify-write.
-
-                stamp_attribute_instants(&mut existing, previous, now).map_err(ExpandedEntityError::from)?;
-
-                let merged = Arc::new(existing);
-                let types = written_entity_types(&merged)?;
-
+                updated.stamp_attribute_instants(Some(previous), SystemInstant::new(Utc::now()));
+                let updated = Arc::new(updated);
+                let addressed = AddressedInstances::EntityFragment {
+                    fragment: &fragment,
+                    overwrite: OverwritePolicy::Overwrite,
+                };
+                let history = mutation_history(addressed, previous, &updated);
                 // The durable matches and the in-process events are planned
                 // together from one partition, so the two channels always agree
                 // on the per-attribute triggers (clause 5.2.12).
-                let change = modification(previous, &merged)?;
-                let plan = self.notifier.plan(target, &entity_uri, &types, change, Some(&merged), Some(previous));
-
-                let addressed = AddressedInstances::EntityFragment {
-                    fragment: &expanded,
-                    overwrite: OverwritePolicy::Overwrite,
-                };
-                let history = mutation_history(addressed, previous, &merged)?;
-                let write = payload_write(&entity_uri, &merged, history, plan.matches)?;
-                Ok((write, (plan.events, not_updated)))
+                let ModificationWrite { write, events } = self.modification_write(target, id, previous, updated, history)?;
+                Ok((write, (events, not_updated)))
             })
             .await?;
 

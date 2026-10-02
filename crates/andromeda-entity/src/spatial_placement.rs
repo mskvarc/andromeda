@@ -9,7 +9,7 @@
 //! evaluated by the store in full.
 
 use crate::{entity_invariant::EntityInvariant, error::EntityError};
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_spatial_index::key::SpatialKey;
@@ -54,12 +54,13 @@ impl LocationPlacement {
     }
 
     /// One `(partition, geometry)` pair per entity type, or none when the
-    /// entity conveys no location.
+    /// entity conveys no location. Every pair borrows the one geometry: the
+    /// index keeps only its projection.
     ///
     /// A type whose name is not an absolute IRI cannot name a partition a
     /// query would read, since queries select expanded types, and is skipped.
     #[must_use]
-    pub fn of(&self, entity_types: &[EntityTypeName], location: Option<&Geometry>) -> Vec<(SpatialKey, Geometry)> {
+    pub fn of<'g>(&self, entity_types: &[EntityTypeName], location: Option<&'g GeometryForm>) -> Vec<(SpatialKey, &'g GeometryForm)> {
         let Some(location) = location else {
             return Vec::new();
         };
@@ -75,7 +76,7 @@ impl LocationPlacement {
             .map(|type_iri| {
                 (
                     SpatialKey::new(self.tenant.clone(), type_iri, self.location.clone()), // clone: each partition key owns its tenant and geoproperty
-                    location.clone(),                                                      // clone: each partition owns its copy of the geometry
+                    location,
                 )
             })
             .collect()
@@ -85,7 +86,7 @@ impl LocationPlacement {
 #[cfg(test)]
 mod tests {
     use crate::spatial_placement::LocationPlacement;
-    use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
+    use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use pretty_assertions::assert_eq;
@@ -97,9 +98,7 @@ mod tests {
     #[test]
     fn a_located_entity_occupies_one_location_partition_per_type() {
         let placement = LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name");
-        let point = Geometry::new(GeometryForm::Point(
-            Position::try_new(1.0, 2.0, None).expect("a test position lies on the CRS84 axes"),
-        ));
+        let point = GeometryForm::Point(Position::try_new(1.0, 2.0, None).expect("a test position lies on the CRS84 axes"));
         let placed = placement.of(&types(&["https://example.org/Car", "https://example.org/Asset"]), Some(&point));
         let keys: Vec<(String, String)> = placed
             .iter()

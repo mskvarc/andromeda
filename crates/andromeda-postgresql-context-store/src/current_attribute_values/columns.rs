@@ -12,6 +12,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
@@ -19,8 +20,8 @@ use andromeda_postgresql_schema::{projected_string_column::ProjectedStringColumn
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
-use sqlx::{Postgres, postgres::PgArguments, query::Query};
+use serde_json::value::RawValue;
+use sqlx::{Postgres, postgres::PgArguments, query::Query, types::Json};
 
 /// The typed columns one projected value occupies.
 ///
@@ -41,7 +42,7 @@ struct TypedValueColumns<'a> {
     /// The geometry value, before EWKB encoding.
     geometry: Option<&'a Geometry>,
     /// The structured value.
-    object: Option<&'a Value>,
+    object: Option<&'a StructuredValue>,
     /// The timestamp value.
     datetime: Option<DateTime<Utc>>,
     /// The URI value, when it fits `value_uri`'s B-tree.
@@ -107,8 +108,9 @@ pub struct ProjectionBinds<'a> {
     pub value_strings: Vec<Option<&'a str>>,
     /// Geometry values as EWKB, projected server-side.
     pub value_geometries: Vec<Option<Vec<u8>>>,
-    /// Structured values.
-    pub value_objects: Vec<Option<&'a Value>>,
+    /// Structured values, each as the JSON text of the expanded document
+    /// piece `value_object` stores.
+    pub value_objects: Vec<Option<Box<RawValue>>>,
     /// URI values, which is how a relationship object is projected.
     pub value_uris: Vec<Option<&'a str>>,
     /// String values too long for `value_string`, under the String value kind.
@@ -123,7 +125,9 @@ impl<'a> ProjectionBinds<'a> {
     /// # Errors
     ///
     /// Returns [`ContextStoreError::Encoding`] when a geometry cannot be
-    /// encoded as EWKB.
+    /// encoded as EWKB, and [`ContextStoreError::PayloadEncoding`] when a
+    /// structured value cannot be written as JSON, which the model never
+    /// produces.
     pub fn from_rows(rows: &'a [ProjectedAttributeRow]) -> Result<ProjectionBinds<'a>, ContextStoreError> {
         let mut binds = ProjectionBinds {
             entity_keys: Vec::with_capacity(rows.len()),
@@ -158,8 +162,14 @@ impl<'a> ProjectionBinds<'a> {
             // decimal itself, preserving its exact value without formatting it.
             binds.value_numbers.push(value.number.cloned());
             binds.value_strings.push(value.text);
-            binds.value_geometries.push(geometry_bytes(value.geometry)?);
-            binds.value_objects.push(value.object);
+            binds.value_geometries.push(geometry_bytes(value.geometry.map(Geometry::form))?);
+            binds.value_objects.push(
+                value
+                    .object
+                    .map(StructuredValue::to_stored_json)
+                    .transpose()
+                    .map_err(ContextStoreError::PayloadEncoding)?,
+            );
             binds.value_uris.push(value.uri);
             binds.value_long_texts.push(value.long_text);
             binds.value_long_uris.push(value.long_uri);
@@ -188,7 +198,12 @@ impl<'a> ProjectionBinds<'a> {
             .bind(&self.value_numbers)
             .bind(&self.value_strings)
             .bind(&self.value_geometries)
-            .bind(&self.value_objects)
+            .bind(
+                self.value_objects
+                    .iter()
+                    .map(|object| object.as_deref().map(Json))
+                    .collect::<Vec<Option<Json<&RawValue>>>>(),
+            )
             .bind(&self.value_uris)
             .bind(&self.value_long_texts)
             .bind(&self.value_long_uris)
@@ -201,6 +216,8 @@ mod tests {
         columns::{ProjectionBinds, typed_value_columns},
         row::{ProjectedAttributeKey, ProjectedAttributeRow, ProjectedAttributeValue},
     };
+    use andromeda_ngsi_ld_entity::json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
     use andromeda_postgresql_schema::{projected_string_column::INDEXED_STRING_BYTE_LIMIT, projected_uri_column::INDEXED_URI_BYTE_LIMIT};
@@ -237,7 +254,7 @@ mod tests {
             ProjectedAttributeValue::String("text".to_owned()),
             ProjectedAttributeValue::String("x".repeat(3000)),
             ProjectedAttributeValue::Boolean(false),
-            ProjectedAttributeValue::Object(serde_json::json!({"a": 1})),
+            ProjectedAttributeValue::Object(StructuredValue::Json(JsonLiteral::new(serde_json::json!({"a": 1})))),
             ProjectedAttributeValue::DateTime(instant),
             ProjectedAttributeValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")),
             ProjectedAttributeValue::Uri(format!("urn:ngsi-ld:Entity:{}", "t".repeat(6000)).parse().expect("a valid URI")),

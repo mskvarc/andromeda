@@ -2,13 +2,12 @@
 
 use crate::{
     headers::{CommonHeadersOptions, apply_common_headers},
+    rendered_response::RenderedResponse,
     version_negotiation::apply_version_negotiation,
 };
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_results_count::NgsiLdResultsCount, ngsild_warning::NgsiLdWarning};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_render::response::RenderedOutput;
 use axum::{
-    Json,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -16,7 +15,8 @@ use headers::HeaderMapExt;
 
 /// NGSI-LD response wrapper for a collection of entities.
 ///
-/// Constructed from a [`RenderedOutput`] produced by the rendering pipeline:
+/// Constructed from what the rendering pipeline produced -- a rendered
+/// document or a typed entity body already written:
 ///
 /// ```ignore
 /// let host = context_hosting.for_request(&api_root);
@@ -32,7 +32,7 @@ pub struct NgsiLdCollectionResponse {
     /// HTTP status returned for the collection.
     status: StatusCode,
     /// Pre-rendered NGSI-LD response body and media type.
-    rendered: RenderedOutput,
+    rendered: RenderedResponse,
     /// Optional total collection count advertised by the response.
     total_count: Option<usize>,
     /// Optional pagination range advertised by the response.
@@ -48,10 +48,10 @@ pub struct NgsiLdCollectionResponse {
 impl NgsiLdCollectionResponse {
     /// Create a 200 OK response for a collection.
     #[must_use]
-    pub const fn ok(rendered: RenderedOutput) -> NgsiLdCollectionResponse {
+    pub fn ok(rendered: impl Into<RenderedResponse>) -> NgsiLdCollectionResponse {
         NgsiLdCollectionResponse {
             status: StatusCode::OK,
-            rendered,
+            rendered: rendered.into(),
             total_count: None,
             content_range: None,
             entity_map_uri: None,
@@ -106,8 +106,9 @@ impl NgsiLdCollectionResponse {
 impl IntoResponse for NgsiLdCollectionResponse {
     fn into_response(self) -> Response {
         let mut headers = HeaderMap::new();
-        headers.typed_insert(self.rendered.media_type);
-        let status = apply_version_negotiation(self.status, self.rendered.version_adaptation, &mut headers);
+        let RenderedResponse { body, head } = self.rendered;
+        headers.typed_insert(head.media_type);
+        let status = apply_version_negotiation(self.status, head.version_adaptation, &mut headers);
 
         if let Some(count) = self.total_count {
             headers.typed_insert(NgsiLdResultsCount::new(count));
@@ -119,7 +120,7 @@ impl IntoResponse for NgsiLdCollectionResponse {
 
         apply_common_headers(
             &mut headers,
-            self.rendered.context_link,
+            head.context_link,
             &CommonHeadersOptions {
                 location: None,
                 entity_map_uri: self.entity_map_uri.as_ref(),
@@ -128,6 +129,6 @@ impl IntoResponse for NgsiLdCollectionResponse {
             },
         );
 
-        (status, headers, Json(self.rendered.value)).into_response()
+        (status, headers, body).into_response()
     }
 }

@@ -53,6 +53,7 @@ async fn durable_queue_deleting_a_subscription_reclaims_its_deliveries_through_t
             change_attribute_name_keys: Vec::new(),
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
+            sys_attrs_snapshot: None,
             subscription_keys: vec![subscription_key(owner_key)],
         }],
     )

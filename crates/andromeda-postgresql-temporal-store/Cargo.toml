@@ -12,6 +12,7 @@ workspace = true
 andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
 andromeda-entity.workspace = true
+andromeda-ngsi-ld-entity.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
@@ -40,7 +41,7 @@ derive_more = { version = "2.1.1", features = ["as_ref", "display", "from"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }
 sea-query-sqlx = { version = "0.9.1", features = ["postgres-array", "runtime-tokio", "sqlx-postgres", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }
-serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
 sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"

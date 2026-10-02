@@ -6,7 +6,7 @@ use crate::{
     partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking},
     subscription::entry::SubEntry,
 };
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, great_circle::great_circle_bounds, relation::matches};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, great_circle::great_circle_bounds, planar::PlanarGeometry, relation::matches};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use rstar::{AABB, Envelope, RTree};
 
@@ -48,10 +48,13 @@ impl SpatialSubscriptionIndex {
     /// Every subscription in one partition whose geo filter the given entity
     /// geometry satisfies.
     ///
+    /// Takes the entity's horizontal projection rather than its geometry, so a
+    /// caller probing several partitions with one geometry projects it once and
+    /// the index never copies the positions.
     /// Already exact: each candidate the tree admits is put through the clause
     /// 4.10 predicate before it is returned, so the caller needs no second
     /// pass.
-    pub fn candidates(&self, key: &SpatialKey, entity_geometry: &Geometry) -> Vec<Identifier> {
+    pub fn candidates(&self, key: &SpatialKey, entity_geometry: &PlanarGeometry) -> Vec<Identifier> {
         // Great-circle bounds, so a `near` subscription is found beside the
         // bulge of a long entity edge as well as beside its vertices.
         let Some(rect) = great_circle_bounds(entity_geometry) else {
@@ -84,8 +87,8 @@ impl SpatialSubscriptionIndex {
 }
 
 /// Every subscription in one partition's tree whose geo filter the entity
-/// geometry satisfies.
-fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &Geometry, envelope: &AABB<[f64; 2]>) -> Vec<Identifier> {
+/// geometry, projected onto the horizontal plane, satisfies.
+fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &PlanarGeometry, envelope: &AABB<[f64; 2]>) -> Vec<Identifier> {
     let mut matched = Vec::new();
     for entry in tree.locate_in_envelope_intersecting(*envelope) {
         if matches(&entry.georel, entity_geometry, &entry.ref_geometry) {
@@ -121,8 +124,8 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{
         form::{GeometryForm, PolygonRings},
         geo_rel::GeoRel,
-        geometry::Geometry,
         linear_ring::LinearRing,
+        planar::PlanarGeometry,
         position::Position,
         positive_distance::PositiveDistance,
     };
@@ -151,14 +154,12 @@ mod tests {
         )
     }
 
-    fn point(x: f64, y: f64) -> Geometry {
-        Geometry::new(GeometryForm::Point(
-            Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"),
-        ))
+    fn point(x: f64, y: f64) -> GeometryForm {
+        GeometryForm::Point(Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"))
     }
 
-    fn square(cx: f64, cy: f64, half: f64) -> Geometry {
-        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![
+    fn square(cx: f64, cy: f64, half: f64) -> GeometryForm {
+        GeometryForm::Polygon(PolygonRings::new(vec![
             LinearRing::try_new(vec![
                 Position::try_new(cx - half, cy - half, None).expect("a test position lies on the CRS84 axes"),
                 Position::try_new(cx + half, cy - half, None).expect("a test position lies on the CRS84 axes"),
@@ -167,18 +168,22 @@ mod tests {
                 Position::try_new(cx - half, cy - half, None).expect("a test position lies on the CRS84 axes"),
             ])
             .expect("a test square is a closed ring"),
-        ])))
+        ]))
     }
 
-    fn entry(id: &str, reference: Geometry, georel: GeoRel) -> SubEntry {
+    fn entry(id: &str, reference: &GeometryForm, georel: GeoRel) -> SubEntry {
         SubEntry::new(uri(id), reference, georel).expect("the reference geometry has a bounding rectangle")
+    }
+
+    fn candidates_of(index: &SpatialSubscriptionIndex, key: &SpatialKey, entity: &GeometryForm) -> Vec<Identifier> {
+        index.candidates(key, &PlanarGeometry::project(entity))
     }
 
     #[test]
     fn an_entity_inside_a_subscriptions_area_makes_it_a_candidate() {
         let index = SpatialSubscriptionIndex::new();
-        index.insert(key(), entry("sub-1", square(0.0, 0.0, 1.0), GeoRel::Within));
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.5, 0.5)), vec![uri("sub-1")]);
+        index.insert(key(), entry("sub-1", &square(0.0, 0.0, 1.0), GeoRel::Within));
+        pretty_assertions::assert_eq!(candidates_of(&index, &key(), &point(0.5, 0.5)), vec![uri("sub-1")]);
     }
 
     #[test]
@@ -188,14 +193,14 @@ mod tests {
             key(),
             entry(
                 "sub-near",
-                point(0.0, 0.0),
+                &point(0.0, 0.0),
                 GeoRel::Near {
                     max_distance: Some(PositiveDistance::from_str("100").expect("positive distance")),
                     min_distance: None,
                 },
             ),
         );
-        assert_eq!(index.candidates(&key(), &point(10.0, 10.0)), [] as [Identifier; 0]);
+        assert_eq!(candidates_of(&index, &key(), &point(10.0, 10.0)), [] as [Identifier; 0]);
     }
 
     #[test]
@@ -205,7 +210,7 @@ mod tests {
             key(),
             entry(
                 "sub-5km",
-                point(0.0, 0.0),
+                &point(0.0, 0.0),
                 GeoRel::Near {
                     max_distance: Some(PositiveDistance::from_str("5000").expect("positive distance")),
                     min_distance: None,
@@ -214,32 +219,32 @@ mod tests {
         );
 
         // ~4 km east is 0.036 degrees at the equator; ~6 km east is 0.054.
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.036, 0.0)), vec![uri("sub-5km")]);
-        assert_eq!(index.candidates(&key(), &point(0.054, 0.0)), [] as [Identifier; 0]);
+        pretty_assertions::assert_eq!(candidates_of(&index, &key(), &point(0.036, 0.0)), vec![uri("sub-5km")]);
+        assert_eq!(candidates_of(&index, &key(), &point(0.054, 0.0)), [] as [Identifier; 0]);
     }
 
     #[test]
     fn a_removed_subscription_stops_being_a_candidate() {
         let index = SpatialSubscriptionIndex::new();
-        index.insert(key(), entry("sub-1", square(0.0, 0.0, 1.0), GeoRel::Within));
+        index.insert(key(), entry("sub-1", &square(0.0, 0.0, 1.0), GeoRel::Within));
         index.remove(&uri("sub-1"));
-        assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), [] as [Identifier; 0]);
+        assert_eq!(candidates_of(&index, &key(), &point(0.0, 0.0)), [] as [Identifier; 0]);
     }
 
     #[test]
     fn a_subscription_on_one_geoproperty_is_not_a_candidate_for_another() {
         let index = SpatialSubscriptionIndex::new();
-        index.insert(observation_space_key(), entry("sub-obs", square(0.0, 0.0, 1.0), GeoRel::Within));
-        assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), [] as [Identifier; 0]);
+        index.insert(observation_space_key(), entry("sub-obs", &square(0.0, 0.0, 1.0), GeoRel::Within));
+        assert_eq!(candidates_of(&index, &key(), &point(0.0, 0.0)), [] as [Identifier; 0]);
     }
 
     #[test]
     fn a_disjoint_subscription_is_found_even_though_its_envelope_misses_the_entity() {
         let index = SpatialSubscriptionIndex::new();
-        index.insert(key(), entry("sub-disjoint", square(0.0, 0.0, 1.0), GeoRel::Disjoint));
+        index.insert(key(), entry("sub-disjoint", &square(0.0, 0.0, 1.0), GeoRel::Disjoint));
         // Far outside the subscription's envelope, which is exactly when a
         // `disjoint` filter matches.
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(50.0, 50.0)), vec![uri("sub-disjoint")]);
+        pretty_assertions::assert_eq!(candidates_of(&index, &key(), &point(50.0, 50.0)), vec![uri("sub-disjoint")]);
     }
 
     #[test]
@@ -247,11 +252,11 @@ mod tests {
         // One subscription indexed once per `entities` selector; the second
         // insert must not wipe the first partition's entry (per-key removal).
         let index = SpatialSubscriptionIndex::new();
-        index.insert(key(), entry("sub-multi", square(0.0, 0.0, 1.0), GeoRel::Within));
-        index.insert(observation_space_key(), entry("sub-multi", square(0.0, 0.0, 1.0), GeoRel::Within));
+        index.insert(key(), entry("sub-multi", &square(0.0, 0.0, 1.0), GeoRel::Within));
+        index.insert(observation_space_key(), entry("sub-multi", &square(0.0, 0.0, 1.0), GeoRel::Within));
 
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), vec![uri("sub-multi")]);
-        pretty_assertions::assert_eq!(index.candidates(&observation_space_key(), &point(0.0, 0.0)), vec![uri("sub-multi")]);
+        pretty_assertions::assert_eq!(candidates_of(&index, &key(), &point(0.0, 0.0)), vec![uri("sub-multi")]);
+        pretty_assertions::assert_eq!(candidates_of(&index, &observation_space_key(), &point(0.0, 0.0)), vec![uri("sub-multi")]);
     }
 
     #[test]
@@ -265,7 +270,7 @@ mod tests {
             key(),
             entry(
                 "sub-min",
-                point(0.0, 0.0),
+                &point(0.0, 0.0),
                 GeoRel::Near {
                     max_distance: None,
                     min_distance: Some(PositiveDistance::from_str("300").expect("positive distance")),
@@ -273,7 +278,7 @@ mod tests {
             ),
         );
         // ~2 km east at the equator, well beyond the 300 m minimum.
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.018, 0.0)), vec![uri("sub-min")]);
+        pretty_assertions::assert_eq!(candidates_of(&index, &key(), &point(0.018, 0.0)), vec![uri("sub-min")]);
     }
 
     #[test]
@@ -283,7 +288,7 @@ mod tests {
         // to it, or the reference falls outside a too-narrow envelope.
         let entry = entry(
             "sub-north",
-            point(0.0, 60.0),
+            &point(0.0, 60.0),
             GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("5000").expect("positive distance")),
                 min_distance: None,
@@ -302,14 +307,14 @@ mod tests {
     }
 
     /// Bremen, the reference point the minimum-distance fixtures sit around.
-    fn bremen() -> Geometry {
+    fn bremen() -> GeometryForm {
         point(8.8072, 53.0758)
     }
 
     /// A square whose west wall is 100.06 m east of Bremen and whose centroid
     /// is 170.10 m east of it.
-    fn east_square() -> Geometry {
-        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![
+    fn east_square() -> GeometryForm {
+        GeometryForm::Polygon(PolygonRings::new(vec![
             LinearRing::try_new(
                 [
                     (8.808_693, 53.075_171),
@@ -323,7 +328,7 @@ mod tests {
                 .collect(),
             )
             .expect("a test square is a closed ring"),
-        ])))
+        ]))
     }
 
     /// Clause 4.10 `near` measures the minimum distance, so a building whose
@@ -331,28 +336,28 @@ mod tests {
     #[test]
     fn a_near_subscription_matches_a_polygon_whose_nearest_wall_is_in_range() {
         let index = SpatialSubscriptionIndex::new();
-        index.insert(key(), entry("sub-max", bremen(), near(Some("150"), None)));
-        pretty_assertions::assert_eq!(index.candidates(&key(), &east_square()), vec![uri("sub-max")]);
+        index.insert(key(), entry("sub-max", &bremen(), near(Some("150"), None)));
+        pretty_assertions::assert_eq!(candidates_of(&index, &key(), &east_square()), vec![uri("sub-max")]);
     }
 
     #[test]
     fn a_min_distance_subscription_ignores_a_polygon_whose_nearest_wall_is_too_close() {
         let index = SpatialSubscriptionIndex::new();
-        index.insert(key(), entry("sub-min", bremen(), near(None, Some("150"))));
-        assert_eq!(index.candidates(&key(), &east_square()), [] as [Identifier; 0]);
+        index.insert(key(), entry("sub-min", &bremen(), near(None, Some("150"))));
+        assert_eq!(candidates_of(&index, &key(), &east_square()), [] as [Identifier; 0]);
     }
 
     #[test]
     fn a_min_distance_only_subscription_is_still_found_far_away() {
         let index = SpatialSubscriptionIndex::new();
-        index.insert(key(), entry("sub-far", point(0.0, 0.0), near(None, Some("1000"))));
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(50.0, 50.0)), vec![uri("sub-far")]);
+        index.insert(key(), entry("sub-far", &point(0.0, 0.0), near(None, Some("1000"))));
+        pretty_assertions::assert_eq!(candidates_of(&index, &key(), &point(50.0, 50.0)), vec![uri("sub-far")]);
     }
 
     #[test]
     fn a_near_subscription_across_the_antimeridian_matches_the_other_side() {
         let index = SpatialSubscriptionIndex::new();
-        index.insert(key(), entry("sub-fiji", point(179.999, -17.0), near(Some("300"), None)));
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(-179.9995, -17.0)), vec![uri("sub-fiji")]);
+        index.insert(key(), entry("sub-fiji", &point(179.999, -17.0), near(Some("300"), None)));
+        pretty_assertions::assert_eq!(candidates_of(&index, &key(), &point(-179.9995, -17.0)), vec![uri("sub-fiji")]);
     }
 }

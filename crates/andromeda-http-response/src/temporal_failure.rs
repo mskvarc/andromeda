@@ -47,7 +47,7 @@ mod tests {
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_ngsi_ld_query::error::QueryError;
     use andromeda_ngsi_ld_render::temporal::values::TemporalValuesError;
-    use andromeda_ngsi_ld_representation::payload_census::{GeometryOwner, PayloadBudgetExceeded};
+    use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_ngsi_ld_request::{error::ParameterError, unsupported_representation::UnsupportedRepresentation};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_temporal::{

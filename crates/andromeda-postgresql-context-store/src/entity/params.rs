@@ -3,14 +3,15 @@
 //! One entity or a thousand, the statements bind the same arrays, so this is
 //! the only shape the write path builds. Everything that turns a
 //! specification value into a column — the `ltree` rendering of a scope, the
-//! exact JSON pre-serialisation of a payload, the EWKB encoding of a geometry
-//! — happens on the way in here.
+//! one encoding of an entity state into its stored document, the EWKB encoding
+//! of a geometry — happens on the way in here.
 
-use crate::error::ContextStoreError;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use crate::{entity::staged_geometry::StagedGeometry, error::ContextStoreError};
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
-use andromeda_postgresql_encoding::{array_literal::IntegerArrayLiteral, ewkb_binding::geometry_bytes};
+use andromeda_postgresql_encoding::array_literal::IntegerArrayLiteral;
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -22,7 +23,7 @@ use serde_json::Value;
 ///
 /// The payload is carried once, as the JSON text the statements bind (as
 /// `text[]` cast to `jsonb`, or as the bytes of a binary `COPY` field): the
-/// DOM it was serialised from is not kept, because no consumer of the column
+/// state it was encoded from is not kept, because no consumer of the column
 /// set reads it and one serialisation per entity is the whole cost.
 #[derive(Debug)]
 pub struct PreparedEntityColumns {
@@ -42,12 +43,12 @@ pub struct PreparedEntityColumns {
     pub scope_paths_json: Vec<Value>,
     /// Pre-serialised JSON text for each payload.
     pub payload_json: Vec<String>,
-    /// Location EWKB buffers.
-    pub locations: Vec<Option<Vec<u8>>>,
-    /// Observation-space EWKB buffers.
-    pub obs_spaces: Vec<Option<Vec<u8>>>,
-    /// Operation-space EWKB buffers.
-    pub op_spaces: Vec<Option<Vec<u8>>>,
+    /// Location geometries, as EWKB or kept.
+    pub locations: Vec<StagedGeometry<Vec<u8>>>,
+    /// Observation-space geometries, as EWKB or kept.
+    pub obs_spaces: Vec<StagedGeometry<Vec<u8>>>,
+    /// Operation-space geometries, as EWKB or kept.
+    pub op_spaces: Vec<StagedGeometry<Vec<u8>>>,
     /// The instant after which every `location` instance has expired, when
     /// every instance carries one.
     pub location_expires_ats: Vec<Option<DateTime<Utc>>>,
@@ -78,14 +79,19 @@ impl PreparedEntityColumns {
         }
     }
 
-    /// Serialise an expanded payload once and append its JSON text.
+    /// Encode an entity state once, as the stored expanded document, and
+    /// append its JSON text.
+    ///
+    /// The text is the entity state codec's own output (the bytes
+    /// [`EntityState::to_vec`] writes), produced straight from the state with
+    /// no intermediate JSON tree.
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::PayloadEncoding`] when the payload cannot be
-    /// serialised to JSON text.
-    pub fn push_payload(&mut self, payload: &Value) -> Result<(), ContextStoreError> {
-        let json = serde_json::to_string(payload).map_err(ContextStoreError::PayloadEncoding)?;
+    /// Returns [`ContextStoreError::PayloadEncoding`] when the state cannot be
+    /// encoded, which the codec never does in practice.
+    pub fn push_payload(&mut self, state: &EntityState) -> Result<(), ContextStoreError> {
+        let json = serde_json::to_string(state).map_err(ContextStoreError::PayloadEncoding)?;
         self.payload_json.push(json);
         Ok(())
     }
@@ -121,7 +127,8 @@ impl PreparedEntityColumns {
 
     /// Encode one row's three hoisted geometries into the parallel EWKB bind
     /// vectors. This is the only way to append them, so the vectors cannot
-    /// fall out of step with each other and EWKB stays inside the store.
+    /// fall out of step with each other and EWKB stays inside the store. A
+    /// kept geometry is not encoded at all.
     ///
     /// # Errors
     ///
@@ -129,13 +136,13 @@ impl PreparedEntityColumns {
     /// cannot be encoded as EWKB.
     pub fn push_geometries(
         &mut self,
-        location: Option<&Geometry>,
-        observation_space: Option<&Geometry>,
-        operation_space: Option<&Geometry>,
+        location: StagedGeometry<&GeometryForm>,
+        observation_space: StagedGeometry<&GeometryForm>,
+        operation_space: StagedGeometry<&GeometryForm>,
     ) -> Result<(), ContextStoreError> {
-        self.locations.push(geometry_bytes(location)?);
-        self.obs_spaces.push(geometry_bytes(observation_space)?);
-        self.op_spaces.push(geometry_bytes(operation_space)?);
+        self.locations.push(location.encoded()?);
+        self.obs_spaces.push(observation_space.encoded()?);
+        self.op_spaces.push(operation_space.encoded()?);
         Ok(())
     }
 }

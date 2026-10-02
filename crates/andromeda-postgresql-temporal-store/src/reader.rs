@@ -211,10 +211,7 @@ impl TemporalHistoryReader for TemporalRepository {
         Ok(TemporalEntityIdOutcome {
             candidates: entity_ids
                 .into_iter()
-                .map(|entity_id| TemporalEntityCandidate {
-                    entity_id,
-                    selection_value: None,
-                })
+                .map(|entity_id| TemporalEntityCandidate { entity_id, selection: None })
                 .collect(),
             residual: TemporalResidual::default(),
             pagination: TemporalPaginationOutcome::Applied { total: total_count },

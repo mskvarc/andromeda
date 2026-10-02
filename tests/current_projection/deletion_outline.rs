@@ -14,8 +14,8 @@
 use andromeda_context_commit::scope_presence::ScopePresence;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::deletion_outline::{DeletionOutline, DeletionWatchers};
+use andromeda_ngsi_ld_entity::reads::attribute_instance_key::AttributeInstanceKey;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::instance_key::AttributeInstanceKey;
 use andromeda_postgresql_context_store::entity::repo::EntityRepository;
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup};
 use andromeda_test_client::test_client::TestClient;

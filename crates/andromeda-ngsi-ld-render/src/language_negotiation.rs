@@ -55,11 +55,10 @@ fn render_attribute(attribute: &Attribute, language_filter: Option<&LanguageFilt
 /// than return the raw language map. Only the empty language map, or the absence
 /// of a filter, leaves the property as itself.
 fn render_language_property(language_property: &LanguageProperty, language_filter: Option<&LanguageFilter>) -> Result<Value, RenderError> {
-    if let Some(filter) = language_filter {
-        let selected = negotiate_language_property(language_property, filter).or_else(|| default_language_property(language_property));
-        if let Some(negotiated) = selected {
-            return serialize_value(&negotiated);
-        }
+    if let Some(filter) = language_filter
+        && let Some(entry) = negotiated_entry(language_property, filter)
+    {
+        return serialize_value(&NegotiatedProperty::from_language_property(language_property, entry));
     }
 
     // Clone required: Attribute's #[serde(tag = "type")] adds the "type" discriminant during serialization.
@@ -67,14 +66,26 @@ fn render_language_property(language_property: &LanguageProperty, language_filte
     serialize_value(&Attribute::LanguageProperty(language_property.clone()))
 }
 
-/// The `Property` clause 4.15 defaults to when no requested language matches:
-/// any supported language — the first tagged entry, else the `@none` default.
+/// The language-map entry clause 4.15 answers a `LanguageProperty` with under
+/// a `lang` filter: the entry the filter selects by RFC 4647 basic filtering,
+/// or, when nothing matches, any supported language.
 ///
-/// `None` only when the language map is empty, which has nothing to serve.
-fn default_language_property(language_property: &LanguageProperty) -> Option<NegotiatedProperty<'_>> {
+/// `None` only when the language map is empty, which has nothing to serve and
+/// leaves the property as itself.
+pub(crate) fn negotiated_entry<'a>(language_property: &'a LanguageProperty, filter: &LanguageFilter) -> Option<NegotiatedEntry<'a>> {
     let available = language_entries(&language_property.language_map);
-    let selected = default_supported_entry(&available)?;
-    Some(NegotiatedProperty::from_language_property(language_property, selected))
+    negotiate_entry(&available, filter)
+        .or_else(|| default_supported_entry(&available))
+        .map(AvailableLanguage::entry)
+}
+
+/// The entry clause 4.15 selects out of a language map.
+#[derive(Debug)]
+pub(crate) struct NegotiatedEntry<'a> {
+    /// The tag the entry is keyed by, or `@none`.
+    pub(crate) lang: LanguageMapKey,
+    /// The text the entry carries.
+    pub(crate) value: &'a LanguageMapValue,
 }
 
 /// Any supported entry of a language map: a tagged one by preference, else the
@@ -88,27 +99,25 @@ fn default_supported_entry<'a, 'b>(available: &'b [AvailableLanguage<'a>]) -> Op
 }
 
 /// Pick the language-map entry the filter selects, by RFC 4647 basic filtering.
-fn negotiate_language_property<'a>(language_property: &'a LanguageProperty, filter: &LanguageFilter) -> Option<NegotiatedProperty<'a>> {
-    let available = language_entries(&language_property.language_map);
-
+fn negotiate_entry<'a, 'b>(available: &'b [AvailableLanguage<'a>], filter: &LanguageFilter) -> Option<&'b AvailableLanguage<'a>> {
     for preference in filter.ordered() {
         let range = preference.value();
         match range {
             LanguageRange::Wildcard => {
-                if let Some(entry) = default_supported_entry(&available) {
-                    return Some(NegotiatedProperty::from_language_property(language_property, entry));
+                if let Some(entry) = default_supported_entry(available) {
+                    return Some(entry);
                 }
             }
             LanguageRange::Tag(_) => {
                 // Exact match.
                 if let Some(entry) = available.iter().find(|entry| entry.matches_exact(range)) {
-                    return Some(NegotiatedProperty::from_language_property(language_property, entry));
+                    return Some(entry);
                 }
                 // Prefix match. RFC 4647 basic filtering places no restriction to
                 // basic ranges, so an extended range like `fr-CA` still matches a
                 // longer tag such as `fr-CA-1994`.
                 if let Some(entry) = available.iter().find(|entry| entry.matches_prefix(range)) {
-                    return Some(NegotiatedProperty::from_language_property(language_property, entry));
+                    return Some(entry);
                 }
             }
         }
@@ -147,6 +156,17 @@ impl<'a> AvailableLanguage<'a> {
         match &self.range {
             AvailableLanguageRange::Tag(tag) => range.exact_matches(tag),
             AvailableLanguageRange::Default => false,
+        }
+    }
+
+    /// The negotiated entry this candidate answers with.
+    fn entry(&self) -> NegotiatedEntry<'a> {
+        NegotiatedEntry {
+            lang: match &self.range {
+                AvailableLanguageRange::Default => LanguageMapKey::None,
+                AvailableLanguageRange::Tag(tag) => LanguageMapKey::Tag(tag.clone()), // clone: the answer owns the tag it names
+            },
+            value: self.value,
         }
     }
 
@@ -195,14 +215,11 @@ struct NegotiatedProperty<'a> {
 
 impl<'a> NegotiatedProperty<'a> {
     /// Build the answer from a language property and the entry chosen from it.
-    fn from_language_property(language_property: &'a LanguageProperty, selected: &AvailableLanguage<'a>) -> NegotiatedProperty<'a> {
+    fn from_language_property(language_property: &'a LanguageProperty, entry: NegotiatedEntry<'a>) -> NegotiatedProperty<'a> {
         NegotiatedProperty {
             type_: AttributeType::Property,
-            value: selected.value,
-            lang: match &selected.range {
-                AvailableLanguageRange::Default => LanguageMapKey::None,
-                AvailableLanguageRange::Tag(tag) => LanguageMapKey::Tag(tag.clone()),
-            },
+            value: entry.value,
+            lang: entry.lang,
             observed_at: language_property.common.observed_at,
             dataset_id: &language_property.common.dataset_id,
             sub_attributes: &language_property.common.sub_attributes,

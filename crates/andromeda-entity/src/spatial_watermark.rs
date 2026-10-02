@@ -22,6 +22,7 @@ use crate::{
     spatial_placement::LocationPlacement,
     spatial_reconciliation::{RebuildOutcome, rebuild_location_index},
 };
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use async_lock::Mutex;
 use std::sync::{
@@ -96,7 +97,7 @@ impl SpatialWatermark {
         let round = self.arrivals.load(Ordering::SeqCst);
         let read = self.source.locations_changed_since(horizon).await?;
         for location in read.locations {
-            let placements = self.placement.of(&location.entity_types, location.location.as_ref());
+            let placements = self.placement.of(&location.entity_types, location.location.as_ref().map(Geometry::form));
             self.index.replace_entity(location.entity_id, placements);
         }
         state.horizon = Some(read.horizon);
@@ -228,7 +229,7 @@ mod tests {
             IriBuf::new("https://example.org/Vehicle".to_owned()).expect("a well-formed IRI"),
             "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         );
-        let square = Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![
+        let square = GeometryForm::Polygon(PolygonRings::new(vec![
             LinearRing::try_new(vec![
                 Position::try_new(-1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
                 Position::try_new(1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
@@ -237,7 +238,7 @@ mod tests {
                 Position::try_new(-1.0, -1.0, None).expect("a test position lies on the CRS84 axes"),
             ])
             .expect("a test square is a closed ring"),
-        ])));
+        ]));
         watermark.index().query(&key, &GeoRel::Within, &square)
     }
 

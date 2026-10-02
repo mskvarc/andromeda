@@ -5,8 +5,9 @@
 //! `geojson::GeometryValue`, never through `geo_types`. The `geojson` crate's
 //! own `geo_types` conversion drops every ordinate past the second, because
 //! `geo_types` is two-dimensional by construction, so routing through it would
-//! throw altitude away. Decoding reads the compact tree in place (see
-//! [`crate::compact_geojson`]).
+//! throw altitude away. Decoding reads a compact geometry object straight from
+//! a deserializer (see [`crate::written_geometry`]) or from a parsed tree (see
+//! [`crate::compact_geojson`]), the two sharing one reading of its members.
 
 use crate::{
     coordinate_path::CoordinatePath,

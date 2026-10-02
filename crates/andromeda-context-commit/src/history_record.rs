@@ -1,26 +1,28 @@
 //! Temporal Evolution consequences carried by an atomic write.
 
-use crate::{error::CommitError, scope_presence::ScopePresence};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::{
-    instance_key::{AttributeInstanceKey, attribute_instance_families},
-    removed_instance::{RemovedAttributeInstance, removed_attribute_instances},
-    scope_member::extract_scopes,
-    written_observation::{AddressedInstances, written_observation},
+use crate::scope_presence::ScopePresence;
+use andromeda_ngsi_ld_entity::{
+    document::EntityDocument,
+    entity_state::EntityState,
+    history::written_observation::{AddressedInstances, written_observation},
+    reads::{
+        attribute_instance_key::AttributeInstanceKey,
+        removed_instance::{RemovedAttributeInstance, removed_attribute_instances},
+    },
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use derive_more::IsVariant;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// One temporal-history consequence of an entity mutation.
 #[derive(Debug, IsVariant)]
 pub enum HistoryRecord {
-    /// Attribute observations contained in an expanded payload, recorded
-    /// because a Core write changed the Entity's current state (clause 4.3.1:
-    /// "Brokers that intend to implement the Temporal API should consider
-    /// updating the Temporal Evolution of an Entity whenever the 'current
-    /// state' is modified via the Core API").
-    Observations(Arc<Value>),
+    /// Attribute observations of an entity, recorded because a Core write
+    /// changed the Entity's current state (clause 4.3.1: "Brokers that intend
+    /// to implement the Temporal API should consider updating the Temporal
+    /// Evolution of an Entity whenever the 'current state' is modified via the
+    /// Core API").
+    Observations(Arc<EntityState>),
     /// Attribute instances added to the Temporal Evolution of an Entity through
     /// the Temporal API (clauses 5.6.11 and 5.6.12), recorded exactly as the
     /// client sent them.
@@ -32,7 +34,7 @@ pub enum HistoryRecord {
     /// (clause 4.5.5.3) -- which the write answers through its
     /// [`CurrentStateProjection`](crate::current_state_projection::CurrentStateProjection)
     /// rather than through its history.
-    EvolutionInstances(Arc<Value>),
+    EvolutionInstances(Arc<EntityDocument>),
     /// End of one attribute instance that left current entity state.
     Tombstone(RemovedAttributeInstance),
     /// End of the Entity's Scope, which left current entity state.
@@ -69,7 +71,8 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Identifier>, attribut
     })
 }
 
-/// Build the observations and exact instance tombstones produced by a payload mutation.
+/// Build the observations and exact instance tombstones produced by a state
+/// mutation.
 ///
 /// `previous` is the Entity before the write and `current` the Entity it
 /// stored. The observation is the [`written_observation`] of the instances
@@ -88,59 +91,51 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Identifier>, attribut
 /// is gone from current state and its temporal interval has to close with it.
 /// A mutation that names a different Scope needs no record of its own — the
 /// event it writes is itself what ends the interval before it.
-///
-/// # Errors
-///
-/// Returns [`CommitError::Invariant`] when the Fragment or either state
-/// carries an instance whose `datasetId` cannot be read, since neither its
-/// observation nor its tombstone would name an instance.
-pub fn mutation_history(addressed: AddressedInstances<'_>, previous: &Value, current: &Value) -> Result<Vec<HistoryRecord>, CommitError> {
-    let removed = removed_attribute_instances(previous, current).map_err(|error| CommitError::Invariant(error.into()))?;
-    let observation = written_observation(addressed, previous, current).map_err(|error| CommitError::Invariant(error.into()))?;
+#[must_use]
+pub fn mutation_history(addressed: AddressedInstances<'_>, previous: &EntityState, current: &EntityState) -> Vec<HistoryRecord> {
+    let removed = removed_attribute_instances(previous, current);
+    let observation = written_observation(addressed, Some(previous), current);
     let mut history = Vec::with_capacity(removed.len() + 2);
     history.extend(observation.map(|observed| HistoryRecord::Observations(Arc::new(observed))));
     history.extend(removed.into_iter().map(HistoryRecord::Tombstone));
-    if scope_was_cleared(previous, current) {
+    if previous.scope().is_some() && current.scope().is_none() {
         history.push(HistoryRecord::ScopeRemoval);
     }
-    Ok(history)
-}
-
-/// Whether the mutation left the Entity with no Scope at all, having had one.
-fn scope_was_cleared(previous: &Value, current: &Value) -> bool {
-    !extract_scopes(previous).is_empty() && extract_scopes(current).is_empty()
+    history
 }
 
 /// Build the tombstone every attribute instance of a deleted entity needs.
 ///
 /// Clause 5.6.6 deletes the entity's current state, and clause 4.5.8 has an
-/// instance that has ended carry a
-/// `deletedAt`. The deletion therefore records one tombstone per instance the
-/// entity still held, so temporal history says when each instance ended instead
-/// of trailing off with no explanation.
-///
-/// The order is fixed by the instance identity rather than left to the set that
-/// collected it: a tombstone's position in the write is half of the key its
-/// stored row deduplicates on, so a replay has to produce the same order.
-///
-/// # Errors
-///
-/// Returns [`CommitError::Invariant`] when the entity carries an instance whose
-/// `datasetId` cannot be read.
-pub fn deletion_history(previous: &Value) -> Result<Vec<HistoryRecord>, CommitError> {
-    let instances = attribute_instance_families(previous).map_err(|error| CommitError::Invariant(error.into()))?;
-    let scope = if extract_scopes(previous).is_empty() {
-        ScopePresence::Absent
-    } else {
-        ScopePresence::Held
+/// instance that has ended carry a `deletedAt`. The deletion therefore records
+/// one tombstone per instance the entity still held, so temporal history says
+/// when each instance ended instead of trailing off with no explanation.
+#[must_use]
+pub fn deletion_history(previous: &EntityState) -> Vec<HistoryRecord> {
+    let instances = previous.instance_families().map(|(attr, dataset_id, attribute_type)| {
+        (
+            AttributeInstanceKey {
+                attr: attr.clone(),              // clone: the tombstone owns its attribute name.
+                dataset_id: dataset_id.cloned(), // clone: the tombstone owns its dataset identifier.
+            },
+            attribute_type,
+        )
+    });
+    let scope = match previous.scope() {
+        Some(_) => ScopePresence::Held,
+        None => ScopePresence::Absent,
     };
-    Ok(deletion_tombstones(instances, scope))
+    deletion_tombstones(instances, scope)
 }
 
 /// The tombstones a deleted entity's history records, from the instances it
 /// held and whether it held a Scope; [`deletion_history`] reads both off the
-/// removed payload, and a deletion that never read the payload states them
+/// removed state, and a deletion that never read the state states them
 /// itself.
+///
+/// The order is fixed by the instance identity rather than left to the set that
+/// collected it: a tombstone's position in the write is half of the key its
+/// stored row deduplicates on, so a replay has to produce the same order.
 pub fn deletion_tombstones(instances: impl IntoIterator<Item = (AttributeInstanceKey, AttributeType)>, scope: ScopePresence) -> Vec<HistoryRecord> {
     let mut removed = instances
         .into_iter()
@@ -172,32 +167,54 @@ mod tests {
         history_record::{HistoryRecord, deletion_history, deletion_tombstones, mutation_history},
         scope_presence::ScopePresence,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
-    use andromeda_ngsi_ld_model::expanded::{
-        instance_key::AttributeInstanceKey,
-        mutation::selection::OverwritePolicy,
-        removed_instance::RemovedAttributeInstance,
-        written_observation::AddressedInstances,
+    use andromeda_ngsi_ld_entity::{
+        document::{EntityDocument, instance_document::InstanceDocument},
+        entity_state::EntityState,
+        history::written_observation::AddressedInstances,
+        operation::selection::OverwritePolicy,
+        reads::{attribute_instance_key::AttributeInstanceKey, removed_instance::RemovedAttributeInstance},
     };
-    use iri_rs::IriBuf;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
     use serde_json::{Value, json};
+
+    const PROPERTY: &str = "https://uri.etsi.org/ngsi-ld/Property";
+
+    /// Decode a stored document into a state.
+    fn state(document: &Value) -> EntityState {
+        EntityState::from_slice(&serde_json::to_vec(document).expect("JSON")).expect("a stored entity decodes")
+    }
+
+    /// Decode a written entity fragment.
+    fn fragment(document: &Value) -> EntityDocument {
+        EntityDocument::from_slice(&serde_json::to_vec(document).expect("JSON")).expect("a written fragment decodes")
+    }
+
+    /// An entity of the given members.
+    fn entity(members: &Value) -> Value {
+        let mut node = json!({"@id": "urn:ngsi-ld:A", "@type": ["https://example.org/T"]});
+        if let (Some(node), Some(members)) = (node.as_object_mut(), members.as_object()) {
+            node.extend(members.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
+        }
+        json!([node])
+    }
+
+    fn property(value: i64) -> Value {
+        json!({"@type": [PROPERTY], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]})
+    }
 
     #[test]
     fn a_replacement_tombstones_a_dropped_attribute() {
-        let previous = json!([{
-            "@id": "urn:ngsi-ld:A",
-            "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}],
-            "https://example.org/colour": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}]
-        }]);
-        let replacement = json!([{
-            "@id": "urn:ngsi-ld:A",
-            "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}]
-        }]);
+        let previous = state(&entity(
+            &json!({"https://example.org/speed": [property(1)], "https://example.org/colour": [property(2)]}),
+        ));
+        let replacement_document = entity(&json!({"https://example.org/speed": [property(1)]}));
+        let replacement = state(&replacement_document);
+        let written = fragment(&replacement_document);
         let addressed = AddressedInstances::EntityFragment {
-            fragment: &replacement,
+            fragment: &written,
             overwrite: OverwritePolicy::Overwrite,
         };
-        let history = mutation_history(addressed, &previous, &replacement).expect("readable datasetIds");
+        let history = mutation_history(addressed, &previous, &replacement);
         assert!(history[0].is_observations());
         assert!(history.iter().any(HistoryRecord::is_tombstone));
     }
@@ -208,37 +225,31 @@ mod tests {
         let dataset_b = "urn:ngsi-ld:Dataset:b";
         let instance = |dataset_id: &str| {
             json!({
-                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "@type": [PROPERTY],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
                 "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_id}]
             })
         };
-        let previous = json!([{
-            "@id": "urn:ngsi-ld:Vehicle:1",
-            "https://example.com/speed": [instance(dataset_a), instance(dataset_b)]
-        }]);
-        let current = json!([{
-            "@id": "urn:ngsi-ld:Vehicle:1",
-            "https://example.com/speed": [instance(dataset_b)]
-        }]);
-        let fragment = json!([{
+        let previous = state(&entity(&json!({"https://example.com/speed": [instance(dataset_a), instance(dataset_b)]})));
+        let current = state(&entity(&json!({"https://example.com/speed": [instance(dataset_b)]})));
+        let deletion = fragment(&json!([{
             "https://example.com/speed": [{
-                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "@type": [PROPERTY],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}],
                 "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_a}]
             }]
-        }]);
+        }]));
         let addressed = AddressedInstances::EntityFragment {
-            fragment: &fragment,
+            fragment: &deletion,
             overwrite: OverwritePolicy::Overwrite,
         };
 
-        let history = mutation_history(addressed, &previous, &current).expect("readable datasetIds");
+        let history = mutation_history(addressed, &previous, &current);
 
         // The deletion is recorded by its tombstone alone: the NGSI-LD Null is
         // an instruction, and the instance it removed is not in current state.
         pretty_assertions::assert_eq!(history.len(), 1);
-        let HistoryRecord::Tombstone(removed) = &history[0] else {
+        let Some(HistoryRecord::Tombstone(removed)) = history.first() else {
             panic!("the only record is the tombstone: {history:?}");
         };
         pretty_assertions::assert_eq!(removed.key.attr.as_str(), "https://example.com/speed");
@@ -252,28 +263,29 @@ mod tests {
     fn a_partial_update_records_the_resulting_instance_rather_than_the_fragment() {
         let temperature = |value: i64| {
             json!({
-                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "@type": [PROPERTY],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}],
                 "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "CEL"}]
             })
         };
-        let previous = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/temperature": [temperature(25)]}]);
-        let current = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/temperature": [temperature(100)]}]);
-        let fragment = json!({
-            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
-            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 100}]
-        });
-        let attribute = IriBuf::new("https://example.org/temperature".to_owned()).expect("a valid IRI");
+        let previous = state(&entity(&json!({"https://example.org/temperature": [temperature(25)]})));
+        let current = state(&entity(&json!({"https://example.org/temperature": [temperature(100)]})));
+        let attribute: AttributeName = "https://example.org/temperature".parse().expect("a valid attribute name");
+        let written = InstanceDocument::from_slice(
+            &attribute,
+            &serde_json::to_vec(&json!({"@type": [PROPERTY], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 100}]})).expect("JSON"),
+        )
+        .expect("a written attribute fragment decodes");
         let addressed = AddressedInstances::AttributeFragment {
             attribute: &attribute,
             dataset_id: None,
-            fragment: &fragment,
+            fragment: &written,
         };
 
-        let history = mutation_history(addressed, &previous, &current).expect("readable datasetIds");
+        let history = mutation_history(addressed, &previous, &current);
 
         pretty_assertions::assert_eq!(history.len(), 1);
-        let HistoryRecord::Observations(observed) = &history[0] else {
+        let Some(HistoryRecord::Observations(observed)) = history.first() else {
             panic!("the only record is the observation: {history:?}");
         };
         pretty_assertions::assert_eq!(**observed, current);
@@ -283,19 +295,14 @@ mod tests {
     /// Entity already holds -- records no observation at all.
     #[test]
     fn a_write_that_applied_no_instance_records_no_observation() {
-        let state = json!([{
-            "@id": "urn:ngsi-ld:A",
-            "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
-        }]);
-        let fragment = json!([{
-            "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 2}]}]
-        }]);
+        let held = state(&entity(&json!({"https://example.org/speed": [property(1)]})));
+        let append = fragment(&json!([{"https://example.org/speed": [property(2)]}]));
         let addressed = AddressedInstances::EntityFragment {
-            fragment: &fragment,
+            fragment: &append,
             overwrite: OverwritePolicy::Preserve,
         };
 
-        let history = mutation_history(addressed, &state, &state).expect("readable datasetIds");
+        let history = mutation_history(addressed, &held, &held);
 
         assert!(history.is_empty(), "{history:?}");
     }
@@ -303,31 +310,35 @@ mod tests {
     /// Clause 4.18: a replacement that omits `scope` ends the Scope's interval.
     #[test]
     fn a_replacement_without_scope_records_the_scope_removal() {
-        let previous = json!([{"@id": "urn:ngsi-ld:A", "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}]}]);
-        let replacement: Value = json!([{"@id": "urn:ngsi-ld:A"}]);
+        let previous = state(&entity(&json!({"https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}]})));
+        let replacement_document = entity(&json!({}));
+        let replacement = state(&replacement_document);
+        let written = fragment(&replacement_document);
         let addressed = AddressedInstances::EntityFragment {
-            fragment: &replacement,
+            fragment: &written,
             overwrite: OverwritePolicy::Overwrite,
         };
 
-        let history = mutation_history(addressed, &previous, &replacement).expect("readable datasetIds");
+        let history = mutation_history(addressed, &previous, &replacement);
 
         assert!(matches!(history.as_slice(), [HistoryRecord::ScopeRemoval]), "{history:?}");
     }
 
     #[test]
     fn deleting_an_entity_tombstones_every_instance_it_still_held_in_a_fixed_order() {
-        let previous = json!([{
-            "@id": "urn:ngsi-ld:A",
-            "https://example.org/speed": [
-                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:b"}]},
-                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:a"}]}
-            ],
-            "https://example.org/colour": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}]
-        }]);
+        let instance = |dataset_id: &str| {
+            json!({
+                "@type": [PROPERTY],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_id}]
+            })
+        };
+        let previous = state(&entity(&json!({
+            "https://example.org/speed": [instance("urn:ngsi-ld:Dataset:b"), instance("urn:ngsi-ld:Dataset:a")],
+            "https://example.org/colour": [property(1)]
+        })));
 
         let named = deletion_history(&previous)
-            .expect("readable datasetIds")
             .into_iter()
             .map(|entry| match entry {
                 HistoryRecord::Tombstone(removed) => (removed.key.attr.as_str().to_owned(), removed.key.dataset_id.map(|id| id.as_str().to_owned())),
@@ -347,7 +358,7 @@ mod tests {
 
     #[test]
     fn deleting_an_entity_that_held_no_attributes_records_nothing() {
-        assert!(deletion_history(&json!([{"@id": "urn:ngsi-ld:A"}])).expect("readable datasetIds").is_empty());
+        assert!(deletion_history(&state(&entity(&json!({})))).is_empty());
     }
 
     /// What one entry of a deletion's history ends.
@@ -380,22 +391,24 @@ mod tests {
         (key, attribute_type)
     }
 
-    /// Clauses 4.5.7, 4.5.8 and 4.18: a deletion that never read the payload
+    /// Clauses 4.5.7, 4.5.8 and 4.18: a deletion that never read the state
     /// states the instances and the Scope it removed itself, and records
     /// exactly the tombstones -- each instance with its family, then the Scope
-    /// -- that reading the removed payload records.
+    /// -- that reading the removed state records.
     #[test]
-    fn an_outline_of_every_instance_and_the_scope_records_the_tombstones_the_payload_would() {
-        let removed = json!([{
-            "@id": "urn:ngsi-ld:A",
+    fn an_outline_of_every_instance_and_the_scope_records_the_tombstones_the_state_would() {
+        let with_dataset = |dataset_id: &str| {
+            json!({
+                "@type": [PROPERTY],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_id}]
+            })
+        };
+        let removed = state(&entity(&json!({
             "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}],
-            "https://example.org/speed": [
-                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:b"}]},
-                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"]},
-                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:a"}]}
-            ],
+            "https://example.org/speed": [with_dataset("urn:ngsi-ld:Dataset:b"), property(1), with_dataset("urn:ngsi-ld:Dataset:a")],
             "https://example.org/owner": [{"@type": ["https://uri.etsi.org/ngsi-ld/Relationship"], "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:P"}]}]
-        }]);
+        })));
         // Listed in an order of its own, as a store answers.
         let outline = vec![
             instance("https://example.org/speed", Some("urn:ngsi-ld:Dataset:a"), AttributeType::Property),
@@ -415,7 +428,7 @@ mod tests {
         .collect::<Vec<_>>();
 
         pretty_assertions::assert_eq!(ended(deletion_tombstones(outline, ScopePresence::Held)), expected);
-        pretty_assertions::assert_eq!(ended(deletion_history(&removed).expect("readable datasetIds")), expected);
+        pretty_assertions::assert_eq!(ended(deletion_history(&removed)), expected);
     }
 
     #[test]

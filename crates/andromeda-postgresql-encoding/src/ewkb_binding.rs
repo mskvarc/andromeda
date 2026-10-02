@@ -9,7 +9,7 @@
 //! `pg_type` OID lookup.
 
 use crate::ewkb::{EwkbError, encode};
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::form::GeometryForm;
 
 /// Encode an absent-or-present geometry into the buffer a `bytea` bind takes.
 ///
@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_geometry::geometry::Geometry;
 /// # Errors
 ///
 /// Returns [`EwkbError`] if the geometry cannot be encoded.
-pub fn geometry_bytes(geometry: Option<&Geometry>) -> Result<Option<Vec<u8>>, EwkbError> {
+pub fn geometry_bytes(geometry: Option<&GeometryForm>) -> Result<Option<Vec<u8>>, EwkbError> {
     geometry.map(|geometry| encode(geometry).map(|ewkb| ewkb.to_vec())).transpose()
 }
 
@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn a_present_geometry_binds_as_its_ewkb_buffer() {
-        let geometry = Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [13.38, 52.52] })).expect("point parses");
+        let geometry = GeometryForm::from_compact_value(&serde_json::json!({ "type": "Point", "coordinates": [13.38, 52.52] })).expect("point parses");
         let bytes = geometry_bytes(Some(&geometry)).expect("encodes").expect("present");
         assert_eq!(bytes.first(), Some(&0x01), "PostGIS reads little-endian EWKB: {bytes:?}");
     }

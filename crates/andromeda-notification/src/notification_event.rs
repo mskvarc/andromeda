@@ -13,11 +13,11 @@
 //! Entity matched no subscription produces no event at all.
 
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::entity_change::EntityChange;
+use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::SysAttrsSnapshot};
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
-use serde_json::Value;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
@@ -48,12 +48,20 @@ pub struct NotificationEvent {
     pub change: EntityChange,
     /// Entity whose change produced the event.
     pub entity_id: Identifier,
-    /// Expanded entity snapshot at the time of the mutation.
+    /// The entity state the write left behind, or the state a deletion
+    /// removed.
     #[builder(default = Default::default())]
-    pub entity_snapshot: Option<Arc<Value>>,
+    pub entity_snapshot: Option<Arc<EntityState>>,
     /// Entity state before the mutation, carried for `showChanges` support.
     #[builder(default = Default::default())]
-    pub previous_snapshot: Option<Arc<Value>>,
+    pub previous_snapshot: Option<Arc<EntityState>>,
+    /// The clause 4.8 system attributes of an entity the change deleted.
+    ///
+    /// An entity state holds no entity-level `createdAt` or `modifiedAt`, and
+    /// once the deletion committed the entity row they were read from is gone,
+    /// so the event records them beside the removed state.
+    #[builder(default = Default::default())]
+    pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
     /// Instant at which the event was recorded.
     pub created_at: DateTime<Utc>,
 }

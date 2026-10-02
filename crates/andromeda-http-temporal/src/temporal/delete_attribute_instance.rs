@@ -72,7 +72,6 @@ pub async fn delete_attr_instance(
                 entity_type_compact: None,
                 attribute_name: Some(&attr_id),
                 method: Method::DELETE,
-                body: None,
                 context: &context,
                 operation: ForwardingOperation::DeleteTemporalAttributeInstance,
                 path_suffix: Some(&path_suffix),
@@ -82,6 +81,7 @@ pub async fn delete_attr_instance(
                     headers: Some(&headers),
                 },
             },
+            None,
         )
         .await
         .with_instance(&uri)?;

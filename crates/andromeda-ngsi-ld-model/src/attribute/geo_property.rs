@@ -1,43 +1,39 @@
 //! The `GeoProperty` attribute family (ETSI GS CIM 009 clause 5.2.7).
 
 use crate::attribute::common_fields::CommonAttributeFields;
-use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
+use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry, geometry_members::JsonLdKeywords, written_geometry::WrittenGeometry};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
-use jsonld::Expandable;
-use serde::{Deserialize, Serialize, de::Error as DeserializeError};
+use serde::{
+    Deserialize,
+    Serialize,
+    de::{Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, Visitor},
+};
 use serde_json::{Map, Value};
 use serde_with::skip_serializing_none;
+use std::fmt;
 use thiserror::Error;
 
 /// NGSI-LD `GeoProperty` representation (ETSI GS CIM 009 clause 5.2.7).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(
-    type = "ngsi:GeoProperty",
-    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
-)]
 pub struct GeoProperty {
     /// Geometry value, held and serialised as `GeoJSON` per RFC 7946.
-    #[jsonld(property = "ngsi:hasValue", coerce = "@json")]
     pub value: Geometry,
     /// Optional JSON-LD datatype for `value`.
-    #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<NgsiLdReference>,
     /// Previous geometry value emitted in notifications when `showChanges` is active.
-    #[jsonld(property = "ngsi:hasPreviousValue", coerce = "@json")]
     pub previous_value: Option<Geometry>,
     /// Members shared with every other attribute family.
     #[serde(flatten)]
-    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
 }
 
 /// The member an attribute instance names its family in, the tag the derived
 /// [`Attribute`](crate::attribute::instance::Attribute) decoding reads.
-const TYPE_MEMBER: &str = "type";
+pub(crate) const TYPE_MEMBER: &str = "type";
 
 /// The members of a `GeoProperty` instance other than its type and its
 /// geometries.
@@ -52,35 +48,58 @@ struct GeoPropertyEnvelope {
 }
 
 impl GeoProperty {
-    /// Read a `GeoProperty` instance from the members of its compact object.
+    /// Read a `GeoProperty` instance from its compact object, its own `type`
+    /// member skipped.
     ///
-    /// The geometries are read in place by the direct `GeoJSON` reader, so a
-    /// geometry of millions of positions is never buffered once more per
-    /// position on its way into the domain type; the remaining members are few
-    /// and decode as every other family's do. The result is the one the
-    /// derived decoding of the same object gives, except that a geometry
-    /// carrying a JSON-LD keyword member is refused rather than read.
+    /// The geometries are read straight from the deserializer, so a geometry
+    /// of millions of positions is never held as a JSON tree on its way into
+    /// the domain type; the remaining members are few and decode as every
+    /// other family's do. The result is the one the derived decoding of the
+    /// same object gives, except that a geometry carrying a JSON-LD keyword
+    /// member is refused rather than read. A member written twice counts as
+    /// written last, as a parsed tree keeps it.
     ///
     /// # Errors
     ///
     /// Returns the decoding failure of a missing or malformed geometry, or of
     /// a malformed remaining member.
-    pub(crate) fn from_instance(members: &Map<String, Value>) -> Result<GeoProperty, serde_json::Error> {
-        let value = members
-            .get(compact_properties::VALUE)
-            .ok_or_else(|| serde_json::Error::missing_field(compact_properties::VALUE))
-            .and_then(typed_geometry)?;
-        let previous_value = match members.get(compact_properties::PREVIOUS_VALUE) {
-            None | Some(Value::Null) => None,
-            Some(geometry) => Some(typed_geometry(geometry)?),
-        };
-        // clone: the envelope's few members are decoded from a document of their own
-        let envelope: Map<String, Value> = members
-            .iter()
-            .filter(|(member, _)| ![TYPE_MEMBER, compact_properties::VALUE, compact_properties::PREVIOUS_VALUE].contains(&member.as_str()))
-            .map(|(member, value)| (member.clone(), value.clone()))
-            .collect();
-        let GeoPropertyEnvelope { value_type, common } = deserialize_exact(&Value::Object(envelope))?;
+    pub(crate) fn from_instance<'de, D: Deserializer<'de>>(instance: D) -> Result<GeoProperty, D::Error> {
+        instance.deserialize_map(GeoPropertyVisitor)
+    }
+}
+
+/// Reads the members of one `GeoProperty` instance.
+#[derive(Clone, Copy, Debug)]
+struct GeoPropertyVisitor;
+
+impl<'de> Visitor<'de> for GeoPropertyVisitor {
+    type Value = GeoProperty;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a GeoProperty instance")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut members: A) -> Result<GeoProperty, A::Error> {
+        let mut value = None;
+        let mut previous_value = None;
+        let mut envelope = Map::new();
+        while let Some(name) = members.next_key::<String>()? {
+            match name.as_str() {
+                TYPE_MEMBER => {
+                    members.next_value::<IgnoredAny>()?;
+                }
+                compact_properties::VALUE => value = Some(typed_geometry(members.next_value()?)),
+                compact_properties::PREVIOUS_VALUE => previous_value = Some(members.next_value::<Option<WrittenGeometry>>()?.map(typed_geometry)),
+                _ => {
+                    envelope.insert(name, members.next_value::<Value>()?);
+                }
+            }
+        }
+        let value = value
+            .ok_or_else(|| A::Error::missing_field(compact_properties::VALUE))?
+            .map_err(A::Error::custom)?;
+        let previous_value = previous_value.flatten().transpose().map_err(A::Error::custom)?;
+        let GeoPropertyEnvelope { value_type, common } = deserialize_exact(&Value::Object(envelope)).map_err(A::Error::custom)?;
         Ok(GeoProperty {
             value,
             value_type,
@@ -93,7 +112,7 @@ impl GeoProperty {
 /// Why one geometry of a compact `GeoProperty` instance is not read as the
 /// typed [`Geometry`].
 #[derive(Debug, Error)]
-enum TypedGeometryRefusal {
+pub enum TypedGeometryRefusal {
     /// The geometry object carries a JSON-LD keyword, which is no `GeoJSON`
     /// member.
     #[error("the geometry carries a JSON-LD keyword, which is no GeoJSON member")]
@@ -103,7 +122,8 @@ enum TypedGeometryRefusal {
     Geometry(#[from] GeometryError),
 }
 
-/// Read one geometry of a `GeoProperty` instance as the typed [`Geometry`].
+/// Read one written geometry of a `GeoProperty` instance as the typed
+/// [`Geometry`].
 ///
 /// The typed geometry keeps a geometry's type and positions and nothing else,
 /// so a member written beside them is gone once the instance is rendered
@@ -112,20 +132,16 @@ enum TypedGeometryRefusal {
 /// processor would act on -- an `@context` there is one clause 5.5.7 refuses
 /// -- so a geometry carrying one is not read as typed, and the instance stays
 /// as written for the screening that refuses it.
-fn typed_geometry(geometry: &Value) -> Result<Geometry, serde_json::Error> {
-    let read = if geometry.as_object().into_iter().flat_map(Map::keys).any(|member| member.starts_with('@')) {
-        Err(TypedGeometryRefusal::JsonLdKeyword)
-    } else {
-        Geometry::from_geojson_value(geometry).map_err(TypedGeometryRefusal::from)
-    };
-    read.map_err(DeserializeError::custom)
+pub(crate) fn typed_geometry(written: WrittenGeometry) -> Result<Geometry, TypedGeometryRefusal> {
+    match written.json_ld_keywords() {
+        JsonLdKeywords::Present => Err(TypedGeometryRefusal::JsonLdKeyword),
+        JsonLdKeywords::Absent => Ok(Geometry::new(written.into_form()?)),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::attribute::instance::{Attribute, AttributeValue};
-    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-    use jsonld::Expandable;
 
     #[test]
     fn geo_property_round_trip_supports_previous_value() {
@@ -139,22 +155,6 @@ mod tests {
             panic!("expected GeoProperty");
         };
         assert!(property.previous_value.is_some());
-    }
-
-    #[test]
-    fn geo_property_expanded_includes_value_type() {
-        let json = serde_json::json!({
-            "type": "GeoProperty",
-            "value": { "type": "Point", "coordinates": [13.0, 52.0] },
-            "valueType": "geojson:Point"
-        });
-        let attr: Attribute = serde_json::from_value(json).expect("geo property");
-        let Attribute::GeoProperty(property) = attr else {
-            panic!("expected GeoProperty");
-        };
-        let expanded = property.expand::<serde_json::Value>();
-        let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(expanded_properties::VALUE_TYPE.as_str()));
     }
 
     #[test]

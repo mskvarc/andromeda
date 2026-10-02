@@ -2,13 +2,17 @@
 
 use crate::{entity_group::IndexedWrite, name_resolution::ResolvedWriteNames};
 use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
     commit_invariant::{CommitInvariant, NameDictionary},
+    entity_mutation::EntityMutation,
     error::CommitError,
+    hoisted_geometries::GeometryChange,
+    precondition::Precondition,
     projected_attributes::ProjectedAttributes,
 };
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind};
-use andromeda_postgresql_context_store::entity::params::PreparedEntityColumns;
+use andromeda_postgresql_context_store::entity::{params::PreparedEntityColumns, staged_geometry::StagedGeometry};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, ltree::scope_to_ltree};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -28,6 +32,9 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteName
             })
         })?;
         let projection = &record.projection;
+        let state = &record.state;
+        let row = StoredRow::of(write);
+        let changes = &record.geometry_changes;
         columns.ids.push(write.entity_id.as_ref().clone()); // clone: the SQL column set owns identifiers borrowed from the writes.
         columns.push_entity_type_name_keys(key_array(&projection.types, &names.types, NameDictionary::EntityType)?);
         let attribute_keys = key_array(projection.attributes.names(), &names.attributes, NameDictionary::AttributeName)?;
@@ -37,13 +44,13 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteName
             projection.scopes.iter().map(|scope| Value::String(scope_to_ltree(scope))).collect(),
         ));
         columns
-            .push_payload(&record.payload)
+            .push_payload(&record.state)
             .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
         columns
             .push_geometries(
-                projection.location.as_ref(),
-                projection.observation_space.as_ref(),
-                projection.operation_space.as_ref(),
+                row.staged(changes.location, state.location_geometry()),
+                row.staged(changes.observation_space, state.observation_space_geometry()),
+                row.staged(changes.operation_space, state.operation_space_geometry()),
             )
             .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
         columns.location_expires_ats.push(projection.location_expires_at);
@@ -51,6 +58,42 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteName
         columns.min_attribute_expires_ats.push(record.min_attribute_expires_at);
     }
     Ok(columns)
+}
+
+/// What a write knows of the search row it writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoredRow {
+    /// An update that holds against the version it read: if it lands, the
+    /// search row it rewrites is the projection of the state it replaces.
+    AsRead,
+    /// An insert, or an update that overwrites whatever is stored.
+    Unknown,
+}
+
+impl StoredRow {
+    /// What `write` knows of the row it writes.
+    const fn of(write: &AtomicWrite) -> StoredRow {
+        match (&write.entity, write.precondition) {
+            (EntityMutation::Update(_), Precondition::UnchangedSince(_)) => StoredRow::AsRead,
+            (
+                EntityMutation::Update(_) | EntityMutation::Insert(_) | EntityMutation::Delete | EntityMutation::None,
+                Precondition::None | Precondition::MustExist | Precondition::MustNotExist | Precondition::UnchangedSince(_),
+            ) => StoredRow::Unknown,
+        }
+    }
+
+    /// How the row stages one hoisted geometry: kept when the stored row is
+    /// the one the write read and the write leaves the geometry as that row
+    /// holds it, encoded otherwise. A kept geometry costs the statement
+    /// nothing in proportion to its positions.
+    fn staged<G>(self, change: GeometryChange, geometry: Option<G>) -> StagedGeometry<G> {
+        match (self, change) {
+            (StoredRow::AsRead, GeometryChange::Unchanged) => StagedGeometry::Kept,
+            (StoredRow::AsRead, GeometryChange::Changed) | (StoredRow::Unknown, GeometryChange::Changed | GeometryChange::Unchanged) => {
+                StagedGeometry::Written(geometry)
+            }
+        }
+    }
 }
 
 /// The JSON array of dictionary keys for `names`, in declaration order.
@@ -102,7 +145,7 @@ mod tests {
         precondition::Precondition,
         projected_attributes::ProjectedAttributes,
     };
-    use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         attribute_type::AttributeType,
@@ -110,9 +153,10 @@ mod tests {
         identifier::Identifier,
         scope::path::ScopePath,
     };
+    use andromeda_postgresql_context_store::entity::staged_geometry::StagedGeometry;
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use chrono::Utc;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
 
     const VEHICLE: &str = "https://example.org/Vehicle";
@@ -140,29 +184,44 @@ mod tests {
         attributes
     }
 
-    fn scoped_write(id: &str, scopes: Vec<&str>, location: Option<Geometry>) -> AtomicWrite {
+    /// The default `location` of a test entity, as a longitude and latitude.
+    type Located = Option<(f64, f64)>;
+
+    /// A typed entity state, conveying a `location` Point when `location` is set.
+    fn vehicle_state(id: &str, location: Located) -> EntityState {
+        let Some((longitude, latitude)) = location else {
+            return EntityState::new(id.parse().expect("valid entity URI"), EntityTypes::one(vehicle()));
+        };
+        let document = json!([{
+            "@id": id,
+            "@type": [VEHICLE],
+            "https://uri.etsi.org/ngsi-ld/location": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@type": ["https://purl.org/geojson/vocab#Point"],
+                    "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": longitude}, {"@value": latitude}]}]
+                }]
+            }]
+        }]);
+        EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes")
+    }
+
+    fn scoped_write(id: &str, scopes: Vec<&str>, location: Located) -> AtomicWrite {
         let projection = SearchProjection {
             types: vec![vehicle()],
             attributes: speed_attribute(),
             scopes: scopes.into_iter().map(|raw| raw.parse::<ScopePath>().expect("valid scope path")).collect(),
-            location,
-            observation_space: None,
-            operation_space: None,
             location_expires_at: None,
         };
         AtomicWrite::builder()
             .entity_id(Arc::new(id.parse::<Identifier>().expect("valid entity URI")))
             .entity(EntityMutation::Update(EntityRecord::from_parts(
-                Arc::new(json!([{"@id": id, SPEED: [{"@value": 1}]}])),
+                Arc::new(vehicle_state(id, location)),
                 projection,
                 None,
                 None,
             )))
             .build()
-    }
-
-    fn point() -> Geometry {
-        serde_json::from_value(json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("valid point")
     }
 
     /// The key columns carry dictionary keys, never IRIs: the resolved key of
@@ -260,25 +319,28 @@ mod tests {
         pretty_assertions::assert_eq!(columns.scope_paths_json[0], json!(["a.b", "c"]));
     }
 
+    /// Each state is encoded once, by the entity state codec, into the stored
+    /// document it decodes back from.
     #[test]
-    fn payloads_are_serialised_once_as_json_text() {
+    fn payloads_are_encoded_once_as_the_stored_document() {
         let writes = [scoped_write("urn:ngsi-ld:A", Vec::new(), None), scoped_write("urn:ngsi-ld:B", Vec::new(), None)];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &resolved()).expect("valid columns");
         pretty_assertions::assert_eq!(columns.payload_json.len(), 2);
         for ((_, write), encoded) in indexed.iter().zip(&columns.payload_json) {
-            let round_tripped: Value = serde_json::from_str(encoded).expect("valid payload JSON");
             let record = write.entity.record().expect("an update carries a record");
-            pretty_assertions::assert_eq!(&round_tripped, record.payload.as_ref());
+            pretty_assertions::assert_eq!(encoded.as_bytes(), record.state.to_vec().expect("the state encodes").as_slice());
+            let decoded = EntityState::from_slice(encoded.as_bytes()).expect("the stored document decodes");
+            pretty_assertions::assert_eq!(&decoded, record.state.as_ref());
         }
     }
 
     #[test]
     fn every_bind_column_remains_positionally_aligned() {
         let writes = [
-            scoped_write("urn:ngsi-ld:A", vec!["/a"], Some(point())),
+            scoped_write("urn:ngsi-ld:A", vec!["/a"], Some((1.0, 2.0))),
             scoped_write("urn:ngsi-ld:B", Vec::new(), None),
-            scoped_write("urn:ngsi-ld:C", vec!["/c"], Some(point())),
+            scoped_write("urn:ngsi-ld:C", vec!["/c"], Some((1.0, 2.0))),
         ];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &resolved()).expect("valid columns");
@@ -299,6 +361,55 @@ mod tests {
         ] {
             pretty_assertions::assert_eq!(length, 3);
         }
+        pretty_assertions::assert_eq!(
+            columns.locations.iter().map(|staged| staged.ewkb().is_some()).collect::<Vec<_>>(),
+            vec![true, false, true],
+            "the location is encoded from the state the record shares"
+        );
+    }
+
+    /// An update of the state it read, whose record shares that state's
+    /// location, replacing it under `precondition`.
+    fn update_sharing_the_location(precondition: Precondition) -> AtomicWrite {
+        let previous = vehicle_state("urn:ngsi-ld:A", Some((13.4, 52.5)));
+        let current = Arc::new(EntityState::clone(&previous)); // clone: shares every attribute, as a read-modify-write does
+        AtomicWrite::builder()
+            .entity_id(Arc::new("urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI")))
+            .entity(EntityMutation::Update(EntityRecord::replacing(&previous, current).expect("a projection")))
+            .precondition(precondition)
+            .build()
+    }
+
+    /// The resolution of the Vehicle type and of `location`.
+    fn located_names() -> ResolvedWriteNames {
+        let location: AttributeName = "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name");
+        ResolvedWriteNames {
+            types: resolved().types,
+            attributes: HashMap::from([(location, AttributeNameKey::from(13))]),
+        }
+    }
+
+    /// Clause 5.6.2: an update that leaves `location` as the state it read held
+    /// it, and holds against that version, stages the geometry as kept -- no
+    /// EWKB is encoded or bound, so the statement never re-projects it.
+    #[test]
+    fn an_update_holding_against_its_read_keeps_an_unchanged_geometry() {
+        let writes = [update_sharing_the_location(Precondition::UnchangedSince(Utc::now()))];
+        let indexed: Vec<_> = writes.iter().enumerate().collect();
+        let columns = columns_for(&indexed, &located_names()).expect("valid columns");
+        pretty_assertions::assert_eq!(columns.locations, vec![StagedGeometry::Kept]);
+        pretty_assertions::assert_eq!(columns.obs_spaces, vec![StagedGeometry::Kept], "neither state holds one");
+    }
+
+    /// An update that overwrites whatever is stored cannot know the stored row
+    /// holds the geometry it read, so it writes the geometry.
+    #[test]
+    fn an_unconditional_update_writes_even_an_unchanged_geometry() {
+        let writes = [update_sharing_the_location(Precondition::MustExist)];
+        let indexed: Vec<_> = writes.iter().enumerate().collect();
+        let columns = columns_for(&indexed, &located_names()).expect("valid columns");
+        assert!(columns.locations[0].ewkb().is_some(), "{:?}", columns.locations);
+        pretty_assertions::assert_eq!(columns.obs_spaces, vec![StagedGeometry::Written(None)]);
     }
 
     #[test]

@@ -165,10 +165,6 @@ pub enum JsonLdError {
     #[error("the context URL is not an IRI")]
     ContextUrlNotIri(#[source] InvalidIri<String>),
 
-    /// The vocabulary generated into the broker holds an IRI that does not parse.
-    #[error("the generated NGSI-LD vocabulary holds a term whose IRI does not parse")]
-    GeneratedVocabularyIri(#[source] InvalidIri<String>),
-
     /// A `jsonldContext` written as JSON text does not parse.
     #[error("jsonldContext is not valid JSON: {0}")]
     JsonLdContextText(#[source] serde_json::Error),

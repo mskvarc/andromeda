@@ -24,8 +24,8 @@ use crate::{
         Value,
         classify_entity_error,
         collect_proxied_attrs,
+        local_remainder_of_payload,
         provision_response,
-        strip_attributes_from_value,
         update_result::{NotUpdatedReason, update_result_response},
     },
     written_payload_admission::admit_written_entity,
@@ -50,45 +50,43 @@ pub(crate) async fn append_attrs(
     JsonLdDocument { document: fragment, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
+    // The fragment is refused before the options are, so the options are
+    // read here and their refusal raised after the admission.
+    let requested_policy = params.overwrite_policy();
+    let no_overwrite = matches!(requested_policy, Ok(RequestOverwritePolicy::NoOverwrite));
+    let qs = if no_overwrite { "options=noOverwrite" } else { "" };
+    let request = ForwardProvisionRequest {
+        resource: ProvisionResource::Entities,
+        entity_id: &id,
+        entity_type_compact: None,
+        attribute_name: None,
+        method: Method::POST,
+        context: &context,
+        operation: ForwardingOperation::AppendEntityAttributes,
+        path_suffix: Some("/attrs"),
+        query_string: if qs.is_empty() { None } else { Some(qs) },
+        triggering: TriggeringRequest {
+            via: incoming_via.as_ref(),
+            headers: Some(&headers),
+        },
+    };
+    let plan = state.forwarding.plan_provision(&target, &request).await.with_entity_instance(&uri)?;
     // Clause 5.6.3.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
-    // append left with nothing local is still validated.
-    // clone: the admission expands its own copy, while the forwarding phase and
-    // the narrowing after it still read the compact fragment
-    let admitted = admit_written_entity::<AppendAttributes>(service, fragment.clone(), &context)
+    // append left with nothing local is still validated. Only a registration
+    // the plan sends the fragment to reads it again, so it is serialised for
+    // them before it moves into the admission.
+    let payload = plan.payload(&fragment).with_entity_instance(&uri)?;
+    let admitted = admit_written_entity::<AppendAttributes>(service, fragment, &context)
         .await
         .with_entity_instance(&uri)?;
-    let no_overwrite = params.overwrite_policy().with_entity_instance(&uri)? == RequestOverwritePolicy::NoOverwrite;
-    let overwrite = if no_overwrite {
-        OverwritePolicy::Preserve
-    } else {
-        OverwritePolicy::Overwrite
+    let overwrite = match requested_policy.with_entity_instance(&uri)? {
+        RequestOverwritePolicy::NoOverwrite => OverwritePolicy::Preserve,
+        RequestOverwritePolicy::Overwrite => OverwritePolicy::Overwrite,
     };
-
-    // Forward to matching context sources
-    let qs = if no_overwrite { "options=noOverwrite" } else { "" };
-
     let forwarded = state
         .forwarding
-        .forward_provision(
-            &target,
-            ForwardProvisionRequest {
-                resource: ProvisionResource::Entities,
-                entity_id: &id,
-                entity_type_compact: None,
-                attribute_name: None,
-                method: Method::POST,
-                body: Some(&fragment),
-                context: &context,
-                operation: ForwardingOperation::AppendEntityAttributes,
-                path_suffix: Some("/attrs"),
-                query_string: if qs.is_empty() { None } else { Some(qs) },
-                triggering: TriggeringRequest {
-                    via: incoming_via.as_ref(),
-                    headers: Some(&headers),
-                },
-            },
-        )
+        .execute_provision(plan, &request, payload.as_deref())
         .await
         .with_entity_instance(&uri)?;
 
@@ -100,13 +98,17 @@ pub(crate) async fn append_attrs(
     }
 
     // Clause 5.6.3.4: the attributes proxied registrations cover leave the
-    // fragment; whatever remains is appended here.
-    let proxied = collect_proxied_attrs(&forwarded);
-    let mut local_fragment = fragment;
-    let strip = strip_attributes_from_value(&mut local_fragment, &proxied);
-    let local_append = match service.admit_local_remainder(admitted, strip, local_fragment, &context).await {
-        Some(remainder) => Some(async { service.append_attrs(&target, &id, remainder?, overwrite).await }.await),
-        None => None,
+    // fragment; whatever remains is appended here. A fragment no registration
+    // read was taken over by none of them.
+    let local_append = match payload.as_deref() {
+        None => Some(service.append_attrs(&target, &id, admitted, overwrite).await),
+        Some(payload) => {
+            let (remainder, strip) = local_remainder_of_payload(payload, &collect_proxied_attrs(&forwarded)).with_entity_instance(&uri)?;
+            match service.admit_local_remainder(admitted, strip, remainder, &context).await {
+                Some(remainder) => Some(async { service.append_attrs(&target, &id, remainder?, overwrite).await }.await),
+                None => None,
+            }
+        }
     };
     // Clause 5.6.3.5: the status says "whether all the new Attributes were
     // appended or only some of them", and Table 6.6.3.1-2 reserves 204 for

@@ -16,7 +16,7 @@
 //! fixed-width, so a pattern that pins the whole value recognises exactly what
 //! that path wrote.
 
-use crate::alias::Ah;
+use crate::{alias::Ah, structured_json::structured_json};
 use andromeda_postgresql_codes::{compact_code_domain::CompactCodeDomain, registry::UnknownCompactCode, value_kind::ValueKind};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
@@ -155,7 +155,6 @@ fn value_kind_is(kind: ValueKind) -> SimpleExpr {
 /// tombstone rows rather than asking what shape one has.
 #[must_use]
 pub fn recorded_shape() -> SimpleExpr {
-    let value_object = || Expr::col((Ah, AttributeHistory::ValueObject));
     let value_string = || Expr::col((Ah, AttributeHistory::ValueString));
     // An integer literal is `int4` in PostgreSQL, but the code the decoder reads
     // is the same `smallint` the `value_kind` column it refines is stored as, so
@@ -165,7 +164,7 @@ pub fn recorded_shape() -> SimpleExpr {
 
     CaseStatement::new()
         .case(
-            value_kind_is(ValueKind::Object).and(Expr::expr(jsonb_typeof(value_object())).eq(JSON_ARRAY_TYPE)),
+            value_kind_is(ValueKind::Object).and(Expr::expr(jsonb_typeof(structured_json())).eq(JSON_ARRAY_TYPE)),
             shape(RecordedShape::Array),
         )
         .case(value_kind_is(ValueKind::Object), shape(RecordedShape::Object))
@@ -234,7 +233,10 @@ mod tests {
     #[test]
     fn an_array_is_separated_from_an_object_by_its_json_type() {
         let sql = rendered();
-        assert!(sql.contains("jsonb_typeof(\"ah\".\"value_object\")"), "{sql}");
+        assert!(
+            sql.contains("jsonb_typeof(COALESCE((CASE WHEN ((\"ah\".\"value_object\" ->> ('@type')) = ('@json'))"),
+            "{sql}"
+        );
         assert!(sql.contains("THEN 6"), "the array branch must be reachable: {sql}");
         assert!(sql.contains("THEN 5"), "the object branch must be reachable: {sql}");
         let array_branch = sql.find("THEN 6").expect("an array branch");

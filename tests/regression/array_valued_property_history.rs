@@ -13,7 +13,7 @@
 //! so the document could not be compacted at all.
 //!
 //! What the stored value means is decided by the write path, not by this suite:
-//! `crates/andromeda-temporal/src/attribute_instance_value.rs` stores an
+//! `crates/andromeda-ngsi-ld-model/src/temporal/structured_value.rs` stores an
 //! array-valued Property as the elements of the several value nodes JSON-LD
 //! expansion produced. That is observable — `["a"]` is stored as the string
 //! `"a"` and `[["a"],["b","c"]]` as `["a","b","c"]`, because JSON-LD expansion

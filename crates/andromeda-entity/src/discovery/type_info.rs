@@ -9,9 +9,10 @@ use crate::{
     },
     entity_type_summary::AttributeFamilies,
     error::EntityError,
+    query::simplified_names::request_name_compaction,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::{
     attribute_list::{AttributeDetail, AttributeResourceType},
@@ -32,7 +33,7 @@ impl EntityDiscoveryService {
     /// # Errors
     ///
     /// Reports [`EntityError::JsonLd`] when `type_name` cannot be expanded
-    /// against `context`, [`EntityError::Internal`] when a stored name does not
+    /// against `context` or `context` does not resolve or process, [`EntityError::Internal`] when a stored name does not
     /// read back as one, [`EntityError::TypeNotFound`] when neither the local
     /// store nor the registry knows the type, and [`EntityError::Persistence`]
     /// when the store or the registry could not be consulted.
@@ -44,7 +45,7 @@ impl EntityDiscoveryService {
         context: &ContextSpec,
     ) -> Result<Value, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
-        let names = NameCompactor::new(&self.engine, context);
+        let names = request_name_compaction(&self.engine, context).await?;
         let type_iri = self.engine.expand_type(type_name.as_str(), &prepared_context).await?;
         let type_key = parse_type_name(type_iri.as_str())?;
 
@@ -74,7 +75,7 @@ impl EntityDiscoveryService {
         let mut attribute_details: Vec<AttributeDetail> = Vec::with_capacity(attributes.len());
         for attribute in attributes {
             attribute_details.push(AttributeDetail {
-                attribute_name: compacted_attribute_name(&names, &attribute.name).await?,
+                attribute_name: compacted_attribute_name(&names, &attribute.name)?,
                 id: parse_discovery_iri(attribute.name.to_string())?,
                 type_: AttributeResourceType,
                 attribute_types: attribute.families,
@@ -84,7 +85,7 @@ impl EntityDiscoveryService {
         let type_info = EntityTypeInfo::builder()
             .id(type_iri)
             .type_(EntityTypeInfoType)
-            .type_name(compacted_type_name(&names, &type_key).await?)
+            .type_name(compacted_type_name(&names, &type_key)?)
             .entity_count(entity_count)
             .attribute_details(attribute_details)
             .build();

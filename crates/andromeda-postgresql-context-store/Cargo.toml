@@ -24,6 +24,7 @@ andromeda-entity.workspace = true
 andromeda-entity-map.workspace = true
 andromeda-health.workspace = true
 andromeda-jsonld.workspace = true
+andromeda-ngsi-ld-entity.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true

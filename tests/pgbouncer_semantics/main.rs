@@ -211,7 +211,7 @@ async fn statement_cache_eviction_at_the_pooler_is_transparent() {
 /// More than `max_prepared_statements` distinct query-parameter shapes.
 fn query_shapes() -> Vec<String> {
     let mut shapes = Vec::new();
-    for attribute in ["seq", "value", "name", "status"] {
+    for attribute in ["seq", "reading", "name", "status"] {
         shapes.push(format!("?type=Device&q={attribute}>0"));
         shapes.push(format!("?type=Device&attrs={attribute}"));
         shapes.push(format!("?type=Device&q={attribute}!=1&limit=5"));
@@ -364,7 +364,7 @@ async fn durable_notifications_are_delivered_exactly_per_change_through_the_pool
                 .patch(format!("{broker}entities/{id}/attrs"))
                 .header("NGSILD-Tenant", tenant.as_str())
                 .header("Content-Type", "application/ld+json")
-                .json(&json!({"value": {"type": "Property", "value": update}, "@context": [CORE_CONTEXT]}))
+                .json(&json!({"reading": {"type": "Property", "value": update}, "@context": [CORE_CONTEXT]}))
                 .send()
         });
         let _ = join_all(writes).await;
@@ -555,7 +555,7 @@ async fn concurrent_writes_to_one_entity_serialise_correctly_on_two_backends() {
                     .patch(format!("{broker}entities/{encoded}/attrs"))
                     .header("NGSILD-Tenant", tenant.as_str())
                     .header("Content-Type", "application/ld+json")
-                    .json(&json!({"value": {"type": "Property", "value": value}, "@context": [CORE_CONTEXT]})),
+                    .json(&json!({"reading": {"type": "Property", "value": value}, "@context": [CORE_CONTEXT]})),
             )
             .await
         }

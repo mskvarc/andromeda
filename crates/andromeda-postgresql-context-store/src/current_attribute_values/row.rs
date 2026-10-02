@@ -2,12 +2,12 @@
 
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
+use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 
 /// The identity of one projected attribute instance.
 ///
@@ -54,7 +54,7 @@ pub enum ProjectedAttributeValue {
     /// A geometry, in the broker's single geodetic reference system.
     Geometry(Geometry),
     /// A structured value: object, array, language map, JSON literal or list.
-    Object(Value),
+    Object(StructuredValue),
     /// A point in time, already truncated to the broker's microsecond resolution.
     DateTime(DateTime<Utc>),
     /// A URI, which is the shape a relationship object is projected in.
@@ -98,6 +98,8 @@ pub struct ProjectedAttributeRow {
 #[cfg(test)]
 mod tests {
     use crate::current_attribute_values::row::ProjectedAttributeValue;
+    use andromeda_ngsi_ld_entity::json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
     use chrono::{TimeZone, Utc};
@@ -109,7 +111,7 @@ mod tests {
             ProjectedAttributeValue::Number(JsonNumber::from(1)),
             ProjectedAttributeValue::String("text".to_owned()),
             ProjectedAttributeValue::Boolean(true),
-            ProjectedAttributeValue::Object(serde_json::json!({"a": 1})),
+            ProjectedAttributeValue::Object(StructuredValue::Json(JsonLiteral::new(serde_json::json!({"a": 1})))),
             ProjectedAttributeValue::DateTime(instant),
             ProjectedAttributeValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")),
         ];
@@ -125,7 +127,7 @@ mod tests {
             ProjectedAttributeValue::Number(JsonNumber::from(1)).kind(),
             ProjectedAttributeValue::String("text".to_owned()).kind(),
             ProjectedAttributeValue::Boolean(true).kind(),
-            ProjectedAttributeValue::Object(serde_json::json!([])).kind(),
+            ProjectedAttributeValue::Object(StructuredValue::List(Vec::new())).kind(),
             ProjectedAttributeValue::DateTime(instant).kind(),
             ProjectedAttributeValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")).kind(),
         ];

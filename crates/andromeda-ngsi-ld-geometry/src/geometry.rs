@@ -7,17 +7,15 @@
 //! this crate, in `andromeda-postgresql-encoding`, reached only by the store
 //! and by the statement renderers that bind a reference geometry.
 //!
-//! A geometry is two values of one thing: the wire form it arrived as, kept
-//! verbatim down to the altitude and the arity of every position, and its
-//! projection onto the horizontal plane, which is what clause 4.10 predicates
-//! are evaluated over. The projection is computed once, at construction, so
-//! neither an entity write nor a subscription match pays for it repeatedly.
+//! A geometry is the wire form it arrived as, kept verbatim down to the
+//! altitude and the arity of every position. Its projection onto the
+//! horizontal plane, which is what clause 4.10 predicates are evaluated over,
+//! is a separate [`PlanarGeometry`] computed when a spatial operation needs it,
+//! so a geometry held in an entity carries its coordinates once.
 
-use crate::{dimension::GeometryDimension, form::GeometryForm, geojson::GeometryError, geometry_type::GeometryType, planar::project};
-use geo::algorithm::BoundingRect;
+use crate::{dimension::GeometryDimension, form::GeometryForm, geojson::GeometryError, geometry_type::GeometryType, planar::PlanarGeometry};
 use geojson::Geometry as GeoJsonGeometry;
-use jsonld_expandable_core::{JsonValue, ToJsonValue};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 use serde_json::{Map, Value};
 
 /// A geometry attached to an NGSI-LD `GeoProperty` (clause 5.2.7).
@@ -28,24 +26,20 @@ use serde_json::{Map, Value};
 /// form, altitude included, so a change to a height alone is a change to the
 /// geometry. There is deliberately no `Eq`/`Hash`, because the coordinates are
 /// `f64` and no total order or hash over them would be meaningful.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(try_from = "Value")]
+///
+/// Decoding reads a compact `GeoJSON` geometry object straight from the
+/// deserializer (see [`crate::written_geometry`]), never through a JSON tree.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Geometry {
     /// The geometry as received, and as it will be rendered back.
     form: GeometryForm,
-    /// The horizontal projection, cached for predicate evaluation.
-    planar: geo::Geometry<f64>,
 }
 
 impl Geometry {
-    /// Build from a geometry form, projecting it onto the horizontal plane.
-    ///
-    /// Infallible: every form has a projection, including the degenerate ones
-    /// RFC 7946 permits.
+    /// Build from a geometry form.
     #[must_use]
-    pub fn new(form: GeometryForm) -> Geometry {
-        let planar = project(&form);
-        Geometry { form, planar }
+    pub const fn new(form: GeometryForm) -> Geometry {
+        Geometry { form }
     }
 
     /// Build from an arbitrary JSON value that is expected to encode a `GeoJSON`
@@ -110,10 +104,14 @@ impl Geometry {
         &self.form
     }
 
-    /// The horizontal projection the clause 4.10 predicates are evaluated over.
+    /// Project onto the horizontal plane the clause 4.10 predicates are
+    /// evaluated over.
+    ///
+    /// Computed on every call: a caller evaluating this geometry against
+    /// several others projects it once and keeps the result.
     #[must_use]
-    pub const fn planar(&self) -> &geo::Geometry<f64> {
-        &self.planar
+    pub fn planar(&self) -> PlanarGeometry {
+        PlanarGeometry::project(&self.form)
     }
 
     /// Whether every position of this geometry carries an altitude.
@@ -138,13 +136,6 @@ impl Geometry {
     pub fn to_geojson_value(&self) -> Value {
         Value::from(&self.form.to_geojson())
     }
-
-    /// Axis-aligned bounding rectangle of the horizontal projection, or `None`
-    /// for a geometry with no coordinates, such as a Polygon with no rings.
-    #[must_use]
-    pub fn bounding_rect(&self) -> Option<geo::Rect<f64>> {
-        self.planar.bounding_rect()
-    }
 }
 
 /// Narrow arbitrary-precision JSON coordinate numbers to the finite binary64
@@ -164,44 +155,12 @@ fn coordinates_as_f64(value: Value) -> Result<Value, GeometryError> {
     }
 }
 
-// Hand-written because the field to compare is chosen, not all of them:
-// `planar` is a pure projection of `form`, so comparing it as well would be
-// redundant work on the subscription matching path. The sanctioned derive for a
-// skipped field is `educe`, and a proc-macro dependency in this leaf crate is
-// not worth one skipped field.
-impl PartialEq for Geometry {
-    fn eq(&self, other: &Geometry) -> bool {
-        self.form == other.form
-    }
-}
-
-// A decoded geometry is read off the JSON tree serde buffered for it rather
-// than through the `geojson` crate's own decoding, which would buffer the whole
-// geometry once more for its foreign members before reading a position.
-impl TryFrom<Value> for Geometry {
-    type Error = GeometryError;
-
-    fn try_from(value: Value) -> Result<Geometry, GeometryError> {
-        Geometry::from_geojson_value(&value)
-    }
-}
-
 // Hand-written rather than `#[serde(into = "GeoJsonGeometry")]`: that container
 // attribute requires `Clone` and clones the whole geometry on every serialise,
 // which is the hot path for every entity response carrying a GeoProperty.
 impl Serialize for Geometry {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.to_geojson().serialize(serializer)
-    }
-}
-
-impl<V: JsonValue> ToJsonValue<V> for Geometry {
-    fn to_json_value(&self) -> V {
-        // The GeoJSON object is built infallibly, so unlike a
-        // `serde_json::to_value` round trip there is no `Result` to discard
-        // inside this signature, which has no way to report a failure. The
-        // second hop is `jsonld-expandable-core`'s own `serde_json` backend.
-        ToJsonValue::<V>::to_json_value(&self.to_geojson_value())
     }
 }
 
@@ -216,7 +175,6 @@ mod tests {
         linear_ring::LinearRingError,
         position::PositionError,
     };
-    use jsonld_expandable_core::ToJsonValue;
     use serde_json::Value;
 
     /// Where a refused position sits and what is wrong with it.
@@ -439,7 +397,7 @@ mod tests {
     #[test]
     fn the_bounding_rectangle_of_a_polygon_covers_every_vertex() {
         let geometry = Geometry::from_geojson_value(&polygon_json()).expect("polygon parses");
-        let rect = geometry.bounding_rect().expect("non-empty geometry has a bounding rect");
+        let rect = geometry.planar().bounding_rect().expect("non-empty geometry has a bounding rect");
         pretty_assertions::assert_eq!(rect.min(), geo::Coord { x: 1.0, y: 2.0 });
         pretty_assertions::assert_eq!(rect.max(), geo::Coord { x: 5.0, y: 8.0 });
     }
@@ -460,10 +418,9 @@ mod tests {
     }
 
     #[test]
-    fn a_geometry_renders_as_the_json_value_the_expanded_model_carries() {
+    fn a_geometry_renders_as_the_compact_geojson_object_it_was_read_from() {
         let geometry = Geometry::from_geojson_value(&elevated_point_json()).expect("elevated point parses");
-        let rendered: Value = ToJsonValue::<Value>::to_json_value(&geometry);
-        pretty_assertions::assert_eq!(rendered, elevated_point_json());
+        pretty_assertions::assert_eq!(geometry.to_geojson_value(), elevated_point_json());
     }
 
     /// Clause 4.7.2: a string is a geometry if and only if it parses into a

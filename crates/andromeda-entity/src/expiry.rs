@@ -1,27 +1,14 @@
 //! Applying clause 4.22 expiry through the ordinary atomic mutation boundary.
 
-use crate::{
-    EntityService,
-    entity_snapshot::EntitySnapshot,
-    error::EntityError,
-    expanded_member::stored_entity_types,
-    notification_plan::modification,
-    port::expiry::EntityExpirySource,
-};
-use andromeda_context_commit::{
-    atomic_write::AtomicWrite,
-    entity_mutation::EntityMutation,
-    entity_record::EntityRecord,
-    history_record::HistoryRecord,
-    precondition::Precondition,
-    write_outcome::WriteOutcome,
-};
+use crate::{EntityService, entity_snapshot::EntitySnapshot, error::EntityError, modification_write::ModificationWrite, port::expiry::EntityExpirySource};
+#[cfg(test)]
+use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord};
+use andromeda_context_commit::{history_record::HistoryRecord, precondition::Precondition, write_outcome::WriteOutcome};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, operation::expiry_removal::InstanceExpiry, reads::removed_instance::removed_attribute_instances};
 #[cfg(test)]
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::{mutation::expiry::remove_expired_attribute_instances, removed_instance::removed_attribute_instances};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::{num::NonZeroU32, sync::Arc};
 use thiserror::Error;
 use tracing::warn;
@@ -56,8 +43,8 @@ impl EntityExpirySweep {
     ///
     /// Reports [`EntityError::Persistence`] when the expiry source cannot be
     /// read or the sweep's writes cannot be committed, and
-    /// [`EntityError::Validation`] when a due entity's stored payload cannot be
-    /// reduced to its unexpired instances.
+    /// [`EntityError::Internal`] when a due entity's reduced state cannot be
+    /// projected for its write.
     pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<EntityExpiryOutcome, EntityError> {
         let expired_entities = self
             .entity_policy
@@ -153,25 +140,14 @@ impl EntityService {
         let mut writes = Vec::new();
         let mut pending = Vec::new();
         for (identifier, snapshot) in candidates {
-            let Some(purged) = purged_state(snapshot, cutoff)? else {
+            let Some(purged) = purged_state(snapshot, cutoff) else {
                 warn!(entity = %identifier, "attribute-expiry candidate held no past-due instance");
                 continue;
             };
-            let types = stored_entity_types(&purged.current)?;
-            let change = modification(&purged.previous, &purged.current)?;
-            let plan = self
-                .notifier
-                .plan(target, &identifier, &types, change, Some(&purged.current), Some(&purged.previous));
-            writes.push(
-                AtomicWrite::builder()
-                    .entity_id(Arc::new(identifier.clone()))
-                    .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&purged.current))?))
-                    .history(purged.history)
-                    .subscription_matches(plan.matches)
-                    .precondition(Precondition::UnchangedSince(purged.modified_at))
-                    .build(),
-            );
-            pending.push((identifier, plan.events));
+            let ModificationWrite { mut write, events } = self.modification_write(target, &identifier, &purged.previous, purged.current, purged.history)?;
+            write.precondition = Precondition::UnchangedSince(purged.modified_at);
+            writes.push(write);
+            pending.push((identifier, events));
         }
         if writes.is_empty() {
             return Ok(0);
@@ -208,49 +184,47 @@ fn landed_ids(identifiers: Vec<Identifier>, outcomes: &[WriteOutcome]) -> Vec<Id
         .collect()
 }
 
+/// One entity's state before and after its expired instances went.
 struct PurgedState {
-    previous: Arc<Value>,
-    current: Arc<Value>,
+    /// The state as it was read.
+    previous: Arc<EntityState>,
+    /// The state without its expired instances.
+    current: Arc<EntityState>,
+    /// The version the state was read at.
     modified_at: DateTime<Utc>,
+    /// A tombstone for every instance that went.
     history: Vec<HistoryRecord>,
 }
 
-/// The entity `snapshot` becomes once every instance past `cutoff` is gone, or
-/// `None` when it held no such instance.
-///
-/// # Errors
-///
-/// Reports [`EntityError::Internal`] when the stored payload carries a
-/// `datasetId` the tombstones cannot name.
-fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Result<Option<PurgedState>, EntityError> {
-    let EntitySnapshot {
-        payload: previous,
-        modified_at,
-    } = snapshot;
-    let mut purged = Value::clone(&previous); // clone: history diffing requires both the before and after payloads.
-    if !remove_expired_attribute_instances(&mut purged, cutoff) {
-        return Ok(None);
+/// The entity `snapshot` becomes once every instance expired at `cutoff` is
+/// gone (clause 4.22), or `None` when it held no such instance.
+fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<PurgedState> {
+    let EntitySnapshot { state: previous, modified_at } = snapshot;
+    let mut purged = EntityState::clone(&previous); // clone: shares every attribute holding no expired instance
+    match purged.remove_expired_instances(cutoff) {
+        InstanceExpiry::NoneExpired => None,
+        InstanceExpiry::Removed => {
+            let history = removed_attribute_instances(&previous, &purged)
+                .into_iter()
+                .map(HistoryRecord::Tombstone)
+                .collect();
+            Some(PurgedState {
+                previous,
+                current: Arc::new(purged),
+                modified_at,
+                history,
+            })
+        }
     }
-    let history = removed_attribute_instances(&previous, &purged)
-        .map_err(|error| EntityError::Internal(error.into()))?
-        .into_iter()
-        .map(HistoryRecord::Tombstone)
-        .collect();
-    Ok(Some(PurgedState {
-        previous,
-        current: Arc::new(purged),
-        modified_at,
-        history,
-    }))
 }
 
 #[cfg(test)]
-fn purge_write(identifier: &Identifier, snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<AtomicWrite> {
-    let purged = purged_state(snapshot, cutoff).expect("readable datasetIds")?;
+fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<AtomicWrite> {
+    let purged = purged_state(snapshot, cutoff)?;
     Some(
         AtomicWrite::builder()
-            .entity_id(Arc::new(identifier.clone())) // clone: the atomic write owns a shared validated identifier.
-            .entity(EntityMutation::Update(EntityRecord::from_expanded(purged.current).expect("readable members")))
+            .entity_id(Arc::new(purged.current.id().clone())) // clone: the atomic write owns a shared validated identifier.
+            .entity(EntityMutation::Update(EntityRecord::from_state(purged.current).expect("a projectable state")))
             .history(purged.history)
             .precondition(Precondition::UnchangedSince(purged.modified_at))
             .build(),
@@ -264,6 +238,7 @@ mod tests {
         expiry::{EntityExpiryBatchSize, EntityExpiryBatchSizeError, landed_ids, purge_write},
     };
     use andromeda_context_commit::{history_record::HistoryRecord, write_outcome::WriteOutcome};
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
@@ -277,9 +252,9 @@ mod tests {
         DateTime::<Utc>::UNIX_EPOCH
     }
 
-    fn snapshot(payload: Value) -> EntitySnapshot {
+    fn snapshot(payload: &Value) -> EntitySnapshot {
         EntitySnapshot {
-            payload: Arc::new(payload),
+            state: Arc::new(EntityState::from_slice(&serde_json::to_vec(payload).expect("JSON")).expect("a stored entity")),
             modified_at: cutoff(),
         }
     }
@@ -288,7 +263,7 @@ mod tests {
         json!({
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
-            "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@value": expires_at}]
+            "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": expires_at}]
         })
     }
 
@@ -319,26 +294,20 @@ mod tests {
     }
 
     #[test]
-    fn a_past_due_instance_produces_an_optimistic_write_and_tombstone() -> Result<(), IdentifierParseError> {
-        let payload = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/speed": [expiring_instance("1969-01-01T00:00:00Z")]}]);
-        let identifier = "urn:ngsi-ld:A".parse::<Identifier>()?;
-        let write = purge_write(&identifier, snapshot(payload), cutoff());
-        assert!(write.is_some());
-        let Some(write) = write else {
-            return Ok(());
-        };
+    fn a_past_due_instance_produces_an_optimistic_write_and_tombstone() {
+        let payload =
+            json!([{"@id": "urn:ngsi-ld:A", "@type": ["https://example.org/T"], "https://example.org/speed": [expiring_instance("1969-01-01T00:00:00Z")]}]);
+        let write = purge_write(snapshot(&payload), cutoff()).expect("the expired instance is purged");
         pretty_assertions::assert_eq!(write.history.len(), 1);
         assert!(matches!(write.history[0], HistoryRecord::Tombstone(_)));
         assert!(write.precondition.is_unchanged_since());
-        Ok(())
     }
 
     #[test]
-    fn a_future_instance_produces_no_write() -> Result<(), IdentifierParseError> {
-        let payload = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/speed": [expiring_instance("1971-01-01T00:00:00Z")]}]);
-        let identifier = "urn:ngsi-ld:A".parse::<Identifier>()?;
-        assert!(purge_write(&identifier, snapshot(payload), cutoff()).is_none());
-        Ok(())
+    fn a_future_instance_produces_no_write() {
+        let payload =
+            json!([{"@id": "urn:ngsi-ld:A", "@type": ["https://example.org/T"], "https://example.org/speed": [expiring_instance("1971-01-01T00:00:00Z")]}]);
+        assert!(purge_write(snapshot(&payload), cutoff()).is_none());
     }
 
     #[test]

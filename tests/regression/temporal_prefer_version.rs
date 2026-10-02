@@ -67,7 +67,8 @@ fn evolution(id: &str) -> Value {
     json!({
         "id": id,
         "type": ["Vehicle", "Car"],
-        "scope": "/regression/temporal-prefer",
+        // Clause 4.18's ScopeLevel admits letters, digits and `_` only.
+        "scope": "/regression/temporalPrefer",
         "speed": OBSERVATIONS
             .iter()
             .enumerate()

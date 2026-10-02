@@ -50,11 +50,9 @@ impl RegistrationService {
         // is expanded against it.
         reject_scoped_user_contexts(&self.engine, context).await?;
 
-        let validation_document = serde_json::json!({
-            "id": "urn:ngsi-ld:_:context-validate",
-            "type": "ContextSourceRegistration"
-        });
-        self.engine.expand(validation_document, context).await?;
+        // Clause 5.5.7: a context that does not resolve or process refuses the
+        // registration before any of its names is expanded under it.
+        self.engine.expansion_context(context).await?;
 
         let expanded_properties = expand_context_source_properties(&self.engine, &payload, context).await?;
         let mut payload = payload;

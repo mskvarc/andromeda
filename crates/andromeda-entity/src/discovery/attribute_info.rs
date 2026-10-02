@@ -9,9 +9,10 @@ use crate::{
         stored_names::parse_attribute_name,
     },
     error::EntityError,
+    query::simplified_names::request_name_compaction,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::attribute_list::AttributeInfo;
 use serde_json::Value;
@@ -39,7 +40,7 @@ impl EntityDiscoveryService {
     /// # Errors
     ///
     /// Reports [`EntityError::JsonLd`] when `attr_id` cannot be expanded
-    /// against `context`, [`EntityError::Internal`] when a stored name does not
+    /// against `context` or `context` does not resolve or process, [`EntityError::Internal`] when a stored name does not
     /// read back as one, [`EntityError::AttributeNotFound`] when neither the
     /// local store nor the registry knows the attribute, and
     /// [`EntityError::Persistence`] when the store or the registry could not be
@@ -52,7 +53,7 @@ impl EntityDiscoveryService {
         context: &ContextSpec,
     ) -> Result<Value, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
-        let names = NameCompactor::new(&self.engine, context);
+        let names = request_name_compaction(&self.engine, context).await?;
         let attr_iri_buf = self.engine.expand_term(attr_id.as_str(), &prepared_context).await?;
         let attr_iri = parse_attribute_name(attr_iri_buf.as_str())?;
 
@@ -88,11 +89,11 @@ impl EntityDiscoveryService {
         // Clause 5.2.28 fixes `attributeTypes` to the attribute family names; the
         // store already mapped the payload's expanded `@type` IRIs to them.
         let attr = AttributeInfo::builder()
-            .attribute_name(compacted_attribute_name(&names, &attr_iri).await?)
+            .attribute_name(compacted_attribute_name(&names, &attr_iri)?)
             .id(attr_iri_buf)
             .attribute_types(facts.attribute_types)
             .attribute_count(Some(facts.instance_count))
-            .type_names(compacted_type_names(&names, facts.entity_types).await?)
+            .type_names(compacted_type_names(&names, facts.entity_types)?)
             .build();
 
         Ok(serde_json::to_value(attr)?)

@@ -3,11 +3,13 @@
 use crate::{
     claimed_notification_context::claimed_notification_context,
     error::NotificationError,
-    interval_match::{apply_subscription_filters, entity_id_of, entity_types},
+    interval_candidates::IntervalCandidates,
+    interval_match::apply_subscription_filters,
     processor::payload::{
-        filtering::filter_entity_attributes,
-        projection::apply_notification_projection,
-        representation::{compact_for_notification, render_format},
+        compaction::compact_notified_state,
+        entity_instants::{ExpiryStamp, notified_instants},
+        notified_entity::rendered_entity,
+        selection::{EntityMembers, Selection, SelectionRule},
     },
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
@@ -16,18 +18,22 @@ use andromeda_delivery::{
     endpoint::transport::parse_endpoint_transport,
     request::{NotificationDelivery, notification_media_type},
 };
-use andromeda_entity::{
-    port::{payload_pages::EntityPayloadPages, reader::EntityReader},
-    sys_attrs::inject_sys_attrs,
-};
+use andromeda_entity::port::{payload_pages::EntityPayloadPages, reader::EntityReader};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, ngsi_ld_urn::NotificationId};
-use andromeda_ngsi_ld_model::{notification::Notification, subscription::Subscription};
+use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
+use andromeda_ngsi_ld_model::{
+    notification::{Notification, SysAttrsSnapshot},
+    subscription::Subscription,
+};
 use andromeda_ngsi_ld_render::{
     geometry_selection::GeometrySelection,
     notification_conformance::amend_notification_entities,
     notification_data::notification_data,
+    notification_entity::TargetSpelling,
 };
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     compilation::notification_projection,
     notification_slot::{NotificationSlot, NotificationSlotGate},
@@ -37,19 +43,10 @@ use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, stream};
 use serde_json::Value;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error};
 
 const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
-
-/// Rows read per round trip while a periodic notification assembles its
-/// candidate set.
-///
-/// A selector whose type is a boolean expression cannot be pushed into a
-/// `WHERE`, so the broker reads every entity in the tenant and decides in
-/// memory. Reading that in pages bounds one round trip, and discarding
-/// non-matching rows as each page arrives is what bounds what is held.
-const INTERVAL_ENTITY_PAGE: u16 = 500;
 
 /// Bounded evaluation of due entity interval subscriptions.
 pub struct IntervalNotificationOperation {
@@ -107,7 +104,7 @@ impl IntervalNotificationOperation {
         let _results: Vec<()> = stream::iter(due_subs)
             .map(|sub| async move {
                 // Fetch entities matching the subscription's entity selectors
-                let entities = match this.fetch_matching_entities(&sub).await {
+                let entities = match this.candidates().matching(&sub).await {
                     Ok(e) => e,
                     Err(e) => {
                         error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
@@ -226,6 +223,14 @@ impl IntervalNotificationOperation {
         self.sub_repo.next_interval_due(&self.target, cutoff).await.map_err(NotificationError::from)
     }
 
+    /// The entities a due subscription's notification considers.
+    fn candidates(&self) -> IntervalCandidates<'_> {
+        IntervalCandidates {
+            target: &self.target,
+            pages: self.entity_pages.as_ref(),
+        }
+    }
+
     /// Advance a due subscription's grid anchor past `cutoff`, logging a store
     /// failure rather than aborting the sweep.
     async fn advance_anchor(&self, sub: &Subscription, cutoff: DateTime<Utc>) {
@@ -234,107 +239,71 @@ impl IntervalNotificationOperation {
         }
     }
 
-    async fn fetch_matching_entities(&self, sub: &Subscription) -> Result<Vec<Value>, NotificationError> {
-        let Some(selectors) = sub.selection.entities.as_ref() else {
-            // No entity selectors — every entity qualifies.
-            return self.collect_pages(None, |_| true).await;
-        };
-
-        let mut all_entities = Vec::new();
-        for selector in selectors {
-            // A by-type lookup takes one type, so only a leaf selector can be
-            // pushed down; a boolean expression reads every entity and is
-            // applied in memory. Passing the expression text as a type name,
-            // which is what happened before it was parsed, matched nothing at
-            // all.
-            let single_type = selector.type_.as_single_type();
-            let matched = self
-                .collect_pages(single_type, |entity| {
-                    if single_type.is_none() && !selector.type_.matches(&entity_types(entity)) {
-                        return false;
-                    }
-                    let Some(entity_id) = entity_id_of(entity) else {
-                        return false;
-                    };
-                    if let Some(id) = selector.id.as_ref()
-                        && &entity_id != id
-                    {
-                        return false;
-                    }
-                    selector.id_pattern.as_ref().is_none_or(|pattern| pattern.is_match(entity_id.as_str()))
-                })
-                .await?;
-            all_entities.extend(matched);
-        }
-
-        Ok(all_entities)
-    }
-
-    /// Read entities a page at a time, keeping only those `keep` accepts.
-    ///
-    /// `type_iri` narrows the read to one entity type when the selector names
-    /// exactly one; otherwise every entity is a candidate and the predicate is
-    /// the only filter. See [`INTERVAL_ENTITY_PAGE`] for why this pages.
-    async fn collect_pages(&self, entity_type: Option<&EntityTypeName>, mut keep: impl FnMut(&Value) -> bool) -> Result<Vec<Value>, NotificationError> {
-        let limit = i64::from(INTERVAL_ENTITY_PAGE);
-        let mut kept = Vec::new();
-        let mut offset = 0_i64;
-        loop {
-            let page = match entity_type {
-                Some(type_name) => self
-                    .entity_pages
-                    .get_entities_by_type(&self.target, type_name, Some(limit), Some(offset))
-                    .await
-                    .map_err(NotificationError::from)?,
-                None => self
-                    .entity_pages
-                    .get_all_entities(&self.target, Some(limit), Some(offset))
-                    .await
-                    .map_err(NotificationError::from)?,
-            };
-            let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
-            kept.extend(page.into_iter().filter(|entity| keep(entity)));
-            if exhausted {
-                return Ok(kept);
-            }
-            offset += limit;
-        }
-    }
-
     /// Render the entities of one periodic notification the way clause 5.8.6
     /// prescribes: narrowed to `notification.attributes`, reduced by `pick`
     /// and `omit`, compacted under the subscription's context and rendered
     /// in its `notification.format`.
-    async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<Value>) -> Result<Vec<Value>, NotificationError> {
+    async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<EntityState>) -> Result<Vec<Value>, NotificationError> {
         let projection = notification_projection(&sub.notification, sub.id.as_ref());
+        let rule = SelectionRule {
+            attributes: sub.notification.attributes.as_deref(),
+            dataset_ids: None,
+            projection: &projection,
+        };
+        // Table 5.2.14-1: without `sysAttrs` a notification carries no clause
+        // 4.8 system attribute, the instances' included.
+        let sys_attrs = match sub.notification.sys_attrs {
+            Some(true) => SysAttrsInclusion::Include,
+            Some(false) | None => SysAttrsInclusion::Strip,
+        };
+        let instants = self.entity_instants(&entities, sys_attrs, rule.entity_members()).await;
         let context = ContextSpec::for_subscription_context(sub.delivery.jsonld_context.as_ref());
+        let context_compactor = self.engine.compactor(&context);
+        let compactor = EntityCompactor::new(&context_compactor);
+        let read = EntityRead {
+            id_override: None,
+            sys_attrs,
+            now: Utc::now(),
+        };
         let format = sub.notification.format.unwrap_or_default();
-        let compactor = self.engine.compactor(&context);
         let mut results = Vec::with_capacity(entities.len());
-        for mut entity in entities {
-            if sub.notification.sys_attrs.is_some_and(|include| include)
-                && let Some(id) = entity_id_of(&entity)
-                && let Ok(Some(sa)) = self.entity_reader.get_sys_attrs(&self.target, &id).await
-            {
-                inject_sys_attrs(&mut entity, sa.created_at, sa.modified_at, sa.expires_at);
-            }
-
-            let mut narrowed = if let Some(ref attrs) = sub.notification.attributes {
-                filter_entity_attributes(&entity, attrs)
-            } else {
-                entity
-            };
-            apply_notification_projection(&mut narrowed, &projection);
-
-            let compacted = compact_for_notification(&compactor, &narrowed, None).await.map_err(NotificationError::from)?;
-
-            results.push(render_format(compacted, format, sub.notification.join));
+        for entity in &entities {
+            let selected = Selection::of(entity, rule).apply(entity);
+            let compacted = compact_notified_state(&compactor, &self.engine, &selected, &read).await?;
+            let stamped = notified_instants(instants.get(entity.id()), ExpiryStamp::Written, None);
+            // A periodic notification spells its Relationship targets as the
+            // store holds them.
+            results.push(rendered_entity(&compacted, &stamped, format, TargetSpelling::AsStored)?);
         }
 
         // Clause 5.8.6 places the `ngsildConformance` amendment last, after the
         // format rendering: a periodic notification is sent the same way a
         // change-driven one is, so it is amended the same way too.
         Ok(amend_notification_entities(results, sub.delivery.ngsild_conformance, format))
+    }
+
+    /// The clause 4.8 system attributes of every entity one periodic
+    /// notification carries, read in one round trip when the subscription asks
+    /// for them.
+    ///
+    /// A read that fails leaves the entities without them rather than failing
+    /// the notification.
+    async fn entity_instants(&self, entities: &[EntityState], sys_attrs: SysAttrsInclusion, members: EntityMembers) -> HashMap<Identifier, SysAttrsSnapshot> {
+        match (sys_attrs, members) {
+            (SysAttrsInclusion::Include, EntityMembers::Kept) => (),
+            (SysAttrsInclusion::Strip, EntityMembers::Kept | EntityMembers::Dropped) | (SysAttrsInclusion::Include, EntityMembers::Dropped) => {
+                return HashMap::new();
+            }
+        }
+        // clone: the batch read takes the identifiers as one slice
+        let ids: Vec<Identifier> = entities.iter().map(|entity| entity.id().clone()).collect();
+        match self.entity_reader.get_sys_attrs_batch(&self.target, &ids).await {
+            Ok(instants) => instants,
+            Err(error) => {
+                debug!("Failed to fetch the system attributes of a periodic notification: {}", error);
+                HashMap::new()
+            }
+        }
     }
 }
 

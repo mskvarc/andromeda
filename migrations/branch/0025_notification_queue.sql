@@ -50,12 +50,20 @@ create table notification_events (
     change_dataset_ids text[] compression lz4 collate "C" not null,
     entity_snapshot jsonb compression lz4,
     previous_snapshot jsonb compression lz4,
+    -- The clause 4.8 createdAt, modifiedAt and expiresAt of an Entity a
+    -- deletion removed. By delivery the Entity's row is gone, so clause 5.8.6
+    -- can only report them from here; a change that leaves the Entity in place
+    -- stores none and the delivery reads them from the Entity.
+    entity_created_at timestamptz,
+    entity_modified_at timestamptz,
+    entity_expires_at timestamptz,
     constraint pk_notification_events primary key (event_key),
     constraint uq_notification_events_write_identity unique (write_id, event_ordinal),
     constraint chk_notification_events_event_ordinal check (event_ordinal >= 0),
     constraint chk_notification_events_lifecycle check (lifecycle between 1 and 3),
     constraint chk_notification_events_change_kinds check (change_kinds <@ array[1, 2, 3]::smallint[]),
     constraint chk_notification_events_change_arity check (cardinality(change_attribute_name_keys) = cardinality(change_kinds) and cardinality(change_dataset_ids) = cardinality(change_kinds)),
+    constraint chk_notification_events_entity_system_times check (num_nonnulls (entity_created_at, entity_modified_at) in (0, 2) and (entity_expires_at is null or entity_created_at is not null)),
     constraint chk_notification_events_entity_id_length check (octet_length(entity_id) <= 1024)
 )
 with (

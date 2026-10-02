@@ -43,7 +43,9 @@ pub mod delivery_store;
 pub mod error;
 /// Entity interval notification evaluation.
 pub mod interval;
-/// Matching an expanded entity payload against an interval subscription.
+/// The entities a periodic notification considers.
+mod interval_candidates;
+/// Matching an entity state against an interval subscription.
 mod interval_match;
 /// The immutable notification event a write produces.
 pub mod notification_event;
@@ -64,6 +66,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-entity",
         "andromeda-http-headers",
         "andromeda-jsonld",
+        "andromeda-ngsi-ld-compaction",
+        "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

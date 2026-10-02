@@ -12,7 +12,7 @@ use crate::{
     deletion_outline_fixture::outline_of,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    port::{deletion_outline::DeletionOutlineReader, reader::EntityReader},
+    port::{deletion_outline::DeletionOutlineReader, reader::EntityReader, retrieved_entity::RetrievedEntity},
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -24,11 +24,11 @@ use andromeda_context_commit::{
     write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
-use serde_json::Value;
 use std::{
     collections::HashMap,
     sync::{
@@ -41,8 +41,8 @@ use std::{
 /// The stored entities and the clock their versions are drawn from.
 #[derive(Default)]
 pub(crate) struct StoredRows {
-    /// Each entity's expanded payload and clause 4.8 `modifiedAt`.
-    entities: HashMap<Identifier, (Value, DateTime<Utc>)>,
+    /// Each entity's state and clause 4.8 `modifiedAt`.
+    entities: HashMap<Identifier, (Arc<EntityState>, DateTime<Utc>)>,
     /// The last version handed out.
     clock: DateTime<Utc>,
 }
@@ -55,10 +55,10 @@ impl StoredRows {
         self.clock
     }
 
-    /// Store `payload` as the entity `id` names, at a new version.
-    pub(crate) fn put(&mut self, id: &Identifier, payload: Value) {
+    /// Store `state` as the entity `id` names, at a new version.
+    pub(crate) fn put(&mut self, id: &Identifier, state: Arc<EntityState>) {
         let version = self.next_version();
-        self.entities.insert(id.clone(), (payload, version)); // clone: the rows own their keys
+        self.entities.insert(id.clone(), (state, version)); // clone: the rows own their keys
     }
 
     /// Remove the entity `id` names.
@@ -66,8 +66,8 @@ impl StoredRows {
         self.entities.remove(id);
     }
 
-    /// The payload the entity `id` names, as stored.
-    pub(crate) fn payload(&self, id: &Identifier) -> Option<&Value> {
+    /// The state the entity `id` names, as stored.
+    pub(crate) fn payload(&self, id: &Identifier) -> Option<&Arc<EntityState>> {
         self.entities.get(id).map(|(payload, _)| payload)
     }
 
@@ -86,7 +86,7 @@ impl StoredRows {
                 WriteOutcome::AlreadyExists
             }
             (EntityMutation::Insert(record), None, _) => {
-                self.put(id, Value::clone(&record.payload)); // clone: the rows own their copy of the shared payload
+                self.put(id, Arc::clone(&record.state)); // clone: Arc ref-count bump; the rows share the written state
                 WriteOutcome::Created
             }
             // An update or a deletion stating a version matches the row only
@@ -99,7 +99,7 @@ impl StoredRows {
                 WriteOutcome::NotFound
             }
             (EntityMutation::Update(record), Some(_), _) => {
-                self.put(id, Value::clone(&record.payload)); // clone: the rows own their copy of the shared payload
+                self.put(id, Arc::clone(&record.state)); // clone: Arc ref-count bump; the rows share the written state
                 WriteOutcome::Updated
             }
             (EntityMutation::Delete, Some(modified_at), _) => {
@@ -124,7 +124,7 @@ pub(crate) enum ConcurrentWriter {
     BeforeEveryCommit(Box<dyn Fn(&mut StoredRows) + Send>),
 }
 
-/// An in-memory store holding each entity's expanded payload and version.
+/// An in-memory store holding each entity's state and version.
 #[derive(Default)]
 pub(crate) struct InMemoryStore {
     /// The stored entities.
@@ -133,14 +133,14 @@ pub(crate) struct InMemoryStore {
     concurrent: Mutex<Option<ConcurrentWriter>>,
     /// Every write submitted, in submission order, whether it landed or not.
     submitted: Mutex<Vec<AtomicWrite>>,
-    /// How many reads handed out whole payloads.
+    /// How many reads handed out whole states.
     payload_reads: AtomicUsize,
 }
 
 impl InMemoryStore {
-    /// Store `payload` as the entity `id` names.
-    pub(crate) fn seed(&self, id: &Identifier, payload: Value) {
-        self.rows.lock().expect("the store lock is not poisoned").put(id, payload);
+    /// Store `state` as the entity `id` names.
+    pub(crate) fn seed(&self, id: &Identifier, state: EntityState) {
+        self.rows.lock().expect("the store lock is not poisoned").put(id, Arc::new(state));
     }
 
     /// Have `writer` interfere with the commits that follow.
@@ -148,9 +148,9 @@ impl InMemoryStore {
         *self.concurrent.lock().expect("the store lock is not poisoned") = Some(writer);
     }
 
-    /// The stored payload and version of the entity `id` names.
-    pub(crate) fn stored(&self, id: &Identifier) -> Option<(Value, DateTime<Utc>)> {
-        self.rows.lock().expect("the store lock is not poisoned").entities.get(id).cloned() // clone: the caller owns its copy of the row
+    /// The stored state and version of the entity `id` names.
+    pub(crate) fn stored(&self, id: &Identifier) -> Option<(Arc<EntityState>, DateTime<Utc>)> {
+        self.rows.lock().expect("the store lock is not poisoned").entities.get(id).cloned() // clone: Arc ref-count bump and the version
     }
 
     /// Every write submitted for the entity `id` names, in submission order.
@@ -161,14 +161,14 @@ impl InMemoryStore {
         for_id
     }
 
-    /// How many reads handed out whole payloads.
+    /// How many reads handed out whole states.
     pub(crate) fn payload_reads(&self) -> usize {
         self.payload_reads.load(Ordering::Relaxed)
     }
 
-    /// The stored payload and version of the entity `id` names, counted as a
-    /// payload read.
-    fn read(&self, id: &Identifier) -> Option<(Value, DateTime<Utc>)> {
+    /// The stored state and version of the entity `id` names, counted as a
+    /// state read.
+    fn read(&self, id: &Identifier) -> Option<(Arc<EntityState>, DateTime<Utc>)> {
         self.payload_reads.fetch_add(1, Ordering::Relaxed);
         self.stored(id)
     }
@@ -205,7 +205,7 @@ impl ContextCommitter for InMemoryStore {
 #[async_trait]
 impl DeletionOutlineReader for InMemoryStore {
     async fn deletion_outline(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<DeletionOutline>, EntityError> {
-        Ok(self.stored(id).map(|(payload, modified_at)| outline_of(&payload, modified_at)))
+        Ok(self.stored(id).map(|(state, modified_at)| outline_of(&state, modified_at)))
     }
 
     async fn deletion_watchers(&self, _target: &ContextTarget) -> Result<DeletionWatchers, EntityError> {
@@ -215,37 +215,56 @@ impl DeletionOutlineReader for InMemoryStore {
 
 #[async_trait]
 impl EntityReader for InMemoryStore {
-    async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<Value>, EntityError> {
-        Ok(self.read(id).map(|(payload, _)| payload))
+    async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<Arc<EntityState>>, EntityError> {
+        Ok(self.read(id).map(|(state, _)| state))
     }
 
-    async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
-        // clone: the answer owns the identifiers it is keyed by
-        Ok(ids.iter().filter_map(|id| self.read(id).map(|(payload, _)| (id.clone(), payload))).collect())
+    async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, RetrievedEntity>, EntityError> {
+        Ok(ids
+            .iter()
+            .filter_map(|id| {
+                self.read(id).map(|(state, modified_at)| {
+                    let retrieved = RetrievedEntity {
+                        state,
+                        sys_attrs: SysAttrsSnapshot {
+                            created_at: modified_at,
+                            modified_at,
+                            expires_at: None,
+                        },
+                    };
+                    (id.clone(), retrieved) // clone: the answer owns the identifiers it is keyed by
+                })
+            })
+            .collect())
     }
 
     async fn get_snapshot(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
-        Ok(self.read(id).map(|(payload, modified_at)| EntitySnapshot {
-            payload: Arc::new(payload),
-            modified_at,
-        }))
+        Ok(self.read(id).map(|(state, modified_at)| EntitySnapshot { state, modified_at }))
     }
 
     async fn get_snapshot_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
         Ok(ids
             .iter()
             .filter_map(|id| {
-                self.read(id).map(|(payload, modified_at)| {
+                self.read(id).map(|(state, modified_at)| {
                     (
                         id.clone(), // clone: the answer owns the identifiers it is keyed by
-                        EntitySnapshot {
-                            payload: Arc::new(payload),
-                            modified_at,
-                        },
+                        EntitySnapshot { state, modified_at },
                     )
                 })
             })
             .collect())
+    }
+
+    async fn get_with_sys_attrs(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+        Ok(self.read(id).map(|(state, modified_at)| RetrievedEntity {
+            state,
+            sys_attrs: SysAttrsSnapshot {
+                created_at: modified_at,
+                modified_at,
+                expires_at: None,
+            },
+        }))
     }
 
     async fn get_sys_attrs(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {

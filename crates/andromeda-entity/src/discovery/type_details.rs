@@ -9,9 +9,10 @@ use crate::{
         stored_names::parse_discovery_iri,
     },
     error::EntityError,
+    query::simplified_names::request_name_compaction,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity_type_list::{EntityType, EntityTypeType};
 use serde_json::Value;
 
@@ -24,20 +25,21 @@ impl EntityDiscoveryService {
     /// # Errors
     ///
     /// Reports [`EntityError::Persistence`] when the store or the registry
-    /// could not be read, and [`EntityError::Internal`] when a stored type or
-    /// attribute name does not read back as one.
+    /// could not be read, [`EntityError::JsonLd`] when the request context
+    /// does not resolve or process, and [`EntityError::Internal`] when a stored
+    /// type or attribute name does not read back as one.
     pub async fn type_details(&self, target: &ContextTarget, scope: DiscoveryScope, context: &ContextSpec) -> Result<Value, EntityError> {
         let mut summaries = self.store.entity_type_attributes(target).await?;
         union_type_summaries(&mut summaries, self.registered_types(scope).await?);
 
-        let names = NameCompactor::new(&self.engine, context);
+        let names = request_name_compaction(&self.engine, context).await?;
         let mut entity_types: Vec<EntityType> = Vec::with_capacity(summaries.len());
         for (type_iri, attrs) in summaries {
             entity_types.push(EntityType {
                 id: parse_discovery_iri(type_iri.to_string())?,
-                type_name: compacted_type_name(&names, &type_iri).await?,
+                type_name: compacted_type_name(&names, &type_iri)?,
                 type_: EntityTypeType,
-                attribute_names: compacted_attribute_names(&names, attrs).await?,
+                attribute_names: compacted_attribute_names(&names, attrs)?,
             });
         }
 

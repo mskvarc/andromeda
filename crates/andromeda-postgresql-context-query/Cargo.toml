@@ -25,6 +25,7 @@ sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] 
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-ngsi-ld-entity.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 pretty_assertions = "1.4.1"
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }

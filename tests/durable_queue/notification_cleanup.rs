@@ -12,11 +12,11 @@ use crate::{
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore};
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
-use serde_json::Value;
 use serial_test::serial;
 use sqlx::PgPool;
 
@@ -59,8 +59,8 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
 
     let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the fan-out"));
     assert_eq!(claimed.len(), 4);
-    // clone: the payload is compared again after the claimed batch is consumed.
-    let payload = claimed.first().expect("a claimed delivery").event.entity_snapshot.as_deref().cloned();
+    // clone: Arc ref-count bump; the payload is compared again after the claimed batch is consumed.
+    let payload = claimed.first().expect("a claimed delivery").event.entity_snapshot.clone();
 
     // Four dispositions over one shared event: delivered, obsolete (which the
     // drain acknowledges the same way), retry-exhausted, and retained pending.
@@ -96,11 +96,12 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     assert_eq!(removed, 2, "only the acknowledged deliveries are past the horizon");
     assert_eq!(stored_deliveries(&pool).await, 2, "the exhausted and retained deliveries stay");
     assert_eq!(stored_events(&pool).await, 1, "the event survives while any delivery references it");
-    let retained: Option<Value> = sqlx::query_scalar("SELECT entity_snapshot FROM notification_events")
+    let retained: Option<String> = sqlx::query_scalar("SELECT entity_snapshot::text FROM notification_events")
         .fetch_one(&pool)
         .await
         .expect("retained payload");
-    assert_eq!(retained, payload, "no surviving delivery loses its payload");
+    let retained = retained.map(|text| EntityState::from_slice(text.as_bytes()).expect("the retained payload is an entity state"));
+    assert_eq!(retained.as_ref(), payload.as_deref(), "no surviving delivery loses its payload");
 
     // Dead-letter retention removes the exhausted delivery kept as evidence;
     // the delivered-row reap never touches an undelivered row.
@@ -129,7 +130,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     assert_eq!(last.len(), 1);
     assert_eq!(
         last.first().expect("the last delivery").event.entity_snapshot.as_deref(),
-        payload.as_ref(),
+        payload.as_deref(),
         "the last delivery still carries the shared payload"
     );
     queue

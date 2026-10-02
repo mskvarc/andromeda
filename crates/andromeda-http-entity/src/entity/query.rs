@@ -21,7 +21,6 @@ use crate::{
         RequestProjection,
         ResolvedJoin,
         Response,
-        ResponsePayload,
         StatusCode,
         query_admission::{AdmittedQuery, admit_request},
         query_binding::QueryBinding,
@@ -33,7 +32,7 @@ use crate::{
         with_linked_resolution_warnings,
     },
     error::public_error,
-    read_rendering::{EntityRepresentation, apply_representation_names, render_entities, render_joined_entities},
+    read_rendering::{EntityRepresentation, apply_representation_names, matched_entities},
     state::EntityRouteServices,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -235,22 +234,17 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let page_matches = split_page_matches(split_survivors, resolved.as_ref());
         let entity_map_uri = record_map_use(&state.entity_maps, map_use, contributions, map_entities, page_matches, &uri).await?;
 
-        let representation = EntityRepresentation::new(language_filter.as_ref(), opts.render_mode, projection);
+        let representation = EntityRepresentation::new(opts.render_mode, projection);
         apply_representation_names(service, &representation, &context, &mut entities, resolved.as_mut(), &uri).await?;
         let entities = entities;
         let page_boundary = cursor_boundary(&entities);
-        let payload = match &resolved {
-            Some(resolved) => render_joined_entities(&entities, resolved, &representation, &uri)?,
-            None => render_entities(&entities, &representation, &uri)?,
-        };
-        let rendered = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
+        let answer = matched_entities(&entities, resolved.as_ref(), &representation);
+        let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
             .start_rendering(accept.media_type(), prefer.rendering_preferences(), opts.render_mode)
             .await
             .with_entity_instance(&uri)?
-            .with_geometry_selection(geometry_selection(&query))
-            .with_payload(ResponsePayload::Collection(payload))
-            .render()
-            .with_entity_instance(&uri)?;
+            .with_geometry_selection(geometry_selection(&query));
+        let rendered = answer.render(rendering, language_filter.as_ref(), &uri)?;
         Ok(query_response(
             rendered,
             QueryCollectionMetadata {

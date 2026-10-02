@@ -1,36 +1,30 @@
 //! Deleting an attribute from an entity (clause 5.6.5).
 
-use crate::{
-    EntityService,
-    attrs::attribute_write::{MutatedEntity, payload_write},
-    error::EntityError,
-    expanded_member::{attr_name_of, written_entity_types},
-    notification_plan::modification,
-};
+use crate::{EntityService, entity_validation_reason::EntityValidationReason, error::EntityError, modification_write::ModificationWrite};
 use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::{
-    instance_key::attribute_instance_family,
-    mutation::{attribute::delete_attr, error::ExpandedEntityError, selection::DatasetSelection},
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    operation::{mutation_error::MutationError, selection::DatasetSelection},
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
     /// Delete one attribute, or one of its instances, from an entity
     /// (clause 5.6.5).
     ///
-    /// The deletion is computed from a payload read outside the writing
+    /// The deletion is computed from a state read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
     ///
     /// # Errors
     ///
     /// Reports [`EntityError::JsonLd`] when `attr_name` cannot be expanded
-    /// against `context`, [`EntityError::NotFound`] when no entity carries
+    /// against `context`, [`EntityError::Validation`] when its expansion is
+    /// not an attribute name, [`EntityError::NotFound`] when no entity carries
     /// `id`, [`EntityError::MemberNotFound`] when the entity carries neither
     /// the attribute nor the selected instance, [`EntityError::Contention`]
     /// when concurrent writers superseded the computed write on every attempt,
@@ -43,18 +37,15 @@ impl EntityService {
         selection: DatasetSelection<'_>,
         context: &ContextSpec,
     ) -> Result<(), EntityError> {
-        let entity_uri = id.clone(); // clone: notification and computed write own the identifier
-        let id = id.as_str();
-
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
-        let expanded_attr_name = attr_name_of(attr_iri.as_str())?;
+        let attribute = attribute_name_of(attr_iri.as_str())?;
 
         // Resolve target dataset ids for tombstones before mutating the entity
-        // payload. The catalogue outlives the attributes it describes, so this
+        // state. The catalogue outlives the attributes it describes, so this
         // does not have to be re-read per attempt.
         let tombstone_targets: Vec<Option<Identifier>> = match selection {
-            DatasetSelection::All => match self.attribute_history.dataset_identifiers(target, &entity_uri, &expanded_attr_name).await {
+            DatasetSelection::All => match self.attribute_history.dataset_identifiers(target, id, &attribute).await {
                 Ok(dataset_identifiers) => dataset_identifiers,
                 Err(e) => {
                     tracing::warn!(error = %e, entity_id = %id, event = "tea_lookup_failed_for_deletion");
@@ -65,10 +56,10 @@ impl EntityService {
             DatasetSelection::Default => vec![None],
         };
 
-        let MutatedEntity { events } = self
-            .commit_computed_write(target, &entity_uri, |previous| {
-                let mut existing = Value::clone(previous); // clone: the deletion mutates its own copy of the stored payload
-                delete_attr(&mut existing, &attr_iri, selection)?;
+        let events = self
+            .commit_computed_write(target, id, |previous| {
+                let mut remaining = EntityState::clone(previous); // clone: shares every attribute the deletion leaves alone
+                delete_member(&mut remaining, &attribute, selection)?;
 
                 // Clause 5.6.5.4 handles the Scope before the `deleteAll` and
                 // `datasetId` bullets — "If the target Attribute is scope,
@@ -78,32 +69,27 @@ impl EntityService {
                 // stream to tombstone: clause 4.5.4 gives it no dataset
                 // dimension and no attribute family, so its history is the
                 // scope removal and nothing else.
-                let history = if expanded_attr_name.as_str() == expanded_properties::SCOPE.as_str() {
+                let history = if attribute.as_str() == expanded_properties::SCOPE.as_str() {
                     vec![HistoryRecord::ScopeRemoval]
                 } else {
                     tombstone_targets
                         .iter()
                         .map(|target| {
-                            // The family is read from the payload the deletion is
-                            // computed against, so the tombstone renders the null member
-                            // its family prescribes (clauses 4.5.7 and 4.5.8). A target
-                            // the catalogue knows and the payload does not is a Property
-                            // by clause 4.5.2.
-                            let attribute_type = attribute_instance_family(previous, &expanded_attr_name, target.as_ref())
-                                .map_err(ExpandedEntityError::from)?
+                            // The family is read from the state the deletion is
+                            // computed against, so the tombstone renders the null
+                            // member its family prescribes (clauses 4.5.7 and
+                            // 4.5.8). A target the catalogue knows and the state
+                            // does not is a Property by clause 4.5.2.
+                            let attribute_type = previous
+                                .attribute_instance_family(attribute.as_str(), target.as_ref())
                                 .unwrap_or(AttributeType::Property);
-                            Ok(tombstone(&expanded_attr_name, target.as_ref(), attribute_type))
+                            tombstone(&attribute, target.as_ref(), attribute_type)
                         })
-                        .collect::<Result<Vec<HistoryRecord>, EntityError>>()?
+                        .collect()
                 };
 
-                let merged = Arc::new(existing);
-                let types = written_entity_types(&merged)?;
-                let change = modification(previous, &merged)?;
-                let plan = self.notifier.plan(target, &entity_uri, &types, change, Some(&merged), Some(previous));
-
-                let write = payload_write(&entity_uri, &merged, history, plan.matches)?;
-                Ok((write, MutatedEntity { events: plan.events }))
+                let ModificationWrite { write, events } = self.modification_write(target, id, previous, Arc::new(remaining), history)?;
+                Ok((write, events))
             })
             .await?;
 
@@ -112,5 +98,108 @@ impl EntityService {
         }
 
         Ok(())
+    }
+}
+
+/// Read an expanded attribute IRI as the attribute name it stands for.
+///
+/// The IRI comes straight out of JSON-LD term expansion, so a value that fails
+/// the NGSI-LD name grammar means the caller asked for something that cannot
+/// name an attribute at all.
+fn attribute_name_of(iri: &str) -> Result<AttributeName, EntityError> {
+    iri.parse()
+        .map_err(|source| EntityError::Validation(EntityValidationReason::AttributeName(source)))
+}
+
+/// Delete the member `attribute` names from `state` (clause 5.6.5).
+///
+/// `scope` (clause 4.18) and the entity `expiresAt` (clause 4.22) are named
+/// like attributes but hold no instances: the whole member goes unless a
+/// `datasetId` is selected, which neither of them carries.
+fn delete_member(state: &mut EntityState, attribute: &AttributeName, selection: DatasetSelection<'_>) -> Result<(), MutationError> {
+    let name = attribute.as_str();
+    let held = if name == expanded_properties::SCOPE.as_str() {
+        state.scope().is_some()
+    } else if name == expanded_properties::EXPIRES_AT.as_str() {
+        state.expires_at().is_some()
+    } else {
+        return state.delete_attribute(attribute, selection);
+    };
+    if !held {
+        return Err(MutationError::AttributeNotFound {
+            attribute: attribute.clone(), // clone: the error outlives the borrowed request
+        });
+    }
+    match selection {
+        DatasetSelection::Single(dataset_id) => Err(MutationError::missing_instance(attribute, Some(dataset_id))),
+        DatasetSelection::All | DatasetSelection::Default => {
+            if name == expanded_properties::SCOPE.as_str() {
+                state.set_scope(None);
+            } else {
+                state.set_expires_at(None);
+            }
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::attrs::delete::delete_member;
+    use andromeda_ngsi_ld_entity::{
+        entity_state::EntityState,
+        operation::{mutation_error::MutationError, selection::DatasetSelection},
+    };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+    use serde_json::json;
+
+    fn scoped() -> EntityState {
+        let document = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "@type": ["https://example.org/Vehicle"],
+            "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/a"}],
+            "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
+        }]);
+        EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity")
+    }
+
+    fn name(iri: &str) -> AttributeName {
+        iri.parse().expect("a valid attribute name")
+    }
+
+    /// Clause 5.6.5.4: "If the target Attribute is scope, remove the scope
+    /// Attribute from the target Entity".
+    #[test]
+    fn deleting_the_scope_removes_it() {
+        let mut state = scoped();
+        delete_member(&mut state, &name("https://uri.etsi.org/ngsi-ld/scope"), DatasetSelection::All).expect("the scope is deleted");
+        assert!(state.scope().is_none());
+        assert!(state.attributes().contains("https://example.org/speed"));
+    }
+
+    /// The scope carries no `datasetId`, so no dataset selects it.
+    #[test]
+    fn a_dataset_of_the_scope_is_not_found() {
+        let mut state = scoped();
+        let dataset: Identifier = "urn:ngsi-ld:Dataset:a".parse().expect("a valid identifier");
+        let error =
+            delete_member(&mut state, &name("https://uri.etsi.org/ngsi-ld/scope"), DatasetSelection::Single(&dataset)).expect_err("the scope has no dataset");
+        assert!(matches!(error, MutationError::DatasetNotFound { .. }), "{error:?}");
+        assert!(state.scope().is_some());
+    }
+
+    #[test]
+    fn deleting_an_absent_expiry_is_not_found() {
+        let mut state = scoped();
+        let error = delete_member(&mut state, &name("https://uri.etsi.org/ngsi-ld/expiresAt"), DatasetSelection::All).expect_err("no expiry is held");
+        assert!(matches!(error, MutationError::AttributeNotFound { .. }), "{error:?}");
+    }
+
+    #[test]
+    fn an_attribute_is_deleted_by_its_name() {
+        let mut state = scoped();
+        delete_member(&mut state, &name("https://example.org/speed"), DatasetSelection::All).expect("the attribute is deleted");
+        assert!(!state.attributes().contains("https://example.org/speed"));
+        assert!(state.scope().is_some());
     }
 }

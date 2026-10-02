@@ -1,0 +1,13 @@
+{
+    "@context": {
+        "example": "http://example.org/",
+        "xsd": "http://www.w3.org/2001/XMLSchema#",
+        "address": "example:address",
+        "city": "example:city",
+        "country": "example:country",
+        "street": "example:street",
+        "Place": "example:Place",
+        "PostalAddress": "example:PostalAddress",
+        "String": "xsd:String"
+    }
+}

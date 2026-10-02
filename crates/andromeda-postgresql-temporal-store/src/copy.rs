@@ -19,11 +19,13 @@ use crate::{
     stored_instance_columns::{generated_instance_id, verbatim_instance_id},
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_branch::schema_prefix;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_encoding::{
     copy::{
+        CopyFieldError,
         write_bool_opt,
         write_bytea_opt,
         write_field_count,
@@ -32,6 +34,7 @@ use andromeda_postgresql_encoding::{
         write_i32_opt,
         write_i64,
         write_jsonb_opt,
+        write_jsonb_text,
         write_text_opt,
         write_timestamptz,
         write_timestamptz_opt,
@@ -42,6 +45,7 @@ use andromeda_postgresql_encoding::{
     ewkb_binding::geometry_bytes,
 };
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
+use serde_json::value::RawValue;
 use sqlx::{Executor, Postgres, Transaction};
 
 /// Number of columns written per staged history tuple.
@@ -169,13 +173,27 @@ pub(crate) fn encode_history_copy_stream(rows: &[AttributeHistoryRow]) -> Result
         write_text_opt(&mut buf, verbatim_instance_id(&row.instance))?;
         write_text_opt(&mut buf, numeric.as_deref())?;
         write_text_opt(&mut buf, row.value.string())?;
-        write_bytea_opt(&mut buf, geometry_bytes(row.value.geometry())?.as_deref())?;
-        write_jsonb_opt(&mut buf, row.value.object())?;
+        write_bytea_opt(&mut buf, geometry_bytes(row.value.geometry().map(Geometry::form))?.as_deref())?;
+        write_stored_json(&mut buf, row.value.object())?;
         write_text_opt(&mut buf, row.value.uri().map(Uri::as_str))?;
-        write_jsonb_opt(&mut buf, row.metadata.as_ref())?;
+        write_stored_json(&mut buf, row.metadata.as_deref())?;
     }
     write_trailer(&mut buf);
     Ok(buf)
+}
+
+/// Append an optional `jsonb` field from the JSON a column stores, encoding
+/// `None` as a NULL.
+///
+/// # Errors
+///
+/// Returns [`CopyFieldError`] when the document is longer than a field prefix
+/// can announce.
+fn write_stored_json(buf: &mut Vec<u8>, json: Option<&RawValue>) -> Result<(), CopyFieldError> {
+    match json {
+        Some(json) => write_jsonb_text(buf, json.get()),
+        None => write_jsonb_opt(buf, None),
+    }
 }
 
 const fn estimated_stream_bytes(rows: usize) -> usize {

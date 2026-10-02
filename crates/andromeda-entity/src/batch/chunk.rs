@@ -14,11 +14,9 @@
 
 use crate::{
     EntityService,
-    batch::prepare::PreparedEntity,
     entity_invariant::EntityInvariant,
     error::EntityError,
-    expanded_member::written_entity_types,
-    notification_plan::{NotificationPlan, creation},
+    notification_plan::{NotificationPlan, creation, modification},
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_commit::{
@@ -34,13 +32,8 @@ use andromeda_context_commit::{
     write_retry::WRITE_ATTEMPTS,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, history::written_observation::AddressedInstances, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{
-    entity_change::EntityChange,
-    expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError, written_observation::AddressedInstances},
-};
-use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::sync::Arc;
 
 /// One entity's place in a chunk: the change to make and everything the change
@@ -54,11 +47,18 @@ pub(super) struct ChunkWrite {
     /// the instances it wrote, as the stored Entity holds them, and the ends
     /// of the instances and Scope it removed.
     pub history: Vec<HistoryRecord>,
-    /// What the write assumes about the entity it was computed from.
-    pub precondition: Precondition,
     /// Both notification channels this write owes, planned to mirror its
     /// single-entity sibling's triggers.
     pub plan: NotificationPlan,
+}
+
+/// A chunk write together with what it assumes about the entity it was
+/// computed from.
+pub(super) struct GuardedWrite {
+    /// The write to commit.
+    pub write: ChunkWrite,
+    /// The condition the store checks before it applies the write.
+    pub precondition: Precondition,
 }
 
 /// The two states one entity update moves between, and what it addressed.
@@ -68,12 +68,13 @@ pub(super) struct ChunkWrite {
 /// come from the difference between the stored state and the state replacing
 /// it, and the observation is the resulting state of the instances the request
 /// addressed.
-pub(super) struct UpdatedPayloads<'a> {
+pub(super) struct UpdatedStates<'a> {
     /// The entity as the store holds it before the write. It is also the state
     /// a deletion filter and `showChanges` are evaluated against.
-    pub previous: &'a Arc<Value>,
-    /// The entity the write stores in its place.
-    pub merged: Arc<Value>,
+    pub previous: &'a Arc<EntityState>,
+    /// The entity the write stores in its place, not yet stamped. It shares
+    /// every attribute it did not change with `previous`.
+    pub current: EntityState,
     /// The instances the request addressed, whose resulting state the
     /// Temporal Evolution records.
     pub addressed: AddressedInstances<'a>,
@@ -105,140 +106,88 @@ impl ChunkOutcome {
 }
 
 impl EntityService {
-    /// The write that stores a freshly prepared payload as a new entity.
+    /// The write that stores `state` as a new entity.
     ///
     /// Mirrors the single create (clause 5.6.1): one `entityCreated` over the
-    /// whole payload. A batch inserts only an entity it was asked to create or
-    /// found absent, so the write holds only while the entity does not exist.
+    /// whole entity, and the whole entity as its first observation. A batch
+    /// inserts only an entity it was asked to create or found absent, so the
+    /// write is committed to hold only while the entity does not exist.
     ///
     /// # Errors
     ///
     /// Answers the entity's identifier with the failure, boxed because a
-    /// failure is the rare outcome, for the batch's per-entity report, when an instance's `datasetId` cannot be read.
+    /// failure is the rare outcome, when the entity's search columns cannot be
+    /// derived.
     pub(super) fn chunk_insert(
         &self,
         target: &ContextTarget,
-        prepared: PreparedEntity,
-        now: DateTime<Utc>,
+        id: Identifier,
+        mut state: EntityState,
+        now: SystemInstant,
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
-        let PreparedEntity {
-            id,
-            mut expanded,
-            projection,
-            expires_at,
-            min_attribute_expires_at,
-        } = prepared;
         // Clause 4.8: a created entity's attribute instances carry the write
         // instant as both createdAt and modifiedAt.
-        if let Err(error) = stamp_attribute_instants(&mut expanded, &Value::Null, now) {
-            return Err(Box::new((id, ExpandedEntityError::from(error).into())));
-        }
-        let payload = Arc::new(expanded);
-        let types = projection.types.clone(); // clone: the plan carries the names after the record has taken them
-        let change = match creation(&payload) {
-            Ok(change) => change,
-            Err(error) => return Err(Box::new((id, error))),
-        };
-        let plan = self.notifier.plan(target, &id, &types, change, Some(&payload), None);
-        Ok(ChunkWrite {
-            id,
-            entity: EntityMutation::Insert(EntityRecord::from_parts(
-                Arc::clone(&payload), // clone: Arc ref-count bump; the same payload is the observation
-                projection,
-                expires_at,
-                min_attribute_expires_at,
-            )),
-            history: vec![HistoryRecord::Observations(payload)],
-            precondition: Precondition::MustNotExist,
-            plan,
-        })
-    }
-
-    /// The write that stores `payload` as a new entity, deriving its columns
-    /// from the payload rather than from a preparation pass, under the same
-    /// precondition as [`Self::chunk_insert`].
-    ///
-    /// # Errors
-    ///
-    /// Answers the entity's identifier with the failure, boxed because a
-    /// failure is the rare outcome, for the batch's per-entity report, when the payload's members cannot be read.
-    pub(super) fn chunk_insert_payload(
-        &self,
-        target: &ContextTarget,
-        id: Identifier,
-        payload: Arc<Value>,
-        now: DateTime<Utc>,
-    ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
-        // Clause 4.8: stamp the created entity's attribute instances before the
-        // record derives its columns from the payload.
-        let mut payload_value = Arc::try_unwrap(payload).unwrap_or_else(|shared| (*shared).clone()); // clone: only when another reference still holds the payload
-        if let Err(error) = stamp_attribute_instants(&mut payload_value, &Value::Null, now) {
-            return Err(Box::new((id, ExpandedEntityError::from(error).into())));
-        }
-        let payload = Arc::new(payload_value);
-        let record = match EntityRecord::from_expanded(Arc::clone(&payload)) {
-            // clone: Arc ref-count bump; the same payload is the observation
+        state.stamp_attribute_instants(None, now);
+        let state = Arc::new(state);
+        let plan = self.notifier.plan(target, &id, state.types().as_slice(), creation(&state), Some(&state), None);
+        let record = match EntityRecord::from_state(Arc::clone(&state)) {
+            // clone: reference-count bump; the same state is the observation
             Ok(record) => record,
             Err(error) => return Err(Box::new((id, error.into()))),
         };
-        let types = record.projection.types.clone(); // clone: the plan carries the names the record holds
-        let change = match creation(&payload) {
-            Ok(change) => change,
-            Err(error) => return Err(Box::new((id, error))),
-        };
-        let plan = self.notifier.plan(target, &id, &types, change, Some(&payload), None);
         Ok(ChunkWrite {
             id,
             entity: EntityMutation::Insert(record),
-            history: vec![HistoryRecord::Observations(payload)],
-            precondition: Precondition::MustNotExist,
+            history: vec![HistoryRecord::Observations(state)],
             plan,
         })
     }
 
-    /// The write that overwrites an existing entity with the state replacing it,
-    /// under the entity `change` the write made.
+    /// The write that overwrites an existing entity with the state replacing
+    /// it.
     ///
-    /// The build site supplies one precise group per changed attribute instance.
-    /// The write is computed from `previous`, so the version it holds against
-    /// is stated by the read-modify-write driver that read it.
+    /// The per-attribute triggers of clause 5.2.12 are read off the difference
+    /// between the two states. The write is computed from `previous`, so the
+    /// version it holds against is stated by the read-modify-write driver
+    /// that read it.
     ///
     /// # Errors
     ///
     /// Answers the entity's identifier with the failure, boxed because a
-    /// failure is the rare outcome, for the batch's per-entity report, when the merged payload's members or either state's
-    /// `datasetId`s cannot be read.
+    /// failure is the rare outcome, when the entity's search columns cannot be
+    /// derived.
     pub(super) fn chunk_update(
         &self,
         target: &ContextTarget,
         id: Identifier,
-        payloads: UpdatedPayloads<'_>,
-        change: EntityChange,
-        now: DateTime<Utc>,
+        states: UpdatedStates<'_>,
+        now: SystemInstant,
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
-        let UpdatedPayloads { previous, merged, addressed } = payloads;
+        let UpdatedStates {
+            previous,
+            mut current,
+            addressed,
+        } = states;
         // Clause 4.8: an updated instance takes `now` for modifiedAt and keeps
         // its createdAt; an untouched one keeps both. Stamped before the columns
-        // and the notification plan read the payload, so both see it.
-        let mut merged_value = Arc::try_unwrap(merged).unwrap_or_else(|shared| (*shared).clone()); // clone: only when another reference still holds the merged payload
-        if let Err(error) = stamp_attribute_instants(&mut merged_value, previous, now) {
-            return Err(Box::new((id, ExpandedEntityError::from(error).into())));
-        }
-        let merged = Arc::new(merged_value);
+        // and the notification plan read the state, so both see it; only an
+        // attribute whose stamps change stops being shared with `previous`.
+        current.stamp_attribute_instants(Some(previous), now);
+        let current = Arc::new(current);
         // Clauses 5.6.8, 5.6.9 and 5.6.20 run the single-entity behaviours per
         // entity, so the batch records exactly what its single-entity sibling
         // records: the resulting instances it addressed and the ends of what it
         // removed.
-        let history = match mutation_history(addressed, previous, &merged) {
-            Ok(history) => history,
-            Err(error) => return Err(Box::new((id, error.into()))),
-        };
-        let types = match written_entity_types(&merged) {
-            Ok(types) => types,
-            Err(error) => return Err(Box::new((id, error))),
-        };
-        let plan = self.notifier.plan(target, &id, &types, change, Some(&merged), Some(previous));
-        let record = match EntityRecord::from_expanded(merged) {
+        let history = mutation_history(addressed, previous, &current);
+        let plan = self.notifier.plan(
+            target,
+            &id,
+            current.types().as_slice(),
+            modification(previous, &current),
+            Some(&current),
+            Some(previous),
+        );
+        let record = match EntityRecord::replacing(previous, current) {
             Ok(record) => record,
             Err(error) => return Err(Box::new((id, error.into()))),
         };
@@ -246,7 +195,6 @@ impl EntityService {
             id,
             entity: EntityMutation::Update(record),
             history,
-            precondition: Precondition::MustExist,
             plan,
         })
     }
@@ -280,7 +228,7 @@ impl EntityService {
     /// matches commit with the entity row either way, never deferred to the
     /// worker, and a job carries the change events only when no durable match
     /// was recorded for them.
-    pub(super) async fn commit_chunk(&self, placement: SideEffectPlacement<'_>, entries: Vec<ChunkWrite>) -> Result<ChunkOutcome, EntityError> {
+    pub(super) async fn commit_chunk(&self, placement: SideEffectPlacement<'_>, entries: Vec<GuardedWrite>) -> Result<ChunkOutcome, EntityError> {
         let target = placement.target();
         if entries.is_empty() {
             return Ok(ChunkOutcome::default());
@@ -289,14 +237,8 @@ impl EntityService {
         let mut writes = Vec::with_capacity(entries.len());
         let mut settled: Vec<(Identifier, bool, Vec<ChangeEvent>)> = Vec::with_capacity(entries.len());
 
-        for entry in entries {
-            let ChunkWrite {
-                id,
-                entity,
-                history,
-                precondition,
-                plan,
-            } = entry;
+        for GuardedWrite { write, precondition } in entries {
+            let ChunkWrite { id, entity, history, plan } = write;
             let NotificationPlan { matches, events } = plan;
             let creates = entity.is_insert();
             let entity_id = Arc::new(id.clone()); // clone: the write and deferred side effect share this identifier.
@@ -311,7 +253,7 @@ impl EntityService {
                 SideEffectPlacement::Inline(_) => (builder.history(history).build(), events),
                 SideEffectPlacement::DeferredOnLive => {
                     // Tombstones stay inline in both modes: they describe what
-                    // the payload just stopped saying, and deferring them would
+                    // the state just stopped saying, and deferring them would
                     // leave `current_attribute_values` answering `q` filters with a
                     // value the entity no longer has.
                     let (observations, endings): (Vec<HistoryRecord>, Vec<HistoryRecord>) = history.into_iter().partition(HistoryRecord::is_observations);

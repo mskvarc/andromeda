@@ -1,0 +1,18 @@
+{
+    "@context": {
+        "ex": "https://example.org/unsupported#",
+        "byKey": {
+            "@id": "ex:byKey",
+            "@container": "@index"
+        },
+        "partOf": {
+            "@reverse": "ex:hasPart"
+        },
+        "Typed": {
+            "@id": "ex:Typed",
+            "@context": {
+                "inner": "ex:inner"
+            }
+        }
+    }
+}

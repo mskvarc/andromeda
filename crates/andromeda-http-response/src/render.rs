@@ -344,7 +344,7 @@ mod tests {
             .render()
             .expect("a rendering");
 
-        pretty_assertions::assert_eq!(rendered.context_link, None);
+        pretty_assertions::assert_eq!(rendered.head.context_link, None);
         pretty_assertions::assert_eq!(rendered.value.get("@context"), None);
     }
 
@@ -360,8 +360,8 @@ mod tests {
             .expect("a rendering");
 
         pretty_assertions::assert_eq!(embedded.value["@context"], json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
-        pretty_assertions::assert_eq!(embedded.context_link, None);
-        pretty_assertions::assert_eq!(linked.context_link, Some(iri(NGSI_LD_CORE_CONTEXT_URL.as_str())));
+        pretty_assertions::assert_eq!(embedded.head.context_link, None);
+        pretty_assertions::assert_eq!(linked.head.context_link, Some(iri(NGSI_LD_CORE_CONTEXT_URL.as_str())));
         assert!(linked.value.get("@context").is_none(), "{}", linked.value);
     }
 }

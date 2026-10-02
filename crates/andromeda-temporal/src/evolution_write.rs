@@ -15,16 +15,14 @@
 //! alone), so a change the fold makes owes the notifications a Core write
 //! making the same change would, committed with it; a backfill owes none.
 
-use crate::{error::TemporalError, service::TemporalService, temporal_invariant::TemporalInvariant, temporal_validation_reason::TemporalValidationReason};
+use crate::{error::TemporalError, service::TemporalService, temporal_invariant::TemporalInvariant, written_evolution::WrittenEvolution};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
     current_state_projection::CurrentStateProjection,
     entity_mutation::EntityMutation,
     entity_record::EntityRecord,
-    history_record::HistoryRecord,
     precondition::{AfterAttempt, Precondition, after_attempt},
-    submission_refusal::SubmissionRefusal,
     write_outcome::single,
     write_retry::{WRITE_ATTEMPTS, backoff_after_lost_attempts},
 };
@@ -34,19 +32,17 @@ use andromeda_entity::{
     entity_snapshot::EntitySnapshot,
     notification_plan::{creation, modification},
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::{
-    attribute_system_time::stamp_attribute_instants,
-    current_state_fold::{CurrentStateFold, CurrentStateFoldError, fold_into_current_state},
-    dataset_id::InstanceDatasetIdError,
+use andromeda_ngsi_ld_entity::{
+    history::current_state_fold::{CurrentStateFold, fold_into_current_state},
+    system_instant::SystemInstant,
 };
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::Utc;
-use serde_json::Value;
 use std::sync::Arc;
 
 impl TemporalService {
-    /// Add every instance of the expanded `evolution` to the Temporal Evolution
-    /// of `entity_id`, and to current state the ones that stand there.
+    /// Add every instance of `evolution` to the Temporal Evolution of
+    /// `entity_id`, and to current state the ones that stand there.
     ///
     /// The fold is computed from current state read outside the writing
     /// transaction, so the write states the version it assumed -- the absence of
@@ -55,12 +51,13 @@ impl TemporalService {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::Validation`] when an instance's `datasetId`
-    /// cannot be read or the folded Entity cannot be stored,
-    /// [`TemporalError::TransactionContended`] when concurrent writers
-    /// superseded the fold on every attempt, and [`TemporalError::Commit`] or
-    /// [`TemporalError::Persistence`] when the write cannot be landed.
-    pub(crate) async fn commit_evolution(&self, target: &ContextTarget, entity_id: &Identifier, evolution: Arc<Value>) -> Result<(), TemporalError> {
+    /// Returns [`TemporalError::Validation`] when the evolution would create an
+    /// Entity naming no identifier or type, or a standing instance cannot be
+    /// current state, [`TemporalError::TransactionContended`] when concurrent
+    /// writers superseded the fold on every attempt, and
+    /// [`TemporalError::Commit`] or [`TemporalError::Persistence`] when the
+    /// write cannot be landed.
+    pub(crate) async fn commit_evolution(&self, target: &ContextTarget, entity_id: &Identifier, evolution: &WrittenEvolution) -> Result<(), TemporalError> {
         for lost_attempts in 0..WRITE_ATTEMPTS {
             if lost_attempts > 0 {
                 self.retry_delay.wait(backoff_after_lost_attempts(lost_attempts)).await;
@@ -70,7 +67,7 @@ impl TemporalService {
                 .get_snapshot(target, entity_id)
                 .await
                 .map_err(TemporalError::from_entity_failure)?;
-            let EvolutionWrite { write, events } = evolution_write(&self.notifier, target, entity_id, Arc::clone(&evolution), current.as_ref())?; // clone: Arc ref-count bump
+            let EvolutionWrite { write, events } = evolution_write(&self.notifier, target, entity_id, evolution, current.as_ref())?;
             let outcome = single(self.writes.commit(target, vec![write]).await?)?;
             match after_attempt(&outcome) {
                 AfterAttempt::Settled => {
@@ -102,17 +99,15 @@ fn evolution_write(
     notifier: &ChangeNotifier,
     target: &ContextTarget,
     entity_id: &Identifier,
-    evolution: Arc<Value>,
+    evolution: &WrittenEvolution,
     current: Option<&EntitySnapshot>,
 ) -> Result<EvolutionWrite, TemporalError> {
     let now = Utc::now();
-    let fold = fold_into_current_state(current.map(|snapshot| &*snapshot.payload), &evolution, now).map_err(|error| match error {
-        CurrentStateFoldError::DatasetId(InstanceDatasetIdError { source }) => TemporalError::from(SubmissionRefusal::DatasetId(source)),
-        CurrentStateFoldError::NotAnEntity => TemporalError::Validation(TemporalValidationReason::EntityNotObject),
-    })?;
+    let previous = current.map(|snapshot| &snapshot.state);
+    let fold = fold_into_current_state(previous.map(|state| &**state), evolution.document(), now)?;
     let builder = AtomicWrite::builder()
         .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
-        .history(vec![HistoryRecord::EvolutionInstances(evolution)]);
+        .history(evolution.history());
     match (current, fold) {
         (Some(snapshot), None) => Ok(EvolutionWrite {
             write: builder
@@ -123,24 +118,21 @@ fn evolution_write(
             events: Vec::new(),
         }),
         (current, Some(fold)) => {
-            let CurrentStateFold {
-                mut document,
-                restated,
-                removed,
-            } = fold;
+            let CurrentStateFold { mut state, restated, removed } = fold;
             // Clause 4.8: a standing instance takes the write instant as its
             // modifiedAt and keeps the createdAt it had; a new one takes both.
-            let previous = current.map(|snapshot| &snapshot.payload);
-            stamp_attribute_instants(&mut document, previous.map_or(&Value::Null, |previous| &**previous), now)
-                .map_err(|error| TemporalError::Internal(error.into()))?;
-            let document = Arc::new(document);
-            let record = EntityRecord::from_expanded(Arc::clone(&document))?; // clone: Arc ref-count bump; the document is also the notification's
+            state.stamp_attribute_instants(previous.map(|state| &**state), SystemInstant::new(now));
+            let state = Arc::new(state);
+            // clone: Arc ref-count bump; the state is also the notification's
+            let record = match previous {
+                Some(previous) => EntityRecord::replacing(previous, Arc::clone(&state))?,
+                None => EntityRecord::from_state(Arc::clone(&state))?,
+            };
             let change = match previous {
-                Some(previous) => modification(previous, &document),
-                None => creation(&document),
-            }
-            .map_err(TemporalError::from_entity_failure)?;
-            let plan = notifier.plan(target, entity_id, &record.projection.types, change, Some(&document), previous);
+                Some(previous) => modification(previous, &state),
+                None => creation(&state),
+            };
+            let plan = notifier.plan(target, entity_id, &record.projection.types, change, Some(&state), previous);
             let projection = CurrentStateProjection::Restated {
                 observed: Arc::new(restated),
                 removed,
@@ -176,15 +168,27 @@ struct EvolutionWrite {
 
 #[cfg(test)]
 mod tests {
-    use crate::evolution_write::{EvolutionWrite, evolution_write};
+    use crate::{
+        evolution_write::{EvolutionWrite, evolution_write},
+        written_evolution::WrittenEvolution,
+    };
     use andromeda_context_commit::entity_mutation::EntityMutation;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_entity::{
         change_notifier::{ChangeNotifier, SubscriptionMatching},
         entity_snapshot::EntitySnapshot,
     };
+    use andromeda_ngsi_ld_entity::{
+        document::EntityDocument,
+        entity_state::EntityState,
+        expanded_value::ExpandedValue,
+        family_value::FamilyValue,
+        literal::LiteralValue,
+        reads::attribute_change::AttributeChangeKind,
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind};
+    use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use chrono::Utc;
     use serde_json::{Value, json};
     use std::sync::Arc;
@@ -209,16 +213,17 @@ mod tests {
     /// An expanded Vehicle carrying `members`.
     fn vehicle(members: &Value) -> Value {
         let mut entity = json!({"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.org/Vehicle"]});
-        for (name, value) in members.as_object().expect("the members are an object") {
-            entity[name] = value.clone();
+        if let (Some(entity), Some(members)) = (entity.as_object_mut(), members.as_object()) {
+            entity.extend(members.iter().map(|(name, value)| (name.clone(), value.clone()))); // clone: the fixture owns its members
         }
         json!([entity])
     }
 
     /// Current state holding `speed` = 1, observed on 2024-01-01.
     fn standing() -> EntitySnapshot {
+        let stored = vehicle(&json!({SPEED: [instance(1, "2024-01-01T00:00:00Z")]}));
         EntitySnapshot {
-            payload: Arc::new(vehicle(&json!({SPEED: [instance(1, "2024-01-01T00:00:00Z")]}))),
+            state: Arc::new(EntityState::from_slice(&serde_json::to_vec(&stored).expect("JSON")).expect("a stored entity decodes")),
             modified_at: Utc::now(),
         }
     }
@@ -226,11 +231,12 @@ mod tests {
     /// Fold `evolution` into `current` through a notifier that records nothing
     /// durably, as a live-delivery broker does.
     fn written(evolution: &Value, current: Option<&EntitySnapshot>) -> EvolutionWrite {
+        let document = EntityDocument::from_slice(&serde_json::to_vec(evolution).expect("JSON")).expect("a written evolution decodes");
         evolution_write(
             &ChangeNotifier::new(None, SubscriptionMatching::Absent),
             &ContextTarget::Live,
             &entity_id(),
-            Arc::new(evolution.clone()),
+            &WrittenEvolution::new(Arc::new(document), None),
             current,
         )
         .expect("the evolution folds")
@@ -244,6 +250,21 @@ mod tests {
         (event.change.lifecycle, kinds)
     }
 
+    /// The value the default `speed` instance of `state` holds.
+    fn speed(state: &EntityState) -> Option<JsonNumber> {
+        let (_, instance) = state.attributes().get(SPEED)?.default_instance()?;
+        let FamilyValue::Property { values, .. } = instance.value() else {
+            return None;
+        };
+        match values.head() {
+            ExpandedValue::Literal(literal) => match literal.value() {
+                LiteralValue::Number(number) => Some(number.clone()), // clone: the assertion owns the number
+                LiteralValue::String(_) | LiteralValue::Boolean(_) => None,
+            },
+            ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_) => None,
+        }
+    }
+
     /// Clause 5.6.11.4 on an unknown identifier brings the Entity into being,
     /// which a subscriber sees as its creation, as Core Create Entity.
     #[test]
@@ -253,9 +274,8 @@ mod tests {
         let write = written(&evolution, None);
 
         pretty_assertions::assert_eq!(owed(&write), (EntityLifecycle::Created, vec![(SPEED, AttributeChangeKind::Created)]));
-        let event = &write.events[0];
-        let notified = event.current_payload.as_deref().expect("the notification renders the created Entity");
-        pretty_assertions::assert_eq!(notified[0][SPEED][0]["https://uri.etsi.org/ngsi-ld/hasValue"], json!([{"@value": 2}]));
+        let notified = write.events[0].current_payload.as_deref().expect("the notification renders the created Entity");
+        pretty_assertions::assert_eq!(speed(notified), Some(JsonNumber::from(2)));
     }
 
     /// A newer observation replaces the standing instance (clause 4.5.5.3), an
@@ -270,7 +290,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(owed(&write), (EntityLifecycle::Modified, vec![(SPEED, AttributeChangeKind::Updated)]));
         let previous = write.events[0].previous_attributes.as_deref().expect("the replaced state is carried");
-        pretty_assertions::assert_eq!(previous[0][SPEED][0]["https://uri.etsi.org/ngsi-ld/hasValue"], json!([{"@value": 1}]));
+        pretty_assertions::assert_eq!(speed(previous), Some(JsonNumber::from(1)));
     }
 
     /// An attribute current state did not hold is created beside the standing

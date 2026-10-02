@@ -1,10 +1,10 @@
 //! Turning a read plus a computation into an optimistic write.
 //!
-//! Every entity mutation that is a function of the entity's current payload —
+//! Every entity mutation that is a function of the entity's current state —
 //! merge, replace, all five attribute-level operations, the clause 5.6.21 purge
-//! and the clause 4.22 sweep — reads the payload outside the writing
+//! and the clause 4.22 sweep — reads the state outside the writing
 //! transaction. The write it produces is therefore only meaningful against the
-//! payload it was computed from, so it states that payload's clause 4.8
+//! state it was computed from, so it states that state's clause 4.8
 //! `modifiedAt` and the store refuses it if the entity has moved on.
 //!
 //! Without that, a concurrent writer's change is silently overwritten: two
@@ -21,16 +21,16 @@ use andromeda_context_commit::{
     write_retry::{WRITE_ATTEMPTS, backoff_after_lost_attempts},
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use serde_json::Value;
 use std::{slice::from_ref, sync::Arc};
 
 impl EntityService {
     /// Commit one entity's read-modify-write, re-reading whatever a concurrent
     /// writer superseded.
     ///
-    /// `build` turns the entity's current payload into the write that
-    /// supersedes it, or `None` when the payload needs no write at all. It runs
+    /// `build` turns the entity's current state into the write that
+    /// supersedes it, or `None` when the state needs no write at all. It runs
     /// once per attempt, so it must not consume anything it needs again.
     ///
     /// Returns `None` when the entity does not exist or when `build` declined to
@@ -49,7 +49,7 @@ impl EntityService {
     /// [`EntityError::Contention`] once the attempt budget is spent.
     pub(crate) async fn commit_read_modify_write<B>(&self, target: &ContextTarget, id: &Identifier, mut build: B) -> Result<Option<WriteOutcome>, EntityError>
     where
-        B: FnMut(&Arc<Value>) -> Result<Option<AtomicWrite>, EntityError>,
+        B: FnMut(&Arc<EntityState>) -> Result<Option<AtomicWrite>, EntityError>,
     {
         let _id_guard = self.acquire_id_locks(target, from_ref(id)).await;
 
@@ -59,7 +59,7 @@ impl EntityService {
             let Some(snapshot) = self.reader.get_snapshot(target, id).await? else {
                 return Ok(None);
             };
-            let Some(mut write) = build(&snapshot.payload)? else {
+            let Some(mut write) = build(&snapshot.state)? else {
                 return Ok(None);
             };
             write.precondition = Precondition::UnchangedSince(snapshot.modified_at);
@@ -69,7 +69,7 @@ impl EntityService {
                 AfterAttempt::Settled => return Ok(Some(outcome)),
                 AfterAttempt::Vanished => return Ok(None),
                 // The attempt lost its precondition: fall through to the next
-                // one, which re-reads the payload the write is computed from.
+                // one, which re-reads the state the write is computed from.
                 AfterAttempt::Reread => (),
             }
         }
@@ -100,7 +100,7 @@ impl EntityService {
     /// and otherwise propagates whatever `build` or the coordinator returns.
     pub(crate) async fn commit_computed_write<B, T>(&self, target: &ContextTarget, id: &Identifier, mut build: B) -> Result<T, EntityError>
     where
-        B: FnMut(&Arc<Value>) -> Result<(AtomicWrite, T), EntityError>,
+        B: FnMut(&Arc<EntityState>) -> Result<(AtomicWrite, T), EntityError>,
     {
         let mut produced: Option<T> = None;
         let landed = self

@@ -194,9 +194,9 @@ fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Result<Vec<u8
         write_text(&mut buf, columns.attribute_instance_kinds[index].as_str())?;
         write_jsonb(&mut buf, &columns.scope_paths_json[index])?;
         write_jsonb_text(&mut buf, &columns.payload_json[index])?;
-        write_bytea_opt(&mut buf, columns.locations[index].as_deref())?;
-        write_bytea_opt(&mut buf, columns.obs_spaces[index].as_deref())?;
-        write_bytea_opt(&mut buf, columns.op_spaces[index].as_deref())?;
+        write_bytea_opt(&mut buf, columns.locations[index].written()?)?;
+        write_bytea_opt(&mut buf, columns.obs_spaces[index].written()?)?;
+        write_bytea_opt(&mut buf, columns.op_spaces[index].written()?)?;
         write_timestamptz_opt(&mut buf, columns.location_expires_ats[index]);
         write_timestamptz_opt(&mut buf, columns.expires_ats[index]);
         write_timestamptz_opt(&mut buf, columns.min_attribute_expires_ats[index]);
@@ -217,9 +217,11 @@ mod tests {
         census::delta::{CensusChange, CensusStatements},
         copy::{COPY_INTO_STAGE_SQL, CREATE_STAGE_ENTITIES_SQL, STAGE_ENTITIES_FIELD_COUNT, encode_entities_copy_stream, insert_from_stage_sql},
         params::PreparedEntityColumns,
+        staged_geometry::StagedGeometry,
         write::staging::Srch,
     };
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_postgresql_codes::attribute_kind::AttributeKind;
     use andromeda_postgresql_encoding::copy::COPY_HEADER_SIGNATURE;
@@ -229,6 +231,25 @@ mod tests {
 
     fn instant() -> DateTime<Utc> {
         Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant")
+    }
+
+    /// An entity of type `Building` with no attribute.
+    fn building(id: &str) -> EntityState {
+        EntityState::new(
+            id.parse().expect("entity URI"),
+            EntityTypes::one("https://example.org/Building".parse().expect("type name")),
+        )
+    }
+
+    /// The payload field of a row is the entity state codec's own encoding,
+    /// written once with the binary `jsonb` version byte in front of it.
+    #[test]
+    fn the_payload_field_carries_the_codec_encoding_of_the_state() {
+        let stream = encode_entities_copy_stream(&sample_columns()).expect("the sample columns encode");
+        let encoded = building("urn:ngsi-ld:Building:2").to_vec().expect("the state encodes");
+        let mut field = vec![0x01];
+        field.extend_from_slice(&encoded);
+        assert!(stream.windows(field.len()).any(|window| window == field.as_slice()));
     }
 
     /// Build a two-row sample for encoding tests.
@@ -247,15 +268,19 @@ mod tests {
         columns.push_attribute_instances(Vec::new());
         columns.scope_paths_json.push(serde_json::json!(["root.a"]));
         columns.scope_paths_json.push(serde_json::json!([]));
-        columns
-            .push_payload(&serde_json::json!({"@id": "urn:ngsi-ld:Building:1"}))
-            .expect("payload serialises");
-        columns
-            .push_payload(&serde_json::json!({"@id": "urn:ngsi-ld:Building:2"}))
-            .expect("payload serialises");
+        columns.push_payload(&building("urn:ngsi-ld:Building:1")).expect("the state encodes");
+        columns.push_payload(&building("urn:ngsi-ld:Building:2")).expect("the state encodes");
         let point = Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses");
-        columns.push_geometries(Some(&point), None, None).expect("geometry encodes");
-        columns.push_geometries(None, None, None).expect("geometry encodes");
+        columns
+            .push_geometries(
+                StagedGeometry::Written(Some(point.form())),
+                StagedGeometry::Written(None),
+                StagedGeometry::Written(None),
+            )
+            .expect("geometry encodes");
+        columns
+            .push_geometries(StagedGeometry::Written(None), StagedGeometry::Written(None), StagedGeometry::Written(None))
+            .expect("geometry encodes");
         columns.location_expires_ats.push(None);
         columns.location_expires_ats.push(None);
         columns.expires_ats.push(Some(instant()));

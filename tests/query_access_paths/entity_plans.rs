@@ -289,11 +289,14 @@ fn string_equality(operand: &str) -> String {
 /// The payload statement a Query Entities page issues over `source` (its
 /// `FROM` and `WHERE`, the identity row aliased `e`): the page of 100 entity
 /// keys is cut in identifier order past `offset` rows, and each kept row's
-/// payload is looked up by key outside the window.
+/// payload and system attributes are looked up by key outside the window.
 fn payload_page(source: &str, offset: u32) -> String {
     format!(
-        "SELECT (SELECT d.payload FROM entity_documents AS d WHERE d.entity_key = page.entity_key) AS payload \
+        "SELECT stored.payload, stored.created_at, stored.modified_at, stored.expires_at \
          FROM (SELECT e.entity_key, e.id AS sort_0 {source} ORDER BY sort_0 ASC LIMIT 100 OFFSET {offset}) AS page \
+         JOIN LATERAL (SELECT pd.payload, pe.created_at, pd.modified_at, pe.expires_at FROM entity_documents AS pd \
+                       JOIN entities AS pe ON pe.entity_key = pd.entity_key \
+                       WHERE pd.entity_key = page.entity_key LIMIT 1) AS stored ON TRUE \
          ORDER BY page.sort_0 ASC"
     )
 }

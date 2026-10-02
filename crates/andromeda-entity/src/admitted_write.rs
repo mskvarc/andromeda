@@ -1,20 +1,29 @@
-//! A single-entity write payload the clause 5.5.4 admission produced.
+//! A single-entity write document the clause 5.5.4 admission produced.
 //!
 //! The admission expands a payload exactly the way its write path stores it
-//! and screens the expanded form. What it expanded is kept rather than thrown
-//! away, so the local write consumes it directly and a payload is expanded
-//! once per request. Only a payload the forwarding phase narrowed -- some of
-//! its attributes claimed by an exclusive or redirect registration (clause
-//! 4.3.6.3) -- is admitted again, because what remains of it is a different
-//! document.
+//! and screens the written document. What it expanded is kept rather than
+//! thrown away, so the local write consumes it directly and a payload is
+//! expanded once per request. Only a payload the forwarding phase narrowed --
+//! some of its attributes claimed by an exclusive or redirect registration
+//! (clause 4.3.6.3) -- is admitted again, because what remains of it is a
+//! different document.
 
-use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
+use crate::compact_geometry_admission::admit_compact_geometries;
+use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};
+use andromeda_ngsi_ld_expansion::{
+    attribute_fragment::AttributeFragment,
+    entity_expansion::EntityExpansion,
+    error::ExpansionError,
+    normalization::Normalization,
+};
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
+use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
 use serde_json::Value;
 use std::marker::PhantomData;
 
-/// An entity-shaped payload admitted for the write `W`, expanded as that
+/// An entity-shaped document admitted for the write `W`, expanded as that
 /// write stores it.
 ///
 /// Only [`EntityService::admit_entity_write`](crate::EntityService::admit_entity_write)
@@ -22,109 +31,171 @@ use std::marker::PhantomData;
 /// construct one, so holding one proves the payload passed clause 5.5.4.
 #[derive(Debug)]
 pub struct AdmittedEntity<W> {
-    /// The expanded, screened payload.
-    expanded: Value,
-    /// The write the payload was admitted for.
+    /// The expanded, screened document.
+    document: EntityDocument,
+    /// The write the document was admitted for.
     write: PhantomData<W>,
 }
 
 impl<W> AdmittedEntity<W> {
-    /// Wrap a payload the admission of `W` expanded and screened.
-    pub(crate) const fn new(expanded: Value) -> AdmittedEntity<W> {
-        AdmittedEntity { expanded, write: PhantomData }
+    /// Wrap a document the admission of `W` expanded and screened.
+    pub(crate) const fn new(document: EntityDocument) -> AdmittedEntity<W> {
+        AdmittedEntity { document, write: PhantomData }
     }
 
-    /// The expanded payload the write stores.
-    pub(crate) fn into_expanded(self) -> Value {
-        self.expanded
+    /// Give up the written document the write applies.
+    pub(crate) fn into_document(self) -> EntityDocument {
+        self.document
     }
 }
 
 /// A bare Attribute Fragment admitted for the write `W` on `attribute`,
 /// expanded as that write stores it.
 ///
-/// The fragment is expanded under the attribute the request URI names (see
-/// `andromeda_jsonld::attribute_fragment`), so the attribute travels with it.
+/// The fragment is expanded under the attribute the request URI names, so the
+/// attribute's expanded name travels with it.
 #[derive(Debug)]
 pub struct AdmittedAttribute<'a, W> {
-    /// The attribute the fragment was expanded under.
+    /// The attribute as the request URI names it.
     attribute: &'a AttributeName,
-    /// The expanded, screened fragment.
-    expanded: Value,
+    /// The attribute's expanded name, under which the fragment was expanded.
+    expanded_name: AttributeName,
+    /// The expanded, screened instance.
+    document: InstanceDocument,
     /// The write the fragment was admitted for.
     write: PhantomData<W>,
 }
 
 impl<'a, W> AdmittedAttribute<'a, W> {
     /// Wrap a fragment the admission of `W` expanded under `attribute`.
-    pub(crate) const fn new(attribute: &'a AttributeName, expanded: Value) -> AdmittedAttribute<'a, W> {
+    pub(crate) fn new(attribute: &'a AttributeName, fragment: AttributeFragment) -> AdmittedAttribute<'a, W> {
+        let (expanded_name, document) = fragment.into_parts();
         AdmittedAttribute {
             attribute,
-            expanded,
+            expanded_name,
+            document,
             write: PhantomData,
         }
     }
 
-    /// The attribute the fragment was expanded under.
+    /// The attribute as the request URI names it.
     pub(crate) const fn attribute(&self) -> &'a AttributeName {
         self.attribute
     }
 
-    /// The expanded fragment the write stores.
-    pub(crate) fn into_expanded(self) -> Value {
-        self.expanded
+    /// The expanded name of the attribute the fragment writes.
+    pub(crate) const fn expanded_name(&self) -> &AttributeName {
+        &self.expanded_name
+    }
+
+    /// Give up the expanded attribute name and the written instance.
+    pub(crate) fn into_parts(self) -> (AttributeName, InstanceDocument) {
+        (self.expanded_name, self.document)
     }
 }
 
-/// A compact write payload, in the JSON form the admission expands.
+/// A write payload as the transport decoded it, which the admission expands.
+///
+/// A typed compact entity or fragment is expanded by the typed walk; a payload
+/// held as JSON is expanded after its concise rewrite.
 pub trait WritePayload: Send {
-    /// Render the payload as the compact JSON document the admission expands.
+    /// Refuse a payload whose typed geometries are past `limit` before it is
+    /// expanded.
+    ///
+    /// A JSON payload holds no typed geometry; its geometries are counted on
+    /// the document it expands to.
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::Validation`] when a decoded payload cannot be
-    /// rendered back to JSON.
-    fn into_payload(self) -> Result<Value, EntityError>;
+    /// Returns [`PayloadBudgetExceeded::GeometryPositions`] naming the first
+    /// attribute whose geometry is past `limit`.
+    fn admit_geometries(&self, limit: GeometryPositionLimit) -> Result<(), PayloadBudgetExceeded>;
+
+    /// Expand the payload under `expansion`'s context, after the concise
+    /// rewrite `normalization` names.
+    fn expand<'s>(
+        self,
+        expansion: &'s EntityExpansion<'s>,
+        normalization: Normalization,
+    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's
+    where
+        Self: 's;
 }
 
 impl WritePayload for Value {
-    fn into_payload(self) -> Result<Value, EntityError> {
-        Ok(self)
+    fn admit_geometries(&self, _limit: GeometryPositionLimit) -> Result<(), PayloadBudgetExceeded> {
+        Ok(())
+    }
+
+    fn expand<'s>(
+        self,
+        expansion: &'s EntityExpansion<'s>,
+        normalization: Normalization,
+    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's
+    where
+        Self: 's,
+    {
+        expansion.entity_fragment(self, normalization)
     }
 }
 
 impl WritePayload for &Entity {
-    fn into_payload(self) -> Result<Value, EntityError> {
-        serde_json::to_value(self).map_err(|error| EntityError::Validation(EntityValidationReason::EntityPayload(error)))
+    fn admit_geometries(&self, limit: GeometryPositionLimit) -> Result<(), PayloadBudgetExceeded> {
+        admit_compact_geometries(limit, self.attribute_members())
+    }
+
+    fn expand<'s>(
+        self,
+        expansion: &'s EntityExpansion<'s>,
+        normalization: Normalization,
+    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's
+    where
+        Self: 's,
+    {
+        expansion.entity(self, normalization)
     }
 }
 
 impl WritePayload for &EntityPatch {
-    fn into_payload(self) -> Result<Value, EntityError> {
-        serde_json::to_value(self).map_err(|error| EntityError::Validation(EntityValidationReason::PatchPayload(error)))
+    fn admit_geometries(&self, limit: GeometryPositionLimit) -> Result<(), PayloadBudgetExceeded> {
+        admit_compact_geometries(limit, self.attribute_members())
+    }
+
+    fn expand<'s>(
+        self,
+        expansion: &'s EntityExpansion<'s>,
+        normalization: Normalization,
+    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's
+    where
+        Self: 's,
+    {
+        expansion.entity_patch(self, normalization)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::admitted_write::WritePayload;
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
     use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
-    use serde_json::{Value, json};
+    use serde_json::json;
 
-    #[test]
-    fn a_json_document_is_its_own_payload() {
-        let document = json!({"speed": {"type": "Property", "value": 1}});
-        let expected = document.to_string();
-        pretty_assertions::assert_eq!(document.into_payload().expect("a document").to_string(), expected);
-    }
-
-    #[test]
-    fn a_decoded_entity_and_patch_render_back_to_their_compact_json() {
+    /// A JSON fragment, a decoded entity and a decoded patch of one compact
+    /// document expand to the same written document.
+    #[tokio::test]
+    async fn every_payload_form_expands_to_the_same_document() {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds");
+        let expansion = EntityExpansion::prepare(&engine, &ContextSpec::core_only())
+            .await
+            .expect("the core context processes");
         let written = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 1}});
-        let entity: Entity = serde_json::from_value(written.clone()).expect("an entity"); // clone: the test compares against the written document
-        pretty_assertions::assert_eq!((&entity).into_payload().expect("renders"), serde_json::to_value(&entity).expect("renders"));
-        let patch: EntityPatch = serde_json::from_value(written).expect("a patch");
-        let rendered: Value = (&patch).into_payload().expect("renders");
-        pretty_assertions::assert_eq!(rendered, serde_json::to_value(&patch).expect("renders"));
+        let entity: Entity = serde_json::from_value(written.clone()).expect("an entity"); // clone: the same document is decoded three ways
+        let patch: EntityPatch = serde_json::from_value(written.clone()).expect("a patch"); // clone: the same document is decoded three ways
+        let from_json = written.expand(&expansion, Normalization::Entity).await.expect("the JSON expands");
+        let from_entity = (&entity).expand(&expansion, Normalization::Entity).await.expect("the entity expands");
+        let from_patch = (&patch).expand(&expansion, Normalization::Entity).await.expect("the patch expands");
+        pretty_assertions::assert_eq!(from_entity, from_json);
+        pretty_assertions::assert_eq!(from_patch, from_json);
     }
 }

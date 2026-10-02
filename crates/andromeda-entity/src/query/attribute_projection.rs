@@ -1,48 +1,15 @@
-//! Filtering an entity's attributes down to what the client asked for
-//! (clause 4.21 `pick` and `omit`, clause 5.7.2 `attrs`).
+//! Filtering a compact entity's attributes down to what the client asked
+//! for (clause 4.21 `pick` and `omit`, clause 5.7.2 `attrs`).
+//!
+//! An entity read from the local store is narrowed before it is compacted
+//! (`crate::query::state_projection`); these narrow an entity that arrives
+//! compact -- a Linked Entity another broker returned, or an entity on its way
+//! to a subscriber -- whose member names have to be expanded to be matched.
 
-use crate::{
-    error::EntityError,
-    query::{EntityQueryService, attribute_expansion::AttributeExpansions},
-};
-use andromeda_jsonld::context_spec::ContextSpec;
+use crate::{error::EntityError, query::attribute_expansion::AttributeExpansions};
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::{
-    entity::compiled::CompiledEntityQuery,
-    projection::{compiled::Projection, term::ProjectionTerm},
-};
+use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
 use iri_rs::IriBuf;
-
-impl EntityQueryService {
-    /// Apply `attrs`, `pick` and `omit` to every entity in a result set.
-    ///
-    /// The context is prepared once for the whole set, and each distinct
-    /// member name is expanded once however many entities carry it. Clause
-    /// 5.7.2.5 reduces "every Entity within the payload body" to the members
-    /// the projection defines; an entity it would reduce to none of them was
-    /// never selected (`EntitySelection::projected_members`), so every entity
-    /// here keeps one and the page stays the size the store cut it to.
-    pub(super) async fn apply_projection(
-        &self,
-        mut entities: Vec<Entity>,
-        query: &CompiledEntityQuery,
-        context: &ContextSpec,
-    ) -> Result<Vec<Entity>, EntityError> {
-        if query.projection.is_empty() && query.selection.attrs.is_empty() {
-            return Ok(entities);
-        }
-
-        let prepared = self.engine().prepare_term_context(context);
-        let mut expansions = AttributeExpansions::new(self.engine(), &prepared);
-        for entity in &mut entities {
-            if !query.selection.attrs.is_empty() {
-                filter_entity_attrs(entity, &query.selection.attrs, &mut expansions).await?;
-            }
-            project_entity(entity, &query.projection, &mut expansions).await?;
-        }
-        Ok(entities)
-    }
-}
 
 /// Apply one compiled `pick`/`omit` projection to a single entity.
 ///
@@ -116,17 +83,17 @@ pub async fn filter_entity_attrs(entity: &mut Entity, wanted_iris: &[IriBuf], ex
 /// rule is applied by the renderer instead
 /// (`EntityRenderer::with_structural_projection`).
 pub(crate) fn apply_structural_scope_projection(entity: &mut Entity, projection: &Projection) {
-    if !projection.pick.is_empty() && !projection.pick.contains(&ProjectionTerm::Scope) {
-        entity.scope = None;
-    }
-    if !projection.omit.is_empty() && projection.omit.contains(&ProjectionTerm::Scope) {
+    if !projection.keeps(&ProjectionTerm::Scope) {
         entity.scope = None;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::query::attribute_projection::apply_structural_scope_projection;
+    use andromeda_ngsi_ld_model::entity::Entity;
+    use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+    use iri_rs::IriBuf;
     use serde_json::json;
 
     fn entity_with_scope() -> Entity {

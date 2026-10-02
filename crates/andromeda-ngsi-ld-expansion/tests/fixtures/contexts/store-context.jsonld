@@ -1,0 +1,10 @@
+{
+    "@context": {
+        "Store": "https://uri.etsi.org/ngsi-ld/primer/Store",
+        "address": "https://schema.org/address",
+        "streetAddress": "https://schema.org/streetAddress",
+        "addressRegion": "https://schema.org/addressRegion",
+        "addressLocality": "https://schema.org/addressLocality",
+        "postalCode": "https://schema.org/postalCode"
+    }
+}

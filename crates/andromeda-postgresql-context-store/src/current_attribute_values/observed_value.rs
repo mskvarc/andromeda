@@ -9,7 +9,6 @@
 
 use crate::current_attribute_values::row::ProjectedAttributeValue;
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
-use serde_json::Value;
 use thiserror::Error;
 
 /// A neutral observation value has no projected form.
@@ -44,7 +43,7 @@ impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
             // clone: the projected row owns the geometry it writes.
             TemporalValue::Geometry(geometry) => Ok(ProjectedAttributeValue::Geometry(geometry.clone())),
             // clone: the projected row owns the structured value it writes.
-            TemporalValue::Object(object) => Ok(ProjectedAttributeValue::Object(Value::clone(object))),
+            TemporalValue::Structured(structured) => Ok(ProjectedAttributeValue::Object(structured.clone())),
             TemporalValue::DateTime(instant) => Ok(ProjectedAttributeValue::DateTime(*instant)),
             // clone: the projected row owns the URI it writes.
             TemporalValue::Uri(uri) => Ok(ProjectedAttributeValue::Uri(uri.clone())),
@@ -57,8 +56,9 @@ impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
 #[cfg(test)]
 mod tests {
     use crate::current_attribute_values::{observed_value::ProjectedValueUnrepresentable, row::ProjectedAttributeValue};
+    use andromeda_ngsi_ld_entity::json_literal::JsonLiteral;
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
-    use andromeda_ngsi_ld_model::temporal::TemporalValue;
+    use andromeda_ngsi_ld_model::temporal::{TemporalValue, structured_value::StructuredValue};
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
     use chrono::{TimeZone, Utc};
@@ -81,7 +81,7 @@ mod tests {
             TemporalValue::String("text".to_owned()),
             TemporalValue::Boolean(true),
             TemporalValue::Geometry(Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("a point")),
-            TemporalValue::Object(json!({"a": 1})),
+            TemporalValue::Structured(StructuredValue::Json(JsonLiteral::new(json!({"a": 1})))),
             TemporalValue::DateTime(instant),
             TemporalValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")),
         ];

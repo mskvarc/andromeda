@@ -42,12 +42,13 @@ impl NgsiLdBatchResponse {
 impl IntoResponse for NgsiLdBatchResponse {
     fn into_response(self) -> Response {
         let mut headers = HeaderMap::new();
-        headers.typed_insert(self.rendered.media_type);
-        let status = apply_version_negotiation(self.status, self.rendered.version_adaptation, &mut headers);
+        let RenderedOutput { value, head } = self.rendered;
+        headers.typed_insert(head.media_type);
+        let status = apply_version_negotiation(self.status, head.version_adaptation, &mut headers);
 
         apply_common_headers(
             &mut headers,
-            self.rendered.context_link,
+            head.context_link,
             &CommonHeadersOptions {
                 location: None,
                 entity_map_uri: None,
@@ -56,6 +57,6 @@ impl IntoResponse for NgsiLdBatchResponse {
             },
         );
 
-        (status, headers, Json(self.rendered.value)).into_response()
+        (status, headers, Json(value)).into_response()
     }
 }

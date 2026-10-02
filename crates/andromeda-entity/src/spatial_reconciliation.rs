@@ -5,6 +5,7 @@ use crate::{
     port::spatial_snapshot::{ChangeHorizon, EntitySpatialSnapshotSource},
     spatial_placement::LocationPlacement,
 };
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_spatial_index::{
     entity::{entry::SpatialEntry, index::SpatialEntityIndex},
     key::SpatialKey,
@@ -43,7 +44,7 @@ pub async fn rebuild_location_index(
     let read = source.locations().await?;
     let mut partitions: HashMap<SpatialKey, Vec<SpatialEntry>> = HashMap::new();
     for location in read.locations {
-        for (key, geometry) in placement.of(&location.entity_types, location.location.as_ref()) {
+        for (key, geometry) in placement.of(&location.entity_types, location.location.as_ref().map(Geometry::form)) {
             // clone: each partition's entry owns the identifier
             partitions
                 .entry(key)
@@ -124,9 +125,7 @@ mod tests {
             IriBuf::new("https://example.org/Vehicle".to_owned()).expect("a well-formed IRI"),
             placement.geoproperty().clone(),
         );
-        let reference = Geometry::new(GeometryForm::Point(
-            Position::try_new(0.0, 0.0, None).expect("a test position lies on the CRS84 axes"),
-        ));
+        let reference = GeometryForm::Point(Position::try_new(0.0, 0.0, None).expect("a test position lies on the CRS84 axes"));
         assert!(index.query(&key, &GeoRel::Intersects, &reference).is_none());
 
         let outcome = rebuild_location_index(&index, &OneVehicle, &placement).await.expect("the store is readable");

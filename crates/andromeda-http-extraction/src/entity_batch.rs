@@ -9,9 +9,11 @@
 
 use crate::{
     addressed_uri::addressed_request_uri,
+    batch_array::batch_items,
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
     batch_item_refusal::BatchItemRefusal,
     blocking_decode::{BlockingDecodePolicy, decode_payload},
+    body_envelope::BodyEnvelope,
     classification::classify_context_link_error,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     json_value_budget::refuse_values_past_budget,
@@ -27,8 +29,8 @@ use andromeda_jsonld::{
     request_context::RequestContext,
 };
 use andromeda_ngsi_ld_lexicon::{identifier_length::IdentifierTooLong, uri::Uri};
-use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact};
+use andromeda_ngsi_ld_model::{entity::Entity, request_body::RequestBody};
+use andromeda_ngsi_ld_number::json_value::number_range::refuse_numbers_out_of_range;
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
 use axum::{
     body::Bytes,
@@ -38,7 +40,7 @@ use axum::{
 };
 use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use std::mem::take;
 
 /// The representation a batch request announced in its `Content-Type`.
@@ -170,25 +172,6 @@ where
     }
 }
 
-/// Decode the request body into the non-empty JSON array that clauses 5.6.7
-/// to 5.6.10 and 5.6.20 require of a batch operation, holding `members`.
-///
-/// The body is decoded without narrowing arbitrary-precision numbers. It is
-/// known to be non-empty: [`BatchBody`] exists only for a request that declared
-/// a payload length and carried one.
-///
-/// # Errors
-///
-/// Returns the [`BatchBodyRefusal`] for a body that is not JSON, not an array,
-/// or an empty array.
-pub(crate) fn batch_items(body: &Bytes, members: BatchMembers) -> Result<Vec<Value>, BatchBodyRefusal> {
-    match serde_json::from_slice::<Value>(body).map_err(|source| BatchBodyRefusal::NotJson { source })? {
-        Value::Array(items) if items.is_empty() => Err(BatchBodyRefusal::Empty { members }),
-        Value::Array(items) => Ok(items),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => Err(BatchBodyRefusal::NotAnArray { members }),
-    }
-}
-
 /// One decoded batch entity, with the context it is read against.
 ///
 /// JSON-LD applies a top-level node's `@context` to that node alone, so each
@@ -219,52 +202,78 @@ pub struct ParsedBatch {
     pub errors: Vec<BatchEntityError>,
 }
 
-/// The `id` a batch item must carry before anything can be reported against
-/// it.
-///
-/// # Errors
-///
-/// Returns the [`BatchBodyRefusal`] for an item that has no URI to stand in a
-/// clause 5.2.17 `entityId`: a null item (clauses 5.6.7.4 to 5.6.10.4), or an
-/// item whose `id` is absent, not a string, or not a URI (Tables 5.2.4-1 and
-/// 5.2.17-1). A URI of any length is returned: one too long to be stored is
-/// still one an error can be reported against.
-fn batch_entity_id(item: &Value, index: usize) -> Result<Uri, BatchBodyRefusal> {
-    if item.is_null() {
-        return Err(BatchBodyRefusal::NullItem { index });
-    }
-    item.as_object()
-        .and_then(|object| object.get("id"))
-        .and_then(Value::as_str)
-        .ok_or(BatchBodyRefusal::MissingId { index })?
-        .parse::<Uri>()
-        .map_err(|source| BatchBodyRefusal::MalformedId { index, source })
+/// One batch array item: the slice of text it is, and the members at its top
+/// the batch rules ask about.
+struct BatchArrayItem<'b> {
+    /// The item as written.
+    text: &'b RawValue,
+    /// The item at its top level.
+    envelope: BodyEnvelope,
 }
 
-/// Admit one batch array item, whose `id` is `entity_id`, as an entity and the
-/// `@context` member it carried.
-///
-/// # Errors
-///
-/// Returns the [`BatchItemRefusal`] when the `id` is too long to be stored,
-/// when the item carries a number the model cannot represent, carries an
-/// `@context` its representation forbids or lacks one it requires (clause
-/// 6.3.5), or is not an entity. Clause 5.6.7.4 reports these per entity,
-/// leaving the rest of the batch intact.
-fn admit_batch_item(mut item: Value, entity_id: &Uri, content_kind: ContentKind) -> Result<(Entity, Option<Value>), BatchItemRefusal> {
-    IdentifierTooLong::check(entity_id.as_str())?;
-    canonicalize_numbers(&mut item)?;
-
-    // The context is carried beside the entity, not decoded into it.
-    let context = item.as_object_mut().and_then(|object| object.remove("@context"));
-    match (content_kind, &context) {
-        (ContentKind::Json, Some(_)) => return Err(BatchItemRefusal::ContextInJson),
-        (ContentKind::LdJson, None) => return Err(BatchItemRefusal::NoContextInLdJson),
-        (ContentKind::Json, None) | (ContentKind::LdJson, Some(_)) => {}
+impl<'b> BatchArrayItem<'b> {
+    /// Read the top level of the item `text`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`BatchBodyRefusal`] of an item that is no JSON, which an
+    /// item of a body read as a JSON array never is.
+    fn read(text: &'b RawValue) -> Result<BatchArrayItem<'b>, BatchBodyRefusal> {
+        let envelope = BodyEnvelope::read(text.get().as_bytes()).map_err(|source| BatchBodyRefusal::NotJson { source })?;
+        Ok(BatchArrayItem { text, envelope })
     }
 
-    let entity = deserialize_exact::<Entity>(&item).map_err(|source| BatchItemRefusal::from(UndecodableBody::of::<Entity>(&item, source)))?;
-    Ok((entity, context))
+    /// The `id` the item must carry before anything can be reported against
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`BatchBodyRefusal`] for an item that has no URI to stand in
+    /// a clause 5.2.17 `entityId`: a null item (clauses 5.6.7.4 to 5.6.10.4),
+    /// or an item whose `id` is absent, not a string, or not a URI (Tables
+    /// 5.2.4-1 and 5.2.17-1). A URI of any length is returned: one too long to
+    /// be stored is still one an error can be reported against.
+    fn entity_id(&self, index: usize) -> Result<Uri, BatchBodyRefusal> {
+        match &self.envelope {
+            BodyEnvelope::Null => Err(BatchBodyRefusal::NullItem { index }),
+            BodyEnvelope::Object(object) => object
+                .id()
+                .ok_or(BatchBodyRefusal::MissingId { index })?
+                .parse::<Uri>()
+                .map_err(|source| BatchBodyRefusal::MalformedId { index, source }),
+            BodyEnvelope::Array(_) | BodyEnvelope::Scalar => Err(BatchBodyRefusal::MissingId { index }),
+        }
+    }
+
+    /// Admit the item, whose `id` is `entity_id`, as an entity and the
+    /// `@context` member it carried.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`BatchItemRefusal`] when the `id` is too long to be stored,
+    /// when the item carries a number the model cannot represent, carries an
+    /// `@context` its representation forbids or lacks one it requires (clause
+    /// 6.3.5), or is not an entity. Clause 5.6.7.4 reports these per entity,
+    /// leaving the rest of the batch intact.
+    fn admit(self, entity_id: &Uri, content_kind: ContentKind) -> Result<(Entity, Option<Value>), BatchItemRefusal> {
+        IdentifierTooLong::check(entity_id.as_str())?;
+        let text = self.text.get().as_bytes();
+        refuse_numbers_out_of_range(text)?;
+
+        // The context is carried beside the entity, not decoded into it.
+        let context = match self.envelope {
+            BodyEnvelope::Object(object) => object.into_context(),
+            BodyEnvelope::Array(_) | BodyEnvelope::Null | BodyEnvelope::Scalar => None,
+        };
+        match (content_kind, &context) {
+            (ContentKind::Json, Some(_)) => return Err(BatchItemRefusal::ContextInJson),
+            (ContentKind::LdJson, None) => return Err(BatchItemRefusal::NoContextInLdJson),
+            (ContentKind::Json, None) | (ContentKind::LdJson, Some(_)) => {}
+        }
+
+        let entity = Entity::from_request_text(text).map_err(|source| BatchItemRefusal::from(UndecodableBody::of_text::<Entity>(text, source)))?;
+        Ok((entity, context))
+    }
 }
 
 /// Parse a batch request body with per-entity error handling.
@@ -309,10 +318,10 @@ fn decode_batch(
     link_context: ContextSpec,
     value_limit: Option<RequestJsonValueLimit>,
 ) -> Result<ParsedBatch, BatchBodyRefusal> {
-    // Counted before the tree is built, so a body of too many values costs
+    // Counted before anything is built, so a body of too many values costs
     // its bytes and nothing more.
     refuse_values_past_budget(body, value_limit)?;
-    let items = batch_items(body, BatchMembers::Entities)?;
+    let items = batch_items::<&RawValue>(body, BatchMembers::Entities)?;
 
     let mut contexts = match content_kind {
         ContentKind::Json => BatchContexts::shared(link_context),
@@ -322,8 +331,9 @@ fn decode_batch(
     let mut errors = Vec::new();
 
     for (index, item) in items.into_iter().enumerate() {
-        let entity_id = batch_entity_id(&item, index)?;
-        match admit_batch_item(item, &entity_id, content_kind) {
+        let item = BatchArrayItem::read(item)?;
+        let entity_id = item.entity_id(index)?;
+        match item.admit(&entity_id, content_kind) {
             Ok((entity, own)) => admitted.push(BatchItem {
                 entity,
                 context: contexts.context_of(own),

@@ -189,35 +189,18 @@ fn protected_header(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        FederationService,
-        config::FederationConfig,
-        fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
+        fixed_registration_store::offline_service,
         forwarded_payload::ForwardedPayload,
         request::TriggeringRequest,
         transport::{ForwardedRequest, apply_custom_headers, conformance_preference, protected_header},
     };
     use andromeda_http_headers::media_type::ResponseMediaType;
-    use andromeda_jsonld::engine::processor::JsonLdEngine;
-    use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, key_value_pair::KeyValuePair, registration::ContextSourceRegistration};
     use headers::Header;
     use http::{HeaderMap, HeaderValue};
     use iri_rs::IriBuf;
     use serde_json::json;
-    use std::sync::Arc;
     use url::Url;
-
-    /// A forwarding service with no registrations of its own, offline.
-    fn service() -> FederationService {
-        FederationService::new(
-            Arc::new(FixedRegistrationStore::new(Vec::new())),
-            Arc::new(NoLocalEntities),
-            JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"),
-            ContextSourcePseudonym::new("andromeda-test").expect("a valid alias"),
-            &FederationConfig::default(),
-        )
-        .expect("the service builds")
-    }
 
     /// A registration naming `tenant`, or no tenant at all.
     fn registration(tenant: Option<&str>) -> ContextSourceRegistration {
@@ -239,7 +222,7 @@ mod tests {
     /// The headers of `payload` forwarded with `method` to `registration`, when
     /// the triggering request carried `incoming`.
     fn forwarded_headers(registration: &ContextSourceRegistration, method: reqwest::Method, payload: &ForwardedPayload, incoming: &HeaderMap) -> HeaderMap {
-        let request = service()
+        let request = offline_service(Vec::new())
             .build_request(ForwardedRequest {
                 method,
                 url: Url::parse("https://peer.example.org/ngsi-ld/v1/entities").expect("valid URL"),

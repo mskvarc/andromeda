@@ -86,7 +86,6 @@ const fn expansion_failure(error: &JsonLdError) -> TermExpansionFailure {
         | JsonLdError::Expansion(_)
         | JsonLdError::Compaction(_)
         | JsonLdError::ContextUrlNotIri(_)
-        | JsonLdError::GeneratedVocabularyIri(_)
         | JsonLdError::JsonLdContextText(_)
         | JsonLdError::JsonLdContextShape
         | JsonLdError::DocumentShape

@@ -14,7 +14,6 @@ use andromeda_postgresql_context_store::pending_side_effects::{
     payload::{PersistedAttributeChange, PersistedBatchSideEffectJob, PersistedChangeEvent, PersistedSysAttrs, PersistedTemporalEntity},
     repo::PendingSideEffectsRepository,
 };
-use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
 
@@ -67,7 +66,7 @@ fn persisted_job(landed: &[&AtomicWrite]) -> PersistedBatchSideEffectJob {
             .temporal_entities
             .extend(job.temporal_entities.iter().map(|(id, expanded)| PersistedTemporalEntity {
                 id: id.as_ref().clone(), // clone: the persisted DTO owns the validated entity URI.
-                expanded: Value::clone(expanded),
+                expanded: Arc::clone(expanded),
             }));
         merged.change_events.extend(job.change_events.iter().map(persisted_event));
     }
@@ -112,26 +111,37 @@ mod tests {
         change_event::ChangeEvent,
         entity_mutation::EntityMutation,
     };
+    use andromeda_ngsi_ld_entity::{
+        entity_state::EntityState,
+        entity_types::EntityTypes,
+        reads::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            attribute_instance_key::AttributeInstanceKey,
+        },
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
-        expanded::{
-            attribute_change::{AttributeChange, AttributeChangeKind},
-            instance_key::AttributeInstanceKey,
-        },
         notification::ChangeOrigin,
     };
     use chrono::Utc;
-    use serde_json::json;
     use std::sync::Arc;
 
     fn uri(raw: &str) -> Identifier {
         raw.parse().expect("a valid URI")
     }
 
+    /// The `Building` entity `id` as a write leaves it.
+    fn building(id: &str) -> Arc<EntityState> {
+        Arc::new(EntityState::new(
+            uri(id),
+            EntityTypes::one("https://example.org/Building".parse().expect("a valid type name")),
+        ))
+    }
+
     /// One write's change through `lifecycle`, carrying `current` as the entity
     /// the write left behind.
-    fn write_with_change(id: &str, lifecycle: EntityLifecycle, current: Option<serde_json::Value>) -> AtomicWrite {
+    fn write_with_change(id: &str, lifecycle: EntityLifecycle, current: Option<Arc<EntityState>>) -> AtomicWrite {
         let change = EntityChange::new(
             lifecycle,
             vec![AttributeChange {
@@ -147,7 +157,7 @@ mod tests {
             .change(change)
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
-            .current_payload(current.map(Arc::new))
+            .current_payload(current)
             .build();
         AtomicWrite::builder()
             .entity_id(Arc::new(uri(id)))
@@ -163,16 +173,9 @@ mod tests {
     /// with its lifecycle, instances and the entity it left behind.
     #[test]
     fn every_write_of_a_commit_contributes_its_change_in_order() {
-        let first = write_with_change(
-            "urn:ngsi-ld:Building:1",
-            EntityLifecycle::Created,
-            Some(json!([{"@id": "urn:ngsi-ld:Building:1"}])),
-        );
-        let second = write_with_change(
-            "urn:ngsi-ld:Building:2",
-            EntityLifecycle::Modified,
-            Some(json!([{"@id": "urn:ngsi-ld:Building:2"}])),
-        );
+        let first = write_with_change("urn:ngsi-ld:Building:1", EntityLifecycle::Created, Some(building("urn:ngsi-ld:Building:1")));
+        let second_state = building("urn:ngsi-ld:Building:2");
+        let second = write_with_change("urn:ngsi-ld:Building:2", EntityLifecycle::Modified, Some(Arc::clone(&second_state)));
 
         let job = persisted_job(&[&first, &second]);
 
@@ -184,10 +187,31 @@ mod tests {
             job.change_events[0].instances[0].dataset_id.as_ref().map(Identifier::as_str),
             Some("urn:dataset:a")
         );
-        pretty_assertions::assert_eq!(
-            job.change_events[1].current_payload.as_deref(),
-            Some(&json!([{"@id": "urn:ngsi-ld:Building:2"}]))
+        assert!(
+            job.change_events[1]
+                .current_payload
+                .as_ref()
+                .is_some_and(|persisted| Arc::ptr_eq(persisted, &second_state)),
+            "the persisted change shares the state the write left"
         );
+    }
+
+    /// A temporal entity is persisted as the state the write left, shared
+    /// rather than copied.
+    #[test]
+    fn a_temporal_entity_is_persisted_without_copying_its_state() {
+        let state = building("urn:ngsi-ld:Building:1");
+        let write = AtomicWrite::builder()
+            .entity_id(Arc::new(uri("urn:ngsi-ld:Building:1")))
+            .entity(EntityMutation::None)
+            .side_effects(Some(BatchSideEffectJob {
+                temporal_entities: vec![(Arc::new(uri("urn:ngsi-ld:Building:1")), Arc::clone(&state))],
+                change_events: Vec::new(),
+            }))
+            .build();
+        let job = persisted_job(&[&write]);
+        pretty_assertions::assert_eq!(job.temporal_entities.len(), 1);
+        assert!(Arc::ptr_eq(&job.temporal_entities[0].expanded, &state));
     }
 
     /// A deletion carries no resulting entity, so nothing is stored for it.

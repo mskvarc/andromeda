@@ -9,9 +9,12 @@ use crate::{
 use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
 use andromeda_entity::error::EntityError;
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
+use andromeda_ngsi_ld_entity::{history::current_state_fold::CurrentStateFoldError, operation::mutation_error::MutationError, refusal::EntityRefusal};
+use andromeda_ngsi_ld_expansion::error::ExpansionError;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::temporal::values::TemporalValuesError;
-use andromeda_ngsi_ld_representation::payload_census::PayloadBudgetExceeded;
+use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use thiserror::Error;
@@ -150,6 +153,105 @@ impl From<PersistenceFailure> for TemporalError {
 impl From<SubmissionRefusal> for TemporalError {
     fn from(refusal: SubmissionRefusal) -> TemporalError {
         TemporalError::Validation(TemporalValidationReason::Refused(refusal))
+    }
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A written document the model refuses is the client's `BadRequestData`
+/// (clause 5.5.4), an unusable or forbidden `unitCode` keeping the reason the
+/// temporal write path has always given it, except an unreadable compiled-in
+/// unit catalog, which is the build's fault and no request can mend.
+impl From<EntityRefusal> for TemporalError {
+    fn from(refusal: EntityRefusal) -> TemporalError {
+        match refusal {
+            EntityRefusal::UnitCatalog(malformed) => TemporalError::Internal(TemporalInvariant::UnitCatalog(malformed)),
+            EntityRefusal::UnitCodeUnusable { attribute, source } => {
+                TemporalError::Validation(TemporalValidationReason::InstanceUnitCodeUnusable { attribute, source })
+            }
+            EntityRefusal::UnitCodeForbidden { family, attribute } => {
+                TemporalError::Validation(TemporalValidationReason::InstanceUnitCodeForbidden { family, attribute })
+            }
+            refused @ (EntityRefusal::Syntax { .. }
+            | EntityRefusal::Malformed { .. }
+            | EntityRefusal::MissingId
+            | EntityRefusal::EntityId { .. }
+            | EntityRefusal::TypeNotString
+            | EntityRefusal::EntityType { .. }
+            | EntityRefusal::MissingType
+            | EntityRefusal::ExpandedAttributeName(_)
+            | EntityRefusal::Scope(_)
+            | EntityRefusal::ScopeNull
+            | EntityRefusal::EntityExpiresAt
+            | EntityRefusal::DatasetId { .. }
+            | EntityRefusal::InstanceId { .. }
+            | EntityRefusal::DateTime { .. }
+            | EntityRefusal::Reference { .. }
+            | EntityRefusal::DatasetIdSentinel { .. }
+            | EntityRefusal::ReservedNullValue { .. }
+            | EntityRefusal::NestedNullValue { .. }
+            | EntityRefusal::MemberForbidden { .. }
+            | EntityRefusal::UnsupportedAttributeType
+            | EntityRefusal::SeveralFamilies { .. }
+            | EntityRefusal::MissingValue { .. }
+            | EntityRefusal::MissingObject { .. }
+            | EntityRefusal::MissingFamilyValue { .. }
+            | EntityRefusal::RepeatedInstance { .. }
+            | EntityRefusal::MultipleDefaultInstances { .. }
+            | EntityRefusal::GeoProperty { .. }
+            | EntityRefusal::NullBesideData { .. }
+            | EntityRefusal::NullInState { .. }
+            | EntityRefusal::OutputOnlyMember { .. }
+            | EntityRefusal::ReservedAttributeName { .. }) => TemporalError::Validation(TemporalValidationReason::Representation(refused)),
+        }
+    }
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A context that does not load and a document the processor refuses are the
+/// JSON-LD failures they always were; a refused document is classified as the
+/// model refuses it.
+impl From<ExpansionError> for TemporalError {
+    fn from(error: ExpansionError) -> TemporalError {
+        match error {
+            ExpansionError::Context(failure) | ExpansionError::Processor(failure) => TemporalError::JsonLd(failure),
+            ExpansionError::Refused(refusal) => TemporalError::from(refusal),
+            ExpansionError::CompactDocument(source) => TemporalError::Validation(TemporalValidationReason::CompactDocument(source)),
+        }
+    }
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A request context that does not resolve is the JSON-LD failure it is; any
+/// other failure to compact an entity the broker assembled itself is its own
+/// fault.
+impl From<CompactionError> for TemporalError {
+    fn from(error: CompactionError) -> TemporalError {
+        match error {
+            CompactionError::JsonLd(failure) => TemporalError::JsonLd(failure),
+            fault @ (CompactionError::Encode(_) | CompactionError::NotAnObject | CompactionError::MissingId | CompactionError::Decode(_)) => {
+                TemporalError::Internal(TemporalInvariant::Compaction(fault))
+            }
+        }
+    }
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A Temporal Evolution that brings an Entity into being has to name it
+/// (clause 4.5.1), and a standing instance that cannot be current state is
+/// refused as the model refuses it.
+impl From<CurrentStateFoldError> for TemporalError {
+    fn from(error: CurrentStateFoldError) -> TemporalError {
+        match error {
+            CurrentStateFoldError::MissingId => TemporalError::Validation(TemporalValidationReason::EntityMissingId),
+            CurrentStateFoldError::MissingType => TemporalError::Validation(TemporalValidationReason::EntityMissingType),
+            CurrentStateFoldError::Instance(MutationError::Refused(refusal)) => TemporalError::from(*refusal),
+            CurrentStateFoldError::Instance(
+                mutation @ (MutationError::AttributeNotFound { .. }
+                | MutationError::DatasetNotFound { .. }
+                | MutationError::DefaultInstanceNotFound { .. }
+                | MutationError::AttributeTypeMismatch { .. }),
+            ) => TemporalError::Validation(TemporalValidationReason::Mutation(mutation)),
+        }
     }
 }
 

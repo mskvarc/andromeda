@@ -41,6 +41,7 @@ andromeda-http-temporal.workspace = true
 andromeda-http-tenancy.workspace = true
 andromeda-http3-server.workspace = true
 andromeda-jsonld.workspace = true
+andromeda-ngsi-ld-compaction.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true

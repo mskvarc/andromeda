@@ -6,8 +6,8 @@ use andromeda_context_commit::{
     history_record::HistoryRecord,
     subscription_match::SubscriptionMatch,
 };
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 /// The writes one job replays: one per entity, carrying the observations still
@@ -19,14 +19,14 @@ use std::{collections::HashMap, sync::Arc};
 /// one -- gets a write of its own. Neither changes the entity row. Observation
 /// writes keep their stored order and the matches keep theirs, which is what
 /// numbers the replay's rows the same way on every attempt.
-pub(crate) fn replay_writes(temporal_entities: Vec<(Arc<Identifier>, Arc<Value>)>, owed: Vec<SubscriptionMatch>) -> Vec<AtomicWrite> {
+pub(crate) fn replay_writes(temporal_entities: Vec<(Arc<Identifier>, Arc<EntityState>)>, owed: Vec<SubscriptionMatch>) -> Vec<AtomicWrite> {
     let mut writes: Vec<AtomicWrite> = temporal_entities
         .into_iter()
-        .map(|(identifier, expanded)| {
+        .map(|(identifier, observed)| {
             AtomicWrite::builder()
                 .entity_id(identifier)
                 .entity(EntityMutation::None)
-                .history(vec![HistoryRecord::Observations(expanded)])
+                .history(vec![HistoryRecord::Observations(observed)])
                 .build()
         })
         .collect();
@@ -57,9 +57,9 @@ pub(crate) fn replay_writes(temporal_entities: Vec<(Arc<Identifier>, Arc<Value>)
 mod tests {
     use crate::{building_subscription_fixture::subscription_key, side_effect_replay::replay_writes};
     use andromeda_context_commit::{history_record::HistoryRecord, subscription_match::SubscriptionMatch};
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
-    use serde_json::json;
     use std::sync::Arc;
 
     fn uri(raw: &str) -> Identifier {
@@ -81,7 +81,13 @@ mod tests {
         let observed = "urn:ngsi-ld:Building:observed";
         let deleted = "urn:ngsi-ld:Building:deleted";
         let writes = replay_writes(
-            vec![(Arc::new(uri(observed)), Arc::new(json!([{ "@id": observed }])))],
+            vec![(
+                Arc::new(uri(observed)),
+                Arc::new(EntityState::new(
+                    uri(observed),
+                    EntityTypes::one("https://example.org/Building".parse().expect("a valid type")),
+                )),
+            )],
             vec![matched(deleted), matched(observed), matched(deleted)],
         );
 

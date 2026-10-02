@@ -5,17 +5,20 @@
 //! window.
 
 use crate::{
-    entity::{read::identity_with_documents, repo::EntityRepository},
+    entity::{
+        read::{identity_with_documents, payload_of},
+        repo::EntityRepository,
+    },
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::operator::array_contains_key;
 use sea_query::{Expr, ExprTrait, JoinType, Order, PostgresQueryBuilder};
-use sea_query_sqlx::SqlxBinder;
-use serde_json::Value;
+use sea_query_sqlx::{SqlxBinder, SqlxValues};
 use std::slice::from_ref;
 
 /// The unsigned page bound a signed `limit` or `offset` names.
@@ -27,19 +30,21 @@ fn page_bound(value: i64) -> u64 {
 }
 
 impl EntityRepository {
-    /// Retrieve entity payloads filtered by type with optional pagination.
+    /// Retrieve the stored states of the entities of one type, with optional
+    /// pagination.
     ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when the dictionary lookup for the type or
-    /// the payload query fails.
+    /// the payload query fails, or when a stored document no longer decodes as
+    /// an entity state.
     pub async fn get_entities_by_type(
         &self,
         target: &ContextTarget,
         entity_type: &EntityTypeName,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> Result<Vec<Value>, ContextStoreError> {
+    ) -> Result<Vec<EntityState>, ContextStoreError> {
         // A type the dictionary never interned was never carried by any entity.
         let Some(type_key) = self.entity_type_names.lookup(from_ref(entity_type)).await?.get(entity_type) else {
             return Ok(Vec::new());
@@ -62,15 +67,16 @@ impl EntityRepository {
             statement.limit(page_bound(limit));
         }
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?)
+        self.stored_states(&sql, values).await
     }
 
-    /// Retrieve all entity payloads with optional pagination.
+    /// Retrieve the stored states of every entity, with optional pagination.
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError`] when the payload query fails.
-    pub async fn get_all_entities(&self, target: &ContextTarget, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, ContextStoreError> {
+    /// Returns [`ContextStoreError`] when the payload query fails or a stored
+    /// document no longer decodes as an entity state.
+    pub async fn get_all_entities(&self, target: &ContextTarget, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<EntityState>, ContextStoreError> {
         let mut statement = identity_with_documents(target);
         statement
             .column((EntityDocuments::Table, EntityDocuments::Payload))
@@ -80,7 +86,14 @@ impl EntityRepository {
             statement.limit(page_bound(limit));
         }
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?)
+        self.stored_states(&sql, values).await
+    }
+
+    /// Run a statement that selects the `payload` column and decode every row
+    /// it returns into the entity state it stores.
+    async fn stored_states(&self, sql: &str, values: SqlxValues) -> Result<Vec<EntityState>, ContextStoreError> {
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
+        rows.iter().map(payload_of).collect()
     }
 }
 

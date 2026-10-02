@@ -4,15 +4,15 @@
 //! Clause 5.6.6 removes an entity's current state. The deletion's own effect
 //! and its Temporal Evolution need only the entity's types, the identity and
 //! family of every attribute instance it held, and whether it held a Scope:
-//! the tombstones of clauses 4.5.7 and 4.5.8 and the change clause 5.8.6 notifies are
-//! stated over those. The payload itself is needed only by a subscription the
-//! deletion can notify, which renders and filters the removed state, so a
-//! deletion no subscription can be owed reads the outline instead of a
-//! payload that may run to gigabytes once decoded.
+//! the tombstones of clauses 4.5.7 and 4.5.8 and the change clause 5.8.6
+//! notifies are stated over those. The state itself is needed only by a
+//! subscription the deletion can notify, which renders and filters the removed
+//! state, so a deletion no subscription can be owed reads the outline instead
+//! of a state that may run to gigabytes once decoded.
 
 use andromeda_context_commit::scope_presence::ScopePresence;
+use andromeda_ngsi_ld_entity::reads::attribute_instance_key::AttributeInstanceKey;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, entity_type_name::EntityTypeName};
-use andromeda_ngsi_ld_model::expanded::instance_key::AttributeInstanceKey;
 use chrono::{DateTime, Utc};
 
 /// The entity a deletion removes, as far as the deletion itself reads it.

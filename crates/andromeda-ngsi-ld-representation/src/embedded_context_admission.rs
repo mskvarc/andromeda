@@ -163,7 +163,8 @@ fn reject_in_object<'a>(members: &'a Map<String, Value>, path: &mut Vec<PathSegm
 
 /// Whether a member's content is a native JSON literal the JSON-LD processor
 /// never expands (clause 5.5.7, closing note).
-fn is_native_json_member(member: &str) -> bool {
+#[must_use]
+pub fn is_native_json_member(member: &str) -> bool {
     NATIVE_JSON_MEMBERS.contains(&member)
 }
 

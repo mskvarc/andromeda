@@ -7,10 +7,11 @@
 //! document is processed under is [`crate::document_context`], and into the
 //! `@context` a response names is [`crate::presented_context`].
 
-use crate::{document_context::resolve_context_value, request_context::RequestContext};
+use crate::{core_context::is_ngsi_ld_core_context_url, document_context::resolve_context_value, request_context::RequestContext};
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf};
 use serde_json::Value;
+use std::sync::Arc;
 
 /// How the NGSI-LD core context joins the context a request named when a
 /// document is processed.
@@ -129,6 +130,40 @@ impl ContextSpec {
     pub fn to_context_value(&self) -> Option<Value> {
         resolve_context_value(None, self)
     }
+
+    /// The key a process-wide cache keeps the context this spec processes to
+    /// under, or `None` when that processed context must not outlive one
+    /// operation.
+    ///
+    /// A spec qualifies when it carries no body `@context` and every `Link`
+    /// context it names is a released core context, all of which are embedded
+    /// in the broker: an embedded context cannot change, while a context
+    /// fetched from a URL carries the lifetime its origin granted (clause
+    /// 6.3.16), which the loader enforces each time it resolves it. The key is
+    /// the serialized `@context` the spec resolves to, which is exactly what
+    /// gets processed, so two specs share a key only when they would process
+    /// the same value.
+    #[must_use]
+    pub fn embedded_context_key(&self) -> Option<Arc<str>> {
+        let embedded_only = self.body_context().is_none() && self.link_context().is_none_or(|url| is_ngsi_ld_core_context_url(url.as_ref()));
+        if !embedded_only {
+            return None;
+        }
+        self.context_key()
+    }
+
+    /// The key one engine keeps the context this spec processes to under, for
+    /// as long as the documents it was processed from stay what the loader
+    /// resolves (`engine::processed_context_cache`), or `None` when the spec
+    /// resolves to no `@context` at all.
+    ///
+    /// The key is the serialized `@context` the spec resolves to, which is
+    /// exactly what gets processed, so two specs share a key only when they
+    /// would process the same value.
+    #[must_use]
+    pub(crate) fn context_key(&self) -> Option<Arc<str>> {
+        self.to_context_value().map(|value| Arc::from(value.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -217,5 +252,43 @@ mod tests {
             .to_context_value()
             .expect("a context value");
         pretty_assertions::assert_eq!(context, json!([NGSI_LD_CORE_CONTEXT_URL]));
+    }
+
+    #[test]
+    fn a_spec_naming_no_context_has_an_embedded_context_key() {
+        assert!(ContextSpec::none().embedded_context_key().is_some());
+        assert!(ContextSpec::core_only().embedded_context_key().is_some());
+    }
+
+    #[test]
+    fn a_spec_naming_only_released_core_contexts_has_an_embedded_context_key() {
+        assert!(
+            ContextSpec::from_link(iri(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()))
+                .embedded_context_key()
+                .is_some()
+        );
+    }
+
+    /// Clause 6.3.16: a fetched context carries its own lifetime, so nothing
+    /// processed from it is kept past one operation.
+    #[test]
+    fn a_spec_naming_a_remote_context_has_no_embedded_context_key() {
+        assert!(
+            ContextSpec::from_link(iri("https://example.com/context.jsonld"))
+                .embedded_context_key()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_spec_carrying_a_body_context_has_no_embedded_context_key() {
+        let spec = ContextSpec::from_body(json!({ "speed": "https://example.com/speed" }));
+        assert!(spec.embedded_context_key().is_none());
+    }
+
+    #[test]
+    fn specs_resolving_to_the_same_context_share_one_embedded_context_key() {
+        let versioned = ContextSpec::from_link(iri(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()));
+        pretty_assertions::assert_eq!(versioned.embedded_context_key(), ContextSpec::none().embedded_context_key());
     }
 }

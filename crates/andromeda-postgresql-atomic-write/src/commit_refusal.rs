@@ -23,9 +23,8 @@ use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_context_store::{entity::types_present::EntityTypesMissing, error::ContextStoreError};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
 use andromeda_postgresql_pool::persistence_classification::classify;
-use andromeda_postgresql_temporal_store::{error::TemporalStoreError, unit_code_metadata::UnitCodeMetadataError};
+use andromeda_postgresql_temporal_store::error::TemporalStoreError;
 use andromeda_temporal::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
-use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 
 /// Classify a raw database failure raised while beginning or committing the
 /// commit transaction.
@@ -165,6 +164,7 @@ pub(crate) fn history(error: TemporalStoreError) -> AttemptFailure {
         TemporalStoreError::EntityIntent { entity_id, source } => AttemptFailure::of_write(temporal_store(*source), entity_id),
         other @ (TemporalStoreError::Database(_)
         | TemporalStoreError::StoredHistory(_)
+        | TemporalStoreError::StoredJson(_)
         | TemporalStoreError::StoredCatalog(_)
         | TemporalStoreError::StoredAggregation(_)
         | TemporalStoreError::Render(_)
@@ -201,28 +201,11 @@ pub(crate) fn name_lookup(error: &NameLookupError) -> CommitError {
     CommitError::from(error.failure_class().record(error))
 }
 
-/// Classify a `unitCode` failure raised while projecting current state.
-///
-/// A code the client wrote is the client's to correct; an identity already in a
-/// row that the catalog no longer registers is catalog drift (clause 4.5.2).
-#[track_caller]
-pub(crate) fn unit_code(error: UnitCodeMetadataError) -> CommitError {
-    match error {
-        UnitCodeMetadataError::Refused(UnitCodeRefusal::Malformed) => CommitError::Submission(SubmissionRefusal::UnitCodeMalformed),
-        UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode | UnitCodeRefusal::Unregistered { .. }) => {
-            CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered)
-        }
-        drift @ (UnitCodeMetadataError::UnknownIdentity { .. } | UnitCodeMetadataError::Catalog(_)) => {
-            CommitError::Persistence(PersistenceFailure::Undecodable.record(&drift))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         attempt_failure::AttemptFailure,
-        commit_refusal::{context_store, entity_statement, history, name_lookup, temporal, temporal_store, unit_code},
+        commit_refusal::{context_store, entity_statement, history, name_lookup, temporal, temporal_store},
     };
     use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -267,16 +250,6 @@ mod tests {
     fn a_temporal_persistence_fault_stays_a_persistence_failure() {
         let error = temporal(TemporalError::Persistence(PersistenceFailure::StatementRejected));
         assert!(matches!(error, CommitError::Persistence(_)), "{error}");
-    }
-
-    /// Clause 4.5.2 draws `unitCode` from a closed list, so a code outside it
-    /// can never be stored however often the client retries.
-    #[test]
-    fn an_unregistered_unit_code_is_reported_as_a_refused_submission() {
-        let error = unit_code(UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode));
-        assert!(matches!(error, CommitError::Submission(_)), "{error}");
-        let malformed = unit_code(UnitCodeMetadataError::Refused(UnitCodeRefusal::Malformed));
-        assert!(matches!(malformed, CommitError::Submission(_)), "{malformed}");
     }
 
     #[test]

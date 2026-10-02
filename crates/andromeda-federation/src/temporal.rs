@@ -2,9 +2,9 @@
 
 use crate::{
     FederationService,
-    answer_vocabulary::AnswerVocabulary,
     cache::Cacheability,
     config::SplitEntities,
+    document_rewording::DocumentVocabulary,
     entity_read::own_loop_warning,
     entity_revalidation::retain_admissible,
     error::FederationError,
@@ -222,7 +222,7 @@ impl FederationService {
             triggering,
             cacheability: Cacheability::Uncacheable,
             entity_map,
-            vocabulary: AnswerVocabulary::Entities,
+            vocabulary: DocumentVocabulary::Entities,
         };
         let answers = match paging {
             SourcePaging::Walk(budget) => self.fan_out_walk(targets, conditions, budget).await?,
@@ -311,7 +311,7 @@ impl FederationService {
                     triggering,
                     cacheability: Cacheability::Uncacheable,
                     entity_map,
-                    vocabulary: AnswerVocabulary::Entities,
+                    vocabulary: DocumentVocabulary::Entities,
                 },
             )
             .await;

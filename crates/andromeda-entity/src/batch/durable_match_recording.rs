@@ -36,7 +36,8 @@ use crate::{
 };
 use andromeda_context_commit::{atomic_write::AtomicWrite, subscription_match::SubscriptionMatch};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::selection::OverwritePolicy, notification::NotificationTrigger};
+use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
+use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::sync::Arc;
@@ -222,8 +223,9 @@ async fn batch_upsert_update_replaces_the_whole_instance_dropping_a_subattribute
         .expect("the batch upsert lands");
 
     let write = single_recorded_write(&recorded);
-    let payload = &write.entity.record().expect("an upsert update carries an entity record").payload;
-    let category = &payload[CATEGORY_IRI][0];
+    let state = &write.entity.record().expect("an upsert update carries an entity record").state;
+    let stored = serde_json::to_value(&**state).expect("the stored state encodes");
+    let category = &stored[0][CATEGORY_IRI][0];
     assert_eq!(category["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"], json!("retail"));
     assert!(
         category.get(ACCURACY_IRI).is_none(),
@@ -290,7 +292,7 @@ async fn a_live_delivery_batch_delete_defers_its_events_when_enqueued() {
 
 /// The change a batch deletion publishes for each entity carries the removed
 /// state as both its notified and its previous state, and both are the one
-/// payload the deletion read.
+/// state the deletion read.
 #[tokio::test]
 async fn a_batch_deletion_publishes_one_snapshot_per_entity() {
     let observed = probing_recording_service(ProbeAnswer::Answers(DeletionWatchers::Possible), CachedSubscription::Building).await;

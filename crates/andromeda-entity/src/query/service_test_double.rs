@@ -10,7 +10,7 @@ use crate::{
     config::EntityConfig,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    port::{query::EntityQueryStore, reader::EntityReader},
+    port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
     query::EntityQueryService,
     query_outcome::QueryOutcome,
     spatial_acceleration::SpatialAcceleration,
@@ -18,13 +18,13 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
-use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 /// A store whose every method is an error: the tests built on it never read.
@@ -38,12 +38,16 @@ fn unused(method: &str) -> EntityError {
 
 #[async_trait]
 impl EntityReader for UnusedStore {
-    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Value>, EntityError> {
+    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Arc<EntityState>>, EntityError> {
         Err(unused("get"))
     }
 
-    async fn get_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
+    async fn get_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, RetrievedEntity>, EntityError> {
         Err(unused("get_batch"))
+    }
+
+    async fn get_with_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+        Err(unused("get_with_sys_attrs"))
     }
 
     async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
@@ -69,7 +73,7 @@ impl EntityQueryStore for UnusedStore {
         panic!("the read-path unit tests never inspect the store's profile")
     }
 
-    async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, EntityError> {
+    async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
         Err(unused("query_compiled"))
     }
 

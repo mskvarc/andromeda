@@ -7,7 +7,9 @@
 //! semantics of" another. That assertion is now the compiler's.
 //!
 //! Every predicate is evaluated over the horizontal projection of both
-//! geometries. ETSI GS CIM 009 v1.9.1 clause 4.10 defines `georel` by reference
+//! geometries, which the caller supplies as [`PlanarGeometry`] values so that a
+//! geometry evaluated against many others is projected once rather than once
+//! per pair. ETSI GS CIM 009 v1.9.1 clause 4.10 defines `georel` by reference
 //! to OGC 06-103r4, whose clause 6.1.2.5 states that spatial operations work in
 //! the "map geometry" of the data and reflect neither z nor m, and whose clause
 //! 6.1.15.1 defines the relational operators by projection onto the
@@ -25,22 +27,23 @@
 
 use crate::{
     geo_rel::GeoRel,
-    geometry::Geometry,
+    planar::PlanarGeometry,
     proximity::{Boundary, Proximity},
 };
 use geo::algorithm::{Contains, Intersects};
 
 /// Whether `subject` stands in the relation `georel` to `reference`.
 ///
-/// `subject` is the geometry read off the entity or registration; `reference`
-/// is the one the query supplied. The asymmetry matters: `within` asks whether
-/// the subject is inside the reference, `contains` the opposite.
+/// `subject` is the projection of the geometry read off the entity or
+/// registration; `reference` is the projection of the one the query supplied.
+/// The asymmetry matters: `within` asks whether the subject is inside the
+/// reference, `contains` the opposite.
 #[must_use]
-pub fn matches(georel: &GeoRel, subject: &Geometry, reference: &Geometry) -> bool {
-    matches_planar(georel, subject.planar(), reference.planar())
+pub fn matches(georel: &GeoRel, subject: &PlanarGeometry, reference: &PlanarGeometry) -> bool {
+    matches_planar(georel, subject.as_geo(), reference.as_geo())
 }
 
-/// [`matches()`] over the horizontal projections the geometries carry.
+/// [`matches()`] over the `geo` geometries the projections hold.
 fn matches_planar(georel: &GeoRel, subject: &geo::Geometry<f64>, reference: &geo::Geometry<f64>) -> bool {
     match georel {
         // `ST_Within(subject, reference)`
@@ -670,7 +673,12 @@ mod tests {
     fn every_georel_variant_evaluates_through_one_in_memory_matcher() {
         let fixtures = Fixtures::flat();
         for case in conformance_table(&fixtures) {
-            pretty_assertions::assert_eq!(matches(&case.georel, case.subject, case.reference), case.expected, "{}", case.description);
+            pretty_assertions::assert_eq!(
+                matches(&case.georel, &case.subject.planar(), &case.reference.planar()),
+                case.expected,
+                "{}",
+                case.description
+            );
         }
     }
 
@@ -683,7 +691,7 @@ mod tests {
         let elevated = Fixtures::elevated(&flat);
         for case in conformance_table(&elevated) {
             pretty_assertions::assert_eq!(
-                matches(&case.georel, case.subject, case.reference),
+                matches(&case.georel, &case.subject.planar(), &case.reference.planar()),
                 case.expected,
                 "{} (elevated)",
                 case.description

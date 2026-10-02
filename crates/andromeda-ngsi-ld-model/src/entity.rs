@@ -10,12 +10,9 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use jsonld::Expandable;
-use jsonld_expandable_core::JsonValue;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
-    iter::once,
     slice::{Iter, from_ref},
     vec::IntoIter,
 };
@@ -89,12 +86,6 @@ impl<'a> IntoIterator for &'a ScopeValue {
     }
 }
 
-impl Expandable for ScopeValue {
-    fn expand<V: JsonValue>(&self) -> V {
-        V::array(self.iter().map(|s| V::object(once(("@value".to_string(), V::string(s.as_str()))))))
-    }
-}
-
 /// NGSI-LD Entity representation (ETSI GS CIM 009 clause 5.2.4, Table 5.2.4-1).
 ///
 /// An Entity is the core informational unit in NGSI-LD, representing a
@@ -102,66 +93,52 @@ impl Expandable for ScopeValue {
 /// optional scope, and a set of attributes (Properties, Relationships, etc.).
 ///
 /// All spec-defined entity members are explicit fields. `@context` is excluded
-/// as it is a transport concern handled by the JSON-LD engine.
+/// as it is a transport concern handled by the JSON-LD engine. Decoding is
+/// `crate::entity_decoding`'s, which reads the attributes without buffering
+/// them.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable, TypedBuilder)]
+#[derive(Debug, Clone, Serialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#"))]
 pub struct Entity {
     /// Entity identifier (clause 5.2.4).
-    #[jsonld(id)]
     pub id: Identifier,
     /// One or more entity types.
     #[serde(rename = "type")]
-    #[jsonld(type_value)]
     pub type_: EntityTypeValue,
     /// Scopes the entity belongs to (clause 4.18).
-    #[jsonld(property = "ngsi:scope", passthrough)]
     #[builder(default = Default::default())]
     pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
-    #[serde(default)]
-    #[jsonld(property = "ngsi:expiresAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     #[builder(default = Default::default())]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
-    #[jsonld(property = "ngsi:location", passthrough)]
     #[builder(default = Default::default())]
     pub location: Option<AttributeValue>,
 
     /// Observation space geometry (clause 5.2.4).
-    #[jsonld(property = "ngsi:observationSpace", passthrough)]
     #[builder(default = Default::default())]
     pub observation_space: Option<AttributeValue>,
 
     /// Operation space geometry (clause 5.2.4).
-    #[jsonld(property = "ngsi:operationSpace", passthrough)]
     #[builder(default = Default::default())]
     pub operation_space: Option<AttributeValue>,
 
     /// System-generated creation timestamp (clause 4.8, Table 5.2.2-1).
-    #[serde(default)]
-    #[jsonld(property = "ngsi:createdAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     #[builder(default = Default::default())]
     pub created_at: Option<DateTime<Utc>>,
 
     /// System-generated modification timestamp (clause 4.8, Table 5.2.2-1).
-    #[serde(default)]
-    #[jsonld(property = "ngsi:modifiedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     #[builder(default = Default::default())]
     pub modified_at: Option<DateTime<Utc>>,
 
     /// Deletion timestamp, output-only in notifications/temporal (clause 4.8).
-    #[serde(default)]
-    #[jsonld(property = "ngsi:deletedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     #[builder(default = Default::default())]
     pub deleted_at: Option<DateTime<Utc>>,
 
     /// Every other attribute the entity carries, keyed by attribute name.
     #[serde(flatten)]
-    #[jsonld(flatten_map)]
     #[builder(default = Default::default())]
     pub attrs: IndexMap<AttributeName, AttributeValue>,
 }
@@ -213,6 +190,15 @@ impl Entity {
                 .into_iter()
                 .filter_map(|(name, value)| value.as_ref().map(|value| (name, value))),
         )
+    }
+
+    /// The Attribute member named `name`, from wherever this type keeps it.
+    #[must_use]
+    pub fn attribute_member(&self, name: &str) -> Option<&AttributeValue> {
+        match self.geo_property_members().into_iter().find(|(geo_name, _)| *geo_name == name) {
+            Some((_, member)) => member.as_ref(),
+            None => self.attrs.get(name),
+        }
     }
 
     /// Keep only the Attribute members whose name `keep` accepts, from wherever
@@ -300,9 +286,10 @@ impl Entity {
 /// in the URL path and `type` cannot be changed).
 ///
 /// System-managed timestamps (`createdAt`, `modifiedAt`, `deletedAt`) are
-/// excluded as they are not patchable.
+/// excluded as they are not patchable. Decoding is
+/// `crate::entity_decoding`'s, as the [`Entity`]'s is.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityPatch {
     /// Entity identifier, when the payload repeats it.
@@ -314,7 +301,6 @@ pub struct EntityPatch {
     pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
-    #[serde(default)]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
@@ -341,6 +327,22 @@ impl EntityPatch {
         }
         AttributeStrip::from_counts(before, self.attrs.len())
     }
+
+    /// Every Attribute member the patch carries with its name, as
+    /// [`Entity::attribute_members`] yields an entity's: [`EntityPatch::attrs`]
+    /// in order, then `location`, `observationSpace` and `operationSpace` where
+    /// present.
+    pub fn attribute_members(&self) -> impl Iterator<Item = (&str, &AttributeValue)> {
+        self.attrs.iter().map(|(name, value)| (name.as_str(), value)).chain(
+            [
+                (compact_properties::LOCATION, &self.location),
+                (compact_properties::OBSERVATION_SPACE, &self.observation_space),
+                (compact_properties::OPERATION_SPACE, &self.operation_space),
+            ]
+            .into_iter()
+            .filter_map(|(name, value)| value.as_ref().map(|value| (name, value))),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -352,7 +354,6 @@ mod tests {
         notification::SysAttrsSnapshot,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
-    use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
     use chrono::{Datelike, TimeZone, Utc};
     use serde_json::{Value, json};
 
@@ -367,6 +368,23 @@ mod tests {
             .map(|entity| entity.id.to_string())
             .expect_err("the payload must be refused")
             .to_string()
+    }
+
+    /// A member is found by name wherever the type keeps it: a geo-property in
+    /// its own field, every other attribute in the map.
+    #[test]
+    fn a_member_is_found_by_name_in_its_field_or_the_map() {
+        let entity: Entity = serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:A:1",
+            "type": "A",
+            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}},
+            "speed": {"type": "Property", "value": 1}
+        }))
+        .expect("an entity");
+        assert!(matches!(entity.attribute_member("location"), Some(AttributeValue::Single(_))));
+        assert!(matches!(entity.attribute_member("speed"), Some(AttributeValue::Single(_))));
+        assert!(entity.attribute_member("observationSpace").is_none());
+        assert!(entity.attribute_member("missing").is_none());
     }
 
     /// Clause 4.6.2 sets no length on a URI, so a `ListRelationship` member far
@@ -678,131 +696,6 @@ mod tests {
         let entity = entity.with_sys_attrs(&snapshot);
         // User-provided expiresAt is preserved, not overwritten by snapshot
         pretty_assertions::assert_eq!(entity.expires_at, original_expires);
-    }
-
-    #[test]
-    fn entity_expanded_has_dynamic_type_and_id() {
-        use jsonld::Expandable;
-
-        let payload = json!({
-            "id": "urn:ngsi-ld:Building:001",
-            "type": "Building"
-        });
-
-        let entity: Entity = serde_json::from_value(payload).expect("basic entity");
-        let expanded = entity.expand::<serde_json::Value>();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        pretty_assertions::assert_eq!(obj["@id"], "urn:ngsi-ld:Building:001");
-        pretty_assertions::assert_eq!(obj["@type"], json!(["Building"]));
-    }
-
-    #[test]
-    fn entity_expanded_with_multiple_types() {
-        use jsonld::Expandable;
-
-        let payload = json!({
-            "id": "urn:ngsi-ld:Building:002",
-            "type": ["Building", "Venue"]
-        });
-
-        let entity: Entity = serde_json::from_value(payload).expect("entity with multi type");
-        let expanded = entity.expand::<serde_json::Value>();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        pretty_assertions::assert_eq!(obj["@type"], json!(["Building", "Venue"]));
-    }
-
-    #[test]
-    fn entity_expanded_includes_scope() {
-        use jsonld::Expandable;
-
-        let payload = json!({
-            "id": "urn:ngsi-ld:Building:003",
-            "type": "Building",
-            "scope": "/Madrid/Gardens"
-        });
-
-        let entity: Entity = serde_json::from_value(payload).expect("entity with scope");
-        let expanded = entity.expand::<serde_json::Value>();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        let scope = &obj[expanded_properties::SCOPE.as_str()];
-        pretty_assertions::assert_eq!(scope, &json!([{"@value": "/Madrid/Gardens"}]));
-    }
-
-    #[test]
-    fn entity_expanded_includes_timestamps_and_attributes() {
-        use jsonld::Expandable;
-
-        let payload = json!({
-            "id": "urn:ngsi-ld:Building:004",
-            "type": "Building",
-            "createdAt": "2024-01-01T00:00:00Z",
-            "modifiedAt": "2024-06-15T12:30:00Z",
-            "temperature": {
-                "type": "Property",
-                "value": 25
-            }
-        });
-
-        let entity: Entity = serde_json::from_value(payload).expect("entity with attrs");
-        let expanded = entity.expand::<serde_json::Value>();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        // Timestamps should be typed values
-        assert!(obj.contains_key(expanded_properties::CREATED_AT.as_str()));
-        let created = &obj[expanded_properties::CREATED_AT.as_str()];
-        pretty_assertions::assert_eq!(created[0]["@type"], expanded_classes::DATE_TIME.as_str());
-
-        // Flattened attribute
-        assert!(obj.contains_key("temperature"));
-    }
-
-    #[test]
-    fn entity_expanded_omits_none_fields() {
-        use jsonld::Expandable;
-
-        let payload = json!({
-            "id": "urn:ngsi-ld:Building:005",
-            "type": "Building"
-        });
-
-        let entity: Entity = serde_json::from_value(payload).expect("basic entity");
-        let expanded = entity.expand::<serde_json::Value>();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        assert!(!obj.contains_key(expanded_properties::SCOPE.as_str()));
-        assert!(!obj.contains_key(expanded_properties::EXPIRES_AT.as_str()));
-        assert!(!obj.contains_key(expanded_properties::LOCATION.as_str()));
-        assert!(!obj.contains_key(expanded_properties::OBSERVATION_SPACE.as_str()));
-        assert!(!obj.contains_key(expanded_properties::OPERATION_SPACE.as_str()));
-        assert!(!obj.contains_key(expanded_properties::CREATED_AT.as_str()));
-        assert!(!obj.contains_key(expanded_properties::MODIFIED_AT.as_str()));
-        assert!(!obj.contains_key(expanded_properties::DELETED_AT.as_str()));
-    }
-
-    #[test]
-    fn entity_expanded_includes_location() {
-        use jsonld::Expandable;
-
-        let payload = json!({
-            "id": "urn:ngsi-ld:Building:006",
-            "type": "Building",
-            "location": {
-                "type": "GeoProperty",
-                "value": {"type": "Point", "coordinates": [13.0, 52.0]}
-            }
-        });
-
-        let entity: Entity = serde_json::from_value(payload).expect("entity with location");
-        let expanded = entity.expand::<serde_json::Value>();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        let location = &obj[expanded_properties::LOCATION.as_str()];
-        // A single-instance AttributeValue expands to a one-element array.
-        let arr = location.as_array().expect("location is array");
-        pretty_assertions::assert_eq!(arr.len(), 1);
     }
 
     #[test]

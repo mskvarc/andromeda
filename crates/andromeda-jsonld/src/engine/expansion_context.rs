@@ -1,0 +1,395 @@
+//! A request `@context`, processed once into the active context expansion
+//! reads.
+//!
+//! [`JsonLdEngine::expand`] hands the JSON-LD processor a document carrying the
+//! `@context` a [`ContextSpec`] resolves to (clause 5.5.7: the request's own
+//! context first, the core context appended last) and the processor turns it
+//! into an active context before it reads a single member. Nothing of that
+//! depends on the document, so [`ExpansionContext`] does it once and keeps the
+//! result: a typed expansion of the request decides every term against
+//! [`ExpansionContext::active`], and the processor, when a document needs it,
+//! starts from the same active context instead of processing the `@context`
+//! again ([`ExpansionContext::expand`]).
+//!
+//! JSON-LD 1.1 applies a term's property-scoped context to the object written
+//! under that term. The one the core context declares (`ngsildproof`, clause
+//! 4.5.2.2) and any a context source's context declares are processed here, on
+//! top of the root active context, so a synchronous walker can descend into
+//! them without a loader.
+
+use crate::{
+    context_graph::check_context_graph,
+    context_spec::ContextSpec,
+    engine::{context_url::resolve_relative_context_urls, processor::JsonLdEngine},
+    error::JsonLdError,
+    loader::{error::LoaderError, http::HttpContextLoader},
+};
+use iri_rs::IriBuf;
+use jsonld::{
+    Context as ActiveContext,
+    ExpandError,
+    ExpandedDocument,
+    context::BindingRef,
+    context_processing::{Error as ProcessingError, Options as ProcessingOptions, Process},
+    expansion::{Error as ExpansionAlgorithmError, Expand, Options as ExpansionOptions},
+    syntax::{Context as JsonLdContext, TryFromJson, Value as JsonLdValue},
+};
+use moka::future::Cache;
+use rdfx::{BlankIdBuf, vocabulary::no_vocabulary_mut};
+use serde_json::{Map, Value};
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
+
+/// How many distinct processed contexts are kept.
+///
+/// Only combinations of the released core contexts qualify, so the working
+/// set is a handful of entries.
+const CAPACITY: u64 = 16;
+
+/// How long one processed context is kept.
+///
+/// The active context memoizes every term it expands, so a context kept forever
+/// would accumulate one entry per attribute name ever written. Dropping it
+/// periodically bounds that at the price of processing the core context again
+/// once per period.
+const TIME_TO_LIVE: Duration = Duration::from_secs(600);
+
+/// Processed contexts built only from documents embedded in the broker, keyed
+/// by the resolved `@context` they were processed from.
+///
+/// Process-wide rather than per engine: an embedded core context is the same
+/// document for every engine of the process, and no engine can make a core
+/// context URL resolve to anything else.
+static EMBEDDED_CONTEXTS: LazyLock<Cache<Arc<str>, Arc<ExpansionContext>>> =
+    LazyLock::new(|| Cache::builder().max_capacity(CAPACITY).time_to_live(TIME_TO_LIVE).build());
+
+/// The active context one request is expanded under.
+#[derive(derive_more::Debug)]
+pub struct ExpansionContext {
+    /// The active context the request's `@context` processed into.
+    #[debug(skip)]
+    active: ActiveContext<IriBuf, BlankIdBuf>,
+    /// The property-scoped context of every root term that declares one,
+    /// processed on top of [`ExpansionContext::active`].
+    #[debug(skip)]
+    property_scoped: HashMap<Box<str>, ActiveContext<IriBuf, BlankIdBuf>>,
+}
+
+impl ExpansionContext {
+    /// The active context every term of the request is decided against.
+    #[must_use]
+    pub const fn active(&self) -> &ActiveContext<IriBuf, BlankIdBuf> {
+        &self.active
+    }
+
+    /// The active context JSON-LD 1.1 expansion switches to for an object
+    /// written under `term`, when `term` is defined at the root of
+    /// [`ExpansionContext::active`] with a property-scoped context.
+    ///
+    /// Valid only for an object reached through root-level terms alone: a
+    /// scoped context entered on the way changes what the next one is
+    /// processed on top of.
+    #[must_use]
+    pub fn property_scoped(&self, term: &str) -> Option<&ActiveContext<IriBuf, BlankIdBuf>> {
+        self.property_scoped.get(term)
+    }
+
+    /// Expand a compact document with the JSON-LD processor, starting from
+    /// this active context.
+    ///
+    /// The document is expected to carry no `@context` of its own: the
+    /// request's context is the one this was processed from. One it does carry
+    /// is processed on top, as the processor always does.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`JsonLdError`] [`JsonLdEngine::expand`] reports for the
+    /// same failure.
+    pub async fn expand(&self, engine: &JsonLdEngine, document: &JsonLdValue) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
+        document
+            .expand_full(
+                no_vocabulary_mut(),
+                self.active.clone(), // clone: cheap, every definition and cache is shared through an `Arc`
+                None,
+                engine.loader(),
+                ExpansionOptions::default(),
+                (),
+            )
+            .await
+            .map_err(|error| JsonLdError::from(ExpandError::Expansion(error)))
+    }
+
+    /// Resolve and process the `@context` a spec selects, as
+    /// [`JsonLdEngine::expand`] does before reading a document.
+    async fn prepare(spec: &ContextSpec, loader: &HttpContextLoader) -> Result<ExpansionContext, JsonLdError> {
+        let Some(context) = resolved_context(spec, loader) else {
+            return Ok(ExpansionContext {
+                active: ActiveContext::new(None),
+                property_scoped: HashMap::new(),
+            });
+        };
+        check_context_graph(loader, &context).await?;
+        let unprocessed = JsonLdContext::try_from_json(&JsonLdValue::from_serde_json(context))
+            .map_err(|error| JsonLdError::from(ExpandError::Expansion(ExpansionAlgorithmError::ContextSyntax(error))))?;
+        let active = unprocessed
+            .process_full(no_vocabulary_mut(), &ActiveContext::new(None), loader, None, processing_options(), ())
+            .await
+            .map_err(processing_failure)?
+            .into_processed();
+        let property_scoped = property_scoped_contexts(&active, loader).await;
+        Ok(ExpansionContext { active, property_scoped })
+    }
+}
+
+impl JsonLdEngine {
+    /// The active context a document written under `spec` is expanded under.
+    ///
+    /// A context built only from documents the broker embeds is kept for the
+    /// whole process; any other is kept on this engine while every document
+    /// it was processed from stays what the loader resolves
+    /// (`engine::processed_context_cache`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JsonLdError::ContextGraph`] for references that cycle or nest
+    /// too deep, the context-loading variant of a context that does not
+    /// resolve, and the processing failure of one that does not process, each
+    /// as [`JsonLdEngine::expand`] reports it.
+    pub async fn expansion_context(&self, spec: &ContextSpec) -> Result<Arc<ExpansionContext>, JsonLdError> {
+        let Some(key) = spec.embedded_context_key() else {
+            let loader = self.loader();
+            return self
+                .expansion_contexts()
+                .get_or_prepare(spec.context_key(), loader, || ExpansionContext::prepare(spec, loader))
+                .await;
+        };
+        if let Some(cached) = EMBEDDED_CONTEXTS.get(&key).await {
+            return Ok(cached);
+        }
+        let prepared = Arc::new(ExpansionContext::prepare(spec, self.loader()).await?);
+        EMBEDDED_CONTEXTS.insert(key, Arc::clone(&prepared)).await; // clone: Arc ref-count bump
+        Ok(prepared)
+    }
+}
+
+/// The `@context` a spec resolves to, with the root-relative references to the
+/// tenant's own stored contexts rewritten exactly as a document's are.
+fn resolved_context(spec: &ContextSpec, loader: &HttpContextLoader) -> Option<Value> {
+    let context = spec.to_context_value()?;
+    let mut carrier = Value::Object(Map::from_iter([("@context".to_owned(), context)]));
+    resolve_relative_context_urls(&mut carrier, loader.hosted_contexts());
+    match carrier {
+        Value::Object(mut members) => members.remove("@context"),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => None,
+    }
+}
+
+/// The context processing options expansion processes a document's
+/// `@context` with.
+fn processing_options() -> ProcessingOptions {
+    ProcessingOptions::from(ExpansionOptions::default())
+}
+
+/// A context-processing failure, typed as the processor's expansion reports
+/// it.
+fn processing_failure(error: ProcessingError<LoaderError>) -> JsonLdError {
+    JsonLdError::from(ExpandError::Expansion(ExpansionAlgorithmError::ContextProcessing(error)))
+}
+
+/// Process the property-scoped context of every root term that declares one.
+///
+/// A scoped context that does not process is left out rather than failing the
+/// request: expansion processes it only for an object actually written under
+/// that term, and a walker meeting a term it holds no context for leaves the
+/// document to the processor, which reports the failure where it occurs.
+async fn property_scoped_contexts(
+    active: &ActiveContext<IriBuf, BlankIdBuf>,
+    loader: &HttpContextLoader,
+) -> HashMap<Box<str>, ActiveContext<IriBuf, BlankIdBuf>> {
+    let mut scoped = HashMap::new();
+    for binding in active.definitions() {
+        let BindingRef::Normal(term, definition) = binding else {
+            continue;
+        };
+        let Some(local) = definition.context.as_deref() else {
+            continue;
+        };
+        let base_url = definition.base_url().cloned(); // clone: processing takes the base URL by value
+        if let Ok(processed) = local
+            .process_full(no_vocabulary_mut(), active, loader, base_url, processing_options().with_override(), ())
+            .await
+        {
+            scoped.insert(Box::from(term.as_str()), processed.into_processed());
+        }
+    }
+    scoped
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        context_cache::ContextCache,
+        context_spec::ContextSpec,
+        engine::{preloaded_engine::engine_preloading, processor::JsonLdEngine},
+        loader::replaceable_row::ReplaceableRow,
+        operation_hit_scope::run_in_operation_scope,
+    };
+    use iri_rs::IriBuf;
+    use jsonld::{
+        Context,
+        Environment,
+        Id,
+        NoLoader,
+        Term,
+        context_processing::{
+            Warning,
+            algorithm::{Action, expand_iri_simple},
+        },
+        syntax::{ExpandableRef, Nullable, Value as JsonLdValue},
+    };
+    use rdfx::{BlankIdBuf, vocabulary::no_vocabulary_mut};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    /// An engine that resolves only what is embedded, never the network.
+    fn offline_engine() -> JsonLdEngine {
+        JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
+    }
+
+    /// The IRI `term` expands to as an expanded member key.
+    fn key_iri(context: &Context<IriBuf, BlankIdBuf>, term: &str) -> String {
+        let mut warnings = ();
+        let mut environment = Environment {
+            vocabulary: no_vocabulary_mut(),
+            loader: &NoLoader,
+            warnings: &mut warnings,
+        };
+        let expanded = expand_iri_simple::<Warning, _, _, _>(
+            &mut environment,
+            context,
+            Nullable::Some(ExpandableRef::String(term)),
+            false,
+            Some(Action::Keep),
+        )
+        .expect("keep never rejects")
+        .expect("keep never drops");
+        match expanded.as_ref() {
+            Term::Id(Id::Valid(id)) => id.to_string(),
+            Term::Null | Term::Id(Id::Invalid(_)) | Term::Keyword(_) => panic!("{term} expands to no IRI"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_core_context_decides_a_core_term_and_the_default_vocabulary_the_rest() {
+        let engine = offline_engine();
+        let context = engine.expansion_context(&ContextSpec::none()).await.expect("the core context processes");
+
+        pretty_assertions::assert_eq!(key_iri(context.active(), "location"), "https://uri.etsi.org/ngsi-ld/location");
+        pretty_assertions::assert_eq!(key_iri(context.active(), "speed"), "https://uri.etsi.org/ngsi-ld/default-context/speed");
+    }
+
+    /// Clause 5.5.7: the core context is appended last, so a user context
+    /// redefining a core term leaves the core definition in force.
+    #[tokio::test]
+    async fn a_user_context_cannot_redefine_a_core_term() {
+        let engine = offline_engine();
+        let spec = ContextSpec::from_body(json!({ "location": "https://example.org/location", "speed": "https://example.org/speed" }));
+        let context = engine.expansion_context(&spec).await.expect("the context processes");
+
+        pretty_assertions::assert_eq!(key_iri(context.active(), "location"), "https://uri.etsi.org/ngsi-ld/location");
+        pretty_assertions::assert_eq!(key_iri(context.active(), "speed"), "https://example.org/speed");
+    }
+
+    #[tokio::test]
+    async fn the_core_proof_term_carries_its_processed_scoped_context() {
+        let engine = offline_engine();
+        let context = engine.expansion_context(&ContextSpec::none()).await.expect("the core context processes");
+
+        let scoped = context.property_scoped("ngsildproof").expect("ngsildproof declares a scoped context");
+        pretty_assertions::assert_eq!(key_iri(scoped, "entityIdSealed"), "https://uri.etsi.org/ngsi-ld/entityIdSealed");
+        assert!(context.property_scoped("location").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_context_preloaded_by_url_is_processed_before_the_core_context() {
+        let engine = engine_preloading(&[(
+            "https://example.org/ctx.jsonld".to_owned(),
+            json!({ "@context": { "speed": "https://example.org/speed" } }),
+        )]);
+        let spec = ContextSpec::from_link(IriBuf::new("https://example.org/ctx.jsonld".to_owned()).expect("an IRI"));
+        let context = engine.expansion_context(&spec).await.expect("the context processes");
+
+        pretty_assertions::assert_eq!(key_iri(context.active(), "speed"), "https://example.org/speed");
+    }
+
+    /// An engine reading every context from one stored row it can replace.
+    fn engine_over(row: &Arc<ReplaceableRow>) -> JsonLdEngine {
+        JsonLdEngine::builder()
+            .allow_remote(false)
+            .with_l2_cache(Arc::clone(row) as Arc<dyn ContextCache>)
+            .build()
+            .expect("engine builds")
+    }
+
+    /// A context named by URL is processed once while the loader holds the
+    /// same document, and processed again once the loader has read the
+    /// document again (clause 6.3.16 lets the stored copy lapse).
+    #[tokio::test]
+    async fn a_context_named_by_url_is_processed_again_only_once_its_document_is_read_again() {
+        let row = Arc::new(ReplaceableRow::new(json!({ "@context": { "speed": "https://example.org/speed" } })));
+        let engine = engine_over(&row);
+        let url = IriBuf::new("https://example.org/stored.jsonld".to_owned()).expect("an IRI");
+        let spec = ContextSpec::from_link(url.clone()); // clone: the invalidation below names the same URL
+
+        let first = engine.expansion_context(&spec).await.expect("the context processes");
+        let kept = engine.expansion_context(&spec).await.expect("the context processes");
+        assert!(Arc::ptr_eq(&first, &kept), "an unchanged document keeps its processed context");
+
+        row.replace(json!({ "@context": { "speed": "https://example.org/velocity" } }));
+        engine.invalidate_context(&url).await;
+        let reprocessed = engine.expansion_context(&spec).await.expect("the context processes");
+
+        pretty_assertions::assert_eq!(key_iri(reprocessed.active(), "speed"), "https://example.org/velocity");
+    }
+
+    /// Clause 5.13.3.5: an operation reusing a kept context finds the stored
+    /// `@context` exactly as one processing it does, so each operation counts
+    /// one hit.
+    #[tokio::test]
+    async fn every_operation_reusing_a_kept_context_counts_one_hit() {
+        let row = Arc::new(ReplaceableRow::new(json!({ "@context": { "speed": "https://example.org/speed" } })));
+        let engine = engine_over(&row);
+        let url = IriBuf::new("https://example.org/stored.jsonld".to_owned()).expect("an IRI");
+        let spec = ContextSpec::from_link(url.clone()); // clone: the counter is read under the same URL
+
+        for _ in 0..3 {
+            Box::pin(run_in_operation_scope(engine.expansion_context(&spec)))
+                .await
+                .expect("the context processes");
+        }
+
+        let counter = engine.hit_counter().expect("a durable cache attaches a hit counter");
+        pretty_assertions::assert_eq!(counter.pending(&url), 3);
+    }
+
+    #[tokio::test]
+    async fn the_processor_expands_from_the_processed_context_as_from_the_document_context() {
+        let engine = offline_engine();
+        let document: serde_json::Value =
+            serde_json::from_str(r#"{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 0.100000000000000005}}"#)
+                .expect("exact JSON");
+        let spec = ContextSpec::none();
+        let context = engine.expansion_context(&spec).await.expect("the core context processes");
+
+        let typed = context
+            .expand(&engine, &JsonLdValue::from_serde_json(document.clone())) // clone: the reference expansion below consumes the document
+            .await
+            .expect("the processor expands");
+        let reference = engine.expand(document, &spec).await.expect("the processor expands");
+
+        pretty_assertions::assert_eq!(typed.into_serde_json(), reference);
+    }
+}

@@ -53,7 +53,7 @@ pub(crate) fn interpret(
     };
     for write in landed {
         let refused = |error: TemporalError| AttemptFailure::of_write(temporal(error), Identifier::clone(&write.entity_id)); // clone: the attribution owns the entity it names.
-        let entity_types = write.recorded_entity_types()?;
+        let entity_types = write.recorded_entity_types();
         match (&write.projection, core_write_history) {
             (CurrentStateProjection::FromHistory, CoreWriteHistory::Recorded) | (CurrentStateProjection::Untouched, _) => {}
             (CurrentStateProjection::FromHistory, CoreWriteHistory::NotRecorded) => {
@@ -139,14 +139,16 @@ mod tests {
         write_ordinal::WriteOrdinal,
         write_record::WriteRecord,
     };
+    use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
     use andromeda_temporal::{append_intent::TemporalAppendEntry, core_write_history::CoreWriteHistory};
     use chrono::{TimeZone, Utc};
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::sync::Arc;
 
-    fn speed(entity_id: &str) -> Arc<Value> {
-        Arc::new(json!([{
+    /// The stored expanded document of a Vehicle whose `speed` is 1.
+    fn speed_document(entity_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!([{
             "@id": entity_id,
             "@type": ["https://example.com/Vehicle"],
             "https://example.com/speed": [{
@@ -154,6 +156,16 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]
             }]
         }]))
+        .expect("the fixture serialises")
+    }
+
+    fn speed(entity_id: &str) -> Arc<EntityState> {
+        Arc::new(EntityState::from_slice(&speed_document(entity_id)).expect("the fixture is an entity state"))
+    }
+
+    /// The same Vehicle as a Temporal Evolution fragment.
+    fn speed_instances(entity_id: &str) -> Arc<EntityDocument> {
+        Arc::new(EntityDocument::from_slice(&speed_document(entity_id)).expect("the fixture is an entity document"))
     }
 
     fn observation_write(entity_id: &str) -> AtomicWrite {
@@ -170,7 +182,7 @@ mod tests {
         AtomicWrite::builder()
             .entity_id(Arc::new(uri))
             .entity(EntityMutation::None)
-            .history(vec![HistoryRecord::EvolutionInstances(speed(entity_id))])
+            .history(vec![HistoryRecord::EvolutionInstances(speed_instances(entity_id))])
             .projection(projection)
             .build()
     }

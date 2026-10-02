@@ -1,0 +1,7 @@
+{
+    "@context": {
+        "@vocab": "https://example.org/vocab#",
+        "@language": "en",
+        "headline": "https://example.org/vocab#headline"
+    }
+}

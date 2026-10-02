@@ -5,8 +5,6 @@
 pub mod attribute_expansion;
 /// Filtering an entity's attributes down to what the client asked for.
 pub mod attribute_projection;
-/// Turning an expanded payload back into a compacted [`Entity`].
-pub mod compaction;
 /// Compiling request parameters into a [`CompiledEntityQuery`].
 pub mod compilation;
 /// Narrowing an entity's attribute instances by `datasetId`.
@@ -36,6 +34,9 @@ pub mod residual;
 pub mod residual_conformance;
 /// The read operations themselves.
 pub mod retrieval;
+/// Clause 5.6.3 retrieval over a store holding one entity.
+#[cfg(test)]
+mod retrieval_tests;
 /// Compiling a query's entity selectors (clause 5.2.33) against the context.
 pub mod selector_compilation;
 /// The service the read-path unit tests are built on.
@@ -45,6 +46,8 @@ pub(crate) mod service_test_double;
 pub mod simplified_names;
 /// Narrowing a geo-query to an identifier set through the spatial index.
 pub mod spatial_prefilter;
+/// Narrowing a stored state to what a read selected, before compaction.
+pub(crate) mod state_projection;
 
 use crate::{
     compiled_cache::CompiledQueryCache,

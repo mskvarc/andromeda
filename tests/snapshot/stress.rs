@@ -35,8 +35,11 @@ async fn reset_remote_database() {
     reset_owned_tenant(&remote_pool).await.expect("remote Snapshot database reset");
 }
 
+/// A current entity carrying one Property. The attribute is not named `value`:
+/// that term is the core @context's `ngsi-ld:hasValue`, which clause 4.5.1 keeps
+/// from naming an attribute.
 fn current_entity(id: &str, entity_type: &str, value: usize) -> Value {
-    json!({"id": id, "type": entity_type, "value": {"type": "Property", "value": value}, "@context": CORE_CONTEXT})
+    json!({"id": id, "type": entity_type, "reading": {"type": "Property", "value": value}, "@context": CORE_CONTEXT})
 }
 
 fn temporal_entity(id: &str, entity_type: &str, offset: usize) -> Value {

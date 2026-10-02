@@ -175,7 +175,7 @@ pub(crate) fn near_envelope_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> 
     else {
         return None;
     };
-    let envelope = NearEnvelope::around(great_circle_bounds(&geo.geometry)?, *max_distance);
+    let envelope = NearEnvelope::around(great_circle_bounds(&geo.geometry.planar())?, *max_distance);
     envelope
         .rects()
         .iter()
@@ -203,7 +203,7 @@ pub(crate) fn near_envelope_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> 
 /// carrying [`QueryError::NearWithoutDistance`] when `georel=near` names neither
 /// `maxDistance` nor `minDistance`.
 pub fn relation_expression(georel: &GeoRel, planar: SimpleExpr, geographic: SimpleExpr, geometry: &Geometry) -> Result<SimpleExpr, RenderError> {
-    let reference = encode(geometry)?;
+    let reference = encode(geometry.form())?;
     // Built fresh per relation so the EWKB it binds is not shared as an owned
     // value between the two operands a `near` relation carries.
     let reference_geom = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()));
@@ -811,7 +811,7 @@ mod tests {
     #[test]
     fn a_three_dimensional_reference_binds_as_three_dimensional_ewkb() {
         let geo = point_query_3d(GeoRel::Within, LOCATION);
-        let ewkb = encode(&geo.geometry).expect("elevated point encodes");
+        let ewkb = encode(geo.geometry.form()).expect("elevated point encodes");
         let decoded = Geometry::try_from(&ewkb).expect("the bound bytes decode");
         assert_eq!(decoded.dimension(), GeometryDimension::ThreeD);
 

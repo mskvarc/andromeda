@@ -20,8 +20,9 @@
 
 use crate::{client, control_pool, reset};
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind, notification::ChangeOrigin};
+use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, notification::ChangeOrigin};
 use andromeda_postgresql_context_store::pending_side_effects::{
     payload::{PersistedAttributeChange, PersistedBatchSideEffectJob, PersistedChangeEvent},
     repo::PendingSideEffectsRepository,
@@ -125,6 +126,20 @@ fn count_entities(notified: &mut HashMap<String, usize>, notification: &Value) {
     }
 }
 
+/// The `Device` a deferred creation left behind, decoded from its stored
+/// expanded document.
+fn created_device(entity_id: &str) -> EntityState {
+    let document = json!([{
+        "@id": entity_id,
+        "@type": [DEVICE],
+        TEMPERATURE: [{
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 21}]
+        }]
+    }]);
+    EntityState::from_slice(&serde_json::to_vec(&document).expect("the document serialises")).expect("the document is an entity state")
+}
+
 /// The job exactly as a live-delivery broker defers the creation of `entity_id`:
 /// no observation left to record and one change, carrying the entity the write
 /// left behind, still owed its notification.
@@ -143,14 +158,7 @@ fn live_deferred_creation(entity_id: &str) -> PersistedBatchSideEffectJob {
         previous_attributes: None,
         sys_attrs_snapshot: None,
         origin: ChangeOrigin::Local,
-        current_payload: Some(Arc::new(json!({
-            "@id": entity_id,
-            "@type": [DEVICE],
-            TEMPERATURE: [{
-                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
-                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 21}]
-            }]
-        }))),
+        current_payload: Some(Arc::new(created_device(entity_id))),
     };
     PersistedBatchSideEffectJob {
         temporal_entities: Vec::new(),

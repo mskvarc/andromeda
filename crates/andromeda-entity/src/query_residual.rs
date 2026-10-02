@@ -5,9 +5,8 @@
 //! restating them would be two definitions of one concept. The wrapper exists
 //! so a call site cannot confuse what was asked for with what is left over.
 //!
-//! The `matches()` evaluator that finishes the residual in memory lives in
-//! the binary crate's service layer, because it needs the geo-filter
-//! implementation which is outside this crate's scope.
+//! The `matches()` evaluator that finishes the residual in memory over a
+//! stored entity state lives in `crate::residual_filter`.
 
 use crate::residual_predicate::ResidualPredicate;
 use andromeda_ngsi_ld_query::{
@@ -18,9 +17,8 @@ use andromeda_ngsi_ld_query::{
 
 /// The subset of an [`EntitySelection`] a store did not apply.
 ///
-/// Construction and structural inspection live here. The in-memory evaluation
-/// (`matches()`) lives in the binary's service layer because it depends on
-/// the geo-filter, which is a concern above the store.
+/// Construction and structural inspection live here; the in-memory
+/// evaluation is `crate::residual_filter::matches`.
 #[derive(Debug, Default)]
 pub struct ResidualFilter(EntitySelection);
 

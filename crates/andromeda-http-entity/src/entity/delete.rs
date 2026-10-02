@@ -61,7 +61,6 @@ pub(crate) async fn delete(
                 entity_type_compact: None,
                 attribute_name: None,
                 method: Method::DELETE,
-                body: None,
                 context: &context,
                 operation: ForwardingOperation::DeleteEntity,
                 path_suffix: None,
@@ -71,6 +70,7 @@ pub(crate) async fn delete(
                     headers: Some(&headers),
                 },
             },
+            None,
         )
         .await
         .with_entity_instance(&uri)?;

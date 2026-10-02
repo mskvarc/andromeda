@@ -146,6 +146,7 @@ fn entry(delivery: ClaimedDelivery) -> DeliveryEntry {
                 .entity_id(delivery.entity_id)
                 .entity_snapshot(delivery.entity_snapshot.map(Arc::new))
                 .previous_snapshot(delivery.previous_snapshot.map(Arc::new))
+                .sys_attrs_snapshot(delivery.sys_attrs_snapshot)
                 .created_at(delivery.created_at)
                 .build(),
         )
@@ -184,6 +185,7 @@ mod tests {
             entity_id: "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"),
             entity_snapshot: None,
             previous_snapshot: None,
+            sys_attrs_snapshot: None,
             created_at: Utc::now(),
         }
     }

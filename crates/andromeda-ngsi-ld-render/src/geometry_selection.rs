@@ -64,6 +64,19 @@ impl<'a> GeometrySelection<'a> {
     }
 }
 
+impl<'a> GeometrySelection<'a> {
+    /// The name of the `GeoProperty` the geometry is taken from: the one the
+    /// request named, `location` when it named none.
+    pub(crate) fn property_name(&self) -> &'a str {
+        self.property.map_or(compact_properties::LOCATION, AttributeName::as_str)
+    }
+
+    /// The `datasetId` values the request narrowed the instances to.
+    pub(crate) const fn dataset_ids(&self) -> &'a [DatasetSelector] {
+        self.dataset_ids
+    }
+}
+
 impl GeometrySelection<'_> {
     /// The `GeoJSON` geometry of one rendered entity, or `None` when clause
     /// 4.5.16.1 selects none and the geometry is therefore null.
@@ -81,7 +94,7 @@ impl GeometrySelection<'_> {
     /// of the two spellings it is under cannot depend on whether the request
     /// named `location` or named a `GeoProperty` of its own.
     fn geo_property<'e>(&self, entity: &'e Map<String, Value>) -> Option<&'e Value> {
-        let named = self.property.map_or(compact_properties::LOCATION, AttributeName::as_str);
+        let named = self.property_name();
         entity
             .get(named)
             .or_else(|| compact_to_expanded(named).and_then(|expanded| entity.get(expanded)))
@@ -156,7 +169,7 @@ fn instance_dataset_id(instance: &Value) -> Option<&str> {
 }
 
 /// Whether one `datasetId` selector names the instance carrying `dataset_id`.
-fn selects(selector: &DatasetSelector, dataset_id: Option<&str>) -> bool {
+pub(crate) fn selects(selector: &DatasetSelector, dataset_id: Option<&str>) -> bool {
     match selector {
         DatasetSelector::Default => dataset_id.is_none(),
         DatasetSelector::Id(uri) => dataset_id == Some(uri.as_str()),

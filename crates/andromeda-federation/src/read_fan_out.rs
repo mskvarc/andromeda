@@ -8,8 +8,8 @@
 
 use crate::{
     FederationService,
-    answer_vocabulary::AnswerVocabulary,
     cache::Cacheability,
+    document_rewording::DocumentVocabulary,
     entity_read::mode_admitted,
     error::FederationError,
     operation::ForwardingOperation,
@@ -21,9 +21,9 @@ use crate::{
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_query::{
-    filter::{eval::evaluate as eval_q_expr, expression::Expr},
+    filter::{eval::evaluate, expression::Expr},
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExprRaw,
 };
@@ -119,7 +119,7 @@ pub(crate) struct ForwardedGetConditions<'a> {
     pub(crate) entity_map: EntityMapInUse<'a>,
     /// What kind of answer every source returns, which decides where its names
     /// sit when it is read back in the client's terms (clause 4.3.6.6).
-    pub(crate) vocabulary: AnswerVocabulary,
+    pub(crate) vocabulary: DocumentVocabulary,
 }
 
 /// What one contacted registration answered, before the caller folds it.
@@ -210,7 +210,7 @@ impl FederationService {
                 }
             }
         }
-        eval_q_expr(filter, &Value::Object(expanded))
+        evaluate(filter, ContextSourceProperties::new(&expanded))
     }
 
     /// Send each target the forwarded read it resolved to -- a GET or a POST
@@ -303,12 +303,16 @@ pub(crate) fn read_outcome<T>(answers: Vec<SourceAnswer<T>>, matched: usize) -> 
 #[cfg(test)]
 mod tests {
     use crate::{
+        fixed_registration_store::offline_service,
         operation::ForwardingOperation,
         outcome::ForwardedEntities,
         read_binding::ReadIntent,
-        read_fan_out::{ReadServing, SourceAnswer, read_outcome},
+        read_fan_out::{ReadSelection, ReadServing, SourceAnswer, read_outcome},
+        request::{CsrModeFilter, EntityMapInUse},
     };
+    use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
     use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+    use andromeda_ngsi_ld_query::filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser};
     use serde_json::json;
 
     fn registration(operations: Option<&[&str]>) -> ContextSourceRegistration {
@@ -384,5 +388,73 @@ mod tests {
         assert!(query.admits(&registration(Some(&["queryEntity"]))));
         assert!(query.admits(&registration(Some(&["queryBatch"]))));
         assert!(!query.admits(&registration(Some(&["retrieveEntity"]))));
+    }
+    /// A registration carrying `properties` beside its clause 5.2.9 members.
+    fn registration_with(id: &str, properties: serde_json::Value) -> ContextSourceRegistration {
+        let mut document = json!({
+            "id": id,
+            "type": "ContextSourceRegistration",
+            "endpoint": "https://peer.example.org",
+            "mode": "inclusive",
+            "information": [{"entities": [{"type": "https://example.org/Vehicle"}]}],
+            "status": "ok",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        });
+        if let (Some(members), serde_json::Value::Object(added)) = (document.as_object_mut(), properties) {
+            members.extend(added);
+        }
+        serde_json::from_value(document).expect("valid registration")
+    }
+
+    /// Clause 4.9: a context source filter reads the Context Source Properties
+    /// a registration adds and its own clause 5.2.9 members, each by the name
+    /// the filter expands to under the request context.
+    #[tokio::test]
+    async fn a_source_filter_selects_by_the_properties_a_registration_carries() {
+        let alpha = registration_with(
+            "urn:ngsi-ld:csr:alpha",
+            json!({"https://example.org/sourceGroup": {"type": "Property", "value": "alpha"}}),
+        );
+        let beta = registration_with("urn:ngsi-ld:csr:beta", json!({"https://example.org/sourceGroup": "beta"}));
+        let service = offline_service(vec![alpha, beta]);
+        let context = ContextSpec::from_body(json!({"sourceGroup": "https://example.org/sourceGroup"}));
+        let selected = |q: &'static str| {
+            let service = &service;
+            let context = &context;
+            async move {
+                let prepared = service.engine().prepare_term_context(context);
+                let filter = expand_q_expr(
+                    parser::parse(q).expect("the filter parses"),
+                    &JsonKeyAttributes::default(),
+                    &ContextualExpander::new(service.engine(), &prepared),
+                )
+                .await
+                .expect("the filter expands");
+                service
+                    .select_read_registrations(
+                        context,
+                        ReadSelection {
+                            entity_type: None,
+                            entity_ids: None,
+                            exclude_registration: None,
+                            csf: Some(&filter),
+                            scope_q: None,
+                            serving: ReadServing::Operation(ForwardingOperation::QueryEntity),
+                            mode_filter: CsrModeFilter::All,
+                            entity_map: EntityMapInUse::None,
+                        },
+                    )
+                    .await
+                    .expect("the selection runs")
+                    .into_iter()
+                    .map(|registration| registration.id.to_string())
+                    .collect::<Vec<_>>()
+            }
+        };
+        pretty_assertions::assert_eq!(selected("sourceGroup==\"alpha\"").await, vec!["urn:ngsi-ld:csr:alpha"]);
+        pretty_assertions::assert_eq!(selected("sourceGroup==\"beta\"").await, vec!["urn:ngsi-ld:csr:beta"]);
+        pretty_assertions::assert_eq!(selected("mode==\"inclusive\"").await.len(), 2);
+        pretty_assertions::assert_eq!(selected("sourceGroup==\"gamma\"").await, Vec::<String>::new());
     }
 }

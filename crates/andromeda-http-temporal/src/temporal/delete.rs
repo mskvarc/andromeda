@@ -62,7 +62,6 @@ pub async fn delete(
                 entity_type_compact: None,
                 attribute_name: None,
                 method: Method::DELETE,
-                body: None,
                 context: &context,
                 operation: ForwardingOperation::DeleteTemporalEntity,
                 path_suffix: None,
@@ -72,6 +71,7 @@ pub async fn delete(
                     headers: Some(&headers),
                 },
             },
+            None,
         )
         .await
         .with_instance(&uri)?;

@@ -1,6 +1,6 @@
 //! The ports a recording entity service is wired to: a committer that keeps
 //! the writes it saw, a reader that always serves one snapshot and counts the
-//! payloads it hands out, and the ports the operations under test never reach.
+//! states it hands out, and the ports the operations under test never reach.
 
 use crate::{
     entity_snapshot::EntitySnapshot,
@@ -9,6 +9,7 @@ use crate::{
         attribute_history::AttributeDatasetHistory,
         blocking_executor::{BlockingExecutor, BlockingTask},
         reader::EntityReader,
+        retrieved_entity::RetrievedEntity,
         retry_delay::RetryDelay,
     },
 };
@@ -21,11 +22,11 @@ use andromeda_context_commit::{
     write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::{
     collections::HashMap,
     num::NonZeroUsize,
@@ -84,14 +85,14 @@ impl ContextCommitter for RecordingCommitter {
 }
 
 /// A reader that always hands back one Building snapshot for whatever is asked,
-/// so both a single read-modify-write and a batch one have a payload to compute
+/// so both a single read-modify-write and a batch one have a state to compute
 /// against.
 pub(crate) struct SnapshotReader {
-    /// The payload every read serves.
-    pub(crate) payload: Value,
+    /// The state every read serves.
+    pub(crate) state: Arc<EntityState>,
     /// The modification instant every read serves.
     pub(crate) modified_at: DateTime<Utc>,
-    /// How many whole payloads were read, which a deletion reads only when a
+    /// How many whole states were read, which a deletion reads only when a
     /// subscription may be owed its notification.
     pub(crate) payload_reads: Arc<AtomicUsize>,
 }
@@ -108,21 +109,29 @@ impl SnapshotReader {
 
 #[async_trait]
 impl EntityReader for SnapshotReader {
-    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Value>, EntityError> {
+    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Arc<EntityState>>, EntityError> {
         self.payload_reads.fetch_add(1, Ordering::Relaxed);
-        Ok(Some(self.payload.clone())) // clone: the caller owns its copy while the reader keeps serving the snapshot.
+        Ok(Some(Arc::clone(&self.state))) // clone: Arc ref-count bump; the reader keeps serving the snapshot.
     }
 
-    async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
+    async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, RetrievedEntity>, EntityError> {
         self.payload_reads.fetch_add(1, Ordering::Relaxed);
-        // clone: each requested id gets its own owned copy of the fixture.
-        Ok(ids.iter().map(|id| (id.clone(), self.payload.clone())).collect())
+        Ok(ids
+            .iter()
+            .map(|id| {
+                let retrieved = RetrievedEntity {
+                    state: Arc::clone(&self.state), // clone: Arc ref-count bump; the reader keeps serving the snapshot.
+                    sys_attrs: self.sys_attrs(),
+                };
+                (id.clone(), retrieved) // clone: the answer owns its keys
+            })
+            .collect())
     }
 
     async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
         self.payload_reads.fetch_add(1, Ordering::Relaxed);
         Ok(Some(EntitySnapshot {
-            payload: Arc::new(self.payload.clone()), // clone: each read yields an owned snapshot the writer mutates.
+            state: Arc::clone(&self.state), // clone: Arc ref-count bump; a writer copies what it changes.
             modified_at: self.modified_at,
         }))
     }
@@ -135,12 +144,20 @@ impl EntityReader for SnapshotReader {
                 (
                     id.clone(), // clone: the map owns each requested id
                     EntitySnapshot {
-                        payload: Arc::new(self.payload.clone()), // clone: each entry owns its snapshot
+                        state: Arc::clone(&self.state), // clone: Arc ref-count bump; a writer copies what it changes
                         modified_at: self.modified_at,
                     },
                 )
             })
             .collect())
+    }
+
+    async fn get_with_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+        self.payload_reads.fetch_add(1, Ordering::Relaxed);
+        Ok(Some(RetrievedEntity {
+            state: Arc::clone(&self.state), // clone: Arc ref-count bump; the reader keeps serving the snapshot.
+            sys_attrs: self.sys_attrs(),
+        }))
     }
 
     async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {

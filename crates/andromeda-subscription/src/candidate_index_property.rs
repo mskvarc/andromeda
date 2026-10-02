@@ -13,13 +13,13 @@ use crate::{
     matching::matches_subscription,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
+use andromeda_ngsi_ld_entity::reads::{
+    attribute_change::{AttributeChange, AttributeChangeKind},
+    attribute_instance_key::AttributeInstanceKey,
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
-    expanded::{
-        attribute_change::{AttributeChange, AttributeChangeKind},
-        instance_key::AttributeInstanceKey,
-    },
     notification::{ChangeOrigin, NotificationTrigger},
     subscription::{EntitySelector, SubscriptionStatus},
 };

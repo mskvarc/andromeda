@@ -17,7 +17,6 @@ use crate::{
     },
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    expanded_member::stored_entity_types,
     notification_fanout::{ChangedEntity, MutationSnapshots},
     notification_plan::{NotificationPlan, deletion},
     side_effect::SideEffectPlacement,
@@ -27,14 +26,13 @@ use andromeda_context_commit::{
     change_event::ChangeEvent,
     entity_mutation::EntityMutation,
     history_record::deletion_history,
-    precondition::Precondition,
     subscription_match::SubscriptionMatch,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, SysAttrsSnapshot};
-use chrono::{DateTime, Utc};
-use serde_json::Value;
+use chrono::Utc;
 use std::{collections::HashMap, sync::Arc};
 
 /// One chunk's successfully deleted identifiers and its per-entity failures.
@@ -67,21 +65,17 @@ impl ChunkRewrite for DeleteRewrite<'_> {
         entry: Identifier,
         snapshot: Option<&EntitySnapshot>,
         reads: &HashMap<Identifier, SysAttrsSnapshot>,
-        _now: DateTime<Utc>,
+        _now: SystemInstant,
     ) -> Result<PlannedWrite<Identifier>, Box<(Identifier, EntityError)>> {
         let Some(snapshot) = snapshot else {
             let error = EntityError::not_found(&entry);
             return Err(Box::new((entry, error)));
         };
-        let payload = &snapshot.payload;
+        let removed = &snapshot.state;
         let sys_attrs = reads.get(&entry);
-        let built = deletion_events(&entry, payload, sys_attrs).and_then(|events| {
-            let matches = self.service.delete_subscription_matches(self.target, &entry, payload, sys_attrs)?;
-            Ok((NotificationPlan { matches, events }, deletion_history(payload)?))
-        });
-        let (plan, history) = match built {
-            Ok(built) => built,
-            Err(error) => return Err(Box::new((entry, error))),
+        let plan = NotificationPlan {
+            matches: self.service.delete_subscription_matches(self.target, &entry, removed, sys_attrs),
+            events: deletion_events(&entry, removed, sys_attrs),
         };
         Ok(PlannedWrite {
             write: ChunkWrite {
@@ -90,8 +84,7 @@ impl ChunkRewrite for DeleteRewrite<'_> {
                 // Clause 5.6.6 removes current state and leaves the Temporal
                 // Evolution standing, so every instance the entity still held is
                 // recorded as ended rather than being deleted with it.
-                history,
-                precondition: Precondition::MustExist,
+                history: deletion_history(removed),
                 plan,
             },
             entry,
@@ -103,31 +96,29 @@ impl ChunkRewrite for DeleteRewrite<'_> {
 impl EntityService {
     /// The durable notification records one deletion owes, mirroring the single
     /// delete (clause 5.6.6): one per subscription the deletion is owed to,
-    /// carrying the pre-delete snapshot as its entity and previous image.
+    /// carrying the removed state as its entity and previous image.
     ///
-    /// The entity snapshot the durable match stores has the clause-4.8 system
-    /// attributes embedded when they are known, because the deleted row is gone
-    /// by delivery time and the durable path cannot re-read `createdAt`/
-    /// `modifiedAt` the way a non-deletion notification does.
+    /// The clause 4.8 system attributes travel beside the removed state when
+    /// they are known, because the deleted row is gone by delivery time and
+    /// the durable path cannot re-read `createdAt`/`modifiedAt` the way a
+    /// non-deletion notification does.
     fn delete_subscription_matches(
         &self,
         target: &ContextTarget,
         id: &Identifier,
-        payload: &Arc<Value>,
+        removed: &Arc<EntityState>,
         sys_attrs: Option<&SysAttrsSnapshot>,
-    ) -> Result<Vec<SubscriptionMatch>, EntityError> {
-        let entity_types = stored_entity_types(payload)?;
-        let change = deletion(payload)?;
+    ) -> Vec<SubscriptionMatch> {
         let deleted = ChangedEntity {
             target,
             id,
-            types: &entity_types,
+            types: removed.types().as_slice(),
         };
         let snapshots = MutationSnapshots {
-            current: SnapshotSupply::Removed { removed: payload, sys_attrs },
-            previous: Some(payload),
+            current: SnapshotSupply::Removed { removed, sys_attrs },
+            previous: Some(removed),
         };
-        Ok(self.notifier.subscription_matches(deleted, &change, snapshots))
+        self.notifier.subscription_matches(deleted, &deletion(removed), snapshots)
     }
 
     pub(super) async fn batch_delete_chunk(&self, placement: SideEffectPlacement<'_>, chunk: &[Identifier]) -> Result<DeleteChunkOutcome, EntityError> {
@@ -142,22 +133,17 @@ impl EntityService {
 
 /// The clause 5.6.10 notification one deletion raises: one change carrying
 /// the Entity's deletion and every instance it took with it (clause 5.8.6).
-///
-/// # Errors
-///
-/// Reports [`EntityError::Internal`] when the stored payload's types or
-/// `datasetId`s cannot be read.
-fn deletion_events(id: &Identifier, payload: &Arc<Value>, sys_attrs: Option<&SysAttrsSnapshot>) -> Result<Vec<ChangeEvent>, EntityError> {
-    Ok(vec![
+fn deletion_events(id: &Identifier, removed: &Arc<EntityState>, sys_attrs: Option<&SysAttrsSnapshot>) -> Vec<ChangeEvent> {
+    vec![
         ChangeEvent::builder()
             .entity_id(id.clone()) // clone: the event owns its identifier
-            .entity_types(stored_entity_types(payload)?)
-            .change(deletion(payload)?)
+            .entity_types(removed.types().as_slice().to_vec()) // clone: the event owns the names of the types it carries
+            .change(deletion(removed))
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
-            .entity_snapshot(Some(Arc::clone(payload)))
-            .previous_attributes(Some(Arc::clone(payload)))
-            .sys_attrs_snapshot(sys_attrs.cloned())
+            .entity_snapshot(Some(Arc::clone(removed))) // clone: reference-count bump
+            .previous_attributes(Some(Arc::clone(removed))) // clone: reference-count bump
+            .sys_attrs_snapshot(sys_attrs.cloned()) // clone: the event owns the system times it carries
             .build(),
-    ])
+    ]
 }

@@ -8,6 +8,7 @@
 //! path alone, by a deserializer that tracks the member it is in, so the
 //! refusal names it.
 
+use crate::admitted_document::admitted_document;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use serde_path_to_error::Path;
@@ -48,6 +49,20 @@ impl UndecodableBody {
                 source,
             },
             Err(_) | Ok(_) => UndecodableBody::Document { source },
+        }
+    }
+
+    /// The failure decoding the admitted body `text` as a `T` ended in with
+    /// `source`, naming the member it failed at.
+    ///
+    /// Called only once a decoding has failed: the body is parsed into the
+    /// tree an admitted body stands for, whose members the retracing decode
+    /// reads as the failed decoding read them.
+    #[must_use]
+    pub fn of_text<T: DeserializeOwned>(text: &[u8], source: serde_json::Error) -> UndecodableBody {
+        match admitted_document(text) {
+            Ok(document) => UndecodableBody::of::<T>(&document, source),
+            Err(_unreadable) => UndecodableBody::Document { source },
         }
     }
 }

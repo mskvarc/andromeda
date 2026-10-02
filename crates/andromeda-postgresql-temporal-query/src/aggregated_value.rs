@@ -20,7 +20,7 @@
 //! and widening it to binary floating point to aggregate would report a minimum
 //! or a maximum that was never observed.
 
-use crate::{alias::Ah, recorded_shape::CANONICAL_TIME_PATTERN};
+use crate::{alias::Ah, recorded_shape::CANONICAL_TIME_PATTERN, structured_json::structured_json};
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
@@ -81,8 +81,8 @@ fn boolean_as_numeric() -> SimpleExpr {
 fn array_size() -> SimpleExpr {
     CaseStatement::new()
         .case(
-            Expr::expr(jsonb_typeof(Expr::col((Ah, AttributeHistory::ValueObject)))).eq(JSON_ARRAY_TYPE),
-            cast(jsonb_array_length(Expr::col((Ah, AttributeHistory::ValueObject))), PostgresType::Numeric),
+            Expr::expr(jsonb_typeof(structured_json())).eq(JSON_ARRAY_TYPE),
+            cast(jsonb_array_length(structured_json()), PostgresType::Numeric),
         )
         .into()
 }
@@ -213,8 +213,9 @@ mod tests {
     #[test]
     fn the_sized_operand_measures_an_array_by_its_length() {
         let sql = rendered(sized_numeric_expr());
-        assert!(sql.contains("jsonb_array_length(\"ah\".\"value_object\")"), "{sql}");
-        assert!(sql.contains("jsonb_typeof(\"ah\".\"value_object\")"), "{sql}");
+        let structured = "COALESCE((CASE WHEN ((\"ah\".\"value_object\" ->> ('@type')) = ('@json'))";
+        assert!(sql.contains(&format!("jsonb_array_length({structured}")), "{sql}");
+        assert!(sql.contains(&format!("jsonb_typeof({structured}")), "{sql}");
     }
 
     /// Table 4.5.19.1-1 marks `stddev` and `sumsq` N/A for a JSON Array, so

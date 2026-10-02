@@ -5,8 +5,9 @@
 //! correct broker never breaks, so a broken one is answered `InternalError`.
 
 use crate::outcome::InvalidTemporalOutcome;
+use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
-use andromeda_ngsi_ld_model::expanded::{dataset_id::InstanceDatasetIdError, entity_member::ExpandedMemberError};
+use andromeda_ngsi_ld_render::temporal::history_row::HistoryRowRenderError;
 use andromeda_unit_catalog::unit_code_registry::UnitCodeSnapshotMalformed;
 use chrono::OutOfRangeError;
 use thiserror::Error;
@@ -14,14 +15,12 @@ use thiserror::Error;
 /// A temporal policy invariant that did not hold.
 #[derive(Debug, Error)]
 pub enum TemporalInvariant {
-    /// An entity the broker already admitted carries an instance whose
-    /// `datasetId` no longer reads as an identifier.
-    #[error("an admitted entity carries an unreadable datasetId: {0}")]
-    AdmittedDatasetId(#[from] InstanceDatasetIdError),
-    /// An entity the broker already admitted carries an `@id`, `@type` or member
-    /// key that no longer reads as the value it stands for.
-    #[error("an admitted entity carries an unreadable member: {0}")]
-    AdmittedMember(#[from] ExpandedMemberError),
+    /// A stored history row no longer reads as the instance it recorded.
+    #[error("a stored history row does not render: {0}")]
+    RenderedInstance(#[source] HistoryRowRenderError),
+    /// A temporal entity the broker assembled could not be compacted.
+    #[error("an assembled temporal entity does not compact: {0}")]
+    Compaction(#[source] CompactionError),
     /// The compiled-in UN/CEFACT unit catalog did not parse, so no `unitCode`
     /// can be checked.
     #[error("the unit catalog is unreadable: {0}")]

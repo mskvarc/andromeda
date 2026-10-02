@@ -36,6 +36,8 @@ use std::collections::BTreeSet;
 mod delete;
 /// The batch insert.
 mod insert;
+/// The stored document a set-write lands, staged apart from the projection.
+mod payload_staging;
 /// The images of an `entity_search` row a set-write hands on.
 pub(crate) mod search_image;
 /// The staging shape every set-write reads its arrays through.

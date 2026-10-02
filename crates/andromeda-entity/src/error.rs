@@ -3,10 +3,12 @@
 use crate::{entity_invariant::EntityInvariant, entity_operation_unsupported::EntityOperationUnsupported, entity_validation_reason::EntityValidationReason};
 use andromeda_context_commit::error::CommitError;
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
+use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal::EntityRefusal};
+use andromeda_ngsi_ld_expansion::error::ExpansionError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::mutation::error::ExpandedEntityError;
 use andromeda_ngsi_ld_query::error::QueryError;
-use andromeda_ngsi_ld_representation::payload_census::PayloadBudgetExceeded;
+use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use derive_more::IsVariant;
@@ -38,7 +40,7 @@ pub enum EntityError {
     },
     /// A requested entity member or dataset instance does not exist.
     #[error("entity member not found: {0}")]
-    MemberNotFound(ExpandedEntityError),
+    MemberNotFound(MutationError),
     /// An entity already uses the requested identifier.
     #[error("entity {identifier} already exists")]
     AlreadyExists {
@@ -162,6 +164,97 @@ impl From<PersistenceFailure> for EntityError {
     }
 }
 
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A written document the model refuses is the client's `BadRequestData`
+/// (clause 5.5.4), except an unreadable compiled-in unit catalog, which is the
+/// build's fault and no request can mend.
+impl From<EntityRefusal> for EntityError {
+    fn from(refusal: EntityRefusal) -> EntityError {
+        match refusal {
+            EntityRefusal::UnitCatalog(malformed) => EntityError::Internal(EntityInvariant::UnitCatalog(malformed)),
+            refused @ (EntityRefusal::Syntax { .. }
+            | EntityRefusal::Malformed { .. }
+            | EntityRefusal::MissingId
+            | EntityRefusal::EntityId { .. }
+            | EntityRefusal::TypeNotString
+            | EntityRefusal::EntityType { .. }
+            | EntityRefusal::MissingType
+            | EntityRefusal::ExpandedAttributeName(_)
+            | EntityRefusal::Scope(_)
+            | EntityRefusal::ScopeNull
+            | EntityRefusal::EntityExpiresAt
+            | EntityRefusal::DatasetId { .. }
+            | EntityRefusal::InstanceId { .. }
+            | EntityRefusal::DateTime { .. }
+            | EntityRefusal::Reference { .. }
+            | EntityRefusal::DatasetIdSentinel { .. }
+            | EntityRefusal::ReservedNullValue { .. }
+            | EntityRefusal::NestedNullValue { .. }
+            | EntityRefusal::MemberForbidden { .. }
+            | EntityRefusal::UnsupportedAttributeType
+            | EntityRefusal::SeveralFamilies { .. }
+            | EntityRefusal::MissingValue { .. }
+            | EntityRefusal::MissingObject { .. }
+            | EntityRefusal::MissingFamilyValue { .. }
+            | EntityRefusal::UnitCodeForbidden { .. }
+            | EntityRefusal::UnitCodeUnusable { .. }
+            | EntityRefusal::RepeatedInstance { .. }
+            | EntityRefusal::MultipleDefaultInstances { .. }
+            | EntityRefusal::GeoProperty { .. }
+            | EntityRefusal::NullBesideData { .. }
+            | EntityRefusal::NullInState { .. }
+            | EntityRefusal::OutputOnlyMember { .. }
+            | EntityRefusal::ReservedAttributeName { .. }) => EntityError::Validation(EntityValidationReason::Refused(Box::new(refused))),
+        }
+    }
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// Clause 5.5.2 makes a well-formed request naming an attribute or instance
+/// the entity does not have `ResourceNotFound`, and a fragment that cannot be
+/// applied to what the entity holds `BadRequestData`.
+impl From<MutationError> for EntityError {
+    fn from(error: MutationError) -> EntityError {
+        match error {
+            missing @ (MutationError::AttributeNotFound { .. } | MutationError::DatasetNotFound { .. } | MutationError::DefaultInstanceNotFound { .. }) => {
+                EntityError::MemberNotFound(missing)
+            }
+            MutationError::Refused(refusal) => EntityError::from(*refusal),
+            mismatch @ MutationError::AttributeTypeMismatch { .. } => EntityError::Validation(EntityValidationReason::Mutation(mismatch)),
+        }
+    }
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A context that does not load and a document the processor refuses are the
+/// JSON-LD failures they always were; a refused document is classified as the
+/// model refuses it.
+impl From<ExpansionError> for EntityError {
+    fn from(error: ExpansionError) -> EntityError {
+        match error {
+            ExpansionError::Context(failure) | ExpansionError::Processor(failure) => EntityError::JsonLd(failure),
+            ExpansionError::Refused(refusal) => EntityError::from(refusal),
+            ExpansionError::CompactDocument(source) => EntityError::Validation(EntityValidationReason::CompactDocument(source)),
+        }
+    }
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// A stored entity that cannot be written for the processor is the broker's
+/// fault; a compacted document the compact model refuses is reported as the
+/// entity data it is.
+impl From<CompactionError> for EntityError {
+    fn from(error: CompactionError) -> EntityError {
+        match error {
+            CompactionError::JsonLd(failure) => EntityError::JsonLd(failure),
+            CompactionError::Encode(source) => EntityError::Internal(EntityInvariant::StateEncoding(source)),
+            CompactionError::NotAnObject => EntityError::Validation(EntityValidationReason::EntityDataNotObject),
+            CompactionError::MissingId => EntityError::Validation(EntityValidationReason::EntityMissingId),
+            CompactionError::Decode(source) => EntityError::Validation(EntityValidationReason::EntityData(source)),
+        }
+    }
+}
+
 impl EntityError {
     /// Construct a missing-entity failure.
     #[must_use]
@@ -209,7 +302,48 @@ impl EntityError {
 mod tests {
     use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
     use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
+    use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal::EntityRefusal};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+
+    fn speed() -> AttributeName {
+        "https://example.org/speed".parse().expect("a valid attribute name")
+    }
+
+    /// Clause 5.5.4: a document the model refuses is the client's
+    /// `BadRequestData`, carried typed with its own message.
+    #[test]
+    fn a_refused_document_is_a_validation_failure_carrying_the_refusal() {
+        let error = EntityError::from(EntityRefusal::MissingType);
+        assert!(
+            matches!(&error, EntityError::Validation(EntityValidationReason::Refused(refusal)) if matches!(**refusal, EntityRefusal::MissingType)),
+            "{error:?}"
+        );
+        assert!(error.to_string().starts_with("invalid entity operation: "), "{error}");
+    }
+
+    /// Clause 5.5.2: a well-formed request naming a member the entity lacks is
+    /// `ResourceNotFound`, a fragment of another family `BadRequestData`, and a
+    /// written instance that cannot become state is classified as its refusal.
+    #[test]
+    fn a_mutation_failure_is_classified_by_what_it_names() {
+        let missing = EntityError::from(MutationError::AttributeNotFound { attribute: speed() });
+        assert!(
+            matches!(missing, EntityError::MemberNotFound(MutationError::AttributeNotFound { .. })),
+            "{missing:?}"
+        );
+        let mismatch = EntityError::from(MutationError::AttributeTypeMismatch {
+            attribute: speed(),
+            fragment_type: AttributeType::Relationship,
+            instance_type: AttributeType::Property,
+        });
+        assert!(matches!(mismatch, EntityError::Validation(EntityValidationReason::Mutation(_))), "{mismatch:?}");
+        let refused = EntityError::from(MutationError::from(EntityRefusal::MissingId));
+        assert!(
+            matches!(&refused, EntityError::Validation(EntityValidationReason::Refused(refusal)) if matches!(**refusal, EntityRefusal::MissingId)),
+            "{refused:?}"
+        );
+    }
 
     #[test]
     fn backpressure_keeps_its_retryable_categories() {

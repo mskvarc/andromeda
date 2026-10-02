@@ -16,19 +16,52 @@
 //! reimplement a geometry kernel, altitude is modelled in this crate's own
 //! types and evaluation stays on the projection — which is what the
 //! specification asks for anyway.
+//!
+//! A projection is computed when a spatial operation asks for one and is not
+//! kept beside the geometry it was projected from: a stored geometry would
+//! otherwise hold every coordinate twice. Code that evaluates one geometry
+//! against many others projects it once and reuses the [`PlanarGeometry`].
 
 use crate::{
     form::{GeometryForm, PolygonRings},
     line_string_coordinates::LineStringCoordinates,
     position::Position,
 };
-use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
+use geo::{BoundingRect, Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon, Rect};
 
-/// Project a geometry onto the horizontal plane.
+/// A geometry projected onto the horizontal plane, the form every clause 4.10
+/// relation is evaluated over.
 ///
 /// The projection is a distinct value, not a view: the form it was projected
 /// from keeps every altitude it arrived with.
-pub fn project(form: &GeometryForm) -> GeoGeometry<f64> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanarGeometry(GeoGeometry<f64>);
+
+impl PlanarGeometry {
+    /// Project a geometry form onto the horizontal plane.
+    ///
+    /// Infallible: every form has a projection, including the degenerate ones
+    /// RFC 7946 permits.
+    #[must_use]
+    pub fn project(form: &GeometryForm) -> PlanarGeometry {
+        PlanarGeometry(project(form))
+    }
+
+    /// The projection as the `geo` geometry the evaluators compute over.
+    pub(crate) const fn as_geo(&self) -> &GeoGeometry<f64> {
+        &self.0
+    }
+
+    /// Axis-aligned bounding rectangle of the projection, or `None` for a
+    /// geometry with no coordinates, such as a Polygon with no rings.
+    #[must_use]
+    pub fn bounding_rect(&self) -> Option<Rect<f64>> {
+        self.0.bounding_rect()
+    }
+}
+
+/// Drop the altitude of every position of a geometry form.
+fn project(form: &GeometryForm) -> GeoGeometry<f64> {
     match form {
         GeometryForm::Point(position) => GeoGeometry::Point(Point::from(coord(position))),
         GeometryForm::MultiPoint(positions) => {

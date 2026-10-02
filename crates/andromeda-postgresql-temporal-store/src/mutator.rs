@@ -12,10 +12,10 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_query::temporal::history_delete::TemporalHistoryDeleteScope;
 use andromeda_temporal::{
     error::TemporalError,
+    observed_instance::ObservedInstance,
     port::mutator::{TemporalDeleteScope, TemporalMutator},
 };
 use async_trait::async_trait;
-use serde_json::Value;
 
 #[async_trait]
 impl TemporalMutator for TemporalRepository {
@@ -74,9 +74,9 @@ impl TemporalMutator for TemporalRepository {
         instance: &InstanceIdentity,
         entity_id: &Identifier,
         attribute_name: &AttributeName,
-        expanded_instance: &Value,
+        replacement: &ObservedInstance,
     ) -> Result<(), TemporalError> {
-        self.update_attribute_instance(target, entity_id, attribute_name, instance, expanded_instance)
+        self.update_attribute_instance(target, entity_id, attribute_name, instance, replacement)
             .await
             .map_err(TemporalError::from)
     }

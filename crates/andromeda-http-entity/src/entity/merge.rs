@@ -52,11 +52,10 @@ pub(crate) async fn merge(
         observed_at: params.observed_at,
         type_selector: params.entity_type.as_ref(),
     };
-    let patch_value = serde_json::to_value(&patch).with_entity_instance(&uri)?;
     // Clause 5.6.17.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and a
     // merge left with nothing local is still validated.
-    let admitted = admit_written_entity::<MergeEntity>(service, patch_value, &context)
+    let admitted = admit_written_entity::<MergeEntity>(service, &patch, &context)
         .await
         .with_entity_instance(&uri)?;
 
@@ -78,7 +77,6 @@ pub(crate) async fn merge(
                 entity_type_compact: None,
                 attribute_name: None,
                 method: Method::PATCH,
-                body: Some(&patch),
                 context: &context,
                 operation: ForwardingOperation::MergeEntity,
                 path_suffix: None,
@@ -88,6 +86,7 @@ pub(crate) async fn merge(
                     headers: Some(&headers),
                 },
             },
+            Some(&patch),
         )
         .await
         .with_entity_instance(&uri)?;

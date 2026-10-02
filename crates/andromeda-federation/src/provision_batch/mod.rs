@@ -24,6 +24,7 @@ mod single_write;
 
 use crate::{
     FederationService,
+    document_rewording::DocumentVocabulary,
     error::FederationError,
     forwarded_body::ForwardedBody,
     forwarded_payload::ItemBody,
@@ -46,11 +47,9 @@ use andromeda_jsonld::{
     batch_contexts::{BatchContext, ContextGroups},
     context_spec::ContextSpec,
 };
+use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{
-    expanded::mutation::selection::OverwritePolicy,
-    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
-};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_request::options::UpsertMode;
 use futures::{StreamExt, stream};
 use serde_json::Value;
@@ -234,14 +233,18 @@ impl FederationService {
         match plan_for(request.operation, csr) {
             FallbackPlan::Batch => {
                 let ids = narrowed.iter().map(|entity| entity.id.clone()).collect::<Vec<_>>(); // clone: the outcomes are keyed by identifier
-                // A batch deletion carries the bare identifiers (clause 5.6.10).
+                // The forwarded array takes each narrowed body over; what is left
+                // of an entity names its result. A batch deletion carries the
+                // bare identifiers (clause 5.6.10).
+                let mut narrowed = narrowed;
                 let items = narrowed
-                    .iter()
+                    .iter_mut()
                     .map(|entity| ItemBody {
-                        body: entity.body.clone().unwrap_or_else(|| Value::String(entity.id.to_string())), // clone: the forwarded array owns its items
+                        body: entity.body.take().unwrap_or_else(|| Value::String(entity.id.to_string())),
                         context: entity.context,
                     })
                     .collect::<Vec<_>>();
+                let narrowed = narrowed;
                 let url = forwarding_url(
                     csr.access.endpoint.url(),
                     &["entityOperations", request.operation.batch_path()],
@@ -252,7 +255,7 @@ impl FederationService {
                         registration: csr,
                         url,
                         method: reqwest::Method::POST,
-                        payload: WritePayload::Items(&items),
+                        payload: WritePayload::Items(items),
                         triggering: request.triggering,
                         linked_map: None,
                     })
@@ -338,7 +341,11 @@ impl FederationService {
 /// nothing for a deletion, under the context the entity was submitted with.
 const fn entity_payload<'a>(body: Option<&'a [u8]>, context: &'a ContextSpec) -> WritePayload<'a> {
     match body {
-        Some(bytes) => WritePayload::Document { bytes, context },
+        Some(bytes) => WritePayload::Document {
+            bytes,
+            vocabulary: DocumentVocabulary::Entities,
+            context,
+        },
         None => WritePayload::Empty(context),
     }
 }

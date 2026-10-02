@@ -50,7 +50,7 @@ fn unique_tenant(prefix: &str) -> String {
 
 /// A minimal `Device` entity under the core context.
 fn device_entity(id: &str) -> Value {
-    json!({"id": id, "type": "Device", "value": {"type": "Property", "value": 1}, "@context": [CORE_CONTEXT]})
+    json!({"id": id, "type": "Device", "reading": {"type": "Property", "value": 1}, "@context": [CORE_CONTEXT]})
 }
 
 /// Create one entity under `tenant`, returning the response status and the echoed

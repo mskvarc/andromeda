@@ -21,12 +21,8 @@ pub mod attribute_history_row;
 pub mod attribute_history_value;
 /// Bulk inserts into the rebuilt `attribute_history` hypertable.
 pub mod attribute_history_write;
-/// Reading the parts of one expanded NGSI-LD attribute instance.
-pub mod attribute_instance;
 /// Deleting the Temporal Evolution of one attribute.
 pub mod attribute_stream_deletion;
-/// The value an attribute instance carries, and the column it lands in.
-pub mod attribute_value;
 /// Dispatch mode for bulk history writes.
 pub mod bulk_write_mode;
 /// Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
@@ -46,6 +42,8 @@ pub(crate) mod history_row_decode;
 /// The identity and column reads the two history hypertables share.
 pub(crate) mod history_row_identity;
 mod instance_mutation;
+/// The statements addressing one temporal attribute instance by its `instanceId`.
+mod instance_statements;
 /// Idempotent PostgreSQL implementation of deferred temporal appends.
 pub mod intent_sink;
 /// `andromeda-temporal` mutation-port implementation on [`TemporalRepository`](repo::TemporalRepository).
@@ -120,6 +118,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-space",
         "andromeda-context-commit",
         "andromeda-entity",
+        "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

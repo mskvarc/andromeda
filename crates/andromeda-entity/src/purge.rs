@@ -1,32 +1,30 @@
-//! Purging attributes from a set of entities (clause 5.6.21).
+//! Purging attributes from a set of entities (clause 5.6.21), whole or
+//! scoped to a `datasetId` (the Andromeda `purge_dataset_scope` extension; see
+//! `docs/extensions/purge-dataset-scope.md`).
 //!
-//! Each entity is its own atomic write: the payload rewrite and the tombstones
+//! Each entity is its own atomic write: the state rewrite and the tombstones
 //! for the purged instances commit together, and one entity failing must not
-//! undo the ones already purged. The diff is computed from a payload read
+//! undo the ones already purged. The diff is computed from a state read
 //! outside that write, so the write states the `modifiedAt` it assumed and is
 //! recomputed against a fresh read if a concurrent writer got in first.
 
-use crate::{
-    EntityService,
-    error::EntityError,
-    expanded_member::stored_entity_types,
-    notification_plan::modification,
-    purge_dataset::build_dataset_purge_write,
-};
-use andromeda_context_commit::{
-    atomic_write::AtomicWrite,
-    change_event::ChangeEvent,
-    entity_mutation::EntityMutation,
-    entity_record::EntityRecord,
-    history_record::HistoryRecord,
-};
+use crate::{EntityService, entity_validation_reason::EntityValidationReason, error::EntityError, modification_write::ModificationWrite};
+use andromeda_context_commit::{change_event::ChangeEvent, history_record::HistoryRecord};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::removed_instance::removed_attribute_instances;
-use andromeda_ngsi_ld_query::projection::purge::{DatasetPurgeScope, PurgeMode};
-use iri_rs::IriBuf;
-use serde_json::Value;
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    operation::{
+        purge::{AttributePurge, PurgeOutcome},
+        selection::DatasetSelection,
+    },
+    reads::removed_instance::removed_attribute_instances,
+};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
+    projection::purge::{DatasetPurgeScope, PurgeMode},
+};
 use std::sync::Arc;
 
 impl EntityService {
@@ -35,29 +33,33 @@ impl EntityService {
     /// - `Drop`: remove the listed attributes from each entity
     /// - `Keep`: retain only the listed attributes, removing all others
     ///
-    /// Each entity is its own atomic write: the payload rewrite and the
-    /// tombstones for the purged instances commit together, and one entity
-    /// failing must not undo the ones already purged. The diff is computed
-    /// from a payload read outside that write, so the write states the
-    /// `modifiedAt` it assumed and is re-read if a concurrent writer got in.
+    /// A `datasetId` selector removes only the instances it names of each
+    /// selected attribute; `deleteAll`, like no selector, removes every
+    /// instance, which is the whole attribute.
     ///
     /// Returns the number of entities modified.
     ///
     /// # Errors
     ///
     /// Reports [`EntityError::JsonLd`] when one of the named attributes cannot
-    /// be expanded against `context`, [`EntityError::Contention`] when
+    /// be expanded against `context`, [`EntityError::Validation`] when its
+    /// expansion is not an attribute name, [`EntityError::Contention`] when
     /// concurrent writers superseded an entity's purge on every attempt, and
     /// [`EntityError::Persistence`] when the store could not read an entity or
     /// commit its purge.
     pub async fn purge_attrs(&self, target: &ContextTarget, entity_ids: &[Identifier], mode: &PurgeMode, context: &ContextSpec) -> Result<u32, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
-        let attr_iris: Vec<IriBuf> = match mode {
+        let attributes: Vec<AttributeName> = match mode {
             PurgeMode::DeleteEntities => return Ok(0),
             PurgeMode::Drop { attributes, .. } | PurgeMode::Keep { attributes, .. } => {
                 let mut expanded = Vec::with_capacity(attributes.len());
-                for attr in attributes {
-                    expanded.push(self.engine.expand_term(attr.as_str(), &prepared_context).await?);
+                for attribute in attributes {
+                    let iri = self.engine.expand_term(attribute.as_str(), &prepared_context).await?;
+                    expanded.push(
+                        iri.as_str()
+                            .parse()
+                            .map_err(|source| EntityError::Validation(EntityValidationReason::AttributeName(source)))?,
+                    );
                 }
                 expanded
             }
@@ -66,29 +68,19 @@ impl EntityService {
         let mut modified_count = 0u32;
 
         for entity_id in entity_ids {
-            let mut purged: Option<PurgedEntity> = None;
+            let mut purged: Option<Vec<ChangeEvent>> = None;
             let outcome = self
                 .commit_read_modify_write(target, entity_id, |previous| {
-                    let Some((mut write, mut removed)) = build_scoped_purge_write(entity_id, previous, mode, &attr_iris)? else {
+                    let Some((current, history)) = purged_state(previous, mode, &attributes) else {
                         return Ok(None);
                     };
-                    let change = modification(previous, &removed.merged)?;
-                    let plan = self.notifier.plan(
-                        target,
-                        entity_id,
-                        &stored_entity_types(&removed.merged)?,
-                        change,
-                        Some(&removed.merged),
-                        Some(previous),
-                    );
-                    write.subscription_matches = plan.matches;
-                    removed.events = plan.events;
-                    purged = Some(removed);
+                    let ModificationWrite { write, events } = self.modification_write(target, entity_id, previous, Arc::new(current), history)?;
+                    purged = Some(events);
                     Ok(Some(write))
                 })
                 .await?;
 
-            let (Some(_), Some(purged)) = (outcome, purged) else {
+            let (Some(_), Some(events)) = (outcome, purged) else {
                 continue;
             };
             modified_count += 1;
@@ -97,110 +89,114 @@ impl EntityService {
             // `attributeDeleted` trigger says what kind of change fires a
             // notification rather than which operation caused it. Reported the
             // way clause 5.6.5 reports the single-attribute form.
-            purged.events.into_iter().for_each(|event| self.notifier.publish(target, event));
+            for event in events {
+                self.notifier.publish(target, event);
+            }
         }
 
         Ok(modified_count)
     }
 }
 
-/// What one clause 5.6.21 purge removed from one entity.
-pub(crate) struct PurgedEntity {
-    /// The entity as it stands once the purged attributes are gone.
-    pub(crate) merged: Arc<Value>,
-    /// In-process events matching the durable records committed with the write.
-    pub(crate) events: Vec<ChangeEvent>,
-}
-
-/// The write that purges one entity, dispatched on the dataset scope.
-///
-/// A whole-attribute scope — the standard clause 5.6.21 default and the
-/// explicit `deleteAll`, which both remove every instance — takes the payload
-/// key-removal path. A `datasetId` selector removes only the named instances of
-/// each targeted attribute, reusing the single-entity clause 5.6.5 mutation.
-///
-/// # Errors
-///
-/// Reports [`EntityError::Internal`] when the stored payload's members cannot
-/// be read back into the write's record or tombstones.
-fn build_scoped_purge_write(
-    entity_id: &Identifier,
-    previous: &Value,
-    mode: &PurgeMode,
-    attr_iris: &[IriBuf],
-) -> Result<Option<(AtomicWrite, PurgedEntity)>, EntityError> {
-    match mode.dataset_scope() {
-        // Whole-entity deletion never reaches attribute purging.
-        None => Ok(None),
+/// What `previous` becomes once purged as `mode` says, with a tombstone for
+/// every instance it lost, or `None` when it holds nothing the purge selects.
+fn purged_state(previous: &EntityState, mode: &PurgeMode, attributes: &[AttributeName]) -> Option<(EntityState, Vec<HistoryRecord>)> {
+    let purge = match mode {
+        PurgeMode::DeleteEntities => return None,
+        PurgeMode::Drop { .. } => AttributePurge::Drop(attributes),
+        PurgeMode::Keep { .. } => AttributePurge::Keep(attributes),
+    };
+    let mut purged = EntityState::clone(previous); // clone: shares every attribute the purge leaves alone
+    let outcome = match mode.dataset_scope()? {
         // `deleteAll` removes every instance, which is the whole attribute, so
-        // it reduces to the standard key-removal path rather than a per-instance
-        // one; only a `datasetId` selector needs the instance-level mutation.
-        Some(DatasetPurgeScope::Unfiltered | DatasetPurgeScope::All) => build_purge_write(entity_id, previous, mode, attr_iris),
-        Some(DatasetPurgeScope::Selector(selector)) => build_dataset_purge_write(entity_id, previous, mode, attr_iris, selector),
+        // it is the standard whole-attribute purge; only a `datasetId`
+        // selector removes single instances, through the clause 5.6.5 rule.
+        DatasetPurgeScope::Unfiltered | DatasetPurgeScope::All => purged.purge_attributes(purge),
+        DatasetPurgeScope::Selector(selector) => purged.purge_dataset_instances(purge, selection_of(selector)),
+    };
+    match outcome {
+        PurgeOutcome::Untouched => None,
+        PurgeOutcome::Purged => {
+            let history = removed_attribute_instances(previous, &purged)
+                .into_iter()
+                .map(HistoryRecord::Tombstone)
+                .collect();
+            Some((purged, history))
+        }
     }
 }
 
-/// The write that purges `previous` of the whole attributes `mode` selects,
-/// together with what it removed, or `None` when the entity holds none of them.
-///
-/// # Errors
-///
-/// Reports [`EntityError::Internal`] when the stored payload's members cannot
-/// be read back into the write's record or tombstones.
-fn build_purge_write(
-    entity_id: &Identifier,
-    previous: &Value,
-    mode: &PurgeMode,
-    attr_iris: &[IriBuf],
-) -> Result<Option<(AtomicWrite, PurgedEntity)>, EntityError> {
-    let mut purged = previous.clone(); // clone: the "before" side stays intact for the removal diff
-    let obj = match &mut purged {
-        Value::Array(arr) => arr.first_mut().and_then(|v| v.as_object_mut()),
-        Value::Object(obj) => Some(obj),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    };
+/// The clause 5.6.5 selection a `datasetId` selector lowers to: `@none`
+/// selects the default instance, a URI that one dataset.
+const fn selection_of(selector: &DatasetSelector) -> DatasetSelection<'_> {
+    match selector {
+        DatasetSelector::Default => DatasetSelection::Default,
+        DatasetSelector::Id(dataset_id) => DatasetSelection::Single(dataset_id),
+    }
+}
 
-    let Some(obj) = obj else {
-        return Ok(None);
+#[cfg(test)]
+mod tests {
+    use crate::purge::purged_state;
+    use andromeda_context_commit::history_record::HistoryRecord;
+    use andromeda_ngsi_ld_entity::{attribute_instances::AttributeInstances, entity_state::EntityState};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::{
+        dataset::DatasetSelector,
+        projection::purge::{DatasetPurgeScope, PurgeMode},
     };
+    use serde_json::json;
 
-    let keys_to_remove: Vec<String> = match mode {
-        PurgeMode::Drop { .. } => attr_iris
-            .iter()
-            .filter(|iri| obj.contains_key(iri.as_str()))
-            .map(|iri| iri.as_str().to_owned())
-            .collect(),
-        PurgeMode::Keep { .. } => obj
-            .keys()
-            .filter(|k| {
-                // Preserve JSON-LD structural keys and NGSI-LD system attrs
-                !k.starts_with('@') && !attr_iris.iter().any(|iri| k.as_str() == iri.as_str())
-            })
-            .cloned() // clone: owned keys for removal
-            .collect(),
-        PurgeMode::DeleteEntities => Vec::new(),
-    };
-
-    if keys_to_remove.is_empty() {
-        return Ok(None);
+    /// A Vehicle whose `speed` has a default and a `datasetId` instance and
+    /// whose `brand` has one.
+    fn vehicle() -> EntityState {
+        let document = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "@type": ["https://example.org/Vehicle"],
+            "https://example.org/speed": [
+                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]},
+                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 2}], "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:a"}]}
+            ],
+            "https://example.org/brand": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "x"}]}]
+        }]);
+        EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity")
     }
 
-    for key in &keys_to_remove {
-        obj.remove(key);
+    fn speed() -> Vec<AttributeName> {
+        vec!["https://example.org/speed".parse().expect("a valid attribute name")]
     }
 
-    let removed = removed_attribute_instances(previous, &purged).map_err(|error| EntityError::Internal(error.into()))?;
-    let mut history = Vec::with_capacity(removed.len());
-    for instance in removed {
-        history.push(HistoryRecord::Tombstone(instance));
+    fn drop(scope: DatasetPurgeScope) -> PurgeMode {
+        PurgeMode::Drop {
+            attributes: speed(),
+            dataset: scope,
+        }
     }
 
-    let merged = Arc::new(purged);
-    let write = AtomicWrite::builder()
-        .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
-        .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&merged))?)) // clone: Arc ref-count bump; the payload is also the notification's
-        .history(history)
-        .build();
+    /// Clause 5.6.21 `drop`: the listed attribute goes whole, one tombstone
+    /// per instance it held.
+    #[test]
+    fn a_whole_attribute_purge_tombstones_every_instance() {
+        let (purged, history) = purged_state(&vehicle(), &drop(DatasetPurgeScope::Unfiltered), &speed()).expect("speed is purged");
+        assert!(!purged.attributes().contains("https://example.org/speed"));
+        assert!(purged.attributes().contains("https://example.org/brand"));
+        pretty_assertions::assert_eq!(history.len(), 2);
+        assert!(history.iter().all(|record| matches!(record, HistoryRecord::Tombstone(_))));
+    }
 
-    Ok(Some((write, PurgedEntity { merged, events: Vec::new() })))
+    /// A `datasetId` selector removes only the instance it names.
+    #[test]
+    fn a_dataset_purge_tombstones_only_the_selected_instance() {
+        let selector = DatasetSelector::Id("urn:ngsi-ld:Dataset:a".parse().expect("a valid identifier"));
+        let (purged, history) = purged_state(&vehicle(), &drop(DatasetPurgeScope::Selector(selector)), &speed()).expect("one instance is purged");
+        pretty_assertions::assert_eq!(purged.attributes().get("https://example.org/speed").map(AttributeInstances::len), Some(1));
+        pretty_assertions::assert_eq!(history.len(), 1);
+    }
+
+    #[test]
+    fn a_purge_selecting_nothing_writes_nothing() {
+        let selector = DatasetSelector::Id("urn:ngsi-ld:Dataset:z".parse().expect("a valid identifier"));
+        assert!(purged_state(&vehicle(), &drop(DatasetPurgeScope::Selector(selector)), &speed()).is_none());
+        assert!(purged_state(&vehicle(), &PurgeMode::DeleteEntities, &speed()).is_none());
+    }
 }

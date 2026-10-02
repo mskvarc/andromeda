@@ -23,14 +23,15 @@
 
 use crate::{
     EntityService,
-    batch::chunk::{ChunkOutcome, ChunkWrite},
+    batch::chunk::{ChunkOutcome, ChunkWrite, GuardedWrite},
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
+use andromeda_ngsi_ld_entity::system_instant::SystemInstant;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::{collections::HashSet, future::Future};
 
 /// One batch path's part in a chunk read-modify-write: what it reads besides
@@ -57,8 +58,8 @@ pub(super) trait ChunkRewrite: Sync {
     /// Build the write of `entry` against `snapshot`, the entity as this
     /// attempt read it, or `None` when the attempt found it absent.
     ///
-    /// The write's precondition is stated by the driver, whatever the build
-    /// set.
+    /// The write's precondition is the driver's to state: the build only
+    /// says what to write.
     ///
     /// # Errors
     ///
@@ -69,7 +70,7 @@ pub(super) trait ChunkRewrite: Sync {
         entry: Self::Entry,
         snapshot: Option<&EntitySnapshot>,
         reads: &Self::Reads,
-        now: DateTime<Utc>,
+        now: SystemInstant,
     ) -> Result<PlannedWrite<Self::Entry>, Box<(Identifier, EntityError)>>;
 }
 
@@ -110,7 +111,7 @@ impl EntityService {
         }
         let chunk_ids: Vec<Identifier> = entries.iter().map(|entry| R::id(entry).clone()).collect(); // clone: the guards and the first read own the identifiers
         let _id_guards = self.acquire_id_locks(placement.target(), &chunk_ids).await;
-        let now = Utc::now();
+        let now = SystemInstant::new(Utc::now());
 
         let mut pending = self.rewrite_attempt(placement, rewrite, entries, &chunk_ids, now, &mut settled).await?;
         for lost_attempts in 1..WRITE_ATTEMPTS {
@@ -138,7 +139,7 @@ impl EntityService {
         rewrite: &R,
         pending: Vec<R::Entry>,
         ids: &[Identifier],
-        now: DateTime<Utc>,
+        now: SystemInstant,
         settled: &mut ChunkOutcome,
     ) -> Result<Vec<R::Entry>, EntityError> {
         let mut snapshots = self.reader.get_snapshot_batch(placement.target(), ids).await?;
@@ -149,9 +150,9 @@ impl EntityService {
         for entry in pending {
             let snapshot = snapshots.remove(R::id(&entry));
             match rewrite.build(entry, snapshot.as_ref(), &reads, now) {
-                Ok(PlannedWrite { entry, mut write, alongside }) => {
-                    write.precondition = snapshot.map_or(Precondition::MustNotExist, |snapshot| Precondition::UnchangedSince(snapshot.modified_at));
-                    writes.push(write);
+                Ok(PlannedWrite { entry, write, alongside }) => {
+                    let precondition = snapshot.map_or(Precondition::MustNotExist, |snapshot| Precondition::UnchangedSince(snapshot.modified_at));
+                    writes.push(GuardedWrite { write, precondition });
                     built.push((entry, alongside));
                 }
                 Err(failure) => settled.errors.push(*failure),

@@ -20,11 +20,9 @@ use crate::{
 use andromeda_context_commit::scope_presence::ScopePresence;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::deletion_outline::{DeletionOutline, DeletionWatchers};
+use andromeda_ngsi_ld_entity::reads::attribute_instance_key::AttributeInstanceKey;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{
-    expanded::instance_key::AttributeInstanceKey,
-    notification::{NotificationTrigger, effective_notification_triggers},
-};
+use andromeda_ngsi_ld_model::notification::{NotificationTrigger, effective_notification_triggers};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_schema::{

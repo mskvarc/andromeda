@@ -27,8 +27,14 @@ use rdfx::{BlankIdBuf, vocabulary::no_vocabulary_mut};
 use thiserror::Error;
 
 /// A request `@context` and the active context it processed into.
+///
+/// [`ContextCompactor::processed_context`] hands it out, so a compaction that
+/// selects terms itself reads the same processed context the processor
+/// compacts against.
+///
+/// [`ContextCompactor::processed_context`]: crate::engine::context_compactor::ContextCompactor::processed_context
 #[derive(derive_more::Debug)]
-pub(crate) struct CompactionContext {
+pub struct CompactionContext {
     /// The `@context` as the request resolved it, which a compacted document
     /// that keeps its context carries verbatim.
     unprocessed: JsonLdContext,
@@ -73,6 +79,13 @@ impl CompactionContext {
             .map_err(|error| CompactionContextError::Processing(Box::new(CompactError::ContextProcessing(error))))?
             .into_processed();
         Ok(CompactionContext { unprocessed, processed })
+    }
+
+    /// The active context: the term definitions and the inverse context IRI
+    /// compaction selects terms from (JSON-LD 1.1 API section 6.2).
+    #[must_use]
+    pub const fn active_context(&self) -> &ActiveContext<IriBuf, BlankIdBuf> {
+        &self.processed
     }
 
     /// Compact an expanded document against this context.

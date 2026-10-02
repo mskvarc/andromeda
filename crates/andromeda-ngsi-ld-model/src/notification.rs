@@ -81,7 +81,7 @@ fn push_unique(triggers: &mut Vec<NotificationTrigger>, trigger: NotificationTri
 }
 
 /// System attribute timestamps captured before entity deletion.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SysAttrsSnapshot {
     /// Creation timestamp the entity carried.
     pub created_at: DateTime<Utc>,

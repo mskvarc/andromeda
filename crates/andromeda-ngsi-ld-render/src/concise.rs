@@ -45,7 +45,7 @@ pub fn concise_value(val: Value) -> Value {
 }
 
 /// Apply concise transformation to an attribute value (single instance or multi-attribute array).
-fn concise_attr_value(value: Value) -> Value {
+pub(crate) fn concise_attr_value(value: Value) -> Value {
     match value {
         Value::Object(attr_obj) => concise_single_instance(attr_obj),
         Value::Array(items) => Value::Array(

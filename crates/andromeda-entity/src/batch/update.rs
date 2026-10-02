@@ -16,50 +16,41 @@ use crate::{
     batch::{
         BatchResult,
         admitted_batch::AdmittedBatchEntity,
-        chunk::UpdatedPayloads,
+        chunk::UpdatedStates,
         chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
         prepare::PreparedEntity,
     },
     entity_snapshot::EntitySnapshot,
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
-    expanded_member::unwrap_expanded_ref,
-    notification_plan::modification,
     side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::{
-    mutation::{
-        entity::{append_entity_attrs, update_entity_attrs},
-        selection::OverwritePolicy,
-    },
-    written_observation::AddressedInstances,
+use andromeda_ngsi_ld_entity::{
+    document::EntityDocument,
+    entity_state::EntityState,
+    history::written_observation::AddressedInstances,
+    operation::selection::OverwritePolicy,
+    system_instant::SystemInstant,
 };
-use chrono::{DateTime, Utc};
-use serde_json::Value;
-use std::sync::Arc;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
-/// Whether a `noOverwrite` append of `attrs` onto `entity` can add nothing: the
-/// fragment names at least one attribute and every named attribute is already
-/// present. Clause 5.6.9.5 counts an Entity in S only when it was "successfully
-/// updated (Attributes appended)", so an append that adds no attribute leaves
-/// the Entity out of S (clause 5.6.9.4). A fragment that names a not-yet-present
-/// attribute appends it and the Entity is a success even if others are skipped,
-/// matching the single Append Attributes operation (clause 5.6.3), which reports
-/// the skipped ones in a `notUpdated` list rather than failing the Entity.
-fn appends_nothing(entity: &Value, attrs: &Value) -> bool {
-    let entity_obj = match entity {
-        Value::Array(arr) => arr.first().and_then(Value::as_object),
-        Value::Object(obj) => Some(obj),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    };
-    let Some((entity_obj, attrs_obj)) = entity_obj.zip(attrs.as_object()) else {
-        return false;
-    };
-    let mut named = attrs_obj.keys().filter(|key| !key.starts_with('@')).peekable();
-    named.peek().is_some() && named.all(|key| entity_obj.contains_key(key))
+/// Whether a `noOverwrite` append of `fragment` onto `entity` can add nothing:
+/// the fragment names at least one member and every member it names is
+/// already present. Clause 5.6.9.5 counts an Entity in S only when it was
+/// "successfully updated (Attributes appended)", so an append that adds no
+/// attribute leaves the Entity out of S (clause 5.6.9.4). A fragment that names
+/// a not-yet-present attribute appends it and the Entity is a success even if
+/// others are skipped, matching the single Append Attributes operation (clause
+/// 5.6.3), which reports the skipped ones in a `notUpdated` list rather than
+/// failing the Entity.
+fn appends_nothing(entity: &EntityState, fragment: &EntityDocument) -> bool {
+    let scope = fragment.scope().map(|_| entity.scope().is_some());
+    let expiry = fragment.expires_at().map(|_| entity.expires_at().is_some());
+    let attributes = fragment.attributes().keys().map(|name| entity.attributes().contains(name.as_str()));
+    let mut named = scope.into_iter().chain(expiry).chain(attributes).peekable();
+    named.peek().is_some() && named.all(|present| present)
 }
 
 /// Updating each entity of a chunk as an attempt read it (clause 5.6.9.4 runs
@@ -83,18 +74,18 @@ impl ChunkRewrite for UpdateRewrite<'_> {
         entry: PreparedEntity,
         snapshot: Option<&EntitySnapshot>,
         _reads: &(),
-        now: DateTime<Utc>,
+        now: SystemInstant,
     ) -> Result<PlannedWrite<PreparedEntity>, Box<(Identifier, EntityError)>> {
         let Some(snapshot) = snapshot else {
             let error = EntityError::not_found(&entry.id);
             return Err(Box::new((entry.id, error)));
         };
-        let previous = &snapshot.payload;
-        let mut updated = Value::clone(previous); // clone: the update mutates its own copy of the stored payload
+        let previous = &snapshot.state;
+        // clone: reference-count bumps; the update shares every attribute it does not touch with the stored state
+        let mut updated = EntityState::clone(previous);
 
-        let attrs = unwrap_expanded_ref(&entry.expanded);
         let mut alongside = None;
-        if self.overwrite == OverwritePolicy::Preserve {
+        let applied = if self.overwrite == OverwritePolicy::Preserve {
             // Clause 5.6.9.4: the local phase is an Append Attributes (clause
             // 5.6.3) with overwrite disabled. Clause 5.6.9.5 puts an Entity in
             // S when it was "successfully updated (Attributes appended)", so a
@@ -104,39 +95,33 @@ impl ChunkRewrite for UpdateRewrite<'_> {
             // out of S and is reported as an error, making the batch a 207.
             // Whether it appended anything depends on the state this attempt
             // read, so the error belongs to the attempt.
-            if appends_nothing(&updated, attrs) {
+            if appends_nothing(&updated, &entry.document) {
                 alongside = Some(EntityError::Validation(EntityValidationReason::NoOverwriteConflict));
             }
-            if let Err(error) = append_entity_attrs(&mut updated, attrs, OverwritePolicy::Preserve) {
-                return Err(Box::new((entry.id, error.into())));
-            }
+            updated.append_attributes(&entry.document, OverwritePolicy::Preserve).map(drop)
         } else {
-            if let Err(error) = update_entity_attrs(&mut updated, attrs) {
-                return Err(Box::new((entry.id, error.into())));
-            }
-            if let Err(error) = append_entity_attrs(&mut updated, attrs, OverwritePolicy::Overwrite) {
-                return Err(Box::new((entry.id, error.into())));
-            }
+            updated
+                .update_attributes(&entry.document)
+                .and_then(|_| updated.append_attributes(&entry.document, OverwritePolicy::Overwrite))
+                .map(drop)
+        };
+        if let Err(error) = applied {
+            return Err(Box::new((entry.id, EntityError::from(error))));
         }
 
         // Batch update mirrors the single attribute update (clause 5.6.9):
         // the per-attribute triggers, partitioned from the before/after diff.
-        let change = match modification(previous, &updated) {
-            Ok(change) => change,
-            Err(error) => return Err(Box::new((entry.id, error))),
-        };
         let write = self.service.chunk_update(
             self.target,
             entry.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
-            UpdatedPayloads {
+            UpdatedStates {
                 previous,
-                merged: Arc::new(updated),
+                current: updated,
                 addressed: AddressedInstances::EntityFragment {
-                    fragment: &entry.expanded,
+                    fragment: &entry.document,
                     overwrite: self.overwrite,
                 },
             },
-            change,
             now,
         )?;
         Ok(PlannedWrite { entry, write, alongside })
@@ -187,7 +172,39 @@ impl EntityService {
 #[cfg(test)]
 mod tests {
     use crate::batch::update::appends_nothing;
-    use serde_json::json;
+    use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
+    use serde_json::{Value, json};
+
+    const ENTITY_ID: &str = "urn:ngsi-ld:Vehicle:1";
+    const BRAND_NAME: &str = "https://example.org/brandName";
+    const IS_PARKED: &str = "https://example.org/isParked";
+    const SPEED: &str = "https://example.org/speed";
+    const SCOPE: &str = "https://uri.etsi.org/ngsi-ld/scope";
+
+    fn property(value: &str) -> Value {
+        json!([{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]}])
+    }
+
+    fn relationship() -> Value {
+        json!([{"@type": ["https://uri.etsi.org/ngsi-ld/Relationship"], "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Parking:1"}]}])
+    }
+
+    /// An expanded node of `members` beside the entity's identity.
+    fn node(members: &[(&str, Value)]) -> Value {
+        let mut node = serde_json::Map::new();
+        node.insert("@id".to_owned(), json!(ENTITY_ID));
+        node.insert("@type".to_owned(), json!(["https://example.org/Vehicle"]));
+        node.extend(members.iter().map(|(name, value)| ((*name).to_owned(), value.clone()))); // clone: the fixture keeps its members
+        Value::Array(vec![Value::Object(node)])
+    }
+
+    fn stored() -> EntityState {
+        EntityState::from_slice(node(&[(BRAND_NAME, property("x")), (IS_PARKED, relationship())]).to_string().as_bytes()).expect("a stored entity")
+    }
+
+    fn fragment(members: &[(&str, Value)]) -> EntityDocument {
+        EntityDocument::from_slice(node(members).to_string().as_bytes()).expect("a written fragment")
+    }
 
     /// Clause 5.6.9.5: an Entity is a success (S) only when at least one Attribute
     /// was appended. A fragment naming a not-yet-present Attribute appends it, even
@@ -195,29 +212,29 @@ mod tests {
     /// nothing.
     #[test]
     fn a_no_overwrite_fragment_appends_nothing_only_when_every_named_attribute_is_present() {
-        let stored = json!({"@id": "urn:ngsi-ld:Vehicle:1", "brandName": {"type": "Property"}, "isParked": {"type": "Relationship"}});
+        let stored = stored();
 
         // Every named attribute already present -> appends nothing (207 path).
-        assert!(appends_nothing(&stored, &json!({"isParked": {"type": "Relationship"}})));
-        assert!(appends_nothing(
-            &stored,
-            &json!({"@context": "x", "brandName": {"type": "Property"}, "isParked": {"type": "Relationship"}})
-        ));
+        assert!(appends_nothing(&stored, &fragment(&[(IS_PARKED, relationship())])));
+        assert!(appends_nothing(&stored, &fragment(&[(BRAND_NAME, property("y")), (IS_PARKED, relationship())])));
 
         // At least one named attribute is new -> appends something (S / 204 path).
-        assert!(!appends_nothing(&stored, &json!({"speed": {"type": "Property"}})));
-        assert!(!appends_nothing(
-            &stored,
-            &json!({"isParked": {"type": "Relationship"}, "speed": {"type": "Property"}})
-        ));
+        assert!(!appends_nothing(&stored, &fragment(&[(SPEED, property("1"))])));
+        assert!(!appends_nothing(&stored, &fragment(&[(IS_PARKED, relationship()), (SPEED, property("1"))])));
 
-        // A fragment naming no attribute (only JSON-LD keywords) appends nothing new
-        // but is not a noOverwrite conflict either.
-        assert!(!appends_nothing(&stored, &json!({"@context": "x"})));
+        // A fragment naming no member appends nothing new but is not a
+        // noOverwrite conflict either.
+        assert!(!appends_nothing(&stored, &fragment(&[])));
+    }
 
-        // The stored payload may arrive array-wrapped.
-        let array_wrapped = json!([{"brandName": {"type": "Property"}}]);
-        assert!(appends_nothing(&array_wrapped, &json!({"brandName": {"type": "Property"}})));
-        assert!(!appends_nothing(&array_wrapped, &json!({"speed": {"type": "Property"}})));
+    /// The scope is a member like any attribute (clause 4.18): a fragment
+    /// naming it appends something only to an entity that holds none.
+    #[test]
+    fn a_no_overwrite_scope_appends_nothing_only_to_an_entity_holding_a_scope() {
+        let scoped = fragment(&[(SCOPE, json!([{"@value": "/Madrid"}]))]);
+        assert!(!appends_nothing(&stored(), &scoped));
+
+        let holding = EntityState::from_slice(node(&[(SCOPE, json!([{"@value": "/Berlin"}]))]).to_string().as_bytes()).expect("a stored entity");
+        assert!(appends_nothing(&holding, &scoped));
     }
 }

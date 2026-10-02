@@ -56,20 +56,18 @@ use crate::{
     read::rendered_entity::HistoryPresence,
     remote_linked::TemporalLinkedWindow,
     service::TemporalService,
+    temporal_compaction::TemporalCompaction,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::entity_member::extract_types;
+use andromeda_entity::port::retrieved_entity::RetrievedEntity;
+use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{projection::compiled::Projection, temporal::compiled::CompiledTemporalQuery};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use indexmap::{IndexMap, IndexSet};
 use serde_json::Value;
-use std::{
-    collections::{HashMap, HashSet},
-    num::NonZeroU32,
-};
+use std::{collections::HashSet, num::NonZeroU32};
 
 /// Everything a temporal join traversal produced: the temporal
 /// representations it resolved, and the Linked Entities it could not.
@@ -320,25 +318,20 @@ impl TemporalService {
         context: &ContextSpec,
     ) -> Result<(IndexMap<Identifier, Value>, Vec<TemporalLinkedCandidate>), TemporalError> {
         let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
-        let payloads = self.entity_reader.get_batch(target, &ids).await.map_err(TemporalError::from_entity_failure)?;
-        // Every stored payload was admitted when it was written, so a type it
-        // cannot be read back with is a broker fault, not a missing link.
-        let types: HashMap<&Identifier, Vec<EntityTypeName>> = payloads
-            .iter()
-            .map(|(id, payload)| Ok((id, extract_types(payload).map_err(|error| TemporalError::Internal(error.into()))?)))
-            .collect::<Result<_, TemporalError>>()?;
+        let retrieved = self.entity_reader.get_batch(target, &ids).await.map_err(TemporalError::from_entity_failure)?;
 
-        let name_compactor = NameCompactor::new(&self.engine, context);
+        let compactor = self.engine.compactor(context);
+        let compaction = TemporalCompaction::new(&compactor);
         let mut level = IndexMap::with_capacity(candidates.len());
         let mut named: Vec<TemporalLinkedCandidate> = Vec::new();
         for candidate in candidates {
             // An id the base store does not know is not a temporal entity here,
             // so its history is not this broker's to render.
-            let Some(entity_types) = types.get(&candidate.id) else {
+            let Some(RetrievedEntity { state, .. }) = retrieved.get(&candidate.id) else {
                 continue;
             };
             match self
-                .render_one_temporal_entity(target, &candidate.id, entity_types, compiled, &name_compactor)
+                .render_one_temporal_entity(target, &candidate.id, state.types().as_slice(), compiled, &compaction)
                 .await
             {
                 Ok(rendered) => {

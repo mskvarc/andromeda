@@ -10,6 +10,7 @@
 //! upsert collapses them.
 
 use crate::{
+    branch_statement::BranchStatement,
     current_attribute_values::{
         column_sets::{PROJECTION_COLUMNS, staging_columns},
         columns::ProjectionBinds,
@@ -83,11 +84,14 @@ pub async fn insert_minted_projection_in_tx(
         return Ok(());
     }
     let binds = ProjectionBinds::from_rows(&projection.rows)?;
-    let sql = minted_insert_sql(target)?;
-    let statement = binds.bind_to(sqlx::query(AssertSqlSafe(sql.as_str()))).execute(&mut **tx);
+    let sql = MINTED_INSERT.text(target)?;
+    let statement = binds.bind_to(sqlx::query(AssertSqlSafe(&*sql))).execute(&mut **tx);
     observe_statement(CAV_MINTED_INSERT, statement).await?;
     Ok(())
 }
+
+/// The minted-key insert's text, built once for the live branch.
+static MINTED_INSERT: BranchStatement = BranchStatement::new(minted_insert_sql);
 
 /// Build the minted-entity projection insert: the shared staging, then every
 /// staged row inserted as it stands.

@@ -42,14 +42,13 @@
 //! and `andromeda_ngsi_ld_query::term_expander::TermExpander`, which
 //! this crate implements in [`term_expansion`] so the query language never
 //! names JSON-LD. Its inverse, `andromeda_ngsi_ld_query::term_compactor::TermCompactor`,
-//! is implemented in [`term_compaction`] for the same reason.
+//! is implemented by `andromeda-ngsi-ld-compaction`, which compacts names
+//! against a processed context.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-pub mod attribute_fragment;
 pub mod batch_contexts;
-pub mod compaction;
 pub mod compound_context_host;
 pub mod config;
 pub mod context_cache;
@@ -72,7 +71,6 @@ pub mod operation_hit_scope;
 pub mod presented_context;
 pub mod request_context;
 pub mod scoped_context_admission;
-pub mod term_compaction;
 pub mod term_expansion;
 
 #[cfg(test)]

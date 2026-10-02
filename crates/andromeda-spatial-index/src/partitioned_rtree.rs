@@ -360,7 +360,7 @@ mod tests {
         key::SpatialKey,
         partitioned_rtree::{PartitionedRTree, WriteTracking},
     };
-    use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
+    use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
@@ -371,10 +371,8 @@ mod tests {
     }
 
     fn entry(id: &str, x: f64, y: f64) -> SpatialEntry {
-        let geometry = Geometry::new(GeometryForm::Point(
-            Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"),
-        ));
-        SpatialEntry::new(uri(id), geometry).expect("a point has a bounding rectangle")
+        let geometry = GeometryForm::Point(Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"));
+        SpatialEntry::new(uri(id), &geometry).expect("a point has a bounding rectangle")
     }
 
     fn key_a() -> SpatialKey {

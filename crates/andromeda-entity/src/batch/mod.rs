@@ -40,7 +40,7 @@ pub mod execution;
 mod history_recording;
 /// Batch merge-patch.
 mod merge;
-/// Turning request entities into expanded, validated payloads.
+/// Expanding and screening the entities of a batch that name one context.
 mod prepare;
 /// Ordering the instances an array repeats (clause 5.5.11).
 mod same_id_rounds;
@@ -61,8 +61,8 @@ use crate::{
     side_effect::SideEffectPlacement,
     write_kind::{BatchCreate, BatchMerge, BatchUpdate, BatchUpsert},
 };
+use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::mutation::selection::OverwritePolicy;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use futures::{StreamExt, stream};
 use std::collections::HashSet;
@@ -142,10 +142,8 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when an
-    /// entity the forwarding phase narrowed cannot be expanded against
-    /// the context it was submitted with, and
-    /// [`EntityError::Persistence`] when the store could not commit a chunk. A
+    /// Reports the first chunk-level failure: [`EntityError::Persistence`]
+    /// when the store could not commit a chunk. A
     /// failure that concerns one entity only is carried in
     /// [`BatchResult::errors`] instead, because clause 5.6.7 reports batch
     /// results per entity.
@@ -236,10 +234,8 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when an
-    /// entity the forwarding phase narrowed cannot be expanded against
-    /// the context it was submitted with, and
-    /// [`EntityError::Persistence`] when the store could not read or commit a
+    /// Reports the first chunk-level failure: [`EntityError::Persistence`]
+    /// when the store could not read or commit a
     /// chunk. A failure that concerns one entity only is carried in
     /// [`BatchResult::errors`] instead, because clause 5.6.9 reports batch
     /// results per entity.
@@ -283,10 +279,8 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when an
-    /// entity the forwarding phase narrowed cannot be expanded against
-    /// the context it was submitted with, and
-    /// [`EntityError::Persistence`] when the store could not read or commit a
+    /// Reports the first chunk-level failure: [`EntityError::Persistence`]
+    /// when the store could not read or commit a
     /// chunk. A failure that concerns one entity only is carried in
     /// [`BatchResult::errors`] instead.
     pub async fn batch_merge(&self, placement: SideEffectPlacement<'_>, admitted: AdmittedBatch<BatchMerge>) -> Result<BatchResult, EntityError> {
@@ -324,12 +318,11 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when an
-    /// entity the forwarding phase narrowed cannot be expanded against
-    /// the context it was submitted with, and [`EntityError::Persistence`]
+    /// Reports the first chunk-level failure: [`EntityError::Persistence`]
     /// when the store could not read or commit a chunk. A failure that concerns
     /// one entity only is carried in [`BatchResult::errors`] instead, because
-    /// clause 5.6.8 reports batch results per entity -- among them
+    /// clause 5.6.8 reports batch results per entity -- among them an entity
+    /// the forwarding phase narrowed whose remainder does not expand, and
     /// [`EntityError::Contention`] for an entity whose write lost to a
     /// concurrent writer on every attempt.
     pub async fn batch_upsert(

@@ -14,14 +14,9 @@
 //! context is a property of the registration; the expansion side is the
 //! operation's [`TermResolver`], shared by every registration.
 
-use crate::{
-    error::FederationError,
-    federation_invariant::FederationInvariant,
-    forwarded_parameter::{ForwardedParameter, ParameterNames},
-    forwarding_context::Rewording,
-    term_resolver::TermResolver,
-};
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
+use crate::{error::FederationError, federation_invariant::FederationInvariant, forwarding_context::Rewording, term_resolver::TermResolver};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     entity_type_name::EntityTypeName,
@@ -29,12 +24,11 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_query::{
     filter::{compaction::compact_q_expr, expansion::expand_q_expr, expression::Expr, json_key_attributes::JsonKeyAttributes, parser},
-    projection::grammar::{RawProjectionTerm, parse_projection_list},
+    projection::grammar::RawProjectionTerm,
     type_selection::grammar::TypeExprRaw,
 };
 use serde_json::{Map, Value};
 use std::{future::Future, pin::Pin, str::FromStr};
-use url::form_urlencoded;
 
 /// The Subscription member holding its entity selectors (Table 5.2.12-1).
 const ENTITIES_MEMBER: &str = "entities";
@@ -62,7 +56,7 @@ pub(crate) struct ForwardedNames<'a> {
     /// The engine the inbound expander reads.
     engine: &'a JsonLdEngine,
     /// Compacts names against the forwarding context.
-    names: NameCompactor<'a>,
+    names: NameCompaction,
     /// Whether the forwarding context differs from the inbound one.
     rewording: Rewording,
 }
@@ -70,18 +64,33 @@ pub(crate) struct ForwardedNames<'a> {
 impl<'a> ForwardedNames<'a> {
     /// The names a request forwarded under `naming` carries, reworded from the
     /// inbound context when `rewording` says the two differ.
-    pub(crate) fn new(engine: &'a JsonLdEngine, resolver: &'a TermResolver<'a>, naming: &'a ContextSpec, rewording: Rewording) -> ForwardedNames<'a> {
-        ForwardedNames {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::JsonLd`] when `naming` does not resolve or
+    /// does not process.
+    pub(crate) async fn prepare(
+        engine: &'a JsonLdEngine,
+        resolver: &'a TermResolver<'a>,
+        naming: &ContextSpec,
+        rewording: Rewording,
+    ) -> Result<ForwardedNames<'a>, FederationError> {
+        Ok(ForwardedNames {
             resolver,
             engine,
-            names: NameCompactor::new(engine, naming),
+            names: NameCompaction::new(engine.compactor(naming).processed_context().await?),
             rewording,
-        }
+        })
     }
 
     /// The inbound-context expansion this spelling is built on.
     pub(crate) const fn resolver(&self) -> &'a TermResolver<'a> {
         self.resolver
+    }
+
+    /// Whether the names are reworded from the inbound context.
+    pub(crate) const fn rewording(&self) -> Rewording {
+        self.rewording
     }
 
     /// A registered attribute IRI spelled in the forwarding context, or the IRI
@@ -91,8 +100,8 @@ impl<'a> ForwardedNames<'a> {
     ///
     /// Returns [`FederationInvariant::ForwardedName`] when the compacted
     /// spelling is not an NGSI-LD name.
-    pub(crate) async fn compact_attr(&self, iri: &AttributeName) -> Result<AttributeName, FederationError> {
-        forwarded_name(&self.names.compact_attr_iri(iri.as_str()).await)
+    pub(crate) fn compact_attr(&self, iri: &AttributeName) -> Result<AttributeName, FederationError> {
+        forwarded_name(&self.names.compact_attr_iri(iri.as_str()))
     }
 
     /// A registered entity type IRI spelled in the forwarding context, or the
@@ -102,8 +111,8 @@ impl<'a> ForwardedNames<'a> {
     ///
     /// Returns [`FederationInvariant::ForwardedName`] when the compacted
     /// spelling is not an NGSI-LD name.
-    pub(crate) async fn compact_type(&self, iri: &EntityTypeName) -> Result<EntityTypeName, FederationError> {
-        forwarded_name(&self.names.compact_type_iri(iri.as_str()).await)
+    pub(crate) fn compact_type(&self, iri: &EntityTypeName) -> Result<EntityTypeName, FederationError> {
+        forwarded_name(&self.names.compact_type_iri(iri.as_str()))
     }
 
     /// A client's attribute name, spelled in the forwarding context.
@@ -118,7 +127,7 @@ impl<'a> ForwardedNames<'a> {
             Rewording::AsInbound => Ok(term.clone()), // clone: the forwarded query owns the names it writes
             Rewording::Reword => {
                 let iri = self.resolver.expand_attr(term.as_str()).await?;
-                forwarded_name(&self.names.compact_attr_iri(iri.as_str()).await)
+                forwarded_name(&self.names.compact_attr_iri(iri.as_str()))
             }
         }
     }
@@ -133,7 +142,7 @@ impl<'a> ForwardedNames<'a> {
             Rewording::AsInbound => Ok(term.clone()), // clone: the forwarded query owns the names it writes
             Rewording::Reword => {
                 let iri = self.resolver.expand_type(term.as_str()).await?;
-                forwarded_name(&self.names.compact_type_iri(iri.as_str()).await)
+                forwarded_name(&self.names.compact_type_iri(iri.as_str()))
             }
         }
     }
@@ -236,80 +245,8 @@ impl<'a> ForwardedNames<'a> {
             Rewording::AsInbound => Ok(name.clone()), // clone: the forwarded query owns the name it writes
             Rewording::Reword => {
                 let iri = self.resolver.expand_attr(name.as_str()).await?;
-                forwarded_name(&self.names.compact_attr_iri(iri.as_str()).await)
+                forwarded_name(&self.names.compact_attr_iri(iri.as_str()))
             }
-        }
-    }
-
-    /// A raw query string a client wrote, with every parameter that carries
-    /// names (`type`, `attrs`, `jsonKeys`, `expandValues`, `geoproperty`,
-    /// `pick`, `omit` and `q`) spelled in the forwarding context and every
-    /// other parameter unchanged.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FederationError::Query`] when a name-bearing parameter does
-    /// not parse, and the errors of [`ForwardedNames::attr`] and
-    /// [`ForwardedNames::q`] when one of its names does not reword.
-    pub(crate) async fn query_string(&self, raw: &str) -> Result<String, FederationError> {
-        if self.rewording == Rewording::AsInbound {
-            return Ok(raw.to_owned());
-        }
-        let pairs = form_urlencoded::parse(raw.as_bytes())
-            .into_owned()
-            .map(|(key, value)| (key.parse::<ForwardedParameter>().ok(), key, value))
-            .collect::<Vec<_>>();
-        let mut json_keys = Vec::new();
-        for (_, _, value) in pairs.iter().filter(|(parameter, _, _)| *parameter == Some(ForwardedParameter::JsonKeys)) {
-            json_keys.extend(attribute_names(value)?);
-        }
-        // The serializer holds a non-`Sync` encoder, so it is built only once
-        // every value is reworded and never lives across an await. A parameter
-        // the binding tables do not name carries no name and travels as written.
-        let mut reworded = Vec::with_capacity(pairs.len());
-        for (parameter, key, value) in &pairs {
-            let spelled = match parameter {
-                Some(parameter) => self.reworded_parameter(*parameter, value, &json_keys).await?,
-                None => value.clone(), // clone: the forwarded query owns the values it writes
-            };
-            reworded.push((key, spelled));
-        }
-        Ok(form_urlencoded::Serializer::new(String::new()).extend_pairs(reworded).finish())
-    }
-
-    /// One query parameter's value spelled in the forwarding context.
-    async fn reworded_parameter(&self, parameter: ForwardedParameter, value: &str, json_keys: &[AttributeName]) -> Result<String, FederationError> {
-        match parameter.names() {
-            ParameterNames::TypeSelection => {
-                let expression: TypeExprRaw = value.parse()?;
-                Ok(self.type_expr(&expression).await?.to_string())
-            }
-            ParameterNames::AttributeList => {
-                let mut names = Vec::new();
-                for name in attribute_names(value)? {
-                    names.push(self.attr(&name).await?.to_string());
-                }
-                Ok(names.join(","))
-            }
-            ParameterNames::Attribute => {
-                let parsed: NgsiLdReference = value
-                    .parse()
-                    .map_err(|error| FederationError::from(FederationInvariant::ForwardedName(error)))?;
-                Ok(self.geoproperty(&parsed).await?.to_string())
-            }
-            ParameterNames::Projection => {
-                let terms = parse_projection_list(value)?;
-                Ok(self.projection(&terms).await?.iter().map(ToString::to_string).collect::<Vec<_>>().join(","))
-            }
-            ParameterNames::Query => {
-                let expression = parser::parse(value)?;
-                Ok(self.q(&expression, Some(json_keys)).await?.to_string())
-            }
-            ParameterNames::SourceFilter => {
-                let expression = parser::parse(value)?;
-                Ok(self.q(&expression, None).await?.to_string())
-            }
-            ParameterNames::Nothing => Ok(value.to_owned()),
         }
     }
 
@@ -371,15 +308,6 @@ impl<'a> ForwardedNames<'a> {
     }
 }
 
-/// The attribute names a comma-separated parameter value lists.
-fn attribute_names(value: &str) -> Result<Vec<AttributeName>, FederationError> {
-    value
-        .split(',')
-        .filter(|name| !name.is_empty())
-        .map(|name| name.parse().map_err(|error| FederationError::from(FederationInvariant::ForwardedName(error))))
-        .collect()
-}
-
 /// A compacted spelling as the NGSI-LD name it has to be.
 ///
 /// Compaction answers a term or a full IRI, both of which the clause 4.6.2
@@ -437,7 +365,9 @@ mod tests {
         let inbound = inbound();
         let naming = configured();
         let resolver = TermResolver::new(&engine, &inbound);
-        let names = ForwardedNames::new(&engine, &resolver, &naming, Rewording::Reword);
+        let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)
+            .await
+            .expect("the forwarding context processes");
 
         pretty_assertions::assert_eq!(names.attr(&attr("speed")).await.expect("rewords").as_str(), "velocity");
         // A term the forwarding context does not abbreviate travels as its IRI.
@@ -459,7 +389,9 @@ mod tests {
         let engine = engine();
         let inbound = inbound();
         let resolver = TermResolver::new(&engine, &inbound);
-        let names = ForwardedNames::new(&engine, &resolver, &inbound, Rewording::AsInbound);
+        let names = ForwardedNames::prepare(&engine, &resolver, &inbound, Rewording::AsInbound)
+            .await
+            .expect("the forwarding context processes");
         pretty_assertions::assert_eq!(names.attr(&attr("speed")).await.expect("keeps").as_str(), "speed");
         pretty_assertions::assert_eq!(
             names.query_string("type=Vehicle&attrs=speed&q=speed%3E10").await.expect("keeps"),
@@ -473,7 +405,9 @@ mod tests {
         let inbound = inbound();
         let naming = configured();
         let resolver = TermResolver::new(&engine, &inbound);
-        let names = ForwardedNames::new(&engine, &resolver, &naming, Rewording::Reword);
+        let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)
+            .await
+            .expect("the forwarding context processes");
         let reworded = names
             .query_string("type=Vehicle&attrs=speed,brand&q=speed%3E10&pick=speed&geoproperty=speed&limit=5&id=urn:ngsi-ld:Vehicle:1")
             .await
@@ -505,7 +439,9 @@ mod tests {
             "street": "https://example.org/street"
         }));
         let resolver = TermResolver::new(&engine, &inbound);
-        let names = ForwardedNames::new(&engine, &resolver, &naming, Rewording::Reword);
+        let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)
+            .await
+            .expect("the forwarding context processes");
 
         let literal = names.query_string("q=speed%5Broad%5D%3D%3D%22Main%22&jsonKeys=speed").await.expect("rewords");
         let pairs = form_urlencoded::parse(literal.as_bytes()).into_owned().collect::<Vec<_>>();
@@ -530,7 +466,9 @@ mod tests {
         let inbound = inbound();
         let naming = configured();
         let resolver = TermResolver::new(&engine, &inbound);
-        let names = ForwardedNames::new(&engine, &resolver, &naming, Rewording::Reword);
+        let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)
+            .await
+            .expect("the forwarding context processes");
         let reworded = names.query_string("csf=speed%3D%3D1&orderBy=speed").await.expect("rewords");
         let pairs = form_urlencoded::parse(reworded.as_bytes()).into_owned().collect::<Vec<_>>();
         pretty_assertions::assert_eq!(
@@ -545,7 +483,9 @@ mod tests {
         let inbound = inbound();
         let naming = configured();
         let resolver = TermResolver::new(&engine, &inbound);
-        let names = ForwardedNames::new(&engine, &resolver, &naming, Rewording::Reword);
+        let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)
+            .await
+            .expect("the forwarding context processes");
         let document = json!({
             "id": "urn:ngsi-ld:Subscription:forwarded-1",
             "type": "Subscription",

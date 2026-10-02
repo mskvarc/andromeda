@@ -96,7 +96,7 @@ pub(crate) async fn apply(
 fn group<'a>(landed: &[&'a AtomicWrite]) -> Vec<EventGroup<'a>> {
     let mut groups: Vec<EventGroup<'a>> = Vec::new();
     for change in landed.iter().flat_map(|write| write.subscription_matches.iter()) {
-        match groups.iter_mut().find(|group| same_change(group.change, change)) {
+        match groups.iter_mut().find(|group| group.change.same_change(change)) {
             Some(group) => group.subscriptions.push(change.subscription_key),
             None => groups.push(EventGroup {
                 change,
@@ -105,18 +105,6 @@ fn group<'a>(landed: &[&'a AtomicWrite]) -> Vec<EventGroup<'a>> {
         }
     }
     groups
-}
-
-/// Whether two pending notifications describe the same change.
-///
-/// Everything an event stores has to agree, not just the entity: two writes of
-/// one commit can each change the same entity, and folding those together would
-/// tell a subscriber about one change where clause 5.8.6 owes it two.
-fn same_change(left: &SubscriptionMatch, right: &SubscriptionMatch) -> bool {
-    left.entity_id == right.entity_id
-        && left.change == right.change
-        && left.entity_snapshot == right.entity_snapshot
-        && left.previous_snapshot == right.previous_snapshot
 }
 
 /// Mint the dictionary key of every attribute the grouped changes name.
@@ -172,13 +160,14 @@ fn event<'a>(
         change_attribute_name_keys,
         entity_snapshot: group.change.entity_snapshot.as_deref(),
         previous_snapshot: group.change.previous_snapshot.as_deref(),
+        sys_attrs_snapshot: group.change.sys_attrs_snapshot.as_ref(),
         subscription_keys: group.subscriptions,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::consequences::notification_events::{EventGroup, event, group, same_change};
+    use crate::consequences::notification_events::{EventGroup, event, group};
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
         entity_mutation::EntityMutation,
@@ -186,16 +175,21 @@ mod tests {
         subscription_match::SubscriptionMatch,
         write_ordinal::WriteOrdinal,
     };
+    use andromeda_ngsi_ld_entity::{
+        entity_state::EntityState,
+        entity_types::EntityTypes,
+        reads::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            attribute_instance_key::AttributeInstanceKey,
+        },
+    };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
-        expanded::{
-            attribute_change::{AttributeChange, AttributeChangeKind},
-            instance_key::AttributeInstanceKey,
-        },
+        notification::SysAttrsSnapshot,
     };
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
-    use serde_json::json;
+    use chrono::Utc;
     use std::{collections::HashMap, ptr, sync::Arc};
 
     const SPEED: &str = "https://example.org/speed";
@@ -206,6 +200,14 @@ mod tests {
 
     fn speed() -> AttributeName {
         SPEED.parse().expect("a valid attribute name")
+    }
+
+    /// The `Vehicle` entity every match reports a change of.
+    fn vehicle() -> Arc<EntityState> {
+        Arc::new(EntityState::new(
+            uri("urn:ngsi-ld:Vehicle:1"),
+            EntityTypes::one("https://example.org/Vehicle".parse().expect("a valid type name")),
+        ))
     }
 
     /// A change through `lifecycle` that `kind`s the `speed` instance of
@@ -228,7 +230,7 @@ mod tests {
             .subscription_key(SubscriptionKey::try_from(subscription).expect("a positive subscription key"))
             .entity_id(uri("urn:ngsi-ld:Vehicle:1"))
             .change(change)
-            .entity_snapshot(Some(Arc::new(json!({ "id": "urn:ngsi-ld:Vehicle:1" }))))
+            .entity_snapshot(Some(vehicle()))
             .build()
     }
 
@@ -266,6 +268,41 @@ mod tests {
         pretty_assertions::assert_eq!(groups.len(), 2);
     }
 
+    /// A deletion's system attributes are part of what its event stores, so
+    /// two deletions that agree on everything else but them are two events.
+    #[test]
+    fn changes_differing_only_in_their_system_attributes_are_not_folded_together() {
+        let mut second = updated(2);
+        second.sys_attrs_snapshot = Some(SysAttrsSnapshot {
+            created_at: Utc::now(),
+            modified_at: Utc::now(),
+            expires_at: None,
+        });
+        let first = write(vec![updated(1)]);
+        let other = write(vec![second]);
+        pretty_assertions::assert_eq!(group(&[&first, &other]).len(), 2);
+    }
+
+    /// The removed entity's system attributes are handed to the event row as
+    /// the match carries them.
+    #[test]
+    fn an_event_carries_the_system_attributes_of_its_change() {
+        let mut matched = updated(1);
+        let sys_attrs = SysAttrsSnapshot {
+            created_at: Utc::now(),
+            modified_at: Utc::now(),
+            expires_at: None,
+        };
+        matched.sys_attrs_snapshot = Some(sys_attrs.clone()); // clone: the test compares the event against the value it handed over
+        let group = EventGroup {
+            change: &matched,
+            subscriptions: vec![matched.subscription_key],
+        };
+        let dictionary = HashMap::from([(speed(), AttributeNameKey::from(7))]);
+        let built = event(WriteOrdinal::at(0), 0, group, &dictionary).expect("a valid group builds an event");
+        pretty_assertions::assert_eq!(built.sys_attrs_snapshot, Some(&sys_attrs));
+    }
+
     /// The ordinal a group is numbered by is its position, so the grouping has
     /// to be a function of submission order alone.
     #[test]
@@ -288,8 +325,8 @@ mod tests {
     #[test]
     fn changes_differing_only_in_their_previous_snapshot_are_not_folded_together() {
         let mut second = updated(2);
-        second.previous_snapshot = Some(Arc::new(json!({ "id": "urn:ngsi-ld:Vehicle:1" })));
-        assert!(!same_change(&updated(1), &second));
+        second.previous_snapshot = Some(vehicle());
+        assert!(!updated(1).same_change(&second));
     }
 
     /// The matcher hands every subscriber of one change the same snapshot
@@ -297,7 +334,7 @@ mod tests {
     /// the payload it was handed once.
     #[test]
     fn changes_sharing_one_snapshot_allocation_fold_together() {
-        let snapshot = Arc::new(json!({ "id": "urn:ngsi-ld:Vehicle:1", "speed": [1, 2, 3] }));
+        let snapshot = vehicle();
         let sharing = |subscription: i64| {
             let mut change = updated(subscription);
             change.entity_snapshot = Some(Arc::clone(&snapshot));
@@ -320,7 +357,7 @@ mod tests {
             2,
             entity_change(EntityLifecycle::Modified, AttributeChangeKind::Updated, Some("urn:dataset:named")),
         );
-        assert!(!same_change(&updated(1), &second));
+        assert!(!updated(1).same_change(&second));
     }
 
     /// The commit's temporal history entries have already drawn from the

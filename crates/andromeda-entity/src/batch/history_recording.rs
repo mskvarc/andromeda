@@ -16,7 +16,8 @@ use crate::{
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::selection::OverwritePolicy};
+use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
+use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -49,7 +50,8 @@ async fn batch_merge_records_the_merged_instance_keeping_its_untouched_sub_prope
 
     let write = single_recorded_write(&recorded);
     assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
-    let category = observed_default_instance(recorded_observation(&write).expect("an observation"), CATEGORY_IRI);
+    let observation = recorded_observation(&write).expect("an observation");
+    let category = observed_default_instance(&observation, CATEGORY_IRI);
     assert_eq!(category[ACCURACY_IRI][0][properties::VALUE.as_str()][0]["@value"], json!("high"));
 }
 

@@ -2,6 +2,7 @@
 
 use crate::{
     error::ContextStoreError,
+    jsonb_text::JsonbText,
     snapshot::{status_code::status_of, stored_snapshot_error::StoredSnapshotError},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -10,17 +11,16 @@ use andromeda_ngsi_ld_model::{
     query::body::Query,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority},
 };
-use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use iso8601_duration::Duration as Iso8601Duration;
 use sea_query::Iden;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
 use url::Url;
 
-/// Deserialize an optional JSON column into a typed `Option<T>`.
+/// Deserialize an optional JSON column into a typed `Option<T>`, decoded by
+/// the streaming reader straight from the column's text.
 ///
 /// `unreadable` names the column in the failure, so the JSON columns of one
 /// record are told apart without carrying the column's text.
@@ -35,8 +35,8 @@ pub fn deserialize_json_column<T: DeserializeOwned>(
     column: impl Iden + Copy,
     unreadable: fn(serde_json::Error) -> StoredSnapshotError,
 ) -> Result<Option<T>, ContextStoreError> {
-    let val: Option<Value> = row.try_get(column.unquoted())?;
-    Ok(val.map(|v| deserialize_exact(&v).map_err(unreadable)).transpose()?)
+    let text: Option<JsonbText<'_>> = row.try_get(column.unquoted())?;
+    Ok(text.map(|text| serde_json::from_slice(text.as_bytes()).map_err(unreadable)).transpose()?)
 }
 
 /// Convert a `snapshots` row into the domain [`Snapshot`].

@@ -211,7 +211,6 @@ mod tests {
             | JsonLdError::TermNotExpanded
             | JsonLdError::ExpandedTermNotIri(_)
             | JsonLdError::ContextUrlNotIri(_)
-            | JsonLdError::GeneratedVocabularyIri(_)
             | JsonLdError::JsonLdContextText(_)
             | JsonLdError::JsonLdContextShape
             | JsonLdError::DocumentShape

@@ -1,12 +1,12 @@
 //! Entity change events committed for downstream consumers.
 
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_change::EntityChange,
     notification::{ChangeOrigin, SysAttrsSnapshot},
 };
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
@@ -24,38 +24,41 @@ pub struct ChangeEvent {
     pub change: EntityChange,
     /// Time at which the mutation occurred.
     pub occurred_at: DateTime<Utc>,
-    /// Expanded pre-deletion snapshot for an entity deletion.
+    /// The state an entity deletion removed.
     #[builder(default = Default::default())]
-    pub entity_snapshot: Option<Arc<Value>>,
-    /// Expanded state before the mutation for `showChanges`.
+    pub entity_snapshot: Option<Arc<EntityState>>,
+    /// The state before the mutation, for `showChanges`.
     #[builder(default = Default::default())]
-    pub previous_attributes: Option<Arc<Value>>,
+    pub previous_attributes: Option<Arc<EntityState>>,
     /// System attributes captured before deletion.
     #[builder(default = Default::default())]
     pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
     /// Whether the event originated locally or from a forwarded source.
     pub origin: ChangeOrigin,
-    /// Expanded state after the mutation, when already available.
+    /// The state after the mutation, when already available.
     #[builder(default = Default::default())]
-    pub current_payload: Option<Arc<Value>>,
+    pub current_payload: Option<Arc<EntityState>>,
 }
 
 #[cfg(test)]
 mod tests {
     use crate::change_event::ChangeEvent;
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         notification::{ChangeOrigin, NotificationTrigger},
     };
     use chrono::Utc;
-    use serde_json::json;
     use std::sync::Arc;
 
     /// A deletion hands both fields the one removed state it read, so the
     /// event carries one allocation however many readers it has.
     #[test]
     fn a_change_event_shares_the_snapshot_it_is_given() {
-        let removed = Arc::new(json!([{"@id": "urn:ngsi-ld:Building:1"}]));
+        let removed = Arc::new(EntityState::new(
+            "urn:ngsi-ld:Building:1".parse().expect("valid entity id"),
+            EntityTypes::one("https://example.org/Building".parse().expect("valid type name")),
+        ));
         let event = ChangeEvent::builder()
             .entity_id("urn:ngsi-ld:Building:1".parse().expect("valid entity id"))
             .change(EntityChange::new(EntityLifecycle::Deleted, Vec::new()))

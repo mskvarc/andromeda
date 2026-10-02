@@ -9,7 +9,6 @@
 
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, iri};
-use std::ptr;
 
 /// Core Context v1.3 URL.
 pub const NGSI_LD_CORE_CONTEXT_V13_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.3.jsonld");
@@ -94,23 +93,6 @@ pub fn embedded_core_context(url: Iri<&str>) -> Option<&'static str> {
     NGSI_LD_CORE_CONTEXT_MAP
         .iter()
         .find_map(|(candidate, payload)| (candidate == &url).then_some(*payload))
-}
-
-/// Whether two core context URLs resolve to the same embedded document.
-///
-/// The versionless alias and the versioned URL of the same release map to one
-/// payload, so they are the same context; two different releases are not. This
-/// is what the fastpath needs to decide whether an entity's inline core
-/// reference agrees with the version the deployment pinned (clause 4.4):
-/// only when it does may the fastpath's version-specific term table speak for
-/// it. Payloads are compared by pointer, as each URL maps to one interned
-/// `&'static str`.
-#[must_use]
-pub fn same_core_context_document(a: Iri<&str>, b: Iri<&str>) -> bool {
-    match (embedded_core_context(a), embedded_core_context(b)) {
-        (Some(payload_a), Some(payload_b)) => ptr::eq(payload_a, payload_b),
-        (Some(_) | None, _) => a == b,
-    }
 }
 
 #[cfg(test)]

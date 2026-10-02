@@ -11,6 +11,7 @@ mod no_op_guard;
 mod update_first;
 
 use crate::{
+    branch_statement::BranchStatement,
     current_attribute_values::{
         column_sets::{PROJECTION_COLUMNS, staging_columns},
         columns::ProjectionBinds,
@@ -82,12 +83,15 @@ pub async fn upsert_projection_in_tx(
     }
 
     let binds = ProjectionBinds::from_rows(rows)?;
-    let sql = projection_upsert_sql(target)?;
-    let statement = binds.bind_to(sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))).execute(&mut **tx);
+    let sql = PROJECTION_UPSERT.text(target)?;
+    let statement = binds.bind_to(sqlx::query(sqlx::AssertSqlSafe(&*sql))).execute(&mut **tx);
     observe_statement(CAV_UPSERT, statement).await?;
 
     Ok(())
 }
+
+/// The projection upsert's text, built once for the live branch.
+static PROJECTION_UPSERT: BranchStatement = BranchStatement::new(projection_upsert_sql);
 
 /// Build the projection upsert statement for one batch.
 ///

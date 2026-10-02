@@ -7,11 +7,14 @@
 
 pub mod accept;
 pub mod addressed_uri;
+mod admitted_document;
 pub mod admitted_temporal_query;
 pub mod api_root;
+mod batch_array;
 pub mod batch_body_refusal;
 pub mod batch_item_refusal;
 pub mod blocking_decode;
+mod body_envelope;
 pub mod classification;
 pub mod content_length_precondition;
 pub mod context;
@@ -65,6 +68,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-test-allocator",
     ],
     allow_production_dependencies: ["axum", "tokio"],
 }

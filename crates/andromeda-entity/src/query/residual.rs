@@ -9,6 +9,7 @@ use crate::{
     entity_invariant::EntityInvariant,
     error::EntityError,
     pagination_outcome::PaginationOutcome,
+    port::retrieved_entity::RetrievedEntity,
     query::EntityQueryService,
     query_outcome::QueryOutcome,
     query_residual::ResidualFilter,
@@ -17,14 +18,14 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
-use serde_json::Value;
 
 /// The rows a query answers with, and the clause 6.3.13 count when one was
 /// asked for.
 #[derive(Debug)]
 pub(super) struct FinishedPage {
-    /// The page of matching entities.
-    pub rows: Vec<Value>,
+    /// The stored states of the page's matching entities, each with its
+    /// entity-level system times.
+    pub rows: Vec<RetrievedEntity>,
     /// Total number of matches, present when the query asked to be counted.
     pub total_count: Option<i64>,
 }
@@ -38,7 +39,7 @@ pub(super) struct FinishedPage {
 /// taken over rows a later filter will thin leaves the page short and every
 /// subsequent page misaligned, so the combination is a broken store rather than
 /// a case to compensate for.
-pub(super) fn finish_page(outcome: QueryOutcome<Value>, pagination: Pagination) -> Result<FinishedPage, EntityError> {
+pub(super) fn finish_page(outcome: QueryOutcome<RetrievedEntity>, pagination: Pagination) -> Result<FinishedPage, EntityError> {
     let QueryOutcome {
         rows,
         unapplied,
@@ -53,12 +54,7 @@ pub(super) fn finish_page(outcome: QueryOutcome<Value>, pagination: Pagination) 
             Ok(FinishedPage { rows, total_count: total })
         }
         PaginationOutcome::Deferred => {
-            let mut admitted = Vec::with_capacity(rows.len());
-            for row in rows {
-                if residual_filter::matches(&unapplied, &row)? {
-                    admitted.push(row);
-                }
-            }
+            let admitted: Vec<RetrievedEntity> = rows.into_iter().filter(|row| residual_filter::matches(&unapplied, &row.state)).collect();
             Ok(window(admitted, pagination))
         }
     }
@@ -69,7 +65,7 @@ pub(super) fn finish_page(outcome: QueryOutcome<Value>, pagination: Pagination) 
 ///
 /// Clause 6.3.13 counts matching entities rather than returned ones, so the
 /// count is taken before the window and after the filter.
-fn window(admitted: Vec<Value>, pagination: Pagination) -> FinishedPage {
+fn window(admitted: Vec<RetrievedEntity>, pagination: Pagination) -> FinishedPage {
     let total_count = match pagination.count {
         CountPolicy::Emit => Some(i64::try_from(admitted.len()).unwrap_or(i64::MAX)),
         CountPolicy::Omit => None,
@@ -87,7 +83,7 @@ impl EntityQueryService {
     /// Finish an identifier-only outcome (clause 5.2.39 entity maps).
     ///
     /// A predicate cannot be evaluated against an identifier, so an outstanding
-    /// one costs a payload read for every identifier the store returned. That is
+    /// one costs a state read for every identifier the store returned. That is
     /// the honest price of an entity-map query against a store that could not
     /// push the predicate down.
     pub(super) async fn finish_ids(
@@ -114,16 +110,13 @@ impl EntityQueryService {
                 if unapplied.is_empty() {
                     return Ok(rows.into_iter().skip(pagination.offset as usize).take(pagination.limit as usize).collect());
                 }
-                let payloads = self.reader.get_batch(target, &rows).await?;
-                let mut admitted = Vec::with_capacity(rows.len());
-                for id in rows {
-                    if let Some(payload) = payloads.get(&id)
-                        && residual_filter::matches(&unapplied, payload)?
-                    {
-                        admitted.push(id);
-                    }
-                }
-                Ok(admitted.into_iter().skip(pagination.offset as usize).take(pagination.limit as usize).collect())
+                let states = self.reader.get_batch(target, &rows).await?;
+                Ok(rows
+                    .into_iter()
+                    .filter(|id| states.get(id).is_some_and(|retrieved| residual_filter::matches(&unapplied, &retrieved.state)))
+                    .skip(pagination.offset as usize)
+                    .take(pagination.limit as usize)
+                    .collect())
             }
         }
     }
@@ -131,26 +124,53 @@ impl EntityQueryService {
 
 #[cfg(test)]
 mod tests {
-    use crate::{pagination_outcome::PaginationOutcome, query::residual::finish_page, query_outcome::QueryOutcome, query_residual::ResidualFilter};
+    use crate::{
+        pagination_outcome::PaginationOutcome,
+        port::retrieved_entity::RetrievedEntity,
+        query::residual::{FinishedPage, finish_page},
+        query_outcome::QueryOutcome,
+        query_residual::ResidualFilter,
+    };
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
+    use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         filter::parser,
         pagination::{CountPolicy, Pagination},
     };
-    use serde_json::{Value, json};
+    use chrono::{DateTime, Utc};
+    use serde_json::json;
+    use std::sync::Arc;
 
     const TEMPERATURE: &str = "https://example.com/temperature";
 
-    fn entity(temperature: f64) -> Value {
-        json!([{
+    fn entity(temperature: f64) -> EntityState {
+        let document = json!([{
             "@id": format!("urn:ngsi-ld:Building:{temperature}"),
-            TEMPERATURE: [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": temperature}]}]
-        }])
+            "@type": ["https://example.com/Building"],
+            TEMPERATURE: [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": temperature}]}]
+        }]);
+        EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored state")
     }
 
-    /// Five entities at 10, 20, 30, 40 and 50 degrees.
-    fn five() -> Vec<Value> {
-        [10.0, 20.0, 30.0, 40.0, 50.0].into_iter().map(entity).collect()
+    /// Five entities at 10, 20, 30, 40 and 50 degrees, as a store reads them.
+    fn five() -> Vec<RetrievedEntity> {
+        [10.0, 20.0, 30.0, 40.0, 50.0]
+            .into_iter()
+            .map(|temperature| RetrievedEntity {
+                state: Arc::new(entity(temperature)),
+                sys_attrs: SysAttrsSnapshot {
+                    created_at: DateTime::<Utc>::UNIX_EPOCH,
+                    modified_at: DateTime::<Utc>::UNIX_EPOCH,
+                    expires_at: None,
+                },
+            })
+            .collect()
+    }
+
+    /// The states a finished page holds, in page order.
+    fn states(finished: &FinishedPage) -> Vec<&EntityState> {
+        finished.rows.iter().map(|row| row.state.as_ref()).collect()
     }
 
     /// A residual admitting the three entities above 25 degrees.
@@ -201,7 +221,7 @@ mod tests {
             pagination: PaginationOutcome::Deferred,
         };
         let finished = finish_page(outcome, page(2, 1, CountPolicy::Omit)).expect("coherent outcome");
-        pretty_assertions::assert_eq!(finished.rows, vec![entity(40.0), entity(50.0)]);
+        pretty_assertions::assert_eq!(states(&finished), vec![&entity(40.0), &entity(50.0)]);
     }
 
     #[test]
@@ -239,7 +259,7 @@ mod tests {
             pagination: PaginationOutcome::Deferred,
         };
         let finished = finish_page(outcome, page(20, 10, CountPolicy::Emit)).expect("coherent outcome");
-        assert_eq!(finished.rows, [] as [serde_json::Value; 0]);
+        assert!(finished.rows.is_empty(), "the page holds {} rows", finished.rows.len());
         pretty_assertions::assert_eq!(finished.total_count, Some(3));
     }
 
@@ -253,7 +273,7 @@ mod tests {
             pagination: PaginationOutcome::Deferred,
         };
         let finished = finish_page(outcome, page(2, 0, CountPolicy::Emit)).expect("coherent outcome");
-        pretty_assertions::assert_eq!(finished.rows, vec![entity(10.0), entity(20.0)]);
+        pretty_assertions::assert_eq!(states(&finished), vec![&entity(10.0), &entity(20.0)]);
         pretty_assertions::assert_eq!(finished.total_count, Some(5));
     }
 }

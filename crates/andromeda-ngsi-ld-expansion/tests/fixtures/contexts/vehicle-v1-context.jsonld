@@ -1,0 +1,7 @@
+{
+    "@context": {
+        "Vehicle": "http://example.org/vehicle/Vehicle",
+        "builtYear": "http://example.org/vehicle/builtYear",
+        "speed": "http://example.org/vehicle/speed"
+    }
+}

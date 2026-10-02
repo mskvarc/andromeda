@@ -3,22 +3,21 @@
 use crate::{
     EntityService,
     admitted_write::AdmittedEntity,
-    attrs::attribute_write::payload_write,
     error::EntityError,
-    expanded_member::{unwrap_expanded_ref, written_attribute_names, written_entity_types},
-    notification_plan::modification,
+    modification_write::ModificationWrite,
     write_kind::AppendAttributes,
+    written_members::{member_attribute_names, written_member_names},
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::{
-    attribute_system_time::stamp_attribute_instants,
-    mutation::{entity::append_entity_attrs, error::ExpandedEntityError, selection::OverwritePolicy},
-    written_observation::AddressedInstances,
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    history::written_observation::AddressedInstances,
+    operation::selection::OverwritePolicy,
+    system_instant::SystemInstant,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use chrono::Utc;
-use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
@@ -30,12 +29,12 @@ impl EntityService {
     /// its first-level NGSI-LD Null prohibition, so the fragment was admitted
     /// without a deletion sentinel.
     ///
-    /// Returns `(all_attr_iris, not_appended_iris)`:
-    /// - all attribute IRIs the entity carries once the append has landed
-    /// - attribute IRIs that were NOT appended, because `noOverwrite` was set
+    /// Returns `(requested, not_appended)`, both by expanded name:
+    /// - every member the fragment wrote
+    /// - the members that were NOT appended, because `noOverwrite` was set
     ///   and the instance already existed
     ///
-    /// The append is computed from a payload read outside the writing
+    /// The append is computed from a state read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
     ///
@@ -53,40 +52,28 @@ impl EntityService {
         admitted: AdmittedEntity<AppendAttributes>,
         overwrite: OverwritePolicy,
     ) -> Result<(Vec<AttributeName>, Vec<AttributeName>), EntityError> {
-        let entity_uri = id.clone(); // clone: notification and computed write own the identifier
-        let expanded = Arc::new(admitted.into_expanded());
+        let fragment = admitted.into_document();
 
         // Clause 5.6.3.5 reports "the list of Attributes actually appended", so
-        // the reported set starts from the fragment's own attributes. Reading it
+        // the reported set starts from the fragment's own members. Reading it
         // from the merged entity instead would report every attribute the entity
         // already held as if this request had appended it.
-        let requested = written_attribute_names(unwrap_expanded_ref(&expanded))?;
+        let requested = written_member_names(&fragment)?;
         let (not_appended, events) = self
-            .commit_computed_write(target, &entity_uri, |previous| {
-                let now = Utc::now();
-                let mut existing = Value::clone(previous); // clone: the append mutates its own copy of the stored payload
-                let not_appended = append_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded), overwrite)?;
+            .commit_computed_write(target, id, |previous| {
+                let mut appended = EntityState::clone(previous); // clone: shares every attribute the append leaves alone
+                let not_appended = member_attribute_names(appended.append_attributes(&fragment, overwrite)?)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.
-                stamp_attribute_instants(&mut existing, previous, now).map_err(ExpandedEntityError::from)?;
-                let merged = Arc::new(existing);
-
-                // The attributes actually appended are those the fragment
-                // carried minus the instances `noOverwrite` skipped. This is the
-                // set the change describes to `watchedAttributes` matching and to
-                // the notification's `changedAttributes`; the entity's other
-                // attributes did not change.
-                let types = written_entity_types(&merged)?;
-                let change = modification(previous, &merged)?;
-                let plan = self.notifier.plan(target, &entity_uri, &types, change, Some(&merged), Some(previous));
-
+                appended.stamp_attribute_instants(Some(previous), SystemInstant::new(Utc::now()));
+                let appended = Arc::new(appended);
                 let addressed = AddressedInstances::EntityFragment {
-                    fragment: &expanded,
+                    fragment: &fragment,
                     overwrite,
                 };
-                let history = mutation_history(addressed, previous, &merged)?;
-                let write = payload_write(&entity_uri, &merged, history, plan.matches)?;
-                Ok((write, (not_appended, plan.events)))
+                let history = mutation_history(addressed, previous, &appended);
+                let ModificationWrite { write, events } = self.modification_write(target, id, previous, appended, history)?;
+                Ok((write, (not_appended, events)))
             })
             .await?;
 

@@ -13,6 +13,7 @@ use crate::tenant_factory::{
     error::TenantAssemblyError,
     tasks::notification_worker_failure::{ChangeChannel, channel_closed},
 };
+use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_notification::error::NotificationError;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -151,8 +152,14 @@ pub(super) const fn classify_notification_failure(error: NotificationError) -> T
         NotificationError::Entity(_) | NotificationError::Subscription(_) | NotificationError::Registration(_) | NotificationError::JsonLd(_) => {
             FailureClass::Transient
         }
-        NotificationError::Persistence { .. } => FailureClass::Transient,
-        NotificationError::Representation { .. } => FailureClass::Permanent,
+        // A context that did not resolve may resolve on the next attempt; an
+        // entity that did not compact under one that did never will.
+        NotificationError::Persistence { .. } | NotificationError::Compaction(CompactionError::JsonLd(_)) => FailureClass::Transient,
+        NotificationError::Representation { .. }
+        | NotificationError::Rendering(_)
+        | NotificationError::Compaction(CompactionError::Encode(_) | CompactionError::NotAnObject | CompactionError::MissingId | CompactionError::Decode(_)) => {
+            FailureClass::Permanent
+        }
         NotificationError::Invariant { .. } => FailureClass::InvariantViolation,
     };
     TaskFailure::new(class, error)

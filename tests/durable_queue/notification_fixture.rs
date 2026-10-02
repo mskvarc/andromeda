@@ -2,6 +2,7 @@
 
 use crate::queue_database::{record_events, subscription, subscription_key};
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_notification::{delivery_claim::DeliveryClaim, delivery_entry::DeliveryEntry};
@@ -38,6 +39,7 @@ pub async fn queue_notification(pool: &PgPool, subscriptions: usize) -> QueuedNo
         change_attribute_name_keys: Vec::new(),
         entity_snapshot: Some(&snapshot),
         previous_snapshot: None,
+        sys_attrs_snapshot: None,
         subscription_keys: subscription_keys.iter().map(|key| subscription_key(*key)).collect(),
     }];
     record_events(pool, &record, &events).await.expect("one write's events and deliveries");
@@ -68,16 +70,26 @@ pub fn subscription_id() -> Identifier {
         .expect("a valid subscription URI")
 }
 
-/// The expanded Entity state an event carries.
-pub fn entity_snapshot(entity: &Identifier) -> Value {
-    json!({
+/// The stored expanded document of the Entity an event carries.
+pub fn entity_document(entity: &Identifier) -> Value {
+    json!([{
         "@id": entity.as_str(),
         "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"],
         "https://uri.etsi.org/ngsi-ld/default-context/speed": [{
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 120}]
         }]
-    })
+    }])
+}
+
+/// The Entity state an event carries.
+pub fn entity_snapshot(entity: &Identifier) -> EntityState {
+    decoded(&entity_document(entity))
+}
+
+/// Decode a stored expanded document into the Entity state it stores.
+pub fn decoded(document: &Value) -> EntityState {
+    EntityState::from_slice(&serde_json::to_vec(document).expect("the document serialises")).expect("the document is an entity state")
 }
 
 /// The deliveries a claim read back, failing the verification on any row the

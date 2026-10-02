@@ -1,14 +1,13 @@
-//! Reading a compact `GeoJSON` geometry object straight into a
-//! [`GeometryForm`].
+//! Reading a compact `GeoJSON` geometry object already parsed into a JSON
+//! tree into a [`GeometryForm`].
 //!
-//! A `GeoProperty` value reaches the broker as a parsed JSON tree, and every
-//! reader of it -- the write admission, the spatial index, the current-state
-//! projection, the temporal history -- needs its positions. Decoding the tree
-//! through serde would copy it and buffer it once more per position, so the
-//! tree is read in place instead: the `type` member selects how `coordinates`
-//! nests (IETF RFC 7946 sections 3.1.2 through 3.1.7), and each position, line
-//! and ring is built through the same constructors every other geometry path
-//! uses, refused at the same place with the same reason.
+//! The tree's members are read into what they say, exactly as a geometry read
+//! straight from a deserializer (see [`crate::written_geometry`]) reads them,
+//! and the geometry is built from them by the one reading both share: the
+//! `type` member selects how `coordinates` nests (IETF RFC 7946 sections 3.1.2
+//! through 3.1.7), and each position, line and ring is built through the same
+//! constructors every other geometry path uses, refused at the same place with
+//! the same reason.
 //!
 //! A value that is not a `GeoJSON` geometry object at all -- an unknown
 //! `type`, a missing or misshapen `coordinates`, an ordinate that is not a
@@ -17,21 +16,8 @@
 //! part of the value itself. Members RFC 7946 section 6.1 calls foreign are
 //! ignored, as the geometry carries none of them.
 
-use crate::{
-    coordinate_path::CoordinatePath,
-    form::{GeometryForm, PolygonRings},
-    geojson::{CoordinateShape, GeometryError},
-    geometry_type::GeometryType,
-    line_string_coordinates::LineStringCoordinates,
-    linear_ring::LinearRing,
-    position::{Position, PositionError},
-};
-use serde_json::{Map, Value};
-use std::str::FromStr;
-
-/// The `GeoJSON` `type` token of a `GeometryCollection`, which ETSI GS CIM 009
-/// v1.9.1 clause 4.7.1 excludes from a `GeoProperty` value.
-const GEOMETRY_COLLECTION_TOKEN: &str = "GeometryCollection";
+use crate::{form::GeometryForm, geojson::GeometryError, geometry_members::GeometryMembers};
+use serde_json::Value;
 
 impl GeometryForm {
     /// Read a compact `GeoJSON` geometry object.
@@ -50,120 +36,8 @@ impl GeometryForm {
     /// positions, and [`GeometryError::LinearRing`] for a Polygon ring that is
     /// open or holds fewer than four.
     pub fn from_compact_value(value: &Value) -> Result<GeometryForm, GeometryError> {
-        let object = value.as_object().ok_or(GeometryError::NotAnObject)?;
-        let token = object.get("type").and_then(Value::as_str).ok_or(GeometryError::MissingType)?;
-        if token == GEOMETRY_COLLECTION_TOKEN {
-            return match object.get("geometries") {
-                Some(Value::Array(_)) => Err(GeometryError::GeometryCollectionUnsupported),
-                Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) | None => Err(GeometryError::MissingGeometries),
-            };
-        }
-        let geometry_type = GeometryType::from_str(token).map_err(GeometryError::UnknownType)?;
-        check_bbox(object)?;
-        let coordinates = object.get("coordinates").ok_or(GeometryError::MissingCoordinates)?;
-        let mut enclosing = Vec::new();
-        match geometry_type {
-            GeometryType::Point => Ok(GeometryForm::Point(position(coordinates, &enclosing)?)),
-            GeometryType::MultiPoint => Ok(GeometryForm::MultiPoint(positions(coordinates, &mut enclosing)?)),
-            GeometryType::LineString => Ok(GeometryForm::LineString(line_string(coordinates, &mut enclosing)?)),
-            GeometryType::MultiLineString => Ok(GeometryForm::MultiLineString(each(coordinates, &mut enclosing, line_string)?)),
-            GeometryType::Polygon => Ok(GeometryForm::Polygon(rings(coordinates, &mut enclosing)?)),
-            GeometryType::MultiPolygon => Ok(GeometryForm::MultiPolygon(each(coordinates, &mut enclosing, rings)?)),
-        }
+        GeometryMembers::of_object(value.as_object().ok_or(GeometryError::NotAnObject)?).read()
     }
-}
-
-/// Refuse a `bbox` member that is not an array of numbers (IETF RFC 7946
-/// section 5). The box itself is not carried.
-fn check_bbox(object: &Map<String, Value>) -> Result<(), GeometryError> {
-    match object.get("bbox") {
-        None => Ok(()),
-        Some(Value::Array(members)) if members.iter().all(Value::is_number) => Ok(()),
-        Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => Err(GeometryError::InvalidBbox),
-    }
-}
-
-/// The members of the array `node`, which sits at `enclosing` and holds
-/// `expected`.
-fn items<'a>(node: &'a Value, expected: CoordinateShape, enclosing: &[usize]) -> Result<&'a [Value], GeometryError> {
-    node.as_array().map(Vec::as_slice).ok_or_else(|| GeometryError::NotAnArray {
-        expected,
-        at: CoordinatePath::new(enclosing.to_vec()),
-    })
-}
-
-/// Read `node` as one position, refused at `enclosing`.
-///
-/// The ordinates are read into a fixed buffer: a position of more than three
-/// has no meaning and is refused by its count alone.
-fn position(node: &Value, enclosing: &[usize]) -> Result<Position, GeometryError> {
-    let members = items(node, CoordinateShape::Position, enclosing)?;
-    let mut ordinates = [0.0_f64; 3];
-    for (index, member) in members.iter().enumerate() {
-        let ordinate = member.as_f64().ok_or_else(|| GeometryError::NonNumericOrdinate {
-            at: CoordinatePath::new(enclosing.to_vec()),
-        })?;
-        if let Some(slot) = ordinates.get_mut(index) {
-            *slot = ordinate;
-        }
-    }
-    let read = match ordinates.get(..members.len()) {
-        Some(read) => Position::try_from(read),
-        None => Err(PositionError::TooManyOrdinates { ordinates: members.len() }),
-    };
-    read.map_err(|source| GeometryError::Position {
-        at: CoordinatePath::new(enclosing.to_vec()),
-        source,
-    })
-}
-
-/// Read `node` as a list of positions, each refused at its own index.
-fn positions(node: &Value, enclosing: &mut Vec<usize>) -> Result<Vec<Position>, GeometryError> {
-    items(node, CoordinateShape::Positions, enclosing)?
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            enclosing.push(index);
-            let read = position(item, enclosing);
-            enclosing.pop();
-            read
-        })
-        .collect()
-}
-
-/// Read `node` as the positions of one `LineString`.
-fn line_string(node: &Value, enclosing: &mut Vec<usize>) -> Result<LineStringCoordinates, GeometryError> {
-    LineStringCoordinates::try_new(positions(node, enclosing)?).map_err(|source| GeometryError::LineString {
-        at: CoordinatePath::new(enclosing.clone()), // clone: the refusal owns the path of the one line it names
-        source,
-    })
-}
-
-/// Read `node` as one Polygon ring.
-fn ring(node: &Value, enclosing: &mut Vec<usize>) -> Result<LinearRing, GeometryError> {
-    LinearRing::try_new(positions(node, enclosing)?).map_err(|source| GeometryError::LinearRing {
-        at: CoordinatePath::new(enclosing.clone()), // clone: the refusal owns the path of the one ring it names
-        source,
-    })
-}
-
-/// Read `node` as the rings of one Polygon, exterior ring first.
-fn rings(node: &Value, enclosing: &mut Vec<usize>) -> Result<PolygonRings, GeometryError> {
-    each(node, enclosing, ring).map(PolygonRings::new)
-}
-
-/// Read every member of the array `node` with `read`, each one level deeper.
-fn each<T>(node: &Value, enclosing: &mut Vec<usize>, read: impl Fn(&Value, &mut Vec<usize>) -> Result<T, GeometryError>) -> Result<Vec<T>, GeometryError> {
-    items(node, CoordinateShape::List, enclosing)?
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            enclosing.push(index);
-            let read_item = read(item, enclosing);
-            enclosing.pop();
-            read_item
-        })
-        .collect()
 }
 
 #[cfg(test)]

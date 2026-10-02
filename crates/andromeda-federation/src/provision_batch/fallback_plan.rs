@@ -2,7 +2,8 @@
 //! driven for a batch operation it may not advertise.
 
 use crate::{operation::ForwardingOperation, provision_batch::BatchProvisionOperation};
-use andromeda_ngsi_ld_model::{expanded::mutation::selection::OverwritePolicy, registration::ContextSourceRegistration};
+use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_request::options::UpsertMode;
 
 /// How one registration is driven for a batch operation it may not advertise.
@@ -99,7 +100,7 @@ mod tests {
         fallback_plan::{FallbackPlan, SingleWrite, UpsertFollowUp, plan_for},
         registration_fixture::registration,
     };
-    use andromeda_ngsi_ld_model::expanded::mutation::selection::OverwritePolicy;
+    use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
     use andromeda_ngsi_ld_request::options::UpsertMode;
 
     #[test]

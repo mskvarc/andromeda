@@ -93,6 +93,10 @@ pub enum TemporalStoreError {
     /// gives a Scope no attribute stream.
     #[error("temporal store: an entity scope has no attribute history row")]
     ScopeHasNoAttributeRow,
+    /// A structured value or metadata did not write as the JSON its column
+    /// stores.
+    #[error("temporal store: a stored JSON document does not encode: {0}")]
+    StoredJson(#[source] serde_json::Error),
     /// A `DateTime` attribute value could not be accepted at microsecond resolution.
     #[error("temporal store timestamp precision: {0}")]
     TimestampPrecision(#[from] NgsiLdDateTimeError),
@@ -155,9 +159,11 @@ impl TemporalStoreError {
             | TemporalStoreError::StoredTime(_)
             | TemporalStoreError::UnitCode(UnitCodeMetadataError::UnknownIdentity { .. }) => Some(PersistenceFailure::Undecodable),
             TemporalStoreError::Render(_) | TemporalStoreError::StatementBuild(_) => Some(PersistenceFailure::StatementUnbuildable),
-            TemporalStoreError::Encoding(_) | TemporalStoreError::CopyField(_) | TemporalStoreError::WriteOrdinal(_) | TemporalStoreError::EntryPosition(_) => {
-                Some(PersistenceFailure::Unencodable)
-            }
+            TemporalStoreError::Encoding(_)
+            | TemporalStoreError::CopyField(_)
+            | TemporalStoreError::WriteOrdinal(_)
+            | TemporalStoreError::EntryPosition(_)
+            | TemporalStoreError::StoredJson(_) => Some(PersistenceFailure::Unencodable),
             TemporalStoreError::Collation(CollationProvisioningError::Statement { .. }) => Some(PersistenceFailure::StatementRejected),
             TemporalStoreError::Invariant(TemporalStoreInvariant::NotAHypertable(_) | TemporalStoreInvariant::NoTimeDimension(_)) => {
                 Some(PersistenceFailure::SchemaMismatch)
@@ -241,6 +247,7 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::StatementBuild(_)
             | TemporalStoreError::RetentionHorizon(_)
             | TemporalStoreError::StoredTime(_)
+            | TemporalStoreError::StoredJson(_)
             | TemporalStoreError::ScopeHasNoAttributeRow) => TemporalError::from(PersistenceFailure::ContractBroken.record(&fault)),
         }
     }

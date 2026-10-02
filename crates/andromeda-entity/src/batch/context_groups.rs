@@ -6,36 +6,70 @@
 //! call"). Entities naming one and the same context -- one
 //! [`BatchContextId`](andromeda_jsonld::batch_contexts::BatchContextId), given
 //! when the batch was parsed -- are prepared together, so a batch whose
-//! entities agree resolves its context once and keeps the shared fast path, and
-//! a batch whose entities differ never reads one entity's terms through
-//! another's definitions.
+//! entities agree processes its context once, and a batch whose entities
+//! differ never reads one entity's terms through another's definitions.
 
 use crate::{
     EntityService,
-    batch::prepare::{ClassifiedEntry, PreparedBatch, PreparedEntity},
-    null_sentinel_admission::NullSentinelAdmission,
+    batch::prepare::{PendingEntity, PreparationOutcome},
+    error::EntityError,
 };
-use andromeda_jsonld::batch_contexts::ContextGroups;
+use andromeda_jsonld::batch_contexts::{BatchContext, ContextGroups};
+use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::entity::Entity;
+
+/// An entity its preparation expanded and screened, with the context it was
+/// expanded under.
+pub(super) struct ExpandedEntity {
+    /// The entity as submitted.
+    pub entity: Entity,
+    /// What it expanded to.
+    pub document: EntityDocument,
+    /// The context it was expanded under.
+    pub context: BatchContext,
+}
+
+/// What preparing a batch produced: one slot per position, filled where
+/// preparation succeeded, and the failures against their identifiers.
+pub(super) struct PreparedBatch {
+    /// The prepared entity at each position.
+    pub slots: Vec<Option<ExpandedEntity>>,
+    /// The per-entity failures, in position order.
+    pub errors: Vec<(Identifier, EntityError)>,
+}
 
 impl EntityService {
     /// Prepare every group under its own context, answering one slot per
     /// position below `slot_count`.
     ///
     /// Each entry's `idx` is its position in the whole batch, so the groups'
-    /// slots interleave back into submission order; the failures come back
-    /// group by group, each against its own entity's identifier.
-    pub(super) async fn prepare_grouped(&self, slot_count: usize, groups: ContextGroups<ClassifiedEntry>, admission: NullSentinelAdmission) -> PreparedBatch {
-        let mut slots: Vec<Option<PreparedEntity>> = (0..slot_count).map(|_| None).collect();
-        let mut errors = Vec::new();
+    /// slots interleave back into submission order and the failures come back
+    /// in that order too, each against its own entity's identifier. A position
+    /// no entry names stays empty.
+    pub(super) async fn prepare_grouped(&self, slot_count: usize, groups: ContextGroups<PendingEntity>, admission: NullSentinelAdmission) -> PreparedBatch {
+        let execution = self.batch_execution(slot_count);
+        let screening = self.screening(admission);
+        let mut outcomes: Vec<Option<(PreparationOutcome, BatchContext)>> = (0..slot_count).map(|_| None).collect();
         for (context, entries) in groups {
-            let group = self.prepare_payloads(slot_count, entries, context.spec(), admission).await;
-            for (slot, prepared) in slots.iter_mut().zip(group.slots) {
-                if prepared.is_some() {
-                    *slot = prepared;
+            for (idx, preparation) in self.prepare_group(entries, context.spec(), execution, screening).await {
+                if let Some(slot) = outcomes.get_mut(idx) {
+                    *slot = Some((preparation, context.clone())); // clone: each prepared entity holds the shared context handle
                 }
             }
-            errors.extend(group.errors);
         }
+        let mut errors = Vec::new();
+        let slots = outcomes
+            .into_iter()
+            .map(|outcome| match outcome {
+                Some((Ok((entity, document)), context)) => Some(ExpandedEntity { entity, document, context }),
+                Some((Err(failure), _)) => {
+                    errors.push(*failure);
+                    None
+                }
+                None => None,
+            })
+            .collect();
         PreparedBatch { slots, errors }
     }
 }

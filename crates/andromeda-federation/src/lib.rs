@@ -2,8 +2,6 @@
 
 #![deny(missing_docs)]
 
-/// Reading a source answer back in the client terms.
-mod answer_vocabulary;
 /// The clause 4.5.5 merge of attribute instances from several sources.
 pub mod attribute_instance_merge;
 /// The POST body of a forwarded batch entity query (clause 6.23).
@@ -21,6 +19,8 @@ mod counted_body;
 pub mod discovery;
 /// Discovery response merging.
 pub mod discovery_result;
+/// Rewording a compact document from one context's terms into another's.
+mod document_rewording;
 /// The entities one forwarded query may gather from its sources.
 pub mod entity_budget;
 /// EntityMap creation forwarding (clauses 5.14.4 and 5.14.5).
@@ -52,6 +52,8 @@ pub mod forwarded_parameter;
 pub mod forwarded_payload;
 /// Per-registration narrowing of a client's query parameters.
 pub mod forwarded_query;
+/// Spelling the name-bearing parameters of a forwarded query string.
+mod forwarded_query_string;
 /// Sending forwarded writes and classifying their answers.
 mod forwarded_write;
 /// The one context a forwarded request is expressed against.
@@ -72,6 +74,8 @@ pub mod outcome;
 pub mod provision;
 /// Batch provision forwarding.
 pub mod provision_batch;
+/// Which registrations a single-entity provision is forwarded to.
+pub mod provision_plan;
 /// Purge forwarding.
 pub mod provision_purge;
 /// Why a forwarded entity query produced no answer.
@@ -396,6 +400,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-entity-map",
         "andromeda-http-headers",
         "andromeda-jsonld",
+        "andromeda-ngsi-ld-compaction",
+        "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-number",

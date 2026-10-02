@@ -241,7 +241,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         let mut seen: HashSet<Identifier> = identifiers.iter().cloned().collect();
         let selection = ResidualFilter::over(compiled.entities.clone());
         for sequenced in pending {
-            if seen.contains(&sequenced.intent.entity_id) || !intent_matches_query(&sequenced, compiled, &selection)? {
+            if seen.contains(&sequenced.intent.entity_id) || !intent_matches_query(&sequenced, compiled, &selection) {
                 continue;
             }
             seen.insert(sequenced.intent.entity_id.clone()); // clone: deduplication and the result both own the identifier.
@@ -251,10 +251,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         Ok(TemporalEntityIdOutcome {
             candidates: identifiers
                 .into_iter()
-                .map(|entity_id| TemporalEntityCandidate {
-                    entity_id,
-                    selection_value: None,
-                })
+                .map(|entity_id| TemporalEntityCandidate { entity_id, selection: None })
                 .collect(),
             residual: TemporalResidual::default(),
             pagination: TemporalPaginationOutcome::Deferred,

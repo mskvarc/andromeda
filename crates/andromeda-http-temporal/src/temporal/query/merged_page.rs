@@ -12,16 +12,16 @@ use crate::temporal::{
     JsonKeyAttributes,
     ProblemResponse,
     ResultInstanceExt,
+    TemporalError,
     TemporalQueryParameters,
     compile_geo_query,
     evaluate,
     expand_attribute_names,
     expand_q_expr,
-    matches_geo_query,
-    matches_scope_query,
     query::{forwarding::ForwardedHistory, page::QueriedPage},
 };
 use andromeda_federation::{config::SplitEntities, temporal_last_n::truncate_to_last_n};
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_temporal::service::TemporalService;
 use axum::http::Uri;
@@ -52,8 +52,10 @@ pub(crate) fn defer_split_filters(params: &mut TemporalQueryParameters, filterin
 ///
 /// Clause 5.7.4.4: `q`, the geoquery and the scope query are evaluated once
 /// over the re-assembled entities, because no single source held enough of an
-/// entity to decide them. An entity that cannot be expanded cannot be matched
-/// against an expanded filter, so it does not reach the response.
+/// entity to decide them: each is read as the Temporal Evolution document it
+/// represents, every instance of it, which is what the filters are evaluated
+/// over. An entity that cannot be read as one cannot be matched, so it does not
+/// reach the response.
 ///
 /// # Errors
 ///
@@ -90,17 +92,21 @@ async fn retain_split_matches(
         .await
         .with_instance(instance)?;
     let compiled_scope = deferred.scope_q;
+    let expansion = EntityExpansion::prepare(engine, context)
+        .await
+        .map_err(TemporalError::from)
+        .with_instance(instance)?;
 
     let mut retained = Vec::with_capacity(entities.len());
     for entity in entities {
-        // clone: `expand` consumes the value, and the compact original is what the response carries
-        let Ok(expanded) = engine.expand(entity.clone(), context).await else {
+        // clone: the expansion consumes the value, and the compact original is what the response carries
+        let Ok(document) = expansion.entity_fragment(entity.clone(), Normalization::Entity).await else {
             continue;
         };
 
-        let q_ok = q_expr.as_ref().is_none_or(|expr| evaluate(expr, &expanded));
-        let geo_ok = compiled_geo.as_ref().is_none_or(|geo| matches_geo_query(geo, &expanded));
-        let scope_ok = compiled_scope.as_ref().is_none_or(|scope| matches_scope_query(scope, &expanded));
+        let q_ok = q_expr.as_ref().is_none_or(|expr| evaluate(expr, &document));
+        let geo_ok = compiled_geo.as_ref().is_none_or(|geo| geo.matches_entity(&document));
+        let scope_ok = compiled_scope.as_ref().is_none_or(|scope| scope.matches_entity(&document));
 
         if q_ok && geo_ok && scope_ok {
             retained.push(entity);

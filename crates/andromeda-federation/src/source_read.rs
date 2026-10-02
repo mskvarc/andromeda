@@ -5,8 +5,8 @@
 use crate::{
     FederationService,
     SentResponse,
-    answer_vocabulary::{AnswerRewording, AnswerVocabulary},
     cache::{CacheKey, Cacheability, ForwardedGetCache},
+    document_rewording::{DocumentRewording, DocumentVocabulary},
     error::FederationError,
     forwarded_payload::OutgoingBody,
     forwarding_context::{BodyPresence, ForwardingDecision},
@@ -42,7 +42,7 @@ pub(crate) struct SourceRead<'a> {
     #[builder(default = None)]
     pub(crate) linked_map: Option<&'a Identifier>,
     /// What kind of answer the read returns, which decides where its names sit.
-    pub(crate) vocabulary: AnswerVocabulary,
+    pub(crate) vocabulary: DocumentVocabulary,
 }
 
 impl FederationService {
@@ -53,14 +53,13 @@ impl FederationService {
         outcome: ForwardGetOutcome,
         inbound: &ContextSpec,
         decision: &ForwardingDecision,
-        vocabulary: AnswerVocabulary,
+        vocabulary: DocumentVocabulary,
     ) -> ForwardGetOutcome {
         let ForwardGetOutcome::Success(mut response) = outcome else {
             return outcome;
         };
         let forwarding = decision.context.naming(inbound);
-        let rewording = AnswerRewording::new(&self.engine, &forwarding, inbound);
-        match rewording.reword(response.body, vocabulary, decision.context.rewording()).await {
+        match DocumentRewording::reword(&self.engine, &forwarding, inbound, response.body, vocabulary, decision.context.rewording()).await {
             Ok(body) => {
                 response.body = body;
                 ForwardGetOutcome::Success(response)

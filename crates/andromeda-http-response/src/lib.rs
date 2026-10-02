@@ -27,11 +27,13 @@ pub mod problem_response;
 pub mod provision;
 pub mod query_failure;
 pub mod render;
+pub mod rendered_response;
 pub mod single;
 pub mod store_failure;
 pub mod temporal_failure;
 pub mod tenant_state_rejection;
 pub mod version_negotiation;
+mod written_body;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

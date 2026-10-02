@@ -2,10 +2,10 @@
 
 use crate::{
     FederationService,
-    answer_vocabulary::AnswerVocabulary,
     batch_query_body::{build_batch_query_body, selectors_from_query},
     cache::Cacheability,
     config::SplitEntities,
+    document_rewording::DocumentVocabulary,
     entity_result::parse_forwarded_entities,
     error::FederationError,
     forwarded_parameter::ForwardedParameter,
@@ -262,7 +262,7 @@ impl FederationService {
                         triggering,
                         cacheability: Cacheability::Cacheable,
                         entity_map,
-                        vocabulary: AnswerVocabulary::Entities,
+                        vocabulary: DocumentVocabulary::Entities,
                     },
                     budget,
                 )
@@ -358,7 +358,7 @@ impl FederationService {
                         triggering,
                         cacheability: Cacheability::Cacheable,
                         entity_map,
-                        vocabulary: AnswerVocabulary::Entities,
+                        vocabulary: DocumentVocabulary::Entities,
                     },
                 )
                 .await;

@@ -13,10 +13,8 @@
 //! however many instances it touched and however many of the subscription's
 //! triggers it raised.
 
-use crate::{
-    expanded::attribute_change::{AttributeChange, AttributeChangeKind},
-    notification::NotificationTrigger,
-};
+use crate::notification::NotificationTrigger;
+use andromeda_ngsi_ld_entity::reads::attribute_change::{AttributeChange, AttributeChangeKind};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -34,6 +32,18 @@ pub enum EntityLifecycle {
     Modified,
     /// The Entity existed before the write and does not exist after it.
     Deleted,
+}
+
+/// The clause 5.2.12 trigger one attribute-instance transition raises:
+/// `attributeCreated`, `attributeUpdated` or `attributeDeleted` (Table
+/// 5.2.12-1).
+#[must_use]
+pub const fn attribute_trigger(kind: AttributeChangeKind) -> NotificationTrigger {
+    match kind {
+        AttributeChangeKind::Created => NotificationTrigger::AttributeCreated,
+        AttributeChangeKind::Updated => NotificationTrigger::AttributeUpdated,
+        AttributeChangeKind::Deleted => NotificationTrigger::AttributeDeleted,
+    }
 }
 
 /// One write's change to one Entity.
@@ -72,7 +82,7 @@ impl EntityChange {
     #[must_use]
     pub fn triggers(&self) -> Vec<NotificationTrigger> {
         let mut triggers: Vec<NotificationTrigger> = self.lifecycle_trigger().into_iter().collect();
-        for trigger in self.instances.iter().map(|instance| instance.kind.notification_trigger()) {
+        for trigger in self.instances.iter().map(|instance| attribute_trigger(instance.kind)) {
             if !triggers.contains(&trigger) {
                 triggers.push(trigger);
             }
@@ -121,19 +131,19 @@ impl EntityChange {
             || self
                 .instances
                 .iter()
-                .any(|instance| triggers.contains(&instance.kind.notification_trigger()) && is_watched(&instance.key.attr))
+                .any(|instance| triggers.contains(&attribute_trigger(instance.kind)) && is_watched(&instance.key.attr))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        entity_change::{EntityChange, EntityLifecycle},
-        expanded::{
-            attribute_change::{AttributeChange, AttributeChangeKind},
-            instance_key::AttributeInstanceKey,
-        },
+        entity_change::{EntityChange, EntityLifecycle, attribute_trigger},
         notification::{DEFAULT_NOTIFICATION_TRIGGERS, NotificationTrigger, effective_notification_triggers},
+    };
+    use andromeda_ngsi_ld_entity::reads::{
+        attribute_change::{AttributeChange, AttributeChangeKind},
+        attribute_instance_key::AttributeInstanceKey,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use pretty_assertions::assert_eq;
@@ -179,6 +189,37 @@ mod tests {
                 instance("https://example.org/c", None, AttributeChangeKind::Deleted),
             ],
         )
+    }
+
+    /// Table 5.2.12-1: each attribute-instance transition raises the trigger
+    /// of its own kind.
+    #[test]
+    fn each_attribute_transition_raises_the_trigger_of_its_kind() {
+        assert_eq!(attribute_trigger(AttributeChangeKind::Created), NotificationTrigger::AttributeCreated);
+        assert_eq!(attribute_trigger(AttributeChangeKind::Updated), NotificationTrigger::AttributeUpdated);
+        assert_eq!(attribute_trigger(AttributeChangeKind::Deleted), NotificationTrigger::AttributeDeleted);
+    }
+
+    /// The deferred-change queues persist the transition kind; its spelling is
+    /// the one the model type it replaced persisted (`created`, `updated`,
+    /// `deleted`), and the lifecycle keeps its own.
+    #[test]
+    fn the_persisted_spellings_of_a_change_are_unchanged() {
+        for (kind, spelling) in [
+            (AttributeChangeKind::Created, "\"created\""),
+            (AttributeChangeKind::Updated, "\"updated\""),
+            (AttributeChangeKind::Deleted, "\"deleted\""),
+        ] {
+            assert_eq!(serde_json::to_string(&kind).expect("serialises"), spelling);
+            assert_eq!(serde_json::from_str::<AttributeChangeKind>(spelling).expect("deserialises"), kind);
+        }
+        for (lifecycle, spelling) in [
+            (EntityLifecycle::Created, "\"created\""),
+            (EntityLifecycle::Modified, "\"modified\""),
+            (EntityLifecycle::Deleted, "\"deleted\""),
+        ] {
+            assert_eq!(serde_json::to_string(&lifecycle).expect("serialises"), spelling);
+        }
     }
 
     #[test]

@@ -2,11 +2,12 @@
 //!
 //! Each statement stages its rows with `UNNEST` under the alias `d`, then
 //! projects them once, in a common table expression `proj`, into the typed
-//! columns the three entity relations store: the JSONB key arrays become
-//! `integer[]` and `ltree[]`, the payload text becomes `jsonb`, the EWKB
-//! geometries are validated. The relation statements that follow read `proj`
-//! rather than repeating the projection, so a geometry is validated once per
-//! row however many relations it lands in.
+//! columns the entity relations store: the JSONB key arrays become `integer[]`
+//! and `ltree[]`, the EWKB geometries are validated. The relation statements
+//! that follow read `proj` rather than repeating the projection, so a geometry
+//! is validated once per row however many relations it lands in. The stored
+//! document is staged apart, keyed by the entity identifier
+//! ([`payload_staging`](crate::entity::write::payload_staging)).
 
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::{
@@ -16,7 +17,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     placeholder::external_placeholder,
     postgis::validated_geom_from_ewkb,
-    unnest::{UnnestColumn, unnest_call},
+    unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
 use sea_query::{
     CaseStatement,
@@ -85,7 +86,9 @@ pub(super) struct Doomed;
 /// and are cast to `integer[]`/`smallint[]` in the projection; the scope paths
 /// arrive as JSONB (`scope_paths_json`) and are expanded to `ltree[]` there; the geometries arrive as EWKB
 /// (`loc`, `obs`, `ops`) and are validated there. Not every statement uses
-/// every column: the delete stages only `id` and the expectation.
+/// every column: the delete stages only `id` and the expectation, and only the
+/// update stages which geometries a row keeps (`loc_kept`, `obs_kept`,
+/// `ops_kept`).
 #[derive(Iden, Clone, Copy)]
 pub(super) enum StagedColumn {
     /// Entity identifier.
@@ -101,7 +104,8 @@ pub(super) enum StagedColumn {
     AttributeInstanceKindsLiteral,
     /// Scope-path array as JSONB, in `ltree` dot notation.
     ScopePathsJson,
-    /// Payload as JSON text, cast to `jsonb` in the projection.
+    /// Payload as JSON text, staged apart from the projection and cast to
+    /// `jsonb` where the document is written.
     Payload,
     /// Default `GeoProperty` geometry as EWKB.
     Loc,
@@ -117,7 +121,44 @@ pub(super) enum StagedColumn {
     MinAttributeExpiresAt,
     /// The `modifiedAt` the caller read, or NULL for an unconditional write.
     ExpectedModifiedAt,
+    /// Whether the row keeps its stored `location` geometry.
+    LocKept,
+    /// Whether the row keeps its stored `observationSpace` geometry.
+    ObsKept,
+    /// Whether the row keeps its stored `operationSpace` geometry.
+    OpsKept,
 }
+
+/// One hoisted geometry column of the search row, with the staging columns
+/// that carry it.
+#[derive(Clone, Copy)]
+pub(super) struct HoistedColumn {
+    /// The `entity_search` column the geometry lands in.
+    pub(super) stored: EntitySearch,
+    /// The staging column carrying its EWKB.
+    pub(super) ewkb: StagedColumn,
+    /// The staging column saying whether an update keeps the stored geometry.
+    pub(super) kept: StagedColumn,
+}
+
+/// The three hoisted geometry columns, in bind order.
+pub(super) const HOISTED_COLUMNS: [HoistedColumn; 3] = [
+    HoistedColumn {
+        stored: EntitySearch::Location,
+        ewkb: StagedColumn::Loc,
+        kept: StagedColumn::LocKept,
+    },
+    HoistedColumn {
+        stored: EntitySearch::ObservationSpace,
+        ewkb: StagedColumn::Obs,
+        kept: StagedColumn::ObsKept,
+    },
+    HoistedColumn {
+        stored: EntitySearch::OperationSpace,
+        ewkb: StagedColumn::Ops,
+        kept: StagedColumn::OpsKept,
+    },
+];
 
 /// A staging column reference, `d.<column>`.
 pub(super) fn staged(column: StagedColumn) -> SimpleExpr {
@@ -158,8 +199,9 @@ fn array_of(column: StagedColumn, element_type: PostgresType) -> SimpleExpr {
     array_subquery(&Query::select().expr(cast(element, element_type)).to_owned())
 }
 
-/// The thirteen staging columns every insert and update stages, in bind order.
-const fn value_staging_columns() -> [(StagedColumn, PostgresType); 13] {
+/// The twelve projected staging columns every insert and update stages, in
+/// bind order. The payload is bound after every projected column.
+const fn value_staging_columns() -> [(StagedColumn, PostgresType); 12] {
     [
         (StagedColumn::Id, PostgresType::TextArray),
         (StagedColumn::EntityTypeNameKeysLiteral, PostgresType::TextArray),
@@ -167,7 +209,6 @@ const fn value_staging_columns() -> [(StagedColumn, PostgresType); 13] {
         (StagedColumn::AttributeInstanceNameKeysLiteral, PostgresType::TextArray),
         (StagedColumn::AttributeInstanceKindsLiteral, PostgresType::TextArray),
         (StagedColumn::ScopePathsJson, PostgresType::JsonbArray),
-        (StagedColumn::Payload, PostgresType::TextArray),
         (StagedColumn::Loc, PostgresType::ByteaArray),
         (StagedColumn::Obs, PostgresType::ByteaArray),
         (StagedColumn::Ops, PostgresType::ByteaArray),
@@ -177,7 +218,7 @@ const fn value_staging_columns() -> [(StagedColumn, PostgresType); 13] {
     ]
 }
 
-/// The thirteen staging columns of the insert, in bind order.
+/// The twelve projected staging columns of the insert, in bind order.
 pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
     value_staging_columns()
         .into_iter()
@@ -185,11 +226,13 @@ pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
         .collect()
 }
 
-/// The fourteen staging columns of the update: the insert's thirteen plus the
-/// expectation the compare-and-set reads.
+/// The fifteen projected staging columns of the update: the insert's twelve
+/// and whether each hoisted geometry is kept. The expectation the
+/// compare-and-set reads is staged with the payload, after every projected
+/// column.
 pub(super) fn update_staging_columns() -> Vec<UnnestColumn> {
     let mut columns = insert_staging_columns();
-    columns.push(UnnestColumn::new(StagedColumn::ExpectedModifiedAt, PostgresType::TimestamptzArray));
+    columns.extend(HOISTED_COLUMNS.map(|column| UnnestColumn::new(column.kept, PostgresType::BooleanArray)));
     columns
 }
 
@@ -209,9 +252,11 @@ pub(super) fn staging_source(columns: &[UnnestColumn]) -> FunctionCall {
 /// The projection CTE `proj` over the staged `columns`, whose output columns
 /// carry the names of the relation columns they land in.
 ///
-/// Whether the expectation is projected follows from whether it was staged, so
-/// the insert and the update share this one builder.
-pub(super) fn projection_cte(columns: &[UnnestColumn], expectation: ExpectationStaged) -> CommonTableExpression {
+/// What only an update stages -- whether each geometry is kept -- is
+/// projected for the update alone, so the insert and the update share this one
+/// builder. A kept geometry stages no EWKB, so its projection validates
+/// nothing.
+pub(super) fn projection_cte(columns: &[UnnestColumn], write: ProjectedWrite) -> CommonTableExpression {
     let mut select = Query::select();
     select
         .expr_as(staged(StagedColumn::Id), Entities::Id)
@@ -231,38 +276,45 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], expectation: ExpectationS
             cast(staged(StagedColumn::AttributeInstanceKindsLiteral), PostgresType::SmallintArray),
             EntitySearch::AttributeInstanceKinds,
         )
-        .expr_as(array_of(StagedColumn::ScopePathsJson, PostgresType::Ltree), EntitySearch::ScopePaths)
-        .expr_as(cast(staged(StagedColumn::Payload), PostgresType::Jsonb), EntityDocuments::Payload)
-        .expr_as(geometry(StagedColumn::Loc), EntitySearch::Location)
-        .expr_as(geometry(StagedColumn::Obs), EntitySearch::ObservationSpace)
-        .expr_as(geometry(StagedColumn::Ops), EntitySearch::OperationSpace)
+        .expr_as(array_of(StagedColumn::ScopePathsJson, PostgresType::Ltree), EntitySearch::ScopePaths);
+    for column in HOISTED_COLUMNS {
+        select.expr_as(geometry(column.ewkb), column.stored);
+    }
+    select
         .expr_as(staged(StagedColumn::LocExpiresAt), EntitySearch::LocationExpiresAt)
         .expr_as(staged(StagedColumn::ExpiresAt), Entities::ExpiresAt)
         .expr_as(staged(StagedColumn::MinAttributeExpiresAt), Entities::MinAttributeExpiresAt);
-    match expectation {
-        ExpectationStaged::Yes => {
-            select.expr(staged(StagedColumn::ExpectedModifiedAt));
+    match write {
+        ProjectedWrite::Update => {
+            for column in HOISTED_COLUMNS {
+                select.expr(staged(column.kept));
+            }
         }
-        ExpectationStaged::No => {}
+        ProjectedWrite::Insert => {}
     }
     select.from_function(staging_source(columns), Staged);
     let select: SelectStatement = select.take();
     CommonTableExpression::new().table_name(Proj).query(select).to_owned()
 }
 
-/// Whether a statement stages the caller's expectation beside its values.
+/// Rewrite the projection source's `AS "d"` into `AS d(<columns>)`.
+pub(super) fn apply_staged_alias(sql: String, columns: &[UnnestColumn]) -> String {
+    apply_column_alias(sql, &Staged, columns)
+}
+
+/// Which set-write a projection serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ExpectationStaged {
-    /// The update: the expectation is staged and projected.
-    Yes,
-    /// The insert: nothing to compare against.
-    No,
+pub(super) enum ProjectedWrite {
+    /// The update: whether each geometry is kept is staged and projected.
+    Update,
+    /// The insert: nothing to compare against and no stored row to keep from.
+    Insert,
 }
 
 /// The precondition the update and the delete carry:
 /// `<expected> IS NULL OR entity_documents.modified_at = <expected>`,
 /// with `expected` read from wherever the statement carries it (`d` for the
-/// delete, `proj` for the update).
+/// delete, `pay` for the update).
 ///
 /// A null expectation matches whatever is there; a non-null one matches only a
 /// row still standing as the caller read it, which is what turns a

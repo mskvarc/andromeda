@@ -270,7 +270,7 @@ pub(crate) fn registration_scope_admits(registration: &ContextSourceRegistration
         .coverage
         .scope
         .as_ref()
-        .is_none_or(|scopes| scope_q.matches(&scopes.iter().map(ScopePath::as_str).collect::<Vec<_>>()))
+        .is_none_or(|scopes| scope_q.matches(scopes.iter().map(ScopePath::as_str)))
 }
 
 /// Whether the entity selector axis of one information entry matches.

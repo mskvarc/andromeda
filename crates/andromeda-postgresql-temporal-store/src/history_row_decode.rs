@@ -22,15 +22,15 @@ use crate::{
     unit_code_metadata::restore_unit_code,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, uri::Uri};
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, uri::Uri};
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb::Ewkb;
 use andromeda_temporal::port::history_reader::TemporalHistoryObservation;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
-use serde_json::Value;
+use serde_json::value::RawValue;
 use sqlx::{Row, postgres::PgRow};
 
 /// The table every row this module decodes comes from.
@@ -38,14 +38,15 @@ const TABLE: HistoryTable = HistoryTable::AttributeHistory;
 
 /// Decode one `attribute_history` row into a [`TemporalHistoryRow`].
 pub(crate) fn decode_history_row(row: &PgRow) -> Result<TemporalHistoryObservation, TemporalStoreError> {
-    let attribute_kind = decode_attribute_kind(row)?;
-    let value = decode_value(row)?;
-    let mut metadata: Option<Value> = row.try_get("metadata").unwrap_or(None);
-    restore_unit_code(&mut metadata, decode_unit_code_id(row, UnitCodeColumn::UnitCodeId)?)?;
+    let attribute_type = attribute_type_of(decode_attribute_kind(row)?);
+    let attribute_name = decode_attribute_name(row)?;
+    let value = decode_value(row, attribute_type, &attribute_name)?;
+    let metadata = decode_metadata(row, attribute_type, &attribute_name)?;
+    let metadata = restore_unit_code(metadata, decode_unit_code_id(row, UnitCodeColumn::UnitCodeId)?)?;
 
     let temporal_row = TemporalHistoryRow {
-        attribute_name: decode_attribute_name(row)?,
-        attribute_type: attribute_type_of(attribute_kind),
+        attribute_name,
+        attribute_type,
         dataset_id: decode_dataset_id(row)?,
         value,
         // Each axis is read from its own column and from no other. A row that
@@ -98,8 +99,18 @@ pub(crate) fn decode_unit_code_id(row: &PgRow, column: UnitCodeColumn) -> Result
         .transpose()?)
 }
 
+/// Read the row's metadata, as an instance of its family stores it.
+fn decode_metadata(row: &PgRow, attribute_type: AttributeType, attribute_name: &AttributeName) -> Result<Option<ObservationMetadata>, TemporalStoreError> {
+    let stored: Option<&RawValue> = row.try_get("metadata").unwrap_or(None);
+    match stored {
+        Some(stored) => Ok(ObservationMetadata::from_stored(attribute_type, attribute_name, stored.get())
+            .map_err(|refusal| StoredHistoryError::Metadata(Box::new(refusal)))?),
+        None => Ok(None),
+    }
+}
+
 /// Read the row's value from the column its stored value kind names.
-fn decode_value(row: &PgRow) -> Result<TemporalValue, TemporalStoreError> {
+fn decode_value(row: &PgRow, attribute_type: AttributeType, attribute_name: &AttributeName) -> Result<TemporalValue, TemporalStoreError> {
     let stored: i16 = row.try_get("value_kind")?;
     let kind = ValueKind::try_from(stored).map_err(|source| StoredHistoryError::ValueKind { table: TABLE, source })?;
     match kind {
@@ -110,7 +121,12 @@ fn decode_value(row: &PgRow) -> Result<TemporalValue, TemporalStoreError> {
         ValueKind::String => Ok(TemporalValue::String(required_column(row, TABLE, HistoryColumn::ValueString)?)),
         ValueKind::Boolean => Ok(TemporalValue::Boolean(required_column(row, TABLE, HistoryColumn::ValueBoolean)?)),
         ValueKind::Geometry => Ok(TemporalValue::Geometry(decode_geometry(row)?)),
-        ValueKind::Object => Ok(TemporalValue::Object(required_column(row, TABLE, HistoryColumn::ValueObject)?)),
+        ValueKind::Object => {
+            let stored: &RawValue = required_column(row, TABLE, HistoryColumn::ValueObject)?;
+            Ok(StructuredValue::from_stored(attribute_type, attribute_name, stored.get())
+                .map(TemporalValue::Structured)
+                .map_err(|refusal| StoredHistoryError::ValueObject(Box::new(refusal)))?)
+        }
         ValueKind::DateTime => Ok(TemporalValue::DateTime(required_column(row, TABLE, HistoryColumn::ValueDateTime)?)),
         ValueKind::Uri => {
             let raw: String = required_column(row, TABLE, HistoryColumn::ValueUri)?;
@@ -162,7 +178,7 @@ mod tests {
             ]
         }))
         .expect("a valid elevated Polygon with a hole");
-        let bytes = geometry_bytes(Some(&written))
+        let bytes = geometry_bytes(Some(written.form()))
             .expect("the geometry encodes")
             .expect("a present geometry binds bytes");
         pretty_assertions::assert_eq!(geometry_from_ewkb(&bytes).expect("the stored bytes decode"), written);

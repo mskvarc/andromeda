@@ -11,17 +11,14 @@
 //! applied.
 
 use crate::{
+    document_rewording::{DocumentRewording, DocumentVocabulary},
     error::FederationError,
     forwarded_names::ForwardedNames,
     forwarding_context::{ForwardingContext, ForwardingDecision, Rewording},
     term_resolver::TermResolver,
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_jsonld::{
-    batch_contexts::BatchContext,
-    context_spec::ContextSpec,
-    engine::{expanded_input::ExpandedInput, options::CompactOptions, processor::JsonLdEngine},
-};
+use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfo;
 use andromeda_ngsi_ld_render::version::renderer::VersionRenderer;
 use iri_rs::IriBuf;
@@ -47,7 +44,12 @@ pub struct ForwardedPayload {
 pub(crate) enum OutgoingBody<'a> {
     /// A client's document, or its narrowing to one registration, written in
     /// the inbound context's terms.
-    Document(&'a [u8]),
+    Document {
+        /// The serialised document.
+        bytes: &'a [u8],
+        /// What kind of document it is, which decides where its names sit.
+        vocabulary: DocumentVocabulary,
+    },
     /// A reduced subscription (clause 5.8.1.4), written in the inbound
     /// context's terms.
     Subscription(&'a [u8]),
@@ -141,25 +143,30 @@ pub(crate) struct ItemBody<'a> {
 pub(crate) async fn build_items_payload(
     engine: &JsonLdEngine,
     decision: &ForwardingDecision,
-    items: &[ItemBody<'_>],
+    items: Vec<ItemBody<'_>>,
     info: &ContextSourceInfo<'_>,
 ) -> Result<ForwardedPayload, FederationError> {
     let mut array = Vec::with_capacity(items.len());
-    for item in items {
-        let mut value = item.body.clone(); // clone: the forwarded array owns its items, and a later fallback re-reads them
+    for ItemBody { body: mut value, context } in items {
         remove_inline_context(&mut value);
         // A batch deletion carries bare identifiers, which name no term.
         if !value.is_object() {
             array.push(value);
             continue;
         }
-        let mut value = match decision.context.rewording() {
-            Rewording::AsInbound => value,
-            Rewording::Reword => recompacted(engine, item.context.spec(), &decision.context.naming(item.context.spec()), value).await?,
-        };
+        let naming = decision.context.naming(context.spec());
+        let mut value = DocumentRewording::reword(
+            engine,
+            context.spec(),
+            &naming,
+            value,
+            DocumentVocabulary::Entities,
+            decision.context.rewording(),
+        )
+        .await?;
         value = conformant(value, info);
-        if let Some(context) = decision.context.inline_for(item.context.spec()) {
-            embed_inline_context(&mut value, &context);
+        if let Some(inline) = decision.context.inline_for(context.spec()) {
+            embed_inline_context(&mut value, &inline);
         }
         array.push(value);
     }
@@ -182,51 +189,31 @@ fn conformant(value: Value, info: &ContextSourceInfo<'_>) -> Value {
 
 /// The body spelled in the forwarding context, without an inline `@context`.
 async fn spelled_body(engine: &JsonLdEngine, inbound: &ContextSpec, context: &ForwardingContext, body: OutgoingBody<'_>) -> Result<Value, FederationError> {
-    let (OutgoingBody::Document(bytes) | OutgoingBody::Subscription(bytes) | OutgoingBody::Expressed(bytes)) = body;
+    let (OutgoingBody::Document { bytes, .. } | OutgoingBody::Subscription(bytes) | OutgoingBody::Expressed(bytes)) = body;
     let mut value: Value = serde_json::from_slice(bytes)?;
     remove_inline_context(&mut value);
     match (context.rewording(), body) {
         (Rewording::AsInbound, _) | (Rewording::Reword, OutgoingBody::Expressed(_)) => Ok(value),
-        (Rewording::Reword, OutgoingBody::Document(_)) => {
-            // Clause 4.3.6.6: the document is compacted against the forwarding
+        (Rewording::Reword, OutgoingBody::Document { vocabulary, .. }) => {
+            // Clause 4.3.6.6: the document is spelled in the forwarding
             // context, and carries no `@context` member of its own.
-            let naming = context.naming(inbound);
-            match value {
-                Value::Array(items) => {
-                    let mut compacted = Vec::with_capacity(items.len());
-                    for item in items {
-                        compacted.push(recompacted(engine, inbound, &naming, item).await?);
-                    }
-                    Ok(Value::Array(compacted))
-                }
-                document @ (Value::Object(_) | Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => {
-                    recompacted(engine, inbound, &naming, document).await
-                }
-            }
+            DocumentRewording::reword(engine, inbound, &context.naming(inbound), value, vocabulary, Rewording::Reword).await
         }
         (Rewording::Reword, OutgoingBody::Subscription(_)) => {
             let naming = context.naming(inbound);
             let resolver = TermResolver::new(engine, inbound);
-            ForwardedNames::new(engine, &resolver, &naming, Rewording::Reword)
+            ForwardedNames::prepare(engine, &resolver, &naming, Rewording::Reword)
+                .await?
                 .subscription_document(value)
                 .await
         }
     }
 }
 
-/// One document expanded against the inbound context and compacted against
-/// `naming`.
-async fn recompacted(engine: &JsonLdEngine, inbound: &ContextSpec, naming: &ContextSpec, document: Value) -> Result<Value, FederationError> {
-    let expanded = engine.expand(document, inbound).await?;
-    Ok(engine
-        .compactor(naming)
-        .compact(ExpandedInput::Canonical(expanded), CompactOptions::default())
-        .await?)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
+        document_rewording::DocumentVocabulary,
         forwarded_payload::{ForwardedPayload, ItemBody, OutgoingBody, build_forwarded_payload, build_items_payload},
         forwarding_context::{BodyPresence, ForwardingContext, Rewording, decide, decide_for_items},
     };
@@ -306,6 +293,14 @@ mod tests {
         serde_json::to_vec(&json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 10}})).expect("serialises")
     }
 
+    /// An entity document written in the inbound context's terms.
+    const fn document(bytes: &[u8]) -> OutgoingBody<'_> {
+        OutgoingBody::Document {
+            bytes,
+            vocabulary: DocumentVocabulary::Entities,
+        }
+    }
+
     fn body_context(payload_body: &[u8]) -> Option<Value> {
         serde_json::from_slice::<Value>(payload_body).expect("JSON body").get("@context").cloned()
     }
@@ -323,7 +318,7 @@ mod tests {
     #[tokio::test]
     async fn a_link_context_is_forwarded_as_application_json_with_the_same_link_and_no_inline_context() {
         let bytes = body();
-        let payload = payload(&link_spec(USER_CONTEXT), &[], Some(OutgoingBody::Document(&bytes))).await;
+        let payload = payload(&link_spec(USER_CONTEXT), &[], Some(document(&bytes))).await;
         pretty_assertions::assert_eq!(payload.media_type, ResponseMediaType::Json);
         pretty_assertions::assert_eq!(payload.link_context.as_ref().map(IriBuf::as_str), Some(USER_CONTEXT));
         let forwarded: Value = serde_json::from_slice(payload.body.as_deref().expect("body")).expect("JSON");
@@ -334,12 +329,7 @@ mod tests {
     #[tokio::test]
     async fn a_content_type_of_ld_json_inlines_the_context_and_sends_no_link() {
         let bytes = body();
-        let payload = payload(
-            &link_spec(USER_CONTEXT),
-            &[("contentType", "application/ld+json")],
-            Some(OutgoingBody::Document(&bytes)),
-        )
-        .await;
+        let payload = payload(&link_spec(USER_CONTEXT), &[("contentType", "application/ld+json")], Some(document(&bytes))).await;
         pretty_assertions::assert_eq!(payload.media_type, ResponseMediaType::JsonLd);
         assert!(payload.link_context.is_none());
         pretty_assertions::assert_eq!(body_context(payload.body.as_deref().expect("body")), Some(json!(USER_CONTEXT)));
@@ -348,7 +338,7 @@ mod tests {
     #[tokio::test]
     async fn an_inline_url_context_travels_as_a_link_under_application_json() {
         let bytes = body();
-        let payload = payload(&ContextSpec::from_body(json!(USER_CONTEXT)), &[], Some(OutgoingBody::Document(&bytes))).await;
+        let payload = payload(&ContextSpec::from_body(json!(USER_CONTEXT)), &[], Some(document(&bytes))).await;
         pretty_assertions::assert_eq!(payload.media_type, ResponseMediaType::Json);
         pretty_assertions::assert_eq!(payload.link_context.as_ref().map(IriBuf::as_str), Some(USER_CONTEXT));
         assert!(body_context(payload.body.as_deref().expect("body")).is_none());
@@ -362,7 +352,7 @@ mod tests {
     async fn several_inbound_urls_are_forwarded_under_one_core_link_with_full_names() {
         let bytes = body();
         let inbound = ContextSpec::from_body(json!([USER_CONTEXT, OTHER_CONTEXT]));
-        let as_json = payload(&inbound, &[], Some(OutgoingBody::Document(&bytes))).await;
+        let as_json = payload(&inbound, &[], Some(document(&bytes))).await;
         pretty_assertions::assert_eq!(as_json.link_context.as_ref().map(IriBuf::as_str), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
         let forwarded: Value = serde_json::from_slice(as_json.body.as_deref().expect("body")).expect("JSON");
         assert!(forwarded.get("@context").is_none());
@@ -370,7 +360,7 @@ mod tests {
         pretty_assertions::assert_eq!(forwarded["https://example.org/speed"]["value"], json!(10));
         pretty_assertions::assert_eq!(forwarded["id"], json!("urn:ngsi-ld:Vehicle:1"));
 
-        let as_ld = payload(&inbound, &[("contentType", "application/ld+json")], Some(OutgoingBody::Document(&bytes))).await;
+        let as_ld = payload(&inbound, &[("contentType", "application/ld+json")], Some(document(&bytes))).await;
         assert!(as_ld.link_context.is_none());
         pretty_assertions::assert_eq!(body_context(as_ld.body.as_deref().expect("body")), Some(json!([USER_CONTEXT, OTHER_CONTEXT])));
     }
@@ -381,12 +371,12 @@ mod tests {
         let inline = json!({"speed": "https://example.org/speed", "Vehicle": "https://example.org/Vehicle"});
         let inbound = ContextSpec::from_body(inline.clone()); // clone: compared below
 
-        let as_ld = payload(&inbound, &[("contentType", "application/ld+json")], Some(OutgoingBody::Document(&bytes))).await;
+        let as_ld = payload(&inbound, &[("contentType", "application/ld+json")], Some(document(&bytes))).await;
         pretty_assertions::assert_eq!(as_ld.media_type, ResponseMediaType::JsonLd);
         assert!(as_ld.link_context.is_none());
         pretty_assertions::assert_eq!(body_context(as_ld.body.as_deref().expect("body")), Some(inline));
 
-        let as_json = payload(&inbound, &[], Some(OutgoingBody::Document(&bytes))).await;
+        let as_json = payload(&inbound, &[], Some(document(&bytes))).await;
         pretty_assertions::assert_eq!(as_json.link_context.as_ref().map(IriBuf::as_str), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
         let forwarded: Value = serde_json::from_slice(as_json.body.as_deref().expect("body")).expect("JSON body");
         pretty_assertions::assert_eq!(forwarded["https://example.org/speed"]["type"], json!("Property"));
@@ -403,7 +393,7 @@ mod tests {
         let payload = payload(
             &link_spec(USER_CONTEXT),
             &[("jsonldContext", CONFIGURED_CONTEXT), ("contentType", "application/ld+json")],
-            Some(OutgoingBody::Document(&bytes)),
+            Some(document(&bytes)),
         )
         .await;
         pretty_assertions::assert_eq!(payload.media_type, ResponseMediaType::Json);
@@ -494,12 +484,12 @@ mod tests {
         let bytes = body();
         let absolute = json!([USER_CONTEXT, {"@import": OTHER_CONTEXT, "colour": "https://example.org/colour"}]);
         let inbound = ContextSpec::from_body(absolute.clone()); // clone: compared below
-        let forwarded = payload(&inbound, &[("contentType", "application/ld+json")], Some(OutgoingBody::Document(&bytes))).await;
+        let forwarded = payload(&inbound, &[("contentType", "application/ld+json")], Some(document(&bytes))).await;
         pretty_assertions::assert_eq!(body_context(forwarded.body.as_deref().expect("body")), Some(absolute));
     }
 
     /// The batch payload of one registration, each item under its own context.
-    async fn items_payload(entries: &[(&str, &str)], items: &[ItemBody<'_>]) -> ForwardedPayload {
+    async fn items_payload(entries: &[(&str, &str)], items: Vec<ItemBody<'_>>) -> ForwardedPayload {
         let raw = pairs(entries);
         let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
         let decision = decide_for_items(items.iter().map(|item| item.context), &info, None).expect("decides");
@@ -514,7 +504,7 @@ mod tests {
         let mut contexts = BatchContexts::per_entity();
         let user = contexts.context_of(Some(json!(USER_CONTEXT)));
         let configured = contexts.context_of(Some(json!(CONFIGURED_CONTEXT)));
-        let items = [
+        let items = vec![
             ItemBody {
                 body: json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 1}}),
                 context: &user,
@@ -524,7 +514,7 @@ mod tests {
                 context: &configured,
             },
         ];
-        let forwarded = items_payload(&[], &items).await;
+        let forwarded = items_payload(&[], items).await;
         pretty_assertions::assert_eq!(forwarded.media_type, ResponseMediaType::Json);
         pretty_assertions::assert_eq!(forwarded.link_context.as_ref().map(IriBuf::as_str), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
         let body: Value = serde_json::from_slice(forwarded.body.as_deref().expect("body")).expect("JSON body");
@@ -542,7 +532,7 @@ mod tests {
         let mut contexts = BatchContexts::per_entity();
         let user = contexts.context_of(Some(json!(USER_CONTEXT)));
         let configured = contexts.context_of(Some(json!(CONFIGURED_CONTEXT)));
-        let items = [
+        let items = vec![
             ItemBody {
                 body: json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}),
                 context: &user,
@@ -552,7 +542,7 @@ mod tests {
                 context: &configured,
             },
         ];
-        let forwarded = items_payload(&[("contentType", "application/ld+json")], &items).await;
+        let forwarded = items_payload(&[("contentType", "application/ld+json")], items).await;
         assert!(forwarded.link_context.is_none());
         let body: Value = serde_json::from_slice(forwarded.body.as_deref().expect("body")).expect("JSON body");
         pretty_assertions::assert_eq!(body[0]["@context"], json!(USER_CONTEXT));
@@ -600,14 +590,29 @@ mod tests {
             "speed": {"type": "Property", "value": 10, "observedAt": "2024-01-01T00:00:00Z"}
         }))
         .expect("serialises");
-        let payload = payload(
-            &link_spec(USER_CONTEXT),
-            &[("ngsildConformance", "1.0")],
-            Some(OutgoingBody::Document(&versioned)),
-        )
-        .await;
+        let payload = payload(&link_spec(USER_CONTEXT), &[("ngsildConformance", "1.0")], Some(document(&versioned))).await;
         let forwarded: Value = serde_json::from_slice(payload.body.as_deref().expect("body")).expect("JSON body");
         assert!(forwarded.get("scope").is_none(), "scope was introduced in 1.4: {forwarded}");
         assert!(forwarded["speed"].get("observedAt").is_none(), "observedAt was introduced in 1.3: {forwarded}");
+    }
+    /// The one attribute a request path names is spelled as an attribute in
+    /// the forwarding context: its core members stay, what it names moves.
+    #[tokio::test]
+    async fn an_attribute_body_is_spelled_as_an_attribute_in_the_configured_context() {
+        let attribute = serde_json::to_vec(&json!({"type": "Property", "value": 10, "speed": {"type": "Property", "value": 1}})).expect("serialises");
+        let payload = payload(
+            &link_spec(USER_CONTEXT),
+            &[("jsonldContext", CONFIGURED_CONTEXT)],
+            Some(OutgoingBody::Document {
+                bytes: &attribute,
+                vocabulary: DocumentVocabulary::Attribute,
+            }),
+        )
+        .await;
+        let forwarded: Value = serde_json::from_slice(payload.body.as_deref().expect("body")).expect("JSON body");
+        pretty_assertions::assert_eq!(
+            forwarded,
+            json!({"type": "Property", "value": 10, "velocity": {"type": "Property", "value": 1}})
+        );
     }
 }

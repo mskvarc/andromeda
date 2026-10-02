@@ -15,25 +15,23 @@ use crate::{
     batch::{
         BatchResult,
         admitted_batch::AdmittedBatchEntity,
-        chunk::UpdatedPayloads,
+        chunk::UpdatedStates,
         chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
         prepare::PreparedEntity,
     },
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    notification_plan::modification,
     side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::{
-    mutation::{entity::merge_entity, selection::OverwritePolicy},
-    written_observation::AddressedInstances,
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    history::written_observation::AddressedInstances,
+    operation::selection::OverwritePolicy,
+    system_instant::SystemInstant,
 };
-use chrono::{DateTime, Utc};
-use serde_json::Value;
-use std::sync::Arc;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// Merging each entity of a chunk into the entity as an attempt read it
 /// (clause 5.6.20.4 runs the merge of clause 5.6.17 per entity).
@@ -55,33 +53,29 @@ impl ChunkRewrite for MergeRewrite<'_> {
         entry: PreparedEntity,
         snapshot: Option<&EntitySnapshot>,
         _reads: &(),
-        now: DateTime<Utc>,
+        now: SystemInstant,
     ) -> Result<PlannedWrite<PreparedEntity>, Box<(Identifier, EntityError)>> {
         let Some(snapshot) = snapshot else {
             let error = EntityError::not_found(&entry.id);
             return Err(Box::new((entry.id, error)));
         };
-        let previous = &snapshot.payload;
-        let mut merged = Value::clone(previous); // clone: the merge mutates its own copy of the stored payload
-        if let Err(error) = merge_entity(&mut merged, &entry.expanded, None) {
-            return Err(Box::new((entry.id, error.into())));
+        let previous = &snapshot.state;
+        // clone: reference-count bumps; the merge shares every attribute it does not touch with the stored state
+        let mut merged = EntityState::clone(previous);
+        if let Err(error) = merged.merge(&entry.document, None) {
+            return Err(Box::new((entry.id, EntityError::from(error))));
         }
-        let change = match modification(previous, &merged) {
-            Ok(change) => change,
-            Err(error) => return Err(Box::new((entry.id, error))),
-        };
         let write = self.service.chunk_update(
             self.target,
             entry.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
-            UpdatedPayloads {
+            UpdatedStates {
                 previous,
-                merged: Arc::new(merged),
+                current: merged,
                 addressed: AddressedInstances::EntityFragment {
-                    fragment: &entry.expanded,
+                    fragment: &entry.document,
                     overwrite: OverwritePolicy::Overwrite,
                 },
             },
-            change,
             now,
         )?;
         Ok(PlannedWrite { entry, write, alongside: None })

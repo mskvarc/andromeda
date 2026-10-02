@@ -326,7 +326,7 @@ async fn a_failed_durable_delivery_is_retried_after_eviction() {
         ))
         .header("NGSILD-Tenant", tenant.as_str())
         .header("Content-Type", "application/ld+json")
-        .json(&json!({"value": {"type": "Property", "value": 7}, "@context": [CORE_CONTEXT]}))
+        .json(&json!({"reading": {"type": "Property", "value": 7}, "@context": [CORE_CONTEXT]}))
         .send()
         .await
         .expect("the change is answered");
@@ -376,7 +376,7 @@ async fn an_entity_expires_on_a_dormant_tenant() {
             "id": "urn:ngsi-ld:Device:ephemeral",
             "type": "Device",
             "expiresAt": expires_at,
-            "value": {"type": "Property", "value": 1},
+            "reading": {"type": "Property", "value": 1},
             "@context": [CORE_CONTEXT]
         }))
         .send()
@@ -496,7 +496,7 @@ async fn a_busy_outbox_keeps_its_tenant_serviced_after_eviction() {
             ))
             .header("NGSILD-Tenant", tenant.as_str())
             .header("Content-Type", "application/ld+json")
-            .json(&json!({"value": {"type": "Property", "value": value}, "@context": [CORE_CONTEXT]}))
+            .json(&json!({"reading": {"type": "Property", "value": value}, "@context": [CORE_CONTEXT]}))
             .send()
             .await
             .expect("the change is answered");

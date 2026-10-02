@@ -5,6 +5,7 @@
 #![deny(missing_docs)]
 
 pub mod attribute;
+mod compact_screening;
 mod entity;
 mod entity_operations;
 pub mod entity_type;
@@ -29,18 +30,21 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-headers",
         "andromeda-http-response",
         "andromeda-jsonld",
+        "andromeda-ngsi-ld-entity",
+        "andromeda-ngsi-ld-expansion",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
+        "andromeda-ngsi-ld-vocabulary",
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-geometry",
-        "andromeda-ngsi-ld-number",
         "andromeda-persistence-failure",
     ],
     allow_production_dependencies: ["axum"],

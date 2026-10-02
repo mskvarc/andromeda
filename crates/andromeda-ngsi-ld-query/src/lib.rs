@@ -13,6 +13,10 @@
 //! property of a backend, and it lives in `andromeda-postgresql-query` and the
 //! two statement crates above it. Nothing here names a database.
 //!
+//! The entities the languages are evaluated against in memory are inverted the
+//! same way: an evaluator reads an entity through the traits of
+//! [`queried_entity`], which whatever holds the entity implements.
+//!
 //! Term expansion is likewise inverted rather than depended upon: compilation
 //! that needs a term expanded against an `@context` asks a
 //! [`term_expander::TermExpander`], and a stored filter read back in a
@@ -39,6 +43,7 @@ pub mod pattern;
 pub mod portable_pattern;
 pub mod posix_dialect;
 pub mod projection;
+pub mod queried_entity;
 pub mod scope;
 pub mod temporal;
 pub mod term_compactor;

@@ -1,6 +1,12 @@
 //! Typed durable temporal append intents.
 
-use crate::{error::TemporalError, intent_preparation::prepare, scope_observation::ScopeObservation, write_purpose::TemporalWritePurpose};
+use crate::{
+    error::TemporalError,
+    intent_preparation::prepare,
+    observed_selection::ObservedSelection,
+    scope_observation::ScopeObservation,
+    write_purpose::TemporalWritePurpose,
+};
 use andromeda_context_commit::{history_record::HistoryRecord, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -13,7 +19,6 @@ use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use chrono::{DateTime, Utc};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Monotonic anchor-assigned order of committed intents within one tenant.
 #[derive(Clone, Copy, Debug, Deserialize, Display, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -133,8 +138,12 @@ pub struct TemporalAppendIntent {
     pub entity_types: Vec<EntityTypeName>,
     /// Entries in semantic write order.
     pub entries: Vec<TemporalAppendEntry>,
-    /// Expanded observation payload used for pending stage-one selection.
-    pub selection_value: Option<Value>,
+    /// What the write observed of the entity, which a query answered before
+    /// the intent lands selects the entity by (stage one of a temporal query).
+    ///
+    /// Shared with the write rather than copied, and persisted as the expanded
+    /// document it is under the name earlier intents used.
+    pub selection_value: Option<ObservedSelection>,
 }
 
 impl TemporalAppendIntent {
@@ -153,12 +162,11 @@ impl TemporalAppendIntent {
     /// # Errors
     ///
     /// Returns [`TemporalError::Validation`] when a history record carries an
-    /// attribute the NGSI-LD data model does not admit -- an unparsable
-    /// attribute name, `datasetId`, `observedAt` or `instanceId`, a
-    /// Relationship or `ListRelationship` member that names no target URI, a
-    /// `GeoProperty` whose value is not a geometry, or a Property whose typed
-    /// value cannot be carried -- and [`TemporalError::Internal`] when an
-    /// interpreted geometry cannot be serialised back to JSON.
+    /// instance a history row cannot record -- one carrying no value of the
+    /// shape its family requires, an `observedAt` outside the clause 4.6.3 UTC
+    /// form, or a Property value written in a time form it does not satisfy --
+    /// and [`TemporalError::Internal`] when an observed entity state does not
+    /// read back as the document it encodes to.
     pub fn from_history(
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
@@ -238,6 +246,7 @@ mod tests {
         write_ordinal::WriteOrdinal,
         write_record::WriteRecord,
     };
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         attribute_type::AttributeType,
@@ -259,14 +268,21 @@ mod tests {
         vec![VEHICLE.parse::<EntityTypeName>().expect("valid entity type")]
     }
 
-    fn speed_payload(entity_id: &Identifier) -> Arc<serde_json::Value> {
-        Arc::new(json!([{
+    /// The entity state an observation of `speed` = 42 records.
+    fn speed_payload(entity_id: &Identifier) -> Arc<EntityState> {
+        state(&json!([{
             "@id": entity_id,
+            "@type": [VEHICLE],
             "https://example.com/speed": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 42}]
             }]
         }]))
+    }
+
+    /// Decode a stored entity document.
+    fn state(document: &serde_json::Value) -> Arc<EntityState> {
+        Arc::new(EntityState::from_slice(&serde_json::to_vec(document).expect("JSON")).expect("a stored entity decodes"))
     }
 
     #[test]
@@ -377,7 +393,7 @@ mod tests {
     fn an_intent_with_no_entries_at_all_is_an_observation() {
         let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity ID");
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
-        let attributeless = Arc::new(json!([{"@id": entity_id, "@type": [VEHICLE]}]));
+        let attributeless = state(&json!([{"@id": entity_id, "@type": [VEHICLE]}]));
         let intent = TemporalAppendIntent::from_history(
             &entity_id,
             &vehicle_types(),

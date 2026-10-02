@@ -135,6 +135,19 @@ impl<'a> NumberToken<'a> {
             && i64::try_from(self.fraction.map_or(0, str::len)).is_ok_and(|digits| digits <= MAX_FRACTIONAL_DIGITS)
     }
 
+    /// Whether this token carries no exponent and its value lies within the
+    /// PostgreSQL `NUMERIC` range, decided from its digits alone.
+    ///
+    /// Without an exponent, the integer digit run bounds the integral digits
+    /// and the fraction digit run without its trailing zeros is exactly the
+    /// fractional digits the range is stated over. A token with an exponent is
+    /// left to the exact check.
+    pub(crate) fn is_plainly_within_range(&self) -> bool {
+        self.exponent.is_none()
+            && i64::try_from(self.integer.len()).is_ok_and(|digits| digits <= MAX_INTEGRAL_DIGITS)
+            && i64::try_from(self.fraction.map_or(0, |fraction| fraction.trim_end_matches('0').len())).is_ok_and(|digits| digits <= MAX_FRACTIONAL_DIGITS)
+    }
+
     /// Whether `serde_json`'s reader gives this token back byte for byte when
     /// it reads the token's own serialization.
     ///
@@ -174,7 +187,7 @@ fn split_digits(text: &str) -> (&str, &str) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{JsonNumber, MAX_FRACTIONAL_DIGITS, number_token::NumberToken};
+    use crate::{JsonNumber, MAX_FRACTIONAL_DIGITS, MAX_INTEGRAL_DIGITS, number_token::NumberToken};
     use serde_json::{Number, Value};
     use std::str::FromStr;
 
@@ -316,6 +329,30 @@ mod tests {
         for token in ["-0", "1.50", "1e2", "0.001", too_fine.as_str()] {
             let parsed = NumberToken::parse(token).expect("a valid token");
             assert!(!parsed.is_canonical_within_range(), "{token}");
+        }
+    }
+
+    /// The plain range check agrees with the exact decimal on every token
+    /// without an exponent, and leaves every token with one to it.
+    #[test]
+    fn a_plain_token_is_in_range_exactly_when_its_decimal_is() {
+        let fraction_digits = usize::try_from(MAX_FRACTIONAL_DIGITS).expect("a small constant");
+        let at_bound = format!("0.{}1", "0".repeat(fraction_digits - 1));
+        let past_bound = format!("0.{}1", "0".repeat(fraction_digits));
+        let trailing_zeros = format!("{at_bound}{}", "0".repeat(40));
+        let integral = format!("1{}", "0".repeat(usize::try_from(MAX_INTEGRAL_DIGITS).expect("a small constant")));
+        for token in VALID_TOKENS
+            .iter()
+            .copied()
+            .chain([at_bound.as_str(), past_bound.as_str(), trailing_zeros.as_str(), integral.as_str(), "13.1000000"])
+        {
+            let parsed = NumberToken::parse(token).expect("a valid token");
+            let exact = JsonNumber::from_str(token).is_ok();
+            if parsed.is_plainly_within_range() {
+                assert!(exact, "{token}");
+            } else {
+                assert!(!exact || token.contains(['e', 'E']), "{token}");
+            }
         }
     }
 }

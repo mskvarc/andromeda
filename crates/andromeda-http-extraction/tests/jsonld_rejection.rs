@@ -1,5 +1,6 @@
 use andromeda_http_extraction::jsonld::{JsonLd, JsonLdDocument};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_ngsi_ld_model::request_body::RequestBody;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     body::{Body, to_bytes},
@@ -18,6 +19,8 @@ use std::error::Error;
 struct RequiredIdentifier {
     id: String,
 }
+
+impl RequestBody for RequiredIdentifier {}
 
 /// Build a JSON request carrying the `Content-Length` the extractor requires
 /// before it will look at a body at all: without it the extraction ends in

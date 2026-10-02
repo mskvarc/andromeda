@@ -7,16 +7,13 @@ use crate::{
     read::{dataset_step::DatasetStep, rendered_entity::HistoryPresence},
     requested_identifiers::RequestedIdentifiers,
     service::{TemporalRange, TemporalReadResult, TemporalService},
+    temporal_compaction::TemporalCompaction,
     temporal_invariant::TemporalInvariant,
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{
-    compaction::NameCompactor,
-    context_spec::ContextSpec,
-    engine::{expanded_input::ExpandedInput, options::CompactOptions},
-};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{
@@ -28,10 +25,9 @@ use andromeda_ngsi_ld_render::{
     temporal::aggregation::TemporalAggregationRenderer,
 };
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
-use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
-use serde_json::{Value, json};
-use std::{collections::HashMap, slice::from_ref};
+use serde_json::{Map, Value, json};
+use std::slice::from_ref;
 
 impl TemporalService {
     /// Retrieve and render one temporal entity under the supplied query parameters.
@@ -77,8 +73,9 @@ impl TemporalService {
                 .remove(entity_id)
                 .unwrap_or_default();
 
+            let compactor = self.engine.compactor(context);
             let rendered = self
-                .render_one_temporal_entity(target, entity_id, &entity_types, &compiled, &NameCompactor::new(&self.engine, context))
+                .render_one_temporal_entity(target, entity_id, &entity_types, &compiled, &TemporalCompaction::new(&compactor))
                 .await?;
 
             // Clause 5.7.3.4, step S1: "if the time series, for all the
@@ -158,78 +155,39 @@ impl TemporalService {
         Ok(self.read_history_page(target, entity_id, &window_only).await?.presence())
     }
 
-    /// Build an aggregated temporal response in compacted form, bypassing JSON-LD compaction.
-    /// Aggregation keys (avg, min, etc.) aren't valid JSON-LD IRIs and would be dropped by `compact()`.
+    /// Build the clause 4.5.19 aggregated representation of one entity.
+    ///
+    /// The aggregation keys (`avg`, `min`, ...) are not IRIs, so the
+    /// representation is not a document compaction could read; it is built in
+    /// compact form directly, each attribute and type named by the term the
+    /// request context gives it (clause 5.7.3). A name the resolved context
+    /// does not declare stays a full IRI rather than being truncated to a bare
+    /// fragment the client could not expand back.
     async fn build_aggregated_compacted(
         &self,
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         rows: &[TemporalAggregationRow],
         compiled: &CompiledTemporalQuery,
-        names: &NameCompactor<'_>,
+        compaction: &TemporalCompaction<'_>,
     ) -> Result<Value, TemporalError> {
-        // Build aggregation data keyed by attribute IRI
         let aggr_data = TemporalAggregationRenderer::new(rows, compiled).render();
-
-        // Compact each attribute IRI individually by building a 1-key skeleton and compacting it
-        let mut iri_to_short: HashMap<AttributeName, AttributeName> = HashMap::new();
-        for attr_iri in aggr_data.keys() {
-            let mut skeleton = serde_json::Map::new();
-            skeleton.insert("@id".to_string(), json!(entity_id));
-            skeleton.insert(attr_iri.to_string(), json!([{"@type": [expanded_classes::PROPERTY]}]));
-            if let Ok(compacted) = names
-                .compactor()
-                .compact(ExpandedInput::Assembled(Value::Object(skeleton)), CompactOptions::default())
-                .await
-                && let Some(obj) = compacted.as_object()
-            {
-                for key in obj.keys() {
-                    if !["id", "type", "@context"].contains(&key.as_str()) {
-                        if let Ok(short) = key.parse() {
-                            iri_to_short.insert(attr_iri.clone(), short); // clone: the index owns its attribute key.
-                        }
-                        break;
-                    }
-                }
-            }
-            if !iri_to_short.contains_key(attr_iri) {
-                // `compact_attr_iri` returns the term the resolved context
-                // declares, or the full IRI verbatim when none does (clause
-                // 5.7.3): an undeclared attribute is not truncated to a bare
-                // fragment the client could not expand back.
-                let short = names.compact_attr_iri(attr_iri.as_str()).await;
-                if short != attr_iri.as_str()
-                    && let Ok(short) = short.parse()
-                {
-                    iri_to_short.insert(attr_iri.clone(), short); // clone: the index owns its attribute key.
-                }
-            }
-        }
-
-        // Compact entity type by compacting a minimal type skeleton
-        let type_skeleton = json!({"@id": entity_id, "@type": entity_types});
-        // The type is compacted against the request @context; an undeclared
-        // type stays a full IRI rather than a bare fragment (clause 5.7.3).
-        let compacted_type = if let Ok(compacted) = names
-            .compactor()
-            .compact(ExpandedInput::Assembled(type_skeleton), CompactOptions::default())
-            .await
-        {
-            compacted.as_object().and_then(|o| o.get("type")).cloned().unwrap_or(json!(entity_types)) // clone: need owned Value from borrowed compacted object
-        } else {
-            json!(entity_types)
+        let names = compaction.names().await?;
+        let compacted_types: Vec<Value> = entity_types
+            .iter()
+            .map(|entity_type| Value::String(names.compact_type_iri(entity_type.as_str()).to_string()))
+            .collect();
+        let compacted_type = match <[Value; 1]>::try_from(compacted_types) {
+            Ok([single]) => single,
+            Err(several) => Value::Array(several),
         };
 
-        // Build the final result
-        let mut result = serde_json::Map::new();
-        result.insert("id".to_string(), json!(entity_id));
-        result.insert("type".to_string(), compacted_type);
-
+        let mut result = Map::new();
+        result.insert("id".to_owned(), json!(entity_id));
+        result.insert("type".to_owned(), compacted_type);
         for (attr_iri, attr_obj) in aggr_data {
-            let short_name = iri_to_short.get(&attr_iri).unwrap_or(&attr_iri);
-            result.insert(short_name.to_string(), attr_obj);
+            result.insert(names.compact_attr_iri(attr_iri.as_str()).to_string(), attr_obj);
         }
-
         Ok(Value::Object(result))
     }
 

@@ -3,7 +3,7 @@
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-use andromeda_ngsi_ld_representation::payload_census::EntityPayloadBudget;
+use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroUsize, time::Duration};
 use thiserror::Error;
@@ -153,15 +153,15 @@ pub struct EntityConfig {
     #[toml_comment(inline)]
     pub pending_side_effects_cleanup_interval: HumanDuration,
     /// Maximum number of JSON values one written entity may hold outside its
-    /// geometries and JSON literals, counted on the compact payload before it
-    /// is expanded. JSON-LD expansion turns every value into an object, so
-    /// this bounds what an entity costs once expanded; an entity over it is
-    /// answered 413. Every replica of a deployment runs the same value.
+    /// geometries and JSON literals, counted on the document the write expands
+    /// to; an entity over it is answered 413. Every replica of a deployment
+    /// runs the same value.
     #[toml_comment(inline)]
     pub max_entity_json_values: NonZeroUsize,
     /// Maximum number of positions one `GeoProperty` geometry may hold, in a
     /// written entity and in a query, subscription or registration geometry.
-    /// A written geometry over it is answered 413, a query's 403
+    /// A typed entity's geometry is counted before it is expanded. A written
+    /// geometry over it is answered 413, a query's 403
     /// `TooComplexQuery`. Every replica of a deployment runs the same value.
     #[toml_comment(inline)]
     pub max_geometry_positions: NonZeroUsize,

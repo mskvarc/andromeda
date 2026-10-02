@@ -101,6 +101,7 @@ async fn delivery_insert_waits_out_a_concurrent_subscription_deletion_and_owes_i
         change_attribute_name_keys: Vec::new(),
         entity_snapshot: None,
         previous_snapshot: None,
+        sys_attrs_snapshot: None,
         subscription_keys: vec![SubscriptionKey::try_from(key).expect("a positive subscription key")],
     }];
 

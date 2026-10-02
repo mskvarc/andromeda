@@ -87,6 +87,7 @@ dependencies = [
  "andromeda-context-space",
  "andromeda-entity",
  "andromeda-http-headers",
+ "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
@@ -188,6 +189,7 @@ dependencies = [
  "andromeda-http-tenancy",
  "andromeda-http3-server",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-compaction",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
@@ -271,6 +273,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-space",
+ "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -369,6 +372,9 @@ dependencies = [
  "andromeda-context-space",
  "andromeda-federation",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-compaction",
+ "andromeda-ngsi-ld-entity",
+ "andromeda-ngsi-ld-expansion",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -453,6 +459,8 @@ dependencies = [
  "andromeda-entity-map",
  "andromeda-http-headers",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-compaction",
+ "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
@@ -610,6 +618,8 @@ dependencies = [
  "andromeda-http-headers",
  "andromeda-http-response",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-entity",
+ "andromeda-ngsi-ld-expansion",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -619,6 +629,7 @@ dependencies = [
  "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
+ "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
  "andromeda-tenancy",
  "axum",
@@ -692,6 +703,7 @@ dependencies = [
  "andromeda-ngsi-ld-request",
  "andromeda-persistence-failure",
  "andromeda-tenancy",
+ "andromeda-test-allocator",
  "axum",
  "futures",
  "headers",
@@ -831,6 +843,7 @@ dependencies = [
  "chrono",
  "derive_more",
  "headers",
+ "http-body",
  "iri-rs",
  "mediatype",
  "pretty_assertions",
@@ -1021,6 +1034,7 @@ dependencies = [
  "andromeda-http-headers",
  "andromeda-http-response",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-expansion",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -1140,6 +1154,92 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-ngsi-ld-compaction"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-entity",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-number",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-vocabulary",
+ "andromeda-test-allocator",
+ "chrono",
+ "dashmap",
+ "indexmap 2.14.2",
+ "iri-rs",
+ "jsonld",
+ "jsonld-syntax",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "andromeda-ngsi-ld-entity"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-number",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-vocabulary",
+ "andromeda-test-allocator",
+ "andromeda-unit-catalog",
+ "chrono",
+ "compact_str",
+ "derive_more",
+ "indexmap 2.14.2",
+ "iri-rs",
+ "langtag",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.21",
+ "typed-builder",
+]
+
+[[package]]
+name = "andromeda-ngsi-ld-expansion"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-entity",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-number",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-vocabulary",
+ "andromeda-test-allocator",
+ "andromeda-unit-catalog",
+ "compact_str",
+ "indexmap 2.14.2",
+ "iri-rs",
+ "jsonld",
+ "langtag",
+ "pretty_assertions",
+ "rdfx",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "andromeda-ngsi-ld-geometry"
 version = "0.1.0"
 dependencies = [
@@ -1148,7 +1248,6 @@ dependencies = [
  "derive_more",
  "geo",
  "geojson",
- "jsonld-expandable-core",
  "pretty_assertions",
  "rstar 0.13.0",
  "serde",
@@ -1185,6 +1284,7 @@ name = "andromeda-ngsi-ld-model"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-number",
@@ -1201,8 +1301,6 @@ dependencies = [
  "indexmap 2.14.2",
  "iri-rs",
  "iso8601-duration",
- "jsonld",
- "jsonld-expandable-core",
  "langtag",
  "mediatype",
  "pretty_assertions",
@@ -1276,12 +1374,15 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-headers",
+ "andromeda-ngsi-ld-entity",
+ "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-test-allocator",
  "chrono",
  "geojson",
  "indexmap 2.14.2",
@@ -1359,6 +1460,8 @@ dependencies = [
  "andromeda-delivery",
  "andromeda-entity",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-compaction",
+ "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
@@ -1410,7 +1513,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
  "andromeda-context-space",
- "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
@@ -1484,6 +1587,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-space",
+ "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -1515,6 +1619,7 @@ dependencies = [
  "andromeda-entity-map",
  "andromeda-health",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -1715,6 +1820,7 @@ dependencies = [
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-entity",
+ "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -1757,6 +1863,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-compaction",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -1812,8 +1919,13 @@ dependencies = [
  "andromeda-entity",
  "andromeda-federation",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-compaction",
+ "andromeda-ngsi-ld-entity",
+ "andromeda-ngsi-ld-expansion",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
@@ -1857,6 +1969,8 @@ dependencies = [
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-compaction",
+ "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -1898,8 +2012,12 @@ dependencies = [
  "andromeda-entity",
  "andromeda-federation",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-compaction",
+ "andromeda-ngsi-ld-entity",
+ "andromeda-ngsi-ld-expansion",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
@@ -1959,6 +2077,9 @@ dependencies = [
  "andromeda-context-space",
  "andromeda-entity",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-compaction",
+ "andromeda-ngsi-ld-entity",
+ "andromeda-ngsi-ld-expansion",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -2011,6 +2132,14 @@ dependencies = [
  "toml",
  "toml-comment",
  "tracing",
+]
+
+[[package]]
+name = "andromeda-test-allocator"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "pretty_assertions",
 ]
 
 [[package]]
@@ -4864,9 +4993,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld"
-version = "0.23.3"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3d9632ceae82019ba4fed66a9a1b4821bda908c7133084cf85e6af1bbddfb2d"
+checksum = "8eb07d69aa32d9dba8fc9337a4efed19a26c8eccb1a92f62f0ac1b7ffde0a615"
 dependencies = [
  "contextual",
  "iri-rs",
@@ -4886,11 +5015,12 @@ dependencies = [
 
 [[package]]
 name = "jsonld-compaction"
-version = "0.23.3"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6e321bc2b4c6ef116fd20ef8f96852c2e02ddc610bee9746692e72fff646b18"
+checksum = "89d95f88b009f3042b2fd42c838b55e7bb4b30c6b6e0ffa137b68f5f8b5d83c2"
 dependencies = [
  "contextual",
+ "derive-where",
  "jsonld-context-processing",
  "jsonld-core",
  "jsonld-expansion",
@@ -4903,9 +5033,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-context-processing"
-version = "0.23.3"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56abc99f6ebd3bff876ac5bf9e1571b539f08f85769a63ad53418071fde8675f"
+checksum = "4b118181e6ad3b0039ee1049f303ca11b5b06a1ace9a3c8958307a5b107d0970"
 dependencies = [
  "contextual",
  "foldhash",
@@ -4920,9 +5050,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-core"
-version = "0.23.3"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e3c5ced76d70ee2fd8756fd2793a01f6c6d5f0e7bdd9f90c529b0a79fbcc8d7"
+checksum = "21530fc64dae13ef462a2aa2a3c8acb31c457f55629198987958b8286df170b3"
 dependencies = [
  "contextual",
  "derive-where",
@@ -4952,9 +5082,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expandable"
-version = "0.23.3"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3c3db2d742dd577f1569aef129261702f6a2b2db9196737b1e6029d9b81fe29"
+checksum = "ac8fbd282ca92d196b92894d6399a0ba541c976b043f8988a90d101aff654ac9"
 dependencies = [
  "jsonld-expandable-core",
  "proc-macro-crate",
@@ -4965,9 +5095,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expandable-core"
-version = "0.23.3"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "013433cabc6eceba28f9260863d6f5d6549a19fabcec0c737b226b40bd42a1fa"
+checksum = "5e214f5148e7bcb09f08b8cc6d070c6e426fcaf8afaf1d81d41bced7adb442a7"
 dependencies = [
  "chrono",
  "proc-macro2",
@@ -4978,9 +5108,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expansion"
-version = "0.23.3"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1467b3ef23e6456f9ecec1c204e61859ca530c0b9aa7328536aca24b8cc49ac"
+checksum = "0cff73a04801f4de03fbf293e7dd8b980d4da7413b66cd5a6725deb88c1365c8"
 dependencies = [
  "contextual",
  "jsonld-context-processing",
@@ -4995,9 +5125,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-serialization"
-version = "0.23.3"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c28444026ddd8fd1600cc6b3f92ce04e9e05548eec7d1d5af9688b34005583c8"
+checksum = "5f8f786accfbfa884f674bbc35d8c4e5ec5cac9e83adb74f222fcc22623ad871"
 dependencies = [
  "iri-rs",
  "jsonld-core",
@@ -5010,9 +5140,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-syntax"
-version = "0.23.3"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae61ecbeb5f3af5935cf769d2f69b838f12ca82f717f07a665134b65d40d2337"
+checksum = "7986072334838e1903bb96aaddbafb15132536e4558995802bb2f67ca5b5b06d"
 dependencies = [
  "contextual",
  "hashbrown 0.17.1",
@@ -5030,9 +5160,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-vocab"
-version = "0.23.3"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c17d4b52e0f40c8b0a184a15f91483a4b4268d20731b7f75580b7ce42fcb97e5"
+checksum = "5d9cc07743f227e8075daf411385cc261ed635278bbf0c2b04b3bb263981b463"
 dependencies = [
  "heck 0.5.0",
  "proc-macro-crate",

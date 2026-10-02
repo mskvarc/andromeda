@@ -8,15 +8,8 @@
 //! and entity and temporal policy both read it back out. Each `#[error]` renders
 //! lowercase client prose; spec attribute-type names keep their fixed casing.
 
-use andromeda_ngsi_ld_lexicon::{
-    identifier::{Identifier, IdentifierParseError},
-    ngsi_ld_date_time::NgsiLdDateTimeError,
-    reference::NgsiLdReferenceError,
-    time_value::TimeValueError,
-    uri::UriParseError,
-};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_date_time::NgsiLdDateTimeError, time_value::TimeValueError};
 use andromeda_ngsi_ld_number::JsonNumberError;
-use derive_more::Display;
 use thiserror::Error;
 
 /// Why the submitted content cannot be stored as written.
@@ -34,18 +27,9 @@ pub enum SubmissionRefusal {
     /// A `unitCode` names no code the closed UN/CEFACT list holds (clause 4.5.2).
     #[error("'unitCode' is not a UN/CEFACT common code the unit catalog registers")]
     UnitCodeUnregistered,
-    /// An expanded attribute member key did not satisfy the attribute-name grammar.
-    #[error("expanded attribute name is invalid: {0}")]
-    ExpandedAttributeName(#[source] NgsiLdReferenceError),
-    /// An attribute's `datasetId` was not an identifier.
-    #[error("invalid datasetId: {0}")]
-    DatasetId(#[source] IdentifierParseError),
     /// An `observedAt` value was not a clause 4.6.3 `DateTime`.
     #[error("invalid observedAt: {0}")]
     ObservedAt(#[source] NgsiLdDateTimeError),
-    /// An `instanceId` value was not an identifier.
-    #[error("invalid instanceId: {0}")]
-    InstanceId(#[source] IdentifierParseError),
     /// A time-value property was not a clause 4.6.3 time value.
     #[error("invalid time value property: {0}")]
     TimeValueProperty(#[source] TimeValueError),
@@ -55,24 +39,6 @@ pub enum SubmissionRefusal {
     /// A `Relationship` instance omitted its `object`.
     #[error("Relationship missing object")]
     RelationshipMissingObject,
-    /// A `Relationship` `object` named no target `URI`.
-    #[error("Relationship object names no target URI")]
-    RelationshipObjectNoTarget,
-    /// A `Relationship` target member was not a `URI`.
-    #[error("{member} is not a valid URI: {source}")]
-    RelationshipTarget {
-        /// The member the target came from.
-        member: RelationshipTargetMember,
-        /// The `URI` grammar violation.
-        #[source]
-        source: UriParseError,
-    },
-    /// A `GeoProperty` instance omitted its `value`.
-    #[error("GeoProperty missing value")]
-    GeoPropertyMissingValue,
-    /// A `GeoProperty` carried a `value` string that was not `GeoJSON`.
-    #[error("invalid GeoProperty GeoJSON string: {0}")]
-    GeoPropertyGeoJson(#[source] serde_json::Error),
     /// A `GeoProperty` carried a value that is not a geometry.
     #[error("invalid GeoProperty geometry")]
     GeoPropertyGeometryInvalid,
@@ -82,9 +48,6 @@ pub enum SubmissionRefusal {
     /// A `Property` instance omitted its `value`.
     #[error("Property missing value")]
     PropertyMissingValue,
-    /// A `Property` array element carried no `value`.
-    #[error("Property array element carries no value")]
-    PropertyArrayElementMissingValue,
     /// A `Property` carried a number the arbitrary-precision store cannot hold.
     #[error("Property number cannot be carried: {0}")]
     PropertyNumber(#[source] JsonNumberError),
@@ -100,33 +63,15 @@ pub enum SubmissionRefusal {
     /// A `ListRelationship` instance omitted its `objectList`.
     #[error("ListRelationship missing objectList")]
     ListRelationshipMissingObjectList,
-    /// A `ListRelationship` `objectList` was not a list.
-    #[error("ListRelationship objectList is not a list")]
-    ListRelationshipObjectListNotAList,
-    /// A `ListRelationship` `objectList` member named no target `URI`.
-    #[error("ListRelationship objectList member names no target URI")]
-    ListRelationshipObjectListMemberNoTarget,
     /// A client-supplied `instanceId` claimed more than one instance of the same
     /// attribute at once (clause 4.5.7).
     #[error("instanceId is already claimed by another instance of the same attribute, and must be unique to one")]
     DuplicateInstanceClaim,
 }
 
-/// The member a Relationship target was read from, named as the client wrote it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
-pub enum RelationshipTargetMember {
-    /// The `object` of a `Relationship`.
-    #[display("Relationship object")]
-    RelationshipObject,
-    /// One member of the `objectList` of a `ListRelationship`.
-    #[display("ListRelationship objectList member")]
-    ListRelationshipObjectListMember,
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::submission_refusal::{RelationshipTargetMember, SubmissionRefusal};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use crate::submission_refusal::SubmissionRefusal;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -143,19 +88,6 @@ mod tests {
         assert_eq!(
             SubmissionRefusal::UnitCodeUnregistered.to_string(),
             "'unitCode' is not a UN/CEFACT common code the unit catalog registers"
-        );
-    }
-
-    #[test]
-    fn a_relationship_target_refusal_names_the_member_it_came_from() {
-        let source = "not a uri".parse::<Uri>().expect_err("a space is not allowed in a URI");
-        let refusal = SubmissionRefusal::RelationshipTarget {
-            member: RelationshipTargetMember::ListRelationshipObjectListMember,
-            source,
-        };
-        assert!(
-            refusal.to_string().starts_with("ListRelationship objectList member is not a valid URI: "),
-            "{refusal}"
         );
     }
 }

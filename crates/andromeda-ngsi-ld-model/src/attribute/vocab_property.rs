@@ -2,39 +2,28 @@
 
 use crate::attribute::{common_fields::CommonAttributeFields, one_or_many::OneOrMany};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 /// NGSI-LD `VocabProperty` representation (ETSI GS CIM 009 clause 5.2.35).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(
-    type = "ngsi:VocabProperty",
-    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
-)]
 pub struct VocabProperty {
     /// One or more vocabulary references.
-    #[jsonld(property = "ngsi:hasVocab", passthrough)]
     pub vocab: OneOrMany<NgsiLdReference>,
     /// Optional JSON-LD datatype for `vocab`.
-    #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<NgsiLdReference>,
     /// Previous vocabulary reference emitted in notifications when `showChanges` is active.
-    #[jsonld(property = "ngsi:hasPreviousVocab", passthrough)]
     pub previous_vocab: Option<OneOrMany<NgsiLdReference>>,
     /// Members shared with every other attribute family.
     #[serde(flatten)]
-    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
 }
 
 #[cfg(test)]
 mod tests {
     use crate::attribute::{instance::Attribute, one_or_many::OneOrMany};
-    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-    use jsonld::Expandable;
 
     #[test]
     fn vocab_property_round_trip_supports_single_and_many() {
@@ -49,23 +38,6 @@ mod tests {
         };
         assert!(matches!(property.vocab, OneOrMany::Many(_)));
         assert!(property.previous_vocab.is_some());
-    }
-
-    #[test]
-    fn vocab_property_expanded_uses_vocab_members() {
-        let json = serde_json::json!({
-            "type": "VocabProperty",
-            "vocab": "commercial",
-            "valueType": "xsd:string"
-        });
-        let attr: Attribute = serde_json::from_value(json).expect("vocab property");
-        let Attribute::VocabProperty(property) = attr else {
-            panic!("expected VocabProperty");
-        };
-        let expanded = property.expand::<serde_json::Value>();
-        let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(expanded_properties::VOCAB.as_str()));
-        assert!(obj.contains_key(expanded_properties::VALUE_TYPE.as_str()));
     }
 
     #[test]

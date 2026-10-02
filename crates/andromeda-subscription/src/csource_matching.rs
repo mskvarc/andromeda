@@ -9,11 +9,11 @@ use crate::compiled::CompiledCsrSubscription;
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches as geometry_matches};
 use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::{
-    registration::{ContextSourceRegistration, info::RegistrationInfo},
+    registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, info::RegistrationInfo},
     registration_matching::{EntitySpecification, RegistrationMatchSpecification},
     subscription::SubscriptionStatus,
 };
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, filter::eval, geo::query::GeoQuery};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, filter::eval::evaluate, geo::query::GeoQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
 use chrono::Utc;
 use serde_json::Value;
@@ -96,7 +96,7 @@ fn geo_query_admits(geo_q: &GeoQuery, registration: &ContextSourceRegistration) 
     let Some(declared) = registration_geometry(geo_q, registration) else {
         return true;
     };
-    Geometry::from_geojson_value(declared).is_ok_and(|subject| geometry_matches(&geo_q.georel, &subject, &geo_q.geometry))
+    Geometry::from_geojson_value(declared).is_ok_and(|subject| geometry_matches(&geo_q.georel, &subject.planar(), &geo_q.geometry.planar()))
 }
 
 /// The registration geometry a `geoQ` names (Table 5.2.9-1): `observationSpace`
@@ -123,7 +123,7 @@ fn scope_query_admits(sub: &CompiledCsrSubscription, registration: &ContextSourc
         .coverage
         .scope
         .as_deref()
-        .is_some_and(|scopes| scope_q.matches(&scopes.iter().map(ScopePath::as_str).collect::<Vec<_>>()))
+        .is_some_and(|scopes| scope_q.matches(scopes.iter().map(ScopePath::as_str)))
 }
 
 /// Clause 5.11.2.4: the context source filter is matched against the
@@ -135,7 +135,8 @@ fn context_source_filter_admits(sub: &CompiledCsrSubscription, registration: &Co
     registration
         .additional_properties
         .as_ref()
-        .is_some_and(|properties| eval::evaluate(csf, properties))
+        .and_then(ContextSourceProperties::of)
+        .is_some_and(|properties| evaluate(csf, properties))
 }
 
 #[cfg(test)]

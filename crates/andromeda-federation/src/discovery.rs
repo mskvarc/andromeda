@@ -2,8 +2,8 @@
 
 use crate::{
     FederationService,
-    answer_vocabulary::AnswerVocabulary,
     cache::Cacheability,
+    document_rewording::DocumentVocabulary,
     entity_read::own_loop_warning,
     error::FederationError,
     forwarded_names::ForwardedNames,
@@ -96,7 +96,7 @@ impl FederationService {
                     .registration(&csr)
                     .inbound(context)
                     .triggering(triggering)
-                    .vocabulary(AnswerVocabulary::Discovery)
+                    .vocabulary(DocumentVocabulary::Discovery)
                     .build();
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;
@@ -145,7 +145,7 @@ impl FederationService {
     ) -> Result<(Vec<String>, String), FederationError> {
         let decision = forwarding_decision(registration, inbound, BodyPresence::Absent)?;
         let naming = decision.context.naming(inbound);
-        let names = ForwardedNames::new(&self.engine, resolver, &naming, decision.context.rewording());
+        let names = ForwardedNames::prepare(&self.engine, resolver, &naming, decision.context.rewording()).await?;
         let collection = collection_of(target).to_owned();
         let segments = match target {
             DiscoveryTarget::Types | DiscoveryTarget::Attributes => vec![collection],

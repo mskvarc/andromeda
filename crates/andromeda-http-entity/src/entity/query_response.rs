@@ -2,8 +2,8 @@
 
 use crate::entity::{IntoResponse, NgsiLdCollectionResponse, Response, StatusCode, query_page::QueryPage};
 use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_warning::NgsiLdWarning};
+use andromeda_http_response::rendered_response::RenderedResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_render::response::RenderedOutput;
 use axum::http::Uri as HttpUri;
 
 /// The metadata a query's response carries beside its rendered collection.
@@ -28,7 +28,7 @@ pub(crate) struct QueryCollectionMetadata {
 
 /// Assemble the response around a rendered collection.
 pub(crate) fn query_response(
-    rendered: RenderedOutput,
+    rendered: RenderedResponse,
     metadata: QueryCollectionMetadata,
     page: &QueryPage,
     media_type: ResponseMediaType,

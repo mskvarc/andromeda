@@ -2,7 +2,7 @@
 //! (clause 4.22).
 
 use crate::{
-    entity::{mapper::stored_uri, repo::EntityRepository},
+    entity::{mapper::stored_uri, read::snapshot_of, repo::EntityRepository},
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -44,8 +44,9 @@ impl EntityRepository {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError`] when the candidate query fails, or when a
-    /// returned identifier is no longer a valid URI.
+    /// Returns [`ContextStoreError`] when the candidate query fails, when a
+    /// returned identifier is no longer a valid URI, or when a stored document
+    /// no longer decodes as an entity state.
     pub async fn entities_with_expired_attributes(
         &self,
         target: &ContextTarget,
@@ -55,16 +56,8 @@ impl EntityRepository {
         let (sql, values) = entities_with_expired_attributes_statement(target, cutoff, u64::from(batch_size.get())).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
-        rows.into_iter()
-            .map(|row| {
-                Ok((
-                    stored_uri(row.get("id"))?,
-                    EntitySnapshot {
-                        payload: row.get("payload"),
-                        modified_at: row.get("modified_at"),
-                    },
-                ))
-            })
+        rows.iter()
+            .map(|row| -> Result<(Identifier, EntitySnapshot), ContextStoreError> { Ok((stored_uri(row.try_get("id")?)?, snapshot_of(row)?)) })
             .collect()
     }
 }

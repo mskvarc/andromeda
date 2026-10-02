@@ -17,13 +17,14 @@
 
 use crate::{
     context::ResponseContext,
+    entity_response::{EntityPayload, ReadyEntityResponse},
     error::RenderError,
     geojson::{GeoJsonRenderer, GeoJsonShape},
     geometry_selection::GeometrySelection,
     uri_decoding::decode_percent_encoded_uris,
     version::{adaptation::VersionAdaptation, adapted_payload::AdaptedPayload, renderer::VersionRenderer},
 };
-use andromeda_http_headers::media_type::ResponseMediaType;
+use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMediaType};
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use iri_rs::IriBuf;
@@ -89,17 +90,17 @@ impl ResponsePayload {
 #[derive(Debug)]
 pub struct ResponseRenderer<'a> {
     /// The negotiated media type, which decides the envelope.
-    media_type: ResponseMediaType,
+    pub(crate) media_type: ResponseMediaType,
     /// The resolved `@context`, in the one carrier the response uses.
-    context: ResponseContext,
+    pub(crate) context: ResponseContext,
     /// The `Prefer: ngsi-ld=` version to adapt the payload to, if any.
-    requested_version: Option<SpecVersion>,
-    /// The clause 4.5 representation the payload was already rendered in.
-    format: ResponseFormat,
+    pub(crate) requested_version: Option<SpecVersion>,
+    /// The clause 4.5 representation the payload is rendered in.
+    pub(crate) format: ResponseFormat,
     /// Which NGSI-LD Element the payload is, which version adaptation reads.
-    adapted_payload: AdaptedPayload,
+    pub(crate) adapted_payload: AdaptedPayload,
     /// The clause 4.5.16.1 rule a `GeoJSON` geometry is selected by.
-    geometry_selection: GeometrySelection<'a>,
+    pub(crate) geometry_selection: GeometrySelection<'a>,
 }
 
 /// A fully-configured renderer with its payload attached, ready to run.
@@ -110,9 +111,20 @@ pub struct ResponseRenderer<'a> {
 #[derive(Debug)]
 pub struct ReadyResponse<'a> {
     /// The configuration the payload was attached to.
-    renderer: ResponseRenderer<'a>,
+    pub(crate) renderer: ResponseRenderer<'a>,
     /// What is being answered.
-    payload: ResponsePayload,
+    pub(crate) payload: ResponsePayload,
+    /// Whether the payload's Relationship targets are still to be decoded.
+    pub(crate) targets: TargetDecoding,
+}
+
+/// Whether a payload's Relationship targets have been percent-decoded yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TargetDecoding {
+    /// The pipeline decodes them, as it does every document a caller hands it.
+    Pending,
+    /// The typed walk that wrote the payload decoded them as it wrote them.
+    Applied,
 }
 
 /// Output of the rendering pipeline, ready for the response type to serialize.
@@ -120,6 +132,13 @@ pub struct ReadyResponse<'a> {
 pub struct RenderedOutput {
     /// The fully-rendered JSON value, with `@context` injected if applicable.
     pub value: Value,
+    /// How the response carrying it is written.
+    pub head: ResponseHead,
+}
+
+/// What a rendered response says about itself beside its body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResponseHead {
     /// The target of the one context `Link` header the response carries, when
     /// its `@context` is advertised rather than embedded.
     pub context_link: Option<IriBuf>,
@@ -193,7 +212,23 @@ impl<'a> ResponseRenderer<'a> {
     /// cannot be produced without a payload.
     #[must_use]
     pub const fn with_payload(self, payload: ResponsePayload) -> ReadyResponse<'a> {
-        ReadyResponse { renderer: self, payload }
+        ReadyResponse {
+            renderer: self,
+            payload,
+            targets: TargetDecoding::Pending,
+        }
+    }
+
+    /// Attach the typed entities to render, in the representation set by
+    /// [`ResponseRenderer::with_format`] and negotiated against
+    /// `language_filter` (clause 4.15), producing a runnable
+    /// [`ReadyEntityResponse`].
+    ///
+    /// The entities are written straight into the response body; see
+    /// [`crate::entity_response`].
+    #[must_use]
+    pub const fn with_entities(self, payload: EntityPayload<'a>, language_filter: Option<&'a LanguageFilter>) -> ReadyEntityResponse<'a> {
+        ReadyEntityResponse::new(self, payload, language_filter)
     }
 }
 
@@ -205,7 +240,7 @@ impl ReadyResponse<'_> {
     /// Returns [`RenderError::Serialization`] when the `GeoJSON` envelope cannot
     /// be turned into a JSON value.
     pub fn render(self) -> Result<RenderedOutput, RenderError> {
-        let ReadyResponse { renderer, payload } = self;
+        let ReadyResponse { renderer, payload, targets } = self;
         let geo_json_shape = match renderer.media_type {
             ResponseMediaType::Json | ResponseMediaType::JsonLd => None,
             ResponseMediaType::GeoJson => payload.geo_json_shape(),
@@ -218,7 +253,7 @@ impl ReadyResponse<'_> {
         // GeoJSON wrapping, so the policy is media-type-independent: the walk
         // runs while the payload is still a plain entity object, and the Feature
         // envelope is built afterwards from the already-decoded value.
-        if carries_relationships {
+        if carries_relationships && targets == TargetDecoding::Pending {
             decode_percent_encoded_uris(&mut value);
         }
 
@@ -259,9 +294,11 @@ impl ReadyResponse<'_> {
 
         Ok(RenderedOutput {
             value,
-            context_link,
-            media_type: renderer.media_type,
-            version_adaptation,
+            head: ResponseHead {
+                context_link,
+                media_type: renderer.media_type,
+                version_adaptation,
+            },
         })
     }
 }
@@ -331,8 +368,8 @@ mod tests {
             .render()
             .expect("render");
         assert!(rendered.value.get("@context").is_none());
-        pretty_assertions::assert_eq!(rendered.context_link, Some(iri("https://example.org/ctx")));
-        pretty_assertions::assert_eq!(rendered.media_type, ResponseMediaType::Json);
+        pretty_assertions::assert_eq!(rendered.head.context_link, Some(iri("https://example.org/ctx")));
+        pretty_assertions::assert_eq!(rendered.head.media_type, ResponseMediaType::Json);
     }
 
     #[test]
@@ -342,8 +379,8 @@ mod tests {
             .render()
             .expect("render");
         pretty_assertions::assert_eq!(rendered.value["@context"], json!("https://example.org/ctx"));
-        pretty_assertions::assert_eq!(rendered.context_link, None);
-        pretty_assertions::assert_eq!(rendered.media_type, ResponseMediaType::JsonLd);
+        pretty_assertions::assert_eq!(rendered.head.context_link, None);
+        pretty_assertions::assert_eq!(rendered.head.media_type, ResponseMediaType::JsonLd);
     }
 
     #[test]
@@ -377,7 +414,7 @@ mod tests {
             .render()
             .expect("render");
         assert!(rendered.value.get("@context").is_none());
-        pretty_assertions::assert_eq!(rendered.context_link, None);
+        pretty_assertions::assert_eq!(rendered.head.context_link, None);
     }
 
     #[test]
@@ -417,14 +454,14 @@ mod tests {
             .render()
             .expect("render");
         assert!(embedded_feature.value.get("@context").is_some());
-        pretty_assertions::assert_eq!(embedded_feature.context_link, None);
+        pretty_assertions::assert_eq!(embedded_feature.head.context_link, None);
 
         let advertised = ResponseRenderer::new(ResponseMediaType::GeoJson, linked())
             .with_payload(ResponsePayload::Single(an_entity()))
             .render()
             .expect("render");
         assert!(advertised.value.get("@context").is_none());
-        pretty_assertions::assert_eq!(advertised.context_link, Some(iri("https://example.org/ctx")));
+        pretty_assertions::assert_eq!(advertised.head.context_link, Some(iri("https://example.org/ctx")));
     }
 
     #[test]
@@ -468,7 +505,7 @@ mod tests {
             ))
             .render()
             .expect("render");
-        pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::Unchanged);
+        pretty_assertions::assert_eq!(rendered.head.version_adaptation, VersionAdaptation::Unchanged);
     }
 
     #[test]
@@ -491,7 +528,7 @@ mod tests {
             .with_payload(ResponsePayload::Single(json!({"id": "urn:x", "type": "T"})))
             .render()
             .expect("render");
-        pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::Applied { version: SpecVersion::V1_4 });
+        pretty_assertions::assert_eq!(rendered.head.version_adaptation, VersionAdaptation::Applied { version: SpecVersion::V1_4 });
     }
 
     #[test]
@@ -500,6 +537,6 @@ mod tests {
             .with_payload(ResponsePayload::Single(json!({"id": "urn:x", "type": "T"})))
             .render()
             .expect("render");
-        pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::None);
+        pretty_assertions::assert_eq!(rendered.head.version_adaptation, VersionAdaptation::None);
     }
 }

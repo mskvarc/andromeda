@@ -204,6 +204,7 @@ fn csr_ordering_condition(path: &AttrPath, op: OrderingOp, rhs: &Scalar) -> Cond
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_query::filter::{eval::evaluate, parser};
     use andromeda_postgresql_query::{
         attribute_name_key::AttributeNameKey,
@@ -335,19 +336,33 @@ mod tests {
     /// An attribute IRI used by the conformance fixtures.
     const NAME: &str = "https://example.com/name";
 
-    /// An entity carrying one value for each of the three fixture attributes.
-    fn present(speed: i64, color: &str, name: &str) -> serde_json::Value {
+    /// The stored state an expanded document decodes to.
+    fn stored(document: &serde_json::Value) -> EntityState {
+        EntityState::from_slice(&serde_json::to_vec(document).expect("JSON")).expect("a stored state")
+    }
+
+    /// One Property instance holding `value`.
+    fn property(value: &serde_json::Value) -> serde_json::Value {
         serde_json::json!([{
-            "@id": "urn:ngsi-ld:Vehicle:A1",
-            SPEED: [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": speed}] }],
-            COLOR: [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": color}] }],
-            NAME: [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": name}] }],
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]
         }])
     }
 
+    /// An entity carrying one value for each of the three fixture attributes.
+    fn present(speed: i64, color: &str, name: &str) -> EntityState {
+        stored(&serde_json::json!([{
+            "@id": "urn:ngsi-ld:Vehicle:A1",
+            "@type": ["https://example.com/Vehicle"],
+            SPEED: property(&speed.into()),
+            COLOR: property(&color.into()),
+            NAME: property(&name.into()),
+        }]))
+    }
+
     /// An entity carrying none of the three fixture attributes.
-    fn absent() -> serde_json::Value {
-        serde_json::json!([{ "@id": "urn:ngsi-ld:Vehicle:A2" }])
+    fn absent() -> EntityState {
+        stored(&serde_json::json!([{ "@id": "urn:ngsi-ld:Vehicle:A2", "@type": ["https://example.com/Vehicle"] }]))
     }
 
     fn names() -> QueryNames {
@@ -374,9 +389,9 @@ mod tests {
         /// The filter, written against the three fixture attribute IRIs.
         expression: String,
         /// Entities the predicate must select.
-        matching: Vec<serde_json::Value>,
+        matching: Vec<EntityState>,
         /// Entities carrying the attribute that the predicate must reject.
-        non_matching: Vec<serde_json::Value>,
+        non_matching: Vec<EntityState>,
     }
 
     fn cases() -> Vec<Case> {
@@ -436,10 +451,10 @@ mod tests {
             let expr = parser::parse(&case.expression).unwrap_or_else(|error| panic!("{}: {error}", case.expression));
 
             for entity in &case.matching {
-                assert!(evaluate(&expr, entity), "{} must select {entity}", case.expression);
+                assert!(evaluate(&expr, entity), "{} must select {}", case.expression, entity.id());
             }
             for entity in &case.non_matching {
-                assert!(!evaluate(&expr, entity), "{} must reject {entity}", case.expression);
+                assert!(!evaluate(&expr, entity), "{} must reject {}", case.expression, entity.id());
             }
             assert!(!evaluate(&expr, &absent()), "{} must reject an entity without the attribute", case.expression);
 

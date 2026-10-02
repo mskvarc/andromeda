@@ -4,6 +4,7 @@ use crate::intent_store::PostgresTemporalIntentStore;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
 use andromeda_postgresql_seaquery::{
+    cast::cast,
     pg_array::text_array,
     pg_type::PostgresType,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
@@ -12,19 +13,21 @@ use andromeda_postgresql_temporal_store::error::TemporalStoreError;
 use andromeda_temporal::{append_intent::TemporalAppendIntent, error::TemporalError};
 use sea_query::{Alias, Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
-use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 /// The `AS input(write_id, entity_id, base_ordinal, payload)` column-list alias the
 /// enqueue's `UNNEST` set-write projects, in the order the parallel arrays are
 /// bound and the insert's columns are named.
+///
+/// The payloads are bound as the intents' JSON text and cast to `jsonb` by the
+/// projection, so no JSON tree is built for them on the way to the column.
 pub(super) fn intent_unnest_columns() -> [UnnestColumn; 4] {
     [
         UnnestColumn::new(Alias::new("write_id"), PostgresType::UuidArray),
         UnnestColumn::new(Alias::new("entity_id"), PostgresType::TextArray),
         UnnestColumn::new(Alias::new("base_ordinal"), PostgresType::IntegerArray),
-        UnnestColumn::new(Alias::new("payload"), PostgresType::JsonbArray),
+        UnnestColumn::new(Alias::new("payload"), PostgresType::TextArray),
     ]
 }
 
@@ -42,7 +45,7 @@ pub(super) fn intent_unnest_columns() -> [UnnestColumn; 4] {
 /// `ON CONFLICT ... DO NOTHING` is what makes a commit replayed under its
 /// original identity enqueue no second copy of any entity's intent at a given
 /// base ordinal.
-pub(super) fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, payloads: Vec<Value>) -> Result<InsertStatement, SeaQueryError> {
+pub(super) fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, payloads: Vec<String>) -> Result<InsertStatement, SeaQueryError> {
     let columns = intent_unnest_columns();
     let call = unnest_call([
         (&columns[0], Expr::val(ids)),
@@ -55,7 +58,7 @@ pub(super) fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<
         .expr(Expr::col((input.clone(), Alias::new("write_id"))))
         .expr(Expr::col((input.clone(), Alias::new("entity_id"))))
         .expr(Expr::col((input.clone(), Alias::new("base_ordinal"))))
-        .expr(Expr::col((input.clone(), Alias::new("payload"))))
+        .expr(cast(Expr::col((input.clone(), Alias::new("payload"))), PostgresType::Jsonb))
         .from_function(call, input)
         .to_owned();
     let mut statement = Query::insert();
@@ -100,7 +103,7 @@ impl PostgresTemporalIntentStore {
                     .as_i32()
                     .map_err(|error| TemporalError::from(PersistenceFailure::Unencodable.record(&error)))?,
             );
-            payloads.push(serde_json::to_value(intent).map_err(|error| TemporalError::from(PersistenceFailure::Unencodable.record(&error)))?);
+            payloads.push(serde_json::to_string(intent).map_err(|error| TemporalError::from(PersistenceFailure::Unencodable.record(&error)))?);
         }
         let statement = enqueue_statement(ids, &entity_ids, bases, payloads)
             .map_err(|error| TemporalError::from(PersistenceFailure::StatementUnbuildable.record(&error)))?;
@@ -121,11 +124,10 @@ mod tests {
     use crate::intent_store::enqueue::{enqueue_statement, intent_unnest_columns};
     use andromeda_postgresql_seaquery::unnest::apply_column_alias;
     use sea_query::{Alias, PostgresQueryBuilder};
-    use serde_json::json;
     use uuid::Uuid;
 
     fn enqueue_sql() -> String {
-        let statement = enqueue_statement(vec![Uuid::nil()], &["urn:ngsi-ld:Vehicle:1"], vec![0], vec![json!({})]).expect("arity");
+        let statement = enqueue_statement(vec![Uuid::nil()], &["urn:ngsi-ld:Vehicle:1"], vec![0], vec!["{}".to_owned()]).expect("arity");
         let sql = statement.to_string(PostgresQueryBuilder);
         apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns())
     }
@@ -145,12 +147,14 @@ mod tests {
     }
 
     /// The parallel-array set-write projects a `AS input(...)` column-list
-    /// alias with no ordinality, and each array is cast to its element type.
+    /// alias with no ordinality, and each array is cast to its element type;
+    /// the payloads travel as JSON text and become `jsonb` in the projection.
     #[test]
     fn the_enqueue_projects_the_four_parallel_arrays_as_named_columns() {
         let sql = enqueue_sql();
         assert!(sql.contains("AS input(write_id, entity_id, base_ordinal, payload)"), "{sql}");
-        assert!(sql.contains("::uuid[]") && sql.contains("::jsonb[]"), "{sql}");
+        assert!(sql.contains("::uuid[]") && sql.contains("::text[]"), "{sql}");
+        assert!(sql.contains(r#""input"."payload"::jsonb"#), "{sql}");
         assert!(!sql.contains("WITH ORDINALITY"), "{sql}");
     }
 

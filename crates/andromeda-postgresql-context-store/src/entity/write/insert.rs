@@ -2,16 +2,19 @@
 //! current-state relations.
 
 use crate::{
+    branch_statement::BranchStatement,
     entity::{
         census::delta::{CensusChange, CensusStatements},
         inserted_entity::InsertedEntity,
         mapper::stored_inserted_entity,
         params::{PreparedEntityColumns, literal_texts},
         repo::EntityRepository,
+        staged_geometry::written_column,
         types_present::{entity_write_failure, types_present},
         write::{
+            payload_staging::{DocumentWrite, Pay, apply_payload_alias, payload_cte, payload_of, staged_payload},
             search_image::SearchImage,
-            staging::{Docs, ExpectationStaged, Ins, Proj, Srch, Staged, from_inserted, insert_staging_columns, projected, projection_cte},
+            staging::{Docs, Ins, Proj, ProjectedWrite, Srch, apply_staged_alias, from_inserted, insert_staging_columns, projected, projection_cte},
             type_membership::{Mbrs, created_memberships},
         },
     },
@@ -21,22 +24,25 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
-use andromeda_postgresql_seaquery::unnest::apply_column_alias;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
-use sea_query::{CommonTableExpression, Expr, IntoIden, OnConflict, PostgresQueryBuilder, Query, WithClause};
+use sea_query::{CommonTableExpression, Expr, IntoIden, JoinType, OnConflict, PostgresQueryBuilder, Query, WithClause};
 use sqlx::{Postgres, Transaction};
 
 /// The statement name the entity set-insert is observed under.
 const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 
+/// The batch insert's text, built once for the live branch.
+static ENTITY_INSERT_STATEMENT: BranchStatement = BranchStatement::new(entity_insert_sql);
+
 /// Build the batch insert.
 ///
 /// ```sql
-/// WITH proj AS (SELECT … FROM UNNEST(…) AS d(…)),
+/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $12::timestamptz[]) AS d(…)),
+///      pay AS (SELECT p.id, p.payload FROM UNNEST($1::text[], $13::text[]) AS p(id, payload)),
 ///      ins AS (INSERT INTO entities (id, expires_at, min_attribute_expires_at)
 ///              SELECT … FROM proj ON CONFLICT (id) DO NOTHING RETURNING entity_key, id),
 ///      docs AS (INSERT INTO entity_documents (entity_key, payload)
-///               SELECT ins.entity_key, proj.payload FROM ins JOIN proj ON proj.id = ins.id),
+///               SELECT ins.entity_key, pay.payload::jsonb FROM ins JOIN pay ON pay.id = ins.id),
 ///      srch(entity_key, new_types, new_instance_names, new_instance_kinds) AS
 ///              (INSERT INTO entity_search (…)
 ///               SELECT ins.entity_key, … FROM ins JOIN proj ON proj.id = ins.id
@@ -89,9 +95,11 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
         .into_table(table_of(target, EntityDocuments::Table))
         .columns([EntityDocuments::EntityKey, EntityDocuments::Payload])
         .select_from(
-            from_inserted()
+            Query::select()
+                .from(Ins)
+                .join(JoinType::Join, Pay, payload_of(Ins))
                 .expr(Expr::col((Ins, Entities::EntityKey)))
-                .expr(projected(EntityDocuments::Payload))
+                .expr(staged_payload())
                 .take(),
         )?;
 
@@ -131,8 +139,10 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
         EntitySearch::AttributeInstanceKinds,
     ]));
 
+    let payload_source = DocumentWrite::Insert { payload: columns.len() + 1 };
     let mut with = WithClause::new();
-    with.cte(projection_cte(&columns, ExpectationStaged::No))
+    with.cte(projection_cte(&columns, ProjectedWrite::Insert))
+        .cte(payload_cte(payload_source))
         .cte(CommonTableExpression::new().table_name(Ins).query(identity).to_owned())
         .cte(CommonTableExpression::new().table_name(Docs).query(documents).to_owned())
         .cte(
@@ -154,7 +164,7 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
     let statement = with.query(Query::select().columns([Entities::EntityKey, Entities::Id]).from(Ins).take());
 
     let sql = statement.to_string(PostgresQueryBuilder);
-    Ok(apply_column_alias(sql, &Staged, &columns))
+    Ok(apply_payload_alias(apply_staged_alias(sql, &columns), payload_source))
 }
 
 impl EntityRepository {
@@ -177,21 +187,24 @@ impl EntityRepository {
         types_present(entities)?;
 
         let ids = entities.ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
-        let sql = entity_insert_sql(target)?;
-        let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
+        let locations = written_column(&entities.locations)?;
+        let observation_spaces = written_column(&entities.obs_spaces)?;
+        let operation_spaces = written_column(&entities.op_spaces)?;
+        let sql = ENTITY_INSERT_STATEMENT.text(target)?;
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
             .bind(&ids)
             .bind(literal_texts(&entities.entity_type_name_keys))
             .bind(literal_texts(&entities.attribute_name_keys))
             .bind(literal_texts(&entities.attribute_instance_name_keys))
             .bind(literal_texts(&entities.attribute_instance_kinds))
             .bind(&entities.scope_paths_json)
-            .bind(&entities.payload_json)
-            .bind(&entities.locations)
-            .bind(&entities.obs_spaces)
-            .bind(&entities.op_spaces)
+            .bind(&locations)
+            .bind(&observation_spaces)
+            .bind(&operation_spaces)
             .bind(&entities.location_expires_ats)
             .bind(&entities.expires_ats)
             .bind(&entities.min_attribute_expires_ats)
+            .bind(&entities.payload_json)
             .fetch_all(&mut **tx);
         let rows: Vec<(i64, String)> = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
 
@@ -216,10 +229,12 @@ mod tests {
         pretty_assertions::assert_eq!(placeholders(&sql), (1..=13).collect::<BTreeSet<u32>>());
         assert!(
             sql.contains(
-                "AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at)"
+                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at)"
             ),
             "{sql}"
         );
+        assert!(sql.contains("UNNEST($1::text[], $13::text[]) AS p(id, payload)"), "{sql}");
+        assert!(!sql.contains("ORDINALITY"), "no row is paired by its position in the batch: {sql}");
     }
 
     #[test]
@@ -293,10 +308,17 @@ mod tests {
         assert!(!sql.contains("location_geography"), "the geography is generated: {sql}");
     }
 
+    /// Every child insert finds its row by the identifier the identity insert
+    /// returned: the search and membership rows in the projection, the stored
+    /// document in the payload source.
     #[test]
-    fn the_child_inserts_read_the_minted_key_beside_the_projected_row() {
+    fn the_child_inserts_read_the_minted_key_beside_the_staged_row() {
         let sql = insert();
-        pretty_assertions::assert_eq!(sql.matches(r#"FROM "ins" JOIN "proj" ON "proj"."id" = "ins"."id""#).count(), 3, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#"FROM "ins" JOIN "proj" ON "proj"."id" = "ins"."id""#).count(), 2, "{sql}");
+        assert!(
+            sql.contains(r#"SELECT "ins"."entity_key", "pay"."payload"::jsonb FROM "ins" JOIN "pay" ON "pay"."id" = "ins"."id""#),
+            "{sql}"
+        );
     }
 
     /// Clause 4.17 selects on membership, so a create lands one membership row

@@ -1,13 +1,8 @@
 //! The `type` member of an entity, which carries one type name or several (ETSI GS CIM 009 clause 5.2.4).
 
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use jsonld::ExpandableTypeValue;
-use jsonld_expandable_core::JsonValue;
 use serde::{Deserialize, Serialize};
-use std::{
-    iter::once,
-    slice::{Iter, from_ref},
-};
+use std::slice::{Iter, from_ref};
 
 /// Single or multiple entity type values (clause 5.2.4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,15 +32,6 @@ impl<'a> IntoIterator for &'a EntityTypeValue {
 
     fn into_iter(self) -> Iter<'a, EntityTypeName> {
         self.iter()
-    }
-}
-
-impl ExpandableTypeValue for EntityTypeValue {
-    fn to_type_array<V: JsonValue>(&self) -> V {
-        match self {
-            EntityTypeValue::Single(name) => V::array(once(V::string(name.as_str()))),
-            EntityTypeValue::Multiple(names) => V::array(names.iter().map(|name| V::string(name.as_str()))),
-        }
     }
 }
 

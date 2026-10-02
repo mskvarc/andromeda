@@ -139,7 +139,7 @@ fn simplify_attribute_value(attr: &AttributeValue) -> Value {
 /// than a hand-written key list, so a `VocabProperty` reads its `vocab` member
 /// rather than a `value` it never carries, and each family is rendered by
 /// [`simplified_family_value`].
-fn simplify_raw_envelope(envelope: &Value) -> Value {
+pub(crate) fn simplify_raw_envelope(envelope: &Value) -> Value {
     // clone: the simplified form is owned and the envelope is only borrowed.
     let Some(obj) = envelope.as_object() else {
         return envelope.clone();
@@ -183,7 +183,7 @@ pub fn simplify_value(val: Value) -> Value {
 /// nested entity rather than the URI it was resolved from — clause 4.5.23 is
 /// applied before clause 4.5.4, so by the time this runs the expansion is a
 /// member of the attribute and outranks the plain object reference.
-fn simplify_attr_value(value: Value) -> Value {
+pub(crate) fn simplify_attr_value(value: Value) -> Value {
     match value {
         Value::Object(mut attr_obj) => {
             let attr_type = attr_obj.get("type").and_then(Value::as_str).and_then(|raw| AttributeType::from_str(raw).ok());

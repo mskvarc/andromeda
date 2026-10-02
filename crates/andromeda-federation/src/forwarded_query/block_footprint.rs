@@ -90,7 +90,7 @@ impl BlockSelection {
                 Some(covered) => Some(covered),
                 None => return Ok(None),
             },
-            None => block_types(block, names).await?,
+            None => block_types(block, names)?,
         };
         Ok(Some(selection))
     }
@@ -153,7 +153,7 @@ pub(super) async fn block_attrs(
         None => {
             let mut spelled = Vec::with_capacity(declared.len());
             for name in declared {
-                spelled.push(names.compact_attr(name).await?);
+                spelled.push(names.compact_attr(name)?);
             }
             Ok(AttrCoverage::Write(spelled))
         }
@@ -287,14 +287,14 @@ fn block_identifiers(block: &RegistrationInfo) -> (Vec<Identifier>, Option<Strin
 ///
 /// Returns [`FederationError::Internal`] when a type does not spell as a name
 /// in the forwarding context.
-async fn block_types(block: &RegistrationInfo, names: &ForwardedNames<'_>) -> Result<Option<TypeExprRaw>, FederationError> {
+fn block_types(block: &RegistrationInfo, names: &ForwardedNames<'_>) -> Result<Option<TypeExprRaw>, FederationError> {
     let Some(selectors) = block.entities.as_deref() else {
         return Ok(None);
     };
     let mut spelled: Vec<EntityTypeName> = Vec::new();
     for selector in selectors {
         for name in selector.type_.names() {
-            let compact = names.compact_type(name).await?;
+            let compact = names.compact_type(name)?;
             if !spelled.contains(&compact) {
                 spelled.push(compact);
             }

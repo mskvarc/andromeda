@@ -11,8 +11,8 @@ use crate::{pagination_outcome::PaginationOutcome, query_residual::ResidualFilte
 /// The rows a store returned, together with what it did not do to them.
 ///
 /// Generic in the row type because the two read methods of the entity store
-/// return different shapes: expanded payloads for a full query, identifiers
-/// for the clause 5.2.39 entity-map path.
+/// return different shapes: stored states with their system times for a full
+/// query, identifiers for the clause 5.2.39 entity-map path.
 #[derive(Debug)]
 pub struct QueryOutcome<T> {
     /// The rows the store returned.

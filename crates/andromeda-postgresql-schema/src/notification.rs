@@ -35,6 +35,12 @@ pub enum NotificationEvents {
     EntitySnapshot,
     /// Entity state before the change
     PreviousSnapshot,
+    /// Clause 4.8 `createdAt` of an Entity a deletion removed
+    EntityCreatedAt,
+    /// Clause 4.8 `modifiedAt` of an Entity a deletion removed
+    EntityModifiedAt,
+    /// Clause 4.22 `expiresAt` of an Entity a deletion removed
+    EntityExpiresAt,
 }
 
 /// The `notification_deliveries` table - the mutable per-subscription queue.
@@ -86,6 +92,9 @@ mod tests {
         assert_eq!(NotificationEvents::ChangeDatasetIds.to_string(), "change_dataset_ids");
         assert_eq!(NotificationEvents::EntitySnapshot.to_string(), "entity_snapshot");
         assert_eq!(NotificationEvents::PreviousSnapshot.to_string(), "previous_snapshot");
+        assert_eq!(NotificationEvents::EntityCreatedAt.to_string(), "entity_created_at");
+        assert_eq!(NotificationEvents::EntityModifiedAt.to_string(), "entity_modified_at");
+        assert_eq!(NotificationEvents::EntityExpiresAt.to_string(), "entity_expires_at");
     }
 
     #[test]

@@ -30,7 +30,6 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
         | JsonLdError::TermNotExpanded
         | JsonLdError::ExpandedTermNotIri(_)
         | JsonLdError::ContextUrlNotIri(_)
-        | JsonLdError::GeneratedVocabularyIri(_)
         | JsonLdError::JsonLdContextText(_)
         | JsonLdError::JsonLdContextShape
         | JsonLdError::DocumentShape

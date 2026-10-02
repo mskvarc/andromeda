@@ -5,30 +5,32 @@
 //! records has to be the instance the write left in the Entity, not the
 //! Fragment that asked for it. These helpers read both off one
 //! [`AtomicWrite`]: the observation among its history records, or deferred to
-//! the side-effect job on the asynchronous batch path, and the payload its
-//! entity record stores.
+//! the side-effect job on the asynchronous batch path, and the state its
+//! entity record stores, each encoded as the expanded document the store
+//! keeps.
 
 use andromeda_context_commit::{atomic_write::AtomicWrite, history_record::HistoryRecord};
-use andromeda_ngsi_ld_model::expanded::node::expanded_object_ref;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use pretty_assertions::assert_eq;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 
 /// The one observation a write records, inline or deferred to its side-effect
-/// job, or `None` when it records none.
-pub(crate) fn recorded_observation(write: &AtomicWrite) -> Option<&Value> {
+/// job, encoded as stored, or `None` when it records none.
+pub(crate) fn recorded_observation(write: &AtomicWrite) -> Option<Value> {
     let inline = write.history.iter().filter_map(|record| match record {
-        HistoryRecord::Observations(observed) | HistoryRecord::EvolutionInstances(observed) => Some(observed.as_ref()),
+        HistoryRecord::Observations(observed) => Some(serde_json::to_value(observed.as_ref()).expect("an observation encodes")),
+        HistoryRecord::EvolutionInstances(observed) => Some(serde_json::to_value(observed.as_ref()).expect("an observation encodes")),
         HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
     });
-    let deferred = write
-        .side_effects
-        .iter()
-        .flat_map(|job| job.temporal_entities.iter().map(|(_, observed)| observed.as_ref()));
-    let observations: Vec<&Value> = inline.chain(deferred).collect();
+    let deferred = write.side_effects.iter().flat_map(|job| {
+        job.temporal_entities
+            .iter()
+            .map(|(_, observed)| serde_json::to_value(observed.as_ref()).expect("an observation encodes"))
+    });
+    let observations: Vec<Value> = inline.chain(deferred).collect();
     assert!(observations.len() <= 1, "a write records at most one observation: {observations:?}");
-    observations.first().copied()
+    observations.into_iter().next()
 }
 
 /// The attribute members an observation carries, by expanded name.
@@ -46,15 +48,15 @@ pub(crate) fn assert_observes_stored_instances(write: &AtomicWrite, attributes: 
     let observation = recorded_observation(write).expect("the write records an observation");
     let expected: BTreeSet<String> = attributes.iter().map(|attribute| (*attribute).to_owned()).collect();
     assert_eq!(
-        observed_attributes(observation),
+        observed_attributes(&observation),
         expected,
         "the observation names exactly the written attributes"
     );
-    let stored = &write.entity.record().expect("the write stores an entity record").payload;
+    let stored = serde_json::to_value(write.entity.record().expect("the write stores an entity record").state.as_ref()).expect("the state encodes");
     for attribute in attributes {
         assert_eq!(
-            node(observation).get(*attribute),
-            node(stored).get(*attribute),
+            node(&observation).get(*attribute),
+            node(&stored).get(*attribute),
             "the observed {attribute} is the instance the Entity stores, not the request Fragment"
         );
     }
@@ -69,7 +71,12 @@ pub(crate) fn observed_default_instance<'a>(observation: &'a Value, attribute: &
         .expect("the observation carries the default instance of the attribute")
 }
 
-/// The expanded Entity node of a payload.
-fn node(payload: &Value) -> &Map<String, Value> {
-    expanded_object_ref(payload).expect("the payload is an expanded Entity node")
+/// The Entity node of an encoded state or document.
+fn node(encoded: &Value) -> &Map<String, Value> {
+    match encoded {
+        Value::Array(nodes) => nodes.first().and_then(Value::as_object),
+        Value::Object(node) => Some(node),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+    }
+    .expect("the encoded state is an expanded Entity node")
 }

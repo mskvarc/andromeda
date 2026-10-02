@@ -7,35 +7,36 @@ use crate::{
         BatchResult,
         UpsertPolicy,
         admitted_batch::AdmittedBatchEntity,
-        chunk::{ChunkWrite, UpdatedPayloads},
+        chunk::{ChunkWrite, UpdatedStates},
         chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
         prepare::PreparedEntity,
-        upsert::{UpsertOutcome, stored_payload},
+        upsert::{UpsertOutcome, stored_state},
     },
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    notification_plan::modification,
     side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, history::written_observation::AddressedInstances, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::{mutation::selection::OverwritePolicy, written_observation::AddressedInstances};
-use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::sync::Arc;
 
 /// What a replacement is built from on each attempt.
 enum Replacement {
-    /// The request's prepared payload, which no attempt has spent yet.
+    /// The request's prepared document, which no attempt has spent yet.
     Requested(Box<PreparedEntity>),
-    /// The replacement an earlier attempt built, kept so a later attempt does
-    /// not expand the request again.
+    /// The replacement an earlier attempt stored, kept so a later attempt does
+    /// not convert the request again.
+    ///
+    /// Only this entry holds it once the refused write is dropped, so a later
+    /// attempt takes it back without copying it; its system times are stamped
+    /// again against the state that attempt reads.
     Built {
         /// The entity the replacement is for.
         id: Identifier,
-        /// The replacement payload.
-        payload: Arc<Value>,
+        /// The replacement as the earlier attempt stored it.
+        state: Arc<EntityState>,
     },
 }
 
@@ -62,31 +63,18 @@ impl ChunkRewrite for ReplaceRewrite<'_> {
         entry: Replacement,
         snapshot: Option<&EntitySnapshot>,
         _reads: &(),
-        now: DateTime<Utc>,
+        now: SystemInstant,
     ) -> Result<PlannedWrite<Replacement>, Box<(Identifier, EntityError)>> {
-        let (target, service) = (self.target, self.service);
-        let (write, payload) = match (entry, snapshot) {
-            (Replacement::Requested(prepared), Some(snapshot)) => {
-                let PreparedEntity { id, expanded, .. } = *prepared;
-                let payload = Arc::new(expanded);
-                (service.replacement_write(target, id, &payload, &snapshot.payload, now)?, payload)
-            }
-            (Replacement::Built { id, payload }, Some(snapshot)) => (service.replacement_write(target, id, &payload, &snapshot.payload, now)?, payload),
-            (Replacement::Requested(prepared), None) => {
-                let write = service.chunk_insert(target, *prepared, now)?;
-                let payload = stored_payload(&write)?;
-                (write, payload)
-            }
-            (Replacement::Built { id, payload }, None) => {
-                let write = service.chunk_insert_payload(target, id, payload, now)?;
-                let payload = stored_payload(&write)?;
-                (write, payload)
-            }
+        let (id, replacement) = match entry {
+            Replacement::Requested(prepared) => prepared.into_state()?,
+            // clone: reference-count bumps only when the earlier attempt's write still shares the state
+            Replacement::Built { id, state } => (id, Arc::unwrap_or_clone(state)),
         };
+        let write = self.service.replacement_write(self.target, id, replacement, snapshot, now)?;
         Ok(PlannedWrite {
             entry: Replacement::Built {
                 id: write.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
-                payload,
+                state: stored_state(&write)?,
             },
             write,
             alongside: None,
@@ -128,41 +116,38 @@ impl EntityService {
         ))
     }
 
-    /// The write that replaces `previous` with `payload`, tombstoning whatever
-    /// the replacement drops (NGSI-LD 5.6.8).
+    /// The write that replaces the entity `snapshot` read with
+    /// `replacement`, tombstoning whatever the replacement drops (clause
+    /// 5.6.8), or creates it when the attempt found it absent.
     ///
     /// Mirrors the single replace (clause 5.6.18): one precise event for every
-    /// created, updated, or deleted attribute instance.
+    /// created, updated, or deleted attribute instance, and every instance of
+    /// the replacement observed.
     ///
     /// # Errors
     ///
     /// Answers the entity's identifier with the failure, boxed because a
-    /// failure is the rare outcome, for the batch's per-entity report, when either state's members cannot be read.
+    /// failure is the rare outcome, for the batch's per-entity report.
     fn replacement_write(
         &self,
         target: &ContextTarget,
         id: Identifier,
-        payload: &Arc<Value>,
-        previous: &Arc<Value>,
-        now: DateTime<Utc>,
+        replacement: EntityState,
+        snapshot: Option<&EntitySnapshot>,
+        now: SystemInstant,
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
-        let change = match modification(previous, payload) {
-            Ok(change) => change,
-            Err(error) => return Err(Box::new((id, error))),
-        };
-        self.chunk_update(
-            target,
-            id,
-            UpdatedPayloads {
-                previous,
-                merged: Arc::clone(payload), // clone: Arc ref-count bump; the payload is reused on a retry.
-                addressed: AddressedInstances::EntityFragment {
-                    fragment: payload,
-                    overwrite: OverwritePolicy::Overwrite,
+        match snapshot {
+            Some(snapshot) => self.chunk_update(
+                target,
+                id,
+                UpdatedStates {
+                    previous: &snapshot.state,
+                    current: replacement,
+                    addressed: AddressedInstances::Replacement,
                 },
-            },
-            change,
-            now,
-        )
+                now,
+            ),
+            None => self.chunk_insert(target, id, replacement, now),
+        }
     }
 }

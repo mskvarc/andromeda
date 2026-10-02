@@ -1,0 +1,26 @@
+{
+    "@context": {
+        "isParked": {
+            "@type": "@id",
+            "@id": "http://example.org/common/isParked"
+        },
+        "isNextToBuilding": {
+            "@type": "@id",
+            "@id": "http://example.org/common/isNextToBuilding"
+        },
+        "operatedBy": {
+            "@type": "@id",
+            "@id": "http://example.org/common/operatedBy"
+        },
+        "providedBy": {
+            "@type": "@id",
+            "@id": "http://example.org/common/providedBy"
+        },
+        "reliability": "http://example.org/common/reliability",
+        "name": "http://example.org/common/name",
+        "Person": "http://example.org/common/Person",
+        "City": "http://example.org/common/City",
+        "Camera": "http://example.org/common/Camera",
+        "Company": "http://example.org/common/Company"
+    }
+}

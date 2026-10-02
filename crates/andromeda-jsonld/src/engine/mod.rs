@@ -1,34 +1,24 @@
 //! Expanding and compacting NGSI-LD documents.
 //!
 //! [`processor::JsonLdEngine`] is the whole of the public surface;
-//! [`builder::JsonLdEngineBuilder`] constructs it, and
-//! [`context_compactor::ContextCompactor`] compacts the documents of one
-//! operation against the context it processed once. Everything else here is one
-//! of two things it does behind that surface.
-//!
-//! The first is the ordinary path: hand the document to the JSON-LD
-//! processor, which resolves whatever contexts it names. The second is the
-//! fastpath — [`batch_context`] resolves one batch's `@context` once,
-//! [`term_map`] turns it into a term table, and [`fast_entity`] and
-//! [`fast_attribute`] walk an entity's DOM and emit the expanded form
-//! directly. The fastpath answers `None` for anything it cannot prove
-//! equivalent, and the equivalence is pinned by tests that run both paths
-//! over the same document.
+//! [`builder::JsonLdEngineBuilder`] constructs it,
+//! [`expansion_context::ExpansionContext`] is the processed context a typed
+//! expansion reads, and [`context_compactor::ContextCompactor`] compacts the
+//! documents of one operation against the context it processed once. Every
+//! document the engine itself expands goes to the JSON-LD processor, which
+//! resolves whatever contexts it names.
 
-pub mod batch_context;
 pub mod builder;
-pub(crate) mod compaction_context;
-pub(crate) mod compaction_context_cache;
+pub mod compaction_context;
 pub mod context_compactor;
 pub mod context_url;
-pub mod core_term_semantics;
 pub mod expanded_input;
-pub mod fast_attribute;
-pub mod fast_entity;
+pub mod expansion_context;
 pub mod options;
 /// Engines for unit tests that resolve exactly the documents a test preloads.
 #[cfg(test)]
 pub(crate) mod preloaded_engine;
+pub(crate) mod processed_context_cache;
 pub mod processor;
 pub mod term_lookup;
-pub mod term_map;
+pub(crate) mod user_context_scan;

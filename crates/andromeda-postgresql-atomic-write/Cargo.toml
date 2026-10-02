@@ -17,9 +17,9 @@ workspace = true
 [dependencies]
 andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
+andromeda-ngsi-ld-entity.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
-andromeda-ngsi-ld-number.workspace = true
 andromeda-persistence-failure.workspace = true
 andromeda-postgresql-branch.workspace = true
 andromeda-postgresql-codes.workspace = true
@@ -32,7 +32,6 @@ andromeda-postgresql-seaquery.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-temporal.workspace = true
-andromeda-unit-catalog.workspace = true
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["from"] }
@@ -50,7 +49,8 @@ uuid = { version = "1.26.1", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-andromeda-ngsi-ld-geometry.workspace = true
+andromeda-ngsi-ld-number.workspace = true
+andromeda-unit-catalog.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.1", features = ["macros", "rt", "test-util", "time"] }
 uuid = { version = "1.26.1", features = ["v4"] }

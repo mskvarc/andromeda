@@ -8,15 +8,18 @@
 
 use crate::{
     error::TemporalError,
+    observed_instance::ObservedInstance,
     service::TemporalService,
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_validation_reason::TemporalValidationReason,
-    unit_code_admission::validate_instance_unit_code_admission,
+    unit_code_admission::admit_instance_unit_code,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_entity::document_census::admit_instance_document;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity};
-use andromeda_ngsi_ld_model::expanded::geo_property_admission::validate_instance_geo_property;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use serde_json::Value;
 
@@ -84,14 +87,18 @@ impl TemporalService {
         // Clause 5.6.14.4 raises ResourceNotFound for an unknown Entity,
         // Attribute or instance before the Fragment is read, so a Fragment
         // naming another Attribute is refused only once the target is known.
-        // The budget is counted before the expansion multiplies the Fragment.
-        self.limits.payload_budget.admit(&fragment)?;
-        let expanded = self.engine.expand(fragment, context).await?;
-        let instance_value = fragment_instance(expanded, &attr_iri)?;
-        validate_instance_unit_code_admission(attr_iri.as_str(), &instance_value)?;
-        validate_instance_geo_property(attr_iri.as_str(), &instance_value).map_err(TemporalValidationReason::from)?;
+        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let document = expansion.entity_fragment(fragment, Normalization::Entity).await?;
+        let replacement = fragment_instance(document, &attr_iri)?;
+        admit_instance_document(self.limits.payload_budget, &attr_iri, &replacement)?;
+        admit_instance_unit_code(&attr_iri, &replacement)?;
+        // Clause 5.6.14 replaces the instance with the one the Fragment
+        // carries, so a replacement recording no value replaces it with none.
+        let observation = ObservedInstance::read(replacement)?.ok_or_else(|| TemporalValidationReason::ReplacementRecordsNoValue {
+            target: attr_iri.clone(), // clone: the error owns the attribute it names
+        })?;
 
-        self.mutator.update_instance(target, instance, entity_id, &attr_iri, &instance_value).await
+        self.mutator.update_instance(target, instance, entity_id, &attr_iri, &observation).await
     }
 
     /// Delete a specific attribute instance by its instance ID.
@@ -163,30 +170,25 @@ impl TemporalService {
 ///
 /// Returns [`TemporalValidationReason::FragmentWithoutTargetAttribute`] when
 /// the Fragment does not expand to exactly one instance of `target`.
-fn fragment_instance(expanded: Value, target: &AttributeName) -> Result<Value, TemporalValidationReason> {
+fn fragment_instance(document: EntityDocument, target: &AttributeName) -> Result<InstanceDocument, TemporalValidationReason> {
     let without_target = || TemporalValidationReason::FragmentWithoutTargetAttribute {
         // clone: the error owns the attribute it names
         target: target.clone(),
     };
-    let Value::Array(nodes) = expanded else {
+    let mut attributes = document.into_parts().attributes;
+    let Some(AttributeMember::Instances(instances)) = attributes.shift_remove(target) else {
         return Err(without_target());
     };
-    let [Value::Object(mut node)] = <[Value; 1]>::try_from(nodes).map_err(|_| without_target())? else {
-        return Err(without_target());
-    };
-    let Some(Value::Array(instances)) = node.remove(target.as_str()) else {
-        return Err(without_target());
-    };
-    let [instance] = <[Value; 1]>::try_from(instances).map_err(|_| without_target())?;
+    let [instance] = <[InstanceDocument; 1]>::try_from(instances).map_err(|_| without_target())?;
     Ok(instance)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{attribute_instance_mutation::fragment_instance, temporal_validation_reason::TemporalValidationReason};
+    use andromeda_ngsi_ld_entity::document::EntityDocument;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use pretty_assertions::assert_eq;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     const SPEED: &str = "https://example.com/speed";
 
@@ -194,23 +196,27 @@ mod tests {
         SPEED.parse().expect("valid attribute name")
     }
 
-    fn expanded_instance() -> serde_json::Value {
+    fn expanded_instance() -> Value {
         json!({"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 129}]})
+    }
+
+    fn document(expanded: &Value) -> EntityDocument {
+        EntityDocument::from_slice(&serde_json::to_vec(expanded).expect("JSON")).expect("a written fragment decodes")
     }
 
     #[test]
     fn the_one_instance_of_the_target_attribute_is_taken() {
-        let expanded = json!([{SPEED: [expanded_instance()]}]);
-        assert_eq!(fragment_instance(expanded, &speed()).expect("the target instance"), expanded_instance());
+        let instance = fragment_instance(document(&json!([{SPEED: [expanded_instance()]}])), &speed()).expect("the target instance");
+        let written: Value = serde_json::to_value(&instance).expect("the instance writes");
+        pretty_assertions::assert_eq!(written, expanded_instance());
     }
 
     /// A Fragment naming another Attribute than the request targets carries no
     /// instance of the target.
     #[test]
     fn a_fragment_naming_another_attribute_is_refused() {
-        let expanded = json!([{"https://example.com/fuel": [expanded_instance()]}]);
         assert!(matches!(
-            fragment_instance(expanded, &speed()),
+            fragment_instance(document(&json!([{"https://example.com/fuel": [expanded_instance()]}])), &speed()),
             Err(TemporalValidationReason::FragmentWithoutTargetAttribute { .. })
         ));
     }
@@ -218,18 +224,17 @@ mod tests {
     /// Two compact terms expanding to the target would merge into two instances.
     #[test]
     fn two_instances_of_the_target_are_refused() {
-        let expanded = json!([{SPEED: [expanded_instance(), expanded_instance()]}]);
         assert!(matches!(
-            fragment_instance(expanded, &speed()),
+            fragment_instance(document(&json!([{SPEED: [expanded_instance(), expanded_instance()]}])), &speed()),
             Err(TemporalValidationReason::FragmentWithoutTargetAttribute { .. })
         ));
     }
 
-    /// A Fragment whose member JSON-LD expansion drops expands to no node.
+    /// A Fragment whose member JSON-LD expansion drops expands to no attribute.
     #[test]
     fn a_fragment_expanding_to_nothing_is_refused() {
         assert!(matches!(
-            fragment_instance(json!([]), &speed()),
+            fragment_instance(document(&json!([{}])), &speed()),
             Err(TemporalValidationReason::FragmentWithoutTargetAttribute { .. })
         ));
     }

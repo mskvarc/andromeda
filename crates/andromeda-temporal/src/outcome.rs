@@ -1,12 +1,12 @@
 //! Explicit residual and pagination outcomes returned by temporal readers.
 
-use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
+use crate::observed_selection::ObservedSelection;
+use andromeda_entity::query_residual::ResidualFilter;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     pagination::{CountPolicy, Pagination},
 };
-use serde_json::Value;
 
 /// Entity-selection predicates a temporal reader did not apply.
 #[derive(Debug, Clone, Default)]
@@ -69,13 +69,13 @@ impl TemporalEntityIdOutcome {
     /// Returns [`InvalidTemporalOutcome::ResidualAfterPagination`] when the
     /// reader paginated while leaving a predicate for policy to evaluate, and
     /// [`InvalidTemporalOutcome::ResidualWithoutSelectionValue`] when a
-    /// residual predicate remains but a candidate carries no expanded
-    /// selection value to evaluate it against.
+    /// residual predicate remains but a candidate carries no observed entity
+    /// to evaluate it against.
     pub fn validate(&self) -> Result<(), InvalidTemporalOutcome> {
         if !self.residual.is_empty() && matches!(self.pagination, TemporalPaginationOutcome::Applied { .. }) {
             return Err(InvalidTemporalOutcome::ResidualAfterPagination);
         }
-        if !self.residual.is_empty() && self.candidates.iter().any(|candidate| candidate.selection_value.is_none()) {
+        if !self.residual.is_empty() && self.candidates.iter().any(|candidate| candidate.selection.is_none()) {
             return Err(InvalidTemporalOutcome::ResidualWithoutSelectionValue);
         }
         Ok(())
@@ -87,24 +87,13 @@ impl TemporalEntityIdOutcome {
     ///
     /// Returns whatever [`TemporalEntityIdOutcome::validate`] refuses: an
     /// outcome that paginated ahead of a residual predicate, or one whose
-    /// candidates cannot be evaluated against the predicate that remains; and
-    /// [`InvalidTemporalOutcome::UnreadableCandidate`] for a candidate whose
-    /// identity the residual predicate cannot read.
+    /// candidates cannot be evaluated against the predicate that remains.
     pub fn complete(self, pagination: Pagination) -> Result<(Vec<Identifier>, Option<i64>), InvalidTemporalOutcome> {
         self.validate()?;
         let mut candidates = self.candidates;
         if !self.residual.is_empty() {
             let residual = ResidualFilter::over(self.residual.0);
-            let mut admitted = Vec::with_capacity(candidates.len());
-            for candidate in candidates {
-                let Some(selection_value) = candidate.selection_value.as_ref() else {
-                    continue;
-                };
-                if residual_filter::matches(&residual, selection_value).map_err(|_| InvalidTemporalOutcome::UnreadableCandidate)? {
-                    admitted.push(candidate);
-                }
-            }
-            candidates = admitted;
+            candidates.retain(|candidate| candidate.selection.as_ref().is_some_and(|observed| observed.matches(&residual)));
         }
         let identifiers = candidates.into_iter().map(|candidate| candidate.entity_id).collect();
         match self.pagination {
@@ -114,13 +103,15 @@ impl TemporalEntityIdOutcome {
     }
 }
 
-/// One temporal stage-one candidate and the neutral expanded value used only for residual evaluation.
+/// One temporal stage-one candidate and what was observed of it, used only for
+/// residual evaluation.
 #[derive(Debug)]
 pub struct TemporalEntityCandidate {
     /// Candidate entity identifier.
     pub entity_id: Identifier,
-    /// Expanded selection value for the requested temporal window when any predicate remains residual.
-    pub selection_value: Option<Value>,
+    /// What was observed of the entity in the requested temporal window, when
+    /// any predicate remains residual.
+    pub selection: Option<ObservedSelection>,
 }
 
 /// A temporal reader reported a semantically impossible outcome.
@@ -129,13 +120,9 @@ pub enum InvalidTemporalOutcome {
     /// Pagination cannot precede a predicate that may remove candidates.
     #[error("temporal reader applied pagination while returning an unapplied predicate")]
     ResidualAfterPagination,
-    /// Residual evaluation requires a neutral expanded selection value for every candidate.
+    /// Residual evaluation requires an observed entity for every candidate.
     #[error("temporal reader returned a residual predicate without a selection value")]
     ResidualWithoutSelectionValue,
-    /// A candidate's selection value carries an `@id` or `@type` the residual
-    /// predicate cannot read.
-    #[error("temporal reader returned a candidate whose identity the residual predicate cannot read")]
-    UnreadableCandidate,
 }
 
 /// Apply a deferred page after policy finishes residual evaluation.
@@ -149,8 +136,12 @@ pub fn apply_deferred_page<T>(rows: Vec<T>, pagination: Pagination) -> (Vec<T>, 
 
 #[cfg(test)]
 mod tests {
-    use crate::outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual};
-    use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
+    use crate::{
+        observed_selection::ObservedSelection,
+        outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
+    };
+    use andromeda_entity::query_residual::ResidualFilter;
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
@@ -160,20 +151,28 @@ mod tests {
         pagination::{CountPolicy, Pagination},
         scope::query::ScopeQuery,
     };
-    use serde_json::{Value, json};
-    use std::str::FromStr;
+    use serde_json::json;
+    use std::{str::FromStr, sync::Arc};
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
     const TEMPERATURE: &str = "https://example.com/temperature";
     const SCOPE: &str = "https://uri.etsi.org/ngsi-ld/scope";
 
-    fn entity(identifier: &str, temperature: f64, longitude: f64, scope: &str) -> Value {
-        json!([{
+    fn entity(identifier: &str, temperature: f64, longitude: f64, scope: &str) -> Arc<EntityState> {
+        let stored = json!([{
             "@id": identifier,
-            TEMPERATURE: [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": temperature}]}],
-            LOCATION: [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": {"type": "Point", "coordinates": [longitude, 52.5]}}]}],
+            "@type": ["https://example.com/Sensor"],
+            TEMPERATURE: [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": temperature}]}],
+            LOCATION: [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@type": ["https://purl.org/geojson/vocab#Point"],
+                    "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": longitude}, {"@value": 52.5}]}]
+                }]
+            }],
             SCOPE: [{"@value": scope}]
-        }])
+        }]);
+        Arc::new(EntityState::from_slice(&serde_json::to_vec(&stored).expect("JSON")).expect("a stored entity decodes"))
     }
 
     fn combined_selection() -> EntitySelection {
@@ -191,57 +190,41 @@ mod tests {
             .build()
     }
 
-    fn candidates(values: &[(Identifier, Value)], pushed: &EntitySelection) -> Vec<TemporalEntityCandidate> {
+    fn candidates(states: &[(Identifier, Arc<EntityState>)], pushed: &EntitySelection) -> Vec<TemporalEntityCandidate> {
         let pushed = ResidualFilter::over(pushed.clone());
-        values
+        states
             .iter()
-            .filter(|(_, value)| residual_filter::matches(&pushed, value).expect("the fixtures carry readable identities"))
-            .map(|(entity_id, value)| TemporalEntityCandidate {
+            .map(|(entity_id, state)| (entity_id, ObservedSelection::Observed(Arc::clone(state))))
+            .filter(|(_, observed)| observed.matches(&pushed))
+            .map(|(entity_id, observed)| TemporalEntityCandidate {
                 entity_id: entity_id.clone(),
-                selection_value: Some(value.clone()),
+                selection: Some(observed),
             })
             .collect()
     }
 
     #[test]
     fn q_geo_and_scope_residuals_match_full_pushdown_before_pagination() {
-        let values = [
-            (
-                "urn:ngsi-ld:Entity:1".parse().expect("valid id"),
-                entity("urn:ngsi-ld:Entity:1", 30.0, 13.4, "/A/B"),
-            ),
-            (
-                "urn:ngsi-ld:Entity:2".parse().expect("valid id"),
-                entity("urn:ngsi-ld:Entity:2", 20.0, 13.4, "/A/B"),
-            ),
-            (
-                "urn:ngsi-ld:Entity:3".parse().expect("valid id"),
-                entity("urn:ngsi-ld:Entity:3", 40.0, 15.4, "/A/B"),
-            ),
-            (
-                "urn:ngsi-ld:Entity:4".parse().expect("valid id"),
-                entity("urn:ngsi-ld:Entity:4", 50.0, 13.4, "/A/C"),
-            ),
-            (
-                "urn:ngsi-ld:Entity:5".parse().expect("valid id"),
-                entity("urn:ngsi-ld:Entity:5", 60.0, 13.4, "/A/D"),
-            ),
-            (
-                "urn:ngsi-ld:Entity:6".parse().expect("valid id"),
-                entity("urn:ngsi-ld:Entity:6", 70.0, 13.4, "/B"),
-            ),
-        ];
+        let states = [
+            ("urn:ngsi-ld:Entity:1", 30.0, 13.4, "/A/B"),
+            ("urn:ngsi-ld:Entity:2", 20.0, 13.4, "/A/B"),
+            ("urn:ngsi-ld:Entity:3", 40.0, 15.4, "/A/B"),
+            ("urn:ngsi-ld:Entity:4", 50.0, 13.4, "/A/C"),
+            ("urn:ngsi-ld:Entity:5", 60.0, 13.4, "/A/D"),
+            ("urn:ngsi-ld:Entity:6", 70.0, 13.4, "/B"),
+        ]
+        .map(|(id, temperature, longitude, scope)| (id.parse::<Identifier>().expect("valid id"), entity(id, temperature, longitude, scope)));
         let full = combined_selection();
         let pagination = Pagination {
             limit: 1,
             offset: 1,
             count: CountPolicy::Emit,
         };
-        let full_matches = candidates(&values, &full);
+        let full_matches = candidates(&states, &full);
         let full_pushdown = TemporalEntityIdOutcome {
             candidates: vec![TemporalEntityCandidate {
                 entity_id: full_matches[1].entity_id.clone(),
-                selection_value: None,
+                selection: None,
             }],
             residual: TemporalResidual::default(),
             pagination: TemporalPaginationOutcome::Applied { total: Some(3) },
@@ -258,7 +241,7 @@ mod tests {
             let mut pushed = full.clone();
             ResidualFilter::over(residual.clone()).strip_from(&mut pushed);
             let residual_outcome = TemporalEntityIdOutcome {
-                candidates: candidates(&values, &pushed),
+                candidates: candidates(&states, &pushed),
                 residual: TemporalResidual::over(residual),
                 pagination: TemporalPaginationOutcome::Deferred,
             }

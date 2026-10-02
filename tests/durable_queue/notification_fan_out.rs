@@ -10,19 +10,20 @@
 //! stored bytes show the single-payload saving the split exists for.
 
 use crate::{
-    notification_fixture::{entity_id, entity_snapshot, readable, subscription_id},
+    notification_fixture::{decoded, entity_document, entity_id, entity_snapshot, readable, subscription_id},
     queue_database::{attribute_name, deliveries_of, events_of, queue_database, record_events, subscription, subscription_key},
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{
-    entity_change::{EntityChange, EntityLifecycle},
-    expanded::{
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    reads::{
         attribute_change::{AttributeChange, AttributeChangeKind},
-        instance_key::AttributeInstanceKey,
+        attribute_instance_key::AttributeInstanceKey,
     },
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_notification::delivery_store::DeliveryStore;
 use andromeda_postgresql_context_store::notification_delivery::{queue::NotificationDeliveryQueue, rows::NewNotificationEvent};
 use chrono::Utc;
@@ -36,14 +37,14 @@ use uuid::Uuid;
 const HIGH_FAN_OUT: usize = 100;
 
 /// An Entity snapshot large enough that repeating it per subscriber would dominate the queue.
-fn large_snapshot(entity: &Identifier) -> Value {
+fn large_snapshot(entity: &Identifier) -> EntityState {
     let members: Vec<Value> = (0..2_000).map(|index| json!({"@value": format!("{index}-{}", Uuid::new_v4())})).collect();
-    let mut snapshot = entity_snapshot(entity);
-    snapshot["https://uri.etsi.org/ngsi-ld/default-context/readings"] = json!([{
+    let mut document = entity_document(entity);
+    document[0]["https://uri.etsi.org/ngsi-ld/default-context/readings"] = json!([{
         "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
         "https://uri.etsi.org/ngsi-ld/hasValue": members
     }]);
-    snapshot
+    decoded(&document)
 }
 
 /// Stored bytes of the one event a write left behind.
@@ -126,6 +127,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
             change_attribute_name_keys: vec![temperature, speed],
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
+            sys_attrs_snapshot: None,
             subscription_keys: vec![subscription_key(single_key)],
         }],
     )
@@ -151,6 +153,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
             change_attribute_name_keys: vec![temperature, speed],
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
+            sys_attrs_snapshot: None,
             subscription_keys: many_keys.iter().map(|key| subscription_key(*key)).collect(),
         }],
     )
@@ -213,7 +216,7 @@ async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_absorbs_a_r
     let second_key = subscription(&pool, second.as_str()).await;
 
     let entities: Vec<Identifier> = (0..3).map(|_| entity_id()).collect();
-    let snapshots: Vec<Value> = entities.iter().map(entity_snapshot).collect();
+    let snapshots: Vec<EntityState> = entities.iter().map(entity_snapshot).collect();
     let record = WriteRecord::mint(Utc::now());
     let change = EntityChange::new(EntityLifecycle::Modified, Vec::new());
     let events: Vec<NewNotificationEvent<'_>> = entities
@@ -227,6 +230,7 @@ async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_absorbs_a_r
             change_attribute_name_keys: Vec::new(),
             entity_snapshot: Some(snapshot),
             previous_snapshot: None,
+            sys_attrs_snapshot: None,
             subscription_keys: vec![subscription_key(first_key), subscription_key(second_key)],
         })
         .collect();
@@ -277,6 +281,7 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
             change_attribute_name_keys: Vec::new(),
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
+            sys_attrs_snapshot: None,
             subscription_keys: vec![subscription_key(subscriber_key)],
         }],
     )
@@ -297,12 +302,16 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
     let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim"));
     assert_eq!(claimed.len(), 1);
 
-    let after: (String, Value) = sqlx::query_as("SELECT xmin::text, entity_snapshot FROM notification_events WHERE write_id = $1")
+    let after: (String, String) = sqlx::query_as("SELECT xmin::text, entity_snapshot::text FROM notification_events WHERE write_id = $1")
         .bind(record.write_id().as_uuid())
         .fetch_one(&pool)
         .await
         .expect("event row version after the claim");
     assert_eq!(after.0, before, "a claim must not rewrite the event row");
-    assert_eq!(after.1, snapshot, "the stored payload is untouched by queue traffic");
+    assert_eq!(
+        EntityState::from_slice(after.1.as_bytes()).expect("the stored payload is an entity state"),
+        snapshot,
+        "the stored payload is untouched by queue traffic"
+    );
     pool.close().await;
 }

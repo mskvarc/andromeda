@@ -1,11 +1,10 @@
 //! Immediate temporal mutation preconditions and operations.
 
-use crate::error::TemporalError;
+use crate::{error::TemporalError, observed_instance::ObservedInstance};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_ngsi_ld_query::temporal::history_delete::TemporalHistoryDeleteScope;
 use async_trait::async_trait;
-use serde_json::Value;
 
 /// Scope of one temporal attribute deletion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +55,8 @@ pub trait TemporalMutator: Send + Sync {
         attribute_name: &AttributeName,
     ) -> Result<bool, TemporalError>;
 
-    /// Replace one temporal attribute instance immediately.
+    /// Replace one temporal attribute instance immediately with the
+    /// observation `replacement` records (clause 5.6.14).
     #[must_use = "temporal instance updates must be awaited"]
     async fn update_instance(
         &self,
@@ -64,7 +64,7 @@ pub trait TemporalMutator: Send + Sync {
         instance: &InstanceIdentity,
         entity_id: &Identifier,
         attribute_name: &AttributeName,
-        expanded_instance: &Value,
+        replacement: &ObservedInstance,
     ) -> Result<(), TemporalError>;
 
     /// Delete one temporal attribute instance immediately.

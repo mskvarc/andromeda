@@ -30,6 +30,8 @@ pub mod pushdown;
 pub mod read;
 /// The PostgreSQL entity store.
 pub mod repo;
+/// How a set-write stages one hoisted geometry of one entity row.
+pub mod staged_geometry;
 /// What an Entity row or census ledger that no longer reads back looks like.
 pub mod stored_entity_error;
 /// The clause 4.5.1 invariant that every stored entity carries at least one type.

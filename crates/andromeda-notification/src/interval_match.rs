@@ -1,63 +1,26 @@
-//! Matching an expanded entity payload against a periodic subscription's
-//! selectors and filters (clause 5.8.6).
+//! Matching entity states against a periodic subscription's filters (clause
+//! 5.8.6).
 //!
 //! A periodic notification reads entities a page at a time and decides in memory
 //! which ones the subscription's `q`, `geoQ` and `scopeQ` accept, because a
-//! boolean selector cannot be pushed into a `WHERE`. These are the payload
-//! readers and the filter the interval sweep applies.
+//! boolean selector cannot be pushed into a `WHERE`. This is the filter the
+//! interval sweep applies.
 
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{
-    expanded::{
-        attribute_expiry::remove_expired_instances,
-        query_match::{matches_geo_query, matches_scope_query},
-    },
-    subscription::Subscription,
-};
-use andromeda_ngsi_ld_query::filter::eval;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_model::subscription::Subscription;
+use andromeda_ngsi_ld_query::filter::eval::evaluate;
 use andromeda_subscription::geo_filter::SubscriptionGeoFilter;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 
-/// The node of an expanded entity payload, which the store hands back either
-/// bare or wrapped in a one-element array.
-fn entity_node(entity: &Value) -> Option<&Value> {
-    match entity {
-        Value::Array(arr) => arr.first(),
-        object @ Value::Object(_) => Some(object),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    }
-}
-
-/// The expanded type IRIs an entity payload declares.
-pub(crate) fn entity_types(entity: &Value) -> Vec<EntityTypeName> {
-    entity_node(entity)
-        .and_then(|node| node.get("@type"))
-        .and_then(Value::as_array)
-        .map(|types| {
-            types
-                .iter()
-                .filter_map(Value::as_str)
-                .filter_map(|raw| raw.parse::<EntityTypeName>().ok())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The validated `@id` an expanded entity payload carries.
-pub(crate) fn entity_id_of(entity: &Value) -> Option<Identifier> {
-    entity_node(entity)?.get("@id")?.as_str()?.parse().ok()
-}
-
-/// Apply q, geoQ, and scopeQ filters from a subscription to a list of expanded
-/// entities, as they stand at `at`.
+/// Apply q, geoQ, and scopeQ filters from a subscription to a list of entity
+/// states, as they stand at `at`.
 ///
 /// Clause 4.22: an attribute instance past its `expiresAt` is invalid, so it
 /// is removed before any filter reads the entity, and the entities returned --
 /// the ones the notification carries -- no longer hold it either.
-pub(crate) fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<Value>, at: DateTime<Utc>) -> Vec<Value> {
+pub(crate) fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<EntityState>, at: DateTime<Utc>) -> Vec<EntityState> {
     for entity in &mut entities {
-        remove_expired_instances(entity, at);
+        entity.remove_expired_instances(at);
     }
     let compiled_q = sub.filters.q.as_ref();
 
@@ -74,15 +37,15 @@ pub(crate) fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<V
         .into_iter()
         .filter(|entity| {
             if let Some(expr) = compiled_q
-                && !eval::evaluate(expr, entity)
+                && !evaluate(expr, entity)
             {
                 return false;
             }
-            if !compiled_geo.admits(|geo_q| matches_geo_query(geo_q, entity)) {
+            if !compiled_geo.admits(|geo_q| geo_q.matches_entity(entity)) {
                 return false;
             }
             if let Some(scope_q) = compiled_scope
-                && !matches_scope_query(scope_q, entity)
+                && !scope_q.matches_entity(entity)
             {
                 return false;
             }
@@ -94,6 +57,7 @@ pub(crate) fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<V
 #[cfg(test)]
 mod tests {
     use crate::interval_match::apply_subscription_filters;
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_model::subscription::Subscription;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
@@ -122,16 +86,17 @@ mod tests {
     }
 
     /// A Vehicle whose `speed` is 20 until `expires_at`.
-    fn vehicle(expires_at: &str) -> Value {
-        json!([{
+    fn vehicle(expires_at: &str) -> EntityState {
+        let document = json!([{
             "@id": "urn:ngsi-ld:Vehicle:1",
             "@type": ["https://example.org/Vehicle"],
             SPEED: [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 20}],
-                "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@value": expires_at}]
+                "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": expires_at}]
             }]
-        }])
+        }]);
+        EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes")
     }
 
     /// Clause 4.22: an instance past its `expiresAt` is invalid, so a periodic
@@ -139,7 +104,7 @@ mod tests {
     #[test]
     fn a_periodic_q_does_not_match_through_an_expired_instance() {
         let matched = apply_subscription_filters(&speeding(), vec![vehicle("2030-01-01T00:00:00Z")], instant("2030-01-01T00:00:00Z"));
-        assert_eq!(matched, Vec::<Value>::new());
+        assert_eq!(matched, Vec::<EntityState>::new());
     }
 
     #[test]
@@ -159,6 +124,6 @@ mod tests {
         subscription["geoQ"] = json!({"georel": "near;maxDistance==2000"});
         let subscription: Subscription = serde_json::from_value(subscription).expect("valid subscription");
         let matched = apply_subscription_filters(&subscription, vec![vehicle("2030-01-01T00:00:00Z")], instant("2029-01-01T00:00:00Z"));
-        assert_eq!(matched, Vec::<Value>::new());
+        assert_eq!(matched, Vec::<EntityState>::new());
     }
 }

@@ -1,8 +1,7 @@
 //! The NGSI-LD value family (ETSI GS CIM 009 clause 4.6.3).
 
-use crate::attribute::expansion::serde_json_value_to_json_value;
+use crate::compact_node::CompactNode;
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
-use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
 use serde_json::Value;
 
@@ -52,8 +51,24 @@ impl Serialize for NgsiLdValue {
 
 impl<'de> Deserialize<'de> for NgsiLdValue {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<NgsiLdValue, D::Error> {
-        let value = Value::deserialize(deserializer)?;
-        if let Some(geometry) = try_geometry(&value).map_err(DeserializeError::custom)? {
+        NgsiLdValue::from_json(Value::deserialize(deserializer)?).map_err(DeserializeError::custom)
+    }
+}
+
+impl NgsiLdValue {
+    /// The value a JSON value is: a geometry when it carries both `type` and
+    /// `coordinates`, the JSON value as written otherwise.
+    ///
+    /// This is the one reading of a value, shared by the decoding of a
+    /// document and by the reading of a compact node.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`GeometryError`] of a `GeoJSON`-shaped value that is no
+    /// geometry: a value carrying both members is a geometry or an error,
+    /// never demoted to plain JSON.
+    pub fn from_json(value: Value) -> Result<NgsiLdValue, GeometryError> {
+        if let Some(geometry) = try_geometry(&value)? {
             return Ok(NgsiLdValue::Geometry(geometry));
         }
         // No string value is sniffed into a typed variant here, and the reason
@@ -79,14 +94,16 @@ impl<'de> Deserialize<'de> for NgsiLdValue {
         // a `datasetId` — not on a Property value that merely resembles one.
         Ok(NgsiLdValue::Json(value))
     }
-}
 
-impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
-    fn to_json_value(&self) -> V {
-        match self {
-            NgsiLdValue::Json(value) => serde_json_value_to_json_value::<V>(value),
-            NgsiLdValue::Geometry(g) => g.to_json_value(),
-        }
+    /// The value a compact node is, read as [`NgsiLdValue::from_json`] reads
+    /// the JSON value the node stands for.
+    ///
+    /// # Errors
+    ///
+    /// Returns the node's [`CompactNode::Unreadable`] when it has no JSON form;
+    /// the inner result is [`NgsiLdValue::from_json`]'s.
+    pub fn from_node<N: CompactNode>(node: &N) -> Result<Result<NgsiLdValue, GeometryError>, N::Unreadable> {
+        node.to_json().map(NgsiLdValue::from_json)
     }
 }
 

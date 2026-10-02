@@ -7,7 +7,8 @@ use crate::{
     variant::{DatasetIdPolicy, SubscriptionVariant},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use async_trait::async_trait;
@@ -34,11 +35,11 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
         term_expansion::expand_common_subscription_terms(&self.engine, payload, context).await
     }
 
-    async fn serialize_for_response(&self, subscription: &Subscription, names: &NameCompactor<'_>) -> Result<Value, SubscriptionError> {
+    async fn serialize_for_response(&self, subscription: &Subscription, names: &NameCompaction) -> Result<Value, SubscriptionError> {
         let mut value = serde_json::to_value(subscription).map_err(SubscriptionError::Representation)?;
 
         normalization::fixup_expired_status(&mut value, subscription.lifecycle.expires_at);
-        normalization::compact_subscription_iris(names, &mut value).await;
+        normalization::compact_subscription_iris(names, &mut value);
         normalization::compact_subscription_filters(names, &mut value, &subscription.filters).await;
         normalization::fixup_integer_fields(&mut value);
         normalization::fixup_default_notification_trigger(&mut value);

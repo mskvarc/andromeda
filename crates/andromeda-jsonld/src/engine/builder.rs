@@ -9,7 +9,7 @@ use crate::{
     context_cache::ContextCache,
     context_registry::ContextRegistry,
     core_context::{NGSI_LD_CORE_CONTEXT_URL_LIST, embedded_core_context as embedded_core_context_payload, is_ngsi_ld_core_context_url},
-    engine::{options::RemoteContextFetch, processor::JsonLdEngine, term_lookup::TermCache, term_map::vocabulary::CoreVocabulary},
+    engine::{options::RemoteContextFetch, processor::JsonLdEngine, term_lookup::TermCache},
     error::JsonLdError,
     hit_counter::HitCounter,
     hosted_context_recognizer::{HostedContextRecognizer, NoHostedContexts},
@@ -229,12 +229,10 @@ impl JsonLdEngineBuilder {
             loader = loader.with_l2_cache(durable);
         }
 
-        let core_vocabulary = CoreVocabulary::try_from_generated()?;
         Ok(JsonLdEngine::assembled(
             loader,
             TermCache::new(self.cache_capacity, self.cache_ttl),
             hit_counter,
-            core_vocabulary,
         ))
     }
 }

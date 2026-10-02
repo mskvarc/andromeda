@@ -1,13 +1,6 @@
 //! Create Entity (clause 5.6.1).
 
-use crate::{
-    EntityService,
-    admitted_write::AdmittedEntity,
-    error::EntityError,
-    expanded_member::written_entity_types,
-    notification_plan::creation,
-    write_kind::CreateEntity,
-};
+use crate::{EntityService, admitted_write::AdmittedEntity, error::EntityError, notification_plan::creation, write_kind::CreateEntity};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     entity_mutation::EntityMutation,
@@ -17,11 +10,10 @@ use andromeda_context_commit::{
     write_outcome::single,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError};
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
-use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
@@ -33,8 +25,8 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::Validation`] when the payload's members cannot be
-    /// read, [`EntityError::AlreadyExists`] when another entity already holds
+    /// Reports [`EntityError::Validation`] when the written document is no
+    /// entity a creation can store (clause 5.6.1.4), [`EntityError::AlreadyExists`] when another entity already holds
     /// the identifier (clause 6.4.3.1), and [`EntityError::Persistence`] when
     /// the store could not commit the insert.
     pub async fn create(&self, target: &ContextTarget, id: &Identifier, admitted: AdmittedEntity<CreateEntity>) -> Result<Identifier, EntityError> {
@@ -42,16 +34,17 @@ impl EntityService {
         let result: Result<Identifier, EntityError> = async {
             // Clause 4.8: a created entity's attribute instances carry the write
             // instant as both createdAt and modifiedAt.
-            let mut expanded = admitted.into_expanded();
-            stamp_attribute_instants(&mut expanded, &Value::Null, Utc::now()).map_err(ExpandedEntityError::from)?;
-            let payload = Arc::new(expanded);
-            let types = written_entity_types(&payload)?;
-            let plan = self.notifier.plan(target, id, &types, creation(&payload)?, Some(&payload), None);
+            let mut created = EntityState::try_from(admitted.into_document())?;
+            created.stamp_attribute_instants(None, SystemInstant::new(Utc::now()));
+            let created = Arc::new(created);
+            let plan = self
+                .notifier
+                .plan(target, id, created.types().as_slice(), creation(&created), Some(&created), None);
 
             let write = AtomicWrite::builder()
                 .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
-                .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::clone(&payload))?)) // clone: Arc ref-count bump; the payload is also the change event's
-                .history(vec![HistoryRecord::Observations(Arc::clone(&payload))]) // clone: Arc ref-count bump
+                .entity(EntityMutation::Insert(EntityRecord::from_state(Arc::clone(&created))?)) // clone: Arc ref-count bump; the state is also the change event's
+                .history(vec![HistoryRecord::Observations(Arc::clone(&created))]) // clone: Arc ref-count bump
                 .subscription_matches(plan.matches)
                 .precondition(Precondition::MustNotExist)
                 .build();

@@ -5,10 +5,8 @@
 /// Admitting write payloads the way the transport layer does, for tests.
 #[cfg(test)]
 mod admission_fixture;
-/// A single-entity write payload the clause 5.5.4 admission produced.
+/// A single-entity write document the clause 5.5.4 admission produced.
 pub mod admitted_write;
-/// Checking attribute instance envelopes (clause 5.2.5).
-pub mod attribute_envelope;
 /// What the existing Entities carry of one attribute name.
 pub mod attribute_summary;
 /// Attribute-level writes (clauses 5.6.2 to 5.6.5 and 5.6.19).
@@ -24,6 +22,8 @@ pub mod change_notifier;
 pub mod change_sink;
 /// The change events a side-effect job publishes once the replay commit that settled it has landed.
 mod committed_side_effect;
+/// Refusing a typed write whose geometry is past the position budget before it is expanded.
+pub mod compact_geometry_admission;
 /// A Building store another writer changes mid-operation, for the compare-and-set tests.
 #[cfg(test)]
 mod compare_and_set_fixture;
@@ -33,13 +33,16 @@ pub mod compiled_cache;
 pub mod config;
 /// What a deletion needs to know about the entity it removes, short of its payload.
 pub mod deletion_outline;
-/// A deletion-outline reader answering from a fixture payload, for tests.
+/// A deletion-outline reader answering from a fixture state, for tests.
 #[cfg(test)]
 mod deletion_outline_fixture;
 /// Entity type and attribute discovery operations.
 pub mod discovery;
-/// Screening the identity members of an expanded entity payload.
-mod entity_identity_admission;
+/// Counting what a written document costs against the payload budget.
+pub mod document_census;
+/// The clause 5.5.4 admission run through the entity service.
+#[cfg(test)]
+mod entity_admission_tests;
 /// The invariants entity policy relies on.
 pub mod entity_invariant;
 /// The concrete reasons an entity operation is unsupported by the storage backend.
@@ -54,12 +57,8 @@ pub mod entity_type_summary;
 pub mod entity_validation_reason;
 /// Entity policy failures.
 pub mod error;
-/// Reading members out of an expanded JSON-LD entity.
-pub mod expanded_member;
 /// Applying entity-level and attribute-instance expiry policy.
 pub mod expiry;
-
-pub mod geo_property_geometry;
 /// Assertions over the Temporal Evolution a recorded write carries.
 #[cfg(test)]
 mod history_recording_assertions;
@@ -75,6 +74,8 @@ mod in_memory_store;
 pub mod merge_fragment;
 /// The Table 6.5.3.4-1 options of a merge.
 pub mod merge_options;
+/// The write that stores a modified entity, and the notifications it owes.
+mod modification_write;
 /// Whole-entity mutations (clauses 5.6.1 to 5.6.6).
 pub mod mutation;
 /// Compare-and-set tests for Delete Entity.
@@ -96,16 +97,12 @@ pub mod notification_plan;
 /// A recording notification harness shared by the durable-match tests.
 #[cfg(test)]
 mod notification_recording_harness;
-/// Where a write payload may carry the NGSI-LD Null (clauses 5.5.4, 5.5.8 and 5.5.12).
-mod null_sentinel_admission;
 /// Store-applied or policy-applied pagination state.
 pub mod pagination_outcome;
-/// The budget a written entity payload is admitted under.
 /// Caller-shaped ports consumed by entity policy.
 pub mod port;
 /// Purging attributes from a set of entities.
 pub mod purge;
-mod purge_dataset;
 /// Entity query and retrieval operations.
 pub mod query;
 /// Query rows and unapplied work returned by a store.
@@ -121,8 +118,6 @@ mod recording_ports;
 pub mod residual_filter;
 /// One named query predicate a store may decline.
 pub mod residual_predicate;
-/// Which value a write may give the entity `scope` member (clause 4.18).
-mod scope_admission;
 /// Work a batch write produces but need not finish before answering.
 pub mod side_effect;
 /// Bounded at-least-once drain for durable entity side effects.
@@ -152,12 +147,13 @@ pub mod spatial_watermark;
 mod spatial_write_visibility;
 /// Query capabilities of one entity store.
 pub mod storage_profile;
-/// Injecting clause 4.8 system attributes into an expanded entity.
-pub mod sys_attrs;
 /// The clause 5.5.4 screening a write payload passes before anything else.
 pub mod write_admission;
 /// The write operations an admitted payload is bound to, as types.
 pub mod write_kind;
+/// The members a written Entity Fragment names, as the attribute names
+/// Update Attributes and Append Attributes report.
+mod written_members;
 
 use crate::{
     batch::execution::BatchExecutionConfig,
@@ -177,7 +173,7 @@ use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_representation::payload_census::EntityPayloadBudget;
+use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 use andromeda_subscription::cache::SubscriptionCache;
 use async_lock::MutexGuardArc;
 use dashmap::DashMap;
@@ -272,6 +268,9 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-commit",
         "andromeda-federation",
         "andromeda-jsonld",
+        "andromeda-ngsi-ld-compaction",
+        "andromeda-ngsi-ld-entity",
+        "andromeda-ngsi-ld-expansion",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

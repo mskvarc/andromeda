@@ -10,7 +10,8 @@
 
 use crate::{change::UpsertKind, error::SubscriptionError};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
+use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use futures::future::BoxFuture;
@@ -54,17 +55,16 @@ pub trait SubscriptionVariant: Send + Sync {
         Self: 'async_trait;
 
     /// Serialize a subscription for an HTTP response (compaction, fixups),
-    /// compacting its names with the one [`NameCompactor`] the response uses.
-    fn serialize_for_response<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+    /// compacting its names with the one [`NameCompaction`] the response uses.
+    fn serialize_for_response<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         subscription: &'life1 Subscription,
-        names: &'life2 NameCompactor<'life3>,
+        names: &'life2 NameCompaction,
     ) -> BoxFuture<'async_trait, Result<Value, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
-        'life3: 'async_trait,
         Self: 'async_trait;
 
     /// Additional update-specific validation (e.g. `expiresAt` future check).

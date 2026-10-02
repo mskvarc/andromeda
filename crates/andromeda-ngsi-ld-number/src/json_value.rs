@@ -2,6 +2,7 @@
 
 mod decode_route;
 pub mod json_pointer;
+pub mod number_range;
 pub mod value_census;
 
 use crate::{

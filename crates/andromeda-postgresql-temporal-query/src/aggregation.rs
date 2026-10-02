@@ -413,7 +413,10 @@ mod tests {
     fn the_size_measuring_methods_aggregate_an_array_by_its_length() {
         for method in [AggrMethod::Avg, AggrMethod::Min, AggrMethod::Max, AggrMethod::Sum] {
             let sql = sql_of(&aggregated(vec![method], None));
-            assert!(sql.contains("jsonb_array_length(\"ah\".\"value_object\")"), "{method}: {sql}");
+            assert!(
+                sql.contains("jsonb_array_length(COALESCE((CASE WHEN ((\"ah\".\"value_object\" ->> ('@type')) = ('@json'))"),
+                "{method}: {sql}"
+            );
         }
     }
 

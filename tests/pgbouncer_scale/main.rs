@@ -84,7 +84,7 @@ async fn patch_attr(client: &Client, broker: &str, tenant: &str) -> RequestOutco
             .patch(format!("{broker}entities/{id}/attrs"))
             .header("NGSILD-Tenant", tenant)
             .header("Content-Type", "application/ld+json")
-            .json(&json!({"value": {"type": "Property", "value": 2}, "@context": [CORE_CONTEXT]})),
+            .json(&json!({"reading": {"type": "Property", "value": 2}, "@context": [CORE_CONTEXT]})),
     )
     .await
 }
@@ -93,7 +93,7 @@ async fn patch_attr(client: &Client, broker: &str, tenant: &str) -> RequestOutco
 /// batch body is a bare NGSI-LD entity array, each element carrying the context.
 async fn batch_upsert(client: &Client, broker: &str, tenant: &str) -> RequestOutcome {
     let entities: Vec<_> = (0..8)
-        .map(|index| json!({"id": format!("urn:ngsi-ld:Device:batch:{tenant}:{index}"), "type": "Device", "value": {"type": "Property", "value": index}, "@context": [CORE_CONTEXT]}))
+        .map(|index| json!({"id": format!("urn:ngsi-ld:Device:batch:{tenant}:{index}"), "type": "Device", "reading": {"type": "Property", "value": index}, "@context": [CORE_CONTEXT]}))
         .collect();
     RequestOutcome::of(
         client

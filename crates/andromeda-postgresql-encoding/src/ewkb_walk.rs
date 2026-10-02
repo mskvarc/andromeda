@@ -1,6 +1,6 @@
 //! Walking a domain geometry so a geozero writer can emit it.
 //!
-//! [`Geometry`] carries its own model — [`GeometryForm`] over [`Position`] —
+//! A [`GeometryForm`] is its own model, over [`Position`],
 //! and no longer converts to `geo::Geometry`, which has no room for the third
 //! ordinate IETF RFC 7946 section 3.1.1 allows on every position. Feeding the
 //! EWKB writer therefore means driving geozero's [`GeomProcessor`] callbacks
@@ -20,21 +20,20 @@
 use andromeda_ngsi_ld_geometry::{
     dimension::GeometryDimension,
     form::{GeometryForm, PolygonRings},
-    geometry::Geometry,
     line_string_coordinates::LineStringCoordinates,
     linear_ring::LinearRing,
     position::Position,
 };
 use geozero::{CoordDimensions, GeomProcessor, GeozeroGeometry, error::Result as GeozeroResult};
 
-/// A [`Geometry`] presented to geozero as a geometry source.
+/// A [`GeometryForm`] presented to geozero as a geometry source.
 ///
 /// Borrowed rather than owned: encoding is a read of the geometry a store bind
 /// already holds, and copying its positions to hand them to a writer would be
 /// pure waste.
 pub struct GeometryWalk<'a>(
     /// The geometry whose positions are emitted to the processor.
-    pub &'a Geometry,
+    pub &'a GeometryForm,
 );
 
 impl GeozeroGeometry for GeometryWalk<'_> {
@@ -51,7 +50,7 @@ impl GeozeroGeometry for GeometryWalk<'_> {
     }
 
     fn process_geom<P: GeomProcessor>(&self, processor: &mut P) -> GeozeroResult<()> {
-        process_form(self.0.form(), 0, processor)
+        process_form(self.0, 0, processor)
     }
 }
 
@@ -140,7 +139,7 @@ fn process_position<P: GeomProcessor>(position: &Position, idx: usize, processor
 #[cfg(test)]
 mod tests {
     use crate::ewkb_walk::GeometryWalk;
-    use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, line_string_coordinates::LineStringCoordinates, position::Position};
+    use andromeda_ngsi_ld_geometry::{form::GeometryForm, line_string_coordinates::LineStringCoordinates, position::Position};
     use geozero::GeozeroGeometry;
 
     fn flat(longitude: f64, latitude: f64) -> Position {
@@ -151,10 +150,8 @@ mod tests {
         Position::try_new(longitude, latitude, Some(altitude)).expect("a test position lies on the CRS84 axes")
     }
 
-    fn line(positions: Vec<Position>) -> Geometry {
-        Geometry::new(GeometryForm::LineString(
-            LineStringCoordinates::try_new(positions).expect("two positions trace a line"),
-        ))
+    fn line(positions: Vec<Position>) -> GeometryForm {
+        GeometryForm::LineString(LineStringCoordinates::try_new(positions).expect("two positions trace a line"))
     }
 
     #[test]

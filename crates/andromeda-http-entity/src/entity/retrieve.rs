@@ -21,62 +21,25 @@ use crate::{
         ResolvedJoin,
         Response,
         ResponseContextSource,
-        ResponsePayload,
         RetrievalNarrowing,
-        RetrievingJoin,
         TypedPath,
         ValidatedQuery,
-        Value,
         public_error,
         request_entity_map::{LocalEntitySource, record_map_use, resolve_retrieval_map_use},
         retrieve_forwarding::RetrieveForwarding,
         with_linked_resolution_warnings,
     },
-    read_rendering::{EntityRepresentation, apply_representation_names, render_entity, render_joined_entities},
+    read_rendering::{EntityRepresentation, RetrievedAnswer, apply_representation_names, retrieved_entity},
 };
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::request::{EntityMapInUse, TriggeringRequest};
 use andromeda_http_extraction::{context_target, response_context_request::ResponseContextRequest};
-use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
+use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
 use andromeda_ngsi_ld_render::response::ResponseRenderer;
 use std::slice::{from_mut, from_ref};
 
-/// What a retrieval writes into the response body.
-enum RetrievedPayload {
-    /// The entity itself, with an inline join's Linked Entities nested into it.
-    Single(Value),
-    /// The entity beside the Linked Entities a flat join reached, which is a
-    /// collection even though one entity was asked for (clause 4.5.23).
-    Collection(Vec<Value>),
-}
-
-/// The body a retrieval that resolved a clause 4.5.23 join answers with.
-///
-/// # Errors
-///
-/// Returns a [`ProblemResponse`] when an entity cannot be written in the
-/// requested representation.
-fn joined_payload(
-    entity: &Entity,
-    resolved: &ResolvedJoin<'_>,
-    representation: &EntityRepresentation<'_>,
-    instance: &HttpUri,
-) -> Result<RetrievedPayload, ProblemResponse> {
-    match resolved.join {
-        // Flat: the root and its linked entities side by side.
-        RetrievingJoin::Flat => {
-            let entities = render_joined_entities(from_ref(entity), resolved, representation, instance)?;
-            Ok(RetrievedPayload::Collection(entities))
-        }
-        // Inline: the renderer nests the linked entities into the root,
-        // narrowing each nested copy by the sub-projection its own
-        // Relationship carried (clause 4.21).
-        RetrievingJoin::Inline => Ok(RetrievedPayload::Single(render_entity(entity, Some(resolved), representation, instance)?)),
-    }
-}
-
-/// The HTTP response a retrieval's rendered body becomes.
+/// The HTTP response a retrieval's answer becomes.
 ///
 /// A clause 4.5.23 flat join answers a collection where every other retrieval
 /// answers a single Entity, and each carries the Table 6.5.3.1-1 `entityMap`
@@ -84,23 +47,24 @@ fn joined_payload(
 /// shapes is written is the only thing that differs, so the choice is made once
 /// here rather than inside the handler that gathered them.
 fn retrieval_response(
-    payload: RetrievedPayload,
+    answer: RetrievedAnswer<'_>,
     rendering: ResponseRenderer<'_>,
+    language_filter: Option<&LanguageFilter>,
     warnings: Vec<NgsiLdWarning>,
     entity_map_uri: Option<Identifier>,
     uri: &HttpUri,
 ) -> Result<Response, ProblemResponse> {
-    match payload {
-        RetrievedPayload::Single(value) => {
-            let rendered = rendering.with_payload(ResponsePayload::Single(value)).render().with_entity_instance(uri)?;
+    match answer {
+        RetrievedAnswer::Single(answer) => {
+            let rendered = answer.render(rendering, language_filter, uri)?;
             let mut response = NgsiLdResponse::ok(rendered).with_warnings(warnings);
             if let Some(map_uri) = entity_map_uri {
                 response = response.with_entity_map_uri(map_uri);
             }
             Ok(response.into_response())
         }
-        RetrievedPayload::Collection(values) => {
-            let rendered = rendering.with_payload(ResponsePayload::Collection(values)).render().with_entity_instance(uri)?;
+        RetrievedAnswer::Collection(answer) => {
+            let rendered = answer.render(rendering, language_filter, uri)?;
             let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
             if let Some(map_uri) = entity_map_uri {
                 response = response.with_entity_map_uri(map_uri);
@@ -216,11 +180,7 @@ pub(crate) async fn get(
         (entity, retrieved.warnings, map_uri)
     };
 
-    let representation = EntityRepresentation::new(
-        language_filter.as_ref(),
-        params.resolve_render_mode().with_entity_instance(&uri)?,
-        projection.as_ref(),
-    );
+    let representation = EntityRepresentation::new(params.resolve_render_mode().with_entity_instance(&uri)?, projection.as_ref());
     let request = JoinRequest {
         join: params.join,
         join_level: params.join_level,
@@ -240,10 +200,7 @@ pub(crate) async fn get(
     apply_representation_names(service, &representation, &context, from_mut(&mut entity), resolved.as_mut(), &uri).await?;
     let entity = entity;
 
-    let payload = match &resolved {
-        Some(resolved) => joined_payload(&entity, resolved, &representation, &uri)?,
-        None => RetrievedPayload::Single(render_entity(&entity, None, &representation, &uri)?),
-    };
+    let answer = retrieved_entity(&entity, resolved.as_ref(), &representation);
 
     let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
         .start_rendering(accept.media_type(), prefer.rendering_preferences(), representation.mode)
@@ -253,7 +210,7 @@ pub(crate) async fn get(
             params.geometry_property.as_ref(),
             params.dataset_id.as_deref().unwrap_or_default(),
         ));
-    retrieval_response(payload, rendering, warnings, entity_map_uri, &uri)
+    retrieval_response(answer, rendering, language_filter.as_ref(), warnings, entity_map_uri, &uri)
 }
 
 #[cfg(test)]

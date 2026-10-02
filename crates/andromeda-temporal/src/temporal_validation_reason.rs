@@ -11,13 +11,8 @@
 
 use crate::aggregation_conflict::AggregationConflict;
 use andromeda_context_commit::submission_refusal::SubmissionRefusal;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    identifier::IdentifierParseError,
-    reference::NgsiLdReferenceError,
-};
-use andromeda_ngsi_ld_model::expanded::geo_property_admission::GeoPropertyRefusal;
+use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal::EntityRefusal};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
 use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 use thiserror::Error;
@@ -25,22 +20,12 @@ use thiserror::Error;
 /// Why a temporal request or representation is invalid.
 #[derive(Debug, Error)]
 pub enum TemporalValidationReason {
-    /// The temporal entity payload was not a JSON object.
-    #[error("entity must be a JSON object")]
-    EntityNotObject,
     /// The temporal entity payload omitted its `id`.
     #[error("entity is missing an id")]
     EntityMissingId,
     /// The temporal entity payload omitted its `type`.
     #[error("entity is missing a type")]
     EntityMissingType,
-    /// The temporal entity's `id` was not an identifier.
-    #[error("invalid entity id: {source}")]
-    EntityId {
-        /// Why it is not an identifier, a length past the identifier bound included.
-        #[source]
-        source: IdentifierParseError,
-    },
     /// An attribute name did not satisfy the attribute-name grammar.
     #[error("attribute name is invalid: {source}")]
     AttributeName {
@@ -89,10 +74,26 @@ pub enum TemporalValidationReason {
         /// The targeted attribute, by its expanded name.
         target: AttributeName,
     },
-    /// A `GeoProperty` instance carried a geometry the broker has no reading of
-    /// (clauses 4.7 and 5.5.4), refused before anything is staged.
+    /// The clause 5.6.14.3 replacement instance records no value: its value
+    /// member is its family's deletion encoding, or it names neither a family
+    /// nor a value.
+    #[error("the replacement instance of '{target}' records no value")]
+    ReplacementRecordsNoValue {
+        /// The targeted attribute, by its expanded name.
+        target: AttributeName,
+    },
+    /// The written document is not one the model admits (clauses 5.5.4 and
+    /// 4.5): malformed, a geometry clause 4.7 gives no reading of, a member a
+    /// family never carries, an unusable value.
     #[error(transparent)]
-    GeoProperty(#[from] GeoPropertyRefusal),
+    Representation(EntityRefusal),
+    /// A standing instance of a Temporal Evolution cannot be current state.
+    #[error(transparent)]
+    Mutation(MutationError),
+    /// A compact request document could not be written for the JSON-LD
+    /// processor.
+    #[error("the request document cannot be expanded: {0}")]
+    CompactDocument(#[source] serde_json::Error),
     /// The submitted content cannot be stored as written (clause 5.5.6).
     #[error(transparent)]
     Refused(#[from] SubmissionRefusal),

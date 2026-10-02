@@ -15,12 +15,10 @@ use crate::{
     error::TemporalError,
     linked::candidates::{TemporalLinkedCandidate, collect_candidates},
     service::TemporalService,
+    temporal_compaction::TemporalCompaction,
+    temporal_invariant::TemporalInvariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{
-    compaction::NameCompactor,
-    engine::{expanded_input::ExpandedInput, options::CompactOptions},
-};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
@@ -136,14 +134,14 @@ impl TemporalService {
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
-        names: &NameCompactor<'_>,
+        compaction: &TemporalCompaction<'_>,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
         if compiled.representation.format.is_aggregated() {
-            return self.render_aggregated_entity(target, entity_id, entity_types, compiled, names).await;
+            return self.render_aggregated_entity(target, entity_id, entity_types, compiled, compaction).await;
         }
         let page = self.read_history_page(target, entity_id, compiled).await?;
         let cut = self.common_page_cut(compiled, slice::from_ref(&page))?;
-        self.render_history_page(page, entity_types, compiled, names, cut).await
+        self.render_history_page(page, entity_types, compiled, compaction, cut).await
     }
 
     /// Read the page of one entity's history the compiled query selects.
@@ -201,21 +199,21 @@ impl TemporalService {
         page: EntityHistoryPage,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
-        names: &NameCompactor<'_>,
+        compaction: &TemporalCompaction<'_>,
         cut: Option<PageCut>,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
         let presence = page.presence();
-        let built = TemporalEntityRenderer::new(&page.entity_id, entity_types, &page.rows, compiled, cut).render();
+        let EntityHistoryPage { entity_id, rows } = page;
+        let built = TemporalEntityRenderer::new(&entity_id, entity_types, rows, compiled, cut)
+            .render()
+            .map_err(|error| TemporalError::from(TemporalInvariant::RenderedInstance(error)))?;
         // Clause 5.7.3 / 5.5.7: the representation is compacted against the
         // request @context, which is the core context alone when the client
         // supplies none. A term the resolved context does not declare stays a
         // full IRI; it is not truncated to a bare fragment, since a fragment is
         // not a term the client could expand back (clause 5.7.6 renders type
         // and attribute discovery the same way).
-        let compacted = names
-            .compactor()
-            .compact(ExpandedInput::Assembled(built.entity), CompactOptions::default())
-            .await?;
+        let compacted = compaction.document(&built.entity).await?;
         let mut compacted = TemporalArrayNormalizer::new(compacted).render();
         // Clause 4.21, `id` / `type` half: the attribute half of the
         // projection already ran inside `TemporalEntityRenderer` on the
@@ -231,10 +229,12 @@ impl TemporalService {
             // The renderer names an attribute the cut emptied by the family its
             // rows recorded, under the name the representation was compacted to.
             let mut emptied = IndexMap::with_capacity(built.emptied.len());
-            for (attribute, family) in built.emptied {
-                let compacted_name = names.compact_attr_iri(attribute.as_str()).await;
-                let name = compacted_name.parse::<AttributeName>().unwrap_or(attribute);
-                emptied.insert(name, family);
+            if !built.emptied.is_empty() {
+                let names = compaction.names().await?;
+                for (attribute, family) in built.emptied {
+                    let name = names.compact_attr_iri(attribute.as_str()).parse::<AttributeName>().unwrap_or(attribute);
+                    emptied.insert(name, family);
+                }
             }
             TemporalValuesRenderer::new(compacted, compiled.window.timeproperty, emptied)
                 .render()
@@ -265,7 +265,7 @@ impl TemporalService {
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
-        names: &NameCompactor<'_>,
+        compaction: &TemporalCompaction<'_>,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
         let rows = self.reader.query_entity_aggregation(target, entity_id, compiled).await?;
         // The grouped extension refuses a runaway grouping off the count of
@@ -280,7 +280,7 @@ impl TemporalService {
             }
         }
         let presence = presence_of(rows.is_empty());
-        let value = self.build_aggregated_compacted(entity_id, entity_types, &rows, compiled, names).await?;
+        let value = self.build_aggregated_compacted(entity_id, entity_types, &rows, compiled, compaction).await?;
         Ok(RenderedTemporalEntity {
             value,
             presence,

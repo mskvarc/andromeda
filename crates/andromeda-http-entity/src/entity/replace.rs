@@ -43,11 +43,10 @@ pub(crate) async fn update(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let is_local = params.local.unwrap_or(false);
-    let patch_value = serde_json::to_value(&patch).with_entity_instance(&uri)?;
     // Clause 5.6.18.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a payload this broker refuses reaches no context source and a
     // replacement left with nothing local is still validated.
-    let admitted = admit_written_entity::<ReplaceEntity>(service, patch_value, &context)
+    let admitted = admit_written_entity::<ReplaceEntity>(service, &patch, &context)
         .await
         .with_entity_instance(&uri)?;
 
@@ -66,7 +65,6 @@ pub(crate) async fn update(
                 entity_type_compact: None,
                 attribute_name: None,
                 method: Method::PUT,
-                body: Some(&patch),
                 context: &context,
                 operation: ForwardingOperation::ReplaceEntity,
                 path_suffix: None,
@@ -76,6 +74,7 @@ pub(crate) async fn update(
                     headers: Some(&headers),
                 },
             },
+            Some(&patch),
         )
         .await
         .with_entity_instance(&uri)?;

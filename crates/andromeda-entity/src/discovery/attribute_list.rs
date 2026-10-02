@@ -11,9 +11,11 @@ use crate::{
     },
     entity_invariant::EntityInvariant,
     error::EntityError,
+    query::simplified_names::request_name_compaction,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
+use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, ngsi_ld_urn::AttributeListId};
 use andromeda_ngsi_ld_model::attribute_list::{AttributeInfo, AttributeList, AttributeListType, AttributeResourceType};
 use serde_json::Value;
@@ -33,8 +35,9 @@ impl EntityDiscoveryService {
     /// # Errors
     ///
     /// Reports [`EntityError::Persistence`] when the store or the registry
-    /// could not be read, and [`EntityError::Internal`] when a stored name does
-    /// not read back as one or the minted list identifier is not one.
+    /// could not be read, [`EntityError::JsonLd`] when the request context
+    /// does not resolve or process, and [`EntityError::Internal`] when a stored
+    /// name does not read back as one or the minted list identifier is not one.
     pub async fn attributes(
         &self,
         target: &ContextTarget,
@@ -54,10 +57,10 @@ impl EntityDiscoveryService {
             extend_without_repetition(&mut metadata.entity_types, registered.entity_types);
         }
 
-        let names = NameCompactor::new(&self.engine, context);
+        let names = request_name_compaction(&self.engine, context).await?;
         match representation {
-            AttributeCollectionRepresentation::Detailed => detailed_attributes(attr_data, &names).await,
-            AttributeCollectionRepresentation::List => attribute_name_list(attr_data.into_keys(), &names).await,
+            AttributeCollectionRepresentation::Detailed => detailed_attributes(attr_data, &names),
+            AttributeCollectionRepresentation::List => attribute_name_list(attr_data.into_keys(), &names),
         }
     }
 }
@@ -70,15 +73,15 @@ impl EntityDiscoveryService {
 /// cardinality 0..1 and clause 5.7.9.5 asks only for the names, so neither
 /// is reported here; clause 5.7.10 is where an attribute's families and
 /// count are answered.
-async fn detailed_attributes(attr_data: HashMap<AttributeName, AttributeMetadata>, names: &NameCompactor<'_>) -> Result<Value, EntityError> {
+fn detailed_attributes(attr_data: HashMap<AttributeName, AttributeMetadata>, names: &NameCompaction) -> Result<Value, EntityError> {
     let mut attributes = Vec::with_capacity(attr_data.len());
     for (iri, meta) in attr_data {
         attributes.push(
             AttributeInfo::builder()
-                .attribute_name(compacted_attribute_name(names, &iri).await?)
+                .attribute_name(compacted_attribute_name(names, &iri)?)
                 .id(parse_discovery_iri(iri.to_string())?)
                 .type_(AttributeResourceType)
-                .type_names(compacted_type_names(names, meta.entity_types).await?)
+                .type_names(compacted_type_names(names, meta.entity_types)?)
                 .build(),
         );
     }
@@ -89,8 +92,8 @@ async fn detailed_attributes(attr_data: HashMap<AttributeName, AttributeMetadata
 
 /// The clause 5.2.27 `AttributeList` of the attribute names, each
 /// compacted under the context `names` compacts against.
-async fn attribute_name_list(attr_iris: impl IntoIterator<Item = AttributeName>, names: &NameCompactor<'_>) -> Result<Value, EntityError> {
-    let mut compacted_names = compacted_attribute_names(names, attr_iris).await?;
+fn attribute_name_list(attr_iris: impl IntoIterator<Item = AttributeName>, names: &NameCompaction) -> Result<Value, EntityError> {
+    let mut compacted_names = compacted_attribute_names(names, attr_iris)?;
     compacted_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     let compacted_names = compacted_names;
 

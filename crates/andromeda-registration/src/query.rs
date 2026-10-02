@@ -8,7 +8,8 @@ use crate::{
     registration_invariant::RegistrationInvariant,
     registration_validation_reason::RegistrationValidationReason,
 };
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     context_source_pseudonym::ContextSourcePseudonym,
@@ -95,7 +96,7 @@ impl RegistrationService {
             .zip(page.registrations.last().map(|registration| registration.id.clone()));
         let page_full = page.registrations.len() >= compiled.pagination.limit as usize;
         let total = page.total;
-        let names = NameCompactor::new(&self.engine, context);
+        let names = NameCompaction::new(self.engine.compactor(context).processed_context().await?);
         let mut values = Vec::with_capacity(page.registrations.len());
         for registration in page.registrations {
             let Some(mut registration) = registration_matching_the_query(registration, &compiled)? else {
@@ -104,13 +105,13 @@ impl RegistrationService {
             let additional_properties = registration.additional_properties.take();
             let mut value = serde_json::to_value(registration).map_err(RegistrationError::Representation)?;
             if let Some(information) = value.get_mut("information") {
-                compact_information(&names, information).await;
+                compact_information(&names, information);
             }
             if let Some(properties) = additional_properties
-                && let Some(compacted) = compact_context_source_properties(&names, properties).await?
-                && let (Some(target), Some(source)) = (value.as_object_mut(), compacted.as_object())
+                && let Some(compacted) = compact_context_source_properties(&names, properties)
+                && let Some(target) = value.as_object_mut()
             {
-                target.extend(source.iter().map(|(key, member)| (key.clone(), member.clone()))); // clone: the response object owns compacted members after the temporary document is dropped.
+                target.extend(compacted);
             }
             values.push(value);
         }

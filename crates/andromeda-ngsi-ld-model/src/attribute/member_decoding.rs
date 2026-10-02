@@ -5,10 +5,16 @@
 //! (`#[serde(untagged)]`) buffers the whole member before trying a variant, and
 //! the internally tagged [`Attribute`] it tries first buffers it once more to
 //! find the `type` tag: a `GeoProperty` of a million positions crossed serde's
-//! buffered content three times over, close to a gigabyte for one entity. The
-//! member is therefore read once into a JSON tree, each instance is decoded
-//! from that tree, and a `GeoProperty`'s geometry is read from it in place.
-//! The result is the one the derived decoding gives, with one deliberate
+//! buffered content three times over, close to a gigabyte for one entity.
+//!
+//! A member is therefore read in one of two ways, both giving the result the
+//! derived decoding gives. Decoded from any deserializer, it is read once into
+//! a JSON tree and read from that tree by the model's one reading of a compact
+//! node ([`AttributeValue::from_node`]), which a compacted entity's members
+//! are read by as well. Decoded from the text of a request, it is kept as the
+//! slice of text it is: each instance is decoded straight from that text, a
+//! `GeoProperty`'s geometry without any JSON tree at all, and only a member
+//! that is no instance becomes a tree. Either way there is one deliberate
 //! exception: a geometry carrying a JSON-LD keyword member, such as an
 //! `@context`, is not read as a typed geometry, so the member stays as written
 //! for the clause 5.5.7 screening that refuses it.
@@ -16,11 +22,16 @@
 use crate::attribute::{
     geo_property::GeoProperty,
     instance::{Attribute, AttributeValue},
+    member_node::{MemberForm, read_member},
 };
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_number::json_value::deserialize_exact;
-use serde::{Deserialize, Deserializer};
-use serde_json::Value;
+use serde::{
+    Deserialize,
+    Deserializer,
+    de::{IgnoredAny, MapAccess, Visitor},
+};
+use serde_json::{Deserializer as JsonReader, Value, value::RawValue};
+use std::fmt;
 
 // Hand-written because the derived `untagged` decoding is the buffering this
 // module exists to avoid; see the module documentation.
@@ -33,32 +44,113 @@ impl<'de> Deserialize<'de> for AttributeValue {
 impl AttributeValue {
     /// Read one attribute member: an instance, an array of instances, or,
     /// when it is neither, the member as it stands.
+    ///
+    /// The member is read by [`AttributeValue::from_node`]'s reading; a member
+    /// carried verbatim keeps the spelling it was given in, and so does one
+    /// whose JSON the reader would not accept.
     #[must_use]
     pub fn from_member(member: Value) -> AttributeValue {
-        match member {
-            // Only an object can be one instance, and an object is no array of
-            // them.
-            Value::Object(_) => match attribute_of(&member) {
-                Ok(instance) => AttributeValue::Single(Box::new(instance)),
-                Err(_) => AttributeValue::Raw(member),
+        match read_member(&member) {
+            Ok(MemberForm::Single(instance)) => AttributeValue::Single(instance),
+            Ok(MemberForm::Multiple(instances)) => AttributeValue::Multiple(instances),
+            Ok(MemberForm::Verbatim) | Err(_) => AttributeValue::Raw(member),
+        }
+    }
+
+    /// Read one attribute member from its JSON text, as
+    /// [`AttributeValue::from_member`] reads its tree.
+    ///
+    /// Numbers held as JSON keep the spelling of the text.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reader's failure to read a member that is no instance as
+    /// the JSON value it is carried as, which the text of one JSON value never
+    /// draws.
+    pub(crate) fn from_member_text(member: &RawValue) -> Result<AttributeValue, serde_json::Error> {
+        match member.get().trim_start().as_bytes().first() {
+            Some(b'{') => match attribute_of_text(member) {
+                Ok(instance) => Ok(AttributeValue::Single(Box::new(instance))),
+                Err(_) => verbatim(member),
             },
-            Value::Array(items) => match items.iter().map(attribute_of).collect::<Result<Vec<Attribute>, serde_json::Error>>() {
-                Ok(instances) => AttributeValue::Multiple(instances),
-                Err(_) => AttributeValue::Raw(Value::Array(items)),
+            Some(b'[') => match instances_of_text(member) {
+                Ok(instances) => Ok(AttributeValue::Multiple(instances)),
+                Err(_) => verbatim(member),
             },
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => AttributeValue::Raw(member),
+            Some(_) | None => verbatim(member),
         }
     }
 }
 
-/// Decode one attribute instance, a `GeoProperty` by its geometry-aware reader
-/// and every other family as the derived decoding reads it.
-fn attribute_of(instance: &Value) -> Result<Attribute, serde_json::Error> {
-    match instance.as_object() {
-        Some(members) if members.get("type").and_then(Value::as_str) == Some(AttributeType::GeoProperty.short_name()) => {
-            GeoProperty::from_instance(members).map(Attribute::GeoProperty)
+/// Decode one attribute instance from its text, as [`AttributeValue::from_node`]
+/// reads its tree: a `GeoProperty` by its geometry-aware reader, every other
+/// family as the derived decoding reads it.
+fn attribute_of_text(instance: &RawValue) -> Result<Attribute, serde_json::Error> {
+    let mut reader = JsonReader::from_str(instance.get());
+    let attribute = match serde_json::from_str::<InstanceFamily>(instance.get())? {
+        InstanceFamily::GeoProperty => GeoProperty::from_instance(&mut reader).map(Attribute::GeoProperty),
+        InstanceFamily::Other => Attribute::deserialize(&mut reader),
+    }?;
+    reader.end()?;
+    Ok(attribute)
+}
+
+/// Decode every item of an array member from its text, each as one instance.
+fn instances_of_text(member: &RawValue) -> Result<Vec<Attribute>, serde_json::Error> {
+    serde_json::from_str::<Vec<&RawValue>>(member.get())?
+        .into_iter()
+        .map(attribute_of_text)
+        .collect()
+}
+
+/// Carry a member that is no instance as the JSON value it is.
+fn verbatim(member: &RawValue) -> Result<AttributeValue, serde_json::Error> {
+    serde_json::from_str(member.get()).map(AttributeValue::Raw)
+}
+
+/// Whether an attribute instance names the `GeoProperty` family, read from
+/// its `type` member alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InstanceFamily {
+    /// The `type` member is the string `GeoProperty`.
+    GeoProperty,
+    /// Anything else, a missing `type` included.
+    Other,
+}
+
+// Hand-written: every member but `type` is skipped unread, and a member
+// written twice counts as written last, as a parsed tree keeps it.
+impl<'de> Deserialize<'de> for InstanceFamily {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<InstanceFamily, D::Error> {
+        deserializer.deserialize_map(InstanceFamilyVisitor)
+    }
+}
+
+/// Reads an instance's family from its `type` member.
+#[derive(Clone, Copy, Debug)]
+struct InstanceFamilyVisitor;
+
+impl<'de> Visitor<'de> for InstanceFamilyVisitor {
+    type Value = InstanceFamily;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an attribute instance")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut members: A) -> Result<InstanceFamily, A::Error> {
+        let mut family = InstanceFamily::Other;
+        while let Some(name) = members.next_key::<String>()? {
+            if name == "type" {
+                family = if members.next_value::<Value>()?.as_str() == Some(AttributeType::GeoProperty.short_name()) {
+                    InstanceFamily::GeoProperty
+                } else {
+                    InstanceFamily::Other
+                };
+            } else {
+                members.next_value::<IgnoredAny>()?;
+            }
         }
-        Some(_) | None => deserialize_exact(instance),
+        Ok(family)
     }
 }
 
@@ -67,7 +159,7 @@ mod tests {
     use crate::attribute::instance::{Attribute, AttributeValue};
     use pretty_assertions::assert_eq;
     use serde::{Deserialize, Serialize};
-    use serde_json::{Value, json};
+    use serde_json::{Value, json, value::RawValue};
 
     /// The decoding `AttributeValue` derived before it was written by hand:
     /// each variant tried in order over a buffered copy of the member. Every
@@ -111,14 +203,19 @@ mod tests {
         }
     }
 
-    /// Decode `text` both ways, from the request text as an entity is decoded
-    /// and from its parsed tree, assert the three agree, and answer the variant.
+    /// Decode `text` every way -- through serde from the text, from its
+    /// parsed tree, and from the text kept as text as a request body is
+    /// decoded -- assert all agree with the derived decoding, and answer the
+    /// variant.
     fn decoded_alike(text: &str) -> &'static str {
         let from_text = hand_written(&serde_json::from_str::<AttributeValue>(text).expect("the member decodes"));
         let from_tree = hand_written(&AttributeValue::from_member(serde_json::from_str(text).expect("the member parses")));
+        let raw: &RawValue = serde_json::from_str(text).expect("the member is JSON");
+        let from_raw_text = hand_written(&AttributeValue::from_member_text(raw).expect("the member is read"));
         let oracle = derived(&serde_json::from_str::<DerivedAttributeValue>(text).expect("the derived decoding reads the member"));
         assert_eq!(from_text, oracle, "{text}");
         assert_eq!(from_tree, oracle, "{text}");
+        assert_eq!(from_raw_text, oracle, "{text}");
         oracle.variant
     }
 

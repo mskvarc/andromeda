@@ -5,7 +5,14 @@ use crate::{
     key::SpatialKey,
     partitioned_rtree::{PartitionedRTree, WriteTracking},
 };
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, great_circle::great_circle_bounds, near_envelope::NearEnvelope, relation::matches};
+use andromeda_ngsi_ld_geometry::{
+    form::GeometryForm,
+    geo_rel::GeoRel,
+    great_circle::great_circle_bounds,
+    near_envelope::NearEnvelope,
+    planar::PlanarGeometry,
+    relation::matches,
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use dashmap::DashSet;
@@ -79,7 +86,7 @@ impl SpatialEntityIndex {
     /// no envelope can bound. A seeded scope with no partition for the key
     /// answers with the empty set, because its rebuild found no entity of that
     /// type conveying the `GeoProperty`.
-    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &Geometry) -> Option<HashSet<Identifier>> {
+    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &GeometryForm) -> Option<HashSet<Identifier>> {
         let scope = SeedScope {
             tenant: key.tenant.clone(),           // clone: the seed lookup owns its tenant
             geoproperty: key.geoproperty.clone(), // clone: the seed lookup owns its geoproperty
@@ -87,10 +94,13 @@ impl SpatialEntityIndex {
         if !self.seeded.contains(&scope) {
             return None;
         }
-        let candidates = candidates_for(georel, reference)?;
+        // Projected once: the candidate region and every candidate's relation
+        // read the same projection.
+        let reference = PlanarGeometry::project(reference);
+        let candidates = candidates_for(georel, &reference)?;
         Some(
             self.tree
-                .read_partition(key, |tree| evaluate(tree, georel, reference, &candidates))
+                .read_partition(key, |tree| evaluate(tree, georel, &reference, &candidates))
                 .unwrap_or_default(),
         )
     }
@@ -102,7 +112,8 @@ impl SpatialEntityIndex {
     /// entry in the ones it stays in under that partition's lock, so a reader
     /// never finds it missing from a partition it belongs to throughout. A
     /// geometry with no bounding rectangle cannot be indexed and is dropped.
-    pub fn replace_entity(&self, entity_id: Identifier, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) {
+    /// Each geometry is borrowed: the tree keeps only its projection.
+    pub fn replace_entity<'g>(&self, entity_id: Identifier, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) {
         let entries = entries_of(&entity_id, placements);
         self.tree.replace(entity_id, entries);
     }
@@ -115,7 +126,7 @@ impl SpatialEntityIndex {
     /// pending sees it wherever the change may leave it. A later
     /// [`SpatialEntityIndex::replace_entity`] or [`SpatialEntityIndex::remove`]
     /// settles it.
-    pub fn anticipate_entity(&self, entity_id: Identifier, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) {
+    pub fn anticipate_entity<'g>(&self, entity_id: Identifier, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) {
         let entries = entries_of(&entity_id, placements);
         self.tree.augment(entity_id, entries);
     }
@@ -143,7 +154,7 @@ impl SpatialEntityIndex {
 }
 
 /// The tree entries of one entity's placements, grouped by partition.
-fn entries_of(entity_id: &Identifier, placements: impl IntoIterator<Item = (SpatialKey, Geometry)>) -> Vec<(SpatialKey, Vec<SpatialEntry>)> {
+fn entries_of<'g>(entity_id: &Identifier, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) -> Vec<(SpatialKey, Vec<SpatialEntry>)> {
     placements
         .into_iter()
         // clone: each entry owns the identifier the back-index is keyed by
@@ -169,7 +180,7 @@ enum Candidates {
 ///
 /// A reference with no coordinates has no region, so every entry is a
 /// candidate.
-fn candidates_for(georel: &GeoRel, reference: &Geometry) -> Option<Candidates> {
+fn candidates_for(georel: &GeoRel, reference: &PlanarGeometry) -> Option<Candidates> {
     match georel {
         // `disjoint` matches precisely the entries the envelope test discards.
         GeoRel::Disjoint => Some(Candidates::WholePartition),
@@ -233,7 +244,7 @@ const fn refinement_for(georel: &GeoRel) -> Refinement {
 ///
 /// An entry that straddles the antimeridian can meet both halves of a split
 /// envelope; the set reports it once.
-fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry, candidates: &Candidates) -> HashSet<Identifier> {
+fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &PlanarGeometry, candidates: &Candidates) -> HashSet<Identifier> {
     let entries: Vec<&SpatialEntry> = match candidates {
         Candidates::WholePartition => tree.iter().collect(),
         Candidates::Envelope(envelope) => envelope
@@ -246,7 +257,7 @@ fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry, c
     entries
         .into_iter()
         .filter(|entry| match refinement_for(georel) {
-            Refinement::Exact => matches(georel, &entry.geometry, reference),
+            Refinement::Exact => matches(georel, &entry.planar, reference),
             Refinement::EnvelopeOnly => true,
         })
         // clone: the returned set owns its identifiers, which outlive the tree borrow
@@ -263,7 +274,6 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{
         form::{GeometryForm, PolygonRings},
         geo_rel::GeoRel,
-        geometry::Geometry,
         linear_ring::LinearRing,
         position::Position,
         positive_distance::PositiveDistance,
@@ -289,14 +299,12 @@ mod tests {
         raw.parse().expect("a well-formed URI")
     }
 
-    fn point(x: f64, y: f64) -> Geometry {
-        Geometry::new(GeometryForm::Point(
-            Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"),
-        ))
+    fn point(x: f64, y: f64) -> GeometryForm {
+        GeometryForm::Point(Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"))
     }
 
-    fn square(cx: f64, cy: f64, half: f64) -> Geometry {
-        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![
+    fn square(cx: f64, cy: f64, half: f64) -> GeometryForm {
+        GeometryForm::Polygon(PolygonRings::new(vec![
             LinearRing::try_new(vec![
                 Position::try_new(cx - half, cy - half, None).expect("a test position lies on the CRS84 axes"),
                 Position::try_new(cx + half, cy - half, None).expect("a test position lies on the CRS84 axes"),
@@ -305,7 +313,7 @@ mod tests {
                 Position::try_new(cx - half, cy - half, None).expect("a test position lies on the CRS84 axes"),
             ])
             .expect("a test square is a closed ring"),
-        ])))
+        ]))
     }
 
     /// An index whose `location` scope a rebuild over an empty store seeded.
@@ -318,7 +326,7 @@ mod tests {
     #[test]
     fn an_unseeded_scope_declines_to_answer_even_with_live_entries() {
         let index = SpatialEntityIndex::new();
-        index.replace_entity(uri("urn:ngsi-ld:Vehicle:A"), [(key(), point(0.0, 0.0))]);
+        index.replace_entity(uri("urn:ngsi-ld:Vehicle:A"), [(key(), &point(0.0, 0.0))]);
         assert!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 1.0)).is_none());
     }
 
@@ -342,7 +350,7 @@ mod tests {
     fn an_entity_identified_by_an_http_iri_is_indexed() {
         let index = seeded();
         let id = uri("https://example.org/vehicles/1");
-        index.replace_entity(id.clone(), [(key(), point(0.0, 0.0))]);
+        index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
         assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id])));
     }
 
@@ -350,14 +358,14 @@ mod tests {
     fn an_entity_inside_the_reference_matches_within() {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Vehicle:A");
-        index.replace_entity(id.clone(), [(key(), point(0.0, 0.0))]);
+        index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
         assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id])));
     }
 
     #[test]
     fn an_entity_overlapping_the_reference_does_not_match_disjoint() {
         let index = seeded();
-        index.replace_entity(uri("urn:ngsi-ld:Vehicle:A"), [(key(), square(0.0, 0.0, 2.0))]);
+        index.replace_entity(uri("urn:ngsi-ld:Vehicle:A"), [(key(), &square(0.0, 0.0, 2.0))]);
         assert_eq!(index.query(&key(), &GeoRel::Disjoint, &square(0.0, 0.0, 1.0)), Some(HashSet::new()));
     }
 
@@ -366,7 +374,7 @@ mod tests {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Vehicle:A");
         // 2 km east at the equator is ~0.01797 degrees of longitude.
-        index.replace_entity(id.clone(), [(key(), point(0.01797, 0.0))]);
+        index.replace_entity(id.clone(), [(key(), &point(0.01797, 0.0))]);
 
         let tight = GeoRel::Near {
             max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
@@ -407,7 +415,7 @@ mod tests {
     }
 
     /// Bremen, the reference point the minimum-distance fixtures sit around.
-    fn bremen() -> Geometry {
+    fn bremen() -> GeometryForm {
         point(8.8072, 53.0758)
     }
 
@@ -419,9 +427,9 @@ mod tests {
         let close = uri("urn:ngsi-ld:Vehicle:100m");
         let inside = uri("urn:ngsi-ld:Vehicle:500m");
         // ~0.001 degrees is ~111 m at the equator.
-        index.replace_entity(close.clone(), [(key(), point(0.0009, 0.0))]);
-        index.replace_entity(inside.clone(), [(key(), point(0.0045, 0.0))]);
-        index.replace_entity(uri("urn:ngsi-ld:Vehicle:2000m"), [(key(), point(0.018, 0.0))]);
+        index.replace_entity(close.clone(), [(key(), &point(0.0009, 0.0))]);
+        index.replace_entity(inside.clone(), [(key(), &point(0.0045, 0.0))]);
+        index.replace_entity(uri("urn:ngsi-ld:Vehicle:2000m"), [(key(), &point(0.018, 0.0))]);
 
         assert_eq!(
             index.query(&key(), &near(Some("1000"), Some("300")), &point(0.0, 0.0)),
@@ -436,8 +444,8 @@ mod tests {
     fn near_finds_a_polygon_whose_nearest_wall_is_in_range() {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Building:east");
-        let east_square = Geometry::new(GeometryForm::Polygon(boxes(&[(8.808_693, 53.075_171, 8.810_783, 53.076_429)]).remove(0)));
-        index.replace_entity(id.clone(), [(key(), east_square)]);
+        let east_square = GeometryForm::Polygon(boxes(&[(8.808_693, 53.075_171, 8.810_783, 53.076_429)]).remove(0));
+        index.replace_entity(id.clone(), [(key(), &east_square)]);
         assert_eq!(index.query(&key(), &near(Some("150"), None), &bremen()), Some(HashSet::from([id])));
     }
 
@@ -448,14 +456,14 @@ mod tests {
         let index = seeded();
         // About 184 m from Bremen, in the corner of the 150 m box.
         let id = uri("urn:ngsi-ld:Building:corner");
-        index.replace_entity(id.clone(), [(key(), point(8.8091, 53.0770))]);
+        index.replace_entity(id.clone(), [(key(), &point(8.8091, 53.0770))]);
         assert_eq!(index.query(&key(), &near(Some("150"), None), &bremen()), Some(HashSet::from([id])));
     }
 
     #[test]
     fn a_min_distance_only_near_declines_to_narrow() {
         let index = seeded();
-        index.replace_entity(uri("urn:ngsi-ld:Building:any"), [(key(), bremen())]);
+        index.replace_entity(uri("urn:ngsi-ld:Building:any"), [(key(), &bremen())]);
         assert_eq!(index.query(&key(), &near(None, Some("150")), &bremen()), None);
     }
 
@@ -464,8 +472,8 @@ mod tests {
         let index = seeded();
         let east = uri("urn:ngsi-ld:Building:east-of-180");
         let west = uri("urn:ngsi-ld:Building:west-of-180");
-        index.replace_entity(east.clone(), [(key(), point(179.9995, -17.0))]);
-        index.replace_entity(west.clone(), [(key(), point(-179.9995, -17.0))]);
+        index.replace_entity(east.clone(), [(key(), &point(179.9995, -17.0))]);
+        index.replace_entity(west.clone(), [(key(), &point(-179.9995, -17.0))]);
         assert_eq!(
             index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0)),
             Some(HashSet::from([east, west]))
@@ -476,11 +484,8 @@ mod tests {
     fn a_seam_straddling_entry_is_reported_once() {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Building:straddling");
-        let cut = Geometry::new(GeometryForm::MultiPolygon(boxes(&[
-            (179.9990, -17.0005, 180.0, -16.9995),
-            (-180.0, -17.0005, -179.9990, -16.9995),
-        ])));
-        index.replace_entity(id.clone(), [(key(), cut)]);
+        let cut = GeometryForm::MultiPolygon(boxes(&[(179.9990, -17.0005, 180.0, -16.9995), (-180.0, -17.0005, -179.9990, -16.9995)]));
+        index.replace_entity(id.clone(), [(key(), &cut)]);
         assert_eq!(index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0)), Some(HashSet::from([id])));
     }
 
@@ -488,7 +493,7 @@ mod tests {
     fn a_removed_entity_stops_matching() {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Vehicle:A");
-        index.replace_entity(id.clone(), [(key(), point(0.0, 0.0))]);
+        index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
         index.remove(&id);
         assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(-10.0, -10.0, 20.0)), Some(HashSet::new()));
     }
@@ -501,8 +506,8 @@ mod tests {
         for step in 0..50 {
             let id = uri(&format!("urn:ngsi-ld:V:{step}"));
             let geometry = point(f64::from(step) * 0.001, 0.0);
-            replaced.replace_entity(id.clone(), [(key(), geometry.clone())]);
-            entries.extend(SpatialEntry::new(id, geometry));
+            entries.extend(SpatialEntry::new(id.clone(), &geometry));
+            replaced.replace_entity(id, [(key(), &geometry)]);
         }
         rebuilt.rebuild(
             &TenantRef::UnnamedDefault,
@@ -526,7 +531,7 @@ mod tests {
         let index = SpatialEntityIndex::new();
         let snapshot = index.current_generation();
         let id = uri("urn:ngsi-ld:Vehicle:new");
-        index.replace_entity(id.clone(), [(key(), point(0.0, 0.0))]);
+        index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
 
         index.rebuild(&TenantRef::UnnamedDefault, &location(), HashMap::new(), snapshot);
 
@@ -537,8 +542,8 @@ mod tests {
     fn an_anticipated_geometry_widens_the_candidates_until_the_change_settles() {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Vehicle:A");
-        index.replace_entity(id.clone(), [(key(), point(0.0, 0.0))]);
-        index.anticipate_entity(id.clone(), [(key(), point(10.0, 10.0))]);
+        index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
+        index.anticipate_entity(id.clone(), [(key(), &point(10.0, 10.0))]);
 
         // clone: each assertion owns the identifier it compares against
         assert_eq!(
@@ -550,7 +555,7 @@ mod tests {
             Some(HashSet::from([id.clone()]))
         );
 
-        index.replace_entity(id.clone(), [(key(), point(10.0, 10.0))]);
+        index.replace_entity(id.clone(), [(key(), &point(10.0, 10.0))]);
         assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)), Some(HashSet::new()));
         assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5)), Some(HashSet::from([id])));
     }
@@ -559,7 +564,7 @@ mod tests {
     fn a_polygon_entity_contains_a_point_reference() {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Building:Hall");
-        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0))]);
+        index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
         assert_eq!(index.query(&key(), &GeoRel::Contains, &point(0.5, 0.5)), Some(HashSet::from([id])));
     }
 
@@ -575,7 +580,7 @@ mod tests {
     fn equals_admits_every_envelope_intersecting_candidate_and_leaves_the_decision_to_the_store() {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Region:A");
-        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0))]);
+        index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
 
         // clone: each assertion owns the identifier it compares against
         assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id.clone()])));
@@ -590,7 +595,7 @@ mod tests {
     fn every_placement_of_an_entity_in_one_partition_is_indexed_and_reported_once() {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Region:A");
-        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0)), (key(), square(40.0, 40.0, 1.0))]);
+        index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0)), (key(), &square(40.0, 40.0, 1.0))]);
 
         // clone: each assertion owns the identifier it compares against
         assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(HashSet::from([id.clone()])));
@@ -605,8 +610,8 @@ mod tests {
     fn replacing_an_entity_drops_the_placements_it_no_longer_has() {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Region:A");
-        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0)), (key(), square(40.0, 40.0, 1.0))]);
-        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0))]);
+        index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0)), (key(), &square(40.0, 40.0, 1.0))]);
+        index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
 
         assert_eq!(index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0)), Some(HashSet::new()));
         assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(HashSet::from([id])));
@@ -616,7 +621,7 @@ mod tests {
     fn overlaps_matches_a_partial_intersection() {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Region:A");
-        index.replace_entity(id.clone(), [(key(), square(0.0, 0.0, 1.0))]);
+        index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
         assert_eq!(index.query(&key(), &GeoRel::Overlaps, &square(0.5, 0.5, 1.0)), Some(HashSet::from([id])));
     }
 }

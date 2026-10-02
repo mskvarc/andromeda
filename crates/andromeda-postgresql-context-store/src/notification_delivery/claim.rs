@@ -60,7 +60,7 @@ use sea_query::{
     UpdateStatement,
 };
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{Postgres, Transaction, postgres::PgPool};
+use sqlx::{FromRow, Postgres, Transaction, postgres::PgPool};
 
 /// The statement name the delivery claim is observed under.
 const DELIVERY_CLAIM: StatementName = StatementName("notification-delivery-claim");
@@ -131,10 +131,14 @@ async fn claim_branch(
     let (sql, values) = claimed_projection_statement(target, &claimed_keys).build_sqlx(PostgresQueryBuilder);
     let (unnest_alias, unnest_columns, ordinality) = ordinality_alias();
     let sql = apply_with_ordinality(sql, &unnest_alias, &unnest_columns, &ordinality);
-    let rows: Vec<RawClaimedDeliveryRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
+    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
 
     tx.commit().await?;
-    Ok(rows.into_iter().map(|row| ClaimedDelivery::from_row(row, target)).collect())
+    // The raw rows borrow their snapshot text from the fetched rows, so each
+    // is decoded straight from the bytes the driver received.
+    rows.iter()
+        .map(|row| Ok(ClaimedDelivery::from_row(RawClaimedDeliveryRow::from_row(row)?, target)))
+        .collect()
 }
 
 /// Whether a Snapshot's control record still existed when a claim locked it.
@@ -282,6 +286,9 @@ fn claimed_projection_statement(target: &ContextTarget, claimed_keys: &[i64]) ->
         .column((event.clone(), NotificationEvents::ChangeDatasetIds))
         .column((event.clone(), NotificationEvents::EntitySnapshot))
         .column((event.clone(), NotificationEvents::PreviousSnapshot))
+        .column((event.clone(), NotificationEvents::EntityCreatedAt))
+        .column((event.clone(), NotificationEvents::EntityModifiedAt))
+        .column((event.clone(), NotificationEvents::EntityExpiresAt))
         .column((event.clone(), NotificationEvents::CreatedAt))
         .from(table_of(target, NotificationDeliveries::Table).alias(delivery.clone()))
         .join_as(
@@ -423,5 +430,10 @@ mod tests {
         assert!(sql.contains(r#""e"."lifecycle""#), "{sql}");
         assert!(sql.contains(r#""e"."change_kinds""#), "{sql}");
         assert!(sql.contains(r#""e"."change_dataset_ids""#), "{sql}");
+        assert!(sql.contains(r#""e"."entity_snapshot""#), "{sql}");
+        assert!(sql.contains(r#""e"."previous_snapshot""#), "{sql}");
+        assert!(sql.contains(r#""e"."entity_created_at""#), "{sql}");
+        assert!(sql.contains(r#""e"."entity_modified_at""#), "{sql}");
+        assert!(sql.contains(r#""e"."entity_expires_at""#), "{sql}");
     }
 }

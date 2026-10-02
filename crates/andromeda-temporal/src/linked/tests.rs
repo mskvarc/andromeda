@@ -7,6 +7,7 @@ use crate::{
         TemporalJoinRequest,
         candidates::{RemoteEligibility, TemporalLinkedCandidate, collect_candidates},
     },
+    observed_instance::ObservedInstance,
     outcome::{TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
     port::{
         history_reader::{
@@ -37,9 +38,10 @@ use andromeda_entity::{
     config::EntityConfig,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    port::{reader::EntityReader, retry_delay::RetryDelay},
+    port::{reader::EntityReader, retrieved_entity::RetrievedEntity, retry_delay::RetryDelay},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -418,20 +420,38 @@ impl TemporalHistoryReader for StubBroker {
     }
 }
 
+/// The current state of one known entity: a `Thing` holding no attribute.
+fn thing(id: &Identifier) -> Arc<EntityState> {
+    let thing = "https://example.com/Thing".parse::<EntityTypeName>().expect("valid type IRI");
+    Arc::new(EntityState::new(id.clone(), EntityTypes::one(thing))) // clone: the state owns its identifier
+}
+
 #[async_trait]
 impl EntityReader for StubBroker {
-    async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<Value>, EntityError> {
-        Ok(self.links.contains_key(id).then(|| json!({"@id": id, "@type": ["https://example.com/Thing"]})))
+    async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<Arc<EntityState>>, EntityError> {
+        Ok(self.links.contains_key(id).then(|| thing(id)))
     }
 
-    async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
-        let mut found = HashMap::new();
-        for id in ids {
-            if self.links.contains_key(id) {
-                found.insert(id.clone(), json!({"@id": id, "@type": ["https://example.com/Thing"]})); // clone: the port hands back owned keys
-            }
-        }
-        Ok(found)
+    async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, RetrievedEntity>, EntityError> {
+        Ok(ids
+            .iter()
+            .filter(|id| self.links.contains_key(*id))
+            .map(|id| {
+                let retrieved = RetrievedEntity {
+                    state: thing(id),
+                    sys_attrs: SysAttrsSnapshot {
+                        created_at: DateTime::<Utc>::UNIX_EPOCH,
+                        modified_at: DateTime::<Utc>::UNIX_EPOCH,
+                        expires_at: None,
+                    },
+                };
+                (id.clone(), retrieved) // clone: the port hands back owned keys
+            })
+            .collect())
+    }
+
+    async fn get_with_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+        panic!("get_with_sys_attrs is not exercised by the traversal harness")
     }
 
     async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
@@ -503,7 +523,7 @@ impl TemporalMutator for StubBroker {
         _instance: &InstanceIdentity,
         _entity_id: &Identifier,
         _attribute_name: &AttributeName,
-        _payload: &Value,
+        _replacement: &ObservedInstance,
     ) -> Result<(), TemporalError> {
         Err(unsupported("update_instance"))
     }

@@ -9,7 +9,8 @@
 //! exhaustive matches, that addition fails to compile here, which is where the
 //! decision about its persisted number belongs.
 
-use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind};
+use andromeda_ngsi_ld_entity::reads::attribute_change::AttributeChangeKind;
+use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
 use andromeda_postgresql_codes::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode};
 
 /// The registry member the schema persists for a lifecycle transition.
@@ -55,7 +56,8 @@ pub const fn change_kind_of(code: AttributeChangeKindCode) -> AttributeChangeKin
 #[cfg(test)]
 mod tests {
     use crate::notification_delivery::change_code::{change_kind_of, lifecycle_of, stored_change_kind, stored_lifecycle};
-    use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, expanded::attribute_change::AttributeChangeKind};
+    use andromeda_ngsi_ld_entity::reads::attribute_change::AttributeChangeKind;
+    use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
     use andromeda_postgresql_codes::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode};
 
     #[test]

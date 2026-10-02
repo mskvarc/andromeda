@@ -86,7 +86,10 @@ impl FederationService {
             Err(error) => return Ok(RegistrationQueries::Unprepared(error)),
         };
         let naming = decision.context.naming(narrowing.inbound);
-        let names = ForwardedNames::new(&self.engine, narrowing.resolver, &naming, decision.context.rewording());
+        let names = match ForwardedNames::prepare(&self.engine, narrowing.resolver, &naming, decision.context.rewording()).await {
+            Ok(names) => names,
+            Err(error) => return Ok(RegistrationQueries::Unprepared(error)),
+        };
         let queries = ForwardedQuery::for_registration(narrowing.client, registration, narrowing.split, narrowing.source_page, &names).await?;
         Ok(RegistrationQueries::Narrowed(queries))
     }
@@ -109,7 +112,8 @@ impl FederationService {
     ) -> Result<String, FederationError> {
         let decision = forwarding_decision(registration, inbound, presence)?;
         let naming = decision.context.naming(inbound);
-        ForwardedNames::new(&self.engine, resolver, &naming, decision.context.rewording())
+        ForwardedNames::prepare(&self.engine, resolver, &naming, decision.context.rewording())
+            .await?
             .query_string(raw)
             .await
     }

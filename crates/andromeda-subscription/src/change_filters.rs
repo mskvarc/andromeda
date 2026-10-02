@@ -11,22 +11,19 @@
 
 use crate::{cache::SubscriptionCache, compiled::CompiledSubscription, matching::matches_entity_filters, spatial_narrowing::narrow_by_spatial_index};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_model::{
-    entity_change::{EntityChange, EntityLifecycle},
-    expanded::attribute_expiry::standing_at,
-};
+use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use chrono::Utc;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// The states of the Entity an entity change is filtered against.
 #[derive(Clone, Copy, Debug)]
 pub struct ChangedStates<'a> {
     /// The Entity as the write left it, absent for a deletion.
-    pub current: Option<&'a Value>,
+    pub current: Option<&'a EntityState>,
     /// The Entity as it stood before the write, absent for a creation.
-    pub previous: Option<&'a Value>,
+    pub previous: Option<&'a EntityState>,
 }
 
 /// The candidates whose `q`, `geoQ` and `scopeQ` hold on a state the change is
@@ -34,7 +31,7 @@ pub struct ChangedStates<'a> {
 ///
 /// With no state to read, no filter can be evaluated and the candidates stand.
 /// Either state is read as it stands now, without its expired instances
-/// (clause 4.22).
+/// (clause 4.22); a state with none expired is read as it is, uncopied.
 #[must_use]
 pub fn narrow_by_change_filters(
     cache: &SubscriptionCache,
@@ -44,7 +41,7 @@ pub fn narrow_by_change_filters(
     states: ChangedStates<'_>,
     entity_types: &[EntityTypeName],
 ) -> Vec<Arc<CompiledSubscription>> {
-    let filtered: Vec<&Value> = match change.lifecycle {
+    let filtered: Vec<&EntityState> = match change.lifecycle {
         EntityLifecycle::Deleted => states.previous.or(states.current).into_iter().collect(),
         EntityLifecycle::Created | EntityLifecycle::Modified => states
             .current
@@ -57,7 +54,7 @@ pub fn narrow_by_change_filters(
     }
     let now = Utc::now();
     let mut matching: Vec<Arc<CompiledSubscription>> = Vec::with_capacity(candidates.len());
-    for state in filtered.into_iter().map(|state| standing_at(state, now)) {
+    for state in filtered.into_iter().map(|state| state.standing_at(now)) {
         let remaining: Vec<Arc<CompiledSubscription>> = candidates
             .iter()
             .filter(|candidate| !matching.iter().any(|kept| kept.key == candidate.key))
@@ -66,7 +63,7 @@ pub fn narrow_by_change_filters(
         matching.extend(
             narrow_by_spatial_index(cache, target, remaining, &state, entity_types)
                 .into_iter()
-                .filter(|subscription| matches_entity_filters(subscription, &state)),
+                .filter(|subscription| matches_entity_filters(subscription, &*state)),
         );
     }
     matching

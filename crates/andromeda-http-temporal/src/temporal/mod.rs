@@ -38,10 +38,7 @@ use andromeda_ngsi_ld_lexicon::{
     instance_identity::InstanceIdentity,
     time_rel::TimeRel,
 };
-use andromeda_ngsi_ld_model::{
-    expanded::query_match::{matches_geo_query, matches_scope_query},
-    registration::forwarding_mode::ForwardingMode,
-};
+use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use andromeda_ngsi_ld_query::{
     filter::{
         eval::evaluate,

@@ -1,10 +1,10 @@
 //! Notifying one subscription of one committed entity change (clause 5.8.6).
 //!
 //! Every subscription a change reaches is notified the same way: the entity
-//! document is stamped with the system attributes the subscription asked for,
-//! built into the clause 5.3.1 notification, addressed to the subscription's
-//! endpoint, and the outcome recorded on it. The concurrent fan-out over the
-//! matched subscriptions therefore has a single body to run.
+//! state is rendered as the subscription asks, built into the clause 5.3.1
+//! notification, addressed to the subscription's endpoint, and the outcome
+//! recorded on it. The concurrent fan-out over the matched subscriptions
+//! therefore has a single body to run.
 
 use crate::processor::{
     NotificationProcessor,
@@ -18,29 +18,35 @@ use andromeda_delivery::{
     notification_context::NotificationContext,
     request::{NotificationDelivery, notification_media_type},
 };
-use andromeda_entity::sys_attrs::inject_sys_attrs;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
 use andromeda_ngsi_ld_model::notification::{Notification, NotificationType, SysAttrsSnapshot};
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::notification_data};
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     compiled::CompiledSubscription,
     notification_slot::{NotificationSlot, NotificationSlotGate},
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::sync::Arc;
 use tracing::{debug, error, warn};
 
 /// The committed change every subscription matched by it is notified of.
 ///
 /// One change produces one notification per matched subscription, and all of
-/// them read the same branch, the same event and the same resolved system
-/// attributes, so those are borrowed rather than copied per notification.
+/// them read the same branch, the same event, the same entity state and the
+/// same resolved system attributes, so those are borrowed rather than copied
+/// per notification.
 pub(super) struct NotifiedChange<'a> {
     /// The branch the change was committed on.
     pub(super) target: &'a ContextTarget,
     /// The committed change itself.
     pub(super) event: &'a ChangeEvent,
+    /// The entity the change is notified with, `None` when there is nothing
+    /// left to notify about.
+    pub(super) notified: Option<&'a Arc<EntityState>>,
+    /// The instant every notification of the change reads the entity at.
+    pub(super) now: DateTime<Utc>,
     /// The entity's clause 4.8 system attributes, resolved once for every
     /// subscription that asked for them.
     pub(super) sys_attrs: Option<&'a SysAttrsSnapshot>,
@@ -92,18 +98,11 @@ impl NotificationProcessor {
     /// Notify one subscription of `change` and record the outcome on it
     /// (clause 5.8.6).
     ///
-    /// `entity_data` is this notification's own copy of the entity document,
-    /// because a subscription asking for system attributes has them injected
-    /// into it. `None` is answered when the slot was refused, so no endpoint
-    /// was addressed at all: either the subscription's clause 5.2.12
-    /// `throttling` window or its endpoint's Table 5.2.15-1 `cooldown` window
-    /// swallowed the notification.
-    pub(super) async fn notify_subscription(
-        &self,
-        compiled_sub: &CompiledSubscription,
-        change: &NotifiedChange<'_>,
-        mut entity_data: Option<Value>,
-    ) -> Option<DeliveryResult> {
+    /// `None` is answered when the slot was refused, so no endpoint was
+    /// addressed at all: either the subscription's clause 5.2.12 `throttling`
+    /// window or its endpoint's Table 5.2.15-1 `cooldown` window swallowed the
+    /// notification.
+    pub(super) async fn notify_subscription(&self, compiled_sub: &CompiledSubscription, change: &NotifiedChange<'_>) -> Option<DeliveryResult> {
         let subscription_id = &compiled_sub.id;
         match self
             .sub_repo
@@ -122,26 +121,22 @@ impl NotificationProcessor {
             }
         }
 
-        if compiled_sub.notification_sys_attrs == SysAttrsInclusion::Include
-            && let (Some(document), Some(sys_attrs)) = (entity_data.as_mut(), change.sys_attrs)
-        {
-            inject_sys_attrs(document, sys_attrs.created_at, sys_attrs.modified_at, sys_attrs.expires_at);
-        }
-
-        let Some(entity_data) = entity_data.as_ref() else {
+        let Some(notified) = change.notified else {
             return Some(DeliveryResult::TerminalFailure);
         };
         let event = change.event;
         let build = NotificationBuildParams {
             target: change.target,
             engine: &self.engine,
-            entity_data,
-            previous_attributes: event.previous_attributes.as_deref(),
+            notified,
+            previous: event.previous_attributes.as_deref(),
+            sys_attrs: change.sys_attrs,
             sub: compiled_sub,
             change: &event.change,
             occurred_at: event.occurred_at,
+            now: change.now,
             entity_query: &self.entity_query,
-            compaction_cache: Some(change.compaction_cache),
+            cache: change.compaction_cache,
         };
         let data = build_notification_data(&build).await;
         if data.is_empty() {

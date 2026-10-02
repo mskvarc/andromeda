@@ -3,11 +3,11 @@
 //! A deletion removes current state; its own effect and the tombstones its
 //! Temporal Evolution records need only the entity's outline -- its types, the
 //! identity and family of each attribute instance it held, whether it held a
-//! Scope (see [`crate::deletion_outline`]). The removed payload is read only
+//! Scope (see [`crate::deletion_outline`]). The removed state is read only
 //! when a subscription may be owed the deletion's notification, which renders
 //! and filters the removed state (clauses 5.8.6 and 5.2.12). Whether one may be
 //! is asked of the store every replica shares, and of this process's
-//! subscription cache besides; a failed probe reads the payload, so an
+//! subscription cache besides; a failed probe reads the state, so an
 //! uncertain answer costs memory, never a notification.
 //!
 //! Either way the tombstones and the notification describe the state that was
@@ -21,7 +21,6 @@ use crate::{
     deletion_outline::{DeletionOutline, DeletionWatchers},
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    expanded_member::stored_entity_types,
     notification_fanout::{ChangedEntity, MutationSnapshots},
     notification_plan::deletion,
     snapshot_supply::SnapshotSupply,
@@ -36,10 +35,10 @@ use andromeda_context_commit::{
     write_retry::WRITE_ATTEMPTS,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::reads::attribute_change::deleted_instances;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
-    expanded::attribute_change::deleted_instances,
     notification::ChangeOrigin,
 };
 use andromeda_telemetry::entity::{self, EntityOperation};
@@ -152,13 +151,13 @@ impl EntityService {
     /// Delete an entity a subscription may be owed a notification for,
     /// reading the state it removes for the notification.
     async fn delete_removed_state(&self, target: &ContextTarget, id: &Identifier) -> Result<AfterAttempt, EntityError> {
-        let Some(EntitySnapshot { payload: removed, modified_at }) = self.reader.get_snapshot(target, id).await? else {
+        let Some(EntitySnapshot { state: removed, modified_at }) = self.reader.get_snapshot(target, id).await? else {
             return Ok(AfterAttempt::Vanished);
         };
-        let entity_types = stored_entity_types(&removed)?;
+        let entity_types = removed.types().as_slice().to_vec();
 
         // Captured before the delete so the notification can carry them: once
-        // the row is gone they are unreadable. Read after the payload, so a
+        // the row is gone they are unreadable. Read after the state, so a
         // write that lands in between moves the version the deletion holds
         // against.
         let sys_attrs_snapshot = match self.reader.get_sys_attrs(target, id).await {
@@ -169,18 +168,18 @@ impl EntityService {
             }
         };
 
-        let change = deletion(&removed)?;
+        let change = deletion(&removed);
 
         let deleted = ChangedEntity {
             target,
             id,
             types: &entity_types,
         };
-        // The durable match stores the removed state verbatim, and by delivery
-        // time the deleted row is gone, so a match is notified with its
-        // clause-4.8 system attributes embedded rather than re-read then (the
-        // durable path re-derives only `deletedAt`, from the event instant).
-        // The enriched copy is built only once a subscription matched.
+        // The durable match stores the removed state as it is, and by delivery
+        // time the deleted row is gone, so a match carries its clause-4.8
+        // system attributes beside the state rather than re-reading them then
+        // (the durable path re-derives only `deletedAt`, from the event
+        // instant).
         let snapshots = MutationSnapshots {
             current: SnapshotSupply::Removed {
                 removed: &removed,
@@ -199,7 +198,7 @@ impl EntityService {
             // Clause 5.6.6 removes current state and leaves the Temporal
             // Evolution standing, so every instance the entity still held is
             // recorded as ended rather than being deleted with it.
-            .history(deletion_history(&removed)?)
+            .history(deletion_history(&removed))
             .subscription_matches(subscription_matches)
             .precondition(Precondition::UnchangedSince(modified_at))
             .build();

@@ -126,7 +126,7 @@ pub fn feature_collection(entities: &[Value], selection: GeometrySelection<'_>) 
 }
 
 /// Convert a single NGSI-LD entity JSON object into a `GeoJSON` [`Feature`].
-fn entity_to_feature(entity: &Value, selection: GeometrySelection<'_>) -> Feature {
+pub(crate) fn entity_to_feature(entity: &Value, selection: GeometrySelection<'_>) -> Feature {
     let Some(obj) = entity.as_object() else {
         return Feature {
             bbox: None,

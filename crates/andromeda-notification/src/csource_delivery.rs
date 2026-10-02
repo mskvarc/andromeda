@@ -17,7 +17,8 @@ use andromeda_delivery::{
     notification_context::NotificationContext,
     request::NotificationDelivery,
 };
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
 use andromeda_ngsi_ld_model::{
     notification::{CsourceNotification, CsourceNotificationType, CsrTriggerReason},
@@ -98,19 +99,19 @@ impl CsourceNotificationDelivery {
     /// # Errors
     ///
     /// Returns [`NotificationError::Representation`] when a registration
-    /// cannot be serialised.
+    /// cannot be serialised, and [`NotificationError::JsonLd`] when the
+    /// subscription's context does not resolve or process (clause 5.5.6).
     pub(crate) async fn notified_registrations(
         &self,
         registrations: &[&ContextSourceRegistration],
         subscription: &CompiledCsrSubscription,
     ) -> Result<Vec<Value>, NotificationError> {
         let context = ContextSpec::for_subscription_context(subscription.jsonld_context.as_ref());
-        let names = NameCompactor::new(&self.engine, &context);
-        let mut notified = Vec::with_capacity(registrations.len());
-        for registration in registrations {
-            notified.push(notified_registration(&names, registration, subscription).await?);
-        }
-        Ok(notified)
+        let names = NameCompaction::new(self.engine.compactor(&context).processed_context().await?);
+        registrations
+            .iter()
+            .map(|registration| notified_registration(&names, registration, subscription))
+            .collect()
     }
 
     /// Deliver `data` -- the notified registrations -- to `subscription` with
@@ -214,8 +215,8 @@ fn compiled_transport(subscription: &CompiledCsrSubscription) -> Option<Endpoint
 /// One registration as a notification carries it: trimmed to the
 /// `RegistrationInfo` elements `subscription` matches (clause 5.11.7) and
 /// compacted under the context `names` compacts against.
-async fn notified_registration(
-    names: &NameCompactor<'_>,
+fn notified_registration(
+    names: &NameCompaction,
     registration: &ContextSourceRegistration,
     subscription: &CompiledCsrSubscription,
 ) -> Result<Value, NotificationError> {
@@ -229,7 +230,7 @@ async fn notified_registration(
         object.insert("information".to_string(), Value::Array(matching));
     }
     if let Some(information) = value.get_mut("information") {
-        compact_information(names, information).await;
+        compact_information(names, information);
     }
     Ok(value)
 }
@@ -237,7 +238,8 @@ async fn notified_registration(
 #[cfg(test)]
 mod tests {
     use crate::csource_delivery::notified_registration;
-    use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
     use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::SubscriptionStatus};
     use andromeda_subscription::{compiled::CompiledCsrSubscription, geo_filter::SubscriptionGeoFilter};
     use serde_json::json;
@@ -282,21 +284,23 @@ mod tests {
         .expect("registration parses")
     }
 
-    fn engine() -> JsonLdEngine {
-        JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds")
+    /// Names compacted under the default context, resolved offline.
+    async fn core_names() -> NameCompaction {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds");
+        NameCompaction::new(
+            engine
+                .compactor(&ContextSpec::none())
+                .processed_context()
+                .await
+                .expect("the core context processes"),
+        )
     }
 
     /// Clause 5.11.7: the notification carries only the matching
     /// `RegistrationInfo` elements.
     #[tokio::test]
     async fn the_notified_registration_keeps_only_the_matching_information() {
-        let value = notified_registration(
-            &NameCompactor::new(&engine(), &ContextSpec::none()),
-            &registration(),
-            &subscription("https://example.com/Vehicle"),
-        )
-        .await
-        .expect("serialises");
+        let value = notified_registration(&core_names().await, &registration(), &subscription("https://example.com/Vehicle")).expect("serialises");
 
         pretty_assertions::assert_eq!(value["information"], json!([{"entities": [{"type": "https://example.com/Vehicle"}]}]));
         pretty_assertions::assert_eq!(value["id"], json!("urn:ngsi-ld:ContextSourceRegistration:1"));
@@ -318,9 +322,7 @@ mod tests {
         }))
         .expect("registration parses");
 
-        let value = notified_registration(&NameCompactor::new(&engine(), &ContextSpec::none()), &registration, &subscription(vocabulary))
-            .await
-            .expect("serialises");
+        let value = notified_registration(&core_names().await, &registration, &subscription(vocabulary)).expect("serialises");
 
         pretty_assertions::assert_eq!(value["information"], json!([{"entities": [{"type": "Vehicle"}]}]));
     }

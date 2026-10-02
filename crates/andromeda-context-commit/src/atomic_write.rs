@@ -8,13 +8,11 @@ use crate::{
     batch_side_effect_job::BatchSideEffectJob,
     current_state_projection::CurrentStateProjection,
     entity_mutation::EntityMutation,
-    error::CommitError,
     history_record::HistoryRecord,
     precondition::Precondition,
     subscription_match::SubscriptionMatch,
 };
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::entity_member::extract_types;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
@@ -68,23 +66,22 @@ impl AtomicWrite {
     /// "the same datatype as mandated by clause 5.2.4" and therefore carries
     /// `type`.
     ///
-    /// # Errors
-    ///
-    /// Returns [`CommitError::Invariant`] when the observation's types cannot
-    /// be read: the write path admitted them before building this write.
-    pub fn recorded_entity_types(&self) -> Result<Vec<EntityTypeName>, CommitError> {
+    /// A write that records neither state nor observation -- an Entity
+    /// deletion, which records only endings -- names no type.
+    #[must_use]
+    pub fn recorded_entity_types(&self) -> Vec<EntityTypeName> {
+        // clone: the durable temporal intent outlives the write it was interpreted from.
         match self.entity.record() {
-            Some(record) => Ok(record.projection.types.clone()), // clone: the durable temporal intent outlives the write it was interpreted from.
+            Some(record) => record.projection.types.clone(),
             None => self
                 .history
                 .iter()
                 .find_map(|consequence| match consequence {
-                    HistoryRecord::Observations(payload) | HistoryRecord::EvolutionInstances(payload) => {
-                        Some(extract_types(payload).map_err(|error| CommitError::Invariant(error.into())))
-                    }
+                    HistoryRecord::Observations(observed) => Some(observed.types().as_slice().to_vec()),
+                    HistoryRecord::EvolutionInstances(written) => Some(written.types().to_vec()),
                     HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
                 })
-                .unwrap_or_else(|| Ok(Vec::new())),
+                .unwrap_or_default(),
         }
     }
 }
@@ -98,8 +95,9 @@ mod tests {
         history_record::{HistoryRecord, tombstone},
         precondition::Precondition,
     };
+    use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::sync::Arc;
 
     const VEHICLE: &str = "https://uri.etsi.org/ngsi-ld/default-context/Vehicle";
@@ -109,26 +107,30 @@ mod tests {
     }
 
     /// The merged Entity a write stores back, carrying its clause 4.5.1 types.
-    fn merged_entity() -> Arc<Value> {
-        Arc::new(json!([{
+    fn merged_entity() -> Arc<EntityState> {
+        let document = json!([{
             "@id": "urn:ngsi-ld:Vehicle:1",
             "@type": [VEHICLE],
             "https://example.com/speed": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 42}]
             }]
-        }]))
+        }]);
+        Arc::new(EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes"))
     }
 
-    /// The Entity Fragment a clause 5.6.3 Append Attributes request carries:
-    /// one attribute and, as clause 5.6.3.4 permits, no `type` at all.
-    fn typeless_fragment() -> Arc<Value> {
-        Arc::new(json!([{
+    /// A Temporal Evolution fragment written under another type than the
+    /// Entity the record stores names.
+    fn other_typed_fragment() -> Arc<EntityDocument> {
+        let document = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "@type": ["https://example.com/Other"],
             "https://example.com/speed": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 42}]
             }]
-        }]))
+        }]);
+        Arc::new(EntityDocument::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a written document decodes"))
     }
 
     fn named(types: &[EntityTypeName]) -> Vec<&str> {
@@ -144,17 +146,17 @@ mod tests {
         pretty_assertions::assert_eq!(write.precondition, Precondition::None);
     }
 
-    /// Clause 5.6.3.4 says only "If type is included in the Fragment", so an
-    /// Append Attributes fragment routinely names no type while the Entity it
-    /// was merged into names one. The types recorded are the merged Entity's.
+    /// Clause 5.6.3.4 says only "If type is included in the Fragment", so a
+    /// fragment routinely names other types than the Entity it was merged
+    /// into. The types recorded are the merged Entity's.
     #[test]
     fn a_write_that_stores_entity_state_records_the_merged_entitys_types_not_the_fragments() {
         let write = AtomicWrite::builder()
             .entity_id(entity_id())
-            .entity(EntityMutation::Update(EntityRecord::from_expanded(merged_entity()).expect("readable members")))
-            .history(vec![HistoryRecord::Observations(typeless_fragment())])
+            .entity(EntityMutation::Update(EntityRecord::from_state(merged_entity()).expect("a projection")))
+            .history(vec![HistoryRecord::EvolutionInstances(other_typed_fragment())])
             .build();
-        pretty_assertions::assert_eq!(named(&write.recorded_entity_types().expect("readable types")), vec![VEHICLE]);
+        pretty_assertions::assert_eq!(named(&write.recorded_entity_types()), vec![VEHICLE]);
     }
 
     /// Clauses 5.6.11 and 5.6.12 provide a Temporal Evolution without current
@@ -167,7 +169,13 @@ mod tests {
             .entity(EntityMutation::None)
             .history(vec![HistoryRecord::Observations(merged_entity())])
             .build();
-        pretty_assertions::assert_eq!(named(&write.recorded_entity_types().expect("readable types")), vec![VEHICLE]);
+        pretty_assertions::assert_eq!(named(&write.recorded_entity_types()), vec![VEHICLE]);
+        let evolution = AtomicWrite::builder()
+            .entity_id(entity_id())
+            .entity(EntityMutation::None)
+            .history(vec![HistoryRecord::EvolutionInstances(other_typed_fragment())])
+            .build();
+        pretty_assertions::assert_eq!(named(&evolution.recorded_entity_types()), vec!["https://example.com/Other"]);
     }
 
     /// An Entity deletion stores no Entity row and observes nothing: clauses
@@ -181,6 +189,6 @@ mod tests {
             .entity(EntityMutation::Delete)
             .history(vec![tombstone(&speed, None, AttributeType::Property)])
             .build();
-        pretty_assertions::assert_eq!(write.recorded_entity_types().expect("readable types"), Vec::new());
+        pretty_assertions::assert_eq!(write.recorded_entity_types(), Vec::new());
     }
 }

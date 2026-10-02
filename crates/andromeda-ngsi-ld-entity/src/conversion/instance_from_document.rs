@@ -1,0 +1,235 @@
+//! Turning a written attribute instance into a stored one (clauses 4.5,
+//! 5.6.1, 5.6.18, 5.6.19).
+//!
+//! A stored instance has exactly one family, the value its family requires,
+//! only the members its family defines, and no NGSI-LD Null anywhere. A
+//! written instance that declares no family is read as its value member names
+//! it, and as a Property when it names none (clause 4.5.2). The written
+//! members are moved, never copied.
+
+use crate::{
+    attribute_instances::{AttributeInstances, RepeatedInstance},
+    attributes::Attributes,
+    codec::geometry_decode::{GeoDecoded, geo_value_of},
+    conversion::stored_value::into_stored_values,
+    document::{
+        attribute_member::AttributeMember,
+        instance_document::{InstanceDocument, InstanceDocumentParts},
+        slot::Slot,
+        value_carrier::ValueCarrier,
+        written_value::{ValueSlot, WrittenValue},
+    },
+    family_value::FamilyValue,
+    instance::Instance,
+    json_literal::JsonLiteral,
+    member_role::MemberRole,
+    member_shape::MemberShape,
+    refusal::EntityRefusal,
+    unit_code::UnitCode,
+};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    reference::NgsiLdReference,
+    unit_code_admission::{UnitCodeAdmission, unit_code_admission},
+};
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use indexmap::IndexMap;
+
+impl Instance {
+    /// The stored instance a written one makes, with its `datasetId`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`EntityRefusal`] a create or a replacement answers: a
+    /// missing value, a member the family never carries, a forbidden
+    /// `unitCode`, the NGSI-LD Null anywhere, a repeated sub-attribute
+    /// instance.
+    pub fn try_from_document(attribute: &AttributeName, document: InstanceDocument) -> Result<(Option<Identifier>, Instance), EntityRefusal> {
+        let parts = document.into_parts();
+        let family = resolved_family(&parts);
+        reject_nulls(attribute, &parts)?;
+        let envelope = Envelope {
+            unit_code: parts.unit_code.and_then(set),
+            value_type: parts.value_type.and_then(set),
+            object_types: parts.object_types.and_then(set).unwrap_or_default(),
+        };
+        if envelope.unit_code.is_some() && unit_code_admission(family) == UnitCodeAdmission::Forbidden {
+            return Err(EntityRefusal::UnitCodeForbidden {
+                family,
+                attribute: attribute.clone(),
+            });
+        }
+        let relationship_family = matches!(family, AttributeType::Relationship | AttributeType::ListRelationship);
+        if relationship_family && envelope.value_type.is_some() {
+            return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), properties::VALUE_TYPE));
+        }
+        if !relationship_family && !envelope.object_types.is_empty() {
+            return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), properties::OBJECT_TYPE));
+        }
+        if parts.deleted_at.is_some() {
+            return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), properties::DELETED_AT));
+        }
+        let seals_admitted = attribute.as_str() == properties::NGSILDPROOF.as_str() && family == AttributeType::Property;
+        if !parts.proof_seals.is_empty() && !seals_admitted {
+            return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), properties::ENTITY_ID_SEALED));
+        }
+        let value = family_value(attribute, family, parts.value, envelope)?;
+        let instance = Instance::builder()
+            .value(value)
+            .observed_at(parts.observed_at.and_then(set))
+            .expires_at(parts.expires_at.and_then(set))
+            .created_at(parts.created_at)
+            .modified_at(parts.modified_at)
+            .evolution_id(parts.instance_id)
+            .proof_seals(parts.proof_seals)
+            .sub_attributes(attributes_from_members(parts.sub_attributes)?)
+            .build();
+        Ok((parts.dataset_id, instance))
+    }
+}
+
+/// The members only some families define.
+struct Envelope {
+    /// `unitCode`.
+    unit_code: Option<UnitCode>,
+    /// `valueType`.
+    value_type: Option<NgsiLdReference>,
+    /// `objectType`.
+    object_types: Vec<NgsiLdReference>,
+}
+
+/// The value a slot sets; deletions were refused before.
+fn set<T>(slot: Slot<T>) -> Option<T> {
+    match slot {
+        Slot::Set(value) => Some(value),
+        Slot::Remove => None,
+    }
+}
+
+/// The family a written instance is stored as: the one it declares, else the
+/// one its value member names, else a Property (clause 4.5.2).
+fn resolved_family(parts: &InstanceDocumentParts) -> AttributeType {
+    parts.family.unwrap_or_else(|| match &parts.value {
+        ValueSlot::Set(WrittenValue::Geometry(_)) => AttributeType::GeoProperty,
+        ValueSlot::Set(value) => value.carrier().implied_family(),
+        ValueSlot::Remove(carrier) => carrier.implied_family(),
+        ValueSlot::Absent => AttributeType::Property,
+    })
+}
+
+/// Refuse a written instance deleting any of its members: state holds no
+/// NGSI-LD Null (clause 5.5.4).
+fn reject_nulls(attribute: &AttributeName, parts: &InstanceDocumentParts) -> Result<(), EntityRefusal> {
+    let deletes_a_member = matches!(parts.value, ValueSlot::Remove(_))
+        || parts.observed_at.as_ref().is_some_and(Slot::is_remove)
+        || parts.expires_at.as_ref().is_some_and(Slot::is_remove)
+        || parts.unit_code.as_ref().is_some_and(Slot::is_remove)
+        || parts.value_type.as_ref().is_some_and(Slot::is_remove)
+        || parts.object_types.as_ref().is_some_and(Slot::is_remove);
+    if deletes_a_member {
+        return Err(EntityRefusal::ReservedNullValue { attribute: attribute.clone() });
+    }
+    Ok(())
+}
+
+/// The family value a written value makes under `family`.
+fn family_value(attribute: &AttributeName, family: AttributeType, value: ValueSlot, envelope: Envelope) -> Result<FamilyValue, EntityRefusal> {
+    let written = match value {
+        ValueSlot::Set(written) => written,
+        ValueSlot::Absent | ValueSlot::Remove(_) => return Err(EntityRefusal::missing_value(attribute, family)),
+    };
+    if written.carrier() != ValueCarrier::of(family) {
+        return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), written.carrier().iri()));
+    }
+    let Envelope {
+        unit_code,
+        value_type,
+        object_types,
+    } = envelope;
+    let nested_null = || EntityRefusal::NestedNullValue { attribute: attribute.clone() };
+    let value = match written {
+        WrittenValue::Value(values) if family == AttributeType::GeoProperty => match geo_value_of(attribute, values.as_slice())? {
+            GeoDecoded::Value(geometry) => FamilyValue::GeoProperty {
+                geometry,
+                unit_code,
+                value_type,
+            },
+            GeoDecoded::Null => return Err(EntityRefusal::ReservedNullValue { attribute: attribute.clone() }),
+        },
+        WrittenValue::Value(values) => FamilyValue::Property {
+            values: values.try_map(|value| value.into_stored().ok_or_else(nested_null))?,
+            unit_code,
+            value_type,
+        },
+        WrittenValue::Geometry(geometry) if family == AttributeType::GeoProperty => FamilyValue::GeoProperty {
+            geometry,
+            unit_code,
+            value_type,
+        },
+        WrittenValue::Geometry(_) => {
+            return Err(EntityRefusal::Malformed {
+                attribute: Some(attribute.clone()),
+                member: MemberShape::Value,
+            });
+        }
+        WrittenValue::Object(objects) => FamilyValue::Relationship { objects, object_types },
+        WrittenValue::LanguageMap(entries) => FamilyValue::LanguageProperty {
+            entries: entries
+                .into_stored()
+                .ok_or_else(|| EntityRefusal::ReservedNullValue { attribute: attribute.clone() })?,
+            value_type,
+        },
+        WrittenValue::Vocab(vocab) => FamilyValue::VocabProperty { vocab, value_type },
+        WrittenValue::Json(json) => {
+            if json.iter().any(JsonLiteral::is_null_sentinel) {
+                return Err(EntityRefusal::ReservedNullValue { attribute: attribute.clone() });
+            }
+            if json.iter().any(JsonLiteral::carries_null_sentinel_under_a_key) {
+                return Err(nested_null());
+            }
+            FamilyValue::JsonProperty { json, value_type }
+        }
+        WrittenValue::ValueList(items) => FamilyValue::ListProperty {
+            items: into_stored_values(items).ok_or_else(nested_null)?,
+            unit_code,
+            value_type,
+        },
+        WrittenValue::ObjectList(objects) => FamilyValue::ListRelationship { objects, object_types },
+    };
+    Ok(value)
+}
+
+/// The stored attributes written attribute members make.
+///
+/// # Errors
+///
+/// Returns the refusal of the first member that cannot be stored.
+pub(crate) fn attributes_from_members(members: IndexMap<AttributeName, AttributeMember>) -> Result<Attributes, EntityRefusal> {
+    let mut attributes = Attributes::new();
+    for (name, member) in members {
+        if MemberRole::is_reserved(name.as_str()) {
+            return Err(EntityRefusal::ReservedAttributeName { attribute: name });
+        }
+        let instances = match member {
+            AttributeMember::Remove => return Err(EntityRefusal::ReservedNullValue { attribute: name }),
+            AttributeMember::Instances(instances) => instances,
+        };
+        let converted = instances
+            .into_iter()
+            .map(|instance| Instance::try_from_document(&name, instance))
+            .collect::<Result<Vec<_>, _>>()?;
+        let held = AttributeInstances::try_from_instances(converted).map_err(|repeated| match repeated {
+            RepeatedInstance::Default => EntityRefusal::MultipleDefaultInstances { attribute: name.clone() },
+            RepeatedInstance::Dataset(dataset_id) => EntityRefusal::RepeatedInstance {
+                attribute: name.clone(),
+                dataset_id,
+            },
+        })?;
+        if let Some(held) = held {
+            attributes.insert(name, held);
+        }
+    }
+    Ok(attributes)
+}

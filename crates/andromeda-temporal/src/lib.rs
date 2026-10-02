@@ -10,8 +10,6 @@ pub mod aggregation_eligibility;
 /// Typed, durable consequences for deferred temporal append.
 pub mod append_intent;
 mod attribute_instance_mutation;
-/// The temporal value one expanded attribute instance carries.
-pub mod attribute_instance_value;
 mod compilation;
 pub mod config;
 /// Whether Core API writes add to the Temporal Evolution of an Entity.
@@ -30,6 +28,10 @@ mod intent_preparation;
 pub mod intent_retry_policy;
 /// Clause 4.5.23 join over the temporal evolution of Linked Entities.
 pub mod linked;
+/// Reading one written attribute instance as the observation a history row records.
+pub mod observed_instance;
+/// What one write observed of an entity, as a temporal query selects it by.
+pub mod observed_selection;
 pub mod outcome;
 mod pending_observation;
 /// Read overlay combining stored history with committed pending intents.
@@ -46,6 +48,8 @@ pub mod service;
 pub mod service_limits;
 /// The physical storage policy an operator sets for temporal history.
 pub mod storage_policy;
+/// Compacting what one temporal read renders against its request context.
+mod temporal_compaction;
 /// The invariants temporal policy relies on.
 pub mod temporal_invariant;
 pub mod temporal_not_found_reason;
@@ -55,6 +59,8 @@ mod unit_code_admission;
 mod write;
 /// What one temporal write is for, and what an absent evolution means for it.
 pub mod write_purpose;
+/// The Temporal Evolution a client writes, from its compact form to the documents its write records.
+mod written_evolution;
 
 #[cfg(test)]
 mod deferred_history_tests;
@@ -67,6 +73,9 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-commit",
         "andromeda-entity",
         "andromeda-jsonld",
+        "andromeda-ngsi-ld-compaction",
+        "andromeda-ngsi-ld-entity",
+        "andromeda-ngsi-ld-expansion",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

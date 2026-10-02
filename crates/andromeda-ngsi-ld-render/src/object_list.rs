@@ -27,8 +27,12 @@
 //! single-NGSI-LD-Null deletion encoding.
 
 use andromeda_ngsi_ld_model::attribute::object_list::normalized_object_list;
-use andromeda_ngsi_ld_vocabulary::compact::{classes as compact_classes, properties as compact_properties};
-use serde_json::Value;
+use andromeda_ngsi_ld_vocabulary::{
+    compact::{classes as compact_classes, properties as compact_properties},
+    is_core_term,
+};
+use serde_json::{Map, Value};
+use std::{borrow::Cow, slice::from_ref};
 
 /// The bare-URI form of one `objectList` value.
 ///
@@ -52,36 +56,66 @@ pub fn object_list_member_target(member: &Value) -> Option<&str> {
     member.as_str().or_else(|| member.get(compact_properties::OBJECT).and_then(Value::as_str))
 }
 
-/// Rewrite every `objectList` and `previousObjectList` a rendered payload
-/// carries into the clause 4.5.22.2 normalized form.
+/// A member the broker carries verbatim, every `objectList` and
+/// `previousObjectList` of its `ListRelationship` instances -- and of their
+/// sub-attributes -- in the clause 4.5.22.2 normalized form.
 ///
-/// The walk exists for the payloads that reach the wire as JSON rather than as
-/// a typed resource — a notification is compacted from the stored expanded
-/// document, so the member keeps whichever spelling its Context Producer wrote
+/// A typed `ListRelationship` is written in that form by its own member; a
+/// member carried verbatim keeps whichever spelling its Context Producer wrote
 /// unless the representation is imposed here. Only an instance that declares
-/// itself a `ListRelationship` is rewritten, so a `JsonProperty` document that
-/// happens to carry a member of the same name is left as its writer stored it.
-pub fn normalize_object_lists(value: &mut Value) {
-    match value {
-        Value::Object(fields) => {
-            if fields.get("type").and_then(Value::as_str) == Some(compact_classes::LIST_RELATIONSHIP) {
-                for member in [compact_properties::OBJECT_LIST, compact_properties::PREVIOUS_OBJECT_LIST] {
-                    if let Some(list) = fields.get_mut(member) {
-                        *list = normalized_object_list(list.take());
-                    }
+/// itself a `ListRelationship` is rewritten, and only the attribute structure
+/// is walked, so a client's value that happens to carry a member of the same
+/// name is left as its writer stored it.
+pub(crate) fn normalized_verbatim_member(member: Cow<'_, Value>) -> Cow<'_, Value> {
+    if !holds_list_relationship(&member) {
+        return member;
+    }
+    let mut normalized = member.into_owned();
+    normalize_member(&mut normalized);
+    Cow::Owned(normalized)
+}
+
+/// Whether a verbatim member holds a `ListRelationship` instance anywhere in
+/// its attribute structure.
+fn holds_list_relationship(member: &Value) -> bool {
+    instances(member)
+        .any(|instance| declares_list_relationship(instance) || instance.iter().any(|(name, nested)| !is_core_term(name) && holds_list_relationship(nested)))
+}
+
+/// Normalize the lists of every `ListRelationship` instance of a member.
+fn normalize_member(member: &mut Value) {
+    let instances: Vec<&mut Map<String, Value>> = match member {
+        Value::Object(instance) => vec![instance],
+        Value::Array(items) => items.iter_mut().filter_map(Value::as_object_mut).collect(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Vec::new(),
+    };
+    for instance in instances {
+        if declares_list_relationship(instance) {
+            for name in [compact_properties::OBJECT_LIST, compact_properties::PREVIOUS_OBJECT_LIST] {
+                if let Some(list) = instance.get_mut(name) {
+                    *list = normalized_object_list(list.take());
                 }
             }
-            for nested in fields.values_mut() {
-                normalize_object_lists(nested);
-            }
         }
-        Value::Array(items) => {
-            for item in items {
-                normalize_object_lists(item);
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        instance
+            .iter_mut()
+            .filter(|(name, _)| !is_core_term(name))
+            .for_each(|(_, nested)| normalize_member(nested));
     }
+}
+
+/// The instances one member holds: the one object, or each object of an array.
+fn instances(member: &Value) -> impl Iterator<Item = &Map<String, Value>> {
+    let items = match member {
+        Value::Array(items) => items.as_slice(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => from_ref(member),
+    };
+    items.iter().filter_map(Value::as_object)
+}
+
+/// Whether an instance declares itself a `ListRelationship`.
+fn declares_list_relationship(instance: &Map<String, Value>) -> bool {
+    instance.get("type").and_then(Value::as_str) == Some(compact_classes::LIST_RELATIONSHIP)
 }
 
 /// The URI one member carries, as the bare string the concise and simplified
@@ -102,8 +136,14 @@ fn bare_uri_member(member: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use crate::object_list::{bare_uri_object_list, normalize_object_lists, object_list_member_target};
-    use serde_json::json;
+    use crate::object_list::{bare_uri_object_list, normalized_verbatim_member, object_list_member_target};
+    use serde_json::{Value, json};
+    use std::borrow::Cow;
+
+    /// The member as the normalization writes it.
+    fn normalized(member: Value) -> Value {
+        normalized_verbatim_member(Cow::Owned(member)).into_owned()
+    }
 
     /// Table 5.2.37-1: "In the concise form, each string in the array holds a
     /// valid URI", and clause 4.5.4 gives the simplified rendering the same
@@ -126,54 +166,44 @@ mod tests {
     }
 
     /// Clause 4.5.22.2 makes `previousObjectList`'s representation "the same as
-    /// that of `objectList`", so a `showChanges` notification normalizes both.
+    /// that of `objectList`", so both are normalized.
     #[test]
-    fn the_walk_normalizes_both_list_members_of_a_list_relationship() {
-        let mut payload = json!({
-            "id": "urn:ngsi-ld:Building:1",
-            "type": "Building",
-            "hasRooms": {
-                "type": "ListRelationship",
-                "objectList": ["urn:ngsi-ld:Room:3"],
-                "previousObjectList": ["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]
-            }
-        });
-        normalize_object_lists(&mut payload);
-        pretty_assertions::assert_eq!(payload["hasRooms"]["objectList"], json!([{"object": "urn:ngsi-ld:Room:3"}]));
+    fn both_list_members_of_a_list_relationship_are_normalized() {
+        let member = normalized(json!({
+            "type": "ListRelationship",
+            "objectList": ["urn:ngsi-ld:Room:3"],
+            "previousObjectList": ["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]
+        }));
+        pretty_assertions::assert_eq!(member["objectList"], json!([{"object": "urn:ngsi-ld:Room:3"}]));
         pretty_assertions::assert_eq!(
-            payload["hasRooms"]["previousObjectList"],
+            member["previousObjectList"],
             json!([{"object": "urn:ngsi-ld:Room:1"}, {"object": "urn:ngsi-ld:Room:2"}])
         );
     }
 
     /// Clause 4.5.2.2 prohibits `objectList` on a Property, so a member of that
-    /// name inside a `JsonProperty` document is the producer's own data and is
-    /// left exactly as it was stored.
+    /// name inside a client's value is the producer's own data and is left
+    /// exactly as it was stored, and a member that holds no `ListRelationship`
+    /// is not copied at all.
     #[test]
-    fn the_walk_leaves_a_json_property_document_untouched() {
-        let mut payload = json!({
-            "id": "urn:ngsi-ld:Building:2",
-            "type": "Building",
-            "config": {"type": "JsonProperty", "json": {"objectList": ["not-a-relationship"]}}
-        });
-        normalize_object_lists(&mut payload);
-        pretty_assertions::assert_eq!(payload["config"]["json"]["objectList"], json!(["not-a-relationship"]));
+    fn a_client_value_shaped_like_a_list_relationship_is_left_untouched() {
+        for member in [
+            json!({"type": "JsonProperty", "json": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:R:1"]}}),
+            json!({"type": "Property", "value": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:R:1"]}}),
+        ] {
+            assert!(matches!(normalized_verbatim_member(Cow::Borrowed(&member)), Cow::Borrowed(_)), "{member}");
+        }
     }
 
-    /// The walk reaches every instance of a multi-instance attribute
-    /// (clause 4.5.5), which a rendering carries as a JSON array.
+    /// Every instance of a multi-attribute (clause 4.5.5), and a sub-attribute,
+    /// is reached.
     #[test]
-    fn the_walk_reaches_every_instance_of_a_multi_instance_list_relationship() {
-        let mut payload = json!({
-            "id": "urn:ngsi-ld:Building:3",
-            "type": "Building",
-            "hasRooms": [
-                {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Room:1"]},
-                {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Room:2"], "datasetId": "urn:ngsi-ld:Dataset:1"}
-            ]
-        });
-        normalize_object_lists(&mut payload);
-        pretty_assertions::assert_eq!(payload["hasRooms"][0]["objectList"], json!([{"object": "urn:ngsi-ld:Room:1"}]));
-        pretty_assertions::assert_eq!(payload["hasRooms"][1]["objectList"], json!([{"object": "urn:ngsi-ld:Room:2"}]));
+    fn every_instance_and_sub_attribute_is_reached() {
+        let member = normalized(json!([
+            {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Room:1"]},
+            {"type": "Property", "value": 1, "rooms": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Room:2"]}}
+        ]));
+        pretty_assertions::assert_eq!(member[0]["objectList"], json!([{"object": "urn:ngsi-ld:Room:1"}]));
+        pretty_assertions::assert_eq!(member[1]["rooms"]["objectList"], json!([{"object": "urn:ngsi-ld:Room:2"}]));
     }
 }

@@ -1,0 +1,7 @@
+{
+    "@context": {
+        "schema": "https://schema.org/",
+        "location": "https://schema.org/location",
+        "name": "https://schema.org/name"
+    }
+}

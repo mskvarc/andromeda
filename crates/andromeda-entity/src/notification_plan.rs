@@ -16,23 +16,21 @@
 
 use crate::{
     change_notifier::ChangeNotifier,
-    error::EntityError,
     notification_fanout::{ChangedEntity, MutationSnapshots},
     snapshot_supply::SnapshotSupply,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    reads::attribute_change::{AttributeChangeKind, classify_attribute_changes, deleted_instances},
+};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
-    expanded::{
-        attribute_change::{AttributeChangeKind, classify_attribute_changes},
-        attribute_expiry::instance_expired,
-    },
     notification::ChangeOrigin,
 };
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::sync::Arc;
 
 /// Both notification channels planned from one mutation.
@@ -45,42 +43,22 @@ pub struct NotificationPlan {
     pub events: Vec<ChangeEvent>,
 }
 
-/// The change a write made to an Entity it created, from the payload it stored.
-///
-/// # Errors
-///
-/// Reports [`EntityError::Internal`] when the payload carries an instance whose
-/// `datasetId` cannot be read: the request that produced it was admitted.
-pub fn creation(current: &Value) -> Result<EntityChange, EntityError> {
-    classified(EntityLifecycle::Created, &Value::Null, current)
+/// The change a write made to an Entity it created, from the state it stored.
+#[must_use]
+pub fn creation(current: &EntityState) -> EntityChange {
+    EntityChange::new(EntityLifecycle::Created, classify_attribute_changes(None, current))
 }
 
 /// The change a write made to an Entity it neither created nor deleted, from
 /// the Entity before and after it (clause 5.2.12).
-///
-/// # Errors
-///
-/// Reports [`EntityError::Internal`] when either state carries an instance
-/// whose `datasetId` cannot be read: the stored state was admitted when it was
-/// written, and the new state when its request was.
-pub fn modification(previous: &Value, current: &Value) -> Result<EntityChange, EntityError> {
-    classified(EntityLifecycle::Modified, previous, current)
+#[must_use]
+pub fn modification(previous: &EntityState, current: &EntityState) -> EntityChange {
+    EntityChange::new(EntityLifecycle::Modified, classify_attribute_changes(Some(previous), current))
 }
 
 /// The change a write made to an Entity it deleted, from the Entity it removed.
-///
-/// # Errors
-///
-/// Reports [`EntityError::Internal`] when the removed Entity carries an
-/// instance whose `datasetId` cannot be read.
-pub(crate) fn deletion(previous: &Value) -> Result<EntityChange, EntityError> {
-    classified(EntityLifecycle::Deleted, previous, &Value::Null)
-}
-
-/// Classify the instance transitions between two states under `lifecycle`.
-fn classified(lifecycle: EntityLifecycle, previous: &Value, current: &Value) -> Result<EntityChange, EntityError> {
-    let instances = classify_attribute_changes(previous, current).map_err(|error| EntityError::Internal(error.into()))?;
-    Ok(EntityChange::new(lifecycle, instances))
+pub(crate) fn deletion(previous: &EntityState) -> EntityChange {
+    EntityChange::new(EntityLifecycle::Deleted, deleted_instances(previous.instance_keys()))
 }
 
 /// The change as a subscriber can see it once the instances expired at `at`
@@ -93,12 +71,12 @@ fn classified(lifecycle: EntityLifecycle, previous: &Value, current: &Value) -> 
 /// removal of an expired instance by the expiry sweep is still a deletion. A
 /// modification left with no instance changed nothing at all; a creation or a
 /// deletion is still an Entity lifecycle change without one.
-fn standing_change(mut change: EntityChange, current: Option<&Value>, at: DateTime<Utc>) -> Option<EntityChange> {
+fn standing_change(mut change: EntityChange, current: Option<&EntityState>, at: DateTime<Utc>) -> Option<EntityChange> {
     if let Some(current) = current {
         change.instances.retain(|instance| match instance.kind {
             AttributeChangeKind::Deleted => true,
             AttributeChangeKind::Created | AttributeChangeKind::Updated => {
-                !instance_expired(current, instance.key.attr.as_str(), instance.key.dataset_id.as_ref(), at)
+                !current.instance_expired(instance.key.attr.as_str(), instance.key.dataset_id.as_ref(), at)
             }
         });
     }
@@ -112,7 +90,7 @@ impl ChangeNotifier {
     /// Plan both notification channels for one write's `change` to one Entity.
     ///
     /// `entity_snapshot` is the entity as it stands after the mutation -- the
-    /// payload a `keyValues`/`normalized` notification renders, never the
+    /// state a `keyValues`/`normalized` notification renders, never the
     /// request fragment. The previous state is carried for `showChanges` and
     /// for the filters of a change that removed instances.
     #[must_use]
@@ -122,8 +100,8 @@ impl ChangeNotifier {
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         change: EntityChange,
-        entity_snapshot: Option<&Arc<Value>>,
-        previous_snapshot: Option<&Arc<Value>>,
+        entity_snapshot: Option<&Arc<EntityState>>,
+        previous_snapshot: Option<&Arc<EntityState>>,
     ) -> NotificationPlan {
         let snapshot_ref = entity_snapshot.map(|snapshot| &**snapshot);
         let now = Utc::now();
@@ -159,34 +137,47 @@ impl ChangeNotifier {
 #[cfg(test)]
 mod tests {
     use crate::notification_plan::{creation, deletion, modification, standing_change};
-    use andromeda_ngsi_ld_model::{
-        entity_change::{EntityChange, EntityLifecycle},
-        expanded::{
+    use andromeda_ngsi_ld_entity::{
+        entity_state::EntityState,
+        reads::{
             attribute_change::{AttributeChange, AttributeChangeKind},
-            instance_key::AttributeInstanceKey,
+            attribute_instance_key::AttributeInstanceKey,
         },
     };
+    use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use chrono::{DateTime, Utc};
-    use serde_json::{Value, json};
+    use serde_json::{Map, Value, json};
 
     fn instant(raw: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(raw).expect("instant parses").with_timezone(&Utc)
     }
 
+    /// The stored entity `members` describe, decoded as the store decodes it.
+    fn state(members: Value) -> EntityState {
+        let Value::Object(members) = members else {
+            panic!("the fixture members are an object");
+        };
+        let mut node = Map::from_iter([
+            ("@id".to_owned(), json!("urn:ngsi-ld:Vehicle:1")),
+            ("@type".to_owned(), json!(["https://example.com/Vehicle"])),
+        ]);
+        node.extend(members);
+        EntityState::from_slice(&serde_json::to_vec(&Value::Array(vec![Value::Object(node)])).expect("JSON")).expect("a stored entity")
+    }
+
     /// An entity whose `speed` expired in 2000 and whose `heading` never expires.
-    fn half_expired() -> Value {
-        json!([{
-            "@id": "urn:ngsi-ld:Vehicle:1",
+    fn half_expired() -> EntityState {
+        state(json!({
             "https://example.com/speed": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
-                "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@value": "2000-01-01T00:00:00Z"}]
+                "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2000-01-01T00:00:00Z"}]
             }],
             "https://example.com/heading": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 2}]
             }]
-        }])
+        }))
     }
 
     fn instance(attribute: &str, kind: AttributeChangeKind) -> AttributeChange {
@@ -256,7 +247,7 @@ mod tests {
 
     #[test]
     fn a_creation_carries_every_written_instance_as_created() {
-        let created = creation(&json!({"https://example.com/a": property(1), "https://example.com/b": property(2)})).expect("readable datasetIds");
+        let created = creation(&state(json!({"https://example.com/a": property(1), "https://example.com/b": property(2)})));
         pretty_assertions::assert_eq!(created.lifecycle, EntityLifecycle::Created);
         pretty_assertions::assert_eq!(created.instances.len(), 2);
         assert!(created.instances.iter().all(|instance| instance.kind == AttributeChangeKind::Created));
@@ -264,9 +255,9 @@ mod tests {
 
     #[test]
     fn a_modification_carries_one_precise_transition_per_changed_instance() {
-        let before = json!({"https://example.com/keep": property(1), "https://example.com/drop": property(9)});
-        let after = json!({"https://example.com/keep": property(2), "https://example.com/new": property(3)});
-        let modified = modification(&before, &after).expect("readable datasetIds");
+        let before = state(json!({"https://example.com/keep": property(1), "https://example.com/drop": property(9)}));
+        let after = state(json!({"https://example.com/keep": property(2), "https://example.com/new": property(3)}));
+        let modified = modification(&before, &after);
         pretty_assertions::assert_eq!(modified.lifecycle, EntityLifecycle::Modified);
         let kinds: Vec<(&str, AttributeChangeKind)> = modified.instances.iter().map(|instance| (instance.key.attr.as_str(), instance.kind)).collect();
         pretty_assertions::assert_eq!(
@@ -281,7 +272,7 @@ mod tests {
 
     #[test]
     fn a_deletion_carries_every_removed_instance_as_deleted() {
-        let deleted = deletion(&json!({"https://example.com/a": property(1)})).expect("readable datasetIds");
+        let deleted = deletion(&state(json!({"https://example.com/a": property(1)})));
         pretty_assertions::assert_eq!(deleted.lifecycle, EntityLifecycle::Deleted);
         pretty_assertions::assert_eq!(deleted.instances, vec![instance("https://example.com/a", AttributeChangeKind::Deleted)]);
     }

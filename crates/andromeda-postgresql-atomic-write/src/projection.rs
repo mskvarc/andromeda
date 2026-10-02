@@ -14,18 +14,15 @@
 //! whose write did not land carries no key and contributes nothing here, and
 //! the dictionary keys were minted from those same intents in this transaction.
 
-use crate::{
-    attempt_failure::AttemptFailure,
-    commit_refusal::{context_store, unit_code},
-    projected_entity_key::ProjectedEntityKey,
-};
+use crate::{attempt_failure::AttemptFailure, commit_refusal::context_store, projected_entity_key::ProjectedEntityKey};
 use andromeda_context_commit::{
     commit_invariant::{CommitInvariant, NameDictionary},
     error::CommitError,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::document::slot::Slot;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::attribute_expiry::instance_expires_at;
+use andromeda_ngsi_ld_model::temporal::observation_metadata::ObservationMetadata;
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, entity_key::EntityKey};
 use andromeda_postgresql_context_store::current_attribute_values::{
     delete::delete_instances_in_tx,
@@ -34,7 +31,6 @@ use andromeda_postgresql_context_store::current_attribute_values::{
     upsert::upsert_projection_in_tx,
 };
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
-use andromeda_postgresql_temporal_store::unit_code_metadata::unit_code_in;
 use andromeda_temporal::append_intent::{TemporalAppendEntry, TemporalAppendIntent};
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;
@@ -57,11 +53,10 @@ struct ProjectionWork {
 ///
 /// # Errors
 ///
-/// Returns [`CommitError::Persistence`] when a statement fails,
-/// [`AttemptFailure::Refused`] naming the entity when an instance carries a
-/// `unitCode` the catalog cannot store, and [`CommitError::Invariant`] when an observation
-/// carries a value the projection has no column for or names an attribute the
-/// dictionary did not resolve.
+/// Returns [`CommitError::Persistence`] when a statement fails, and
+/// [`CommitError::Invariant`] when an observation carries a value the
+/// projection has no column for or names an attribute the dictionary did not
+/// resolve.
 pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
@@ -112,18 +107,19 @@ fn collect(
                     // state loses the row rather than storing a marker.
                     Err(_) => work.removals.push(key),
                     Ok(value) => {
+                        let metadata = row.metadata.as_ref();
                         let projected = ProjectedAttributeRow {
                             key,
                             attribute_kind: stored_attribute_kind(row.attribute_type),
                             value,
-                            // A unit the instance carries is its entity's
-                            // content, refused for that entity's write alone.
-                            unit_code_id: unit_code_in(row.metadata.as_ref())
-                                .map_err(|error| AttemptFailure::of_write(unit_code(error), intent.entity_id.clone()))?, // clone: the attribution owns the entity it names.
+                            // A typed unit is one the catalog resolved when the
+                            // instance was admitted, so its identity is stored
+                            // as it stands.
+                            unit_code_id: metadata.and_then(ObservationMetadata::unit_code).and_then(Slot::as_set).map(|unit| unit.id()),
                             // The instance's own members other than its value
                             // are its metadata, so its clause 4.22 `expiresAt`
                             // is read from there exactly as the payload carries it.
-                            expires_at: row.metadata.as_ref().and_then(instance_expires_at),
+                            expires_at: metadata.and_then(ObservationMetadata::expires_at),
                         };
                         match entity {
                             ProjectedEntityKey::Minted(minted) => work.minted.push(minted, projected).map_err(|error| context_store(error))?,
@@ -162,11 +158,11 @@ fn grain(
 #[cfg(test)]
 mod tests {
     use crate::{
-        attempt_failure::AttemptFailure,
         projected_entity_key::ProjectedEntityKey,
         projection::{ProjectionWork, collect},
     };
-    use andromeda_context_commit::{submission_refusal::SubmissionRefusal, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+    use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
+    use andromeda_ngsi_ld_entity::unit_code::UnitCode;
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         attribute_type::AttributeType,
@@ -174,7 +170,7 @@ mod tests {
         instance_identity::InstanceIdentity,
         scope::path::ScopePath,
     };
-    use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata};
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::{entity_key::EntityKey, value_kind::ValueKind};
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
@@ -214,7 +210,14 @@ mod tests {
         observation_with(value, None)
     }
 
-    fn observation_with(value: TemporalValue, metadata: Option<serde_json::Value>) -> TemporalAppendEntry {
+    /// The metadata a `speed` Property instance stores as `json`.
+    fn metadata(json: &str) -> ObservationMetadata {
+        ObservationMetadata::from_stored(AttributeType::Property, &speed(), json)
+            .expect("valid stored metadata")
+            .expect("the metadata carries a member")
+    }
+
+    fn observation_with(value: TemporalValue, metadata: Option<ObservationMetadata>) -> TemporalAppendEntry {
         TemporalAppendEntry::Observation {
             row: TemporalHistoryRow {
                 attribute_name: speed(),
@@ -260,8 +263,8 @@ mod tests {
     #[test]
     fn an_observation_projects_the_instances_own_expiry() {
         let mut work = ProjectionWork::default();
-        let metadata = serde_json::json!({"https://uri.etsi.org/ngsi-ld/expiresAt": [{"@value": "2030-01-01T00:00:00Z"}]});
-        let intent = intent(vec![observation_with(TemporalValue::Number(JsonNumber::from(1)), Some(metadata))]);
+        let expiring = metadata(r#"{"https://uri.etsi.org/ngsi-ld/expiresAt": [{"@value": "2030-01-01T00:00:00Z"}]}"#);
+        let intent = intent(vec![observation_with(TemporalValue::Number(JsonNumber::from(1)), Some(expiring))]);
         collect(&mut work, &intent, entity_key(), &dictionary()).expect("a projectable observation");
         pretty_assertions::assert_eq!(
             work.upserts[0].expires_at,
@@ -328,17 +331,22 @@ mod tests {
         assert!(collect(&mut work, &intent, entity_key(), &HashMap::new()).is_err());
     }
 
-    /// A unit the catalog does not register is the content of the entity that
-    /// carried it, so the refusal names that entity and no other.
+    /// A unit the instance carries was resolved against the catalog when it
+    /// was admitted, so the projection stores that catalog identity.
     #[test]
-    fn an_unregistered_unit_code_is_refused_for_the_entity_that_carried_it() {
+    fn an_observation_projects_the_catalog_identity_of_its_unit() {
         let mut work = ProjectionWork::default();
-        let metadata = serde_json::json!({"https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "NOTACODE"}]});
-        let intent = intent(vec![observation_with(TemporalValue::Number(JsonNumber::from(1)), Some(metadata))]);
-        let refused = collect(&mut work, &intent, entity_key(), &dictionary());
-        assert!(
-            matches!(&refused, Err(AttemptFailure::Refused(refused)) if refused.entity_id.as_str() == "urn:ngsi-ld:Vehicle:1" && matches!(refused.refusal, SubmissionRefusal::UnitCodeUnregistered)),
-            "{refused:?}"
-        );
+        let celsius = metadata(r#"{"https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "CEL"}]}"#);
+        let intent = intent(vec![observation_with(TemporalValue::Number(JsonNumber::from(1)), Some(celsius))]);
+        collect(&mut work, &intent, entity_key(), &dictionary()).expect("a projectable observation");
+        pretty_assertions::assert_eq!(work.upserts[0].unit_code_id, Some(UnitCode::resolve("CEL").expect("a catalogued unit").id()));
+    }
+
+    #[test]
+    fn an_observation_without_a_unit_projects_none() {
+        let mut work = ProjectionWork::default();
+        let intent = intent(vec![observation(TemporalValue::Number(JsonNumber::from(1)))]);
+        collect(&mut work, &intent, entity_key(), &dictionary()).expect("a projectable observation");
+        pretty_assertions::assert_eq!(work.upserts[0].unit_code_id, None);
     }
 }

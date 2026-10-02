@@ -26,13 +26,16 @@ use andromeda_context_commit::{
     entity_mutation::EntityMutation,
 };
 use andromeda_entity::side_effect_drain::EntitySideEffectDrainConfig;
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    reads::{
+        attribute_change::{AttributeChange, AttributeChangeKind},
+        attribute_instance_key::AttributeInstanceKey,
+    },
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
-    expanded::{
-        attribute_change::{AttributeChange, AttributeChangeKind},
-        instance_key::AttributeInstanceKey,
-    },
     notification::ChangeOrigin,
 };
 use chrono::Utc;
@@ -52,16 +55,21 @@ const NAME: &str = "https://uri.etsi.org/ngsi-ld/default-context/name";
 /// The `datasetId` of the deleted `name` instance.
 const DATASET: &str = "urn:ngsi-ld:Dataset:driver";
 
-/// The expanded Entity the write leaves behind.
-fn modified_entity() -> Value {
-    json!({
+/// The stored expanded document of the Entity the write leaves behind.
+fn modified_document() -> Value {
+    json!([{
         "@id": ENTITY_ID,
         "@type": [VEHICLE],
         SPEED: [{
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 120}]
         }]
-    })
+    }])
+}
+
+/// The Entity the write leaves behind.
+fn modified_entity() -> EntityState {
+    EntityState::from_slice(&serde_json::to_vec(&modified_document()).expect("the document serialises")).expect("the document is an entity state")
 }
 
 /// The change: `speed` updated, the `driver` instance of `name` deleted.
@@ -120,7 +128,7 @@ async fn durable_queue_a_job_hands_each_write_its_whole_change_back() {
         "one write defers one change: {payload}"
     );
     assert_eq!(payload["change_events"][0]["lifecycle"], json!("modified"), "{payload}");
-    assert_eq!(payload["change_events"][0]["current_payload"], modified_entity(), "{payload}");
+    assert_eq!(payload["change_events"][0]["current_payload"], modified_document(), "{payload}");
 
     let (drain, published) = live_side_effect_drain(
         &pool,

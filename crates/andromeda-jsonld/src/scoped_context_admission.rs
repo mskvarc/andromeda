@@ -26,7 +26,7 @@
 //! The walk resolves each non-core context once and follows the remote
 //! references a resolved document itself names, because a scoped context two
 //! hops away is as effective as one written inline. Resolution goes through the
-//! engine's parsed-context cache, so the verdict for a URL is parsed once for
+//! engine's scanned-context cache, so the verdict for a URL is reached once for
 //! the life of the engine and every later request reads it from memory.
 //!
 //! Nothing here decides which operations run the rule. A payload a Context
@@ -39,10 +39,7 @@ use crate::{
     core_context::is_ngsi_ld_core_context_url,
     engine::{
         processor::JsonLdEngine,
-        term_map::{
-            collect_context_items,
-            user_term::{UserTermTable, parse_user_context},
-        },
+        user_context_scan::{UserContextScan, collect_context_items, scan_user_context},
     },
     error::JsonLdError,
 };
@@ -84,9 +81,9 @@ pub async fn reject_scoped_user_contexts(engine: &JsonLdEngine, context: &Contex
                     }
                 }
                 Value::Object(_) => {
-                    let table = parse_user_context(item);
-                    refuse_scoped_term(&table)?;
-                    pending.extend(table.nested_references);
+                    let scan = scan_user_context(item);
+                    refuse_scoped_term(&scan)?;
+                    pending.extend(scan.nested_references);
                 }
                 // `collect_context_items` flattens arrays away; a scalar names
                 // no context, and `null` resets one rather than declaring terms.
@@ -100,20 +97,20 @@ pub async fn reject_scoped_user_contexts(engine: &JsonLdEngine, context: &Contex
         if is_ngsi_ld_core_context_url(url.as_ref()) || visited.contains(&url) {
             continue;
         }
-        let table = engine.user_term_tables().get_or_load(engine.loader(), &url).await?;
-        refuse_scoped_term(&table)?;
-        // clone: the worklist owns the references the cached table keeps
-        pending.extend(table.nested_references.iter().cloned());
+        let scan = engine.user_context_scans().get_or_load(engine.loader(), &url).await?;
+        refuse_scoped_term(&scan)?;
+        // clone: the worklist owns the references the cached scan keeps
+        pending.extend(scan.nested_references.iter().cloned());
         visited.insert(url);
     }
     Ok(())
 }
 
-/// Refuse one resolved context document that declares a scoped `@context`.
-fn refuse_scoped_term(table: &UserTermTable) -> Result<(), JsonLdError> {
-    match &table.scoped_context_term {
+/// Refuse one scanned context document that declares a scoped `@context`.
+fn refuse_scoped_term(scan: &UserContextScan) -> Result<(), JsonLdError> {
+    match &scan.scoped_context_term {
         Some(term) => Err(JsonLdError::ScopedUserContext {
-            term: term.clone(), // clone: the term table is cached and outlives the refusal
+            term: term.clone(), // clone: the scan is cached and outlives the refusal
         }),
         None => Ok(()),
     }
@@ -223,8 +220,7 @@ mod tests {
     }
 
     /// The refusal is a property of the whole set of contexts, so it cannot
-    /// depend on the order they are inspected in -- which is what the fastpath
-    /// merge, stopping at the first thing it cannot honour, does depend on.
+    /// depend on the order they are inspected in.
     #[tokio::test]
     async fn a_scoped_context_in_the_second_of_two_contexts_is_refused() {
         let engine = engine_serving(&[

@@ -22,7 +22,7 @@ const READER_NESTING_LIMIT: usize = 127;
 
 /// The prefix of the member names `serde_json`'s value visitor reserves for its
 /// arbitrary-precision number and raw-value tokens.
-const SERDE_JSON_PRIVATE_MEMBER_PREFIX: &str = "$serde_json::private::";
+pub(crate) const SERDE_JSON_PRIVATE_MEMBER_PREFIX: &str = "$serde_json::private::";
 
 /// The member name `serde_json`'s reader spells a number token with when it
 /// hands a number that is not a 64-bit integer to a visitor as a one-member

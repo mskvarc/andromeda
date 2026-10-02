@@ -1,8 +1,7 @@
 //! What one write did to the Entity's current state, which the
 //! current-attribute projection follows.
 
-use andromeda_ngsi_ld_model::expanded::removed_instance::RemovedAttributeInstance;
-use serde_json::Value;
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::removed_instance::RemovedAttributeInstance};
 use std::sync::Arc;
 
 /// The current-state change one write makes, as the projection that answers
@@ -23,8 +22,8 @@ pub enum CurrentStateProjection {
     /// instances as the client sent them, while current state holds only the
     /// most current one of each Attribute instance.
     Restated {
-        /// An expanded Entity node carrying the instances that now stand.
-        observed: Arc<Value>,
+        /// An Entity carrying the instances that now stand.
+        observed: Arc<EntityState>,
         /// The instances the write removed from current state.
         removed: Vec<RemovedAttributeInstance>,
     },

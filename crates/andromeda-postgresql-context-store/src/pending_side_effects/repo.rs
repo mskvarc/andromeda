@@ -18,11 +18,10 @@ use andromeda_context_commit::{
     write_record::WriteRecord,
 };
 use andromeda_postgresql_schema::queue::PendingSideEffects;
-use andromeda_postgresql_seaquery::clock::wall_clock;
+use andromeda_postgresql_seaquery::{cast::cast, clock::wall_clock, pg_type::PostgresType};
 use chrono::{DateTime, Utc};
 use sea_query::{DeleteStatement, Expr, ExprTrait, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
-use serde_json::Value;
 use sqlx::{Postgres, Transaction, postgres::PgPool};
 use uuid::Uuid;
 
@@ -39,7 +38,9 @@ use uuid::Uuid;
 /// ordinal base the enqueueing commit used, and resume its temporal and
 /// notification consequences under them rather than under a freshly minted
 /// identity.
-fn enqueue_statement(id: Uuid, write_id: Uuid, recorded_at: DateTime<Utc>, base_ordinal: i32, payload: Value) -> Result<InsertStatement, SeaQueryError> {
+///
+/// The payload is the job's JSON text, cast to `jsonb` by the server.
+fn enqueue_statement(id: Uuid, write_id: Uuid, recorded_at: DateTime<Utc>, base_ordinal: i32, payload: String) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(PendingSideEffects::Table)
@@ -50,7 +51,13 @@ fn enqueue_statement(id: Uuid, write_id: Uuid, recorded_at: DateTime<Utc>, base_
             PendingSideEffects::BaseOrdinal,
             PendingSideEffects::Payload,
         ])
-        .values([Expr::val(id), Expr::val(write_id), recorded_at.into(), base_ordinal.into(), Expr::val(payload)])?
+        .values([
+            Expr::val(id),
+            Expr::val(write_id),
+            recorded_at.into(),
+            base_ordinal.into(),
+            cast(Expr::val(payload), PostgresType::Jsonb),
+        ])?
         .on_conflict(OnConflict::column(PendingSideEffects::WriteId).do_nothing().to_owned());
     Ok(statement.clone())
 }
@@ -119,7 +126,7 @@ impl PendingSideEffectsRepository {
         base_ordinal: WriteOrdinal,
         payload: &PersistedBatchSideEffectJob,
     ) -> Result<(), ContextStoreError> {
-        let payload_json = serde_json::to_value(payload).map_err(ContextStoreError::PayloadEncoding)?;
+        let payload_json = serde_json::to_string(payload).map_err(ContextStoreError::PayloadEncoding)?;
         let base_ordinal = base_ordinal.as_i32()?;
         let statement = enqueue_statement(
             SideEffectJobId::mint().as_uuid(),
@@ -159,11 +166,10 @@ mod tests {
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
-    use serde_json::json;
     use uuid::Uuid;
 
     fn rendered() -> String {
-        enqueue_statement(Uuid::nil(), Uuid::nil(), Utc::now(), 0, json!({}))
+        enqueue_statement(Uuid::nil(), Uuid::nil(), Utc::now(), 0, "{}".to_owned())
             .expect("arity")
             .to_string(PostgresQueryBuilder)
     }
@@ -179,6 +185,14 @@ mod tests {
                 && sql.contains(r#""payload""#),
             "{sql}"
         );
+    }
+
+    /// The job is bound as its JSON text and cast to `jsonb` by the server, so
+    /// no JSON tree is built for it on the way to the column.
+    #[test]
+    fn the_job_is_bound_as_text_cast_to_jsonb() {
+        let sql = rendered();
+        assert!(sql.contains("'{}'::jsonb"), "{sql}");
     }
 
     #[test]

@@ -7,7 +7,7 @@
 
 use crate::undecodable_body::UndecodableBody;
 use andromeda_ngsi_ld_lexicon::{identifier_length::IdentifierTooLong, uri::Uri};
-use andromeda_ngsi_ld_number::json_value::JsonNumberPathError;
+use andromeda_ngsi_ld_number::json_value::number_range::NumberRangeError;
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use thiserror::Error;
 
@@ -23,9 +23,10 @@ pub enum BatchItemRefusal {
     /// Clause 6.3.5: an `application/ld+json` item carries no `@context`.
     #[error("an application/ld+json batch item must contain @context")]
     NoContextInLdJson,
-    /// A number the model cannot represent.
+    /// A number the model cannot represent, or a member named like the
+    /// reader's own number tokens.
     #[error(transparent)]
-    Number(#[from] JsonNumberPathError),
+    Number(#[from] NumberRangeError),
     /// A member that does not decode, named by its path.
     #[error(transparent)]
     Undecodable(#[from] UndecodableBody),

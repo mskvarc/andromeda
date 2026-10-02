@@ -2,6 +2,7 @@
 //! expectation still holds and hands back the system attributes it held.
 
 use crate::{
+    branch_statement::BranchStatement,
     entity::{
         census::delta::{CensusChange, CensusStatements},
         mapper::stored_uri,
@@ -38,6 +39,9 @@ struct Doc;
 #[derive(Iden, Clone, Copy)]
 #[iden = "gone"]
 struct Gone;
+
+/// The batch delete's text, built once for the live branch.
+static ENTITY_DELETE_STATEMENT: BranchStatement = BranchStatement::new(entity_delete_sql);
 
 /// Build the batch delete.
 ///
@@ -193,8 +197,8 @@ impl EntityRepository {
         }
 
         let ids = ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
-        let sql = entity_delete_sql(target)?;
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+        let sql = ENTITY_DELETE_STATEMENT.text(target)?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(&*sql))
             .bind(ids)
             .bind(expected_modified_at)
             .fetch_all(&mut **tx);

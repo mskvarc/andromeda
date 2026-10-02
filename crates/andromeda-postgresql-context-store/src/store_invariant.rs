@@ -43,6 +43,10 @@ pub enum StoreInvariant {
         /// How many rows it was asked to write.
         rows: usize,
     },
+    /// A statement that creates search rows was handed a row that keeps its
+    /// stored geometry, which a row being created does not have.
+    #[error("a created search row was staged to keep a geometry it does not hold")]
+    KeptGeometryWithoutStoredRow,
 }
 
 #[cfg(test)]

@@ -65,7 +65,6 @@ pub async fn add_attrs(
                 entity_type_compact: entity_type.as_ref(),
                 attribute_name: None,
                 method: Method::POST,
-                body: Some(&payload),
                 context: &context,
                 operation: ForwardingOperation::AppendTemporalAttributes,
                 path_suffix: Some("/attrs"),
@@ -75,6 +74,7 @@ pub async fn add_attrs(
                     headers: Some(&headers),
                 },
             },
+            Some(&payload),
         )
         .await
         .with_instance(&uri)?;

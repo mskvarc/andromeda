@@ -20,8 +20,8 @@ use crate::{
         ValidatedQuery,
         classify_entity_error,
         collect_proxied_attrs,
+        local_remainder_of_payload,
         provision_response,
-        strip_attributes_from_value,
         update_result::{NotUpdatedReason, update_result_response},
     },
     written_payload_admission::admit_written_entity,
@@ -48,37 +48,34 @@ pub(crate) async fn update_attrs(
     JsonLdDocument { document: fragment, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
+    let request = ForwardProvisionRequest {
+        resource: ProvisionResource::Entities,
+        entity_id: &id,
+        entity_type_compact: None,
+        attribute_name: None,
+        method: Method::PATCH,
+        context: &context,
+        operation: ForwardingOperation::UpdateEntityAttributes,
+        path_suffix: Some("/attrs"),
+        query_string: None,
+        triggering: TriggeringRequest {
+            via: incoming_via.as_ref(),
+            headers: Some(&headers),
+        },
+    };
+    let plan = state.forwarding.plan_provision(&target, &request).await.with_entity_instance(&uri)?;
     // Clause 5.6.2.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
-    // update left with nothing local is still validated.
-    // clone: the admission expands its own copy, while the forwarding phase and
-    // the narrowing after it still read the compact fragment
-    let admitted = admit_written_entity::<UpdateAttributes>(service, fragment.clone(), &context)
+    // update left with nothing local is still validated. Only a registration
+    // the plan sends the fragment to reads it again, so it is serialised for
+    // them before it moves into the admission.
+    let payload = plan.payload(&fragment).with_entity_instance(&uri)?;
+    let admitted = admit_written_entity::<UpdateAttributes>(service, fragment, &context)
         .await
         .with_entity_instance(&uri)?;
-
-    // Forward to matching context sources
     let forwarded = state
         .forwarding
-        .forward_provision(
-            &target,
-            ForwardProvisionRequest {
-                resource: ProvisionResource::Entities,
-                entity_id: &id,
-                entity_type_compact: None,
-                attribute_name: None,
-                method: Method::PATCH,
-                body: Some(&fragment),
-                context: &context,
-                operation: ForwardingOperation::UpdateEntityAttributes,
-                path_suffix: Some("/attrs"),
-                query_string: None,
-                triggering: TriggeringRequest {
-                    via: incoming_via.as_ref(),
-                    headers: Some(&headers),
-                },
-            },
-        )
+        .execute_provision(plan, &request, payload.as_deref())
         .await
         .with_entity_instance(&uri)?;
 
@@ -97,13 +94,17 @@ pub(crate) async fn update_attrs(
     }
 
     // Clause 5.6.2.4: the attributes proxied registrations cover leave the
-    // fragment; whatever remains is updated here.
-    let proxied = collect_proxied_attrs(&forwarded);
-    let mut local_fragment = fragment;
-    let strip = strip_attributes_from_value(&mut local_fragment, &proxied);
-    let local_update = match service.admit_local_remainder(admitted, strip, local_fragment, &context).await {
-        Some(remainder) => Some(async { service.update_attrs(&target, &id, remainder?).await }.await),
-        None => None,
+    // fragment; whatever remains is updated here. A fragment no registration
+    // read was taken over by none of them.
+    let local_update = match payload.as_deref() {
+        None => Some(service.update_attrs(&target, &id, admitted).await),
+        Some(payload) => {
+            let (remainder, strip) = local_remainder_of_payload(payload, &collect_proxied_attrs(&forwarded)).with_entity_instance(&uri)?;
+            match service.admit_local_remainder(admitted, strip, remainder, &context).await {
+                Some(remainder) => Some(async { service.update_attrs(&target, &id, remainder?).await }.await),
+                None => None,
+            }
+        }
     };
 
     // Clause 5.6.2.5: the status says "whether all the new Attributes were

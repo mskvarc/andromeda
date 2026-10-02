@@ -16,7 +16,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, observation_metadata::ObservationMetadata};
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity},
@@ -27,7 +27,6 @@ use andromeda_temporal::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::{slice, sync::Arc};
 
 /// PostgreSQL temporal history used through the idempotent append port.
@@ -303,14 +302,19 @@ fn observation_row(
     recorded_at: DateTime<Utc>,
     identity: TemporalObservationIdentity,
 ) -> Result<AttributeHistoryRow, TemporalStoreError> {
-    let mut metadata = row.metadata.clone(); // clone: the persisted row owns its metadata.
-    let unit_code_id = take_unit_code(&mut metadata)?;
+    // clone: the persisted row owns its metadata, the durable intent keeps its own.
+    let (metadata, unit_code_id) = take_unit_code(row.metadata.clone())?;
+    let metadata = metadata
+        .as_ref()
+        .map(ObservationMetadata::to_stored_json)
+        .transpose()
+        .map_err(TemporalStoreError::StoredJson)?;
     Ok(AttributeHistoryRow {
         recorded_at,
         identity,
         stream_key,
         attribute_kind: stored_attribute_kind(row.attribute_type),
-        value: stored_value(row)?,
+        value: AttributeHistoryValue::of_observation(&row.value)?,
         axes: SemanticTimeAxes {
             // Each axis is preserved exactly as the observation carried it. An
             // observation that declared none keeps none, so it matches no window
@@ -325,25 +329,6 @@ fn observation_row(
     })
 }
 
-/// Translate a neutral observation value into the shape the row stores.
-fn stored_value(row: &TemporalHistoryRow) -> Result<AttributeHistoryValue, TemporalStoreError> {
-    match &row.value {
-        TemporalValue::Number(value) => Ok(AttributeHistoryValue::Number(value.clone())), // clone: the persisted row owns its exact decimal.
-        TemporalValue::String(value) => Ok(AttributeHistoryValue::String(value.clone())), // clone: the persisted row owns the string.
-        TemporalValue::Boolean(value) => Ok(AttributeHistoryValue::Boolean(*value)),
-        TemporalValue::Geometry(geometry) => Ok(AttributeHistoryValue::Geometry(geometry.clone())), // clone: the persisted row owns its geometry.
-        TemporalValue::Object(value) => Ok(AttributeHistoryValue::Object(Value::clone(value))),     // clone: the persisted row owns the structured value.
-        TemporalValue::DateTime(value) => Ok(AttributeHistoryValue::DateTime(*value)),
-        TemporalValue::Uri(value) => Ok(AttributeHistoryValue::Uri(value.clone())), // clone: the persisted row owns the URI.
-        TemporalValue::Tombstone { deleted_at } => Ok(AttributeHistoryValue::Tombstone { deleted_at: *deleted_at }),
-        // Clause 4.5.4 gives a Scope no attribute stream, so it is carried by
-        // `TemporalAppendEntry::Scope` and stored in `scope_history`; one that
-        // reached the attribute conversion would have to invent the stream the
-        // clause denies it.
-        TemporalValue::Scopes(_) => Err(TemporalStoreError::ScopeHasNoAttributeRow),
-    }
-}
-
 /// Classify one store failure at the temporal port boundary.
 #[track_caller]
 fn persistence(error: impl Into<TemporalStoreError>) -> TemporalError {
@@ -354,7 +339,7 @@ mod tests {
     use crate::{
         attribute_history_value::AttributeHistoryValue,
         error::TemporalStoreError,
-        intent_sink::{recording_entity_key, stored_value},
+        intent_sink::recording_entity_key,
         temporal_catalog_write::TemporalCatalog,
         temporal_store_invariant::TemporalStoreInvariant,
     };
@@ -478,6 +463,9 @@ mod tests {
         let geometry = Geometry::from_geojson_value(&json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 2.0, 30.0], [3.0, 4.0]]}))
             .expect("a valid LineString");
         let row = observed_row(AttributeType::GeoProperty, TemporalValue::Geometry(geometry.clone())); // clone: the test compares the stored value against what it observed
-        pretty_assertions::assert_eq!(stored_value(&row).expect("a geometry is storable"), AttributeHistoryValue::Geometry(geometry));
+        let AttributeHistoryValue::Geometry(stored) = AttributeHistoryValue::of_observation(&row.value).expect("a geometry is storable") else {
+            panic!("a geometry is stored in the geometry column");
+        };
+        pretty_assertions::assert_eq!(stored, geometry);
     }
 }

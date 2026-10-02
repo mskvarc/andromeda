@@ -21,11 +21,36 @@
 //! representation renders it, so the two cannot disagree about a name neither
 //! clause distinguishes.
 
-use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
-use andromeda_jsonld::compaction::NameCompactor;
+use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, query::EntityQueryService};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::Entity;
 use indexmap::IndexMap;
+
+/// The compaction of single names against the processed request context:
+/// the short name Table 5.2.28-1 and clause C.6 give an expanded name.
+///
+/// # Errors
+///
+/// Reports [`EntityError::JsonLd`] when the request context does not resolve
+/// or process (clause 5.5.7).
+pub(crate) async fn request_name_compaction(engine: &JsonLdEngine, context: &ContextSpec) -> Result<NameCompaction, EntityError> {
+    Ok(NameCompaction::new(engine.compactor(context).processed_context().await?))
+}
+
+impl EntityQueryService {
+    /// The compaction of single names against the request context, for
+    /// [`apply_simplified_names`].
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when the request context does not
+    /// resolve or process (clause 5.5.7).
+    pub async fn name_compaction(&self, context: &ContextSpec) -> Result<NameCompaction, EntityError> {
+        request_name_compaction(self.engine(), context).await
+    }
+}
 
 /// Rename an Entity's Attributes to the short names the context declares for
 /// them, for a response written in the clause 4.5.4 simplified
@@ -36,18 +61,14 @@ use indexmap::IndexMap;
 /// Reports [`EntityError::Validation`] when a declared term is not a name
 /// the clause 4.6.2 grammar admits, which would leave the Attribute
 /// unaddressable under the very context that named it.
-pub async fn apply_simplified_names(entity: &mut Entity, names: &NameCompactor<'_>) -> Result<(), EntityError> {
+pub fn apply_simplified_names(entity: &mut Entity, names: &NameCompaction) -> Result<(), EntityError> {
     if !entity.attrs.keys().any(is_fully_qualified) {
         return Ok(());
     }
 
     let mut renamed: IndexMap<AttributeName, _> = IndexMap::with_capacity(entity.attrs.len());
     for (name, value) in entity.attrs.drain(..) {
-        let rendered = if is_fully_qualified(&name) {
-            declared_name(&name, names).await?
-        } else {
-            name
-        };
+        let rendered = if is_fully_qualified(&name) { declared_name(&name, names)? } else { name };
         renamed.insert(rendered, value);
     }
     entity.attrs = renamed;
@@ -56,8 +77,8 @@ pub async fn apply_simplified_names(entity: &mut Entity, names: &NameCompactor<'
 
 /// The short name the context declares for a fully qualified Attribute name,
 /// or the name itself when it declares none.
-async fn declared_name(name: &AttributeName, names: &NameCompactor<'_>) -> Result<AttributeName, EntityError> {
-    let compacted = names.compact_attr_iri(name.as_str()).await;
+fn declared_name(name: &AttributeName, names: &NameCompaction) -> Result<AttributeName, EntityError> {
+    let compacted = names.compact_attr_iri(name.as_str());
     compacted.parse().map_err(|error| {
         EntityError::Validation(EntityValidationReason::DeclaredName {
             requested: name.clone(),
@@ -80,7 +101,7 @@ mod tests {
         service_test_double::service,
         simplified_names::{apply_simplified_names, is_fully_qualified},
     };
-    use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
+    use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
     use indexmap::IndexMap;
@@ -134,10 +155,10 @@ mod tests {
     async fn a_coerced_term_names_the_attribute_of_the_simplified_representation() {
         let service = service();
         let context = coercing_context();
-        let names = NameCompactor::new(service.engine(), &context);
+        let names = service.name_compaction(&context).await.expect("the context processes");
         let mut entity = entity(&["http://example.org/test/testedAt", "http://example.org/common/isParked"]);
 
-        apply_simplified_names(&mut entity, &names).await.expect("the declared terms are NGSI-LD names");
+        apply_simplified_names(&mut entity, &names).expect("the declared terms are NGSI-LD names");
 
         let rendered: Vec<&str> = entity.attrs.keys().map(AttributeName::as_str).collect();
         pretty_assertions::assert_eq!(rendered, vec!["testedAt", "isParked"]);
@@ -149,10 +170,10 @@ mod tests {
     async fn a_name_no_term_declares_is_left_as_the_compaction_produced_it() {
         let service = service();
         let context = coercing_context();
-        let names = NameCompactor::new(service.engine(), &context);
+        let names = service.name_compaction(&context).await.expect("the context processes");
         let mut entity = entity(&["http://example.org/parking/status", "brandName"]);
 
-        apply_simplified_names(&mut entity, &names).await.expect("no declared term is ungrammatical");
+        apply_simplified_names(&mut entity, &names).expect("no declared term is ungrammatical");
 
         let rendered: Vec<&str> = entity.attrs.keys().map(AttributeName::as_str).collect();
         pretty_assertions::assert_eq!(rendered, vec!["http://example.org/parking/status", "brandName"]);
@@ -164,10 +185,10 @@ mod tests {
     async fn renaming_keeps_the_order_the_attributes_were_rendered_in() {
         let service = service();
         let context = coercing_context();
-        let names = NameCompactor::new(service.engine(), &context);
+        let names = service.name_compaction(&context).await.expect("the context processes");
         let mut entity = entity(&["brandName", "http://example.org/test/testedAt", "http://example.org/parking/status"]);
 
-        apply_simplified_names(&mut entity, &names).await.expect("the declared terms are NGSI-LD names");
+        apply_simplified_names(&mut entity, &names).expect("the declared terms are NGSI-LD names");
 
         let rendered: Vec<&str> = entity.attrs.keys().map(AttributeName::as_str).collect();
         pretty_assertions::assert_eq!(rendered, vec!["brandName", "testedAt", "http://example.org/parking/status"]);

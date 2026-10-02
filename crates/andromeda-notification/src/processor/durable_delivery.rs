@@ -2,26 +2,20 @@
 //!
 //! A queued delivery carries the event as it was persisted, so the change
 //! event the processor evaluates is rebuilt from the stored row: the deleted
-//! entity's types and system attributes come back from the snapshot the
-//! delete write embedded them into, because the row they described is gone.
+//! entity's types come back from the state it removed and its system
+//! attributes from the event, because the row they described is gone.
 
 use crate::{
     delivery_drain::{DeliveryDisposition, NotificationDeliveryTransport},
     delivery_entry::DeliveryEntry,
     notification_event::NotificationEvent,
-    processor::NotificationProcessor,
+    processor::{ChangeAudience, CommitFilters, NotificationProcessor},
 };
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{
-    entity_change::EntityLifecycle,
-    notification::{ChangeOrigin, SysAttrsSnapshot},
-};
-use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, notification::ChangeOrigin};
 use andromeda_subscription::error::SubscriptionError;
-use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use serde_json::Value;
 use std::sync::Arc;
 
 impl NotificationDeliveryTransport for NotificationProcessor {
@@ -31,7 +25,11 @@ impl NotificationDeliveryTransport for NotificationProcessor {
             if let Err(error) = self.refresh_cached_subscription(&entry.target, &entry.subscription_id).await {
                 return unreadable_subscription(&entry.subscription_id, &error);
             }
-            let outcome = self.apply_entity_change_for(entry.target.clone(), event, Some(&entry.subscription_id)).await;
+            let audience = ChangeAudience::Queued {
+                subscription: &entry.subscription_id,
+                filters: commit_filters(&entry.event),
+            };
+            let outcome = self.apply_entity_change_for(entry.target.clone(), event, audience).await;
             if outcome.delivered > 0 {
                 DeliveryDisposition::Delivered
             } else if outcome.retryable_failures > 0 {
@@ -64,24 +62,39 @@ fn unreadable_subscription(subscription_id: &Identifier, error: &SubscriptionErr
     }
 }
 
+/// Whether the commit decided the entity filters of the queued delivery.
+///
+/// The commit reads the entity filters on the states the change carries: a
+/// deletion on the state before it or the state it removed, any other change on
+/// the state it left and, when it removed instances, the state before it. A
+/// queued event carrying one of those states was filtered on it; one carrying
+/// none was admitted without a state to read.
+fn commit_filters(stored: &NotificationEvent) -> CommitFilters {
+    let filtered = match stored.change.lifecycle {
+        EntityLifecycle::Deleted => stored.entity_snapshot.is_some() || stored.previous_snapshot.is_some(),
+        EntityLifecycle::Created | EntityLifecycle::Modified => {
+            stored.entity_snapshot.is_some() || (stored.previous_snapshot.is_some() && stored.change.deletes_instances())
+        }
+    };
+    if filtered { CommitFilters::Decided } else { CommitFilters::Undecided }
+}
+
 /// Rebuild the change a durably queued delivery records, as the processor
 /// evaluates it.
 ///
 /// The stored lifecycle says whether the Entity outlived the change, so the one
-/// stored snapshot is placed accordingly: an Entity the change deleted is
-/// carried as what was removed (the shape clause 5.8.6 reduces to `deletedAt`),
-/// with its clause 4.8 system attributes read back from the snapshot the delete
-/// write embedded them into because the row is gone; any other Entity is
-/// carried as the write left it, and its system attributes are read from its
-/// row.
+/// stored state is placed accordingly: an Entity the change deleted is carried
+/// as what was removed (the shape clause 5.8.6 reduces to `deletedAt`), with
+/// the clause 4.8 system attributes the event recorded because the row is gone;
+/// any other Entity is carried as the write left it, and its system attributes
+/// are read from its row.
 fn queued_change_event(stored: &NotificationEvent) -> ChangeEvent {
     let snapshot = stored.entity_snapshot.as_ref().map(Arc::clone);
-    let entity_types = entity_types_from_snapshot(snapshot.as_deref());
+    // clone: the change event owns the types it is routed by
+    let entity_types = snapshot.as_ref().map(|state| state.types().as_slice().to_vec()).unwrap_or_default();
     let (removed, current, sys_attrs_snapshot) = match stored.change.lifecycle {
-        EntityLifecycle::Deleted => {
-            let sys_attrs = sys_attrs_from_snapshot(snapshot.as_deref());
-            (snapshot, None, sys_attrs)
-        }
+        // clone: the change event owns the system attributes it notifies with
+        EntityLifecycle::Deleted => (snapshot, None, stored.sys_attrs_snapshot.clone()),
         EntityLifecycle::Created | EntityLifecycle::Modified => (None, snapshot, None),
     };
     ChangeEvent::builder()
@@ -97,80 +110,32 @@ fn queued_change_event(stored: &NotificationEvent) -> ChangeEvent {
         .build()
 }
 
-/// Reconstruct the clause-4.8 system attributes from a persisted deletion
-/// snapshot.
-///
-/// A durable delete notification cannot re-read `createdAt`/`modifiedAt` from
-/// the store — the row is gone — so the delete write embeds them into the
-/// stored `entity_snapshot`. Reading them back here restores the typed
-/// [`SysAttrsSnapshot`] the in-process path carries, so the same injection runs
-/// for both the entity-level and the attribute-level deletion notification.
-/// Returns `None` when the snapshot carries no `createdAt` member (a non-deletion
-/// snapshot, whose sys attributes are re-read from the live entity instead).
-fn sys_attrs_from_snapshot(snapshot: Option<&Value>) -> Option<SysAttrsSnapshot> {
-    let object = match snapshot? {
-        Value::Array(values) => values.first().and_then(Value::as_object),
-        Value::Object(object) => Some(object),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    }?;
-    let read = |iri: &str| -> Option<DateTime<Utc>> {
-        object
-            .get(iri)
-            .and_then(Value::as_array)
-            .and_then(|values| values.first())
-            .and_then(|entry| entry.get("@value"))
-            .and_then(Value::as_str)
-            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-            .map(|value| value.with_timezone(&Utc))
-    };
-    let created_at = read(expanded_properties::CREATED_AT.as_str())?;
-    Some(SysAttrsSnapshot {
-        created_at,
-        modified_at: read(expanded_properties::MODIFIED_AT.as_str()).unwrap_or(created_at),
-        expires_at: read(expanded_properties::EXPIRES_AT.as_str()),
-    })
-}
-
-/// Read expanded entity types from a persisted event snapshot.
-fn entity_types_from_snapshot(snapshot: Option<&Value>) -> Vec<EntityTypeName> {
-    let Some(snapshot) = snapshot else {
-        return Vec::new();
-    };
-    let object = match snapshot {
-        Value::Array(values) => values.first().and_then(Value::as_object),
-        Value::Object(object) => Some(object),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    };
-    object
-        .and_then(|object| object.get("@type"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter_map(|value| value.parse::<EntityTypeName>().ok())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         delivery_drain::DeliveryDisposition,
         notification_event::{NotificationEvent, NotificationEventKey},
-        processor::durable_delivery::{entity_types_from_snapshot, queued_change_event, sys_attrs_from_snapshot, unreadable_subscription},
+        processor::{
+            CommitFilters,
+            durable_delivery::{commit_filters, queued_change_event, unreadable_subscription},
+        },
     };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_ngsi_ld_entity::{
+        entity_state::EntityState,
+        reads::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            attribute_instance_key::AttributeInstanceKey,
+        },
+    };
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
-        expanded::{
-            attribute_change::{AttributeChange, AttributeChangeKind},
-            instance_key::AttributeInstanceKey,
-        },
+        notification::SysAttrsSnapshot,
     };
-    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_subscription::error::SubscriptionError;
-    use chrono::Utc;
+    use chrono::{TimeZone, Utc};
     use serde_json::{Value, json};
     use std::sync::Arc;
     use uuid::Uuid;
@@ -178,36 +143,48 @@ mod tests {
     /// The attribute the deliveries below name.
     const NAME: &str = "https://uri.etsi.org/ngsi-ld/default-context/name";
 
-    /// An expanded Entity carrying `name` and `airQualityLevel`, with the
-    /// system attributes a delete write embeds.
-    fn entity_with_name() -> Value {
-        json!([{
+    /// Decode a stored document into a state.
+    fn state(document: &Value) -> Arc<EntityState> {
+        Arc::new(EntityState::from_slice(&serde_json::to_vec(document).expect("JSON")).expect("a stored entity decodes"))
+    }
+
+    /// An Entity carrying `name` and `airQualityLevel`.
+    fn entity_with_name() -> Arc<EntityState> {
+        state(&json!([{
             "@id": "urn:ngsi-ld:Building:1",
             "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Building"],
-            expanded_properties::CREATED_AT.as_str(): [{"@value": "2024-01-01T00:00:00Z"}],
             NAME: [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "Tower"}]}],
             "https://uri.etsi.org/ngsi-ld/default-context/airQualityLevel": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 3}]
             }]
-        }])
+        }]))
     }
 
     /// The same Entity as a clause 5.6.5 Attribute deletion leaves it.
-    fn entity_without_name() -> Value {
-        json!([{
+    fn entity_without_name() -> Arc<EntityState> {
+        state(&json!([{
             "@id": "urn:ngsi-ld:Building:1",
             "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Building"],
             "https://uri.etsi.org/ngsi-ld/default-context/airQualityLevel": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 3}]
             }]
-        }])
+        }]))
+    }
+
+    /// The system attributes a deletion recorded.
+    fn recorded_instants() -> SysAttrsSnapshot {
+        SysAttrsSnapshot {
+            created_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("valid instant"),
+            modified_at: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).single().expect("valid instant"),
+            expires_at: None,
+        }
     }
 
     /// One queued delivery of a change through `lifecycle` that deleted the
     /// `name` Attribute.
-    fn queued(lifecycle: EntityLifecycle, snapshot: Option<Value>) -> NotificationEvent {
+    fn queued(lifecycle: EntityLifecycle, snapshot: Option<Arc<EntityState>>, sys_attrs: Option<SysAttrsSnapshot>) -> NotificationEvent {
         let name = AttributeChange {
             key: AttributeInstanceKey {
                 attr: NAME.parse().expect("valid attribute name"),
@@ -221,7 +198,8 @@ mod tests {
             .event_ordinal(WriteOrdinal::at(0))
             .change(EntityChange::new(lifecycle, vec![name]))
             .entity_id("urn:ngsi-ld:Building:1".parse().expect("valid entity URI"))
-            .entity_snapshot(snapshot.map(Arc::new))
+            .entity_snapshot(snapshot)
+            .sys_attrs_snapshot(sys_attrs)
             .created_at(Utc::now())
             .build()
     }
@@ -232,10 +210,11 @@ mod tests {
     /// rather than reducing the Entity to `deletedAt`.
     #[test]
     fn a_queued_attribute_deletion_is_rebuilt_as_the_entity_it_left_behind() {
-        let event = queued_change_event(&queued(EntityLifecycle::Modified, Some(entity_without_name())));
+        let left_behind = entity_without_name();
+        let event = queued_change_event(&queued(EntityLifecycle::Modified, Some(Arc::clone(&left_behind)), None));
         pretty_assertions::assert_eq!(event.entity_id.as_str(), "urn:ngsi-ld:Building:1");
         pretty_assertions::assert_eq!(event.change.lifecycle, EntityLifecycle::Modified);
-        pretty_assertions::assert_eq!(event.current_payload.as_deref(), Some(&entity_without_name()));
+        assert!(event.current_payload.as_ref().is_some_and(|current| Arc::ptr_eq(current, &left_behind)));
         assert!(event.entity_snapshot.is_none());
         assert!(
             event.sys_attrs_snapshot.is_none(),
@@ -244,16 +223,16 @@ mod tests {
     }
 
     /// Clause 5.6.6 removes the Entity: the queued change is a deletion,
-    /// rebuilt as what was removed with the system attributes its snapshot
-    /// embeds, whatever instances it names.
+    /// rebuilt as what was removed with the system attributes the event
+    /// recorded, whatever instances it names.
     #[test]
     fn a_queued_entity_deletion_is_rebuilt_as_what_was_removed() {
-        let event = queued_change_event(&queued(EntityLifecycle::Deleted, Some(entity_with_name())));
+        let removed = entity_with_name();
+        let event = queued_change_event(&queued(EntityLifecycle::Deleted, Some(Arc::clone(&removed)), Some(recorded_instants())));
         pretty_assertions::assert_eq!(event.change.lifecycle, EntityLifecycle::Deleted);
         assert!(event.current_payload.is_none());
-        pretty_assertions::assert_eq!(event.entity_snapshot.as_deref(), Some(&entity_with_name()));
-        let sys_attrs = event.sys_attrs_snapshot.expect("the embedded system attributes");
-        pretty_assertions::assert_eq!(sys_attrs.created_at.to_rfc3339(), "2024-01-01T00:00:00+00:00");
+        assert!(event.entity_snapshot.as_ref().is_some_and(|snapshot| Arc::ptr_eq(snapshot, &removed)));
+        pretty_assertions::assert_eq!(event.sys_attrs_snapshot, Some(recorded_instants()));
         pretty_assertions::assert_eq!(
             event.entity_types.iter().map(EntityTypeName::as_str).collect::<Vec<_>>(),
             vec!["https://uri.etsi.org/ngsi-ld/default-context/Building"]
@@ -261,42 +240,31 @@ mod tests {
     }
 
     /// A delivery with no snapshot leaves the Entity to be read from the
-    /// store.
+    /// store, and its types unknown.
     #[test]
     fn a_queued_modification_without_a_snapshot_leaves_the_entity_to_be_read() {
-        let event = queued_change_event(&queued(EntityLifecycle::Modified, None));
+        let event = queued_change_event(&queued(EntityLifecycle::Modified, None, None));
         assert!(event.current_payload.is_none());
         assert!(event.entity_snapshot.is_none());
+        assert_eq!(event.entity_types, Vec::<EntityTypeName>::new());
     }
 
+    /// A delivery queued with the state the commit filtered on was decided
+    /// at commit; one queued without any state was admitted undecided.
     #[test]
-    fn a_deletion_snapshot_gives_back_its_system_attributes() {
-        let snapshot = json!([{
-            "@id": "urn:ngsi-ld:Vehicle:1",
-            expanded_properties::CREATED_AT.as_str(): [{"@value": "2024-01-01T00:00:00Z"}],
-            expanded_properties::MODIFIED_AT.as_str(): [{"@value": "2024-01-02T00:00:00Z"}]
-        }]);
-        let restored = sys_attrs_from_snapshot(Some(&snapshot)).expect("system attributes");
-        pretty_assertions::assert_eq!(restored.created_at.to_rfc3339(), "2024-01-01T00:00:00+00:00");
-        pretty_assertions::assert_eq!(restored.modified_at.to_rfc3339(), "2024-01-02T00:00:00+00:00");
-        assert!(restored.expires_at.is_none());
-    }
-
-    #[test]
-    fn a_snapshot_without_created_at_carries_no_system_attributes() {
-        assert!(sys_attrs_from_snapshot(Some(&json!({"@id": "urn:ngsi-ld:Vehicle:1"}))).is_none());
-        assert!(sys_attrs_from_snapshot(None).is_none());
-    }
-
-    #[test]
-    fn the_types_of_a_wrapped_snapshot_are_read_back() {
-        let snapshot = json!([{"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.com/Vehicle"]}]);
-        let types = entity_types_from_snapshot(Some(&snapshot));
-        pretty_assertions::assert_eq!(
-            types.iter().map(EntityTypeName::as_str).collect::<Vec<_>>(),
-            vec!["https://example.com/Vehicle"]
-        );
-        assert_eq!(entity_types_from_snapshot(None), [] as [EntityTypeName; 0]);
+    fn a_queued_state_carries_the_commit_filter_decision() {
+        assert!(matches!(
+            commit_filters(&queued(EntityLifecycle::Modified, Some(entity_without_name()), None)),
+            CommitFilters::Decided
+        ));
+        assert!(matches!(
+            commit_filters(&queued(EntityLifecycle::Deleted, Some(entity_with_name()), None)),
+            CommitFilters::Decided
+        ));
+        assert!(matches!(
+            commit_filters(&queued(EntityLifecycle::Modified, None, None)),
+            CommitFilters::Undecided
+        ));
     }
 
     /// A subscription the store could not read back is not a subscription that

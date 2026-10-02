@@ -7,7 +7,7 @@
 use crate::{
     EntityService,
     admitted_write::{AdmittedAttribute, AdmittedEntity, WritePayload},
-    batch::admitted_batch::{AdmittedBatch, RenderedEntity},
+    batch::admitted_batch::{AdmittedBatch, SubmittedEntity},
     write_kind::{AttributeWriteKind, BatchWriteKind, EntityWriteKind},
 };
 use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec};
@@ -37,25 +37,21 @@ pub(crate) async fn admitted_attribute<'a, W: AttributeWriteKind>(
 
 /// Admit a batch's entities for `kind`, failing the test when any is refused.
 pub(crate) async fn admitted_batch<W: BatchWriteKind>(service: &EntityService, kind: W, entities: Vec<Entity>, context: &ContextSpec) -> AdmittedBatch<W> {
-    let (admitted, refused) = service.admit_batch_write(kind, rendered(entities, context)).await;
+    let (admitted, refused) = service.admit_batch_write(kind, submitted(entities, context)).await;
     assert!(refused.is_empty(), "every entity is admitted: {refused:?}");
     admitted
 }
 
-/// Render each entity back to its compact JSON, as the transport layer does
-/// before it admits a batch, every entity read against `context`.
-pub(crate) fn rendered(entities: Vec<Entity>, context: &ContextSpec) -> Vec<RenderedEntity> {
+/// Submit each entity as the transport layer does before it admits a batch,
+/// every entity read against `context`.
+pub(crate) fn submitted(entities: Vec<Entity>, context: &ContextSpec) -> Vec<SubmittedEntity> {
     // clone: every entity of the fixture batch shares one context
     let mut contexts = BatchContexts::shared(context.clone());
     entities
         .into_iter()
-        .map(|entity| {
-            let representation = serde_json::to_value(&entity).expect("the entity renders");
-            RenderedEntity {
-                entity,
-                representation,
-                context: contexts.context_of(None),
-            }
+        .map(|entity| SubmittedEntity {
+            entity,
+            context: contexts.context_of(None),
         })
         .collect()
 }

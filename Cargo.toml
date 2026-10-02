@@ -64,6 +64,7 @@ andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
 andromeda-entity.workspace = true
 andromeda-http-headers.workspace = true
+andromeda-ngsi-ld-entity.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
@@ -92,8 +93,8 @@ h3 = "0.0.8"
 h3-quinn = "0.0.10"
 http = "1.5.0"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-jsonld = { version = "0.23.3", features = ["serde-json"] }
-jsonld-syntax = { version = "0.23.3", features = ["serde-json"] }
+jsonld = { version = "0.23.4", features = ["serde-json"] }
+jsonld-syntax = { version = "0.23.4", features = ["serde-json"] }
 pretty_assertions = "1.4.1"
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
 regex = "1.13.1"
@@ -150,6 +151,9 @@ andromeda-http-temporal = { path = "crates/andromeda-http-temporal" }
 andromeda-http-tenancy = { path = "crates/andromeda-http-tenancy" }
 andromeda-http3-server = { path = "crates/andromeda-http3-server" }
 andromeda-jsonld = { path = "crates/andromeda-jsonld" }
+andromeda-ngsi-ld-compaction = { path = "crates/andromeda-ngsi-ld-compaction" }
+andromeda-ngsi-ld-entity = { path = "crates/andromeda-ngsi-ld-entity" }
+andromeda-ngsi-ld-expansion = { path = "crates/andromeda-ngsi-ld-expansion" }
 andromeda-ngsi-ld-geometry = { path = "crates/andromeda-ngsi-ld-geometry" }
 andromeda-ngsi-ld-lexicon = { path = "crates/andromeda-ngsi-ld-lexicon" }
 andromeda-ngsi-ld-model = { path = "crates/andromeda-ngsi-ld-model" }
@@ -187,6 +191,7 @@ andromeda-task-runtime = { path = "crates/andromeda-task-runtime" }
 andromeda-telemetry = { path = "crates/andromeda-telemetry" }
 andromeda-temporal = { path = "crates/andromeda-temporal" }
 andromeda-tenancy = { path = "crates/andromeda-tenancy" }
+andromeda-test-allocator = { path = "crates/andromeda-test-allocator" }
 andromeda-test-client = { path = "crates/andromeda-test-client" }
 andromeda-test-fixtures = { path = "crates/andromeda-test-fixtures" }
 andromeda-test-harness = { path = "crates/andromeda-test-harness" }

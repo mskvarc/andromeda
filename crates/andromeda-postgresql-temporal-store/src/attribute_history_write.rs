@@ -10,6 +10,7 @@ use crate::{
     verbatim_instance_claim::{claim_verbatim_instances, run_history_dedup_deletes, verbatim_instance_targets},
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey, value_kind::ValueKind};
@@ -26,8 +27,8 @@ use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use sea_query::{CaseStatement, Expr, ExprTrait, Iden, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
-use serde_json::Value;
-use sqlx::{AssertSqlSafe, Postgres, Transaction};
+use serde_json::value::RawValue;
+use sqlx::{AssertSqlSafe, Postgres, Transaction, types::Json};
 use uuid::Uuid;
 
 /// The statement name the history batch insert is observed under, in either
@@ -153,12 +154,12 @@ struct AttributeHistoryBinds<'a> {
     value_strings: Vec<Option<&'a str>>,
     /// Geometry values as EWKB, projected server-side.
     value_geometries: Vec<Option<Vec<u8>>>,
-    /// Structured values.
-    value_objects: Vec<Option<&'a Value>>,
+    /// Structured values, as the JSON the column stores.
+    value_objects: Vec<Option<Json<&'a RawValue>>>,
     /// URI values, which is how a relationship object is stored.
     value_uris: Vec<Option<&'a str>>,
-    /// Retained expanded members.
-    metadatas: Vec<Option<&'a Value>>,
+    /// The instances' metadata, as the JSON the column stores.
+    metadatas: Vec<Option<Json<&'a RawValue>>>,
 }
 
 /// Spread one attribute-history batch into its column-major binds.
@@ -206,10 +207,10 @@ fn attribute_history_binds(rows: &[AttributeHistoryRow]) -> Result<AttributeHist
         // exact and never passes through text or binary64.
         binds.value_numbers.push(row.value.number().cloned());
         binds.value_strings.push(row.value.string());
-        binds.value_geometries.push(geometry_bytes(row.value.geometry())?);
-        binds.value_objects.push(row.value.object());
+        binds.value_geometries.push(geometry_bytes(row.value.geometry().map(Geometry::form))?);
+        binds.value_objects.push(row.value.object().map(Json));
         binds.value_uris.push(row.value.uri().map(Uri::as_str));
-        binds.metadatas.push(row.metadata.as_ref());
+        binds.metadatas.push(row.metadata.as_deref().map(Json));
     }
     Ok(binds)
 }

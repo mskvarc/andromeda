@@ -2,6 +2,7 @@
 
 use crate::{
     error::QueryError,
+    queried_entity::scoped_entity::ScopedEntity,
     scope::{pattern::ScopePattern, pattern_fault::ScopePatternFault},
 };
 use serde::{Deserialize, Serialize};
@@ -84,11 +85,23 @@ impl ScopeQuery {
     /// satisfied by at least one of the entity's scopes, and the query holds
     /// when any alternative does. This is the in-memory reading used by
     /// subscription matching and by the post-merge filtering of a distributed
-    /// query; the backend renderings walk the same tree.
-    pub fn matches<S: AsRef<str>>(&self, scopes: &[S]) -> bool {
+    /// query; the backend renderings walk the same tree. The scopes are walked
+    /// once per requirement, so their iterator has to be cheap to clone.
+    pub fn matches<I>(&self, scopes: I) -> bool
+    where
+        I: IntoIterator,
+        I::IntoIter: Clone,
+        I::Item: AsRef<str>,
+    {
+        let scopes = scopes.into_iter();
         self.alternatives
             .iter()
-            .any(|alternative| alternative.iter().all(|pattern| scopes.iter().any(|scope| pattern.matches(scope.as_ref()))))
+            .any(|alternative| alternative.iter().all(|pattern| scopes.clone().any(|scope| pattern.matches(scope.as_ref()))))
+    }
+
+    /// Whether an entity's scopes (clause 4.18) satisfy this query.
+    pub fn matches_entity<'a, E: ScopedEntity<'a>>(&self, entity: E) -> bool {
+        self.matches(entity.scopes())
     }
 }
 
@@ -274,6 +287,7 @@ impl From<ScopeQuery> for String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 
     fn shape(raw: &str) -> Vec<Vec<String>> {
         ScopeQuery::parse(raw)
@@ -344,16 +358,16 @@ mod tests {
         // Clause 4.19: `;` is AND across the entity's whole scope set, not
         // within one scope.
         let query = ScopeQuery::parse("/Spain;/Madrid/Gardens").expect("valid scope query");
-        assert!(query.matches(&["/Spain", "/Madrid/Gardens"]));
-        assert!(!query.matches(&["/Spain"]));
+        assert!(query.matches(["/Spain", "/Madrid/Gardens"]));
+        assert!(!query.matches(["/Spain"]));
     }
 
     #[test]
     fn a_disjunction_needs_only_one_alternative_met() {
         let query = ScopeQuery::parse("/France,/Spain").expect("valid scope query");
-        assert!(query.matches(&["/Spain"]));
-        assert!(query.matches(&["/France"]));
-        assert!(!query.matches(&["/Italy"]));
+        assert!(query.matches(["/Spain"]));
+        assert!(query.matches(["/France"]));
+        assert!(!query.matches(["/Italy"]));
     }
 
     #[test]
@@ -375,10 +389,10 @@ mod tests {
     #[test]
     fn a_grouped_query_matches_by_its_distributed_meaning() {
         let query = ScopeQuery::parse("(/A|/B);/C").expect("valid scope query");
-        assert!(query.matches(&["/A", "/C"]));
-        assert!(query.matches(&["/B", "/C"]));
-        assert!(!query.matches(&["/A"]));
-        assert!(!query.matches(&["/C"]));
+        assert!(query.matches(["/A", "/C"]));
+        assert!(query.matches(["/B", "/C"]));
+        assert!(!query.matches(["/A"]));
+        assert!(!query.matches(["/C"]));
     }
 
     #[test]
@@ -424,5 +438,28 @@ mod tests {
     fn a_malformed_scope_query_is_rejected_when_the_resource_is_deserialized() {
         // Clause 4.19 admits `#` only as the last segment.
         assert!(serde_json::from_str::<ScopeQuery>("\"/A/#/C\"").is_err());
+    }
+
+    /// An entity carrying the given scopes (clause 4.18).
+    struct ScopedFixture(Vec<ScopePath>);
+
+    impl<'a> ScopedEntity<'a> for &'a ScopedFixture {
+        fn scopes(self) -> impl Iterator<Item = &'a ScopePath> + Clone {
+            self.0.iter()
+        }
+    }
+
+    fn scoped(paths: &[&str]) -> ScopedFixture {
+        ScopedFixture(paths.iter().map(|path| path.parse().expect("a scope path")).collect())
+    }
+
+    /// Clause 4.19 read against an entity's scopes: every requirement of one
+    /// alternative met by some scope, and no scope at all meeting nothing.
+    #[test]
+    fn an_entity_is_matched_by_the_scopes_it_carries() {
+        let query = ScopeQuery::parse("/Madrid/#;/Spain").expect("parses");
+        assert!(query.matches_entity(&scoped(&["/Spain", "/Madrid/Gardens"])));
+        assert!(!query.matches_entity(&scoped(&["/Spain"])));
+        assert!(!query.matches_entity(&scoped(&[])));
     }
 }

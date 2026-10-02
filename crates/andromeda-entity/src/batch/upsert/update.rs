@@ -7,47 +7,45 @@ use crate::{
         BatchResult,
         UpsertPolicy,
         admitted_batch::AdmittedBatchEntity,
-        chunk::{ChunkWrite, UpdatedPayloads},
+        chunk::{ChunkWrite, UpdatedStates},
         chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
         prepare::PreparedEntity,
-        upsert::{UpsertOutcome, stored_payload},
+        upsert::{UpsertOutcome, stored_state},
     },
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    expanded_member::unwrap_expanded_ref,
-    notification_plan::modification,
     side_effect::SideEffectPlacement,
     write_admission::BatchWrite,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::expanded::{
-    mutation::{
-        deletion_sentinel::{DroppedSentinels, drop_deletion_sentinels, restore_deletion_sentinels},
-        entity::update_entity_attrs,
-        selection::OverwritePolicy,
-    },
-    written_observation::AddressedInstances,
+use andromeda_ngsi_ld_entity::{
+    document::EntityDocument,
+    entity_state::EntityState,
+    history::written_observation::AddressedInstances,
+    operation::{deletion_drop::DroppedDeletions, selection::OverwritePolicy},
+    system_instant::SystemInstant,
 };
-use chrono::{DateTime, Utc};
-use serde_json::{Map, Value};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::sync::Arc;
 
 /// What an update-mode upsert is built from on each attempt.
 enum UpsertFragment {
-    /// The request's prepared payload, which no attempt has spent yet.
+    /// The request's prepared document, applied as an update to the entity
+    /// an attempt reads.
     Requested(Box<PreparedEntity>),
-    /// The payload an earlier attempt inserted for an entity it found absent,
+    /// The entity an earlier attempt inserted for an entity it found absent,
     /// and the deletions it dropped from the request to do so. The insert lost
     /// to a concurrent create, so a later attempt updates the entity with the
     /// two put back together.
     Inserted {
         /// The entity the request is for.
         id: Identifier,
-        /// The payload the insert stored.
-        stored: Arc<Value>,
-        /// The members of the request that asked for a deletion.
-        deletions: Map<String, Value>,
+        /// The entity the insert stored.
+        stored: Arc<EntityState>,
+        /// The members of the request that asked for a deletion, boxed
+        /// because they are rarely more than a marker and the entry is moved
+        /// through every attempt.
+        deletions: Box<DroppedDeletions>,
     },
 }
 
@@ -74,12 +72,12 @@ impl ChunkRewrite for UpdateRewrite<'_> {
         entry: UpsertFragment,
         snapshot: Option<&EntitySnapshot>,
         _reads: &(),
-        now: DateTime<Utc>,
+        now: SystemInstant,
     ) -> Result<PlannedWrite<UpsertFragment>, Box<(Identifier, EntityError)>> {
         let (target, service) = (self.target, self.service);
         match (entry, snapshot) {
             (UpsertFragment::Requested(prepared), Some(snapshot)) => {
-                let write = service.upsert_update_write(target, prepared.id.clone(), &prepared.expanded, &snapshot.payload, now)?; // clone: the entry is kept to rebuild the write if the store refuses it
+                let write = service.upsert_update_write(target, prepared.id.clone(), &prepared.document, &snapshot.state, now)?; // clone: the entry is kept to rebuild the write if the store refuses it
                 Ok(PlannedWrite {
                     entry: UpsertFragment::Requested(prepared),
                     write,
@@ -87,32 +85,28 @@ impl ChunkRewrite for UpdateRewrite<'_> {
                 })
             }
             (UpsertFragment::Inserted { id, stored, deletions }, Some(snapshot)) => {
-                // The stored payload carries the system times the insert
-                // stamped; the update restamps every instance it writes against
-                // the entity it found, so they leave no trace.
-                let mut fragment = Value::clone(&stored); // clone: the update needs the request back, and the stored payload is shared with the refused insert
-                restore_deletion_sentinels(&mut fragment, &deletions);
-                let write = service.upsert_update_write(target, id.clone(), &fragment, &snapshot.payload, now)?; // clone: the entry is kept to rebuild the write if the store refuses it
+                let document = requested_again(&stored, *deletions);
+                let write = service.upsert_update_write(target, id.clone(), &document, &snapshot.state, now)?; // clone: the entry is kept to rebuild the write if the store refuses it
                 Ok(PlannedWrite {
-                    entry: UpsertFragment::Inserted { id, stored, deletions },
+                    entry: UpsertFragment::Requested(Box::new(PreparedEntity { id, document })),
                     write,
                     alongside: None,
                 })
             }
             // Clause 5.6.8.4 routes an absent Entity to "the behaviour defined
             // by clause 5.6.1", where the deletions the update branch admits
-            // have nothing to delete: they are dropped, and only a payload that
-            // carried one is re-derived, so an ordinary create keeps the
-            // columns the preparation pass computed.
+            // have nothing to delete: they are dropped, and the rest of the
+            // request becomes the entity.
             (UpsertFragment::Requested(prepared), None) => {
                 let mut prepared = *prepared;
-                let (write, deletions) = match drop_deletion_sentinels(&mut prepared.expanded) {
-                    DroppedSentinels::Unchanged => (service.chunk_insert(target, prepared, now)?, Map::new()),
-                    DroppedSentinels::Dropped(deletions) => (service.chunk_insert_payload(target, prepared.id, Arc::new(prepared.expanded), now)?, deletions),
-                };
-                inserted(write, deletions)
+                let deletions = Box::new(prepared.document.drop_deletions());
+                let (id, state) = prepared.into_state()?;
+                inserted(service.chunk_insert(target, id, state, now)?, deletions)
             }
-            (UpsertFragment::Inserted { id, stored, deletions }, None) => inserted(service.chunk_insert_payload(target, id, stored, now)?, deletions),
+            // clone: reference-count bumps only when the earlier attempt's write still shares the state
+            (UpsertFragment::Inserted { id, stored, deletions }, None) => {
+                inserted(service.chunk_insert(target, id, Arc::unwrap_or_clone(stored), now)?, deletions)
+            }
         }
     }
 }
@@ -122,17 +116,34 @@ impl ChunkRewrite for UpdateRewrite<'_> {
 ///
 /// # Errors
 ///
-/// Reports the invariant when the insert stores no payload.
-fn inserted(write: ChunkWrite, deletions: Map<String, Value>) -> Result<PlannedWrite<UpsertFragment>, Box<(Identifier, EntityError)>> {
+/// Reports the invariant when the insert stores no entity.
+fn inserted(write: ChunkWrite, deletions: Box<DroppedDeletions>) -> Result<PlannedWrite<UpsertFragment>, Box<(Identifier, EntityError)>> {
     Ok(PlannedWrite {
         entry: UpsertFragment::Inserted {
             id: write.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
-            stored: stored_payload(&write)?,
+            stored: stored_state(&write)?,
             deletions,
         },
         write,
         alongside: None,
     })
+}
+
+/// The request an insert that lost to a concurrent create was built from: the
+/// entity the insert stored, read as the written document it is, with the
+/// deletions the insert dropped put back.
+///
+/// Only a lost race takes this path; the insert itself moved the request into
+/// the entity instead of keeping a copy of it. The system times the insert
+/// stamped come back with it, and the update stamps every instance it writes
+/// against the entity it found, so they leave no trace.
+fn requested_again(stored: &EntityState, deletions: DroppedDeletions) -> EntityDocument {
+    let mut document = EntityDocument::from(stored);
+    match deletions {
+        DroppedDeletions::Dropped(members) => document.restore_deletions(members),
+        DroppedDeletions::Unchanged => {}
+    }
+    document
 }
 
 impl EntityService {
@@ -186,36 +197,31 @@ impl EntityService {
     /// # Errors
     ///
     /// Answers the entity's identifier with the failure, boxed because a
-    /// failure is the rare outcome, when the fragment cannot be applied or
-    /// either state's members cannot be read.
+    /// failure is the rare outcome, when the fragment cannot be applied.
     fn upsert_update_write(
         &self,
         target: &ContextTarget,
         id: Identifier,
-        fragment: &Value,
-        previous: &Arc<Value>,
-        now: DateTime<Utc>,
+        fragment: &EntityDocument,
+        previous: &Arc<EntityState>,
+        now: SystemInstant,
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
-        let mut updated = Value::clone(previous); // clone: the update mutates its own copy of the stored payload
-        if let Err(error) = update_entity_attrs(&mut updated, unwrap_expanded_ref(fragment)) {
-            return Err(Box::new((id, error.into())));
+        // clone: reference-count bumps; the update shares every attribute it does not touch with the stored state
+        let mut updated = EntityState::clone(previous);
+        if let Err(error) = updated.update_attributes(fragment) {
+            return Err(Box::new((id, EntityError::from(error))));
         }
-        let change = match modification(previous, &updated) {
-            Ok(change) => change,
-            Err(error) => return Err(Box::new((id, error))),
-        };
         self.chunk_update(
             target,
             id,
-            UpdatedPayloads {
+            UpdatedStates {
                 previous,
-                merged: Arc::new(updated),
+                current: updated,
                 addressed: AddressedInstances::EntityFragment {
                     fragment,
                     overwrite: OverwritePolicy::Overwrite,
                 },
             },
-            change,
             now,
         )
     }

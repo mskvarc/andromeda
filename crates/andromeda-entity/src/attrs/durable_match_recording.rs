@@ -23,9 +23,9 @@ use crate::{
     },
     write_kind::{AppendAttributes, PartialUpdateAttribute, ReplaceAttribute, UpdateAttributes},
 };
-use andromeda_ngsi_ld_model::expanded::{
-    attribute_change::AttributeChangeKind,
-    mutation::selection::{DatasetSelection, OverwritePolicy},
+use andromeda_ngsi_ld_entity::{
+    operation::selection::{DatasetSelection, OverwritePolicy},
+    reads::attribute_change::AttributeChangeKind,
 };
 use serde_json::json;
 
@@ -58,7 +58,7 @@ async fn partial_update_attr_records_an_attribute_updated_match() {
     let category = attribute_name("category");
     let admitted = admitted_attribute::<PartialUpdateAttribute>(&service, &category, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .partial_update_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
+        .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
         .await
         .expect("the partial update lands");
 
@@ -90,7 +90,7 @@ async fn replace_attr_records_an_attribute_updated_match() {
     let category = attribute_name("category");
     let admitted = admitted_attribute::<ReplaceAttribute>(&service, &category, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .replace_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
+        .replace_attr(&live_target(), &entity_uri(), None, admitted)
         .await
         .expect("the replace lands");
 

@@ -78,7 +78,7 @@ impl FederationService {
     pub(crate) async fn payload_for_items(
         &self,
         registration: &ContextSourceRegistration,
-        items: &[ItemBody<'_>],
+        items: Vec<ItemBody<'_>>,
     ) -> Result<ForwardedPayload, FederationError> {
         let info = context_source_info(registration)?;
         let decision = decide_for_items(

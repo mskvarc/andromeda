@@ -68,7 +68,7 @@ mod tests {
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_ngsi_ld_query::error::QueryError;
-    use andromeda_ngsi_ld_representation::payload_census::{GeometryOwner, PayloadBudgetExceeded};
+    use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use axum::http::StatusCode;
     use std::{num::NonZeroUsize, time::Duration};

@@ -52,8 +52,7 @@ pub(crate) async fn create(
     // payload -- after expansion a seal forged outside `ngsildproof` is
     // indistinguishable from a sub-attribute (clauses 4.5.2.2, 4.5.3.2 and
     // 4.5.3.3).
-    let representation = serde_json::to_value(&entity).with_entity_instance(&uri)?;
-    let admitted = admit_written_entity::<CreateEntity>(service, representation, &context)
+    let admitted = admit_written_entity::<CreateEntity>(service, &entity, &context)
         .await
         .with_entity_instance(&uri)?;
     let is_local = params.local.unwrap_or(false);
@@ -80,7 +79,6 @@ pub(crate) async fn create(
                 entity_type_compact: entity_type,
                 attribute_name: None,
                 method: Method::POST,
-                body: Some(&entity),
                 context: &context,
                 operation: ForwardingOperation::CreateEntity,
                 path_suffix: None,
@@ -90,6 +88,7 @@ pub(crate) async fn create(
                     headers: Some(&headers),
                 },
             },
+            Some(&entity),
         )
         .await
         .with_entity_instance(&uri)?;

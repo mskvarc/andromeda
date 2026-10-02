@@ -6,12 +6,11 @@
 
 use crate::{cache::SubscriptionCache, compiled::CompiledSubscription};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_geometry::planar::PlanarGeometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_ngsi_ld_model::expanded::geo_property::geo_property_instance_geometries;
 use andromeda_spatial_index::key::SpatialKey;
 use iri_rs::IriBuf;
-use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 /// Narrow `matching` to subscriptions whose pre-compiled `geoQ` actually has
@@ -27,7 +26,7 @@ pub fn narrow_by_spatial_index(
     cache: &SubscriptionCache,
     target: &ContextTarget,
     matching: Vec<Arc<CompiledSubscription>>,
-    entity_data: &Value,
+    entity: &EntityState,
     entity_types: &[EntityTypeName],
 ) -> Vec<Arc<CompiledSubscription>> {
     if !target.permits_federation() {
@@ -36,10 +35,10 @@ pub fn narrow_by_spatial_index(
     let spatial = cache.spatial();
     let tenant = cache.tenant();
 
-    // One read of each distinct geoproperty, cached across the subscriptions
+    // One projection of each distinct geoproperty, cached across the subscriptions
     // that target it. A property the entity does not carry is cached as an
     // empty instance list too, so a miss is not re-read either.
-    let mut geometries: HashMap<AttributeName, Vec<Geometry>> = HashMap::new();
+    let mut geometries: HashMap<AttributeName, Vec<PlanarGeometry>> = HashMap::new();
     let mut kept: Vec<Arc<CompiledSubscription>> = Vec::new();
 
     for sub in matching {
@@ -50,7 +49,7 @@ pub fn narrow_by_spatial_index(
 
         let geoproperty = &geo_q.geoproperty;
         if !geometries.contains_key(geoproperty) {
-            let instances: Vec<Geometry> = geo_property_instance_geometries(entity_data, geoproperty.as_str()).collect();
+            let instances: Vec<PlanarGeometry> = entity.geo_property_geometries(geoproperty.as_str()).map(PlanarGeometry::project).collect();
             // clone: the cache owns its key, which the subscription keeps
             geometries.insert(geoproperty.clone(), instances);
         }

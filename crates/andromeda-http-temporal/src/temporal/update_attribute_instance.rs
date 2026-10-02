@@ -76,7 +76,6 @@ pub async fn update_attr_instance(
                 entity_type_compact: None,
                 attribute_name: Some(&attr_id),
                 method: Method::PATCH,
-                body: Some(&payload),
                 context: &context,
                 operation: ForwardingOperation::UpdateTemporalAttributeInstance,
                 path_suffix: Some(&path_suffix),
@@ -86,6 +85,7 @@ pub async fn update_attr_instance(
                     headers: Some(&headers),
                 },
             },
+            Some(&payload),
         )
         .await
         .with_instance(&uri)?;

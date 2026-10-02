@@ -4,7 +4,6 @@ use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue}
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use cefact_units::UnitCode;
 use derive_more::{Deref, From, Into};
-use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -26,28 +25,19 @@ impl AsRef<str> for UnitCodeRef {
 
 /// NGSI-LD Property representation (ETSI GS CIM 009 clause 5.2.5).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(
-    type = "ngsi:Property",
-    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
-)]
 pub struct Property {
     /// Property value.
-    #[jsonld(property = "ngsi:hasValue")]
     pub value: NgsiLdValue,
     /// Measurement unit code.
-    #[jsonld(property = "ngsi:unitCode", coerce = "@id")]
     pub unit_code: Option<UnitCodeRef>,
     /// Optional JSON-LD datatype for `value`.
-    #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<NgsiLdReference>,
     /// Previous value emitted in notifications when `showChanges` is active.
-    #[jsonld(property = "ngsi:hasPreviousValue")]
     pub previous_value: Option<NgsiLdValue>,
     /// Members shared with every other attribute family.
     #[serde(flatten)]
-    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
 }
 
@@ -55,8 +45,6 @@ pub struct Property {
 mod tests {
     use crate::attribute::{instance::Attribute, value::NgsiLdValue};
     use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-    use jsonld::Expandable;
     use serde_json::Value;
 
     /// Clause 4.6.3 admits several spellings of one `DateTime`, so the document
@@ -83,27 +71,6 @@ mod tests {
         pretty_assertions::assert_eq!(property.value_type.as_ref().map(NgsiLdReference::as_str), Some("DateTime"));
         assert!(property.previous_value.is_some());
         assert!(property.common.instance_id.is_some());
-    }
-
-    #[test]
-    fn property_expanded_includes_output_only_and_value_type_members() {
-        let json = serde_json::json!({
-            "type": "Property",
-            "value": 25,
-            "valueType": "Integer",
-            "createdAt": "2024-01-01T00:00:00Z",
-            "modifiedAt": "2024-01-02T00:00:00Z"
-        });
-        let attr: Attribute = serde_json::from_value(json).expect("property");
-        let Attribute::Property(property) = attr else {
-            panic!("expected Property");
-        };
-        pretty_assertions::assert_eq!(property.value_type.as_ref().map(NgsiLdReference::as_str), Some("Integer"));
-        let expanded = property.expand::<serde_json::Value>();
-        let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(expanded_properties::VALUE_TYPE.as_str()));
-        assert!(obj.contains_key(expanded_properties::CREATED_AT.as_str()));
-        assert!(obj.contains_key(expanded_properties::MODIFIED_AT.as_str()));
     }
 
     #[test]

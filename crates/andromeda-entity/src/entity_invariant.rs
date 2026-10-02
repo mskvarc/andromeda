@@ -10,7 +10,6 @@ use andromeda_ngsi_ld_lexicon::{
     ngsi_ld_urn::{AttributeListIdParseError, EntityTypeListIdParseError},
     reference::NgsiLdReferenceError,
 };
-use andromeda_ngsi_ld_model::expanded::{dataset_id::InstanceDatasetIdError, entity_member::ExpandedMemberError};
 use andromeda_unit_catalog::unit_code_registry::UnitCodeSnapshotMalformed;
 use std::num::TryFromIntError;
 use thiserror::Error;
@@ -18,14 +17,13 @@ use thiserror::Error;
 /// An entity policy invariant that did not hold.
 #[derive(Debug, Error)]
 pub enum EntityInvariant {
-    /// An entity the broker already admitted carries an instance whose
-    /// `datasetId` no longer reads as an identifier.
-    #[error("an admitted entity carries an unreadable datasetId: {0}")]
-    AdmittedDatasetId(#[from] InstanceDatasetIdError),
-    /// An entity the broker already admitted carries an `@id`, `@type` or member
-    /// key that no longer reads as the value it stands for.
-    #[error("an admitted entity carries an unreadable member: {0}")]
-    AdmittedMember(#[from] ExpandedMemberError),
+    /// The expanded name of `scope` or of the entity `expiresAt` did not read
+    /// as an attribute name, which the core vocabulary guarantees it does.
+    #[error("the expanded name of an entity member is not an attribute name: {0}")]
+    ReservedMemberName(#[source] NgsiLdReferenceError),
+    /// An entity state could not be written in its expanded form.
+    #[error("an entity state could not be written in expanded form: {0}")]
+    StateEncoding(#[source] serde_json::Error),
     /// A store applied a query's result window while leaving part of its
     /// filter unapplied, so the page would be short and every later page
     /// misaligned.

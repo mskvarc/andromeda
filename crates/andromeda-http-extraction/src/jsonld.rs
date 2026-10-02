@@ -3,10 +3,18 @@
 //! Uses `mediatype` for Content-Type validation instead of substring matching,
 //! preventing false positives (e.g. `application/json-patch+json` no longer
 //! matches `application/json`).
+//!
+//! A body is admitted from its text alone: its JSON values are counted, its
+//! numbers checked and its top-level `@context` read without building it, and
+//! a [`JsonLd`] body is then decoded straight from the text into its domain
+//! type. Only a [`JsonLdDocument`], which a handler keeps untyped, is parsed
+//! into a JSON tree.
 
 use crate::{
     addressed_uri::addressed_request_uri,
+    admitted_document::admitted_document,
     blocking_decode::{BlockingDecodePolicy, decode_payload},
+    body_envelope::BodyEnvelope,
     classification::classify_context_link_error,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     json_value_budget::refuse_values_past_budget,
@@ -17,7 +25,11 @@ use crate::{
 };
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext};
-use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact, deserialize_exact_document};
+use andromeda_ngsi_ld_model::request_body::RequestBody;
+use andromeda_ngsi_ld_number::json_value::{
+    deserialize_exact_document,
+    number_range::{NumberRangeError, refuse_numbers_out_of_range},
+};
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
@@ -26,17 +38,16 @@ use axum::{
 use headers::HeaderMapExt;
 use iri_rs::IriBuf;
 use mediatype::{MediaTypeBuf, names};
-use serde::de::DeserializeOwned;
 use serde_json::Value;
-use thiserror::Error;
 
 /// Axum extractor for NGSI-LD JSON-LD request bodies decoded into a domain type.
 ///
 /// Validates the `Content-Type` header against the supported NGSI-LD media types
 /// (`application/json`, `application/ld+json`, `application/merge-patch+json`),
 /// extracts and merges `@context` values from the body when present, and
-/// deserializes the context-stripped payload into `T`. A handler that keeps
-/// the body as an untyped JSON document takes [`JsonLdDocument`] instead.
+/// decodes the body, its `@context` member skipped, straight from its text into
+/// `T`. A handler that keeps the body as an untyped JSON document takes
+/// [`JsonLdDocument`] instead.
 pub struct JsonLd<T> {
     /// The deserialized request body with `@context` removed.
     pub value: T,
@@ -47,9 +58,9 @@ pub struct JsonLd<T> {
 /// Axum extractor for NGSI-LD JSON-LD request bodies kept as untyped JSON
 /// documents.
 ///
-/// Applies every precondition [`JsonLd`] applies and yields the same document
-/// `JsonLd<Value>` would, without re-reading a document that is
-/// already in the shape a read of its serialization gives.
+/// Applies every precondition [`JsonLd`] applies and yields the document with
+/// its numbers in canonical spelling and its `@context` removed, in the shape
+/// a read of its serialization gives.
 pub struct JsonLdDocument {
     /// The request body with `@context` removed.
     pub document: Value,
@@ -58,10 +69,10 @@ pub struct JsonLdDocument {
 }
 
 /// A request body that passed the NGSI-LD body preconditions, with its
-/// numbers canonicalized and its `@context` split off.
+/// `@context` read.
 struct AdmittedBody {
-    /// The context-stripped body.
-    document: Value,
+    /// The payload as received.
+    text: Bytes,
     /// The extracted context specification from the body and/or Link header.
     context: ContextSpec,
     /// The request URI, the `instance` of any later rejection.
@@ -105,86 +116,15 @@ fn classify_content_type(raw: &str) -> Option<ContentKind> {
     None
 }
 
-/// Return whether a decoded document carries a top-level JSON-LD context.
-fn document_has_context(document: &Value) -> bool {
-    match document {
-        Value::Object(obj) => obj.contains_key("@context"),
-        Value::Array(items) => items.iter().any(|item| item.as_object().is_some_and(|o| o.contains_key("@context"))),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
-    }
-}
-
-/// Why the `@context` of an `application/ld+json` body cannot be read.
-#[derive(Debug, Error, PartialEq, Eq)]
-enum BodyContextError {
-    /// Clause 6.3.5: an `application/ld+json` body names its context in its
-    /// `@context` member, and this one has none.
-    #[error("application/ld+json body must contain @context")]
-    Missing,
-    /// JSON-LD applies a top-level node's `@context` to that node alone, so the
-    /// members of an array body read as one request must name one and the same
-    /// context; a batch operation, whose items are separate entities, is read
-    /// item by item instead.
-    #[error("every member of an application/ld+json array body must carry the same @context")]
-    Divergent,
-}
-
-/// The `@context` an `application/ld+json` body names, as written.
-///
-/// An object names its own; an array names the one every member carries.
-fn body_context(document: &Value) -> Result<Value, BodyContextError> {
-    match document {
-        Value::Object(object) => object.get("@context").cloned().ok_or(BodyContextError::Missing), // clone: the member is stripped from the body below
-        Value::Array(items) => {
-            let mut contexts = items.iter().map(|item| item.as_object().and_then(|object| object.get("@context")));
-            let first = contexts.next().flatten().ok_or(BodyContextError::Missing)?;
-            if contexts.all(|context| context == Some(first)) {
-                Ok(first.clone()) // clone: the member is stripped from the body below
-            } else {
-                Err(BodyContextError::Divergent)
-            }
+/// The refusal of a body whose JSON or numbers are refused: a text that is no
+/// JSON is an `InvalidRequest`, a number the model cannot represent or a
+/// member named like the reader's own tokens `BadRequestData` (clause 5.5.4).
+fn number_rejection(refusal: NumberRangeError, uri: Uri) -> ExtractorRejection {
+    match refusal {
+        NumberRangeError::Syntax(error) => ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri),
+        refused @ (NumberRangeError::OutOfRange(_) | NumberRangeError::ReservedMemberName { .. }) => {
+            ExtractorRejection::bad_request_data(refused.to_string(), uri)
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Err(BodyContextError::Missing),
-    }
-}
-
-/// Whether a `@context` value has one of the shapes JSON-LD 1.1 section 3.1
-/// gives it: an IRI string, a context definition object, or an array of those
-/// (and `null`, which resets). Clause 5.5.4: any other shape is data that is
-/// not syntactically correct according to the API data type definitions.
-fn is_well_formed_context(context: &Value) -> bool {
-    match context {
-        Value::Null | Value::String(_) | Value::Object(_) => true,
-        Value::Array(items) => items.iter().all(|item| matches!(item, Value::Null | Value::String(_) | Value::Object(_))),
-        Value::Bool(_) | Value::Number(_) => false,
-    }
-}
-
-/// Whether every top-level `@context` a document carries is well formed.
-fn document_contexts_are_well_formed(document: &Value) -> bool {
-    match document {
-        Value::Object(obj) => obj.get("@context").is_none_or(is_well_formed_context),
-        Value::Array(items) => items
-            .iter()
-            .all(|item| item.as_object().and_then(|o| o.get("@context")).is_none_or(is_well_formed_context)),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
-    }
-}
-
-/// Remove top-level JSON-LD context members before policy deserialization.
-fn strip_context_from_value(value: &mut Value) {
-    match value {
-        Value::Object(obj) => {
-            obj.remove("@context");
-        }
-        Value::Array(items) => {
-            for item in items {
-                if let Value::Object(obj) = item {
-                    obj.remove("@context");
-                }
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 
@@ -196,15 +136,15 @@ fn undecodable_body(error: &UndecodableBody, uri: Uri) -> ExtractorRejection {
 impl<S, T> FromRequest<S> for JsonLd<T>
 where
     S: Send + Sync,
-    T: DeserializeOwned + Send + 'static,
+    T: RequestBody + Send + 'static,
 {
     type Rejection = ExtractorRejection;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         read_body(req, state)
             .await?
-            .decode(|AdmittedBody { document, context, uri }| {
-                let value = deserialize_exact(&document).map_err(|source| undecodable_body(&UndecodableBody::of::<T>(&document, source), uri))?;
+            .decode(|AdmittedBody { text, context, uri }| {
+                let value = T::from_request_text(&text).map_err(|source| undecodable_body(&UndecodableBody::of_text::<T>(&text, source), uri))?;
                 Ok(JsonLd { value, context })
             })
             .await
@@ -220,7 +160,9 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         read_body(req, state)
             .await?
-            .decode(|AdmittedBody { document, context, uri }| {
+            .decode(|AdmittedBody { text, context, uri }| {
+                // clone: each refusal names the request
+                let document = admitted_document(&text).map_err(|refusal| number_rejection(refusal, uri.clone()))?;
                 let document = deserialize_exact_document(document).map_err(|source| undecodable_body(&UndecodableBody::Document { source }, uri))?;
                 Ok(JsonLdDocument { document, context })
             })
@@ -249,8 +191,8 @@ struct ReadBody {
 }
 
 impl ReadBody {
-    /// Parse and admit the payload, then hand the admitted body to `finish`,
-    /// all of it on the blocking pool when the payload is large.
+    /// Admit the payload, then hand the admitted body to `finish`, all of it
+    /// on the blocking pool when the payload is large.
     ///
     /// # Errors
     ///
@@ -264,11 +206,11 @@ impl ReadBody {
         let blocking_decode = self.blocking_decode.clone(); // clone: the decode moves the body it was read with
         decode_payload(blocking_decode.as_ref(), self.bytes.len(), move || self.admit().and_then(finish))
             .await
-            .map_err(|failure| ExtractorRejection::Classified(failure.report().with_instance(uri)))?
+            .map_err(|failure| ExtractorRejection::Classified(failure.report().with_instance(uri.clone())))?
     }
 
-    /// Count the payload's values against the request limit, parse it,
-    /// canonicalize its numbers, and split its `@context` off.
+    /// Count the payload's values against the request limit, check its
+    /// numbers, and read its `@context`, all from its text.
     fn admit(self) -> Result<AdmittedBody, ExtractorRejection> {
         let ReadBody {
             bytes,
@@ -279,18 +221,17 @@ impl ReadBody {
             value_limit,
             blocking_decode: _,
         } = self;
-        // Counted before the tree is built, so a payload of too many values
+        // Counted before anything is built, so a payload of too many values
         // costs its bytes and nothing more.
         // clone: each refusal names the request, which the admitted body keeps naming
         refuse_values_past_budget(&bytes, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(uri.clone())))?;
         // clone: as above
-        let mut value: Value =
-            serde_json::from_slice(&bytes).map_err(|error| ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri.clone()))?;
-        drop(bytes);
-        canonicalize_numbers(&mut value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?;
+        refuse_numbers_out_of_range(&bytes).map_err(|refusal| number_rejection(refusal, uri.clone()))?;
+        // clone: as above
+        let envelope = BodyEnvelope::read(&bytes).map_err(|error| number_rejection(NumberRangeError::Syntax(error), uri.clone()))?;
 
         // Reject empty arrays — not a valid NGSI-LD entity or batch payload
-        if value.as_array().is_some_and(Vec::is_empty) {
+        if envelope.is_empty_array() {
             return Err(ExtractorRejection::bad_request_data("Invalid JSON: expected object, got empty array", uri));
         }
 
@@ -299,29 +240,29 @@ impl ReadBody {
         // interprets every version the clause 4.3.6.8 tables describe, so no
         // amendment of the payload is needed for it to be accepted here.
         // Clause 6.3.5: an application/json body must not carry @context.
-        if matches!(content_kind, ContentKind::Json) && document_has_context(&value) {
+        if matches!(content_kind, ContentKind::Json) && envelope.has_context() {
             return Err(ExtractorRejection::bad_request_data("application/json body must not contain @context", uri));
         }
 
-        if !document_contexts_are_well_formed(&value) {
+        if !envelope.contexts_are_well_formed() {
             return Err(ExtractorRejection::bad_request_data(
                 "@context must be a string, an object, or an array of those",
                 uri,
             ));
         }
 
+        // The context is carried by the spec; the member is skipped when the
+        // body is decoded into its domain type.
         let context = match carrier {
-            PayloadCarrier::LdJsonBody => {
-                ContextSpec::from_body(body_context(&value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?)
-            }
+            PayloadCarrier::LdJsonBody => ContextSpec::from_body(
+                envelope
+                    .into_body_context()
+                    .map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?, // clone: as above
+            ),
             PayloadCarrier::LinkHeader => ContextSpec::from_request(link_context.map_or(RequestContext::Default, RequestContext::Link)),
         };
 
-        // The context is carried by the spec; the member is removed before the body
-        // is decoded into its domain type.
-        strip_context_from_value(&mut value);
-
-        Ok(AdmittedBody { document: value, context, uri })
+        Ok(AdmittedBody { text: bytes, context, uri })
     }
 }
 
@@ -388,6 +329,7 @@ mod tests {
     };
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use andromeda_jsonld::request_context::RequestContext;
+    use andromeda_ngsi_ld_model::{entity::Entity, request_body::RequestBody};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
@@ -402,7 +344,6 @@ mod tests {
         response::IntoResponse,
     };
     use iri_rs::IriBuf;
-    use serde::de::DeserializeOwned;
     use serde_json::{Value, json};
     use std::num::NonZeroUsize;
 
@@ -416,7 +357,7 @@ mod tests {
 
     async fn extract<T>(request: Request<Body>) -> Result<JsonLd<T>, ExtractorRejection>
     where
-        T: DeserializeOwned + Send + 'static,
+        T: RequestBody + Send + 'static,
     {
         JsonLd::<T>::from_request(with_content_length(request), &()).await
     }
@@ -827,23 +768,28 @@ mod tests {
         }
     }
 
+    /// An Entity decoded straight from the body text renders as the
+    /// document the untyped extraction parses, numbers in canonical spelling
+    /// included, and both refuse the same bodies.
     #[tokio::test]
-    async fn an_untyped_document_is_the_document_a_value_typed_extraction_gives() {
+    async fn an_untyped_document_is_the_document_an_entity_typed_extraction_renders() {
         let bodies = [
             r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":[21.5,-7,0,18446744073709551616,0.100000000000000005]}}"#,
             r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":[1e-7,-2.5e-400,1E+20,1e20,0.00001,1.50]}}"#,
             r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":{"b":1,"$serde_json::private::Number":"5"}}}"#,
-            r#"[{"id":"urn:ngsi-ld:T:1","type":"T"},{"id":"urn:ngsi-ld:T:2","type":"T","s":"text"}]"#,
+            r#"{"id":"urn:ngsi-ld:T:1","type":"T","s":"text","j":{"type":"JsonProperty","json":{"a":[1.0,{"b":2.50}]}},"raw":{"value":1E+2}}"#,
         ];
         for body in bodies {
             let untyped = extract_document(json_request(body)).await.map(|extracted| extracted.document.to_string());
-            let typed = extract::<Value>(json_request(body)).await.map(|extracted| extracted.value.to_string());
+            let typed = extract::<Entity>(json_request(body))
+                .await
+                .map(|extracted| serde_json::to_value(&extracted.value).expect("an entity renders").to_string());
             match (untyped, typed) {
                 (Ok(untyped), Ok(typed)) => pretty_assertions::assert_eq!(untyped, typed, "{body}"),
                 // Both refuse the document; the typed extraction can also name
                 // the member it failed at, which an untyped one has none of.
                 (Err(ExtractorRejection::BadRequestData { .. }), Err(ExtractorRejection::BadRequestData { .. })) => {}
-                _other => panic!("{body}: the untyped and Value-typed extractions disagree"),
+                _other => panic!("{body}: the untyped and Entity-typed extractions disagree"),
             }
         }
     }
@@ -854,6 +800,8 @@ mod tests {
         struct Named {
             name: String,
         }
+
+        impl RequestBody for Named {}
 
         match extract::<Named>(json_request(r#"{"name":5}"#)).await {
             Err(ExtractorRejection::BadRequestData { detail, .. }) => {
@@ -917,7 +865,7 @@ mod tests {
         let three = NonZeroUsize::new(3).expect("three is not zero");
         let request = with_value_limit(json_request(r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":[1,2]}"#), three);
 
-        let rejection = extract::<Value>(request).await.err().expect("six values exceed three");
+        let rejection = extract::<Entity>(request).await.err().expect("six values exceed three");
         let (status, _connection, problem) = answered(rejection).await;
 
         pretty_assertions::assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
@@ -1000,8 +948,11 @@ mod tests {
     /// rendered back and its context, or the status and problem of its
     /// refusal.
     async fn typed_at(body: &'static str, threshold: usize) -> Result<(String, RequestContext), (StatusCode, Value)> {
-        match extract::<Value>(with_decode_threshold(json_request(body), threshold)).await {
-            Ok(admitted) => Ok((admitted.value.to_string(), admitted.context.request_context().clone())), // clone: the spec is dropped here
+        match extract::<Entity>(with_decode_threshold(json_request(body), threshold)).await {
+            Ok(admitted) => Ok((
+                serde_json::to_value(&admitted.value).expect("an entity renders").to_string(),
+                admitted.context.request_context().clone(), // clone: the spec is dropped here
+            )),
             Err(rejection) => {
                 let (status, _connection, problem) = answered(rejection).await;
                 Err((status, problem))
@@ -1010,13 +961,19 @@ mod tests {
     }
 
     /// The typed extraction decodes every body alike on the blocking pool and
-    /// inline, admitting and refusing the same ones the untyped one does.
+    /// inline, admitting and refusing the same objects the untyped one does;
+    /// an Entity is an object, so an array body is no Entity.
     #[tokio::test]
     async fn a_typed_body_is_decoded_alike_on_both_decode_paths() {
         for body in ADMITTED_BODIES.into_iter().chain(REFUSED_BODIES) {
             let off_executor = typed_at(body, 0).await;
             pretty_assertions::assert_eq!(off_executor, typed_at(body, usize::MAX).await, "{body}");
-            pretty_assertions::assert_eq!(off_executor.is_ok(), decoded_at(body, 0).await.is_ok(), "{body}");
+            let untyped = decoded_at(body, 0).await;
+            if body.starts_with('{') {
+                pretty_assertions::assert_eq!(off_executor.is_ok(), untyped.is_ok(), "{body}");
+            } else {
+                assert!(off_executor.is_err(), "{body}: an array is no Entity");
+            }
         }
     }
 }

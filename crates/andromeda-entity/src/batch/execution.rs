@@ -1,9 +1,10 @@
 //! How much of a batch runs where.
 //!
-//! Small batches stay on the calling task. Large ones spread the synchronous
-//! fast path of their preparation across a blocking pool, because JSON-LD
-//! expansion of a document whose `@context` is already resolved is CPU-bound;
-//! the asynchronous path expands a group in one bulk call and needs no pool.
+//! Small batches stay on the calling task. Large ones spread the typed
+//! expansion of their preparation across a blocking pool, because expanding a
+//! document whose `@context` is already processed is CPU-bound; an entity the
+//! typed walk declines is expanded by the JSON-LD processor on the calling
+//! task.
 
 use std::num::NonZeroUsize;
 
@@ -11,11 +12,12 @@ use std::num::NonZeroUsize;
 #[derive(Clone, Debug)]
 pub struct BatchExecutionConfig {
     /// Maximum number of chunks dispatched in parallel during large-batch processing.
-    /// Sizes the fastpath preparation blocking-pool semaphore (CPU-bound work).
+    /// Sizes how many typed-expansion tasks run on the blocking pool at once
+    /// (CPU-bound work).
     pub chunk_concurrency: usize,
     /// Maximum number of write-batch chunks dispatched in parallel for
     /// create/upsert/update/merge/delete. Distinct from `chunk_concurrency`,
-    /// which sizes fastpath preparation; write paths are DB-bound and prefer a
+    /// which sizes the preparation; write paths are DB-bound and prefer a
     /// lower ceiling to avoid row-lock contention on `entities` and
     /// `temporal_entity_attributes`.
     pub chunk_write_concurrency: usize,
@@ -57,20 +59,20 @@ impl BatchExecutionConfig {
 pub(super) enum BatchExecution {
     /// Process everything inline in the current task.
     Inline,
-    /// Offload the fast path's preparation to the blocking pool.
+    /// Offload the typed walk of the preparation to the blocking pool.
     Offload {
-        /// Maximum number of concurrent fastpath blocking tasks.
-        fast_chunks: NonZeroUsize,
+        /// Maximum number of walk tasks running at once.
+        concurrency: NonZeroUsize,
     },
 }
 
 /// Choose an execution mode for a batch of `len` entities.
-pub(super) fn decide_batch_execution(len: usize, blocking_threshold: usize, fast_chunk_concurrency: usize) -> BatchExecution {
+pub(super) fn decide_batch_execution(len: usize, blocking_threshold: usize, walk_concurrency: usize) -> BatchExecution {
     if len < blocking_threshold {
         return BatchExecution::Inline;
     }
-    let fast_chunks = NonZeroUsize::new(fast_chunk_concurrency.max(1)).unwrap_or(NonZeroUsize::MIN);
-    BatchExecution::Offload { fast_chunks }
+    let concurrency = NonZeroUsize::new(walk_concurrency.max(1)).unwrap_or(NonZeroUsize::MIN);
+    BatchExecution::Offload { concurrency }
 }
 
 #[cfg(test)]
@@ -86,12 +88,12 @@ mod tests {
     #[test]
     fn decide_batch_execution_above_threshold_returns_offload() {
         let exec = decide_batch_execution(1024, 128, 4);
-        assert!(matches!(exec, BatchExecution::Offload { fast_chunks } if fast_chunks.get() == 4));
+        assert!(matches!(exec, BatchExecution::Offload { concurrency } if concurrency.get() == 4));
     }
 
     #[test]
     fn decide_batch_execution_clamps_zero_concurrency_to_one() {
         let exec = decide_batch_execution(1024, 128, 0);
-        assert!(matches!(exec, BatchExecution::Offload { fast_chunks } if fast_chunks.get() == 1));
+        assert!(matches!(exec, BatchExecution::Offload { concurrency } if concurrency.get() == 1));
     }
 }

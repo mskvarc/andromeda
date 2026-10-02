@@ -13,7 +13,6 @@ andromeda-ngsi-ld-number.workspace = true
 derive_more = { version = "2.1.1", features = ["display"] }
 geo = "0.33.1"
 geojson = "1.0.0"
-jsonld-expandable-core = { version = "0.23.3", features = ["serde-json"] }
 rstar = "0.13.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }

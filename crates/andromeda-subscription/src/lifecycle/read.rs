@@ -3,7 +3,8 @@
 
 use crate::{error::SubscriptionError, keyset_listing::KeysetListing, lifecycle::SubscriptionService, variant::SubscriptionVariant};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
+use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use andromeda_ngsi_ld_query::cursor::PageCursor;
@@ -41,9 +42,7 @@ where
     /// cannot be resolved or the resource cannot be compacted against it.
     pub async fn get_for_response(&self, target: &ContextTarget, id: &Identifier, context: &ContextSpec) -> Result<Value, SubscriptionError> {
         let subscription = self.get(target, id).await?;
-        self.variant
-            .serialize_for_response(&subscription, &NameCompactor::new(&self.engine, context))
-            .await
+        self.variant.serialize_for_response(&subscription, &self.name_compaction(context).await?).await
     }
 
     /// List subscriptions with pagination and serialize them for an HTTP response.
@@ -61,7 +60,7 @@ where
         context: &ContextSpec,
     ) -> Result<(Vec<Value>, i64), SubscriptionError> {
         let (subscriptions, total) = self.repo.list(target, limit, offset).await?;
-        let names = NameCompactor::new(&self.engine, context);
+        let names = self.name_compaction(context).await?;
         let mut compacted = Vec::with_capacity(subscriptions.len());
         for subscription in subscriptions {
             compacted.push(self.variant.serialize_for_response(&subscription, &names).await?);
@@ -99,7 +98,7 @@ where
             .first()
             .map(|subscription| subscription.id.clone())
             .zip(subscriptions.last().map(|subscription| subscription.id.clone()));
-        let names = NameCompactor::new(&self.engine, context);
+        let names = self.name_compaction(context).await?;
         let mut compacted = Vec::with_capacity(subscriptions.len());
         for subscription in subscriptions {
             compacted.push(self.variant.serialize_for_response(&subscription, &names).await?);
@@ -109,5 +108,17 @@ where
             total,
             boundary,
         })
+    }
+
+    /// The names of one response, compacted against the reader's `context`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::JsonLd`] when `context` cannot be resolved
+    /// or processed: clause 5.5.7 answers a request whose `@context` is not
+    /// available with `LdContextNotAvailable` rather than with names spelled
+    /// in no context.
+    async fn name_compaction(&self, context: &ContextSpec) -> Result<NameCompaction, SubscriptionError> {
+        Ok(NameCompaction::new(self.engine.compactor(context).processed_context().await?))
     }
 }

@@ -15,18 +15,20 @@
 //!   5.5.4 refuses.
 //!
 //! One admission runs every rule, so a rule added later cannot be added to
-//! half of the write paths. [`admit_expanded_entity`] and
-//! [`admit_expanded_attribute`] hold the rules that read the expanded payload.
-//! The transport layer runs them ahead of its forwarding phase through
-//! [`EntityService::admit_entity_write`], [`EntityService::admit_attribute_write`]
-//! and `EntityService::admit_batch_write`, which expand the payload the way the
+//! half of the write paths. The rules that read the written document are the
+//! entity model's own (`EntityDocument::admit`, `InstanceDocument::admit_fragment`
+//! and the decoding that produced the document); the payload budget is
+//! counted on the same document. The transport layer runs them ahead of its
+//! forwarding phase through [`EntityService::admit_entity_write`],
+//! [`EntityService::admit_attribute_write`] and
+//! `EntityService::admit_batch_write`, which expand the payload the way the
 //! write path stores it and hand back what they expanded; the write paths
 //! accept only such an admitted payload (see `crate::admitted_write`), so no
-//! write stores a payload the screening did not read. What a client wrote before expansion
-//! -- the attribute types of clause 5.2.4, the seals of clause 4.5.2.2 and the
-//! `@context` clause 5.5.7 admits only at the document's top level -- is decided
-//! on the compact payload, which is the transport layer's own half of the same
-//! admission.
+//! write stores a payload the screening did not read. What a client wrote
+//! before expansion -- the attribute types of clause 5.2.4, the seals of
+//! clause 4.5.2.2 and the `@context` clause 5.5.7 admits only at the
+//! document's top level -- is decided on the compact payload, which is the
+//! transport layer's own half of the same admission.
 //!
 //! [`EntityService::admit_write_context`] is the one rule here that reads the
 //! request's `@context` instead of its payload: clause 5.5.7 refuses a user
@@ -36,19 +38,17 @@
 use crate::{
     EntityService,
     admitted_write::{AdmittedAttribute, AdmittedEntity, WritePayload},
-    attribute_envelope::{validate_attribute_envelopes, validate_instance_identities},
     batch::UpsertPolicy,
-    entity_identity_admission::validate_entity_identity,
+    document_census::{admit_entity_document, admit_instance_document},
     error::EntityError,
-    geo_property_geometry::validate_geo_property_geometries,
-    null_sentinel_admission::{NullSentinelAdmission, reject_null_placements_in_attribute, reject_null_placements_in_entity},
-    scope_admission::validate_scope_member,
     write_kind::{AttributeWriteKind, EntityWriteKind},
 };
-use andromeda_jsonld::{attribute_fragment::expand_attribute_fragment, context_spec::ContextSpec, scoped_context_admission::reject_scoped_user_contexts};
+use andromeda_jsonld::{context_spec::ContextSpec, scoped_context_admission::reject_scoped_user_contexts};
+use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument};
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, expanded::node::expanded_nodes};
-use andromeda_ngsi_ld_representation::normalization::{normalize_attribute_node, normalize_entity_attributes, normalize_merge_fragment};
+use andromeda_ngsi_ld_model::attribute_strip::AttributeStrip;
+use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 use serde_json::Value;
 
 /// One of the write operations whose payload is a whole Entity or an
@@ -105,14 +105,14 @@ impl EntityWrite {
         }
     }
 
-    /// Bring a payload into the shape this operation's write path expands, so
-    /// the screening reads what the write would store.
-    fn normalize(self, payload: &mut Value) {
+    /// The concise rewrite this operation's payload goes through before it is
+    /// expanded: a merge keeps a first-level NGSI-LD Null member as the
+    /// deletion of that member (clause 5.5.12), every other write reads it as
+    /// a concise value.
+    pub(crate) const fn normalization(self) -> Normalization {
         match self {
-            EntityWrite::Create | EntityWrite::AppendAttributes | EntityWrite::UpdateAttributes | EntityWrite::ReplaceEntity => {
-                normalize_entity_attributes(payload);
-            }
-            EntityWrite::MergeEntity => normalize_merge_fragment(payload),
+            EntityWrite::Create | EntityWrite::AppendAttributes | EntityWrite::UpdateAttributes | EntityWrite::ReplaceEntity => Normalization::Entity,
+            EntityWrite::MergeEntity => Normalization::MergeFragment,
         }
     }
 }
@@ -152,42 +152,20 @@ impl BatchWrite {
     }
 }
 
-/// Screen one expanded entity-shaped payload under clause 5.5.4.
+/// Screen one written entity document under clause 5.5.4 and the payload
+/// budget.
 ///
 /// # Errors
 ///
-/// Reports [`EntityError::Validation`], which the HTTP binding answers with the
-/// `BadRequestData` of clause 5.5.4, for an `@id` or `@type` that is not an
-/// identifier or a type name, an attribute instance that is not one its family
-/// admits or whose `datasetId` or `instanceId` is not an identifier, an
-/// NGSI-LD Null the operation does not admit, a `scope` member outside clause
-/// 4.18, and a malformed `GeoProperty` geometry.
-pub(crate) fn admit_expanded_entity(expanded: &Value, admission: NullSentinelAdmission) -> Result<(), EntityError> {
-    validate_entity_identity(expanded)?;
-    validate_attribute_envelopes(expanded)?;
-    reject_null_placements_in_entity(expanded, admission)?;
-    validate_scope_member(expanded, admission)?;
-    validate_geo_property_geometries(expanded)
-}
-
-/// Screen one expanded bare Attribute Fragment (clauses 5.6.4 and 5.6.19)
-/// under clause 5.5.4.
-///
-/// The `scope` member has no reading here: clauses 5.6.4.4 and 5.6.19.4 make it
-/// no attribute a fragment can target, which the two write paths refuse by
-/// name before they reach this.
-///
-/// # Errors
-///
-/// Reports [`EntityError::Validation`] on the same terms as
-/// [`admit_expanded_entity`].
-pub(crate) fn admit_expanded_attribute(expanded: &Value, attribute: &AttributeName, admission: NullSentinelAdmission) -> Result<(), EntityError> {
-    validate_attribute_envelopes(expanded)?;
-    // The fragment is the attribute's instances themselves, so the entity walk
-    // above never reaches their identities as it does an entity's attributes.
-    validate_instance_identities(attribute, expanded_nodes(expanded))?;
-    reject_null_placements_in_attribute(expanded, attribute, admission)?;
-    validate_geo_property_geometries(expanded)
+/// Reports [`EntityError::PayloadBudget`] for a document past `budget`, and
+/// the [`EntityError::Validation`] of an NGSI-LD Null the operation does not
+/// admit, an instance its family does not admit, or a `scope` member outside
+/// clause 4.18; the HTTP binding answers it with the `BadRequestData` of
+/// clause 5.5.4.
+pub(crate) fn admit_written_entity(budget: EntityPayloadBudget, document: &EntityDocument, admission: NullSentinelAdmission) -> Result<(), EntityError> {
+    admit_entity_document(budget, document)?;
+    document.admit(admission)?;
+    Ok(())
 }
 
 impl EntityService {
@@ -221,10 +199,10 @@ impl EntityService {
     /// expanded for the local write.
     ///
     /// The payload is expanded here the way `W`'s own path expands it, so the
-    /// screening reads the shape the write stores. A merge fragment is the one
-    /// payload not screened in its final shape: Table 6.5.3.4-1's `format` and
-    /// `lang` are applied against the stored entity later, and that rewrite
-    /// neither introduces an NGSI-LD Null nor removes one.
+    /// screening reads the document the write applies. A merge fragment is
+    /// the one payload not screened in its final shape: Table 6.5.3.4-1's
+    /// `format` and `lang` are applied against the stored entity later, and
+    /// that rewrite neither introduces an NGSI-LD Null nor removes one.
     ///
     /// # Errors
     ///
@@ -240,27 +218,26 @@ impl EntityService {
     /// out of it.
     ///
     /// The request `@context` was admitted with the whole payload, so only the
-    /// payload rules run again, over the document the local write now stores.
+    /// payload rules run again, over the document the local write now applies.
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::Validation`] when a decoded payload cannot be
-    /// rendered back to JSON, [`EntityError::JsonLd`] when the payload cannot
-    /// be expanded against `context`, and the [`EntityError::Validation`] of
-    /// [`admit_expanded_entity`].
+    /// Reports [`EntityError::PayloadBudget`] when a typed geometry or the
+    /// expanded document is past the budget, [`EntityError::JsonLd`] when the
+    /// payload cannot be expanded against `context`, and the [`EntityError::Validation`] of a
+    /// document clause 5.5.4 refuses for `W`.
     pub async fn admit_remaining_entity<W: EntityWriteKind>(
         &self,
         payload: impl WritePayload,
         context: &ContextSpec,
     ) -> Result<AdmittedEntity<W>, EntityError> {
-        let mut payload = payload.into_payload()?;
-        W::WRITE.normalize(&mut payload);
-        // Counted before the expansion multiplies the payload, so a payload
-        // over the budget costs its compact form and nothing more.
-        self.payload_budget.admit(&payload)?;
-        let expanded = self.engine.expand(payload, context).await?;
-        admit_expanded_entity(&expanded, W::WRITE.null_sentinel_admission())?;
-        Ok(AdmittedEntity::new(expanded))
+        // Clause 6.3.2: a typed geometry past the budget is refused before the
+        // expansion copies it into the written document.
+        payload.admit_geometries(self.payload_budget.geometry_positions)?;
+        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let document = payload.expand(&expansion, W::WRITE.normalization()).await?;
+        admit_written_entity(self.payload_budget, &document, W::WRITE.null_sentinel_admission())?;
+        Ok(AdmittedEntity::new(document))
     }
 
     /// The payload the local phase of a distributed write stores, given what
@@ -294,12 +271,20 @@ impl EntityService {
     /// of clauses 5.6.4 and 5.6.19 written to `attribute`, before the
     /// operation forwards it, and keep what it expanded for the local write.
     ///
+    /// Clauses 5.6.4 and 5.6.19 take a bare Attribute Fragment, so the
+    /// entity-level rewrite does not reach it: the expansion applies the
+    /// concise form and discards the output-only `previous...` member clauses
+    /// 5.2.5 to 5.2.38 require an implementation to ignore, and expands the
+    /// Fragment under the name the request URI carries, because a term's own
+    /// definition decides what the members below it mean.
+    ///
     /// # Errors
     ///
     /// Reports the refusal of [`EntityService::admit_write_context`],
     /// [`EntityError::JsonLd`] when the fragment cannot be expanded against
-    /// `context`, and the [`EntityError::Validation`] of
-    /// [`admit_expanded_attribute`].
+    /// `context`, [`EntityError::PayloadBudget`] when it is past the budget,
+    /// and the [`EntityError::Validation`] of a fragment clause 5.5.4 refuses
+    /// for `W`.
     pub async fn admit_attribute_write<'a, W: AttributeWriteKind>(
         &self,
         attribute: &'a AttributeName,
@@ -307,20 +292,11 @@ impl EntityService {
         context: &ContextSpec,
     ) -> Result<AdmittedAttribute<'a, W>, EntityError> {
         self.admit_write_context(context).await?;
-        // Clauses 5.6.4 and 5.6.19 take a bare Attribute Fragment, so the
-        // entity-level normalization does not reach it. Normalizing here is what
-        // applies the concise form and discards the output-only `previous...`
-        // member clauses 5.2.5 to 5.2.38 require an implementation to ignore
-        // when a Context Producer supplies one. The expansion puts the Fragment
-        // back under the name the request URI carries, because a term's own
-        // definition decides what the members below it mean -- see
-        // `andromeda_jsonld::attribute_fragment`.
-        let mut payload = payload;
-        normalize_attribute_node(attribute.as_str(), &mut payload);
-        self.payload_budget.admit_attribute(attribute, &payload)?;
-        let expanded = expand_attribute_fragment(&self.engine, attribute.as_str(), payload, context).await?;
-        admit_expanded_attribute(&expanded, attribute, W::WRITE.null_sentinel_admission())?;
-        Ok(AdmittedAttribute::new(attribute, expanded))
+        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let fragment = expansion.attribute_fragment(attribute, payload).await?;
+        admit_instance_document(self.payload_budget, fragment.name(), fragment.instance())?;
+        fragment.instance().admit_fragment(fragment.name(), W::WRITE.null_sentinel_admission())?;
+        Ok(AdmittedAttribute::new(attribute, fragment))
     }
 }
 
@@ -331,15 +307,34 @@ mod tests {
         batch::UpsertPolicy,
         error::EntityError,
         notification_recording_harness::{budgeted_recording_service, geometry_budget, recording_service},
-        null_sentinel_admission::NullSentinelAdmission,
-        write_admission::{AttributeWrite, BatchWrite, EntityWrite, admit_expanded_attribute, admit_expanded_entity},
+        write_admission::{AttributeWrite, BatchWrite, EntityWrite},
         write_kind::CreateEntity,
     };
     use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_entity::{
+        admission::null_sentinel_admission::NullSentinelAdmission,
+        document::{EntityDocument, instance_document::InstanceDocument},
+    };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
-    use andromeda_ngsi_ld_model::attribute_strip::AttributeStrip;
-    use andromeda_ngsi_ld_representation::payload_census::PayloadBudgetExceeded;
+    use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity};
+    use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use serde_json::{Value, json};
+
+    /// Decode an expanded entity document and screen it under `admission`,
+    /// as the admission screens what it expanded.
+    fn admit_expanded_entity(expanded: &Value, admission: NullSentinelAdmission) -> Result<(), EntityError> {
+        let document = EntityDocument::from_slice(&serde_json::to_vec(expanded).expect("JSON"))?;
+        document.admit(admission)?;
+        Ok(())
+    }
+
+    /// Decode an expanded attribute fragment of `attribute` and screen it
+    /// under `admission`.
+    fn admit_expanded_attribute(expanded: &Value, attribute: &AttributeName, admission: NullSentinelAdmission) -> Result<(), EntityError> {
+        let instance = InstanceDocument::from_slice(attribute, &serde_json::to_vec(expanded).expect("JSON"))?;
+        instance.admit_fragment(attribute, admission)?;
+        Ok(())
+    }
 
     /// An identifier one octet past the identifier bound.
     fn identifier_past_the_limit() -> String {
@@ -359,6 +354,7 @@ mod tests {
     fn entity_with(value: &Value) -> Value {
         json!([{
             "@id": "urn:ngsi-ld:Device:1",
+            "@type": ["https://example.org/Device"],
             "https://example.org/member": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [value]
@@ -431,14 +427,19 @@ mod tests {
         // clause 4.7 adopts the RFC whole.
         let geometry = json!([{
             "@id": "urn:ngsi-ld:Device:1",
+            "@type": ["https://example.org/Device"],
             "https://uri.etsi.org/ngsi-ld/location": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
-                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": {"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}}]
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@type": ["https://purl.org/geojson/vocab#Point"],
+                    "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": 1.0}, {"@value": 2.0}, {"@value": 3.0}, {"@value": 4.0}]}]
+                }]
             }]
         }]);
         assert!(admit_expanded_entity(&geometry, EntityWrite::Create.null_sentinel_admission()).is_err());
 
-        let scope = json!([{"@id": "urn:ngsi-ld:Device:1", "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/A B"}]}]);
+        let scope =
+            json!([{"@id": "urn:ngsi-ld:Device:1", "@type": ["https://example.org/Device"], "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/A B"}]}]);
         assert!(admit_expanded_entity(&scope, EntityWrite::Create.null_sentinel_admission()).is_err());
     }
 
@@ -471,6 +472,7 @@ mod tests {
     fn the_entity_admission_refuses_an_expanded_dataset_id_past_the_identifier_limit() {
         let payload = json!([{
             "@id": "urn:ngsi-ld:Device:1",
+            "@type": ["https://example.org/Device"],
             "https://example.org/member": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
@@ -484,6 +486,7 @@ mod tests {
     fn the_entity_admission_refuses_an_expanded_instance_id_past_the_identifier_limit() {
         let payload = json!([{
             "@id": "urn:ngsi-ld:Device:1",
+            "@type": ["https://example.org/Device"],
             "https://example.org/member": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
@@ -530,14 +533,14 @@ mod tests {
     async fn an_untouched_payload_is_the_admitted_one() {
         let (service, _recorded) = recording_service().await;
         let context = ContextSpec::core_only();
-        let expected = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await.into_expanded();
+        let expected = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await.into_document();
         let admitted = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await;
         let remainder = service
             .admit_local_remainder(admitted, AttributeStrip::Untouched, remaining_vehicle(&json!("ignored")), &context)
             .await
             .expect("something remains")
             .expect("the admitted payload is kept");
-        pretty_assertions::assert_eq!(remainder.into_expanded(), expected);
+        pretty_assertions::assert_eq!(remainder.into_document(), expected);
     }
 
     /// A narrowed payload is a different document: what remains is admitted
@@ -552,8 +555,9 @@ mod tests {
             .await
             .expect("something remains")
             .expect("the remainder is admitted");
-        let expanded = remainder.into_expanded().to_string();
-        assert!(!expanded.contains("/speed") && expanded.contains("/brandName"), "{expanded}");
+        let names: Vec<String> = remainder.into_document().attributes().keys().map(ToString::to_string).collect();
+        assert!(!names.iter().any(|name| name.ends_with("/speed")), "{names:?}");
+        assert!(names.iter().any(|name| name.ends_with("/brandName")), "{names:?}");
     }
 
     /// The remainder is screened in its own right, so a remainder clause 5.5.4
@@ -599,22 +603,25 @@ mod tests {
         ContextSpec::from_body(json!("https://unloadable.example/context.jsonld"))
     }
 
-    /// The budget is counted on the compact payload before the expansion
-    /// multiplies it: an oversized geometry is refused as such even under a
-    /// context the expansion could never load, while the same payload within
-    /// the budget goes on to the expansion and fails there.
+    /// Clause 6.3.2: an oversized geometry is refused as such, while the same
+    /// payload within the budget is admitted; a context that cannot be loaded
+    /// fails the expansion before anything is counted.
     #[tokio::test]
-    async fn the_create_admission_refuses_an_oversized_geometry_before_expanding_it() {
+    async fn the_create_admission_refuses_an_oversized_geometry() {
         let refusal = budgeted_recording_service(geometry_budget(4))
-            .admit_remaining_entity::<CreateEntity>(located_vehicle(), &unloadable_context())
+            .admit_remaining_entity::<CreateEntity>(located_vehicle(), &ContextSpec::core_only())
             .await
             .expect_err("five positions exceed a budget of four");
         assert!(
             matches!(refusal, EntityError::PayloadBudget(PayloadBudgetExceeded::GeometryPositions { .. })),
             "{refusal:?}"
         );
+        budgeted_recording_service(geometry_budget(5))
+            .admit_remaining_entity::<CreateEntity>(located_vehicle(), &ContextSpec::core_only())
+            .await
+            .expect("five positions are within a budget of five");
 
-        let expansion_failure = budgeted_recording_service(geometry_budget(5))
+        let expansion_failure = budgeted_recording_service(geometry_budget(4))
             .admit_remaining_entity::<CreateEntity>(located_vehicle(), &unloadable_context())
             .await
             .expect_err("the context does not load");
@@ -632,17 +639,36 @@ mod tests {
             "location": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}
         });
         let refusal = budgeted_recording_service(geometry_budget(4))
-            .admit_remaining_entity::<CreateEntity>(concise.clone(), &unloadable_context()) // clone: the same payload is admitted twice
+            .admit_remaining_entity::<CreateEntity>(concise.clone(), &ContextSpec::core_only()) // clone: the same payload is admitted twice
             .await
             .expect_err("five positions exceed a budget of four");
         assert!(
             matches!(refusal, EntityError::PayloadBudget(PayloadBudgetExceeded::GeometryPositions { .. })),
             "{refusal:?}"
         );
-        let expansion_failure = budgeted_recording_service(geometry_budget(5))
-            .admit_remaining_entity::<CreateEntity>(concise, &unloadable_context())
+        budgeted_recording_service(geometry_budget(5))
+            .admit_remaining_entity::<CreateEntity>(concise, &ContextSpec::core_only())
             .await
-            .expect_err("the context does not load");
-        assert!(matches!(expansion_failure, EntityError::JsonLd(_)), "{expansion_failure:?}");
+            .expect("five positions are within a budget of five");
+    }
+
+    /// Clause 6.3.2: a typed entity's geometry past the budget is refused
+    /// before the expansion, so not even a context that cannot be loaded is
+    /// reached, and the refusal names the attribute as the client wrote it.
+    #[tokio::test]
+    async fn a_typed_geometry_past_the_budget_is_refused_before_the_expansion() {
+        let entity: Entity = serde_json::from_value(located_vehicle()).expect("a valid entity");
+        let refusal = budgeted_recording_service(geometry_budget(4))
+            .admit_remaining_entity::<CreateEntity>(&entity, &unloadable_context())
+            .await
+            .expect_err("five positions exceed a budget of four");
+        let EntityError::PayloadBudget(PayloadBudgetExceeded::GeometryPositions {
+            owner: GeometryOwner::Attribute(owner),
+            ..
+        }) = refusal
+        else {
+            panic!("the refusal is the geometry budget: {refusal:?}");
+        };
+        pretty_assertions::assert_eq!(owner.as_str(), "location");
     }
 }

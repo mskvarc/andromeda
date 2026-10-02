@@ -20,6 +20,8 @@ pub mod query;
 pub mod reader;
 /// The Context Registry's view of possibly available types and attributes.
 pub mod registry_types;
+/// One entity read for a retrieval, with its clause 4.8 system times.
+pub mod retrieved_entity;
 /// Runtime-neutral waiting between contended write attempts.
 pub mod retry_delay;
 /// The caller-owned ports entity policy is constructed over.

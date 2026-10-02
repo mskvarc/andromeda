@@ -1,12 +1,14 @@
 //! The value one attribute-history row carries, and the column it occupies.
 
+use crate::error::TemporalStoreError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::temporal::TemporalValue;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
+use serde_json::value::RawValue;
 
 /// What one attribute-history row records.
 ///
@@ -20,7 +22,7 @@ use serde_json::Value;
 /// synthesised at render time from the attribute family (clauses 4.5.7 and
 /// 4.5.8) and is never written into a typed column, because a stored sentinel
 /// is indistinguishable from a client that genuinely sent that string.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum AttributeHistoryValue {
     /// The row ends the attribute instance at the given instant.
     Tombstone {
@@ -35,8 +37,8 @@ pub enum AttributeHistoryValue {
     Boolean(bool),
     /// A geometry, stored in the broker's single geodetic reference system.
     Geometry(Geometry),
-    /// A structured value: object, array, language map, JSON literal or list.
-    Object(Value),
+    /// A structured value, as the JSON the structured column stores it as.
+    Object(Box<RawValue>),
     /// A point in time, already truncated to the broker's microsecond resolution.
     DateTime(DateTime<Utc>),
     /// A URI, which is the shape a relationship object is stored in.
@@ -44,6 +46,30 @@ pub enum AttributeHistoryValue {
 }
 
 impl AttributeHistoryValue {
+    /// The shape one neutral observation value is stored in.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalStoreError::ScopeHasNoAttributeRow`] for an entity's
+    /// Scope, which clause 4.5.4 gives no attribute stream: it is carried by a
+    /// scope entry and stored in `scope_history`, so one that reached the
+    /// attribute conversion would have to invent the stream the clause denies
+    /// it; and [`TemporalStoreError::StoredJson`] when a structured value does
+    /// not write as JSON.
+    pub fn of_observation(value: &TemporalValue) -> Result<AttributeHistoryValue, TemporalStoreError> {
+        Ok(match value {
+            TemporalValue::Number(number) => AttributeHistoryValue::Number(number.clone()), // clone: the persisted row owns its exact decimal.
+            TemporalValue::String(text) => AttributeHistoryValue::String(text.clone()),     // clone: the persisted row owns the string.
+            TemporalValue::Boolean(flag) => AttributeHistoryValue::Boolean(*flag),
+            TemporalValue::Geometry(geometry) => AttributeHistoryValue::Geometry(geometry.clone()), // clone: the persisted row owns its geometry.
+            TemporalValue::Structured(structured) => AttributeHistoryValue::Object(structured.to_stored_json().map_err(TemporalStoreError::StoredJson)?),
+            TemporalValue::DateTime(instant) => AttributeHistoryValue::DateTime(*instant),
+            TemporalValue::Uri(uri) => AttributeHistoryValue::Uri(uri.clone()), // clone: the persisted row owns the URI.
+            TemporalValue::Tombstone { deleted_at } => AttributeHistoryValue::Tombstone { deleted_at: *deleted_at },
+            TemporalValue::Scopes(_) => return Err(TemporalStoreError::ScopeHasNoAttributeRow),
+        })
+    }
+
     /// The code the row records for this value's shape.
     #[must_use]
     pub const fn kind(&self) -> ValueKind {
@@ -158,7 +184,7 @@ impl AttributeHistoryValue {
 
     /// The structured column's content, when this row populates it.
     #[must_use]
-    pub const fn object(&self) -> Option<&Value> {
+    pub fn object(&self) -> Option<&RawValue> {
         match self {
             AttributeHistoryValue::Object(object) => Some(object),
             AttributeHistoryValue::Tombstone { .. }
@@ -208,6 +234,7 @@ mod tests {
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
     use chrono::{TimeZone, Utc};
+    use serde_json::value::RawValue;
 
     #[test]
     fn a_tombstone_declares_the_reserved_kind_and_populates_no_typed_column() {
@@ -250,7 +277,7 @@ mod tests {
             AttributeHistoryValue::Number(JsonNumber::from(1)),
             AttributeHistoryValue::String("text".to_owned()),
             AttributeHistoryValue::Boolean(false),
-            AttributeHistoryValue::Object(serde_json::json!({"a": 1})),
+            AttributeHistoryValue::Object(RawValue::from_string(r#"{"a": 1}"#.to_owned()).expect("a JSON object")),
             AttributeHistoryValue::DateTime(instant),
             AttributeHistoryValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")),
         ];

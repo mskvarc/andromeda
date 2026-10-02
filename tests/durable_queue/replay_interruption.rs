@@ -9,6 +9,7 @@
 
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_entity::side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainOutcome};
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_postgresql_context_store::pending_side_effects::{
     payload::{PersistedBatchSideEffectJob, PersistedTemporalEntity},
     repo::PendingSideEffectsRepository,
@@ -27,17 +28,19 @@ const BLOCKED_DEADLINE: Duration = Duration::from_secs(10);
 /// belongs to.
 pub async fn enqueue_observation(pool: &PgPool, entity_id: &str) -> WriteId {
     let record = WriteRecord::mint(Utc::now());
+    let document = json!([{
+        "@id": entity_id,
+        "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"],
+        "https://uri.etsi.org/ngsi-ld/default-context/speed": [{
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 120}]
+        }]
+    }]);
+    let observed = EntityState::from_slice(&serde_json::to_vec(&document).expect("the document serialises")).expect("the document is an entity state");
     let payload = PersistedBatchSideEffectJob {
         temporal_entities: vec![PersistedTemporalEntity {
             id: entity_id.parse().expect("a valid entity identifier"),
-            expanded: json!({
-                "@id": entity_id,
-                "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"],
-                "https://uri.etsi.org/ngsi-ld/default-context/speed": [{
-                    "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
-                    "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 120}]
-                }]
-            }),
+            expanded: Arc::new(observed),
         }],
         change_events: Vec::new(),
     };

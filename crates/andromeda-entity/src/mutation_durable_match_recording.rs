@@ -30,7 +30,8 @@ use crate::{
     },
     write_kind::{MergeEntity, ReplaceEntity},
 };
-use andromeda_ngsi_ld_model::{entity::EntityPatch, expanded::attribute_change::AttributeChangeKind};
+use andromeda_ngsi_ld_entity::reads::attribute_change::AttributeChangeKind;
+use andromeda_ngsi_ld_model::entity::EntityPatch;
 use serde_json::json;
 
 /// Build an [`EntityPatch`] from a compact fixture payload; short-form terms

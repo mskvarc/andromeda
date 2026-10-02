@@ -1,0 +1,7 @@
+{
+    "@context": {
+        "Vehicle": "http://example.org/Vehicle",
+        "speed": "http://example.org/speed",
+        "source": "http://example.org/hasSource"
+    }
+}

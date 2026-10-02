@@ -281,7 +281,7 @@ impl JsonLdEngine {
 
 /// Validate an expansion result as an absolute IRI.
 ///
-/// The processor and the fastpath both emit expansions as document strings; a
+/// The processor emits expansions as document strings; a
 /// well-formed one is an absolute IRI, and this is where that guarantee is
 /// enforced so every caller receives an [`IriBuf`] rather than re-parsing one.
 fn iri_of(candidate: &str) -> Result<IriBuf, JsonLdError> {

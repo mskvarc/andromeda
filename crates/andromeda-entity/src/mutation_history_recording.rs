@@ -35,7 +35,8 @@ async fn merge_records_the_merged_instance_keeping_its_untouched_sub_property() 
 
     let write = single_recorded_write(&recorded);
     assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
-    let category = observed_default_instance(recorded_observation(&write).expect("an observation"), CATEGORY_IRI);
+    let observation = recorded_observation(&write).expect("an observation");
+    let category = observed_default_instance(&observation, CATEGORY_IRI);
     assert_eq!(category[properties::VALUE.as_str()][0]["@value"], json!("retail"));
     assert_eq!(category[ACCURACY_IRI][0][properties::VALUE.as_str()][0]["@value"], json!("high"));
 }
@@ -56,7 +57,7 @@ async fn merge_records_the_instance_without_the_sub_property_it_deleted_and_with
     let write = single_recorded_write(&recorded);
     assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
     let observation = recorded_observation(&write).expect("an observation");
-    assert!(observed_default_instance(observation, CATEGORY_IRI).get(ACCURACY_IRI).is_none());
+    assert!(observed_default_instance(&observation, CATEGORY_IRI).get(ACCURACY_IRI).is_none());
     assert!(
         !observation.to_string().contains("urn:ngsi-ld:null"),
         "no deletion sentinel is recorded: {observation}"

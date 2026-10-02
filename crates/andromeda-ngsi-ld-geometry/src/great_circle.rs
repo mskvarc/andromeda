@@ -14,7 +14,7 @@
 //! The six topological relations of clause 4.10 stay planar, as the `geometry`
 //! columns they are rendered against are; this reading is `near`'s alone.
 
-use crate::geometry::Geometry;
+use crate::planar::PlanarGeometry;
 use geo::{BoundingRect, Coord, Line, LineString, Polygon, Rect};
 
 /// The longitude/latitude rectangle covering every point of `geometry` when its
@@ -24,8 +24,8 @@ use geo::{BoundingRect, Coord, Line, LineString, Polygon, Rect};
 /// It contains the planar bounding rectangle, and widens it only where an edge
 /// bows past its ends or crosses the antimeridian.
 #[must_use]
-pub fn great_circle_bounds(geometry: &Geometry) -> Option<Rect<f64>> {
-    arcs(geometry.planar()).into_iter().map(arc_bounds).reduce(|bounds, arc| {
+pub fn great_circle_bounds(geometry: &PlanarGeometry) -> Option<Rect<f64>> {
+    arcs(geometry.as_geo()).into_iter().map(arc_bounds).reduce(|bounds, arc| {
         Rect::new(
             Coord {
                 x: bounds.min().x.min(arc.min().x),
@@ -186,7 +186,7 @@ mod tests {
     }
 
     fn bounds(geometry: &Geometry) -> Rect<f64> {
-        great_circle_bounds(geometry).expect("a test geometry has coordinates")
+        great_circle_bounds(&geometry.planar()).expect("a test geometry has coordinates")
     }
 
     /// Whether every point sampled along the great-circle edge from `start` to
@@ -241,7 +241,7 @@ mod tests {
         .expect("a test square is a closed ring");
         let square = Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![ring])));
         let rect = bounds(&square);
-        let planar = square.bounding_rect().expect("a square has a bounding rectangle");
+        let planar = square.planar().bounding_rect().expect("a square has a bounding rectangle");
         assert!(rect.max().y - planar.max().y < 1e-7, "a 140 m edge bows by under a centimetre");
         pretty_assertions::assert_eq!((rect.min(), (rect.max().x)), (planar.min(), planar.max().x));
     }
@@ -263,8 +263,8 @@ mod tests {
 
     #[test]
     fn a_geometry_with_no_coordinates_has_no_bounds() {
-        assert!(great_circle_bounds(&Geometry::new(GeometryForm::Polygon(PolygonRings::new(Vec::new())))).is_none());
-        assert!(great_circle_bounds(&Geometry::new(GeometryForm::MultiPoint(Vec::new()))).is_none());
+        assert!(great_circle_bounds(&Geometry::new(GeometryForm::Polygon(PolygonRings::new(Vec::new()))).planar()).is_none());
+        assert!(great_circle_bounds(&Geometry::new(GeometryForm::MultiPoint(Vec::new())).planar()).is_none());
     }
 
     #[test]

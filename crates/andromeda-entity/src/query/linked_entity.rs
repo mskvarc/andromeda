@@ -21,21 +21,21 @@
 
 use crate::{
     error::EntityError,
+    port::retrieved_entity::RetrievedEntity,
     query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_model::{attribute::instance::Attribute, entity::Entity};
 use andromeda_ngsi_ld_representation::{
     linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind},
     sys_attrs::SysAttrsInclusion,
 };
+use chrono::Utc;
 use indexmap::{IndexMap, IndexSet};
-use std::{
-    collections::{HashMap, HashSet},
-    num::NonZeroU32,
-};
+use std::{collections::HashSet, num::NonZeroU32};
 
 /// One traversal candidate: the id a Relationship names, together with the
 /// `objectType` annotations its referencing Relationships carried.
@@ -189,7 +189,7 @@ impl EntityQueryService {
 
     /// Read one level's candidates from the local store, in candidate order.
     ///
-    /// A candidate the store does not hold, or whose payload does not compact
+    /// A candidate the store does not hold, or whose state does not compact
     /// into an entity, is dropped from the level: clause 4.5.23 leaves such a
     /// Relationship as a plain URI rather than failing the whole retrieval.
     async fn resolve_level_locally(
@@ -200,23 +200,29 @@ impl EntityQueryService {
         context: &ContextSpec,
     ) -> Result<IndexMap<Identifier, Entity>, EntityError> {
         let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
-        let mut payloads = self.reader.get_batch(target, &ids).await?;
-        let sys_attr_snapshots = match sys_attrs {
-            SysAttrsInclusion::Include => self.reader.get_sys_attrs_batch(target, &ids).await?,
-            SysAttrsInclusion::Strip => HashMap::new(),
-        };
+        // Clause 4.8: the entity-level system times come back with each state
+        // from the same read.
+        let retrieved = self.reader.get_batch(target, &ids).await?;
 
         let compactor = self.engine().compactor(context);
-        let mut level = IndexMap::with_capacity(payloads.len());
+        let entity_compactor = EntityCompactor::new(&compactor);
+        let now = Utc::now();
+        let mut level = IndexMap::with_capacity(retrieved.len());
         for candidate in candidates {
-            let Some(expanded) = payloads.remove(&candidate.id) else {
+            let Some(RetrievedEntity { state, sys_attrs: times }) = retrieved.get(&candidate.id) else {
                 continue;
             };
-            match self.compact_to_entity(expanded, &compactor, Some(candidate.id.as_str()), sys_attrs).await {
-                Ok(mut entity) => {
-                    if let Some(snapshot) = sys_attr_snapshots.get(&candidate.id) {
-                        entity = entity.with_sys_attrs(snapshot);
-                    }
+            let read = EntityRead {
+                id_override: Some(&candidate.id),
+                sys_attrs,
+                now,
+            };
+            match entity_compactor.entity(state, &read).await {
+                Ok(entity) => {
+                    let entity = match sys_attrs {
+                        SysAttrsInclusion::Include => entity.with_sys_attrs(times),
+                        SysAttrsInclusion::Strip => entity,
+                    };
                     level.insert(candidate.id.clone(), entity); // clone: the result map owns its keys
                 }
                 Err(error) => {
@@ -366,20 +372,25 @@ mod tests {
     use crate::{
         config::EntityConfig,
         entity_snapshot::EntitySnapshot,
-        port::{query::EntityQueryStore, reader::EntityReader},
+        port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
         query::{linked_entity::*, remote_linked::RemoteLinkedEntities},
         query_outcome::QueryOutcome,
         spatial_acceleration::SpatialAcceleration,
         storage_profile::StorageProfile,
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use async_trait::async_trait;
+    use chrono::DateTime;
     use serde_json::{Value, json};
-    use std::sync::{Arc, Mutex, MutexGuard};
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex, MutexGuard},
+    };
 
     fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
@@ -407,28 +418,28 @@ mod tests {
         .expect("entity")
     }
 
-    /// The expanded NGSI-LD payload the store holds for an entity whose single
-    /// Relationship names `targets` in order. The store speaks expanded
-    /// JSON-LD; the traversal compacts what it reads.
-    fn stored(id: &str, targets: &[&str]) -> Value {
-        let objects: Vec<Value> = targets.iter().map(|target| json!({"@id": target})).collect();
-        json!({
-            "@id": id,
-            "@type": ["https://example.com/Thing"],
-            "https://example.com/linksTo": [{
+    /// The state the store holds for an entity whose single Relationship names
+    /// `targets` in order, or that has no attribute when `targets` is empty.
+    /// The store holds states; the traversal compacts what it reads.
+    fn stored(id: &str, targets: &[&str]) -> Arc<EntityState> {
+        let mut document = json!({"@id": id, "@type": ["https://example.com/Thing"]});
+        if !targets.is_empty() {
+            let objects: Vec<Value> = targets.iter().map(|target| json!({"@id": target})).collect();
+            document["https://example.com/linksTo"] = json!([{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Relationship"],
                 "https://uri.etsi.org/ngsi-ld/hasObject": objects
-            }]
-        })
+            }]);
+        }
+        Arc::new(EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored state"))
     }
 
-    /// A store holding a fixed set of expanded payloads, keyed by id.
+    /// A store holding a fixed set of states, keyed by id.
     struct StubStore {
-        entities: HashMap<Identifier, Value>,
+        entities: HashMap<Identifier, Arc<EntityState>>,
     }
 
     impl StubStore {
-        fn new(entities: impl IntoIterator<Item = (Identifier, Value)>) -> StubStore {
+        fn new(entities: impl IntoIterator<Item = (Identifier, Arc<EntityState>)>) -> StubStore {
             StubStore {
                 entities: entities.into_iter().collect(),
             }
@@ -441,15 +452,31 @@ mod tests {
 
     #[async_trait]
     impl EntityReader for StubStore {
-        async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Value>, EntityError> {
+        async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Arc<EntityState>>, EntityError> {
             Err(unsupported("get"))
         }
 
-        async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
+        async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, RetrievedEntity>, EntityError> {
             Ok(ids
                 .iter()
-                .filter_map(|id| self.entities.get(id).map(|value| (id.clone(), value.clone()))) // clone: the port hands back owned payloads
+                .filter_map(|id| {
+                    self.entities.get(id).map(|state| {
+                        let retrieved = RetrievedEntity {
+                            state: Arc::clone(state),
+                            sys_attrs: SysAttrsSnapshot {
+                                created_at: DateTime::<Utc>::UNIX_EPOCH,
+                                modified_at: DateTime::<Utc>::UNIX_EPOCH,
+                                expires_at: None,
+                            },
+                        };
+                        (id.clone(), retrieved) // clone: the port hands back owned keys
+                    })
+                })
                 .collect())
+        }
+
+        async fn get_with_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+            Err(unsupported("get_with_sys_attrs"))
         }
 
         async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
@@ -475,7 +502,7 @@ mod tests {
             panic!("the traversal never inspects the store's profile")
         }
 
-        async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, EntityError> {
+        async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
             Err(unsupported("query_compiled"))
         }
 

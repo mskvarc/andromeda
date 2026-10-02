@@ -9,8 +9,8 @@
 
 use crate::{
     FederationService,
-    answer_vocabulary::AnswerVocabulary,
     cache::Cacheability,
+    document_rewording::DocumentVocabulary,
     entity_read::mode_admitted,
     error::FederationError,
     forwarding_context::BodyPresence,
@@ -149,7 +149,7 @@ impl FederationService {
                     .registration(&registration)
                     .inbound(context)
                     .triggering(triggering)
-                    .vocabulary(AnswerVocabulary::Opaque)
+                    .vocabulary(DocumentVocabulary::Opaque)
                     .build();
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;

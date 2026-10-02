@@ -1,0 +1,38 @@
+{
+    "@context": {
+        "ex": "https://example.org/terms#",
+        "speed": "ex:speed",
+        "sensor": {
+            "@id": "ex:sensor",
+            "@type": "@id"
+        },
+        "category": {
+            "@id": "ex:category",
+            "@type": "@vocab"
+        },
+        "label": {
+            "@id": "ex:label",
+            "@container": "@language"
+        },
+        "settings": {
+            "@id": "ex:settings",
+            "@type": "@json"
+        },
+        "measuredAt": {
+            "@id": "ex:measuredAt",
+            "@type": "https://uri.etsi.org/ngsi-ld/DateTime"
+        },
+        "tags": {
+            "@id": "ex:tags",
+            "@container": "@list"
+        },
+        "nickname": {
+            "@id": "ex:nickname",
+            "@language": "fr"
+        },
+        "Car": "ex:Car",
+        "location": "ex:location",
+        "value": "ex:value",
+        "observedAt": "ex:observedAt"
+    }
+}

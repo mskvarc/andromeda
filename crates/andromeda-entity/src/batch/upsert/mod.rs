@@ -10,7 +10,7 @@
 //!
 //! Replace mode overwrites `entity_documents.payload` wholesale, so any attribute the
 //! replacement omits is deleted and needs a tombstone. That diff is only
-//! meaningful against the payload the entity actually had when the write
+//! meaningful against the state the entity actually had when the write
 //! landed, which is what the compare-and-set guarantees. The diff is taken
 //! against `entity_documents.payload` rather than the temporal catalogue
 //! on purpose: catalogue rows outlive the attributes they describe, because a
@@ -33,8 +33,8 @@ use crate::{
     entity_invariant::EntityInvariant,
     error::EntityError,
 };
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// Replace mode.
@@ -49,15 +49,15 @@ type UpsertOutcome = (BatchResult, Vec<Identifier>);
 /// preparing them, and the identifiers it created.
 pub(super) type UpsertChunkOutcome = (BatchResult, Vec<(Identifier, EntityError)>, Vec<Identifier>);
 
-/// The payload `write` stores, shared rather than copied.
+/// The entity state `write` stores, shared rather than copied.
 ///
 /// # Errors
 ///
 /// Reports [`EntityInvariant::WriteWithoutStoredState`] for a write that stores
-/// no payload, which no insert or update is.
-fn stored_payload(write: &ChunkWrite) -> Result<Arc<Value>, Box<(Identifier, EntityError)>> {
+/// no state, which no insert or update is.
+fn stored_state(write: &ChunkWrite) -> Result<Arc<EntityState>, Box<(Identifier, EntityError)>> {
     match write.entity.record() {
-        Some(record) => Ok(Arc::clone(&record.payload)), // clone: Arc ref-count bump
+        Some(record) => Ok(Arc::clone(&record.state)), // clone: Arc ref-count bump
         None => Err(Box::new((
             write.id.clone(), // clone: the report owns the identifier it names
             EntityInvariant::WriteWithoutStoredState {

@@ -74,8 +74,9 @@ pub enum FederationError {
     #[error(transparent)]
     Representation(#[from] serde_json::Error),
     /// The write payload could not be serialised for the registration it is
-    /// forwarded to.
-    #[error("the forwarded write payload could not be serialised: {0}")]
+    /// forwarded to, or the serialised payload not read back for the part a
+    /// registration left local.
+    #[error("the forwarded write payload could not be serialised or read back: {0}")]
     ForwardedBody(#[source] serde_json::Error),
     /// An internal federation invariant could not be satisfied.
     ///

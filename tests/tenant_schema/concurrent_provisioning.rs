@@ -34,7 +34,7 @@ fn device_entity(id: &str) -> Value {
     json!({
         "id": id,
         "type": "Device",
-        "value": {"type": "Property", "value": 1},
+        "reading": {"type": "Property", "value": 1},
         "@context": [CORE_CONTEXT]
     })
 }

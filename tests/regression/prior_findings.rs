@@ -268,7 +268,10 @@ async fn regression_r2_92_relationship_object_decodes_but_property_percent_survi
     let client = scope.client();
     let target = scope.id("Building:r2-92-target");
     let id = scope.id("Device:r2-92");
-    let encoded_target = target.replace(':', "%3A");
+    // Clause 4.5.3.2 makes `object` a URI, and RFC 3986 section 3 needs the
+    // scheme delimiter unencoded for one, so only the colons after `urn:` are
+    // percent-encoded.
+    let encoded_target = format!("urn:{}", target.strip_prefix("urn:").expect("a test identifier is a URN").replace(':', "%3A"));
     let entity = json!({
         "id": id,
         "type": "Device",

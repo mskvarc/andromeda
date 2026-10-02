@@ -380,19 +380,22 @@ mod tests {
         write_record::WriteRecord,
     };
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_entity::{
+        entity_state::EntityState,
+        reads::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            attribute_instance_key::AttributeInstanceKey,
+        },
+    };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
-        expanded::{
-            attribute_change::{AttributeChange, AttributeChangeKind},
-            instance_key::AttributeInstanceKey,
-        },
         notification::ChangeOrigin,
     };
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use chrono::{DateTime, TimeZone, Utc};
     use futures::future::BoxFuture;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::{
         collections::VecDeque,
         sync::{Arc, Mutex},
@@ -914,15 +917,16 @@ mod tests {
         raw.parse().expect("a valid URI")
     }
 
-    fn building(id: &str) -> Value {
-        json!([{
+    fn building(id: &str) -> EntityState {
+        let stored = json!([{
             "@id": id,
             "@type": [BUILDING_TYPE_IRI],
             "https://uri.etsi.org/ngsi-ld/default-context/category": [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "office"}]
             }]
-        }])
+        }]);
+        EntityState::from_slice(stored.to_string().as_bytes()).expect("the fixture is a stored entity")
     }
 
     /// The change a live-delivery broker defers for a Building it created.

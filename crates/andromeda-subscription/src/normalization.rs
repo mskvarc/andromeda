@@ -1,6 +1,6 @@
 //! Subscription persistence normalization.
 
-use andromeda_jsonld::compaction::NameCompactor;
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
     notification::DEFAULT_NOTIFICATION_TRIGGERS,
@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_query::{
 };
 use chrono::{DateTime, Utc};
 use serde_json::{Number, Value};
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 /// Render `timeInterval` and `throttling` as JSON integers whenever they hold
 /// a whole number of seconds.
@@ -93,7 +93,7 @@ enum StructuralKeywords {
 }
 
 /// Compact every string of one attribute-name list in place.
-async fn compact_name_list(compactor: &NameCompactor<'_>, names: &mut [Value], keywords: StructuralKeywords) {
+fn compact_name_list(compactor: &NameCompaction, names: &mut [Value], keywords: StructuralKeywords) {
     for name in names.iter_mut() {
         let Some(iri) = name.as_str().map(String::from) else {
             continue;
@@ -106,19 +106,19 @@ async fn compact_name_list(compactor: &NameCompactor<'_>, names: &mut [Value], k
         {
             continue;
         }
-        *name = Value::String(compactor.compact_attr_iri(&iri).await);
+        *name = Value::String(compactor.compact_attr_iri(&iri).to_string());
     }
 }
 
 /// Compact IRI-bearing fields in a serialized Subscription for HTTP response.
-pub async fn compact_subscription_iris(compactor: &NameCompactor<'_>, value: &mut Value) {
+pub fn compact_subscription_iris(compactor: &NameCompaction, value: &mut Value) {
     // Compact entities[].type IRIs
     if let Some(entities) = value.get_mut("entities")
         && let Some(arr) = entities.as_array_mut()
     {
         for entity_sel in arr.iter_mut() {
             if let Some(type_iri) = entity_sel.get("type").and_then(|v| v.as_str()).map(String::from) {
-                let compacted = compactor.compact_type_iri(&type_iri).await;
+                let compacted = compactor.compact_type_iri(&type_iri).to_string();
                 if let Some(obj) = entity_sel.as_object_mut() {
                     obj.insert("type".to_string(), Value::String(compacted));
                 }
@@ -127,7 +127,7 @@ pub async fn compact_subscription_iris(compactor: &NameCompactor<'_>, value: &mu
     }
 
     if let Some(watched) = value.get_mut("watchedAttributes").and_then(Value::as_array_mut) {
-        compact_name_list(compactor, watched, StructuralKeywords::Compact).await;
+        compact_name_list(compactor, watched, StructuralKeywords::Compact);
     }
 
     // Clause 5.2.14: `attributes` names attributes only; `pick` and `omit`
@@ -139,7 +139,7 @@ pub async fn compact_subscription_iris(compactor: &NameCompactor<'_>, value: &mu
             ("omit", StructuralKeywords::Keep),
         ] {
             if let Some(names) = notification.get_mut(member).and_then(Value::as_array_mut) {
-                compact_name_list(compactor, names, keywords).await;
+                compact_name_list(compactor, names, keywords);
             }
         }
     }
@@ -160,7 +160,7 @@ pub async fn compact_subscription_iris(compactor: &NameCompactor<'_>, value: &mu
 /// back the filter it wrote. `csf` is exempt because `expandValues` names
 /// Entity attributes, while `csf` addresses a registration's Context Source
 /// Properties.
-pub async fn compact_subscription_filters(compactor: &NameCompactor<'_>, value: &mut Value, filters: &SubscriptionFilters) {
+pub async fn compact_subscription_filters(compactor: &NameCompaction, value: &mut Value, filters: &SubscriptionFilters) {
     if let Some(expr) = filters.q.as_ref() {
         let opted_in: HashSet<AttributeName> = filters.expand_values.iter().flatten().cloned().collect(); // clone: the opt-in list stays on the stored resource
         // clone: the stored filter stays in the resource while the compacted copy is rendered
@@ -175,7 +175,7 @@ pub async fn compact_subscription_filters(compactor: &NameCompactor<'_>, value: 
         let Some(names) = names else {
             continue;
         };
-        let compacted = compact_opt_in_names(compactor, names).await;
+        let compacted = compact_opt_in_names(compactor, names);
         if let Some(obj) = value.as_object_mut() {
             obj.insert(member.to_string(), Value::String(compacted));
         }
@@ -191,11 +191,8 @@ fn insert_compacted(value: &mut Value, member: &str, expr: &Expr) {
 
 /// Spell one stored `expandValues` / `jsonKeys` list in the reader's terms,
 /// in the comma-separated form Table 5.2.12-1 defines.
-async fn compact_opt_in_names(compactor: &NameCompactor<'_>, names: &[AttributeName]) -> String {
-    let mut compacted = Vec::with_capacity(names.len());
-    for name in names {
-        compacted.push(compactor.compact_attr_iri(name.as_str()).await);
-    }
+fn compact_opt_in_names(compactor: &NameCompaction, names: &[AttributeName]) -> String {
+    let compacted: Vec<Arc<str>> = names.iter().map(|name| compactor.compact_attr_iri(name.as_str())).collect();
     compacted.join(",")
 }
 
@@ -208,7 +205,8 @@ mod tests {
         fixup_expired_status,
         fixup_integer_fields,
     };
-    use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
     use andromeda_ngsi_ld_model::subscription::SubscriptionFilters;
     use chrono::{Duration, Utc};
     use serde_json::json;
@@ -216,6 +214,16 @@ mod tests {
     /// An engine that resolves only what is embedded, never the network.
     fn offline_engine() -> JsonLdEngine {
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
+    }
+
+    /// The names of a reader that supplied no `@context` of its own.
+    async fn core_names() -> NameCompaction {
+        let processed = offline_engine()
+            .compactor(&ContextSpec::none())
+            .processed_context()
+            .await
+            .expect("the core context processes");
+        NameCompaction::new(processed)
     }
 
     #[test]
@@ -256,7 +264,6 @@ mod tests {
     /// Clause 5.5.7: a stored `q` and `csf` read back in the reader's terms.
     #[tokio::test]
     async fn stored_filters_are_compacted_into_the_readers_terms() {
-        let engine = offline_engine();
         let filters: SubscriptionFilters = serde_json::from_value(json!({
             "q": "\"https://uri.etsi.org/ngsi-ld/default-context/speed\">10",
             "csf": "\"https://uri.etsi.org/ngsi-ld/default-context/tier\"==\"gold\""
@@ -264,7 +271,7 @@ mod tests {
         .expect("valid filters");
         let mut value = serde_json::to_value(&filters).expect("serialises");
 
-        compact_subscription_filters(&NameCompactor::new(&engine, &ContextSpec::none()), &mut value, &filters).await;
+        compact_subscription_filters(&core_names().await, &mut value, &filters).await;
 
         pretty_assertions::assert_eq!(value["q"], json!("speed>10"));
         pretty_assertions::assert_eq!(value["csf"], json!("tier==\"gold\""));
@@ -274,7 +281,6 @@ mod tests {
     /// read back in the reader's terms, still as one comma-separated String.
     #[tokio::test]
     async fn the_stored_opt_in_lists_are_compacted_into_the_readers_terms() {
-        let engine = offline_engine();
         let filters: SubscriptionFilters = serde_json::from_value(json!({
             "expandValues": "https://uri.etsi.org/ngsi-ld/default-context/speed,https://uri.etsi.org/ngsi-ld/default-context/colour",
             "jsonKeys": "https://uri.etsi.org/ngsi-ld/default-context/payload"
@@ -282,7 +288,7 @@ mod tests {
         .expect("valid filters");
         let mut value = serde_json::to_value(&filters).expect("serialises");
 
-        compact_subscription_filters(&NameCompactor::new(&engine, &ContextSpec::none()), &mut value, &filters).await;
+        compact_subscription_filters(&core_names().await, &mut value, &filters).await;
 
         pretty_assertions::assert_eq!(value["expandValues"], json!("speed,colour"));
         pretty_assertions::assert_eq!(value["jsonKeys"], json!("payload"));
@@ -292,7 +298,6 @@ mod tests {
     /// come back as written beside the compacted attribute IRIs.
     #[tokio::test]
     async fn pick_and_omit_compact_their_attribute_iris_and_keep_the_keywords() {
-        let engine = offline_engine();
         let mut value = json!({
             "notification": {
                 "pick": ["id", "https://uri.etsi.org/ngsi-ld/default-context/speed"],
@@ -300,7 +305,7 @@ mod tests {
             }
         });
 
-        compact_subscription_iris(&NameCompactor::new(&engine, &ContextSpec::none()), &mut value).await;
+        compact_subscription_iris(&core_names().await, &mut value);
 
         pretty_assertions::assert_eq!(value["notification"]["pick"], json!(["id", "speed"]));
         pretty_assertions::assert_eq!(value["notification"]["omit"], json!(["scope", "colour"]));

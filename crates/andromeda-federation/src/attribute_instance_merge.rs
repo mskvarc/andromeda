@@ -8,10 +8,10 @@
 //! boundary. Where neither timestamp decides, the locally held instance stays:
 //! clause 5.7.1.4 makes local data the base the remote data is merged onto.
 
+use andromeda_ngsi_ld_entity::history::instance_recency::InstanceRecency;
 use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
-    instance_recency::InstanceRecency,
 };
 use std::{cmp::Ordering, mem::replace};
 

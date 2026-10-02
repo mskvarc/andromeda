@@ -3,6 +3,7 @@ use crate::{
     error::TemporalError,
     intent_drain::{TemporalIntentClaim, TemporalIntentDrain},
     intent_retry_policy::TemporalIntentRetryPolicy,
+    observed_selection::ObservedSelection,
     outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
     pending_overlay::PendingTemporalHistoryOverlay,
     port::{
@@ -32,6 +33,7 @@ use andromeda_context_commit::{
     write_record::WriteRecord,
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+use andromeda_ngsi_ld_entity::document::EntityDocument;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -51,6 +53,7 @@ use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
+use indexmap::IndexMap;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU32,
@@ -313,10 +316,7 @@ impl TemporalHistoryReader for RecordingSink {
         Ok(TemporalEntityIdOutcome {
             candidates: identifiers
                 .into_iter()
-                .map(|entity_id| TemporalEntityCandidate {
-                    entity_id,
-                    selection_value: None,
-                })
+                .map(|entity_id| TemporalEntityCandidate { entity_id, selection: None })
                 .collect(),
             residual: TemporalResidual::default(),
             pagination: TemporalPaginationOutcome::Deferred,
@@ -382,7 +382,13 @@ fn fixture() -> (KeyedTemporalAppendIntent, Identifier) {
             entity_id: entity_id.clone(), // clone: fixture returns the identifier separately from the intent.
             entity_types: Vec::new(),
             entries: vec![TemporalAppendEntry::Observation { row }],
-            selection_value: Some(serde_json::json!([{"@id": entity_id}])),
+            selection_value: Some(ObservedSelection::Written(Arc::new(EntityDocument::new(
+                Some(entity_id.clone()), // clone: the observed document names the entity the fixture returns too.
+                Vec::new(),
+                None,
+                None,
+                IndexMap::new(),
+            )))),
         },
     };
     (pending, entity_id)

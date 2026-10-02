@@ -18,6 +18,7 @@ use crate::csource_registration::{
     registration_store::{PostgresRegistrationStore, create_error, mutation_outcome, persistence_error},
     routing_rewrite::replace_registration_information,
 };
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
@@ -109,9 +110,9 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .bind(params.tenant.as_ref().map(TenantName::as_str))
         .bind(observation_interval)
         .bind(management_interval)
-        .bind(geometry_bytes(params.location.as_ref()).map_err(|error| persistence_error(error))?)
-        .bind(geometry_bytes(params.observation_space.as_ref()).map_err(|error| persistence_error(error))?)
-        .bind(geometry_bytes(params.operation_space.as_ref()).map_err(|error| persistence_error(error))?)
+        .bind(geometry_bytes(params.location.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
+        .bind(geometry_bytes(params.observation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
+        .bind(geometry_bytes(params.operation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
         .bind(params.expires_at)
         .bind(params.endpoint.as_str())
         .bind(params.accept.as_ref().map(ToString::to_string))
@@ -164,9 +165,9 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Identifier, v
         .bind(values.tenant.as_ref().map(TenantName::as_str))
         .bind(observation_interval)
         .bind(management_interval)
-        .bind(geometry_bytes(values.location.as_ref()).map_err(|error| persistence_error(error))?)
-        .bind(geometry_bytes(values.observation_space.as_ref()).map_err(|error| persistence_error(error))?)
-        .bind(geometry_bytes(values.operation_space.as_ref()).map_err(|error| persistence_error(error))?)
+        .bind(geometry_bytes(values.location.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
+        .bind(geometry_bytes(values.observation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
+        .bind(geometry_bytes(values.operation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
         .bind(values.expires_at)
         .bind(values.endpoint.as_str())
         .bind(values.accept.as_ref().map(ToString::to_string))

@@ -24,6 +24,7 @@ pub mod projected_members;
 pub mod recorded_shape;
 pub mod scope_history;
 pub mod stage1;
+pub mod structured_json;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

@@ -16,11 +16,12 @@
 //! becomes a one-entry language map and the clause 5.5.12 merge then replaces
 //! only that key.
 
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentation;
 use langtag::LangTagBuf;
 use serde_json::{Map, Value};
-use std::{collections::HashMap, mem::take, str::FromStr};
+use std::{mem::take, str::FromStr};
 use thiserror::Error;
 
 /// A fragment member that cannot be applied to the attribute the target holds.
@@ -47,27 +48,12 @@ pub enum MergeFragmentError {
     },
 }
 
-/// The attribute family each top-level member of an expanded entity holds,
-/// keyed by expanded attribute IRI. An instance declaring no recognised
-/// `@type` is a Property (clause 4.5.2).
+/// The attribute family the target entity holds under the expanded name
+/// `attribute`: the family of its first instance, every instance of one
+/// attribute sharing it (clause 4.5.5).
 #[must_use]
-pub fn existing_attribute_types(expanded_entity: &Map<String, Value>) -> HashMap<String, AttributeType> {
-    expanded_entity
-        .iter()
-        .filter(|(key, _)| !key.starts_with('@'))
-        .filter_map(|(key, member)| {
-            let first_instance = member.as_array().and_then(|instances| instances.first()).or(Some(member))?;
-            let declared = first_instance
-                .get("@type")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .find_map(AttributeType::from_expanded_iri)
-                .unwrap_or(AttributeType::Property);
-            Some((key.clone(), declared)) // clone: the map owns the IRIs it is keyed by
-        })
-        .collect()
+pub fn held_attribute_family(target: &EntityState, attribute: &str) -> Option<AttributeType> {
+    target.member_instance_families(attribute).next()
 }
 
 /// Rewrite one fragment member for the type the target entity holds under
@@ -188,7 +174,8 @@ fn language_map_entry(tag: &LangTagBuf, strings: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use crate::merge_fragment::{MergeFragmentError, adapt_member, existing_attribute_types};
+    use crate::merge_fragment::{MergeFragmentError, adapt_member, held_attribute_family};
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
     use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentation;
     use langtag::LangTagBuf;
@@ -214,19 +201,19 @@ mod tests {
     }
 
     #[test]
-    fn the_existing_types_are_read_off_the_expanded_payload() {
-        let expanded = json!({
+    fn the_held_types_are_read_off_the_stored_state() {
+        let expanded = json!([{
             "@id": "urn:ngsi-ld:Vehicle:1",
             "@type": ["https://example.org/Vehicle"],
             "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}],
             "https://example.org/owner": [{"@type": ["https://uri.etsi.org/ngsi-ld/Relationship"], "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:x"}]}],
             "https://example.org/untyped": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
-        });
-        let types = existing_attribute_types(expanded.as_object().expect("object"));
-        pretty_assertions::assert_eq!(types.get("https://example.org/speed"), Some(&AttributeType::Property));
-        pretty_assertions::assert_eq!(types.get("https://example.org/owner"), Some(&AttributeType::Relationship));
-        pretty_assertions::assert_eq!(types.get("https://example.org/untyped"), Some(&AttributeType::Property));
-        assert!(!types.contains_key("@id"));
+        }]);
+        let target = EntityState::from_slice(&serde_json::to_vec(&expanded).expect("JSON")).expect("a stored entity");
+        pretty_assertions::assert_eq!(held_attribute_family(&target, "https://example.org/speed"), Some(AttributeType::Property));
+        pretty_assertions::assert_eq!(held_attribute_family(&target, "https://example.org/owner"), Some(AttributeType::Relationship));
+        pretty_assertions::assert_eq!(held_attribute_family(&target, "https://example.org/untyped"), Some(AttributeType::Property));
+        pretty_assertions::assert_eq!(held_attribute_family(&target, "https://example.org/absent"), None);
     }
 
     #[test]

@@ -1,0 +1,9 @@
+{
+    "@context": {
+        "Vehicle": "http://example.org/vehicle/Vehicle",
+        "testedAt": {
+            "@type": "https://uri.etsi.org/ngsi-ld/DateTime",
+            "@id": "http://example.org/test/testedAt"
+        }
+    }
+}

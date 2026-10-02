@@ -57,19 +57,7 @@ impl JsonLdEngine {
     }
 }
 
-impl<'a> ContextCompactor<'a> {
-    /// The engine this compactor resolves contexts through.
-    #[must_use]
-    pub const fn engine(&self) -> &'a JsonLdEngine {
-        self.engine
-    }
-
-    /// The context documents are compacted against.
-    #[must_use]
-    pub const fn context(&self) -> &'a ContextSpec {
-        self.context
-    }
-
+impl ContextCompactor<'_> {
     /// Compact an expanded document.
     ///
     /// IRIs become the short names the context declares. A compaction that
@@ -157,18 +145,44 @@ impl<'a> ContextCompactor<'a> {
             })
     }
 
+    /// The processed request context, for a compaction that selects terms
+    /// itself rather than handing a document to the processor.
+    ///
+    /// It is the context [`ContextCompactor::compact`] compacts against:
+    /// processed once per compactor, kept on the engine while every document it
+    /// was processed from stays what the loader resolves, and replaced by the
+    /// core context alone, with the same warning, when the request context
+    /// redefines a protected core term.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JsonLdError::InlineContextInvalid`] when the resolved
+    /// `@context` is not a JSON-LD context, a context-loading variant when a
+    /// context did not resolve, or [`JsonLdError::Compaction`] when it did not
+    /// process.
+    pub async fn processed_context(&self) -> Result<Arc<CompactionContext>, JsonLdError> {
+        self.prepared().await.map(Arc::clone)
+    }
+
     /// The processed request context, processing it on first use.
     ///
     /// A failed attempt is not remembered, so the next document tries again,
     /// exactly as it would have had it been the first.
-    async fn prepared(&self) -> Result<&CompactionContext, JsonLdError> {
-        self.prepared.get_or_try_init(|| self.prepare()).await.map(Arc::as_ref)
+    async fn prepared(&self) -> Result<&Arc<CompactionContext>, JsonLdError> {
+        self.prepared.get_or_try_init(|| self.prepare()).await
     }
 
     /// Process the request context, or the core context alone when the request
     /// context redefines a protected core term.
     async fn prepare(&self) -> Result<Arc<CompactionContext>, JsonLdError> {
-        match self.engine.compaction_contexts().get_or_prepare(self.context, self.engine.loader()).await {
+        let loader = self.engine.loader();
+        let preparation = || CompactionContext::prepare(self.context, loader);
+        match self
+            .engine
+            .compaction_contexts()
+            .get_or_prepare(self.context.context_key(), loader, preparation)
+            .await
+        {
             Ok(prepared) => Ok(prepared),
             Err(CompactionContextError::Processing(error)) if JsonLdError::is_protected_term_error(&error) => {
                 tracing::warn!(error = %error, "{PROTECTED_TERM_FALLBACK}");
@@ -185,9 +199,11 @@ impl<'a> ContextCompactor<'a> {
     /// The core context alone, which a protected-term redefinition falls back
     /// to.
     async fn core_context(&self) -> Result<Arc<CompactionContext>, JsonLdError> {
+        let core_only = ContextSpec::core_only();
+        let loader = self.engine.loader();
         self.engine
             .compaction_contexts()
-            .get_or_prepare(&ContextSpec::core_only(), self.engine.loader())
+            .get_or_prepare(core_only.context_key(), loader, || CompactionContext::prepare(&core_only, loader))
             .await
             .map_err(|error| {
                 tracing::error!("Compaction failed even against the core context: {}", error);
@@ -245,6 +261,7 @@ fn document_id(document: &ExpandedDocument<IriBuf, BlankIdBuf>) -> &str {
 #[cfg(test)]
 mod tests {
     use crate::{
+        context_cache::ContextCache,
         context_spec::ContextSpec,
         core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
         engine::{
@@ -253,6 +270,7 @@ mod tests {
             processor::JsonLdEngine,
         },
         error::JsonLdError,
+        loader::replaceable_row::ReplaceableRow,
     };
     use iri_rs::IriBuf;
     use jsonld::{
@@ -449,18 +467,77 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_body_context_is_processed_per_compactor_and_never_kept_on_the_engine() {
+    async fn a_body_context_is_processed_once_across_compactors() {
         let engine = offline_engine();
         let spec = example_body_context();
+        let first = engine.compactor(&spec).processed_context().await.expect("the context processes");
+        let second = engine.compactor(&spec).processed_context().await.expect("the context processes");
+
+        assert!(Arc::ptr_eq(&first, &second), "the second compactor must reuse the processed context");
+        pretty_assertions::assert_eq!(engine.compaction_contexts().len().await, 1);
+    }
+
+    /// A kept context is only as fresh as the documents it was processed from:
+    /// once the loader reads a document again (its entry lapsed, clause
+    /// 6.3.16), the next operation processes the document the loader holds now.
+    #[tokio::test]
+    async fn a_context_whose_document_is_read_again_is_processed_again() {
+        let row = Arc::new(ReplaceableRow::new(json!({ "@context": { "alpha": "http://example.org/a" } })));
+        let engine = JsonLdEngine::builder()
+            .allow_remote(false)
+            .with_l2_cache(Arc::clone(&row) as Arc<dyn ContextCache>)
+            .build()
+            .expect("engine builds");
+        let url = iri_ref("https://example.org/stored.jsonld");
+        let spec = ContextSpec::from_link(url.clone()); // clone: the invalidation below names the same URL
+        let document = json!({"id": "urn:ngsi-ld:Thing:1", "type": "Thing", "http://example.org/a": {"type": "Property", "value": 1}});
+        let expanded = engine.expand(document, &ContextSpec::none()).await.expect("expansion succeeds");
+
+        let first = engine.compactor(&spec).processed_context().await.expect("the context processes");
+        let kept = engine.compactor(&spec).processed_context().await.expect("the context processes");
+        assert!(Arc::ptr_eq(&first, &kept), "an unchanged document keeps its processed context");
+
+        row.replace(json!({ "@context": { "beta": "http://example.org/a" } }));
+        engine.invalidate_context(&url).await;
+        let compactor = engine.compactor(&spec);
+        let reprocessed = compactor.processed_context().await.expect("the context processes");
+        assert!(!Arc::ptr_eq(&first, &reprocessed), "the document read again is processed again");
+
+        let compacted = compactor.compact(ExpandedInput::Assembled(expanded), STRIP).await.expect("compaction succeeds");
+        assert!(compacted.get("beta").is_some(), "compacted under the document read again: {compacted}");
+    }
+
+    /// A caller selecting terms itself reads the very context the compactor
+    /// compacts documents against, processed once for both.
+    #[tokio::test]
+    async fn the_processed_context_is_the_one_every_document_is_compacted_against() {
+        let engine = offline_engine();
+        let spec = example_body_context();
+        let compactor = engine.compactor(&spec);
         let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
 
-        engine
-            .compactor(&spec)
-            .compact(ExpandedInput::Assembled(expanded), STRIP)
-            .await
-            .expect("compaction succeeds");
+        let processed = compactor.processed_context().await.expect("the context processes");
+        compactor.compact(ExpandedInput::Assembled(expanded), STRIP).await.expect("compaction succeeds");
 
-        pretty_assertions::assert_eq!(engine.compaction_contexts().len().await, 0);
+        assert!(Arc::ptr_eq(&processed, compactor.prepared.get().expect("the context stays prepared")));
+        assert!(processed.active_context().get("brandName").is_some(), "the request's own terms are defined");
+    }
+
+    /// A request context redefining a protected core term is handed out as
+    /// the core context alone, exactly as documents are compacted against it.
+    #[tokio::test]
+    async fn the_processed_context_of_a_protected_term_redefinition_is_the_core_context() {
+        let engine = offline_engine();
+        let spec = ContextSpec::from_body(json!([
+            {"@protected": true, "speed": "http://example.org/protected/speed"},
+            {"speed": "http://example.org/redefined/speed"}
+        ]));
+        let core = ContextSpec::core_only();
+
+        let processed = engine.compactor(&spec).processed_context().await.expect("the fallback processes");
+        let core_processed = engine.compactor(&core).processed_context().await.expect("the core context processes");
+
+        assert!(Arc::ptr_eq(&processed, &core_processed));
     }
 
     #[tokio::test]

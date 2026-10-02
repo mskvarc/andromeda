@@ -126,8 +126,8 @@ fn distance_reference(term: &CompiledOrderTerm, ordering: &ResultOrdering, geo: 
         return Ok(None);
     }
     match (ordering.geometry.as_ref(), geo) {
-        (Some(reference), _) => Ok(Some(encode(&reference.geometry)?.to_vec())),
-        (None, Some(geo)) => Ok(Some(encode(&geo.geometry)?.to_vec())),
+        (Some(reference), _) => Ok(Some(encode(reference.geometry.form())?.to_vec())),
+        (None, Some(geo)) => Ok(Some(encode(geo.geometry.form())?.to_vec())),
         (None, None) => Err(RenderError::Query(QueryError::DistanceOrderWithoutReference)),
     }
 }

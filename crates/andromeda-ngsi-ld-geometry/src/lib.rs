@@ -39,6 +39,7 @@
 
 pub mod compact_geojson;
 pub mod coordinate_path;
+mod coordinate_tape;
 pub mod dimension;
 pub mod form;
 pub mod geo_rel;
@@ -47,16 +48,19 @@ pub mod geojson;
 mod geojson_oracle;
 pub mod geometry;
 pub mod geometry_census;
+pub mod geometry_members;
 pub mod geometry_type;
 pub mod great_circle;
 pub mod line_string_coordinates;
 pub mod linear_ring;
 pub mod near_envelope;
+mod nested_coordinates;
 pub mod planar;
 pub mod position;
 pub mod positive_distance;
 pub mod proximity;
 pub mod relation;
+pub mod written_geometry;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

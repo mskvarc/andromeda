@@ -2,13 +2,12 @@
 
 use crate::{
     headers::{CommonHeadersOptions, apply_common_headers},
+    rendered_response::RenderedResponse,
     version_negotiation::apply_version_negotiation,
 };
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_render::response::RenderedOutput;
 use axum::{
-    Json,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -16,7 +15,8 @@ use headers::HeaderMapExt;
 
 /// NGSI-LD response wrapper for a single entity.
 ///
-/// Constructed from a [`RenderedOutput`] produced by the rendering pipeline:
+/// Constructed from what the rendering pipeline produced -- a rendered
+/// document or a typed entity body already written:
 ///
 /// ```ignore
 /// let host = context_hosting.for_request(&api_root);
@@ -32,7 +32,7 @@ pub struct NgsiLdResponse {
     /// HTTP status returned for the resource.
     status: StatusCode,
     /// Pre-rendered NGSI-LD response body and media type.
-    rendered: RenderedOutput,
+    rendered: RenderedResponse,
     /// Optional resource location advertised by the response.
     location: Option<String>,
     /// Optional entity-map URI advertised by the response.
@@ -48,10 +48,10 @@ pub struct NgsiLdResponse {
 impl NgsiLdResponse {
     /// Create a response with a specific status code.
     #[must_use]
-    pub const fn new(status: StatusCode, rendered: RenderedOutput) -> NgsiLdResponse {
+    pub fn new(status: StatusCode, rendered: impl Into<RenderedResponse>) -> NgsiLdResponse {
         NgsiLdResponse {
             status,
-            rendered,
+            rendered: rendered.into(),
             location: None,
             entity_map_uri: None,
             content_range: None,
@@ -62,7 +62,7 @@ impl NgsiLdResponse {
 
     /// Create a 200 OK response.
     #[must_use]
-    pub const fn ok(rendered: RenderedOutput) -> NgsiLdResponse {
+    pub fn ok(rendered: impl Into<RenderedResponse>) -> NgsiLdResponse {
         NgsiLdResponse::new(StatusCode::OK, rendered)
     }
 
@@ -105,12 +105,13 @@ impl NgsiLdResponse {
 impl IntoResponse for NgsiLdResponse {
     fn into_response(self) -> Response {
         let mut headers = HeaderMap::new();
-        headers.typed_insert(self.rendered.media_type);
-        let status = apply_version_negotiation(self.status, self.rendered.version_adaptation, &mut headers);
+        let RenderedResponse { body, head } = self.rendered;
+        headers.typed_insert(head.media_type);
+        let status = apply_version_negotiation(self.status, head.version_adaptation, &mut headers);
 
         apply_common_headers(
             &mut headers,
-            self.rendered.context_link,
+            head.context_link,
             &CommonHeadersOptions {
                 location: self.location.as_deref(),
                 entity_map_uri: self.entity_map_uri.as_ref(),
@@ -123,6 +124,6 @@ impl IntoResponse for NgsiLdResponse {
             headers.typed_insert(cr.clone());
         }
 
-        (status, headers, Json(self.rendered.value)).into_response()
+        (status, headers, body).into_response()
     }
 }

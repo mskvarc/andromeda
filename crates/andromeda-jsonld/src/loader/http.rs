@@ -29,6 +29,7 @@ use crate::{
     loader::{
         cache_lifetime::CacheLifetime,
         context_lifetimes::ContextLifetimes,
+        context_sources::note_source,
         durable_cache::{fetch_and_persist, load_from_durable_cache, persist_registry_context},
         error::{LoaderError, LoaderErrorKind},
         loaded_context::{ContextProvenance, EntryLifetime, LoadedContext, ResponseDrivenExpiry, registry_context},
@@ -263,13 +264,15 @@ impl HttpContextLoader {
     /// they are, but their download is never recorded as a "Cached" copy: the
     /// broker holds no Cached row for a URL shaped like its own.
     async fn load_entry(&self, requested: &IriBuf) -> Result<LoadedContext, Arc<LoaderError>> {
-        match self.resolution_of(requested)? {
+        let loaded = match self.resolution_of(requested)? {
             Resolution::Stored(identifier) => match self.load_stored(&identifier).await? {
-                StoredLookup::Held(loaded) => Ok(*loaded),
-                StoredLookup::NotHeld => self.load_url(requested, CachedCopy::Forbidden).await,
+                StoredLookup::Held(loaded) => *loaded,
+                StoredLookup::NotHeld => self.load_url(requested, CachedCopy::Forbidden).await?,
             },
-            Resolution::Url(cached_copy) => self.load_url(requested, cached_copy).await,
-        }
+            Resolution::Url(cached_copy) => self.load_url(requested, cached_copy).await?,
+        };
+        note_source(requested, &loaded.value);
+        Ok(loaded)
     }
 
     /// Resolve `url` through the in-process cache, the registry, the durable

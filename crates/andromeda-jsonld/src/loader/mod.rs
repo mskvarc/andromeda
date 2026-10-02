@@ -26,6 +26,8 @@ pub(crate) mod alternate_link;
 pub mod cache_lifetime;
 /// The lifetimes the resolver assigns where no response states one.
 pub(crate) mod context_lifetimes;
+/// The documents a processed context was built from.
+pub(crate) mod context_sources;
 /// The durable-cache steps of context resolution.
 pub mod durable_cache;
 /// Failures reported while resolving a context URL.
@@ -48,6 +50,9 @@ pub mod pending_persistence;
 pub(crate) mod relative_context_references;
 /// Downloading and parsing one remote `@context` document.
 pub mod remote_document;
+/// A durable cache row whose document a unit test can replace.
+#[cfg(test)]
+pub(crate) mod replaceable_row;
 /// A context host for loader tests, on the workspace's mock server.
 #[cfg(test)]
 pub(crate) mod test_origin;

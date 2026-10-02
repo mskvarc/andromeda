@@ -97,7 +97,7 @@ async fn a_failed_snapshot_branch_delivery_is_retried_after_eviction() {
         .json(&json!({
             "id": format!("urn:ngsi-ld:BranchDevice:{tenant}"),
             "type": "BranchDevice",
-            "value": {"type": "Property", "value": 1},
+            "reading": {"type": "Property", "value": 1},
             "@context": [CORE_CONTEXT]
         }))
         .send()

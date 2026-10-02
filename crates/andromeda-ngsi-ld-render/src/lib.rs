@@ -27,20 +27,26 @@
 pub mod concise;
 pub mod context;
 pub mod entity;
+mod entity_body;
+pub mod entity_response;
+#[cfg(test)]
+mod entity_response_tests;
 pub mod error;
 pub mod geojson;
 pub mod geometry_selection;
-pub mod inline_join;
 pub mod language_negotiation;
 pub mod nested_projection;
 pub mod notification_conformance;
 pub mod notification_data;
+pub mod notification_entity;
+pub mod notified_changes;
+#[cfg(test)]
+mod notified_changes_tests;
 pub mod object_list;
 pub mod registration;
 pub mod relationship_targets;
 pub mod response;
 pub mod simplify;
-pub mod snapshot;
 pub mod structural_projection;
 pub mod subscription;
 pub mod temporal;
@@ -51,6 +57,8 @@ pub mod version;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-http-headers",
+        "andromeda-ngsi-ld-entity",
+        "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-number",
@@ -59,6 +67,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-vocabulary",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-test-allocator",
     ],
     allow_production_dependencies: [],
 }

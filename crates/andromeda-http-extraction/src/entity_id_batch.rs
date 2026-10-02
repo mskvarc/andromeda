@@ -7,9 +7,9 @@
 //! Only an item with no URI to report against fails the request.
 
 use crate::{
+    batch_array::batch_items,
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
     batch_item_refusal::BatchItemRefusal,
-    entity_batch::batch_items,
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::{
@@ -46,7 +46,7 @@ pub fn parse_batch_entity_ids(body: &Bytes, instance: &HttpUri) -> Result<Entity
 
 /// The identifiers `body` names, or the refusal that fails the request.
 fn entity_id_batch(body: &Bytes) -> Result<EntityIdBatch, BatchBodyRefusal> {
-    let items = batch_items(body, BatchMembers::EntityIds)?;
+    let items = batch_items::<Value>(body, BatchMembers::EntityIds)?;
     let mut batch = EntityIdBatch {
         ids: Vec::with_capacity(items.len()),
         refused: Vec::new(),

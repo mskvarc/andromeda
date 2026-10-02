@@ -4,7 +4,8 @@
 //! uniqueness, distinct datasets, narrow Entity keys, empty Entity types,
 //! replayed writes, no-op suppression, long strings, instance expiry,
 //! identifier bounds, refused-write isolation, the consequences of attribute
-//! and Entity writes, and the outline a deletion reads instead of the payload.
+//! and Entity writes, the outline a deletion reads instead of the payload, and
+//! the hoisted geometry a write leaving it alone does not project again.
 //! Each test drives the broker over HTTP (or, for the no-op guard and
 //! refused-write isolation, the broker's own projection statement or
 //! committer) and then reads
@@ -32,6 +33,7 @@ mod deletion_outline;
 mod entity_keys;
 mod entity_type;
 mod entity_writes;
+mod hoisted_geometry;
 mod identifier_bounds;
 mod instance_expiry;
 mod long_text;

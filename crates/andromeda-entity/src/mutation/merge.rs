@@ -6,47 +6,28 @@ use crate::{
     entity_type_match::entity_satisfies,
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
-    expanded_member::written_entity_types,
-    merge_fragment::{adapt_member, existing_attribute_types},
+    merge_fragment::{adapt_member, held_attribute_family},
     merge_options::MergeOptions,
-    notification_plan::modification,
+    modification_write::ModificationWrite,
     write_kind::MergeEntity,
 };
-use andromeda_context_commit::{
-    atomic_write::AtomicWrite,
-    change_event::ChangeEvent,
-    entity_mutation::EntityMutation,
-    entity_record::EntityRecord,
-    history_record::mutation_history,
-};
+use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{
-    entity::EntityPatch,
-    expanded::{
-        attribute_system_time::stamp_attribute_instants,
-        mutation::{entity::merge_entity, error::ExpandedEntityError, selection::OverwritePolicy},
-        node::expanded_object_ref,
-        written_observation::AddressedInstances,
-    },
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    history::written_observation::AddressedInstances,
+    operation::selection::OverwritePolicy,
+    system_instant::SystemInstant,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::entity::EntityPatch;
 use andromeda_ngsi_ld_query::type_selection::expansion::expand_type_expression;
 use andromeda_ngsi_ld_representation::entity_members::ENTITY_MEMBERS;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
-
-/// What one clause 5.6.17 merge produced, beyond the write itself.
-///
-/// Read off the attempt that actually landed: the merge runs again whenever a
-/// concurrent writer supersedes an attempt, and the notification must describe
-/// the change the store accepted rather than one that was computed and lost.
-struct MergedEntity {
-    /// In-process events matching the durable records committed with the write.
-    events: Vec<ChangeEvent>,
-}
 
 impl EntityService {
     /// Merge a partial update into an existing entity (NGSI-LD 5.6.17) under
@@ -57,7 +38,7 @@ impl EntityService {
     /// be rewritten against the stored entity first: the rewritten fragment is
     /// a different document, so `patch` is admitted again once rewritten.
     ///
-    /// The merge is computed from a payload read outside the writing
+    /// The merge is computed from a state read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
     ///
@@ -83,60 +64,45 @@ impl EntityService {
     ) -> Result<(), EntityError> {
         let timer = entity::start(EntityOperation::Merge);
         let result: Result<(), EntityError> = async {
-            let entity_uri = id.clone(); // clone: mutation events and computed-write closures own the identifier
-
             let prepared_context = self.engine.prepare_term_context(context);
             let type_selector = match options.type_selector {
                 Some(raw) => Some(expand_type_expression(raw, &ContextualExpander::new(&self.engine, &prepared_context)).await?),
                 None => None,
             };
-            let admitted = if options.rewrites_fragment() {
-                let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::Validation(EntityValidationReason::PatchPayload(err)))?;
+            let fragment = if options.rewrites_fragment() {
+                let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::Validation(EntityValidationReason::CompactDocument(err)))?;
                 self.adapt_merge_fragment(target, id, &mut patch_json, &prepared_context, options).await?;
                 // Clause 5.5.12 lets a merge fragment carry the NGSI-LD Null at
                 // any depth, but "a datasetId cannot be deleted by setting it to
                 // the value urn:ngsi-ld:null". Clause 4.18 admits the sentinel as
                 // the whole value of `scope`, which clause 5.5.12 then reads as
                 // the deletion of that member.
-                self.admit_remaining_entity::<MergeEntity>(patch_json, context).await?
+                self.admit_remaining_entity::<MergeEntity>(patch_json, context).await?.into_document()
             } else {
-                admitted
+                admitted.into_document()
             };
-            let patch_expanded = Arc::new(admitted.into_expanded());
 
-            let now = Utc::now();
-            let MergedEntity { events } = self
-                .commit_computed_write(target, &entity_uri, |previous| {
+            let now = SystemInstant::new(Utc::now());
+            let events = self
+                .commit_computed_write(target, id, |previous| {
                     // Clause 5.6.17.4: the target is the entity with this id "and,
                     // where specified, type"; one outside the selector is not it.
                     if type_selector.as_ref().is_some_and(|selector| !entity_satisfies(previous, selector)) {
-                        return Err(EntityError::not_found(&entity_uri));
+                        return Err(EntityError::not_found(id));
                     }
-                    let mut existing = Value::clone(previous); // clone: the merge mutates its own copy of the stored payload
-                    merge_entity(&mut existing, &patch_expanded, options.observed_at)?;
-
+                    let mut merged = EntityState::clone(previous); // clone: shares every attribute the merge leaves alone
+                    merged.merge(&fragment, options.observed_at)?;
                     // Clause 4.8: a merged instance keeps its createdAt and, when its
                     // content changed, takes `now` for modifiedAt.
-                    stamp_attribute_instants(&mut existing, previous, now).map_err(ExpandedEntityError::from)?;
-                    let merged = Arc::new(existing);
-                    let types = written_entity_types(&merged)?;
-                    let change = modification(previous, &merged)?;
-                    let plan = self.notifier.plan(target, &entity_uri, &types, change, Some(&merged), Some(previous));
-
+                    merged.stamp_attribute_instants(Some(previous), now);
+                    let merged = Arc::new(merged);
                     let addressed = AddressedInstances::EntityFragment {
-                        fragment: &patch_expanded,
+                        fragment: &fragment,
                         overwrite: OverwritePolicy::Overwrite,
                     };
-                    let history = mutation_history(addressed, previous, &merged)?;
-
-                    let write = AtomicWrite::builder()
-                        .entity_id(Arc::new(entity_uri.clone())) // clone: the computed write owns its validated identifier.
-                        .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&merged))?)) // clone: Arc ref-count bump
-                        .history(history)
-                        .subscription_matches(plan.matches)
-                        .build();
-
-                    Ok((write, MergedEntity { events: plan.events }))
+                    let history = mutation_history(addressed, previous, &merged);
+                    let ModificationWrite { write, events } = self.modification_write(target, id, previous, merged, history)?;
+                    Ok((write, events))
                 })
                 .await?;
 
@@ -170,7 +136,6 @@ impl EntityService {
         let Some(existing) = self.reader.get(target, id).await? else {
             return Ok(());
         };
-        let existing_types = expanded_object_ref(&existing).map(existing_attribute_types).unwrap_or_default();
         for (member, value) in members.iter_mut() {
             if ENTITY_MEMBERS.contains(&member.as_str()) {
                 continue;
@@ -182,7 +147,7 @@ impl EntityService {
             adapt_member(
                 &attribute,
                 value,
-                existing_types.get(iri.as_str()).copied(),
+                held_attribute_family(&existing, iri.as_str()),
                 options.representation,
                 options.lang,
             )

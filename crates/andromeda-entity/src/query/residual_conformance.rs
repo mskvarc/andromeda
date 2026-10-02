@@ -8,10 +8,13 @@
 //!
 //! The store applies the predicates it kept using a reference reading of the
 //! specification written in this module, deliberately independent of
-//! [`residual_filter::matches`]. When the two disagree, the profile that declines
-//! the predicate returns a different set from the profile that pushes it down,
-//! and the comparison fails. That is the only construction available without a
-//! second backend that makes the residual and the pushdown check each other.
+//! [`residual_filter::matches`] wherever the specification leaves room for a
+//! second reading: identifiers, types, geometries and scopes are read off the
+//! stored state here, and only `q` goes through the clause 4.9 evaluator both
+//! sides share. When the two disagree, the profile that declines the predicate
+//! returns a different set from the profile that pushes it down, and the
+//! comparison fails. That is the only construction available without a second
+//! backend that makes the residual and the pushdown check each other.
 //!
 //! [`StorageProfile`]: crate::storage_profile::StorageProfile
 
@@ -22,7 +25,7 @@ mod tests {
         entity_snapshot::EntitySnapshot,
         error::EntityError,
         pagination_outcome::PaginationOutcome,
-        port::{query::EntityQueryStore, reader::EntityReader},
+        port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
         query::EntityQueryService,
         query_outcome::QueryOutcome,
         spatial_acceleration::SpatialAcceleration,
@@ -30,27 +33,22 @@ mod tests {
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::engine::processor::JsonLdEngine;
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance, relation::matches};
-    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-    use andromeda_ngsi_ld_model::{
-        expanded::{
-            entity_member::{extract_id, extract_types},
-            geo_property::geo_property_instance_geometries,
-            scope_member::extract_scopes,
-        },
-        notification::SysAttrsSnapshot,
-    };
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, scopes::Scopes};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, planar::PlanarGeometry, positive_distance::PositiveDistance, relation::matches};
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, scope::path::ScopePath};
+    use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
         entity_selection::{ConsideredEntities, EntitySelection},
-        filter::{eval, parser},
+        filter::{eval::evaluate, parser},
         geo::query::GeoQuery,
         pagination::{CountPolicy, Pagination},
         scope::query::ScopeQuery,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use async_trait::async_trait;
-    use serde_json::{Value, json};
+    use chrono::{DateTime, Utc};
+    use serde_json::json;
     use std::{collections::HashMap, str::FromStr, sync::Arc};
 
     const TEMPERATURE: &str = "https://example.com/temperature";
@@ -61,16 +59,23 @@ mod tests {
     ///
     /// Written from ETSI GS CIM 009 v1.9.1 rather than from
     /// `ResidualFilter`, so the two are independent witnesses of the same
-    /// clauses: clause 4.9 for `q`, clause 4.10 for `georel`, clause 4.18 for
-    /// `scopeQ`.
-    fn reference_matches(selection: &EntitySelection, entity: &Value) -> bool {
-        let q_holds = selection.q_expr.as_ref().is_none_or(|expr| eval::evaluate(expr, entity));
+    /// clauses: clause 4.10 for `georel`, clause 4.18 for `scopeQ`, clause
+    /// 5.2.33 for the selectors; clause 4.9 `q` is the evaluator's own.
+    fn reference_matches(selection: &EntitySelection, entity: &EntityState) -> bool {
+        let q_holds = selection.q_expr.as_ref().is_none_or(|expr| evaluate(expr, entity));
         let geo_holds = selection.geo.as_ref().is_none_or(|geo| {
             // Clause 4.10: one instance of the target GeoProperty meeting the
             // restriction is enough.
-            geo_property_instance_geometries(entity, geo.geoproperty.as_str()).any(|subject| matches(&geo.georel, &subject, &geo.geometry))
+            let reference = geo.geometry.planar();
+            entity
+                .geo_property_geometries(geo.geoproperty.as_str())
+                .any(|subject| matches(&geo.georel, &PlanarGeometry::project(subject), &reference))
         });
-        let scope_holds = selection.scope_q.as_ref().is_none_or(|scope_q| scope_q.matches(&extract_scopes(entity)));
+        let scopes: &[ScopePath] = entity.scope().map_or(&[], Scopes::as_slice);
+        let scope_holds = selection
+            .scope_q
+            .as_ref()
+            .is_none_or(|scope_q| scope_q.matches(scopes.iter().map(ScopePath::as_str)));
         // Clause 5.5.14: an EntityMap "fixes the Entities to be considered", so
         // a request left considering none admits no entity at all.
         let considered_holds = match selection.considered {
@@ -81,11 +86,11 @@ mod tests {
         // entity, otherwise any one selector's id and type must both hold.
         let selectors_hold = !selection.selectors_constrain()
             || selection.selectors.iter().any(|selector| {
-                let type_ok = selector.type_expr.as_ref().is_none_or(|type_expr| {
-                    let types = extract_types(entity).expect("the fixtures carry readable types");
-                    type_expr.matches(&types.iter().map(EntityTypeName::as_str).collect::<Vec<&str>>())
-                });
-                let id_ok = selector.ids.is_empty() || extract_id(entity).is_ok_and(|id| selector.ids.contains(&id));
+                let type_ok = selector
+                    .type_expr
+                    .as_ref()
+                    .is_none_or(|type_expr| type_expr.matches(&entity.types().as_slice().iter().map(EntityTypeName::as_str).collect::<Vec<&str>>()));
+                let id_ok = selector.ids.is_empty() || selector.ids.contains(entity.id());
                 type_ok && id_ok
             });
         q_holds && geo_holds && scope_holds && selectors_hold && considered_holds
@@ -100,7 +105,7 @@ mod tests {
     /// store that leaves a residual takes no window either, because a window over
     /// rows a later filter will thin is wrong (clause 5.5.9).
     struct ProfiledEntityStore {
-        entities: Vec<Value>,
+        entities: Vec<Arc<EntityState>>,
         profile: StorageProfile,
     }
 
@@ -120,7 +125,7 @@ mod tests {
                 .entities
                 .iter()
                 .filter(|entity| reference_matches(&pushed, entity))
-                .map(|entity| extract_id(entity).expect("the fixtures carry readable identifiers"));
+                .map(|entity| entity.id().clone()); // clone: the outcome owns the identifiers it returns
 
             if unapplied.is_empty() {
                 let all: Vec<Identifier> = admitted.collect();
@@ -155,19 +160,31 @@ mod tests {
 
     #[async_trait]
     impl EntityReader for ProfiledEntityStore {
-        async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<Value>, EntityError> {
-            // clone: the double hands out owned payloads, as a real store does
-            Ok(self.entities.iter().find(|entity| extract_id(entity).as_ref() == Ok(id)).cloned())
+        async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<Arc<EntityState>>, EntityError> {
+            Ok(self.entities.iter().find(|entity| entity.id() == id).map(Arc::clone))
         }
 
-        async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, Value>, EntityError> {
+        async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, RetrievedEntity>, EntityError> {
             Ok(self
                 .entities
                 .iter()
-                .map(|entity| (extract_id(entity).expect("the fixtures carry readable identifiers"), entity))
-                .filter(|(id, _)| ids.contains(id))
-                .map(|(id, entity)| (id, entity.clone())) // clone: as above
+                .filter(|entity| ids.contains(entity.id()))
+                .map(|entity| {
+                    let retrieved = RetrievedEntity {
+                        state: Arc::clone(entity),
+                        sys_attrs: SysAttrsSnapshot {
+                            created_at: DateTime::<Utc>::UNIX_EPOCH,
+                            modified_at: DateTime::<Utc>::UNIX_EPOCH,
+                            expires_at: None,
+                        },
+                    };
+                    (entity.id().clone(), retrieved) // clone: the map owns its keys, as a real store's does
+                })
                 .collect())
+        }
+
+        async fn get_with_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+            Err(unused("get_with_sys_attrs"))
         }
 
         async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
@@ -193,7 +210,7 @@ mod tests {
             &self.profile
         }
 
-        async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, EntityError> {
+        async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
             Err(unused("query_compiled"))
         }
 
@@ -207,18 +224,25 @@ mod tests {
     }
 
     /// One building, at a temperature, at a position, in a scope.
-    fn building(index: u32, temperature: f64, longitude: f64, latitude: f64, scope: &str) -> Value {
-        json!([{
+    fn building(index: u32, temperature: f64, longitude: f64, latitude: f64, scope: &str) -> Arc<EntityState> {
+        let document = json!([{
             "@id": format!("urn:ngsi-ld:Building:{index:03}"),
             "@type": [BUILDING],
             "https://uri.etsi.org/ngsi-ld/scope": [{"@value": scope}],
-            TEMPERATURE: [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": temperature}]}],
-            LOCATION: [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": {"type": "Point", "coordinates": [longitude, latitude]}}]}]
-        }])
+            TEMPERATURE: [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": temperature}]}],
+            LOCATION: [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@type": ["https://purl.org/geojson/vocab#Point"],
+                    "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": longitude}, {"@value": latitude}]}]
+                }]
+            }]
+        }]);
+        Arc::new(EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored state"))
     }
 
     /// Six buildings spanning both sides of every predicate the harness drives.
-    fn fixtures() -> Vec<Value> {
+    fn fixtures() -> Vec<Arc<EntityState>> {
         vec![
             building(1, 10.0, 13.400, 52.500, "/Berlin/Mitte"),
             building(2, 20.0, 13.401, 52.500, "/Berlin/Kreuzberg"),

@@ -286,6 +286,19 @@ pub enum MemberName {
     Member,
 }
 
+impl MemberName {
+    /// What `name`, read as the first member name of an object, tells about
+    /// the object.
+    #[must_use]
+    pub fn of(name: &str) -> MemberName {
+        if name == SERDE_JSON_PRIVATE_NUMBER_MEMBER {
+            MemberName::NumberToken
+        } else {
+            MemberName::Member
+        }
+    }
+}
+
 /// Reads one member name without keeping it, telling the reader's spelling of
 /// a number token from the name of an object member.
 #[derive(Clone, Copy, Debug)]
@@ -307,11 +320,7 @@ impl Visitor<'_> for MemberNameSeed {
     }
 
     fn visit_str<E: DeserializeError>(self, name: &str) -> Result<MemberName, E> {
-        if name == SERDE_JSON_PRIVATE_NUMBER_MEMBER {
-            Ok(MemberName::NumberToken)
-        } else {
-            Ok(MemberName::Member)
-        }
+        Ok(MemberName::of(name))
     }
 }
 

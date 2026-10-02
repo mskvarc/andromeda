@@ -11,6 +11,7 @@ use serde_json::{Number, Value};
 use std::{num::ParseIntError, str::FromStr};
 use thiserror::Error;
 
+pub mod float_spelling;
 pub mod json_value;
 mod number_token;
 

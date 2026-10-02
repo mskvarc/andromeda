@@ -9,7 +9,7 @@
 
 use crate::compare_and_set_fixture::{Watchers, adds_attribute, building_id, contended_service, held_version, stored_building, tombstoned_terms};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_model::expanded::attribute_change::AttributeChangeKind;
+use andromeda_ngsi_ld_entity::reads::attribute_change::AttributeChangeKind;
 use pretty_assertions::assert_eq;
 use std::sync::{Arc, Mutex};
 
@@ -19,7 +19,7 @@ fn terms(expected: &[&str]) -> Vec<String> {
 }
 
 /// With no subscription to notify, the deletion reads only the outline, never
-/// the payload, and still ends the instance added after its first read.
+/// the state, and still ends the instance added after its first read.
 #[tokio::test]
 async fn a_deletion_from_the_outline_superseded_by_another_writer_ends_the_instance_it_added() {
     let contended = contended_service(Watchers::None).await;
@@ -37,7 +37,7 @@ async fn a_deletion_from_the_outline_superseded_by_another_writer_ends_the_insta
     assert_eq!(Some(held_version(&writes[1])), *concurrent.lock().expect("the version lock is not poisoned"));
     assert_eq!(tombstoned_terms(&writes[0]), terms(&["seed"]));
     assert_eq!(tombstoned_terms(&writes[1]), terms(&["other", "seed"]));
-    assert_eq!(contended.store.payload_reads(), 0, "the outline path never decodes the payload");
+    assert_eq!(contended.store.payload_reads(), 0, "the outline path never decodes the state");
     assert!(contended.store.stored(&id).is_none());
     assert_eq!(contended.published.lock().expect("recording mutex is not poisoned").len(), 1);
 }

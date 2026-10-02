@@ -36,8 +36,9 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
     render::start_rendering_partial_success,
 };
+use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{expanded::mutation::selection::OverwritePolicy, query::body::Query};
+use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{

@@ -106,7 +106,9 @@ mod tests {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
         let context = ContextSpec::none();
         let resolver = TermResolver::new(&engine, &context);
-        let names = ForwardedNames::new(&engine, &resolver, &context, Rewording::AsInbound);
+        let names = ForwardedNames::prepare(&engine, &resolver, &context, Rewording::AsInbound)
+            .await
+            .expect("the forwarding context processes");
         let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&params), &by_type, SplitEntities::Complete, None, &names)
             .await
             .expect("narrowing succeeds");

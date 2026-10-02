@@ -7,9 +7,11 @@
 //! can per entity before a commit starts; these verifications hand the broker's
 //! own committer content that layer would have refused, so the refusal is
 //! raised only once the transaction is running -- where one write's refusal
-//! would otherwise roll back every write sharing the transaction. What the
-//! store then holds is read directly, so each assertion states what landed
-//! rather than what a rendering suggests.
+//! would otherwise roll back every write sharing the transaction. The refused
+//! content is a `DateTime`-typed Property value that is no instant: an entity
+//! state can carry it, and only its interpretation into history refuses it.
+//! What the store then holds is read directly, so each assertion states what
+//! landed rather than what a rendering suggests.
 
 use crate::{
     broker_committer::committer,
@@ -27,10 +29,11 @@ use andromeda_context_commit::{
     write_outcome::{WriteOutcome, single},
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, json};
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -43,46 +46,48 @@ const TEMPERATURE: &str = "https://example.test/current-projection/refused-write
 /// A code the UN/CEFACT catalogue registers: degrees Celsius.
 const CELSIUS: &str = "CEL";
 
-/// A code the UN/CEFACT catalogue does not register.
-const UNREGISTERED: &str = "NOTACODE";
-
-/// The expanded Entity one write stores: a `temperature` Property, with the
-/// given `unitCode` when there is one, and the Building type unless the Entity
-/// is written without one.
-fn expanded_entity(id: &str, typed: Typed, unit_code: Option<&str>) -> Arc<Value> {
-    let mut instance = Map::new();
-    instance.insert("@type".to_owned(), json!(["https://uri.etsi.org/ngsi-ld/Property"]));
-    instance.insert("https://uri.etsi.org/ngsi-ld/hasValue".to_owned(), json!([{"@value": 21.5}]));
-    if let Some(code) = unit_code {
-        instance.insert("https://uri.etsi.org/ngsi-ld/unitCode".to_owned(), json!([{"@value": code}]));
-    }
-    let mut entity = Map::new();
-    entity.insert("@id".to_owned(), json!(id));
-    if let Typed::Building = typed {
-        entity.insert("@type".to_owned(), json!([BUILDING_TYPE]));
-    }
-    entity.insert(TEMPERATURE.to_owned(), json!([instance]));
-    Arc::new(json!([entity]))
+/// The `temperature` reading one write stores.
+#[derive(Clone, Copy)]
+enum Reading {
+    /// 21.5 degrees Celsius.
+    Celsius,
+    /// 21.5 with no unit.
+    Unitless,
+    /// A `DateTime`-typed value that names no instant, which the history
+    /// interpretation refuses.
+    UnreadableInstant,
 }
 
-/// Whether an Entity is written with a type.
-#[derive(Clone, Copy)]
-enum Typed {
-    /// The Entity names the Building type.
-    Building,
-    /// The Entity names no type at all, which clause 4.5.1 forbids.
-    Untyped,
+/// The Building one write stores, with a `temperature` Property holding
+/// `reading`.
+fn building(id: &str, reading: Reading) -> Arc<EntityState> {
+    let mut instance = Map::new();
+    instance.insert("@type".to_owned(), json!(["https://uri.etsi.org/ngsi-ld/Property"]));
+    let value = match reading {
+        Reading::Celsius | Reading::Unitless => json!([{"@value": 21.5}]),
+        Reading::UnreadableInstant => json!([{"@value": "yesterday", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]),
+    };
+    instance.insert("https://uri.etsi.org/ngsi-ld/hasValue".to_owned(), value);
+    match reading {
+        Reading::Celsius => {
+            instance.insert("https://uri.etsi.org/ngsi-ld/unitCode".to_owned(), json!([{"@value": CELSIUS}]));
+        }
+        Reading::Unitless | Reading::UnreadableInstant => {}
+    }
+    let document = json!([{"@id": id, "@type": [BUILDING_TYPE], TEMPERATURE: [instance]}]);
+    let state = EntityState::from_slice(&serde_json::to_vec(&document).expect("the document serialises")).expect("the document is an entity state");
+    Arc::new(state)
 }
 
 /// The write that creates `id`, as a batch create builds it.
-fn creation(id: &str, typed: Typed, unit_code: Option<&str>) -> AtomicWrite {
-    let payload = expanded_entity(id, typed, unit_code);
+fn creation(id: &str, reading: Reading) -> AtomicWrite {
+    let state = building(id, reading);
     AtomicWrite::builder()
         .entity_id(Arc::new(id.parse::<Identifier>().expect("a valid entity URI")))
         .entity(EntityMutation::Insert(
-            EntityRecord::from_expanded(Arc::clone(&payload)).expect("readable members"), // clone: Arc ref-count bump; the same payload is the observation
+            EntityRecord::from_state(Arc::clone(&state)).expect("a projectable state"), // clone: Arc ref-count bump; the same state is the observation
         ))
-        .history(vec![HistoryRecord::Observations(payload)])
+        .history(vec![HistoryRecord::Observations(state)])
         .precondition(Precondition::MustNotExist)
         .build()
 }
@@ -104,19 +109,19 @@ async fn absent(pool: &PgPool, id: &str) -> bool {
 }
 
 #[tokio::test]
-async fn current_projection_a_unit_code_refused_at_commit_fails_only_its_own_write() {
+async fn current_projection_a_value_refused_at_commit_fails_only_its_own_write() {
     let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
     let pool = scope.database_pool();
-    let first = scope.id("Building:isolation-unit-first");
-    let refused = scope.id("Building:isolation-unit-refused");
-    let last = scope.id("Building:isolation-unit-last");
+    let first = scope.id("Building:isolation-value-first");
+    let refused = scope.id("Building:isolation-value-refused");
+    let last = scope.id("Building:isolation-value-last");
 
     let outcomes = commit(
         pool,
         vec![
-            creation(&first, Typed::Building, Some(CELSIUS)),
-            creation(&refused, Typed::Building, Some(UNREGISTERED)),
-            creation(&last, Typed::Building, None),
+            creation(&first, Reading::Celsius),
+            creation(&refused, Reading::UnreadableInstant),
+            creation(&last, Reading::Unitless),
         ],
     )
     .await
@@ -127,7 +132,7 @@ async fn current_projection_a_unit_code_refused_at_commit_fails_only_its_own_wri
             outcomes.as_slice(),
             [
                 WriteOutcome::Created,
-                WriteOutcome::Refused(SubmissionRefusal::UnitCodeUnregistered),
+                WriteOutcome::Refused(SubmissionRefusal::TimeValueProperty(_)),
                 WriteOutcome::Created
             ]
         ),
@@ -140,45 +145,18 @@ async fn current_projection_a_unit_code_refused_at_commit_fails_only_its_own_wri
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.1: an Entity with no type is refused by the entity statement
-/// itself, which writes every entity of the commit at once and names the one
-/// it refused.
-#[tokio::test]
-async fn current_projection_an_untyped_entity_refused_by_the_entity_statement_fails_only_its_own_write() {
-    let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
-    let pool = scope.database_pool();
-    let untyped = scope.id("Building:isolation-untyped");
-    let typed = scope.id("Building:isolation-typed");
-
-    let outcomes = commit(pool, vec![creation(&untyped, Typed::Untyped, None), creation(&typed, Typed::Building, None)])
-        .await
-        .expect("a refusal of one write must not fail the commit");
-
-    assert!(
-        matches!(
-            outcomes.as_slice(),
-            [WriteOutcome::Refused(SubmissionRefusal::UntypedEntity(_)), WriteOutcome::Created]
-        ),
-        "{outcomes:?}"
-    );
-    assert!(absent(pool, &untyped).await, "the untyped Entity must not be stored");
-    assert!(landed(pool, &typed).await, "its typed neighbour must land whole");
-
-    scope.finish().await.expect("cleanup failed");
-}
-
 /// Clause 6.14.3.1 answers 207 when "only some or none" of the entities were
 /// created: a commit whose every write was refused still answers for each.
 #[tokio::test]
 async fn current_projection_a_commit_whose_every_write_is_refused_reports_each_refusal_and_stores_nothing() {
     let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
     let pool = scope.database_pool();
-    let unit = scope.id("Building:isolation-all-unit");
-    let untyped = scope.id("Building:isolation-all-untyped");
+    let first = scope.id("Building:isolation-all-first");
+    let second = scope.id("Building:isolation-all-second");
 
     let outcomes = commit(
         pool,
-        vec![creation(&unit, Typed::Building, Some(UNREGISTERED)), creation(&untyped, Typed::Untyped, None)],
+        vec![creation(&first, Reading::UnreadableInstant), creation(&second, Reading::UnreadableInstant)],
     )
     .await
     .expect("refusals of every write must not fail the commit");
@@ -187,14 +165,14 @@ async fn current_projection_a_commit_whose_every_write_is_refused_reports_each_r
         matches!(
             outcomes.as_slice(),
             [
-                WriteOutcome::Refused(SubmissionRefusal::UnitCodeUnregistered),
-                WriteOutcome::Refused(SubmissionRefusal::UntypedEntity(_))
+                WriteOutcome::Refused(SubmissionRefusal::TimeValueProperty(_)),
+                WriteOutcome::Refused(SubmissionRefusal::TimeValueProperty(_))
             ]
         ),
         "{outcomes:?}"
     );
-    assert!(absent(pool, &unit).await);
-    assert!(absent(pool, &untyped).await);
+    assert!(absent(pool, &first).await);
+    assert!(absent(pool, &second).await);
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -208,11 +186,11 @@ async fn current_projection_a_refused_single_write_is_the_commits_refusal() {
     let pool = scope.database_pool();
     let refused = scope.id("Building:isolation-single");
 
-    let outcomes = commit(pool, vec![creation(&refused, Typed::Building, Some(UNREGISTERED))])
+    let outcomes = commit(pool, vec![creation(&refused, Reading::UnreadableInstant)])
         .await
         .expect("the refusal is the write's outcome");
     assert!(
-        matches!(single(outcomes), Err(CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered))),
+        matches!(single(outcomes), Err(CommitError::Submission(SubmissionRefusal::TimeValueProperty(_)))),
         "a one-write commit reports its refused write as its own refusal"
     );
     assert!(absent(pool, &refused).await);
@@ -230,15 +208,9 @@ async fn current_projection_writes_landed_after_a_refusal_hold_exactly_what_they
     let kept = scope.id("Building:isolation-kept");
     let refused = scope.id("Building:isolation-kept-refused");
 
-    commit(
-        pool,
-        vec![
-            creation(&refused, Typed::Building, Some(UNREGISTERED)),
-            creation(&kept, Typed::Building, Some(CELSIUS)),
-        ],
-    )
-    .await
-    .expect("a refusal of one write must not fail the commit");
+    commit(pool, vec![creation(&refused, Reading::UnreadableInstant), creation(&kept, Reading::Celsius)])
+        .await
+        .expect("a refusal of one write must not fail the commit");
 
     let rows = rows_for_attribute(pool, &kept, "temperature").await;
     assert_eq!(rows.len(), 1, "one projection row, not one per attempt: {rows:?}");

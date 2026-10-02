@@ -14,7 +14,11 @@ use std::collections::HashSet;
 /// not necessarily a plain term (see [`is_absolute_iri`]), so callers that must
 /// distinguish an absolute IRI from a compact one only after ruling out a
 /// defined prefix use that function instead.
-pub(crate) fn is_full_iri(term: &str) -> bool {
+///
+/// It is also the rule deciding which names a name compaction compacts at
+/// all: a name outside these schemes is answered verbatim.
+#[must_use]
+pub fn is_full_iri(term: &str) -> bool {
     term.starts_with("http://") || term.starts_with("https://") || term.starts_with("urn:")
 }
 
@@ -22,10 +26,9 @@ pub(crate) fn is_full_iri(term: &str) -> bool {
 /// `scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`) followed by `:`.
 ///
 /// Unlike [`is_full_iri`] this admits every scheme — `did:`, `mailto:`, `tel:` —
-/// so the fastpath keeps such a value verbatim rather than vocab-expanding it,
-/// matching JSON-LD 1.1 clause 4.6.2 once the prefix table has ruled out a
-/// compact-IRI reading. `did:example:1` is the case the three-scheme allowlist
-/// mis-expanded.
+/// so a context reference written with any scheme is kept as the absolute
+/// IRI it is rather than resolved against a base (JSON-LD 1.1 clause 4.6.2).
+/// `did:example:1` is the case the three-scheme allowlist mis-read.
 pub(crate) fn is_absolute_iri(term: &str) -> bool {
     let mut chars = term.char_indices();
     match chars.next() {

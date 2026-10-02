@@ -7,14 +7,12 @@
 use crate::compiled::CompiledSubscription;
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_model::{
-    expanded::query_match::{matches_geo_query, matches_scope_query},
-    notification::ChangeOrigin,
-    subscription::SubscriptionStatus,
+use andromeda_ngsi_ld_model::{notification::ChangeOrigin, subscription::SubscriptionStatus};
+use andromeda_ngsi_ld_query::{
+    filter::eval::evaluate,
+    queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
 };
-use andromeda_ngsi_ld_query::filter::eval;
 use chrono::Utc;
-use serde_json::Value;
 use tracing::debug;
 
 /// Determine whether a compiled subscription matches a change event.
@@ -125,32 +123,39 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
     true
 }
 
-/// Evaluate q, geoQ, scopeQ, and csf filters against the fetched entity data.
+/// Evaluate q (clause 4.9), geoQ (clause 4.10), scopeQ (clause 4.19) and csf
+/// against an entity.
 ///
 /// Returns `true` if the entity passes all configured filters on the subscription.
-/// Filters that are not configured (None) are skipped.
-pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -> bool {
+/// Filters that are not configured (None) are skipped. On an entity
+/// subscription `csf` is a second Query Language expression over the same
+/// entity. The entity is a stored state or a received document, read through
+/// the query language's own reading of an entity.
+pub fn matches_entity_filters<'a, E>(sub: &CompiledSubscription, entity: E) -> bool
+where
+    E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
+{
     if let Some(ref expr) = sub.compiled_q
-        && !eval::evaluate(expr, entity_data)
+        && !evaluate(expr, entity)
     {
         debug!("Subscription {} skipped: q filter did not match entity", sub.id);
         return false;
     }
 
-    if !sub.compiled_geo_q.admits(|geo_q| matches_geo_query(geo_q, entity_data)) {
+    if !sub.compiled_geo_q.admits(|geo_q| geo_q.matches_entity(entity)) {
         debug!("Subscription {} skipped: geoQ filter did not admit entity", sub.id);
         return false;
     }
 
     if let Some(ref scope_q) = sub.compiled_scope_q
-        && !matches_scope_query(scope_q, entity_data)
+        && !scope_q.matches_entity(entity)
     {
         debug!("Subscription {} skipped: scopeQ filter did not match entity", sub.id);
         return false;
     }
 
     if let Some(ref csf_expr) = sub.compiled_csf
-        && !eval::evaluate(csf_expr, entity_data)
+        && !evaluate(csf_expr, entity)
     {
         debug!("Subscription {} skipped: csf filter did not match entity", sub.id);
         return false;
@@ -168,14 +173,16 @@ mod tests {
         matching::{matches_entity_filters, matches_subscription},
     };
     use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
+    use andromeda_ngsi_ld_entity::{
+        entity_state::EntityState,
+        reads::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            attribute_instance_key::AttributeInstanceKey,
+        },
+    };
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
-        expanded::{
-            attribute_change::{AttributeChange, AttributeChangeKind},
-            instance_key::AttributeInstanceKey,
-            query_match::matches_geo_query,
-        },
         notification::{ChangeOrigin, NotificationTrigger},
         subscription::SubscriptionStatus,
     };
@@ -190,7 +197,6 @@ mod tests {
     use chrono::{DateTime, Utc};
     use futures::executor::block_on;
     use iri_rs::IriBuf;
-    use serde_json::Value;
     use std::{
         fmt::Display,
         future::{Future, ready},
@@ -316,11 +322,24 @@ mod tests {
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
-    fn located(longitude: f64, latitude: f64) -> Value {
-        serde_json::json!([{
+    /// A stored entity whose `location` is the point given.
+    fn located(longitude: f64, latitude: f64) -> EntityState {
+        state(&serde_json::json!([{
             "@id": "urn:ngsi-ld:Building:001",
-            LOCATION: [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": {"type": "Point", "coordinates": [longitude, latitude]}}]}]
-        }])
+            "@type": ["https://example.com/Building"],
+            LOCATION: [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@type": ["https://purl.org/geojson/vocab#Point"],
+                    "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": longitude}, {"@value": latitude}]}]
+                }]
+            }]
+        }]))
+    }
+
+    /// Decode a stored document into a state.
+    fn state(document: &serde_json::Value) -> EntityState {
+        EntityState::from_slice(&serde_json::to_vec(document).expect("JSON")).expect("a stored entity decodes")
     }
 
     #[test]
@@ -365,9 +384,11 @@ mod tests {
         }))
         .expect("the subscription geoQ fixture did not compile");
 
-        assert!(matches_geo_query(&geo_query, &located(13.4, 52.5)));
-        assert!(!matches_geo_query(&geo_query, &located(13.4, 53.5)));
-        assert!(!matches_geo_query(&geo_query, &serde_json::json!([{"@id": "urn:ngsi-ld:Building:002"}])));
+        assert!(geo_query.matches_entity(&located(13.4, 52.5)));
+        assert!(!geo_query.matches_entity(&located(13.4, 53.5)));
+        assert!(!geo_query.matches_entity(&state(
+            &serde_json::json!([{"@id": "urn:ngsi-ld:Building:002", "@type": ["https://example.com/Building"]}])
+        )));
     }
 
     /// Clause 5.8.6: every changed entity is included only when no geoquery is

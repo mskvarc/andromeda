@@ -1,0 +1,75 @@
+//! The scopes one entity belongs to (clause 4.18).
+//!
+//! Clause 4.18 lets an entity be "assigned to one or more Scopes at the same
+//! time" and makes the member optional, so an entity either has no scope at all
+//! or at least one path. The NGSI-LD Null is a deletion instruction, never a
+//! scope, and [`ScopePath`] already refuses it.
+
+use crate::non_empty::{EmptyCollection, NonEmpty};
+use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
+use derive_more::{AsRef, Deref};
+
+/// One or more scope paths, in order, each at most once.
+#[derive(AsRef, Clone, Debug, Deref, Eq, PartialEq)]
+#[as_ref(forward)]
+pub struct Scopes(NonEmpty<ScopePath>);
+
+impl Scopes {
+    /// Hold exactly one path.
+    #[must_use]
+    pub fn one(path: ScopePath) -> Scopes {
+        Scopes(NonEmpty::one(path))
+    }
+
+    /// Hold `paths` in order, keeping the first occurrence of a repeated path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyCollection`] when `paths` is empty.
+    pub fn try_from_paths(paths: impl IntoIterator<Item = ScopePath>) -> Result<Scopes, EmptyCollection> {
+        let mut distinct: Vec<ScopePath> = Vec::new();
+        for path in paths {
+            if !distinct.contains(&path) {
+                distinct.push(path);
+            }
+        }
+        NonEmpty::try_from_vec(distinct).map(Scopes)
+    }
+
+    /// Add the paths this set lacks, in the order given (the clause 5.6.3.4
+    /// `noOverwrite` scope append).
+    pub fn extend(&mut self, paths: impl IntoIterator<Item = ScopePath>) {
+        for path in paths {
+            if !self.0.contains(&path) {
+                self.0.push(path);
+            }
+        }
+    }
+
+    /// The paths as a slice, in order.
+    #[must_use]
+    pub fn as_slice(&self) -> &[ScopePath] {
+        self.0.as_slice()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{non_empty::EmptyCollection, scopes::Scopes};
+    use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
+
+    fn path(raw: &str) -> ScopePath {
+        raw.parse().expect("a valid scope path")
+    }
+
+    #[test]
+    fn a_repeated_path_is_kept_once() {
+        let scopes = Scopes::try_from_paths([path("/a"), path("/b"), path("/a")]).expect("two paths");
+        pretty_assertions::assert_eq!(scopes.as_slice(), &[path("/a"), path("/b")]);
+    }
+
+    #[test]
+    fn no_path_is_refused() {
+        pretty_assertions::assert_eq!(Scopes::try_from_paths([]), Err(EmptyCollection));
+    }
+}

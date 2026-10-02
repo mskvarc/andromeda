@@ -92,7 +92,6 @@ pub async fn create_or_update(
                 entity_type_compact: entity_type.as_ref(),
                 attribute_name: None,
                 method: Method::POST,
-                body: Some(&payload),
                 context: &context,
                 operation: ForwardingOperation::UpsertTemporalEntity,
                 path_suffix: None,
@@ -102,6 +101,7 @@ pub async fn create_or_update(
                     headers: Some(&headers),
                 },
             },
+            Some(&payload),
         )
         .await
         .with_instance(&uri)?;

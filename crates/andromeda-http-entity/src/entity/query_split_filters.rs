@@ -10,10 +10,8 @@ use crate::error::EntityResultExt;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_model::{
-    entity::Entity,
-    expanded::query_match::{matches_geo_query, matches_scope_query},
-};
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
+use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{
     filter::{
         eval::evaluate,
@@ -27,9 +25,11 @@ use axum::http::Uri as HttpUri;
 
 /// Keep the merged entities the deferred filters match.
 ///
-/// An entity that cannot be expanded into the request's context cannot be
+/// Each entity is expanded once, by the typed expansion, under the request's
+/// context, and the filters are evaluated over the typed document it expands
+/// to. An entity that cannot be expanded into the request's context cannot be
 /// matched against filters written in that context, so it is dropped rather
-/// than admitted unfiltered.
+/// than admitted unfiltered; a context that cannot be prepared drops them all.
 ///
 /// # Errors
 ///
@@ -67,18 +67,18 @@ pub(crate) async fn retain_matching(
         .with_entity_instance(instance)?;
     let compiled_scope = deferred.scope_q;
 
+    let Ok(expansion) = EntityExpansion::prepare(service.engine(), context).await else {
+        return Ok(Vec::new());
+    };
     let mut matching = Vec::with_capacity(entities.len());
     for entity in entities {
-        let Ok(compact) = serde_json::to_value(&entity) else {
-            continue;
-        };
-        let Ok(expanded) = service.engine().expand(compact, context).await else {
+        let Ok(document) = expansion.entity(&entity, Normalization::Entity).await else {
             continue;
         };
 
-        let q_ok = compiled_q.as_ref().is_none_or(|expr| evaluate(expr, &expanded));
-        let geo_ok = compiled_geo.as_ref().is_none_or(|geo| matches_geo_query(geo, &expanded));
-        let scope_ok = compiled_scope.as_ref().is_none_or(|scope| matches_scope_query(scope, &expanded));
+        let q_ok = compiled_q.as_ref().is_none_or(|expr| evaluate(expr, &document));
+        let geo_ok = compiled_geo.as_ref().is_none_or(|geo| geo.matches_entity(&document));
+        let scope_ok = compiled_scope.as_ref().is_none_or(|scope| scope.matches_entity(&document));
 
         if q_ok && geo_ok && scope_ok {
             matching.push(entity);

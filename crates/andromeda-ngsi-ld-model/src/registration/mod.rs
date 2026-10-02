@@ -4,9 +4,12 @@
 //! group answers a different question: what the source covers, how the broker
 //! reaches it, what has been observed about it, when the registration applies,
 //! and what identifies it. They live in a module apiece, and this one holds
-//! only the resource that flattens them together.
+//! only the resource that flattens them together. What a `csf` filter reads of
+//! the Context Source Properties it adds is
+//! [`context_source_properties`].
 
 pub mod access;
+pub mod context_source_properties;
 pub mod coverage;
 pub mod forwarding_mode;
 pub mod health;

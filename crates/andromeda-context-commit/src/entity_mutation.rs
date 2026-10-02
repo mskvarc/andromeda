@@ -30,13 +30,17 @@ impl EntityMutation {
 #[cfg(test)]
 mod tests {
     use crate::{entity_mutation::EntityMutation, entity_record::EntityRecord};
-    use serde_json::json;
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
     use std::sync::Arc;
 
     #[test]
     fn only_insert_and_update_mutations_carry_entity_records() {
+        let state = EntityState::new(
+            "urn:ngsi-ld:A".parse().expect("valid entity URI"),
+            EntityTypes::one("https://example.org/T".parse().expect("valid type name")),
+        );
         assert!(
-            EntityMutation::Insert(EntityRecord::from_expanded(Arc::new(json!([{}]))).expect("readable members"))
+            EntityMutation::Insert(EntityRecord::from_state(Arc::new(state)).expect("a projection"))
                 .record()
                 .is_some()
         );

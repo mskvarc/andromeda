@@ -6,28 +6,28 @@ use crate::{
     service::{CreateOrUpdateResult, TemporalService, iri_short_name},
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_validation_reason::TemporalValidationReason,
-    unit_code_admission::validate_entity_unit_code_admission,
+    written_evolution::WrittenEvolution,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::expanded::geo_property_admission::validate_expanded_geo_properties;
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
-use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use serde_json::Value;
-use std::sync::Arc;
+use std::slice::from_ref;
 
 impl TemporalService {
     /// Create a temporal entity or append the supplied observations when it already exists.
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::Validation`] when the payload is not a JSON
-    /// object, carries no `@id` or no `@type` (clause 4.5.1), names an
-    /// unparsable identifier, puts a `unitCode` on an attribute family clause
-    /// 4.5.2 defines without one, or carries a `GeoProperty` whose geometry is
-    /// unusable (clause 4.7); [`TemporalError::JsonLd`] when the
+    /// Returns [`TemporalError::Validation`] when the payload is no Temporal
+    /// Evolution the model admits, carries no `id` or no `type` (clause
+    /// 4.5.1), puts a `unitCode` on an attribute family clause 4.5.2 defines
+    /// without one, or carries a `GeoProperty` whose geometry is unusable
+    /// (clause 4.7); [`TemporalError::PayloadBudget`] when it exceeds the
+    /// budget an entity is admitted under; [`TemporalError::JsonLd`] when the
     /// payload cannot be expanded against `context`; and
     /// [`TemporalError::Commit`] or [`TemporalError::Persistence`] when the
     /// atomic write cannot be landed.
@@ -39,33 +39,18 @@ impl TemporalService {
     }
 
     /// The measured body of [`TemporalService::create_or_update`].
-    async fn create_or_update_inner(&self, target: &ContextTarget, mut payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
-        normalize_entity_attributes(&mut payload);
-        // Counted before the expansion multiplies the payload.
-        self.limits.payload_budget.admit(&payload)?;
-        let expanded = self.engine.expand(payload, context).await?;
-        validate_entity_unit_code_admission(&expanded)?;
-        validate_expanded_geo_properties(&expanded).map_err(TemporalValidationReason::from)?;
-        let entity_id = {
-            let entity_obj = expanded
-                .as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|v| v.as_object())
-                .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::EntityNotObject))?;
-
-            let entity_id = entity_obj
-                .get("@id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::EntityMissingId))?;
-
-            let entity_id = entity_id
-                .parse::<Identifier>()
-                .map_err(|source| TemporalError::Validation(TemporalValidationReason::EntityId { source }))?;
-            if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(Vec::is_empty) {
-                return Err(TemporalError::Validation(TemporalValidationReason::EntityMissingType));
-            }
-            entity_id
-        };
+    async fn create_or_update_inner(&self, target: &ContextTarget, payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
+        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let evolution = WrittenEvolution::expand(&expansion, payload).await?;
+        evolution.admit_budget(self.limits.payload_budget)?;
+        let document = evolution.document();
+        let entity_id = document
+            .id()
+            .cloned() // clone: the identifier outlives the evolution it is read from
+            .ok_or(TemporalError::Validation(TemporalValidationReason::EntityMissingId))?;
+        if document.types().is_empty() {
+            return Err(TemporalError::Validation(TemporalValidationReason::EntityMissingType));
+        }
 
         // Clause 5.6.11.4: an existing Temporal Evolution gets the instances
         // added "as mandated by clause 5.6.12"; otherwise "implementations
@@ -73,7 +58,7 @@ impl TemporalService {
         // the same write -- every instance to history, the standing ones to
         // current state -- and the answer differs only in what it reports.
         let exists = self.reader.entity_exists(target, &entity_id).await?;
-        self.commit_evolution(target, &entity_id, Arc::new(expanded)).await?;
+        self.commit_evolution(target, &entity_id, &evolution).await?;
         if exists {
             Ok(CreateOrUpdateResult::Updated)
         } else {
@@ -86,9 +71,11 @@ impl TemporalService {
     /// # Errors
     ///
     /// Returns [`TemporalError::NotFound`] when the entity has no Temporal
-    /// Evolution, [`TemporalError::Validation`] when the payload puts a
-    /// `unitCode` on an attribute family clause 4.5.2 defines without one or
-    /// carries a `GeoProperty` whose geometry is unusable (clause 4.7),
+    /// Evolution, [`TemporalError::Validation`] when the payload is no
+    /// fragment the model admits, puts a `unitCode` on an attribute family
+    /// clause 4.5.2 defines without one or carries a `GeoProperty` whose
+    /// geometry is unusable (clause 4.7), [`TemporalError::PayloadBudget`]
+    /// when it exceeds the budget an entity is admitted under,
     /// [`TemporalError::JsonLd`] when the payload cannot be expanded against
     /// `context`, and [`TemporalError::Commit`] or
     /// [`TemporalError::Persistence`] when the append cannot be landed.
@@ -100,18 +87,26 @@ impl TemporalService {
     }
 
     /// The measured body of [`TemporalService::add_attrs`].
-    async fn add_attrs_inner(&self, target: &ContextTarget, entity_id: &Identifier, mut payload: Value, context: &ContextSpec) -> Result<(), TemporalError> {
+    async fn add_attrs_inner(&self, target: &ContextTarget, entity_id: &Identifier, payload: Value, context: &ContextSpec) -> Result<(), TemporalError> {
         if !self.reader.entity_exists(target, entity_id).await? {
             return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
         }
 
-        normalize_entity_attributes(&mut payload);
-        // Counted before the expansion multiplies the payload.
-        self.limits.payload_budget.admit(&payload)?;
-        let expanded = self.engine.expand(payload, context).await?;
-        validate_entity_unit_code_admission(&expanded)?;
-        validate_expanded_geo_properties(&expanded).map_err(TemporalValidationReason::from)?;
-        self.commit_evolution(target, entity_id, Arc::new(expanded)).await?;
+        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let evolution = WrittenEvolution::expand(&expansion, payload).await?;
+        evolution.admit_budget(self.limits.payload_budget)?;
+        // Clause 5.6.12 addresses the Temporal Evolution by the request path, and
+        // clause 4.5.6 makes it the Entity with the types its evolution records:
+        // the fragment names neither, yet the instances it adds may have to
+        // bring current state back into being.
+        let recorded_types = self
+            .reader
+            .entity_types(target, from_ref(entity_id))
+            .await?
+            .remove(entity_id)
+            .unwrap_or_default();
+        let evolution = evolution.addressed_to(entity_id, recorded_types);
+        self.commit_evolution(target, entity_id, &evolution).await?;
         Ok(())
     }
 

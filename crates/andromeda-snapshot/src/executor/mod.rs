@@ -3,10 +3,14 @@
 mod attempts;
 /// Where a snapshot capture reads the context it freezes.
 pub mod capture_sources;
+/// What a captured stored state keeps of what it holds.
+mod captured_state;
 mod drain;
 /// Capturing the whole result of one snapshot entity query.
 mod entity_capture;
 mod execution;
+/// Turning the entities a capture merged with its sources into states.
+mod forwarded_capture;
 mod lease_renewal;
 mod status;
 mod translation;

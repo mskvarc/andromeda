@@ -4,8 +4,6 @@ use crate::attribute::common_fields::CommonAttributeFields;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use derive_more::{Deref, DerefMut, From};
 use indexmap::IndexMap;
-use jsonld::{Expandable, ExpandableLanguageMap};
-use jsonld_expandable_core::JsonValue;
 use langtag::{InvalidLangTag, LangTagBuf};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
 use serde_with::skip_serializing_none;
@@ -66,9 +64,8 @@ pub enum LanguageMapValue {
     Multiple(Vec<String>),
 }
 
-/// Local newtype around [`IndexMap`] of language-tagged strings, required so
-/// the foreign [`ExpandableLanguageMap`] trait can be implemented (orphan
-/// rules forbid implementing a foreign trait for the foreign [`IndexMap`]).
+/// The language-tagged strings of a `LanguageProperty`, keyed by tag and
+/// compared by content rather than insertion order.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, From, Deref, DerefMut)]
 #[serde(transparent)]
 pub struct LanguageMap(pub IndexMap<LanguageMapKey, LanguageMapValue>);
@@ -87,65 +84,26 @@ impl PartialEq for LanguageMap {
 // would demand `IndexMap: Eq` with insertion-order semantics.
 impl Eq for LanguageMap {}
 
-impl ExpandableLanguageMap for LanguageMap {
-    fn to_expanded_language_map<V: JsonValue>(&self) -> V {
-        let entries: Vec<V> = self
-            .0
-            .iter()
-            .flat_map(|(key, value)| match value {
-                LanguageMapValue::Single(text) => vec![language_entry::<V>(key, text)],
-                LanguageMapValue::Multiple(values) => values.iter().map(|text| language_entry::<V>(key, text)).collect(),
-            })
-            .collect();
-        V::array(entries)
-    }
-}
-
 /// NGSI-LD `LanguageProperty` representation (ETSI GS CIM 009 clause 5.2.32).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(
-    type = "ngsi:LanguageProperty",
-    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
-)]
 pub struct LanguageProperty {
     /// Language-indexed string map.
-    #[jsonld(property = "ngsi:hasLanguageMap", container = "language")]
     pub language_map: LanguageMap,
     /// Fixed JSON-LD datatype for language-tagged strings.
-    #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<NgsiLdReference>,
     /// Previous language map emitted in notifications when `showChanges` is active.
-    #[jsonld(property = "ngsi:hasPreviousLanguageMap", container = "language")]
     pub previous_language_map: Option<LanguageMap>,
     /// Members shared with every other attribute family.
     #[serde(flatten)]
-    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
-}
-
-/// Builds one expanded language-map entry: an `@value` node carrying an
-/// `@language` tag unless the key is the `@none` default (clause 4.5.16).
-fn language_entry<V: JsonValue>(key: &LanguageMapKey, value: &str) -> V {
-    let mut entries: Vec<(String, V)> = Vec::with_capacity(2);
-    entries.push(("@value".to_string(), V::string(value)));
-    if let LanguageMapKey::Tag(tag) = key {
-        entries.push(("@language".to_string(), V::string(tag.as_str())));
-    }
-    V::object(entries)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute::{
-        instance::Attribute,
-        language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
-    };
+    use crate::attribute::{instance::Attribute, language_property::LanguageProperty};
     use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-    use indexmap::IndexMap;
-    use jsonld::Expandable;
 
     #[test]
     fn language_property_round_trip_supports_previous_language_map() {
@@ -161,19 +119,6 @@ mod tests {
         };
         assert!(property.previous_language_map.is_some());
         pretty_assertions::assert_eq!(property.value_type.as_ref().map(NgsiLdReference::as_str), Some("langString"));
-    }
-
-    #[test]
-    fn language_map_expands_as_language_tagged_values() {
-        let mut map = IndexMap::new();
-        map.insert(LanguageMapKey::None, LanguageMapValue::Single("default".to_string()));
-        let property = LanguageProperty {
-            language_map: map.into(),
-            ..Default::default()
-        };
-        let expanded = property.expand::<serde_json::Value>();
-        let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(expanded_properties::LANGUAGE_MAP.as_str()));
     }
 
     #[test]

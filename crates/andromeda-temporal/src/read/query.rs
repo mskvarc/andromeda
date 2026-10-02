@@ -10,10 +10,11 @@ use crate::{
         rendered_entity::{HistoryPresence, RenderedTemporalEntity},
     },
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalService},
+    temporal_compaction::TemporalCompaction,
     temporal_invariant::TemporalInvariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
@@ -54,13 +55,14 @@ impl TemporalService {
             let entity_types_map: HashMap<Identifier, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
 
             let dataset_step = DatasetStep::of(&compiled);
-            let names = NameCompactor::new(&self.engine, context);
+            let compactor = self.engine.compactor(context);
+            let compaction = TemporalCompaction::new(&compactor);
             let mut warnings = Vec::new();
             let rendered = if compiled.representation.format.is_aggregated() {
                 let mut rendered = Vec::with_capacity(entity_ids.len());
                 for entity_id in entity_ids {
                     let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
-                    let outcome = self.render_one_temporal_entity(target, &entity_id, entity_types, &compiled, &names).await;
+                    let outcome = self.render_one_temporal_entity(target, &entity_id, entity_types, &compiled, &compaction).await;
                     rendered.extend(settle_entity(entity_id, outcome, &mut warnings)?);
                 }
                 rendered
@@ -83,7 +85,7 @@ impl TemporalService {
                     let entity_types = entity_types_map.get(&page.entity_id).map(Vec::as_slice).unwrap_or_default();
                     // clone: a render failure names the entity the page was consumed for.
                     let entity_id = page.entity_id.clone();
-                    let outcome = self.render_history_page(page, entity_types, &compiled, &names, cut).await;
+                    let outcome = self.render_history_page(page, entity_types, &compiled, &compaction, cut).await;
                     rendered.extend(settle_entity(entity_id, outcome, &mut warnings)?);
                 }
                 rendered

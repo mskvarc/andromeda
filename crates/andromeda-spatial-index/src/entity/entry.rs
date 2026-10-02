@@ -1,7 +1,7 @@
 //! One entity's geometry, as the tree holds it.
 
 use crate::partitioned_rtree::Indexed;
-use andromeda_ngsi_ld_geometry::{geometry::Geometry, great_circle::great_circle_bounds};
+use andromeda_ngsi_ld_geometry::{form::GeometryForm, great_circle::great_circle_bounds, planar::PlanarGeometry};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use rstar::{AABB, RTreeObject};
 
@@ -25,8 +25,12 @@ pub struct SpatialEntry {
     /// could not hold would be missing from a partition the query path reads
     /// as complete.
     pub entity_id: Identifier,
-    /// The entity geometry.
-    pub geometry: Geometry,
+    /// The horizontal projection of the entity geometry, the form every
+    /// clause 4.10 relation is evaluated over.
+    ///
+    /// Projected once here rather than at every query the entry is a
+    /// candidate for; the entry needs nothing of the geometry beyond it.
+    pub planar: PlanarGeometry,
     /// Axis-aligned box covering the geometry read with great-circle edges.
     pub envelope: AABB<[f64; 2]>,
 }
@@ -39,10 +43,11 @@ impl SpatialEntry {
     /// prefiltered; refusing to index it is what keeps the tree's answer and
     /// the exact predicate's answer the same.
     #[must_use]
-    pub fn new(entity_id: Identifier, geometry: Geometry) -> Option<SpatialEntry> {
-        let rect = great_circle_bounds(&geometry)?;
+    pub fn new(entity_id: Identifier, geometry: &GeometryForm) -> Option<SpatialEntry> {
+        let planar = PlanarGeometry::project(geometry);
+        let rect = great_circle_bounds(&planar)?;
         let envelope = AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]);
-        Some(SpatialEntry { entity_id, geometry, envelope })
+        Some(SpatialEntry { entity_id, planar, envelope })
     }
 }
 

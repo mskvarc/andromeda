@@ -1,7 +1,7 @@
 //! The bounds one temporal service applies to what a request may ask of it.
 
 use crate::instance_limits::TemporalInstanceLimits;
-use andromeda_ngsi_ld_representation::payload_census::EntityPayloadBudget;
+use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 
 /// The bounds a temporal service applies to its reads and writes.
 #[derive(Clone, Copy, Debug)]

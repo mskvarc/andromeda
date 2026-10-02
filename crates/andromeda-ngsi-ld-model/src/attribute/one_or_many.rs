@@ -1,9 +1,5 @@
 //! The single-or-array shape NGSI-LD uses for `String` / `String[]` members.
 
-use crate::attribute::expansion::id_object;
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
-use jsonld::Expandable;
-use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt,
@@ -65,30 +61,6 @@ where
                 f.write_str(&joined)
             }
         }
-    }
-}
-
-impl Expandable for OneOrMany<Uri> {
-    fn expand<V: JsonValue>(&self) -> V {
-        V::array(self.iter().map(|value| id_object::<V>(value.as_ref())))
-    }
-}
-
-impl<V: JsonValue> ToJsonValue<V> for OneOrMany<Uri> {
-    fn to_json_value(&self) -> V {
-        Expandable::expand::<V>(self)
-    }
-}
-
-impl Expandable for OneOrMany<NgsiLdReference> {
-    fn expand<V: JsonValue>(&self) -> V {
-        V::array(self.iter().map(|value| id_object::<V>(value.as_ref())))
-    }
-}
-
-impl<V: JsonValue> ToJsonValue<V> for OneOrMany<NgsiLdReference> {
-    fn to_json_value(&self) -> V {
-        Expandable::expand::<V>(self)
     }
 }
 

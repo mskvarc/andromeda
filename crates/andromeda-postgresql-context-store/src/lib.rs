@@ -8,6 +8,8 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+/// Write statements whose text depends on the branch alone.
+mod branch_statement;
 /// Active PostgreSQL-family component discovery.
 pub mod component_report;
 /// PostgreSQL connection and pool configuration.
@@ -30,6 +32,8 @@ pub mod error;
 pub mod forwarded_subscription_routes;
 /// What the database pool reports to `/health`.
 pub mod health;
+/// The JSON text of a `jsonb` column, borrowed straight from the row.
+pub mod jsonb_text;
 /// Persistence layer for JSON-LD context documents.
 pub mod jsonld_context;
 /// PostgreSQL maintenance configuration owned beside the database connection settings.
@@ -81,6 +85,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-entity-map",
         "andromeda-health",
         "andromeda-jsonld",
+        "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

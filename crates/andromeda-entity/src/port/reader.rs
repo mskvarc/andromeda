@@ -1,38 +1,39 @@
-//! Entity payload, version, and system-attribute reads.
+//! Entity state, version, and system-attribute reads.
 
-use crate::{entity_snapshot::EntitySnapshot, error::EntityError};
+use crate::{entity_snapshot::EntitySnapshot, error::EntityError, port::retrieved_entity::RetrievedEntity};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use futures::future::BoxFuture;
-use serde_json::Value;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-/// Reads entity payloads and the snapshots needed by optimistic writes.
+/// Reads entity states and the snapshots needed by optimistic writes.
 pub trait EntityReader: Send + Sync + 'static {
-    /// Read one expanded entity payload.
+    /// Read one stored entity state.
     fn get<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
         id: &'life2 Identifier,
-    ) -> BoxFuture<'async_trait, Result<Option<Value>, EntityError>>
+    ) -> BoxFuture<'async_trait, Result<Option<Arc<EntityState>>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
         Self: 'async_trait;
-    /// Read expanded entity payloads keyed by identifier.
+    /// Read stored entity states keyed by identifier, each with its
+    /// entity-level clause 4.8 system times, in one read.
     fn get_batch<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
         ids: &'life2 [Identifier],
-    ) -> BoxFuture<'async_trait, Result<HashMap<Identifier, Value>, EntityError>>
+    ) -> BoxFuture<'async_trait, Result<HashMap<Identifier, RetrievedEntity>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
         Self: 'async_trait;
-    /// Read one expanded payload with its optimistic version token.
+    /// Read one stored state with its optimistic version token.
     fn get_snapshot<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
@@ -49,6 +50,18 @@ pub trait EntityReader: Send + Sync + 'static {
         target: &'life1 ContextTarget,
         ids: &'life2 [Identifier],
     ) -> BoxFuture<'async_trait, Result<HashMap<Identifier, EntitySnapshot>, EntityError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
+    /// Read one stored state together with its entity-level clause 4.8
+    /// system times, in one read (clause 5.6.3 retrieval with `sysAttrs`).
+    fn get_with_sys_attrs<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        target: &'life1 ContextTarget,
+        id: &'life2 Identifier,
+    ) -> BoxFuture<'async_trait, Result<Option<RetrievedEntity>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

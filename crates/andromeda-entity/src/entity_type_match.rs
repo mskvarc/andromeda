@@ -5,23 +5,20 @@
 //! is equivalent, so an entity whose types fall outside the selector is not the
 //! target at all.
 
-use andromeda_ngsi_ld_model::expanded::node::expanded_object_ref;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
-use serde_json::Value;
 
-/// Whether an expanded entity's types satisfy an expanded clause 4.17 selector.
-pub(crate) fn entity_satisfies(expanded: &Value, selector: &TypeExpr) -> bool {
-    let types = expanded_object_ref(expanded)
-        .and_then(|object| object.get("@type"))
-        .and_then(Value::as_array)
-        .map(|types| types.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-        .unwrap_or_default();
+/// Whether a stored entity's types satisfy an expanded clause 4.17 selector.
+pub(crate) fn entity_satisfies(state: &EntityState, selector: &TypeExpr) -> bool {
+    let types: Vec<&str> = state.types().as_slice().iter().map(EntityTypeName::as_str).collect();
     selector.matches(&types)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::entity_type_match::entity_satisfies;
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
     use iri_rs::IriBuf;
     use serde_json::json;
@@ -30,9 +27,14 @@ mod tests {
         TypeExpr::Type(IriBuf::new(format!("https://example.org/{name}")).expect("valid IRI"))
     }
 
+    fn typed(types: &[&str]) -> EntityState {
+        let document = json!([{"@id": "urn:ngsi-ld:Vehicle:1", "@type": types}]);
+        EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored state")
+    }
+
     #[test]
     fn an_entity_satisfies_a_selector_naming_one_of_its_types() {
-        let entity = json!({"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.org/Vehicle", "https://example.org/Asset"]});
+        let entity = typed(&["https://example.org/Vehicle", "https://example.org/Asset"]);
         assert!(entity_satisfies(&entity, &named("Vehicle")));
         assert!(entity_satisfies(&entity, &TypeExpr::Or(vec![named("Building"), named("Asset")])));
         assert!(entity_satisfies(&entity, &TypeExpr::And(vec![named("Vehicle"), named("Asset")])));
@@ -40,14 +42,14 @@ mod tests {
 
     #[test]
     fn an_entity_outside_the_selector_does_not_satisfy_it() {
-        let entity = json!({"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.org/Vehicle"]});
+        let entity = typed(&["https://example.org/Vehicle"]);
         assert!(!entity_satisfies(&entity, &named("Building")));
         assert!(!entity_satisfies(&entity, &TypeExpr::And(vec![named("Vehicle"), named("Asset")])));
     }
 
+    /// Clause 4.17: the wildcard selects an entity of any type.
     #[test]
-    fn an_entity_without_types_satisfies_no_named_type() {
-        let entity = json!({"@id": "urn:ngsi-ld:Vehicle:1"});
-        assert!(!entity_satisfies(&entity, &named("Vehicle")));
+    fn every_entity_satisfies_the_wildcard() {
+        assert!(entity_satisfies(&typed(&["https://example.org/Vehicle"]), &TypeExpr::Wildcard));
     }
 }

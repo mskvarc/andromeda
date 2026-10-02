@@ -454,9 +454,12 @@ mod tests {
         assert_eq!(
             built.sql,
             concat!(
-                r#"SELECT (SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "page"."entity_key") AS "payload" "#,
+                r#"SELECT "stored"."payload", "stored"."created_at", "stored"."modified_at", "stored"."expires_at" "#,
                 r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE TRUE "#,
-                r#"ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2) AS "page" ORDER BY "page"."sort_0" ASC"#
+                r#"ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2) AS "page" "#,
+                r#"INNER JOIN LATERAL (SELECT "d"."payload", "e"."created_at", "d"."modified_at", "e"."expires_at" FROM "entity_documents" AS "d" "#,
+                r#"INNER JOIN "entities" AS "e" ON "e"."entity_key" = "d"."entity_key" WHERE "d"."entity_key" = "page"."entity_key" LIMIT $3) AS "stored" ON TRUE "#,
+                r#"ORDER BY "page"."sort_0" ASC"#
             )
         );
     }
@@ -471,9 +474,9 @@ mod tests {
         let built = build(&q, &temperature_is_known());
         assert!(built.sql.contains(r#"JOIN "entity_documents" ON"#), "{}", built.sql);
         assert!(
-            built
-                .sql
-                .starts_with(r#"SELECT (SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "page"."entity_key") AS "payload" FROM (SELECT "entities"."entity_key", "#),
+            built.sql.starts_with(
+                r#"SELECT "stored"."payload", "stored"."created_at", "stored"."modified_at", "stored"."expires_at" FROM (SELECT "entities"."entity_key", "#
+            ),
             "{}",
             built.sql
         );

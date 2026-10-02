@@ -4,6 +4,7 @@
 //! The broker only ever writes identifiers it validated and names it interned,
 //! so each variant is a column holding something the broker never wrote.
 
+use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError};
 use andromeda_postgresql_codes::{entity_key::EntityKeyOutOfRange, registry::UnknownCompactCode};
 use thiserror::Error;
@@ -15,6 +16,9 @@ pub enum StoredEntityError {
     /// A stored entity identifier is not a URI.
     #[error("a stored entity identifier is not a URI: {0}")]
     Id(#[source] IdentifierParseError),
+    /// A stored entity document no longer decodes as an entity state.
+    #[error("a stored entity payload is not an entity state: {0}")]
+    Payload(#[source] EntityRefusal),
     /// A stored entity key is not a surrogate key, which the identity column's
     /// generated-always constraint makes impossible.
     #[error("a stored entity key is not a surrogate key: {0}")]

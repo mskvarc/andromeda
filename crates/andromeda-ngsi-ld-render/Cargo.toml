@@ -10,6 +10,8 @@ workspace = true
 
 [dependencies]
 andromeda-http-headers.workspace = true
+andromeda-ngsi-ld-entity.workspace = true
+andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
@@ -29,5 +31,6 @@ thiserror = "2.0.21"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-test-allocator.workspace = true
 pretty_assertions = "1.4.1"
 uuid = "1.26.1"

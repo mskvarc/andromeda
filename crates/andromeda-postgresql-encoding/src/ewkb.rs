@@ -27,7 +27,7 @@ use crate::{
     ewkb_build::{GeometryBuildError, GeometryBuilder},
     ewkb_walk::GeometryWalk,
 };
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry};
 use bytes::Bytes;
 use geozero::{GeozeroGeometry, ToWkb, error::GeozeroError, wkb::Ewkb as GeozeroEwkb};
 use thiserror::Error;
@@ -91,13 +91,13 @@ pub enum EwkbError {
 /// # Errors
 ///
 /// Returns [`EwkbError`] if the geometry cannot be encoded.
-pub fn encode(geometry: &Geometry) -> Result<Ewkb, EwkbError> {
+pub fn encode(geometry: &GeometryForm) -> Result<Ewkb, EwkbError> {
     Ewkb::try_from(geometry)
 }
 
 /// A geometry in `PostGIS` EWKB: little-endian, XY or XYZ, never M, SRID 4326.
 ///
-/// Constructed only by encoding a [`Geometry`] or by validating bytes that came
+/// Constructed only by encoding a [`GeometryForm`] or by validating bytes that came
 /// back from a `geometry` column, so the dialect is an enforced invariant
 /// rather than a documented assumption.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -123,10 +123,10 @@ impl Ewkb {
     }
 }
 
-impl TryFrom<&Geometry> for Ewkb {
+impl TryFrom<&GeometryForm> for Ewkb {
     type Error = EwkbError;
 
-    fn try_from(geometry: &Geometry) -> Result<Ewkb, EwkbError> {
+    fn try_from(geometry: &GeometryForm) -> Result<Ewkb, EwkbError> {
         let walk = GeometryWalk(geometry);
         let bytes = walk.to_ewkb(walk.dims(), Some(SRID_WGS84))?;
         Ok(Ewkb(Bytes::from(bytes)))
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn a_geometry_encodes_to_little_endian_ewkb_with_srid_4326() {
-        let ewkb = Ewkb::try_from(&point()).expect("encodes");
+        let ewkb = Ewkb::try_from(point().form()).expect("encodes");
         let bytes = ewkb.as_bytes();
         pretty_assertions::assert_eq!(bytes[0], BYTE_ORDER_LITTLE_ENDIAN);
         assert!(type_word(&ewkb) & EWKB_SRID_FLAG != 0, "SRID flag must be set in {:#010x}", type_word(&ewkb));
@@ -264,21 +264,21 @@ mod tests {
     #[test]
     fn ewkb_decodes_back_to_the_originating_geometry() {
         let original = point();
-        let ewkb = Ewkb::try_from(&original).expect("encodes");
+        let ewkb = Ewkb::try_from(original.form()).expect("encodes");
         pretty_assertions::assert_eq!(Geometry::try_from(&ewkb).expect("decodes"), original);
     }
 
     #[test]
     fn a_polygon_survives_the_full_encode_decode_cycle() {
         let original = polygon();
-        let ewkb = Ewkb::try_from(&original).expect("encodes");
+        let ewkb = Ewkb::try_from(original.form()).expect("encodes");
         pretty_assertions::assert_eq!(Geometry::try_from(&ewkb).expect("decodes"), original);
     }
 
     #[test]
     fn every_supported_two_dimensional_geometry_round_trips_through_ewkb() {
         for original in two_dimensional_cases() {
-            let ewkb = Ewkb::try_from(&original).expect("encodes");
+            let ewkb = Ewkb::try_from(original.form()).expect("encodes");
             pretty_assertions::assert_eq!(type_word(&ewkb) & EWKB_Z_FLAG, 0, "a planar geometry sets no Z flag");
             pretty_assertions::assert_eq!(Geometry::try_from(&ewkb).expect("decodes"), original);
         }
@@ -288,7 +288,7 @@ mod tests {
     fn every_supported_three_dimensional_geometry_round_trips_through_ewkb() {
         for original in three_dimensional_cases() {
             pretty_assertions::assert_eq!(original.dimension(), GeometryDimension::ThreeD);
-            let ewkb = Ewkb::try_from(&original).expect("encodes");
+            let ewkb = Ewkb::try_from(original.form()).expect("encodes");
             let decoded = Geometry::try_from(&ewkb).expect("decodes");
             pretty_assertions::assert_eq!(decoded, original);
             pretty_assertions::assert_eq!(decoded.dimension(), GeometryDimension::ThreeD);
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn a_three_dimensional_point_encodes_with_the_z_and_srid_flags_set() {
-        let ewkb = Ewkb::try_from(&elevated_point()).expect("encodes");
+        let ewkb = Ewkb::try_from(elevated_point().form()).expect("encodes");
         let word = type_word(&ewkb);
         assert!(word & EWKB_Z_FLAG != 0, "the Z flag must be set in {word:#010x}");
         assert!(word & EWKB_SRID_FLAG != 0, "the SRID flag must be set in {word:#010x}");
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn a_three_dimensional_point_decodes_back_to_the_altitude_it_carried() {
-        let ewkb = Ewkb::try_from(&elevated_point()).expect("encodes");
+        let ewkb = Ewkb::try_from(elevated_point().form()).expect("encodes");
         let decoded = Geometry::try_from(&ewkb).expect("decodes");
         pretty_assertions::assert_eq!(
             decoded.form(),
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn a_two_dimensional_buffer_decodes_to_positions_without_an_altitude() {
-        let ewkb = Ewkb::try_from(&point()).expect("encodes");
+        let ewkb = Ewkb::try_from(point().form()).expect("encodes");
         let decoded = Geometry::try_from(&ewkb).expect("decodes");
         pretty_assertions::assert_eq!(
             decoded.form(),
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn a_geometry_of_mixed_position_arity_encodes_as_two_dimensional() {
         let original = parse(&json!({ "type": "LineString", "coordinates": [[1.0, 2.0, 3.0], [4.0, 5.0]] }));
-        let ewkb = Ewkb::try_from(&original).expect("encodes");
+        let ewkb = Ewkb::try_from(original.form()).expect("encodes");
         pretty_assertions::assert_eq!(type_word(&ewkb) & EWKB_Z_FLAG, 0, "a partly elevated geometry sets no Z flag");
         let decoded = Geometry::try_from(&ewkb).expect("decodes");
         pretty_assertions::assert_eq!(
@@ -379,19 +379,19 @@ mod tests {
                 [[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 1.0]]
             ]
         }));
-        let ewkb = Ewkb::try_from(&original).expect("encodes");
+        let ewkb = Ewkb::try_from(original.form()).expect("encodes");
         pretty_assertions::assert_eq!(Geometry::try_from(&ewkb).expect("decodes"), original);
     }
 
     #[test]
     fn encoded_bytes_pass_the_validating_constructor() {
-        let ewkb = Ewkb::try_from(&point()).expect("encodes");
+        let ewkb = Ewkb::try_from(point().form()).expect("encodes");
         pretty_assertions::assert_eq!(Ewkb::try_from(ewkb.as_bytes()).expect("revalidates"), ewkb);
     }
 
     #[test]
     fn a_three_dimensional_buffer_passes_the_validating_constructor() {
-        let ewkb = Ewkb::try_from(&elevated_point()).expect("encodes");
+        let ewkb = Ewkb::try_from(elevated_point().form()).expect("encodes");
         pretty_assertions::assert_eq!(Ewkb::try_from(ewkb.as_bytes()).expect("Z is part of the dialect"), ewkb);
     }
 
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn big_endian_input_is_rejected() {
-        let mut bytes = Ewkb::try_from(&point()).expect("encodes").to_vec();
+        let mut bytes = Ewkb::try_from(point().form()).expect("encodes").to_vec();
         bytes[0] = 0x00;
         let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");
         assert!(matches!(error, EwkbError::NotLittleEndian { marker: 0x00 }), "got {error:?}");
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn plain_wkb_without_a_srid_is_rejected() {
-        let mut bytes = Ewkb::try_from(&point()).expect("encodes").to_vec();
+        let mut bytes = Ewkb::try_from(point().form()).expect("encodes").to_vec();
         let word = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) & !EWKB_SRID_FLAG;
         bytes[1..5].copy_from_slice(&word.to_le_bytes());
         let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn a_foreign_srid_is_rejected() {
-        let mut bytes = Ewkb::try_from(&point()).expect("encodes").to_vec();
+        let mut bytes = Ewkb::try_from(point().form()).expect("encodes").to_vec();
         bytes[5..9].copy_from_slice(&3857_i32.to_le_bytes());
         let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");
         assert!(matches!(error, EwkbError::UnexpectedSrid { srid: 3857 }), "got {error:?}");
@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn m_and_zm_ewkb_are_rejected_before_geozero_decoding() {
         for flag in [EWKB_M_FLAG, EWKB_Z_FLAG | EWKB_M_FLAG] {
-            let mut bytes = Ewkb::try_from(&point()).expect("encodes").to_vec();
+            let mut bytes = Ewkb::try_from(point().form()).expect("encodes").to_vec();
             let word = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) | flag;
             bytes[1..5].copy_from_slice(&word.to_le_bytes());
             let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");

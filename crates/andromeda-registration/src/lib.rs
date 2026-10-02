@@ -111,6 +111,7 @@ impl RegistrationService {
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-jsonld",
+        "andromeda-ngsi-ld-compaction",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

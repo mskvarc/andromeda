@@ -4,19 +4,20 @@ use crate::{
     compiled_cache::LimitCap,
     entity_type_match::entity_satisfies,
     error::EntityError,
-    expanded_member::unwrap_expanded_ref,
+    port::retrieved_entity::RetrievedEntity,
     query::{
         EntityQueryService,
-        attribute_expansion::AttributeExpansions,
-        attribute_projection::{filter_entity_attrs, project_entity},
         dataset_filter::filter_entity_by_dataset_id,
         projection_remainder::projection_remainder,
         pushdown_refusal::refuse_unnarrowable,
         residual::finish_page,
+        state_projection::{keeps_a_standing_attribute, project_state, retain_wanted_attributes},
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{
@@ -30,8 +31,8 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{pagination_cursor::decode_cursor, query::entity::parameters::EntityQueryParameters};
 use andromeda_telemetry::entity::{self, EntityOperation};
-use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use chrono::{DateTime, Utc};
+use std::sync::Arc;
 
 /// What a clause 5.6.3 retrieval narrows the retrieved entity down to.
 ///
@@ -75,7 +76,10 @@ impl EntityQueryService {
     ) -> Result<Entity, EntityError> {
         let timer = entity::start(EntityOperation::Retrieve);
         let result: Result<Entity, EntityError> = async {
-            let Some(expanded_entity) = self.reader.get(target, id).await? else {
+            // Clause 4.8: the entity-level system times sit on the stored row
+            // beside the state, so they are read with it rather than asked for
+            // in a second read.
+            let Some(RetrievedEntity { state, sys_attrs }) = self.reader.get_with_sys_attrs(target, id).await? else {
                 return Err(EntityError::not_found(id));
             };
             // Clause 5.7.1.4: the target is the entity "whose id (URI), and
@@ -84,23 +88,34 @@ impl EntityQueryService {
             if let Some(raw) = narrowing.entity_type {
                 let prepared = self.engine().prepare_term_context(context);
                 let selector = expand_type_expression(raw, &ContextualExpander::new(self.engine(), &prepared)).await?;
-                if !entity_satisfies(&expanded_entity, &selector) {
+                if !entity_satisfies(&state, &selector) {
                     return Err(EntityError::not_found(id));
                 }
             }
 
-            let mut entity = self
-                .compact_to_entity(expanded_entity, &self.engine().compactor(context), Some(id.as_str()), narrowing.sys_attrs)
-                .await?;
+            let now = Utc::now();
+            let state = self.narrow_to_selection(state, id, narrowing, context, now).await?;
+            let compactor = self.engine().compactor(context);
+            let read = EntityRead {
+                id_override: Some(id),
+                sys_attrs: narrowing.sys_attrs,
+                now,
+            };
+            let mut entity = EntityCompactor::new(&compactor).entity(&state, &read).await?;
 
-            if narrowing.sys_attrs == SysAttrsInclusion::Include
-                && let Some(snapshot) = self.reader.get_sys_attrs(target, id).await?
-            {
-                entity = entity.with_sys_attrs(&snapshot);
+            if narrowing.sys_attrs == SysAttrsInclusion::Include {
+                entity = entity.with_sys_attrs(&sys_attrs);
             }
 
-            if !narrowing.attrs.is_empty() || narrowing.projection.is_some() {
-                self.narrow_to_selection(&mut entity, id, narrowing, context).await?;
+            // Tables 6.4.3.2-1 and 5.2.14.1-1 make `attrs` "a synonym for
+            // pick", so the clause 5.7.1.4 rule `attrs` obeys is the same rule here,
+            // and clause 5.7.1.5 reduces the Entity "down to only contain the
+            // defined Entity members" -- an Entity left with none of them is an
+            // Entity the retrieval cannot answer with.
+            if let Some(projection) = narrowing.projection
+                && projection_remainder(&entity, projection).is_nothing()
+            {
+                return Err(EntityError::not_found(id));
             }
 
             if !narrowing.dataset_ids.is_empty() {
@@ -114,40 +129,45 @@ impl EntityQueryService {
         result
     }
 
-    /// Narrow a retrieved entity to the `attrs` list (clause 5.7.2) and the
-    /// clause 4.21 projection the request selected.
-    ///
-    /// The context is prepared once for both, and each member name expanded
-    /// once for both.
+    /// Narrow a retrieved state to the `attrs` list (clause 5.7.2) and the
+    /// clause 4.21 projection the request selected, by expanded name, before
+    /// it is compacted.
     ///
     /// # Errors
     ///
-    /// Returns [`EntityError::not_found`] when the selection leaves the entity
-    /// with nothing to answer with, and whatever the context expansion failed
-    /// with otherwise.
+    /// Returns [`EntityError::not_found`] when `attrs` leaves the entity with
+    /// no attribute standing at `now`, and whatever the context expansion
+    /// failed with otherwise.
     async fn narrow_to_selection(
         &self,
-        entity: &mut Entity,
+        state: Arc<EntityState>,
         id: &Identifier,
         narrowing: &RetrievalNarrowing<'_>,
         context: &ContextSpec,
-    ) -> Result<(), EntityError> {
-        let prepared = self.engine().prepare_term_context(context);
-        let mut expansions = AttributeExpansions::new(self.engine(), &prepared);
+        now: DateTime<Utc>,
+    ) -> Result<Arc<EntityState>, EntityError> {
+        if narrowing.attrs.is_empty() && narrowing.projection.is_none() {
+            return Ok(state);
+        }
+        // clone: a state copy shares every attribute, the narrowing only drops
+        // some of them from the copy's map.
+        let mut narrowed = Arc::unwrap_or_clone(state);
         if !narrowing.attrs.is_empty() {
+            let prepared = self.engine().prepare_term_context(context);
             let expander = ContextualExpander::new(self.engine(), &prepared);
             let mut wanted_iris = Vec::with_capacity(narrowing.attrs.len());
             for attr in narrowing.attrs {
                 wanted_iris.push(expander.expand_term(attr.as_str()).await?);
             }
-            filter_entity_attrs(entity, &wanted_iris, &mut expansions).await?;
+            retain_wanted_attributes(&mut narrowed, &wanted_iris);
 
             // Clause 5.7.1.4: "If the optional Attribute list is present and
             // the NGSI-LD endpoint does know about a matching Entity for the
             // Entity ID, but this Entity does not have any of the Attributes in
             // the Attribute list, then an error of type ResourceNotFound shall
-            // be raised."
-            if !entity.has_attribute_members() {
+            // be raised." An attribute whose every instance expired is not one
+            // the entity has (clause 4.22).
+            if !keeps_a_standing_attribute(&narrowed, now) {
                 return Err(EntityError::not_found(id));
             }
         }
@@ -156,17 +176,9 @@ impl EntityQueryService {
         // entity's Relationships, matching the query path, where the projection
         // runs inside the query and the join follows it.
         if let Some(projection) = narrowing.projection {
-            project_entity(entity, projection, &mut expansions).await?;
-            // Tables 6.4.3.2-1 and 5.2.14.1-1 make `attrs` "a synonym for
-            // pick", so the clause 5.7.1.4 rule above is the same rule here,
-            // and clause 5.7.1.5 reduces the Entity "down to only contain the
-            // defined Entity members" -- an Entity left with none of them is an
-            // Entity the retrieval cannot answer with.
-            if projection_remainder(entity, projection).is_nothing() {
-                return Err(EntityError::not_found(id));
-            }
+            project_state(&mut narrowed, projection);
         }
-        Ok(())
+        Ok(Arc::new(narrowed))
     }
 
     /// Execute a parameterized entity query (clause 5.7.2), returning matching
@@ -183,74 +195,26 @@ impl EntityQueryService {
     pub async fn query(&self, target: &ContextTarget, query: &EntityQueryParameters, context: &ContextSpec) -> Result<(Vec<Entity>, Option<i64>), EntityError> {
         let timer = entity::start(EntityOperation::Query);
         let result: Result<(Vec<Entity>, Option<i64>), EntityError> = async {
-            let compiled = self.compile_query_cached(query, context, LimitCap::Capped).await?;
-            // The opaque pagination cursor (clause 5.5.9.1) is a per-request
-            // position that never took part in compilation, so it is decoded and
-            // set on an owned copy here rather than being keyed into the compiled
-            // cache. A request without one keeps sharing the cached compilation.
-            let compiled = match decode_cursor(query.cursor.as_deref())? {
-                None => compiled,
-                Some(cursor) => {
-                    let mut owned = Arc::unwrap_or_clone(compiled);
-                    owned.keyset = Some(cursor);
-                    Arc::new(owned)
-                }
-            };
-            // The spatial index narrows only the default `location` instances;
-            // the store still evaluates the geo-query, so the refusal below reads
-            // the selection the store is actually handed.
-            let narrowed = self.spatial_prefilter(target, &compiled).await;
-            refuse_unnarrowable(*self.query_store.profile(), &narrowed.selection)?;
-            let outcome = self.query_store.query_compiled(target, &narrowed).await?;
-            let mut page = finish_page(outcome, compiled.pagination)?;
-            // Clause 5.5.9.1: a backward or from-end keyset page was read
-            // descending so a single index scan could serve it; it is reversed
-            // here to the ascending order the client sees on every page.
-            if matches!(compiled.keyset, Some(PageCursor::Before(_) | PageCursor::End)) {
-                page.rows.reverse();
-            }
+            let (rows, total_count) = self.query_states(target, query, context).await?;
             let sys_attrs = query.parse_options()?.sys_attrs;
 
-            // One batch read rather than one per entity.
-            let sys_attrs_map = if sys_attrs == SysAttrsInclusion::Include {
-                let ids: Vec<Identifier> = page
-                    .rows
-                    .iter()
-                    .filter_map(|row| {
-                        unwrap_expanded_ref(row)
-                            .as_object()
-                            .and_then(|obj| obj.get("@id"))
-                            .and_then(Value::as_str)
-                            .and_then(|id| id.parse::<Identifier>().ok())
-                    })
-                    .collect();
-                self.reader.get_sys_attrs_batch(target, &ids).await?
-            } else {
-                HashMap::new()
-            };
-
             let compactor = self.engine().compactor(context);
-            let mut entities = Vec::with_capacity(page.rows.len());
-            for value in page.rows {
-                let id = unwrap_expanded_ref(&value)
-                    .as_object()
-                    .and_then(|obj| obj.get("@id"))
-                    .and_then(Value::as_str)
-                    .and_then(|id| id.parse::<Identifier>().ok());
-
-                let mut entity = self.compact_to_entity(value, &compactor, None, sys_attrs).await?;
-
-                if sys_attrs == SysAttrsInclusion::Include
-                    && let Some(ref id) = id
-                    && let Some(snapshot) = sys_attrs_map.get(id)
-                {
-                    entity = entity.with_sys_attrs(snapshot);
-                }
-
-                entities.push(entity);
+            let entity_compactor = EntityCompactor::new(&compactor);
+            let read = EntityRead {
+                id_override: None,
+                sys_attrs,
+                now: Utc::now(),
+            };
+            let mut entities = Vec::with_capacity(rows.len());
+            for RetrievedEntity { state, sys_attrs: times } in rows {
+                let entity = entity_compactor.entity(&state, &read).await?;
+                // Clause 4.8: the entity-level system times were read by the
+                // page statement itself, beside the payload.
+                entities.push(match sys_attrs {
+                    SysAttrsInclusion::Include => entity.with_sys_attrs(&times),
+                    SysAttrsInclusion::Strip => entity,
+                });
             }
-
-            let mut entities = self.apply_projection(entities, &compiled, context).await?;
 
             if let Some(dataset_ids) = query.dataset_id.as_deref() {
                 for entity in &mut entities {
@@ -258,11 +222,63 @@ impl EntityQueryService {
                 }
             }
 
-            Ok((entities, page.total_count))
+            Ok((entities, total_count))
         }
         .await;
         timer.finish_result(&result);
         result
+    }
+
+    /// Select one page of a parameterized entity query (clause 5.7.2) as the
+    /// stored states it matched, each narrowed to the query's `attrs` and
+    /// clause 4.21 projection and read with its entity-level clause 4.8 system
+    /// times, with the optional clause 6.3.13 count.
+    ///
+    /// The states are what [`EntityQueryService::query`] compacts: no expiry
+    /// (clause 4.22), `datasetId` (clause 4.5.5) or system-time (clause 4.8)
+    /// rule of the rendering has been applied to them yet.
+    ///
+    /// # Errors
+    ///
+    /// As [`EntityQueryService::query`], except that no result is compacted.
+    pub async fn query_states(
+        &self,
+        target: &ContextTarget,
+        query: &EntityQueryParameters,
+        context: &ContextSpec,
+    ) -> Result<(Vec<RetrievedEntity>, Option<i64>), EntityError> {
+        let compiled = self.compile_query_cached(query, context, LimitCap::Capped).await?;
+        // The opaque pagination cursor (clause 5.5.9.1) is a per-request
+        // position that never took part in compilation, so it is decoded and
+        // set on an owned copy here rather than being keyed into the compiled
+        // cache. A request without one keeps sharing the cached compilation.
+        let compiled = match decode_cursor(query.cursor.as_deref())? {
+            None => compiled,
+            Some(cursor) => {
+                let mut owned = Arc::unwrap_or_clone(compiled);
+                owned.keyset = Some(cursor);
+                Arc::new(owned)
+            }
+        };
+        // The spatial index narrows only the default `location` instances;
+        // the store still evaluates the geo-query, so the refusal below reads
+        // the selection the store is actually handed.
+        let narrowed = self.spatial_prefilter(target, &compiled).await;
+        refuse_unnarrowable(*self.query_store.profile(), &narrowed.selection)?;
+        let outcome = self.query_store.query_compiled(target, &narrowed).await?;
+        let mut page = finish_page(outcome, compiled.pagination)?;
+        // Clause 5.5.9.1: a backward or from-end keyset page was read
+        // descending so a single index scan could serve it; it is reversed
+        // here to the ascending order the client sees on every page.
+        if matches!(compiled.keyset, Some(PageCursor::Before(_) | PageCursor::End)) {
+            page.rows.reverse();
+        }
+        for row in &mut page.rows {
+            // The store decoded each state into its own allocation, so this
+            // borrows it mutably without a copy.
+            narrow_to_query(Arc::make_mut(&mut row.state), &compiled);
+        }
+        Ok((page.rows, page.total_count))
     }
 
     /// Execute a compiled query returning only entity identifiers
@@ -278,4 +294,18 @@ impl EntityQueryService {
         let outcome = self.query_store.query_ids(target, compiled).await?;
         self.finish_ids(target, outcome, compiled.pagination).await
     }
+}
+
+/// Apply a query's `attrs` (clause 5.7.2) and clause 4.21 projection to one
+/// stored state before it is compacted.
+///
+/// Clause 5.7.2.5 reduces "every Entity within the payload body" to the
+/// members the projection defines; an entity it would reduce to none of them
+/// was never selected (`EntitySelection::projected_members`), so every entity
+/// here keeps one and the page stays the size the store cut it to.
+fn narrow_to_query(state: &mut EntityState, query: &CompiledEntityQuery) {
+    if !query.selection.attrs.is_empty() {
+        retain_wanted_attributes(state, &query.selection.attrs);
+    }
+    project_state(state, &query.projection);
 }

@@ -7,7 +7,7 @@ use crate::{
 use andromeda_entity::{merge_options::MergeOptions, query::retrieval::RetrievalNarrowing};
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_federation::{
-    entity_result::{collect_proxied_attrs, collect_warnings, contributions_of, strip_attributes_from_value},
+    entity_result::{collect_proxied_attrs, collect_warnings, contributions_of, local_remainder_of_payload},
     operation::{ForwardingOperation, ProvisionResource},
     provision_purge::{ForwardPurgeRequest, ForwardedPurgeResult},
     request::{CsrModeFilter, ForwardProvisionRequest, ForwardQueryRequest},
@@ -36,11 +36,11 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_ngsi_ld_entity::operation::selection::{DatasetSelection, OverwritePolicy};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     entity_type::EntityTypeValue,
-    expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
 };
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_query::{
@@ -48,11 +48,10 @@ use andromeda_ngsi_ld_query::{
     filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes},
     projection::purge::PurgeMode,
 };
-use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, response::ResponsePayload};
+use andromeda_ngsi_ld_render::geometry_selection::GeometrySelection;
 use andromeda_ngsi_ld_request::{
     attribute_deletion::DeleteAttrParams,
     entity::{AppendParams, GetEntityParams, MergeParams, PartialUpdateAttrParams, ReplaceAttrParams},
-    join_traversal::RetrievingJoin,
     linked_retrieval_consistency::reject_linked_retrieval,
     local::LocalOnlyParams,
     options::OverwritePolicy as RequestOverwritePolicy,

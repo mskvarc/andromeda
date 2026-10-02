@@ -104,6 +104,7 @@ const fn classify_retention_failure(error: TemporalStoreError) -> TaskFailure<Te
         | TemporalStoreError::StatementBuild(_)
         | TemporalStoreError::RetentionHorizon(_)
         | TemporalStoreError::StoredTime(_)
+        | TemporalStoreError::StoredJson(_)
         | TemporalStoreError::ScopeHasNoAttributeRow
         | TemporalStoreError::StoredHistory(_)
         | TemporalStoreError::StoredCatalog(_)

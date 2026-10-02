@@ -37,6 +37,6 @@ pub struct SubscriptionForwardingService {
     pub(crate) entity_query: Arc<EntityQueryService>,
     /// Delivery to the local subscriber's endpoint.
     pub(crate) transport: Arc<TransportDispatcher>,
-    /// JSON-LD processing for the filters applied at re-assembly.
+    /// JSON-LD processing for the entities re-assembled.
     pub(crate) engine: JsonLdEngine,
 }
