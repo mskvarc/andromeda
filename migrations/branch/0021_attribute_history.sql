@@ -22,6 +22,11 @@
 -- time filter selects exactly the requested column: a row with no `observedAt`
 -- matches no `observedAt` filter (clause 4.11).
 --
+-- A geometry keeps its `bbox` and its foreign members (IETF RFC 7946 sections 5
+-- and 6.1) beside its positions in `value_geometry_members`, as the expanded
+-- members of its `GeoJSON` node, so a history row renders the geometry it
+-- recorded (clause 4.6.4); the column holds nothing for any other value.
+--
 -- A tombstone carries `deleted_at` and no typed value; its NGSI-LD null is
 -- synthesised at render time, never stored. `attribute_kind` is kept so the
 -- null takes its family's shape: a value for a Property, an object for a
@@ -56,6 +61,7 @@ create table attribute_history (
     value_number numeric compression lz4,
     value_string text compression lz4 collate "C",
     value_geometry geometry compression lz4,
+    value_geometry_members jsonb compression lz4,
     value_object jsonb compression lz4,
     value_uri text compression lz4 collate "C",
     metadata jsonb compression lz4,
@@ -71,7 +77,8 @@ create table attribute_history (
     constraint chk_attribute_history_value_kind_column check (value_kind = 0 or (value_kind = 1 and value_number is not null) or (value_kind = 2 and value_string is not null) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and value_uri is not null)),
     constraint chk_attribute_history_value_geometry_valid check (value_geometry is null or st_isvalid(value_geometry)),
     constraint chk_attribute_history_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
-    constraint chk_attribute_history_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2))
+    constraint chk_attribute_history_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
+    constraint chk_attribute_history_value_geometry_members check (value_geometry_members is null or (value_geometry is not null and jsonb_typeof(value_geometry_members) = 'object'))
 );
 
 create index idx_attribute_history_stream_recorded_at on attribute_history (stream_key, recorded_at desc);

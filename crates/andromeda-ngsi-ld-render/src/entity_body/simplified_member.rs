@@ -217,7 +217,7 @@ impl Serialize for SimplifiedTyped<'_> {
                 None => wrapped(serializer, AttributeType::LanguageProperty, &language_property.language_map),
             },
             Attribute::Property(property) => ValueBody(&property.value).serialize(serializer),
-            Attribute::GeoProperty(geo_property) => GeometryBody(geo_property.value.form()).serialize(serializer),
+            Attribute::GeoProperty(geo_property) => GeometryBody(&geo_property.value).serialize(serializer),
             Attribute::Relationship(relationship) => match relationship_entities(relationship, ResponseFormat::Simplified, self.walk) {
                 Some(linked) => linked.serialize(serializer),
                 None => DecodedTargets::new(&relationship.object, decoding).serialize(serializer),

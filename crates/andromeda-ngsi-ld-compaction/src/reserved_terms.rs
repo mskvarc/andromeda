@@ -56,6 +56,8 @@ pub(crate) struct ReservedTerms {
     pub(crate) entity_type_sealed: IriTerm,
     /// The `GeoJSON` `coordinates` member.
     pub(crate) coordinates: IriTerm,
+    /// The `GeoJSON` `bbox` member (IETF RFC 7946 section 5).
+    pub(crate) bbox: IriTerm,
     /// The value carriers, in [`ValueCarrier`] order.
     carriers: [IriTerm; 7],
     /// The family types, in [`AttributeType`] order.
@@ -83,6 +85,7 @@ impl ReservedTerms {
             entity_id_sealed: term(properties::ENTITY_ID_SEALED),
             entity_type_sealed: term(properties::ENTITY_TYPE_SEALED),
             coordinates: term(properties::COORDINATES),
+            bbox: term(properties::BBOX),
             carriers: CARRIERS.map(|carrier| term(carrier.iri())),
             families: FAMILIES.map(|family| term(family.iri())),
             geometry_types: [

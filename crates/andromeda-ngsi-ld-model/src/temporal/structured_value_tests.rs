@@ -8,7 +8,13 @@ use crate::temporal::{
     structured_value::StructuredValue,
     structured_value_codec::StoredValueError,
 };
-use andromeda_ngsi_ld_entity::{document::slot::Slot, expanded_value::ExpandedValue, literal::LiteralValue, unit_code::UnitCode};
+use andromeda_ngsi_ld_entity::{
+    document::slot::Slot,
+    expanded_value::ExpandedValue,
+    geometry_value::GeometryValue,
+    literal::LiteralValue,
+    unit_code::UnitCode,
+};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_number::JsonNumber;
@@ -230,8 +236,8 @@ fn scalar_values_keep_their_durable_wire_shape() {
     pretty_assertions::assert_eq!(serde_json::to_string(&number).expect("durable JSON"), r#"{"number":0.100000000000000005}"#);
     let point = Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("a point");
     pretty_assertions::assert_eq!(
-        serde_json::to_value(TemporalValue::Geometry(point)).expect("durable JSON"),
-        json!({"geometry": {"type": "Point", "coordinates": [1.0, 2.0]}})
+        serde_json::to_value(TemporalValue::Geometry(GeometryValue::new(point.into_parts().0))).expect("durable JSON"),
+        json!({"geometry": {"form": {"type": "Point", "coordinates": [1.0, 2.0]}}})
     );
     for (wire, expected) in [
         (json!({"number": 42}), TemporalValue::Number(JsonNumber::from(42))),
@@ -255,4 +261,30 @@ fn a_single_json_literal_reads_back_as_the_literal() {
         panic!("a Property reads as its values: {value:?}");
     };
     assert!(matches!(values.head(), ExpandedValue::Json(_)), "{values:?}");
+}
+
+/// IETF RFC 7946 sections 5 and 6.1, clause 4.6.4: a geometry observation
+/// travels in its intent with its `bbox` and foreign members, and one written
+/// without members reads back without them.
+#[test]
+fn a_geometry_observation_keeps_its_members_through_the_intent() {
+    let members = json!({
+        "https://purl.org/geojson/vocab#bbox": [{"@list": [{"@value": 1}, {"@value": 2}, {"@value": 1}, {"@value": 2}]}],
+        "https://ex.org/plotName": [{"@value": "plot 7"}]
+    });
+    let wire = json!({"geometry": {"form": {"type": "Point", "coordinates": [1.0, 2.0]}, "members": members}});
+    let row: TemporalHistoryRow = serde_json::from_value(durable_row(&wire, &Value::Null)).expect("a durable row reads");
+    let TemporalValue::Geometry(geometry) = &row.value else {
+        panic!("a geometry: {row:?}");
+    };
+    let kept = geometry.members().expect("the members travel with the geometry");
+    pretty_assertions::assert_eq!(kept.bbox().map(|bbox| bbox.ordinates().collect::<Vec<_>>()), Some(vec![1.0, 2.0, 1.0, 2.0]));
+    pretty_assertions::assert_eq!(serde_json::to_value(&row.value).expect("durable JSON"), wire);
+
+    let bare = json!({"geometry": {"form": {"type": "Point", "coordinates": [1.0, 2.0]}}});
+    let row: TemporalHistoryRow = serde_json::from_value(durable_row(&bare, &Value::Null)).expect("a durable row reads");
+    let TemporalValue::Geometry(geometry) = &row.value else {
+        panic!("a geometry: {row:?}");
+    };
+    assert!(geometry.members().is_none());
 }

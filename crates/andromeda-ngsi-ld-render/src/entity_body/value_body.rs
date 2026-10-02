@@ -13,7 +13,7 @@ impl Serialize for ValueBody<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.0 {
             NgsiLdValue::Json(json) => json.serialize(serializer),
-            NgsiLdValue::Geometry(geometry) => GeometryBody(geometry.form()).serialize(serializer),
+            NgsiLdValue::Geometry(geometry) => GeometryBody(geometry).serialize(serializer),
         }
     }
 }

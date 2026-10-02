@@ -12,7 +12,6 @@ use crate::{
     unit_code_metadata::take_unit_code,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -125,7 +124,7 @@ impl TemporalRepository {
             .bind(state.value.number())
             .bind(state.value.string())
             .bind(state.value.boolean())
-            .bind(geometry_bytes(state.value.geometry().map(Geometry::form))?)
+            .bind(geometry_bytes(state.value.geometry())?)
             .bind(state.value.object().map(Json))
             .bind(state.value.date_time())
             .bind(state.value.uri().map(Uri::as_str))
@@ -133,6 +132,7 @@ impl TemporalRepository {
             .bind(state.metadata.as_deref().map(Json))
             .bind(state.unit_code_id.map(UnitCodeId::get))
             .bind(stored_attribute_kind(state.attribute_type).code())
+            .bind(state.value.geometry_members().map(Json))
             .execute(&self.pool)
             .await?
             .rows_affected();

@@ -164,6 +164,10 @@ pub enum StoredHistoryError {
     /// of its family.
     #[error("a stored attribute_history metadata is not the members of an instance: {0}")]
     Metadata(#[source] Box<EntityRefusal>),
+    /// A stored `value_geometry_members` document is not the `bbox` and
+    /// foreign members of a geometry.
+    #[error("a stored attribute_history value_geometry_members is not the members of a geometry: {0}")]
+    ValueGeometryMembers(#[source] Box<EntityRefusal>),
     /// A Geometry value is not EWKB the broker writes.
     #[error("a stored attribute_history value_geometry_ewkb is not a geometry: {0}")]
     ValueGeometry(#[source] EwkbError),

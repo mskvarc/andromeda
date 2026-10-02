@@ -23,7 +23,8 @@ use crate::{
     member_shape::MemberShape,
     refusal::EntityRefusal,
 };
-use andromeda_ngsi_ld_geometry::{form::GeometryForm, geojson::GeometryError};
+use andromeda_ngsi_ld_geometry::{bounding_box::BoundingBoxError, form::GeometryForm, geojson::GeometryError};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_number::JsonNumber;
 use serde_json::{Value, json};
 
@@ -333,4 +334,104 @@ fn a_refusal_never_echoes_the_raw_input() {
     assert!(!error.to_string().contains("<secret>"), "{error}");
     let syntax = EntityState::from_slice(br#"[{"@id": "<secret>"#).expect_err("not JSON");
     assert!(!syntax.to_string().contains("<secret>"), "{syntax}");
+}
+
+/// A `location` whose geometry node is `node`.
+fn located(node: &Value) -> Value {
+    entity(&json!({ngsi("location"): [stamped(json!({"@type": [GEO_PROPERTY], ngsi("hasValue"): [node]}))]}))
+}
+
+/// The expanded Point node at `(1, 2)`, with `members` beside its coordinates.
+fn point_node(members: &Value) -> Value {
+    let mut node = json!({"@type": [format!("{GEOJSON}Point")], COORDINATES: [{"@list": [{"@value": 1}, {"@value": 2}]}]});
+    if let (Some(node), Some(members)) = (node.as_object_mut(), members.as_object()) {
+        node.extend(members.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture is built from borrowed parts
+    }
+    node
+}
+
+/// IETF RFC 7946 sections 5 and 6.1, Annex B's `geojson:bbox` term, clause
+/// 4.6.4: a stored geometry node keeps its box and its foreign members, read
+/// and written back unchanged.
+#[test]
+fn a_stored_geometry_node_with_a_box_and_foreign_members_round_trips() {
+    let document = located(&point_node(&json!({
+        format!("{GEOJSON}bbox"): [{"@list": [{"@value": 1}, {"@value": 2}, {"@value": 1}, {"@value": 2}]}],
+        "https://uri.etsi.org/ngsi-ld/default-context/title": [{"@value": "plot 7"}]
+    })));
+    pretty_assertions::assert_eq!(round_trip(&document), document);
+
+    let state = EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity");
+    let (_, instance) = state
+        .attributes()
+        .get(ngsi("location").as_str())
+        .and_then(|member| member.default_instance())
+        .expect("the location");
+    let Some(GeoValue::Geometry(geometry)) = instance.value().geometry() else {
+        panic!("a geometry node");
+    };
+    let members = geometry.members().expect("the members are kept");
+    pretty_assertions::assert_eq!(members.bbox().map(|bbox| bbox.ordinates().collect::<Vec<_>>()), Some(vec![1.0, 2.0, 1.0, 2.0]));
+    pretty_assertions::assert_eq!(
+        members.foreign().keys().map(AttributeName::as_str).collect::<Vec<_>>(),
+        vec!["https://uri.etsi.org/ngsi-ld/default-context/title"]
+    );
+}
+
+/// RFC 7946 section 5: a box of three numbers is no box.
+#[test]
+fn a_stored_box_of_three_numbers_is_refused() {
+    let document = located(&point_node(
+        &json!({format!("{GEOJSON}bbox"): [{"@list": [{"@value": 1}, {"@value": 2}, {"@value": 3}]}]}),
+    ));
+    let refused = refusal(&document);
+    assert!(
+        matches!(
+            refused,
+            EntityRefusal::GeoProperty {
+                source: GeometryError::InvalidBbox(BoundingBoxError::Length { members: 3 }),
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+}
+
+/// Clause 4.5.0: entity state holds the NGSI-LD Null nowhere, a foreign
+/// member of a geometry included.
+#[test]
+fn a_null_inside_a_foreign_member_is_refused() {
+    for foreign in [
+        json!([{"@value": "urn:ngsi-ld:null"}]),
+        json!([{"https://ex.org/k": [{"@value": "urn:ngsi-ld:null"}]}]),
+    ] {
+        let document = located(&point_node(&json!({"https://ex.org/title": foreign})));
+        let refused = refusal(&document);
+        assert!(
+            matches!(refused, EntityRefusal::NullBesideData { .. } | EntityRefusal::NullInState { .. }),
+            "{foreign}: {refused:?}"
+        );
+    }
+}
+
+/// A geometry node holds one box.
+#[test]
+fn two_box_members_are_refused() {
+    let bbox = format!(r#""{GEOJSON}bbox": [{{"@list": [{{"@value": 1}}, {{"@value": 2}}, {{"@value": 1}}, {{"@value": 2}}]}}]"#);
+    let text = format!(
+        r#"[{{"@id": "urn:ngsi-ld:Building:1", "@type": ["https://ex.org/Building"], "{location}": [{{"@type": ["{GEO_PROPERTY}"], "{value}": [{{"@type": ["{GEOJSON}Point"], "{COORDINATES}": [{{"@list": [{{"@value": 1}}, {{"@value": 2}}]}}], {bbox}, {bbox}}}]}}]}}]"#,
+        location = ngsi("location"),
+        value = ngsi("hasValue"),
+    );
+    let refused = EntityState::from_slice(text.as_bytes()).expect_err("two boxes");
+    assert!(
+        matches!(
+            refused,
+            EntityRefusal::Malformed {
+                member: MemberShape::Geometry,
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
 }

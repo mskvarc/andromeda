@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_entity::{
     entity_types::EntityTypes,
     family_value::FamilyValue,
     geo_value::GeoValue,
+    geometry_value::GeometryValue,
     instance::Instance,
 };
 use andromeda_ngsi_ld_geometry::{
@@ -53,7 +54,7 @@ fn ring_positions() -> Result<Vec<Position>, PositionError> {
 
 /// An entity whose `location` is a Polygon of the one ring `ring`.
 fn polygon_entity(id: Identifier, entity_type: EntityTypeName, location: AttributeName, ring: LinearRing) -> EntityState {
-    let geometry = GeoValue::Geometry(GeometryForm::Polygon(PolygonRings::new(vec![ring])));
+    let geometry = GeoValue::Geometry(GeometryValue::new(GeometryForm::Polygon(PolygonRings::new(vec![ring]))));
     let instance = Instance::builder()
         .value(FamilyValue::GeoProperty {
             geometry,

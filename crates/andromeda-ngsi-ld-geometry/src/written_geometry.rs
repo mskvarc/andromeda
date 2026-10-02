@@ -2,10 +2,12 @@
 //!
 //! A `GeoProperty` value of a million positions would cost a JSON tree of a
 //! million arrays and two million number tokens before a single position was
-//! read. The object is read member by member instead: `coordinates` onto a
-//! [`CoordinateTape`], every other member into what it says, and the geometry
-//! is built from them once the object ends, with exactly the validation and
-//! refusals [`GeometryForm::from_compact_value`] applies to a parsed tree.
+//! read. The object is read member by member instead: `coordinates` and `bbox`
+//! onto a [`CoordinateTape`] each, a foreign member (IETF RFC 7946 section 6.1)
+//! into the JSON value it holds, every other member into what it says, and the
+//! geometry is built from them once the object ends, with exactly the
+//! validation and refusals [`Geometry::from_geojson_value`] applies to a parsed
+//! tree.
 //!
 //! A value that is no geometry is still read to its end, so the refusal is the
 //! [`GeometryError`] naming what is wrong rather than a decoding failure, and a
@@ -13,13 +15,14 @@
 
 use crate::{
     coordinate_tape::{CoordinateTape, CoordinateTapeSeed},
-    form::GeometryForm,
+    foreign_members::ForeignMemberName,
     geojson::GeometryError,
     geometry::Geometry,
-    geometry_members::{BboxMember, GeometriesMember, GeometryMembers, JsonLdKeywords, TypeMember},
+    geometry_members::{GeometriesMember, GeometryMembers, JsonLdKeywords, TypeMember},
 };
 use andromeda_ngsi_ld_number::json_value::value_census::{MemberName, MemberNameSeed};
 use serde::de::{Deserialize, DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde_json::Value;
 use std::fmt;
 
 /// A compact `GeoJSON` geometry object as written: the geometry it reads as,
@@ -27,20 +30,21 @@ use std::fmt;
 #[derive(Debug)]
 pub struct WrittenGeometry {
     /// The geometry the object spells, or why it spells none.
-    form: Result<GeometryForm, GeometryError>,
+    geometry: Result<Geometry, GeometryError>,
     /// Whether a member of the object is named by a JSON-LD keyword.
     json_ld_keywords: JsonLdKeywords,
 }
 
 impl WrittenGeometry {
-    /// The geometry the object spells.
+    /// The geometry the object spells, with its `bbox` and its foreign
+    /// members.
     ///
     /// # Errors
     ///
-    /// Returns the [`GeometryError`] [`GeometryForm::from_compact_value`]
-    /// gives for the same object.
-    pub fn into_form(self) -> Result<GeometryForm, GeometryError> {
-        self.form
+    /// Returns the [`GeometryError`] [`Geometry::from_geojson_value`] gives for
+    /// the same object.
+    pub fn into_geometry(self) -> Result<Geometry, GeometryError> {
+        self.geometry
     }
 
     /// Whether a member of the object is named by a JSON-LD keyword.
@@ -50,17 +54,18 @@ impl WrittenGeometry {
     }
 
     /// The written geometry `members` spell.
-    fn of_members(members: &GeometryMembers) -> WrittenGeometry {
+    fn of_members(members: GeometryMembers) -> WrittenGeometry {
+        let json_ld_keywords = members.json_ld_keywords;
         WrittenGeometry {
-            form: members.read(),
-            json_ld_keywords: members.json_ld_keywords,
+            geometry: members.into_geometry(),
+            json_ld_keywords,
         }
     }
 
     /// A written value that is no JSON object.
     const fn not_an_object() -> WrittenGeometry {
         WrittenGeometry {
-            form: Err(GeometryError::NotAnObject),
+            geometry: Err(GeometryError::NotAnObject),
             json_ld_keywords: JsonLdKeywords::Absent,
         }
     }
@@ -79,10 +84,7 @@ impl<'de> Deserialize<'de> for WrittenGeometry {
 // refused geometry fails the decoding with its `GeometryError`.
 impl<'de> Deserialize<'de> for Geometry {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Geometry, D::Error> {
-        WrittenGeometry::deserialize(deserializer)?
-            .into_form()
-            .map(Geometry::new)
-            .map_err(DeserializeError::custom)
+        WrittenGeometry::deserialize(deserializer)?.into_geometry().map_err(DeserializeError::custom)
     }
 }
 
@@ -141,7 +143,7 @@ impl<'de> Visitor<'de> for WrittenGeometryVisitor {
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<WrittenGeometry, A::Error> {
         let mut members = GeometryMembers::default();
         let Some(first) = map.next_key_seed(GeometryKeySeed)? else {
-            return Ok(WrittenGeometry::of_members(&members));
+            return Ok(WrittenGeometry::of_members(members));
         };
         // The reader's spelling of a number, which is no object.
         if let GeometryKey::Other(name) = &first
@@ -152,47 +154,49 @@ impl<'de> Visitor<'de> for WrittenGeometryVisitor {
         }
         let mut key = first;
         loop {
-            read_member(&mut map, &key, &mut members)?;
+            read_member(&mut map, key, &mut members)?;
             match map.next_key_seed(GeometryKeySeed)? {
                 Some(next) => key = next,
-                None => return Ok(WrittenGeometry::of_members(&members)),
+                None => return Ok(WrittenGeometry::of_members(members)),
             }
         }
     }
 }
 
 /// Read the value of the member `key` into `members`.
-fn read_member<'de, A: MapAccess<'de>>(map: &mut A, key: &GeometryKey, members: &mut GeometryMembers) -> Result<(), A::Error> {
+fn read_member<'de, A: MapAccess<'de>>(map: &mut A, key: GeometryKey, members: &mut GeometryMembers) -> Result<(), A::Error> {
     match key {
         GeometryKey::Type => {
             members.geometry_type = match map.next_value_seed(MemberShapeSeed)? {
                 MemberShape::Text(token) => TypeMember::of(&token),
-                MemberShape::Number | MemberShape::Array(_) | MemberShape::Other => TypeMember::Missing,
+                MemberShape::Number | MemberShape::Array | MemberShape::Other => TypeMember::Missing,
             };
         }
-        GeometryKey::Coordinates => {
-            let mut tape = CoordinateTape::default();
-            map.next_value_seed(CoordinateTapeSeed::new(&mut tape))?;
-            members.coordinates = Some(tape);
-        }
-        GeometryKey::Bbox => {
-            members.bbox = match map.next_value_seed(MemberShapeSeed)? {
-                MemberShape::Array(ArrayContent::Numbers) => BboxMember::Admitted,
-                MemberShape::Array(ArrayContent::Mixed) | MemberShape::Text(_) | MemberShape::Number | MemberShape::Other => BboxMember::Invalid,
-            };
-        }
+        GeometryKey::Coordinates => members.coordinates = Some(read_tape(map)?),
+        GeometryKey::Bbox => members.bbox = Some(read_tape(map)?),
         GeometryKey::Geometries => {
             members.geometries = match map.next_value_seed(MemberShapeSeed)? {
-                MemberShape::Array(_) => GeometriesMember::Array,
+                MemberShape::Array => GeometriesMember::Array,
                 MemberShape::Text(_) | MemberShape::Number | MemberShape::Other => GeometriesMember::Absent,
             };
         }
         GeometryKey::Other(name) => {
-            members.json_ld_keywords = members.json_ld_keywords.and(JsonLdKeywords::of(name));
-            map.next_value::<IgnoredAny>()?;
+            if let Ok(foreign) = ForeignMemberName::try_from(&*name) {
+                members.foreign.insert(foreign, map.next_value::<Value>()?);
+            } else {
+                members.json_ld_keywords = members.json_ld_keywords.and(JsonLdKeywords::of(&name));
+                map.next_value::<IgnoredAny>()?;
+            }
         }
     }
     Ok(())
+}
+
+/// Record the value of the current member onto a tape.
+fn read_tape<'de, A: MapAccess<'de>>(map: &mut A) -> Result<CoordinateTape, A::Error> {
+    let mut tape = CoordinateTape::default();
+    map.next_value_seed(CoordinateTapeSeed::new(&mut tape))?;
+    Ok(tape)
 }
 
 /// The member of a geometry object a member name names.
@@ -240,7 +244,8 @@ impl Visitor<'_> for GeometryKeySeed {
     }
 }
 
-/// What a member value is, as far as a geometry object's members ask.
+/// What a member value is, as far as a geometry object's `type` and
+/// `geometries` ask.
 #[derive(Debug)]
 enum MemberShape {
     /// A string, and its text.
@@ -248,18 +253,9 @@ enum MemberShape {
     /// A number.
     Number,
     /// An array.
-    Array(ArrayContent),
+    Array,
     /// A boolean, null, or an object.
     Other,
-}
-
-/// What an array holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ArrayContent {
-    /// Numbers only, or nothing.
-    Numbers,
-    /// At least one member that is not a number.
-    Mixed,
 }
 
 /// Reads one member value into its [`MemberShape`], to its end.
@@ -318,13 +314,8 @@ impl<'de> Visitor<'de> for MemberShapeSeed {
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut items: A) -> Result<MemberShape, A::Error> {
-        let mut content = ArrayContent::Numbers;
-        while let Some(item) = items.next_element_seed(MemberShapeSeed)? {
-            if !matches!(item, MemberShape::Number) {
-                content = ArrayContent::Mixed;
-            }
-        }
-        Ok(MemberShape::Array(content))
+        while items.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(MemberShape::Array)
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut members: A) -> Result<MemberShape, A::Error> {
@@ -346,12 +337,12 @@ impl<'de> Visitor<'de> for MemberShapeSeed {
 
 #[cfg(test)]
 mod tests {
-    use crate::{form::GeometryForm, geometry::Geometry, geometry_members::JsonLdKeywords, written_geometry::WrittenGeometry};
-    use serde_json::Value;
+    use crate::{geojson::GeometryError, geometry::Geometry, geometry_members::JsonLdKeywords, written_geometry::WrittenGeometry};
+    use serde_json::{Value, json};
 
     /// Geometry texts covering every refusal and acceptance, written with
     /// their members in more than one order.
-    const TEXTS: [&str; 30] = [
+    const TEXTS: [&str; 33] = [
         r#"{"type": "Point", "coordinates": [1.0, 2.0]}"#,
         r#"{"coordinates": [1.0, 2.0, 3.5], "type": "Point"}"#,
         r#"{"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}"#,
@@ -371,6 +362,9 @@ mod tests {
         r#"{"type": "Polygon", "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]], "bbox": [0.0, 0.0, 1.0, 1.0], "foreign": {"x": [1, 2]}}"#,
         r#"{"type": "Point", "coordinates": [1.0, 2.0], "bbox": "box"}"#,
         r#"{"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1, "x"]}"#,
+        r#"{"type": "Point", "coordinates": [1, 2], "bbox": [1, 2, 1, 2]}"#,
+        r#"{"type": "Point", "coordinates": [1, 2], "bbox": [1, 2, 3]}"#,
+        r#"{"type": "Point", "coordinates": [1, 2], "bbox": [1, 2, 1, 2], "title": "x", "nested": {"a": [1, 2]}}"#,
         r#"{"type": "GeometryCollection", "geometries": [{"type": "Point", "coordinates": [1.0, 2.0]}]}"#,
         r#"{"type": "GeometryCollection"}"#,
         r#"{"type": "Nonsense", "coordinates": []}"#,
@@ -385,18 +379,19 @@ mod tests {
     ];
 
     /// What a reading gave, rendered for comparison.
-    fn outcome(form: Result<GeometryForm, impl ToString>) -> Result<GeometryForm, String> {
-        form.map_err(|refusal| refusal.to_string())
+    fn outcome(geometry: Result<Geometry, GeometryError>) -> Result<Geometry, String> {
+        geometry.map_err(|refusal| refusal.to_string())
     }
 
     /// The streamed reading of a text agrees with the reading of its tree,
-    /// in what it accepts, in what it refuses and why.
+    /// in what it accepts, its box and foreign members included, in what it
+    /// refuses and why.
     #[test]
     fn a_streamed_geometry_reads_as_its_parsed_tree_does() {
         for text in TEXTS {
             let tree: Value = serde_json::from_str(text).expect("valid JSON");
             let streamed = serde_json::from_str::<WrittenGeometry>(text).expect("every value is read to its end");
-            pretty_assertions::assert_eq!(outcome(streamed.into_form()), outcome(GeometryForm::from_compact_value(&tree)), "{text}");
+            pretty_assertions::assert_eq!(outcome(streamed.into_geometry()), outcome(Geometry::from_geojson_value(&tree)), "{text}");
         }
     }
 
@@ -407,15 +402,30 @@ mod tests {
             let tree: Value = serde_json::from_str(text).expect("valid JSON");
             let from_tree = WrittenGeometry::deserialize_from(&tree);
             let from_text = serde_json::from_str::<WrittenGeometry>(text).expect("every value is read to its end");
-            pretty_assertions::assert_eq!(outcome(from_tree.into_form()), outcome(from_text.into_form()), "{text}");
+            pretty_assertions::assert_eq!(outcome(from_tree.into_geometry()), outcome(from_text.into_geometry()), "{text}");
         }
+    }
+
+    /// IETF RFC 7946 sections 5 and 6.1: the box and the foreign members are
+    /// kept.
+    #[test]
+    fn a_written_geometry_keeps_its_box_and_foreign_members() {
+        let geometry = serde_json::from_str::<WrittenGeometry>(r#"{"title": "x", "type": "Point", "coordinates": [1, 2], "bbox": [1, 2, 1, 2], "z": 1}"#)
+            .expect("read")
+            .into_geometry()
+            .expect("a geometry");
+        let members = geometry.members().expect("members are kept");
+        pretty_assertions::assert_eq!(members.bbox().map(|bbox| bbox.ordinates().collect::<Vec<_>>()), Some(vec![1.0, 2.0, 1.0, 2.0]));
+        let foreign: Vec<(String, Value)> = members.foreign().iter().map(|(name, value)| (name.to_string(), value.clone())).collect(); // clone: the assertion owns what it compares
+        pretty_assertions::assert_eq!(foreign, vec![("title".to_owned(), json!("x")), ("z".to_owned(), json!(1))]);
     }
 
     #[test]
     fn a_member_named_by_a_json_ld_keyword_is_reported() {
         let written = serde_json::from_str::<WrittenGeometry>(r#"{"@context": {}, "type": "Point", "coordinates": [13.4, 52.5]}"#).expect("read");
         pretty_assertions::assert_eq!(written.json_ld_keywords(), JsonLdKeywords::Present);
-        assert!(written.into_form().is_ok(), "the geometry itself is read");
+        let geometry = written.into_geometry().expect("the geometry itself is read");
+        assert!(geometry.members().is_none(), "a keyword is never kept as a foreign member");
         let written = serde_json::from_str::<WrittenGeometry>(r#"{"type": "Point", "coordinates": [13.4, 52.5], "title": "x"}"#).expect("read");
         pretty_assertions::assert_eq!(written.json_ld_keywords(), JsonLdKeywords::Absent);
     }
@@ -426,6 +436,8 @@ mod tests {
     fn deserialising_a_refused_geometry_fails_with_its_geometry_error() {
         let error = serde_json::from_str::<Geometry>(r#"{"type": "Point", "coordinates": [0.0, 91.0]}"#).expect_err("latitude 91");
         assert!(error.to_string().contains("latitude 91 is outside [-90, 90]"), "{error}");
+        let error = serde_json::from_str::<Geometry>(r#"{"type": "Point", "coordinates": [0, 0], "bbox": [0, 0, 4]}"#).expect_err("three numbers");
+        assert!(error.to_string().contains("RFC 7946 section 5"), "{error}");
     }
 
     /// A value that is no geometry is read to its end, so a document holding
@@ -433,7 +445,7 @@ mod tests {
     #[test]
     fn a_value_that_is_no_geometry_is_read_to_its_end() {
         let read: Vec<WrittenGeometry> = serde_json::from_str(r#"[[1, [2]], {"a": {"b": 1}}, 7, {"type": "Point", "coordinates": [1, 2]}]"#).expect("read");
-        let forms: Vec<bool> = read.into_iter().map(|written| written.into_form().is_ok()).collect();
+        let forms: Vec<bool> = read.into_iter().map(|written| written.into_geometry().is_ok()).collect();
         pretty_assertions::assert_eq!(forms, vec![false, false, false, true]);
     }
 

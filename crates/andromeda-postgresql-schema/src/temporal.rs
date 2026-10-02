@@ -79,6 +79,8 @@ pub enum AttributeHistory {
     ValueBoolean,
     /// Geometry value, when `value_kind` selects it
     ValueGeometry,
+    /// The `bbox` and foreign members of the geometry value, when it has any
+    ValueGeometryMembers,
     /// JSON object or array value, when `value_kind` selects it
     ValueObject,
     /// `DateTime` value, when `value_kind` selects it

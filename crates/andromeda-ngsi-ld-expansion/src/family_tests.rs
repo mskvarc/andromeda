@@ -177,11 +177,11 @@ async fn a_geo_property_keeps_the_positions_the_transport_read() {
     let ValueSlot::Set(WrittenValue::Geometry(GeoValue::Geometry(point))) = instance(&document, "https://uri.etsi.org/ngsi-ld/location").value() else {
         panic!("a geometry");
     };
-    pretty_assertions::assert_eq!(point.geometry_type(), GeometryType::Point);
+    pretty_assertions::assert_eq!(point.form().geometry_type(), GeometryType::Point);
     let ValueSlot::Set(WrittenValue::Geometry(GeoValue::Geometry(area))) = instance(&document, &term("area")).value() else {
         panic!("a geometry");
     };
-    pretty_assertions::assert_eq!(area.position_count().get(), 4);
+    pretty_assertions::assert_eq!(area.form().position_count().get(), 4);
 }
 
 /// Clause 4.7.2: a geometry written as a JSON string stays its text.

@@ -11,15 +11,21 @@
 //! geometry whose compacted type is its own `GeoJSON` token is then kept as
 //! the typed geometry it is (see [`Compacted::Geometry`]). Every other
 //! geometry, and any geometry of a context that redefines `coordinates`, is
-//! written in full.
+//! written in full: so is a geometry carrying a `bbox` (IETF RFC 7946 section
+//! 5, written under the core context's `bbox` `@list` term) or foreign members
+//! (section 6.1, compacted as the members of any node), which the compact
+//! model then reads back with them (clause 4.6.4).
 
 use crate::{
     compacted::{Compacted, CompactedObject},
+    expanded_item::ExpandedItem,
     reserved_terms::reserved,
     undecidable::Undecidable,
-    walk::{GeometryOutput, Walk},
+    walk::{GeometryOutput, Walk, property_term},
 };
+use andromeda_ngsi_ld_entity::{geometry_value::GeometryValue, value_mode::Stored};
 use andromeda_ngsi_ld_geometry::{
+    bounding_box::BoundingBox,
     form::{GeometryForm, PolygonRings},
     line_string_coordinates::LineStringCoordinates,
     linear_ring::LinearRing,
@@ -42,15 +48,46 @@ const GEOJSON_TYPE: &str = "type";
 
 impl Walk<'_> {
     /// Compact one geometry node.
-    pub(crate) fn compact_geometry<'a>(&mut self, form: &'a GeometryForm) -> Result<Compacted<'a>, Undecidable> {
+    pub(crate) fn compact_geometry<'a>(&mut self, value: &'a GeometryValue) -> Result<Compacted<'a>, Undecidable> {
+        let form = value.form();
         self.admit_coordinates_term(form)?;
         let mut result = CompactedObject::new();
         self.write_identity(&mut result, None, from_ref(reserved().geometry_type(form.geometry_type())))?;
-        if self.geometries == GeometryOutput::Typed && reads_as_geometry(&result, form) {
-            return Ok(Compacted::Geometry(form));
-        }
+        let Some(members) = value.members() else {
+            if self.geometries == GeometryOutput::Typed && reads_as_geometry(&result, form) {
+                return Ok(Compacted::Geometry(form));
+            }
+            result.insert(compact_properties::COORDINATES, self.coordinates(form)?);
+            return Ok(Compacted::Object(result));
+        };
         result.insert(compact_properties::COORDINATES, self.coordinates(form)?);
+        if let Some(bbox) = members.bbox() {
+            result.insert(compact_properties::BBOX, self.bounding_box(bbox)?);
+        }
+        for (name, values) in members.foreign() {
+            let Some(property) = property_term(name.as_str()) else {
+                continue;
+            };
+            let items: Vec<ExpandedItem<'a, Stored>> = ExpandedItem::of_values(values)?;
+            self.compact_property(&mut result, &property, &items)?;
+        }
         Ok(Compacted::Object(result))
+    }
+
+    /// The ordinates of a `bbox`, each compacted under `bbox`, refusing a
+    /// context in which `bbox` does not compact to the core context's `@list`
+    /// term the walk writes the array for.
+    fn bounding_box<'a>(&self, bbox: &BoundingBox) -> Result<Compacted<'a>, Undecidable> {
+        let items = [ValueKind::Literal { datatype: None }];
+        let key = self.terms.property_key(&reserved().bbox, ValueHint::new(ValueKind::List(&items)))?;
+        match key {
+            Some(key) if &*key == compact_properties::BBOX && self.terms.container(&key).contains(ContainerKind::List) => {}
+            Some(_) | None => return Err(Undecidable::GeometryTerms),
+        }
+        bbox.ordinates()
+            .map(|ordinate| self.ordinate(ordinate, compact_properties::BBOX))
+            .collect::<Result<_, _>>()
+            .map(Compacted::Array)
     }
 
     /// Refuse a context in which `coordinates` does not compact to the core
@@ -116,18 +153,17 @@ impl Walk<'_> {
         [Some(position.longitude()), Some(position.latitude()), position.altitude()]
             .into_iter()
             .flatten()
-            .map(|ordinate| self.ordinate(ordinate))
+            .map(|ordinate| self.ordinate(ordinate, compact_properties::COORDINATES))
             .collect::<Result<_, _>>()
             .map(Compacted::Array)
     }
 
     /// One ordinate, in the canonical spelling the codec stores it with,
-    /// compacted as the number value object it is stored as.
-    fn ordinate<'a>(&self, ordinate: f64) -> Result<Compacted<'a>, Undecidable> {
+    /// compacted under `key` as the number value object it is stored as.
+    fn ordinate<'a>(&self, ordinate: f64, key: &str) -> Result<Compacted<'a>, Undecidable> {
         let text = canonical_float_text(ordinate).map_err(|_| Undecidable::UnrepresentableValue)?;
         let number = NumberBuf::from(serde_json::Number::from_string_unchecked(text));
-        self.terms
-            .value(&Value::Literal(Literal::Number(number), None::<IriBuf>), compact_properties::COORDINATES)
+        self.terms.value(&Value::Literal(Literal::Number(number), None::<IriBuf>), key)
     }
 }
 

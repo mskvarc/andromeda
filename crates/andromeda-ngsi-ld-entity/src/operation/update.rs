@@ -69,6 +69,7 @@ mod tests {
         entity_state::EntityState,
         family_value::FamilyValue,
         geo_value::GeoValue,
+        geometry_value::GeometryValue,
         instance::Instance,
         non_empty::NonEmpty,
         operation::speed_entity::{SPEED, dataset_ids, entity, fragment, instances, name, number, property, property_deletion, property_document, values},
@@ -221,7 +222,7 @@ mod tests {
             .expect("valid positions");
         let location = Instance::builder()
             .value(FamilyValue::GeoProperty {
-                geometry: GeoValue::Geometry(GeometryForm::MultiPoint(positions)),
+                geometry: GeoValue::Geometry(GeometryValue::new(GeometryForm::MultiPoint(positions))),
                 unit_code: None,
                 value_type: None,
             })

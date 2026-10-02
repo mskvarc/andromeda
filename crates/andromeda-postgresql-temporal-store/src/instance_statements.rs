@@ -163,6 +163,7 @@ pub(crate) fn update_instance_sql(column: InstanceColumn, target: &ContextTarget
             (AttributeHistory::Metadata, external_placeholder(13)),
             (AttributeHistory::UnitCodeId, external_placeholder(14)),
             (AttributeHistory::AttributeKind, external_placeholder(15)),
+            (AttributeHistory::ValueGeometryMembers, external_placeholder(16)),
             (AttributeHistory::ModifiedAt, now()),
         ])
         .and_where(Expr::col(column.column()).eq(external_placeholder(1)))

@@ -1,7 +1,12 @@
 //! Backend-neutral temporal observations and aggregation values.
 
-use crate::temporal::{history_row_wire::HistoryRowWire, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use crate::temporal::{
+    geometry_observation::serialize_geometry,
+    history_row_wire::HistoryRowWire,
+    observation_metadata::ObservationMetadata,
+    structured_value::StructuredValue,
+};
+use andromeda_ngsi_ld_entity::geometry_value::GeometryValue;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -17,6 +22,8 @@ use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// The geometry of one observation as a durable intent carries it.
+mod geometry_observation;
 /// The wire form a durable intent persists a history row in.
 mod history_row_wire;
 /// The members an observed instance carries beside its value.
@@ -44,9 +51,11 @@ pub enum TemporalValue {
     String(String),
     /// A boolean attribute value.
     Boolean(bool),
-    /// A `GeoJSON` geometry, held decoded: it persists as the `GeoJSON`
-    /// object it serializes to.
-    Geometry(Geometry),
+    /// A `GeoJSON` geometry, held decoded with its `bbox` and foreign members:
+    /// it persists as the `GeoJSON` of its positions beside the stored JSON of
+    /// its members.
+    #[serde(serialize_with = "serialize_geometry")]
+    Geometry(GeometryValue),
     /// A structured attribute value: what no typed column can hold.
     ///
     /// What the value is depends on the attribute family that carries it

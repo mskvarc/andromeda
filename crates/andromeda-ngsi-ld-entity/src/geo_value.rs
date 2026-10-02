@@ -4,9 +4,11 @@
 //! `GeometryCollection`. Expansion keeps it as a `GeoJSON` vocabulary node whose
 //! coordinates are nested `@list`s; clause 4.7.2 also admits the geometry
 //! written as a JSON string, which expansion leaves a plain string literal.
-//! The first is held as its positions, the second as its text together with
-//! the geometry it parses into.
+//! The first is held as its positions with its `bbox` and foreign members
+//! (see [`crate::geometry_value`]), the second as its text together with the
+//! geometry it parses into, the text keeping every member verbatim.
 
+use crate::geometry_value::GeometryValue;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geojson::GeometryError};
 use serde_json::Value;
 
@@ -51,8 +53,8 @@ impl EncodedGeometry {
 /// The geometry of one `GeoProperty` instance.
 #[derive(Clone, Debug, PartialEq)]
 pub enum GeoValue {
-    /// The `GeoJSON` vocabulary node, held as its positions.
-    Geometry(GeometryForm),
+    /// The `GeoJSON` vocabulary node, held as its positions and its members.
+    Geometry(GeometryValue),
     /// The clause 4.7.2 string form.
     Encoded(EncodedGeometry),
 }
@@ -62,7 +64,7 @@ impl GeoValue {
     #[must_use]
     pub const fn form(&self) -> &GeometryForm {
         match self {
-            GeoValue::Geometry(form) => form,
+            GeoValue::Geometry(value) => value.form(),
             GeoValue::Encoded(encoded) => encoded.form(),
         }
     }

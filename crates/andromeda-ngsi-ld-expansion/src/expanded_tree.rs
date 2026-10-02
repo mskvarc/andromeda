@@ -11,10 +11,12 @@
 //! and IRI still the text expansion produced and every number the exact text
 //! it was written with. One shape is added: a geometry the transport already
 //! read into its positions stays those positions, so a `GeoProperty` of a
-//! million positions never becomes a million value objects.
+//! million positions never becomes a million value objects; its `bbox` and its
+//! foreign members stand beside them, the foreign members expanded as the
+//! members of any node.
 
 use andromeda_ngsi_ld_entity::literal::Direction;
-use andromeda_ngsi_ld_geometry::form::GeometryForm;
+use andromeda_ngsi_ld_geometry::{bounding_box::BoundingBox, form::GeometryForm};
 use serde_json::Value;
 
 /// One expanded item: what JSON-LD 1.1 expansion yields in a value position.
@@ -30,7 +32,31 @@ pub enum ExpandedItem {
     List(Vec<ExpandedItem>),
     /// A `GeoJSON` geometry the transport already read into its positions; it
     /// stands for the `GeoJSON` node expansion makes of that geometry.
-    Geometry(GeometryForm),
+    Geometry(Box<ExpandedGeometry>),
+}
+
+/// A `GeoJSON` geometry read into its positions, with the members written
+/// beside them (IETF RFC 7946 sections 5 and 6.1).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExpandedGeometry {
+    /// The positions.
+    pub form: GeometryForm,
+    /// The `bbox`, when one was written.
+    pub bbox: Option<BoundingBox>,
+    /// The foreign members by expanded name, each with its values in order.
+    pub foreign: Vec<(String, Vec<ExpandedItem>)>,
+}
+
+impl ExpandedGeometry {
+    /// A geometry of positions alone.
+    #[must_use]
+    pub const fn bare(form: GeometryForm) -> ExpandedGeometry {
+        ExpandedGeometry {
+            form,
+            bbox: None,
+            foreign: Vec::new(),
+        }
+    }
 }
 
 /// The scalar of a value object.

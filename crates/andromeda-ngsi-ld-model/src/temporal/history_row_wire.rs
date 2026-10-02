@@ -15,12 +15,12 @@
 use crate::temporal::{
     TemporalHistoryRow,
     TemporalValue,
+    geometry_observation::GeometryWire,
     observation_metadata::ObservationMetadata,
     structured_value::StructuredValue,
     structured_value_codec::StoredValueError,
 };
 use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -47,6 +47,15 @@ pub enum StoredObservationError {
         #[source]
         source: StoredValueError,
     },
+    /// The members of a geometry are not the stored members of one.
+    #[error("the geometry members of '{attribute}' are unreadable: {source}")]
+    GeometryMembers {
+        /// The attribute the row records.
+        attribute: AttributeName,
+        /// Why the members are unreadable.
+        #[source]
+        source: EntityRefusal,
+    },
     /// The metadata is not the expanded members of an instance.
     #[error("the metadata of '{attribute}' is unreadable: {source}")]
     Metadata {
@@ -68,8 +77,8 @@ enum ValueWire {
     String(String),
     /// A boolean attribute value.
     Boolean(bool),
-    /// A `GeoJSON` geometry.
-    Geometry(Geometry),
+    /// A `GeoJSON` geometry, its members still raw.
+    Geometry(GeometryWire),
     /// The stored JSON of a structured value.
     Object(Value),
     /// A datetime attribute value.
@@ -133,7 +142,16 @@ impl TryFrom<HistoryRowWire> for TemporalHistoryRow {
             ValueWire::Number(number) => TemporalValue::Number(number),
             ValueWire::String(text) => TemporalValue::String(text),
             ValueWire::Boolean(flag) => TemporalValue::Boolean(flag),
-            ValueWire::Geometry(geometry) => TemporalValue::Geometry(geometry),
+            ValueWire::Geometry(geometry) => {
+                TemporalValue::Geometry(
+                    geometry
+                        .into_geometry(&attribute_name)
+                        .map_err(|source| StoredObservationError::GeometryMembers {
+                            attribute: attribute_name.clone(), // clone: the error owns the attribute it names
+                            source,
+                        })?,
+                )
+            }
             ValueWire::Object(stored) => TemporalValue::Structured(
                 StructuredValue::from_stored(attribute_type, &attribute_name, &stored.to_string()).map_err(|source| StoredObservationError::Value {
                     attribute: attribute_name.clone(), // clone: the error owns the attribute it names

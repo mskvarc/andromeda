@@ -99,7 +99,7 @@ async fn a_million_position_polygon_expands_from_its_positions_without_a_tree() 
     let ValueSlot::Set(WrittenValue::Geometry(GeoValue::Geometry(form))) = location.value() else {
         panic!("a geometry");
     };
-    assert_eq!(form.position_count().get(), POSITIONS);
+    assert_eq!(form.form().position_count().get(), POSITIONS);
     assert!(
         peak_above_input < PEAK_BUDGET,
         "expanding {POSITIONS} positions peaked at {peak_above_input} bytes above the input, over the {PEAK_BUDGET} byte budget"

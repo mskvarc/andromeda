@@ -93,7 +93,7 @@ pub fn expanded_value<M: MemberMode>(attribute: &AttributeName, item: ExpandedIt
         ExpandedItem::Json(json) => Ok(ExpandedValue::Json(JsonLiteral::new(json))),
         ExpandedItem::Node(node) => value_node(attribute, node).map(ExpandedValue::Node),
         ExpandedItem::List(items) => expanded_values(attribute, items).map(ExpandedValue::List),
-        ExpandedItem::Geometry(form) => geometry_value_node(attribute, &form),
+        ExpandedItem::Geometry(geometry) => geometry_value_node(attribute, *geometry),
     }
 }
 
@@ -135,14 +135,23 @@ fn value_node<M: MemberMode>(attribute: &AttributeName, node: ExpandedNode) -> R
     let mut members = IndexMap::with_capacity(node.members.len());
     for (name, items) in node.members {
         let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
-        let member = if is_sole_null(&items) {
-            M::deletion(attribute)?
-        } else {
-            M::values(expanded_values(attribute, items)?)
-        };
-        members.insert(name, member);
+        members.insert(name, node_member::<M>(attribute, items)?);
     }
     Ok(ValueNode::new(id, types, members))
+}
+
+/// One member of a structured value: its values, or its deletion when they
+/// are the NGSI-LD Null alone (clause 5.5.12).
+///
+/// # Errors
+///
+/// As [`expanded_value`], and the refusal of a mode that holds no deletion.
+pub fn node_member<M: MemberMode>(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<M::Member, EntityRefusal> {
+    if is_sole_null(&items) {
+        M::deletion(attribute)
+    } else {
+        expanded_values(attribute, items).map(M::values)
+    }
 }
 
 /// The refusal of a nested value that is not what its expanded form names.

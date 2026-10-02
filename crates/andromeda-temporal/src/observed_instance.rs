@@ -19,12 +19,12 @@ use andromeda_ngsi_ld_entity::{
     },
     expanded_value::ExpandedValue,
     geo_value::GeoValue,
+    geometry_value::GeometryValue,
     list_object::ListObject,
     literal::{Literal, LiteralValue},
     non_empty::NonEmpty,
     value_mode::Fragment,
 };
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::Identifier,
@@ -156,11 +156,13 @@ const fn missing_value(family: AttributeType) -> SubmissionRefusal {
 fn family_value(family: AttributeType, written: WrittenValue) -> Result<TemporalValue, TemporalError> {
     match (family, written) {
         (AttributeType::Property, WrittenValue::Value(values)) => property_value(values),
-        (AttributeType::GeoProperty, WrittenValue::Geometry(geometry)) => Ok(TemporalValue::Geometry(Geometry::new(match geometry {
-            GeoValue::Geometry(form) => form,
-            // clone: the clause 4.7.2 text is not kept, only the geometry it parses into.
-            GeoValue::Encoded(encoded) => encoded.form().clone(),
-        }))),
+        (AttributeType::GeoProperty, WrittenValue::Geometry(geometry)) => Ok(TemporalValue::Geometry(match geometry {
+            GeoValue::Geometry(value) => value,
+            // The clause 4.7.2 text is not kept, only the positions it parses
+            // into: its members are compact JSON no expansion has named.
+            // clone: the encoded geometry owns the positions its text parses into.
+            GeoValue::Encoded(encoded) => GeometryValue::new(encoded.form().clone()),
+        })),
         (AttributeType::Relationship, WrittenValue::Object(targets)) => Ok(relationship_value(targets)),
         (AttributeType::VocabProperty, WrittenValue::Vocab(terms)) => Ok(vocab_value(terms)),
         (AttributeType::LanguageProperty, WrittenValue::LanguageMap(entries)) => Ok(TemporalValue::Structured(StructuredValue::LanguageMap(entries))),

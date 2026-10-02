@@ -37,13 +37,16 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod bounding_box;
 pub mod compact_geojson;
 pub mod coordinate_path;
 mod coordinate_tape;
 pub mod dimension;
+pub mod foreign_members;
 pub mod form;
 pub mod geo_rel;
 pub mod geojson;
+pub mod geojson_members;
 #[cfg(test)]
 mod geojson_oracle;
 pub mod geometry;

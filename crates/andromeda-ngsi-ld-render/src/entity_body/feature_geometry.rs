@@ -15,7 +15,7 @@ use crate::{
     entity_body::{geometry_body::GeometryBody, typed_entity::TypedEntity},
     geometry_selection::{GeometrySelection, selects},
 };
-use andromeda_ngsi_ld_geometry::form::GeometryForm;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::attribute::{
     common_fields::CommonAttributeFields,
@@ -32,7 +32,7 @@ use serde_json::Map;
 #[derive(Debug)]
 pub(crate) enum FeatureGeometry<'a> {
     /// A `GeoProperty` geometry, written from its positions.
-    Typed(&'a GeometryForm),
+    Typed(&'a Geometry),
     /// A geometry read out of a rendered member.
     Written(GeoJsonGeometry),
     /// No geometry: clause 4.5.16.1 writes it as `null`.
@@ -42,7 +42,7 @@ pub(crate) enum FeatureGeometry<'a> {
 impl Serialize for FeatureGeometry<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
-            FeatureGeometry::Typed(form) => GeometryBody(form).serialize(serializer),
+            FeatureGeometry::Typed(geometry) => GeometryBody(geometry).serialize(serializer),
             FeatureGeometry::Written(geometry) => geometry.serialize(serializer),
             FeatureGeometry::Undefined => serializer.serialize_none(),
         }
@@ -144,12 +144,12 @@ fn sole_instance<'a>(geo_property: &'a GeoProperty, layout: InstanceLayout, sele
     match rendered_dataset_id {
         Some(dataset_id) if !selectors.is_empty() => {
             if selectors.iter().any(|selector| selects(selector, Some(dataset_id.as_str()))) {
-                FeatureGeometry::Typed(geo_property.value.form())
+                FeatureGeometry::Typed(&geo_property.value)
             } else {
                 FeatureGeometry::Undefined
             }
         }
-        Some(_) | None => FeatureGeometry::Typed(geo_property.value.form()),
+        Some(_) | None => FeatureGeometry::Typed(&geo_property.value),
     }
 }
 
@@ -171,7 +171,7 @@ fn selected_instance<'a>(instances: &[&'a GeoProperty], layout: InstanceLayout, 
     } else {
         selectors.iter().find_map(named)
     };
-    selected.map_or(FeatureGeometry::Undefined, |instance| FeatureGeometry::Typed(instance.value.form()))
+    selected.map_or(FeatureGeometry::Undefined, |instance| FeatureGeometry::Typed(&instance.value))
 }
 
 /// The geometry of a member that is no plain `GeoProperty`: the member is

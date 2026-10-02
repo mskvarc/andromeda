@@ -21,6 +21,7 @@ use crate::{
     stored_history_error::{HistoryColumn, HistoryTable, StoredHistoryError, UnitCodeColumn},
     unit_code_metadata::restore_unit_code,
 };
+use andromeda_ngsi_ld_entity::geometry_value::{ExpandedGeoJsonMembers, GeometryValue};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
@@ -120,7 +121,7 @@ fn decode_value(row: &PgRow, attribute_type: AttributeType, attribute_name: &Att
         ValueKind::Number => Ok(TemporalValue::Number(decode_number(row)?)),
         ValueKind::String => Ok(TemporalValue::String(required_column(row, TABLE, HistoryColumn::ValueString)?)),
         ValueKind::Boolean => Ok(TemporalValue::Boolean(required_column(row, TABLE, HistoryColumn::ValueBoolean)?)),
-        ValueKind::Geometry => Ok(TemporalValue::Geometry(decode_geometry(row)?)),
+        ValueKind::Geometry => Ok(TemporalValue::Geometry(decode_geometry(row, attribute_name)?)),
         ValueKind::Object => {
             let stored: &RawValue = required_column(row, TABLE, HistoryColumn::ValueObject)?;
             Ok(StructuredValue::from_stored(attribute_type, attribute_name, stored.get())
@@ -146,10 +147,19 @@ fn decode_number(row: &PgRow) -> Result<JsonNumber, TemporalStoreError> {
     Ok(JsonNumber::from_decimal(&stored).map_err(StoredHistoryError::ValueNumber)?)
 }
 
-/// Read the geometry column, which the query layer selects as EWKB.
-fn decode_geometry(row: &PgRow) -> Result<Geometry, TemporalStoreError> {
+/// Read the geometry column, which the query layer selects as EWKB, and the
+/// `bbox` and foreign members kept beside it (IETF RFC 7946 sections 5 and
+/// 6.1).
+fn decode_geometry(row: &PgRow, attribute_name: &AttributeName) -> Result<GeometryValue, TemporalStoreError> {
     let bytes: Vec<u8> = required_column(row, TABLE, HistoryColumn::ValueGeometryEwkb)?;
-    Ok(geometry_from_ewkb(&bytes)?)
+    let (form, _) = geometry_from_ewkb(&bytes)?.into_parts();
+    let stored: Option<&RawValue> = row.try_get("value_geometry_members")?;
+    let members = stored
+        .map(|stored| ExpandedGeoJsonMembers::from_stored(attribute_name, stored.get()))
+        .transpose()
+        .map_err(|refusal| StoredHistoryError::ValueGeometryMembers(Box::new(refusal)))?
+        .flatten();
+    Ok(GeometryValue::with_members(form, members))
 }
 
 /// Build the geometry one stored EWKB value encodes.

@@ -6,7 +6,10 @@
 //! a JSON literal, or any other value is refused. The node's `coordinates` are
 //! read straight into positions when its `@type` came first, as it does in
 //! every document the broker or PostgreSQL writes; otherwise they are kept as
-//! expanded values and read once the type is known.
+//! expanded values and read once the type is known. Its `bbox` (IETF RFC 7946
+//! section 5, the core context's `geojson:bbox` `@list` term) and its foreign
+//! members (section 6.1, any other expanded name) are read beside them; the
+//! NGSI-LD Null is refused inside either, as entity state never holds it.
 
 use crate::{
     codec::{
@@ -14,12 +17,14 @@ use crate::{
         coordinates_decode::CoordinatesSeed,
         decode_context::DecodeContext,
         element::{ElementsSeed, TypeEntries, values_without_null},
+        geojson_members_codec::MembersRead,
         object_key::ObjectKey,
         raw_scalar::RawScalar,
         value_encode::ValuesOut,
     },
     expanded_value::ExpandedValue,
     geo_value::{EncodedGeometry, GeoValue},
+    geometry_value::GeometryValue,
     member_shape::MemberShape,
     ngsi_ld_null::is_ngsi_ld_null,
     refusal::EntityRefusal,
@@ -149,13 +154,10 @@ impl<'de> Visitor<'de> for GeoElementSeed<'_> {
                         parts.pending = Some(values_without_null(elements, Some(seed.attribute)).map_err(refuse)?);
                     }
                 }
-                ObjectKey::Id
-                | ObjectKey::Language
-                | ObjectKey::Direction
-                | ObjectKey::List
-                | ObjectKey::OtherKeyword
-                | ObjectKey::Name(_)
-                | ObjectKey::InvalidName(_) => return Err(refuse(seed.malformed(MemberShape::Geometry))),
+                ObjectKey::Name(name) => parts.members.read(seed.context, seed.attribute, name, &mut map)?,
+                ObjectKey::Id | ObjectKey::Language | ObjectKey::Direction | ObjectKey::List | ObjectKey::OtherKeyword | ObjectKey::InvalidName(_) => {
+                    return Err(refuse(seed.malformed(MemberShape::Geometry)));
+                }
             }
         }
         parts.decide(seed).map_err(refuse)
@@ -173,21 +175,33 @@ struct GeoParts {
     form: Option<GeometryForm>,
     /// The coordinates, read before the type was known.
     pending: Option<Vec<ExpandedValue<Fragment>>>,
+    /// The `bbox` and the foreign members.
+    members: MembersRead,
 }
 
 impl GeoParts {
     /// Decide what the gathered members make.
     fn decide(self, seed: GeoValueSeed<'_>) -> Result<GeoDecoded, EntityRefusal> {
-        match (self.value, self.geometry_type, self.form, self.pending) {
+        let GeoParts {
+            value,
+            geometry_type,
+            form,
+            pending,
+            members,
+        } = self;
+        let members = members.finish();
+        // A value object carries no member beside its `@value`.
+        let beside_value = members.is_some();
+        let geometry = |form| GeoDecoded::Value(GeoValue::Geometry(GeometryValue::with_members(form, members)));
+        match (value, geometry_type, form, pending) {
+            (Some(_), None, None, None) if beside_value => Err(seed.malformed(MemberShape::Geometry)),
             (Some(RawScalar::String(text)), None, None, None) if is_ngsi_ld_null(&text) => Ok(GeoDecoded::Null),
             (Some(RawScalar::String(text)), None, None, None) => EncodedGeometry::parse(text)
                 .map(|encoded| GeoDecoded::Value(GeoValue::Encoded(encoded)))
                 .map_err(|source| seed.geometry(source)),
             (Some(RawScalar::Number(_) | RawScalar::Boolean(_) | RawScalar::Json(_)), None, None, None) => Err(seed.geometry(GeometryError::NotAnObject)),
-            (None, Some(_), Some(form), None) => Ok(GeoDecoded::Value(GeoValue::Geometry(form))),
-            (None, Some(geometry_type), None, Some(pending)) => {
-                read_pending(seed, geometry_type, &pending).map(|form| GeoDecoded::Value(GeoValue::Geometry(form)))
-            }
+            (None, Some(_), Some(form), None) => Ok(geometry(form)),
+            (None, Some(geometry_type), None, Some(pending)) => read_pending(seed, geometry_type, &pending).map(geometry),
             (None, Some(_), None, None) => Err(seed.geometry(GeometryError::MissingCoordinates)),
             (None, None, None, _) => Err(seed.geometry(GeometryError::MissingType)),
             (Some(_), _, _, _) | (None, None, Some(_), _) | (None, Some(_), Some(_), Some(_)) => Err(seed.malformed(MemberShape::Geometry)),

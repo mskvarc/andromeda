@@ -8,7 +8,7 @@
 use crate::{
     assembly::{
         expanded_value::{expanded_values, literal},
-        geometry_node::geometry_of,
+        geometry_node::{geometry_of, geometry_value},
         member_value::{malformed, null_beside_data, reference_id},
         null_sentinel::{is_deletion, is_list_object_null, is_null},
     },
@@ -116,8 +116,8 @@ fn geo_value(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<GeoV
         return Err(malformed(attribute, MemberShape::Geometry));
     };
     match item {
-        ExpandedItem::Geometry(form) => Ok(GeoValue::Geometry(form)),
-        ExpandedItem::Node(node) => geometry_of(&node).map(GeoValue::Geometry).map_err(refused),
+        ExpandedItem::Geometry(geometry) => geometry_value(attribute, *geometry).map(GeoValue::Geometry),
+        ExpandedItem::Node(node) => geometry_value(attribute, geometry_of(node).map_err(refused)?).map(GeoValue::Geometry),
         ExpandedItem::Value(value) => match literal(attribute, value)?.value() {
             LiteralValue::String(text) => EncodedGeometry::parse(text.to_string()).map(GeoValue::Encoded).map_err(refused),
             LiteralValue::Number(_) | LiteralValue::Boolean(_) => Err(refused(GeometryError::NotAnObject)),

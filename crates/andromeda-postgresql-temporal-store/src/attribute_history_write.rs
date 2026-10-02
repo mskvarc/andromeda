@@ -10,7 +10,6 @@ use crate::{
     verbatim_instance_claim::{claim_verbatim_instances, run_history_dedup_deletes, verbatim_instance_targets},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey, value_kind::ValueKind};
@@ -80,6 +79,8 @@ enum HistoryStaged {
     ValueString,
     /// Geometry value as EWKB.
     ValueGeometry,
+    /// The `bbox` and foreign members of the geometry value.
+    ValueGeometryMembers,
     /// Structured value.
     ValueObject,
     /// URI value.
@@ -154,6 +155,9 @@ struct AttributeHistoryBinds<'a> {
     value_strings: Vec<Option<&'a str>>,
     /// Geometry values as EWKB, projected server-side.
     value_geometries: Vec<Option<Vec<u8>>>,
+    /// The geometries' `bbox` and foreign members, as the JSON the column
+    /// stores.
+    value_geometry_members: Vec<Option<Json<&'a RawValue>>>,
     /// Structured values, as the JSON the column stores.
     value_objects: Vec<Option<Json<&'a RawValue>>>,
     /// URI values, which is how a relationship object is stored.
@@ -183,6 +187,7 @@ fn attribute_history_binds(rows: &[AttributeHistoryRow]) -> Result<AttributeHist
         value_numbers: Vec::with_capacity(rows.len()),
         value_strings: Vec::with_capacity(rows.len()),
         value_geometries: Vec::with_capacity(rows.len()),
+        value_geometry_members: Vec::with_capacity(rows.len()),
         value_objects: Vec::with_capacity(rows.len()),
         value_uris: Vec::with_capacity(rows.len()),
         metadatas: Vec::with_capacity(rows.len()),
@@ -207,7 +212,8 @@ fn attribute_history_binds(rows: &[AttributeHistoryRow]) -> Result<AttributeHist
         // exact and never passes through text or binary64.
         binds.value_numbers.push(row.value.number().cloned());
         binds.value_strings.push(row.value.string());
-        binds.value_geometries.push(geometry_bytes(row.value.geometry().map(Geometry::form))?);
+        binds.value_geometries.push(geometry_bytes(row.value.geometry())?);
+        binds.value_geometry_members.push(row.value.geometry_members().map(Json));
         binds.value_objects.push(row.value.object().map(Json));
         binds.value_uris.push(row.value.uri().map(Uri::as_str));
         binds.metadatas.push(row.metadata.as_deref().map(Json));
@@ -215,8 +221,8 @@ fn attribute_history_binds(rows: &[AttributeHistoryRow]) -> Result<AttributeHist
     Ok(binds)
 }
 
-/// The twenty-one staging columns of an attribute-history row, in bind order.
-fn history_staging_columns() -> [UnnestColumn; 21] {
+/// The twenty-two staging columns of an attribute-history row, in bind order.
+fn history_staging_columns() -> [UnnestColumn; 22] {
     [
         UnnestColumn::new(HistoryStaged::RecordedAt, PostgresType::TimestamptzArray),
         UnnestColumn::new(HistoryStaged::WriteId, PostgresType::UuidArray),
@@ -236,6 +242,7 @@ fn history_staging_columns() -> [UnnestColumn; 21] {
         UnnestColumn::new(HistoryStaged::ValueNumber, PostgresType::NumericArray),
         UnnestColumn::new(HistoryStaged::ValueString, PostgresType::TextArray),
         UnnestColumn::new(HistoryStaged::ValueGeometry, PostgresType::ByteaArray),
+        UnnestColumn::new(HistoryStaged::ValueGeometryMembers, PostgresType::JsonbArray),
         UnnestColumn::new(HistoryStaged::ValueObject, PostgresType::JsonbArray),
         UnnestColumn::new(HistoryStaged::ValueUri, PostgresType::TextArray),
         UnnestColumn::new(HistoryStaged::Metadata, PostgresType::JsonbArray),
@@ -286,6 +293,7 @@ fn attribute_history_insert_sql(target: &ContextTarget) -> Result<String, Tempor
         .expr(staged(HistoryStaged::ValueNumber))
         .expr(staged(HistoryStaged::ValueString))
         .expr(geometry)
+        .expr(staged(HistoryStaged::ValueGeometryMembers))
         .expr(staged(HistoryStaged::ValueObject))
         .expr(staged(HistoryStaged::ValueUri))
         .expr(staged(HistoryStaged::Metadata))
@@ -312,6 +320,7 @@ fn attribute_history_insert_sql(target: &ContextTarget) -> Result<String, Tempor
         AttributeHistory::ValueNumber,
         AttributeHistory::ValueString,
         AttributeHistory::ValueGeometry,
+        AttributeHistory::ValueGeometryMembers,
         AttributeHistory::ValueObject,
         AttributeHistory::ValueUri,
         AttributeHistory::Metadata,
@@ -353,6 +362,7 @@ async fn insert_history_batch_unnest_in_tx(
         .bind(&binds.value_numbers)
         .bind(&binds.value_strings)
         .bind(&binds.value_geometries)
+        .bind(&binds.value_geometry_members)
         .bind(&binds.value_objects)
         .bind(&binds.value_uris)
         .bind(&binds.metadatas)

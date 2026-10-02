@@ -125,17 +125,16 @@ pub enum TypedGeometryRefusal {
 /// Read one written geometry of a `GeoProperty` instance as the typed
 /// [`Geometry`].
 ///
-/// The typed geometry keeps a geometry's type and positions and nothing else,
-/// so a member written beside them is gone once the instance is rendered
-/// again. A `GeoJSON` foreign member (IETF RFC 7946 section 6.1) may go; a
-/// JSON-LD keyword may not, because it is no `GeoJSON` at all but JSON-LD the
-/// processor would act on -- an `@context` there is one clause 5.5.7 refuses
-/// -- so a geometry carrying one is not read as typed, and the instance stays
-/// as written for the screening that refuses it.
+/// The typed geometry keeps a geometry's positions, its `bbox` and its
+/// foreign members (IETF RFC 7946 sections 5 and 6.1), so the instance renders
+/// again as it was written (clause 4.6.4). A JSON-LD keyword is no `GeoJSON`
+/// member at all but JSON-LD the processor would act on -- an `@context` there
+/// is one clause 5.5.7 refuses -- so a geometry carrying one is not read as
+/// typed, and the instance stays as written for the screening that refuses it.
 pub(crate) fn typed_geometry(written: WrittenGeometry) -> Result<Geometry, TypedGeometryRefusal> {
     match written.json_ld_keywords() {
         JsonLdKeywords::Present => Err(TypedGeometryRefusal::JsonLdKeyword),
-        JsonLdKeywords::Absent => Ok(Geometry::new(written.into_form()?)),
+        JsonLdKeywords::Absent => Ok(written.into_geometry()?),
     }
 }
 

@@ -11,12 +11,12 @@
 
 use crate::{
     compact_walk::{
-        element::expand_element,
+        element::{Expanded, expand_element},
         member::{Written, expanded_member},
         object::{KeyedEntry, NodeBuilder, property_name},
     },
     decline::Decline,
-    expanded_tree::ExpandedItem,
+    expanded_tree::{ExpandedGeometry, ExpandedItem},
     term_scope::TermScope,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
@@ -29,7 +29,7 @@ use andromeda_ngsi_ld_representation::normalization::normalize_attribute_node;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use jsonld::Term;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::slice::from_ref;
 
 /// The member of an instance that names its family.
@@ -175,7 +175,7 @@ fn add_value_list(node: &mut NodeBuilder, scope: &TermScope<'_>, values: &[NgsiL
     for value in values {
         match value {
             NgsiLdValue::Json(json) => items.extend(expand_element(scope, Some(key), json)?.into_items()),
-            NgsiLdValue::Geometry(geometry) => items.push(ExpandedItem::Geometry(geometry.form().clone())), // clone: the typed request is borrowed
+            NgsiLdValue::Geometry(geometry) => items.push(geometry_item(scope, key, geometry)?),
         }
     }
     node.add_expanded(name, expanded_member(scope, key, items, Written::Array)?);
@@ -193,9 +193,34 @@ fn add_geometry(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, geomet
     if scope.has_scoped_context(key) {
         return Err(Decline::NestedScopedContext);
     }
-    let items = vec![ExpandedItem::Geometry(geometry.form().clone())]; // clone: the typed request is borrowed
+    let items = vec![geometry_item(scope, key, geometry)?];
     node.add_expanded(name, expanded_member(scope, key, items, Written::Single)?);
     Ok(())
+}
+
+/// The item a geometry the transport already read stands for: its positions,
+/// its `bbox`, and its foreign members (IETF RFC 7946 sections 5 and 6.1)
+/// expanded as the members of the object written under `key`, as the processor
+/// expands every member of a geometry object it reads.
+fn geometry_item(scope: &TermScope<'_>, key: &str, geometry: &Geometry) -> Result<ExpandedItem, Decline> {
+    let mut expanded = ExpandedGeometry::bare(geometry.form().clone()); // clone: the typed request is borrowed
+    if let Some(members) = geometry.members() {
+        expanded.bbox = members.bbox().copied();
+        if !members.foreign().is_empty() {
+            let object = members
+                .foreign()
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.clone())) // clone: the walk expands a JSON object the typed request lends
+                .collect::<Map<String, Value>>();
+            match expand_element(scope, Some(key), &Value::Object(object))? {
+                Expanded::One(ExpandedItem::Node(node)) if node.id.is_none() && node.types.is_empty() => expanded.foreign = node.members,
+                Expanded::Null => {}
+                Expanded::One(ExpandedItem::Node(_) | ExpandedItem::Value(_) | ExpandedItem::Json(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_))
+                | Expanded::Many(_) => return Err(Decline::MalformedJsonLd),
+            }
+        }
+    }
+    Ok(ExpandedItem::Geometry(Box::new(expanded)))
 }
 
 /// The member name `key` expands to, `None` for a key expansion drops.

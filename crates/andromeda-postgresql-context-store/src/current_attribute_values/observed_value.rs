@@ -8,6 +8,7 @@
 //! becomes a projected one.
 
 use crate::current_attribute_values::row::ProjectedAttributeValue;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
 use thiserror::Error;
 
@@ -40,8 +41,11 @@ impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
             // clone: the projected row owns the value it writes.
             TemporalValue::String(text) => Ok(ProjectedAttributeValue::String(text.clone())),
             TemporalValue::Boolean(flag) => Ok(ProjectedAttributeValue::Boolean(*flag)),
-            // clone: the projected row owns the geometry it writes.
-            TemporalValue::Geometry(geometry) => Ok(ProjectedAttributeValue::Geometry(geometry.clone())),
+            // The projection indexes positions; the `bbox` and foreign members
+            // are rendered from the stored document and the history, never
+            // from here.
+            // clone: the projected row owns the positions it writes.
+            TemporalValue::Geometry(geometry) => Ok(ProjectedAttributeValue::Geometry(Geometry::new(geometry.form().clone()))),
             // clone: the projected row owns the structured value it writes.
             TemporalValue::Structured(structured) => Ok(ProjectedAttributeValue::Object(structured.clone())),
             TemporalValue::DateTime(instant) => Ok(ProjectedAttributeValue::DateTime(*instant)),
@@ -56,7 +60,7 @@ impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
 #[cfg(test)]
 mod tests {
     use crate::current_attribute_values::{observed_value::ProjectedValueUnrepresentable, row::ProjectedAttributeValue};
-    use andromeda_ngsi_ld_entity::json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_entity::{geometry_value::GeometryValue, json_literal::JsonLiteral};
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_model::temporal::{TemporalValue, structured_value::StructuredValue};
     use andromeda_ngsi_ld_number::JsonNumber;
@@ -80,7 +84,12 @@ mod tests {
             TemporalValue::Number(JsonNumber::try_from(1.5).expect("a finite number")),
             TemporalValue::String("text".to_owned()),
             TemporalValue::Boolean(true),
-            TemporalValue::Geometry(Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("a point")),
+            TemporalValue::Geometry(GeometryValue::new(
+                Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [1.0, 2.0]}))
+                    .expect("a point")
+                    .into_parts()
+                    .0,
+            )),
             TemporalValue::Structured(StructuredValue::Json(JsonLiteral::new(json!({"a": 1})))),
             TemporalValue::DateTime(instant),
             TemporalValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")),
@@ -122,7 +131,8 @@ mod tests {
             ]
         }))
         .expect("a valid Polygon with a hole");
-        let projected = ProjectedAttributeValue::try_from(&TemporalValue::Geometry(geometry.clone())).expect("a representable observation"); // clone: the test compares the projection against what it projected
+        let observed = TemporalValue::Geometry(GeometryValue::new(geometry.form().clone())); // clone: the test compares the projection against what it projected
+        let projected = ProjectedAttributeValue::try_from(&observed).expect("a representable observation");
         pretty_assertions::assert_eq!(projected.kind(), ValueKind::Geometry);
         pretty_assertions::assert_eq!(projected, ProjectedAttributeValue::Geometry(geometry));
     }

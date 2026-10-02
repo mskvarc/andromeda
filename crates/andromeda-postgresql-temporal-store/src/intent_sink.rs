@@ -344,6 +344,7 @@ mod tests {
         temporal_store_invariant::TemporalStoreInvariant,
     };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+    use andromeda_ngsi_ld_entity::geometry_value::GeometryValue;
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
@@ -457,15 +458,19 @@ mod tests {
     }
 
     /// The observation carries the geometry already built, so the row stores
-    /// that geometry as it stands rather than a JSON rendering of it.
+    /// its positions as they stand rather than a JSON rendering of them, and a
+    /// geometry without members leaves the members column empty.
     #[test]
     fn a_geometry_observation_is_stored_as_its_geometry() {
-        let geometry = Geometry::from_geojson_value(&json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 2.0, 30.0], [3.0, 4.0]]}))
-            .expect("a valid LineString");
-        let row = observed_row(AttributeType::GeoProperty, TemporalValue::Geometry(geometry.clone())); // clone: the test compares the stored value against what it observed
-        let AttributeHistoryValue::Geometry(stored) = AttributeHistoryValue::of_observation(&row.value).expect("a geometry is storable") else {
+        let (form, _) = Geometry::from_geojson_value(&json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 2.0, 30.0], [3.0, 4.0]]}))
+            .expect("a valid LineString")
+            .into_parts();
+        let row = observed_row(AttributeType::GeoProperty, TemporalValue::Geometry(GeometryValue::new(form.clone()))); // clone: the test compares the stored value against what it observed
+        let AttributeHistoryValue::Geometry { form: stored, members } = AttributeHistoryValue::of_observation(&row.value).expect("a geometry is storable")
+        else {
             panic!("a geometry is stored in the geometry column");
         };
-        pretty_assertions::assert_eq!(stored, geometry);
+        pretty_assertions::assert_eq!(stored, form);
+        assert!(members.is_none());
     }
 }

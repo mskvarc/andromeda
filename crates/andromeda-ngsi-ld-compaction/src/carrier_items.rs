@@ -69,7 +69,7 @@ pub(crate) fn value_list<M: CompactedMode>(items: &[ExpandedValue<M>]) -> Result
 /// string it was written as.
 pub(crate) fn geometry<M: CompactedMode>(geometry: &GeoValue) -> Vec<ExpandedItem<'_, M>> {
     vec![match geometry {
-        GeoValue::Geometry(form) => ExpandedItem::Geometry(form),
+        GeoValue::Geometry(value) => ExpandedItem::Geometry(value),
         GeoValue::Encoded(encoded) => ExpandedItem::text(encoded.as_str()),
     }]
 }

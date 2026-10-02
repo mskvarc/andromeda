@@ -13,10 +13,18 @@
 //! is a separate [`PlanarGeometry`] computed when a spatial operation needs it,
 //! so a geometry held in an entity carries its coordinates once.
 
-use crate::{dimension::GeometryDimension, form::GeometryForm, geojson::GeometryError, geometry_type::GeometryType, planar::PlanarGeometry};
+use crate::{
+    dimension::GeometryDimension,
+    form::GeometryForm,
+    geojson::GeometryError,
+    geojson_members::GeoJsonMembers,
+    geometry_members::{ForeignMemberReading, GeometryMembers},
+    geometry_type::GeometryType,
+    planar::PlanarGeometry,
+};
 use geojson::Geometry as GeoJsonGeometry;
 use serde::{Serialize, Serializer};
-use serde_json::{Map, Value};
+use serde_json::{Map, Number, Value};
 
 /// A geometry attached to an NGSI-LD `GeoProperty` (clause 5.2.7).
 ///
@@ -29,17 +37,31 @@ use serde_json::{Map, Value};
 ///
 /// Decoding reads a compact `GeoJSON` geometry object straight from the
 /// deserializer (see [`crate::written_geometry`]), never through a JSON tree.
+/// The `bbox` and the foreign members written beside the positions (RFC 7946
+/// sections 5 and 6.1) are kept and rendered back (ETSI GS CIM 009 v1.9.1
+/// clause 4.6.4); a geometry without them holds nothing for them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Geometry {
     /// The geometry as received, and as it will be rendered back.
     form: GeometryForm,
+    /// The `bbox` and the foreign members, when either was written.
+    members: Option<Box<GeoJsonMembers>>,
 }
 
 impl Geometry {
-    /// Build from a geometry form.
+    /// Build from a geometry form, with no member beside its positions.
     #[must_use]
     pub const fn new(form: GeometryForm) -> Geometry {
-        Geometry { form }
+        Geometry { form, members: None }
+    }
+
+    /// Build from a geometry form and the members written beside it.
+    #[must_use]
+    pub fn with_members(form: GeometryForm, members: Option<GeoJsonMembers>) -> Geometry {
+        Geometry {
+            form,
+            members: members.map(Box::new),
+        }
     }
 
     /// Build from an arbitrary JSON value that is expected to encode a `GeoJSON`
@@ -55,7 +77,7 @@ impl Geometry {
     /// [`GeometryError::GeometryCollectionUnsupported`] if it is a
     /// `GeometryCollection`.
     pub fn from_geojson_value(value: &Value) -> Result<Geometry, GeometryError> {
-        Ok(Geometry::new(GeometryForm::from_compact_value(value)?))
+        GeometryMembers::of_object(value.as_object().ok_or(GeometryError::NotAnObject)?, ForeignMemberReading::Kept).into_geometry()
     }
 
     /// Build from a `GeoProperty` value as written: a `GeoJSON` geometry
@@ -104,6 +126,19 @@ impl Geometry {
         &self.form
     }
 
+    /// The `bbox` and the foreign members written beside the positions, when
+    /// either was.
+    #[must_use]
+    pub fn members(&self) -> Option<&GeoJsonMembers> {
+        self.members.as_deref()
+    }
+
+    /// The form and the members, apart.
+    #[must_use]
+    pub fn into_parts(self) -> (GeometryForm, Option<GeoJsonMembers>) {
+        (self.form, self.members.map(|members| *members))
+    }
+
     /// Project onto the horizontal plane the clause 4.10 predicates are
     /// evaluated over.
     ///
@@ -120,22 +155,50 @@ impl Geometry {
         self.form.dimension()
     }
 
-    /// Render as a `GeoJSON` geometry for the wire.
+    /// Render as a `GeoJSON` geometry for the wire, with its `bbox` and its
+    /// foreign members.
     ///
     /// Infallible, and byte-faithful to what was received: a position that
     /// arrived with two ordinates renders with two, and one that arrived with
     /// three renders with three.
     #[must_use]
     pub fn to_geojson(&self) -> GeoJsonGeometry {
-        GeoJsonGeometry::new(self.form.to_geojson())
+        let mut geometry = GeoJsonGeometry::new(self.form.to_geojson());
+        if let Some(members) = self.members() {
+            geometry.bbox = members.bbox().map(|bbox| bbox.ordinates().collect());
+            geometry.foreign_members = (!members.foreign().is_empty()).then(|| foreign_object(members));
+        }
+        geometry
     }
 
-    /// Render as the compact `GeoJSON` geometry object, the content of the JSON
-    /// literal an expanded `GeoProperty` value holds.
+    /// Render as the compact `GeoJSON` geometry object, with its `bbox` and its
+    /// foreign members.
     #[must_use]
     pub fn to_geojson_value(&self) -> Value {
-        Value::from(&self.form.to_geojson())
+        let mut object = match Value::from(&self.form.to_geojson()) {
+            Value::Object(object) => object,
+            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => return other,
+        };
+        if let Some(members) = self.members() {
+            if let Some(bbox) = members.bbox() {
+                object.insert(
+                    "bbox".to_owned(),
+                    Value::Array(bbox.ordinates().filter_map(Number::from_f64).map(Value::Number).collect()),
+                );
+            }
+            object.extend(foreign_object(members));
+        }
+        Value::Object(object)
     }
+}
+
+/// The foreign members of `members` as a JSON object.
+fn foreign_object(members: &GeoJsonMembers) -> Map<String, Value> {
+    members
+        .foreign()
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.clone())) // clone: the rendered object owns what the geometry keeps
+        .collect()
 }
 
 /// Narrow arbitrary-precision JSON coordinate numbers to the finite binary64
@@ -157,10 +220,15 @@ fn coordinates_as_f64(value: Value) -> Result<Value, GeometryError> {
 
 // Hand-written rather than `#[serde(into = "GeoJsonGeometry")]`: that container
 // attribute requires `Clone` and clones the whole geometry on every serialise,
-// which is the hot path for every entity response carrying a GeoProperty.
+// which is the hot path for every entity response carrying a GeoProperty. A
+// geometry with members renders through its JSON object, which writes a foreign
+// member's number as it was written.
 impl Serialize for Geometry {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.to_geojson().serialize(serializer)
+        match self.members() {
+            None => self.to_geojson().serialize(serializer),
+            Some(_) => self.to_geojson_value().serialize(serializer),
+        }
     }
 }
 
@@ -169,6 +237,7 @@ mod tests {
     use crate::{
         coordinate_path::CoordinatePath,
         dimension::GeometryDimension,
+        form::GeometryForm,
         geojson::GeometryError,
         geometry::Geometry,
         geometry_type::GeometryType,
@@ -190,7 +259,7 @@ mod tests {
             | GeometryError::UnknownType(_)
             | GeometryError::MissingCoordinates
             | GeometryError::MissingGeometries
-            | GeometryError::InvalidBbox
+            | GeometryError::InvalidBbox(_)
             | GeometryError::NotAnArray { .. }
             | GeometryError::NonNumericOrdinate { .. }
             | GeometryError::NonFiniteCoordinate
@@ -421,6 +490,24 @@ mod tests {
     fn a_geometry_renders_as_the_compact_geojson_object_it_was_read_from() {
         let geometry = Geometry::from_geojson_value(&elevated_point_json()).expect("elevated point parses");
         pretty_assertions::assert_eq!(geometry.to_geojson_value(), elevated_point_json());
+    }
+
+    /// IETF RFC 7946 sections 5 and 6.1, ETSI GS CIM 009 v1.9.1 clause 4.6.4:
+    /// the box and the foreign members render back beside the coordinates.
+    #[test]
+    fn a_geometry_with_members_serialises_them_beside_its_coordinates() {
+        let written = serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0], "title": "x"});
+        let geometry = Geometry::from_geojson_value(&written).expect("a point");
+        pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), written);
+        pretty_assertions::assert_eq!(geometry.to_geojson_value(), written);
+    }
+
+    /// A geometry without members holds one empty pointer for them.
+    #[test]
+    fn a_geometry_without_members_allocates_no_member_box() {
+        let geometry = Geometry::from_geojson_value(&point_json()).expect("a point");
+        assert!(geometry.members().is_none());
+        assert!(size_of::<Geometry>() <= size_of::<GeometryForm>() + size_of::<usize>());
     }
 
     /// Clause 4.7.2: a string is a geometry if and only if it parses into a

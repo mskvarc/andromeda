@@ -12,12 +12,12 @@ use crate::{compacted::Compacted, compacted_mode::CompactedMode, undecidable::Un
 use andromeda_ngsi_ld_entity::{
     document::instance_document::InstanceDocument,
     expanded_value::{ExpandedValue, ValueNode},
+    geometry_value::GeometryValue,
     instance::Instance,
     json_literal::JsonLiteral,
     literal::{Direction as LiteralDirection, Literal as ModelLiteral, LiteralValue},
     value_mode::ValueMode,
 };
-use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -61,7 +61,7 @@ pub(crate) enum ExpandedItem<'a, M: ValueMode> {
     /// A written attribute instance node.
     WrittenInstance(&'a InstanceDocument),
     /// A geometry node of the `GeoJSON` vocabulary.
-    Geometry(&'a GeometryForm),
+    Geometry(&'a GeometryValue),
     /// A `ListRelationship` item in its normalized spelling, a node holding
     /// one `hasObject` reference (clause 4.5.22.2).
     WrappedObject(&'a Uri),

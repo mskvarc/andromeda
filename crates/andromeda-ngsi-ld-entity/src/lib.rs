@@ -35,6 +35,7 @@ pub mod entity_types;
 pub mod expanded_value;
 pub mod family_value;
 pub mod geo_value;
+pub mod geometry_value;
 pub mod history;
 pub mod instance;
 pub mod json_literal;

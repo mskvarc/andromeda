@@ -165,6 +165,7 @@ fn project_base_columns(select: &mut SelectStatement) {
         AttributeHistory::ValueNumber,
         AttributeHistory::ValueString,
         AttributeHistory::ValueBoolean,
+        AttributeHistory::ValueGeometryMembers,
         AttributeHistory::ValueObject,
         AttributeHistory::ValueDateTime,
         AttributeHistory::ValueUri,

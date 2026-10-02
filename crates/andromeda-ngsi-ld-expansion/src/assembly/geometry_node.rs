@@ -7,19 +7,25 @@
 //! read from that node into its positions, refusing what RFC 7946 does not
 //! admit with the same refusals every other geometry reading raises; a
 //! geometry the transport already read stands for that node, and as the value
-//! of a plain Property it is written back into it.
+//! of a plain Property it is written back into it. The node's `bbox` (IETF RFC
+//! 7946 section 5, the core context's `geojson:bbox` `@list` term) is read into
+//! a bounding box, and every other member is a foreign member (section 6.1),
+//! kept as the expanded values it holds.
 
 use crate::{
-    assembly::expanded_value::MemberMode,
-    expanded_tree::{ExpandedItem, ExpandedNode, Scalar},
+    assembly::expanded_value::{MemberMode, expanded_values, node_member},
+    expanded_tree::{ExpandedGeometry, ExpandedItem, ExpandedNode, Scalar},
 };
 use andromeda_ngsi_ld_entity::{
     expanded_value::{ExpandedValue, ValueNode},
+    geometry_value::{ExpandedGeoJsonMembers, GeometryValue},
     literal::{Literal, LiteralValue},
     member_shape::MemberShape,
     refusal::EntityRefusal,
+    value_mode::Stored,
 };
 use andromeda_ngsi_ld_geometry::{
+    bounding_box::{BoundingBox, BoundingBoxError},
     coordinate_path::CoordinatePath,
     form::{GeometryForm, PolygonRings},
     geojson::GeometryError,
@@ -38,15 +44,65 @@ use std::str::FromStr;
 /// not admit as a `GeoProperty` value and [`GeometryType`] does not name.
 const GEOMETRY_COLLECTION_TOKEN: &str = "GeometryCollection";
 
-/// Read an expanded `GeoJSON` node as the geometry it describes.
+/// Read an expanded `GeoJSON` node as the geometry it describes, with its
+/// `bbox` and its foreign members.
 ///
 /// # Errors
 ///
 /// Returns [`GeometryError::GeometryCollectionUnsupported`] for a collection,
 /// [`GeometryError::MissingType`] and [`GeometryError::UnknownType`] for a node
-/// naming no geometry type, [`GeometryError::MissingCoordinates`], and the
-/// nesting, line, ring and position refusals of the coordinates.
-pub fn geometry_of(node: &ExpandedNode) -> Result<GeometryForm, GeometryError> {
+/// naming no geometry type, [`GeometryError::MissingCoordinates`], the
+/// nesting, line, ring and position refusals of the coordinates, and
+/// [`GeometryError::InvalidBbox`] for a `bbox` RFC 7946 section 5 refuses.
+pub fn geometry_of(node: ExpandedNode) -> Result<ExpandedGeometry, GeometryError> {
+    let form = geometry_form(&node)?;
+    let mut bbox = None;
+    let mut foreign = Vec::new();
+    for (name, items) in node.members {
+        if name == properties::BBOX.as_str() {
+            bbox = Some(bounding_box(&items)?);
+        } else if name != properties::COORDINATES.as_str() {
+            foreign.push((name, items));
+        }
+    }
+    Ok(ExpandedGeometry { form, bbox, foreign })
+}
+
+/// The bounding box an expanded `bbox` member holds: one list of numbers.
+fn bounding_box(items: &[ExpandedItem]) -> Result<BoundingBox, GeometryError> {
+    let [ExpandedItem::List(ordinates)] = items else {
+        return Err(GeometryError::InvalidBbox(BoundingBoxError::NotNumbers));
+    };
+    let ordinates = ordinates
+        .iter()
+        .map(ordinate_value)
+        .collect::<Option<Vec<f64>>>()
+        .ok_or(GeometryError::InvalidBbox(BoundingBoxError::NotNumbers))?;
+    Ok(BoundingBox::try_from_ordinates(&ordinates)?)
+}
+
+/// The geometry of a `GeoProperty` as the model holds it, its foreign members
+/// read as state values.
+///
+/// # Errors
+///
+/// Returns [`EntityRefusal::ExpandedAttributeName`] for a foreign member name
+/// that is no IRI, and the refusals of an expanded value for its values, the
+/// NGSI-LD Null among them.
+pub fn geometry_value(attribute: &AttributeName, geometry: ExpandedGeometry) -> Result<GeometryValue, EntityRefusal> {
+    let ExpandedGeometry { form, bbox, foreign } = geometry;
+    let foreign = foreign
+        .into_iter()
+        .map(|(name, items)| {
+            let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
+            Ok((name, expanded_values::<Stored>(attribute, items)?))
+        })
+        .collect::<Result<IndexMap<_, _>, EntityRefusal>>()?;
+    Ok(GeometryValue::with_members(form, ExpandedGeoJsonMembers::non_empty(bbox, foreign)))
+}
+
+/// The positions an expanded `GeoJSON` node describes.
+fn geometry_form(node: &ExpandedNode) -> Result<GeometryForm, GeometryError> {
     let token = node
         .types
         .first()
@@ -182,25 +238,38 @@ fn ordinate_value(item: &ExpandedItem) -> Option<f64> {
     }
 }
 
-/// The `GeoJSON` node expansion makes of `form`, as the value of a plain
+/// The `GeoJSON` node expansion makes of `geometry`, as the value of a plain
 /// Property: typed with the geometry's IRI, `coordinates` nested lists of
 /// numbers, each the decimal of the shortest spelling that reads back as its
-/// double.
+/// double, the `bbox` one list of such numbers, and every foreign member as
+/// the member of any node.
 ///
 /// # Errors
 ///
 /// Returns [`EntityRefusal::Malformed`] should a vocabulary IRI not read as a
-/// name, which the generated vocabulary rules out.
-pub fn geometry_value_node<M: MemberMode>(attribute: &AttributeName, form: &GeometryForm) -> Result<ExpandedValue<M>, EntityRefusal> {
+/// name, which the generated vocabulary rules out, and the refusals of a
+/// structured value's members for the foreign members.
+pub fn geometry_value_node<M: MemberMode>(attribute: &AttributeName, geometry: ExpandedGeometry) -> Result<ExpandedValue<M>, EntityRefusal> {
     let malformed = || EntityRefusal::Malformed {
         attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
         member: MemberShape::Geometry,
     };
+    let ExpandedGeometry { form, bbox, foreign } = geometry;
     let type_iri = format!("{}{}", prefix::GEOJSON.as_str(), form.geometry_type());
     let type_name = type_iri.parse::<NgsiLdReference>().map_err(|_| malformed())?;
     let coordinates = properties::COORDINATES.as_str().parse::<AttributeName>().map_err(|_| malformed())?;
-    let list = coordinate_list::<M>(form).ok_or_else(malformed)?;
-    let members = IndexMap::from_iter([(coordinates, M::values(vec![list]))]);
+    let list = coordinate_list::<M>(&form).ok_or_else(malformed)?;
+    let mut members = IndexMap::with_capacity(2 + foreign.len());
+    members.insert(coordinates, M::values(vec![list]));
+    if let Some(bbox) = bbox {
+        let name = properties::BBOX.as_str().parse::<AttributeName>().map_err(|_| malformed())?;
+        let ordinates = bbox.ordinates().map(ordinate_literal).collect::<Option<Vec<_>>>().ok_or_else(malformed)?;
+        members.insert(name, M::values(vec![ExpandedValue::List(ordinates)]));
+    }
+    for (name, items) in foreign {
+        let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
+        members.insert(name, node_member::<M>(attribute, items)?);
+    }
     Ok(ExpandedValue::Node(ValueNode::new(None, vec![type_name], members)))
 }
 
@@ -240,13 +309,16 @@ fn position_list<M: MemberMode>(position: &Position) -> Option<ExpandedValue<M>>
     [Some(position.longitude()), Some(position.latitude()), position.altitude()]
         .into_iter()
         .flatten()
-        .map(|ordinate| {
-            ordinate
-                .to_string()
-                .parse::<JsonNumber>()
-                .ok()
-                .map(|number| ExpandedValue::Literal(Literal::plain(LiteralValue::Number(number))))
-        })
+        .map(ordinate_literal)
         .collect::<Option<Vec<_>>>()
         .map(ExpandedValue::List)
+}
+
+/// One ordinate as the numeric value object it expands to.
+fn ordinate_literal<M: MemberMode>(ordinate: f64) -> Option<ExpandedValue<M>> {
+    ordinate
+        .to_string()
+        .parse::<JsonNumber>()
+        .ok()
+        .map(|number| ExpandedValue::Literal(Literal::plain(LiteralValue::Number(number))))
 }

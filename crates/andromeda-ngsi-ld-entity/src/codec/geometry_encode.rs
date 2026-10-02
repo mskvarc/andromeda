@@ -2,15 +2,22 @@
 //!
 //! A geometry is written as the `GeoJSON` vocabulary node expansion produces:
 //! `@type` naming the geometry type, `coordinates` as nested `@list`s of
-//! `{"@value": n}` ordinates. An ordinate is held as a double, and is written
-//! as the canonical spelling of that double's shortest round-trip decimal; the
-//! clause 4.7.2 string form is written back as its text.
+//! `{"@value": n}` ordinates, then the `bbox` as one `@list` of ordinates and
+//! each foreign member as the expanded values it holds. An ordinate is held as
+//! a double, and is written as the canonical spelling of that double's
+//! shortest round-trip decimal; the clause 4.7.2 string form is written back as
+//! its text.
 
 use crate::{
-    codec::value_encode::{ListOut, TextOut},
+    codec::{
+        geojson_members_codec::write_members,
+        value_encode::{ListOut, TextOut},
+    },
     geo_value::GeoValue,
+    geometry_value::GeometryValue,
 };
 use andromeda_ngsi_ld_geometry::{
+    bounding_box::BoundingBox,
     form::{GeometryForm, PolygonRings},
     line_string_coordinates::LineStringCoordinates,
     linear_ring::LinearRing,
@@ -31,23 +38,46 @@ pub(crate) struct GeoValueOut<'a>(pub(crate) &'a GeoValue);
 impl Serialize for GeoValueOut<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.0 {
-            GeoValue::Geometry(form) => GeometryOut(form).serialize(serializer),
+            GeoValue::Geometry(value) => GeometryOut(value).serialize(serializer),
             GeoValue::Encoded(encoded) => TextOut(encoded.as_str()).serialize(serializer),
         }
     }
 }
 
 /// A geometry as its `GeoJSON` vocabulary node.
-struct GeometryOut<'a>(&'a GeometryForm);
+struct GeometryOut<'a>(&'a GeometryValue);
 
 impl Serialize for GeometryOut<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let form = self.0;
+        let form = self.0.form();
+        let members = self.0.members();
         let type_iri = format!("{}{}", prefix::GEOJSON.as_str(), form.geometry_type());
-        let mut map = serializer.serialize_map(Some(2))?;
+        let entries = members.map_or(0, |members| usize::from(members.bbox().is_some()) + members.foreign().len());
+        let mut map = serializer.serialize_map(Some(2 + entries))?;
         map.serialize_entry("@type", &[type_iri])?;
         map.serialize_entry(properties::COORDINATES.as_str(), &[CoordinatesOut(form)])?;
+        if let Some(members) = members {
+            write_members(&mut map, members)?;
+        }
         map.end()
+    }
+}
+
+/// A bounding box as one list of its ordinates.
+pub(crate) struct BoundingBoxOut<'a>(pub(crate) &'a BoundingBox);
+
+impl Serialize for BoundingBoxOut<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        ListOut(BoxOrdinatesOut(self.0)).serialize(serializer)
+    }
+}
+
+/// The ordinates of a bounding box, south-west corner first.
+struct BoxOrdinatesOut<'a>(&'a BoundingBox);
+
+impl Serialize for BoxOrdinatesOut<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.0.ordinates().map(OrdinateOut))
     }
 }
 

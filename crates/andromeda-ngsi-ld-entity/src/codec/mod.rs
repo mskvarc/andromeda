@@ -19,6 +19,7 @@ mod document_encode;
 mod element;
 mod entity_decode;
 mod entity_encode;
+mod geojson_members_codec;
 pub(crate) mod geometry_decode;
 #[cfg(test)]
 mod geometry_decode_tests;

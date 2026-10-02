@@ -57,7 +57,7 @@ impl<'t> Walk<'t> {
             ExpandedItem::List(items) => self.compact_nested_list(items, key),
             ExpandedItem::StoredInstance(stored) => self.compact_stored_instance(stored),
             ExpandedItem::WrittenInstance(written) => self.compact_written_instance(written),
-            ExpandedItem::Geometry(form) => self.compact_geometry(form),
+            ExpandedItem::Geometry(value) => self.compact_geometry(value),
             ExpandedItem::WrappedObject(uri) => self.compact_wrapped_object(uri.as_str()),
         }
     }

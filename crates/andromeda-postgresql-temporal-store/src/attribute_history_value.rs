@@ -1,14 +1,14 @@
 //! The value one attribute-history row carries, and the column it occupies.
 
 use crate::error::TemporalStoreError;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use serde_json::value::RawValue;
+use serde_json::value::{RawValue, to_raw_value};
 
 /// What one attribute-history row records.
 ///
@@ -35,8 +35,15 @@ pub enum AttributeHistoryValue {
     String(String),
     /// A boolean.
     Boolean(bool),
-    /// A geometry, stored in the broker's single geodetic reference system.
-    Geometry(Geometry),
+    /// A geometry, its positions stored in the broker's single geodetic
+    /// reference system and its `bbox` and foreign members (IETF RFC 7946
+    /// sections 5 and 6.1) as the JSON their own column stores them as.
+    Geometry {
+        /// The positions.
+        form: GeometryForm,
+        /// The stored JSON of the members, when the geometry has any.
+        members: Option<Box<RawValue>>,
+    },
     /// A structured value, as the JSON the structured column stores it as.
     Object(Box<RawValue>),
     /// A point in time, already truncated to the broker's microsecond resolution.
@@ -61,7 +68,10 @@ impl AttributeHistoryValue {
             TemporalValue::Number(number) => AttributeHistoryValue::Number(number.clone()), // clone: the persisted row owns its exact decimal.
             TemporalValue::String(text) => AttributeHistoryValue::String(text.clone()),     // clone: the persisted row owns the string.
             TemporalValue::Boolean(flag) => AttributeHistoryValue::Boolean(*flag),
-            TemporalValue::Geometry(geometry) => AttributeHistoryValue::Geometry(geometry.clone()), // clone: the persisted row owns its geometry.
+            TemporalValue::Geometry(geometry) => AttributeHistoryValue::Geometry {
+                form: geometry.form().clone(), // clone: the persisted row owns its positions.
+                members: geometry.members().map(to_raw_value).transpose().map_err(TemporalStoreError::StoredJson)?,
+            },
             TemporalValue::Structured(structured) => AttributeHistoryValue::Object(structured.to_stored_json().map_err(TemporalStoreError::StoredJson)?),
             TemporalValue::DateTime(instant) => AttributeHistoryValue::DateTime(*instant),
             TemporalValue::Uri(uri) => AttributeHistoryValue::Uri(uri.clone()), // clone: the persisted row owns the URI.
@@ -78,7 +88,7 @@ impl AttributeHistoryValue {
             AttributeHistoryValue::Number(_) => ValueKind::Number,
             AttributeHistoryValue::String(_) => ValueKind::String,
             AttributeHistoryValue::Boolean(_) => ValueKind::Boolean,
-            AttributeHistoryValue::Geometry(_) => ValueKind::Geometry,
+            AttributeHistoryValue::Geometry { .. } => ValueKind::Geometry,
             AttributeHistoryValue::Object(_) => ValueKind::Object,
             AttributeHistoryValue::DateTime(_) => ValueKind::DateTime,
             AttributeHistoryValue::Uri(_) => ValueKind::Uri,
@@ -93,7 +103,7 @@ impl AttributeHistoryValue {
             AttributeHistoryValue::Number(_)
             | AttributeHistoryValue::String(_)
             | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry(_)
+            | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
             | AttributeHistoryValue::Uri(_) => None,
@@ -115,7 +125,7 @@ impl AttributeHistoryValue {
             AttributeHistoryValue::Tombstone { .. }
             | AttributeHistoryValue::String(_)
             | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry(_)
+            | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
             | AttributeHistoryValue::Uri(_) => None,
@@ -130,7 +140,7 @@ impl AttributeHistoryValue {
             AttributeHistoryValue::Tombstone { .. }
             | AttributeHistoryValue::String(_)
             | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry(_)
+            | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
             | AttributeHistoryValue::Uri(_) => None,
@@ -145,7 +155,7 @@ impl AttributeHistoryValue {
             AttributeHistoryValue::Tombstone { .. }
             | AttributeHistoryValue::Number(_)
             | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry(_)
+            | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
             | AttributeHistoryValue::Uri(_) => None,
@@ -160,7 +170,7 @@ impl AttributeHistoryValue {
             AttributeHistoryValue::Tombstone { .. }
             | AttributeHistoryValue::Number(_)
             | AttributeHistoryValue::String(_)
-            | AttributeHistoryValue::Geometry(_)
+            | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
             | AttributeHistoryValue::Uri(_) => None,
@@ -169,9 +179,24 @@ impl AttributeHistoryValue {
 
     /// The geometry column's content, when this row populates it.
     #[must_use]
-    pub const fn geometry(&self) -> Option<&Geometry> {
+    pub const fn geometry(&self) -> Option<&GeometryForm> {
         match self {
-            AttributeHistoryValue::Geometry(geometry) => Some(geometry),
+            AttributeHistoryValue::Geometry { form, .. } => Some(form),
+            AttributeHistoryValue::Tombstone { .. }
+            | AttributeHistoryValue::Number(_)
+            | AttributeHistoryValue::String(_)
+            | AttributeHistoryValue::Boolean(_)
+            | AttributeHistoryValue::Object(_)
+            | AttributeHistoryValue::DateTime(_)
+            | AttributeHistoryValue::Uri(_) => None,
+        }
+    }
+
+    /// The geometry-members column's content, when this row populates it.
+    #[must_use]
+    pub fn geometry_members(&self) -> Option<&RawValue> {
+        match self {
+            AttributeHistoryValue::Geometry { members, .. } => members.as_deref(),
             AttributeHistoryValue::Tombstone { .. }
             | AttributeHistoryValue::Number(_)
             | AttributeHistoryValue::String(_)
@@ -191,7 +216,7 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Number(_)
             | AttributeHistoryValue::String(_)
             | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry(_)
+            | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::DateTime(_)
             | AttributeHistoryValue::Uri(_) => None,
         }
@@ -206,7 +231,7 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Number(_)
             | AttributeHistoryValue::String(_)
             | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry(_)
+            | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::Uri(_) => None,
         }
@@ -221,7 +246,7 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Number(_)
             | AttributeHistoryValue::String(_)
             | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry(_)
+            | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_) => None,
         }

@@ -2,7 +2,7 @@
 //! expanded form the canonical codec writes it in.
 
 use crate::temporal::history_row::neutral_row_to_instance;
-use andromeda_ngsi_ld_entity::non_empty::NonEmpty;
+use andromeda_ngsi_ld_entity::{geometry_value::GeometryValue, non_empty::NonEmpty};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
@@ -265,7 +265,10 @@ fn a_structured_property_renders_the_values_it_was_stored_as() {
 fn a_history_geometry_renders_the_expanded_geojson_node() {
     let polygon = json!({"type": "Polygon", "coordinates": [[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0, 12.5], [0.0, 0.0]]]});
     let geometry = Geometry::from_geojson_value(&polygon).expect("a polygon");
-    let rendered = rendered(row_of(AttributeType::GeoProperty, TemporalValue::Geometry(geometry)), SysAttrsInclusion::Strip);
+    let rendered = rendered(
+        row_of(AttributeType::GeoProperty, TemporalValue::Geometry(GeometryValue::new(geometry.into_parts().0))),
+        SysAttrsInclusion::Strip,
+    );
     let position = |ordinates: &[f64]| json!({"@list": ordinates.iter().map(|ordinate| json!({"@value": ordinate})).collect::<Vec<_>>()});
     let expected = json!([{
         "@type": ["https://purl.org/geojson/vocab#Polygon"],

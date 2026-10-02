@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 andromeda-ngsi-ld-number.workspace = true
-derive_more = { version = "2.1.1", features = ["display"] }
+derive_more = { version = "2.1.1", features = ["as_ref", "display"] }
 geo = "0.33.1"
 geojson = "1.0.0"
 rstar = "0.13.0"

@@ -13,10 +13,15 @@
 //! `type`, a missing or misshapen `coordinates`, an ordinate that is not a
 //! number, a `bbox` that is not an array of numbers -- is refused with the
 //! [`GeometryError`] naming what is missing or misplaced, and never with any
-//! part of the value itself. Members RFC 7946 section 6.1 calls foreign are
-//! ignored, as the geometry carries none of them.
+//! part of the value itself. The form is the positions alone: the members RFC
+//! 7946 section 6.1 calls foreign are passed over, and a `bbox` is checked but
+//! not kept; [`crate::geometry::Geometry::from_geojson_value`] keeps both.
 
-use crate::{form::GeometryForm, geojson::GeometryError, geometry_members::GeometryMembers};
+use crate::{
+    form::GeometryForm,
+    geojson::GeometryError,
+    geometry_members::{ForeignMemberReading, GeometryMembers},
+};
 use serde_json::Value;
 
 impl GeometryForm {
@@ -36,7 +41,7 @@ impl GeometryForm {
     /// positions, and [`GeometryError::LinearRing`] for a Polygon ring that is
     /// open or holds fewer than four.
     pub fn from_compact_value(value: &Value) -> Result<GeometryForm, GeometryError> {
-        GeometryMembers::of_object(value.as_object().ok_or(GeometryError::NotAnObject)?).read()
+        GeometryMembers::of_object(value.as_object().ok_or(GeometryError::NotAnObject)?, ForeignMemberReading::Skipped).read()
     }
 }
 
@@ -61,7 +66,7 @@ mod tests {
                 | GeometryError::UnknownType(_)
                 | GeometryError::MissingCoordinates
                 | GeometryError::MissingGeometries
-                | GeometryError::InvalidBbox
+                | GeometryError::InvalidBbox(_)
                 | GeometryError::NotAnArray { .. }
                 | GeometryError::NonNumericOrdinate { .. }
         )

@@ -1,7 +1,7 @@
 //! The observation each written instance records, family by family.
 
 use crate::{error::TemporalError, observed_instance::ObservedInstance};
-use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;
+use andromeda_ngsi_ld_entity::{document::instance_document::InstanceDocument, geometry_value::GeometryValue};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
@@ -414,7 +414,11 @@ fn a_geo_property_records_its_geometry_however_it_was_written() {
     });
     for geometry in [node, json!({"@value": polygon.to_string()})] {
         let instance = json!({"@type": [GEO_PROPERTY], expanded_properties::VALUE.as_str(): [geometry]});
-        pretty_assertions::assert_eq!(recorded(&instance), TemporalValue::Geometry(written.clone()), "{instance}"); // clone: compared once per spelling
+        pretty_assertions::assert_eq!(
+            recorded(&instance),
+            TemporalValue::Geometry(GeometryValue::new(written.form().clone())), // clone: compared once per spelling
+            "{instance}"
+        );
     }
 }
 
@@ -440,4 +444,26 @@ fn an_observed_at_outside_the_strict_utc_form_is_refused() {
     instance[expanded_properties::OBSERVED_AT.as_str()] = json!([{"@value": "2024-01-01T01:00:00+01:00"}]);
     let error = read(&instance).expect_err("a numeric offset is not the UTC form");
     assert!(error.to_string().contains("observedAt"), "{error}");
+}
+
+/// IETF RFC 7946 sections 5 and 6.1, clause 4.6.4: a geometry node records
+/// its `bbox` and foreign members with its positions.
+#[test]
+fn a_recorded_geo_observation_keeps_its_members() {
+    let node = json!({
+        "@type": ["https://purl.org/geojson/vocab#Point"],
+        "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": 1.0}, {"@value": 2.0}]}],
+        "https://purl.org/geojson/vocab#bbox": [{"@list": [{"@value": 1.0}, {"@value": 2.0}, {"@value": 1.0}, {"@value": 2.0}]}],
+        "https://ex.org/plotName": [{"@value": "plot 7"}]
+    });
+    let instance = json!({"@type": [GEO_PROPERTY], expanded_properties::VALUE.as_str(): [node]});
+    let TemporalValue::Geometry(recorded) = recorded(&instance) else {
+        panic!("a geometry observation");
+    };
+    let members = recorded.members().expect("the members are recorded");
+    pretty_assertions::assert_eq!(members.bbox().map(|bbox| bbox.ordinates().collect::<Vec<_>>()), Some(vec![1.0, 2.0, 1.0, 2.0]));
+    pretty_assertions::assert_eq!(
+        members.foreign().keys().map(AttributeName::as_str).collect::<Vec<_>>(),
+        vec!["https://ex.org/plotName"]
+    );
 }

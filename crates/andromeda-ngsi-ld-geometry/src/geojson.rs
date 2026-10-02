@@ -10,6 +10,7 @@
 //! [`crate::compact_geojson`]), the two sharing one reading of its members.
 
 use crate::{
+    bounding_box::BoundingBoxError,
     coordinate_path::CoordinatePath,
     form::{GeometryForm, PolygonRings},
     geometry_type::GeometryType,
@@ -100,9 +101,9 @@ pub enum GeometryError {
     /// A `GeometryCollection` carries no `geometries` array.
     #[error("a GeoJSON GeometryCollection must carry a `geometries` array")]
     MissingGeometries,
-    /// The `bbox` member is not an array of numbers (RFC 7946 section 5).
-    #[error("a GeoJSON `bbox` must be an array of numbers")]
-    InvalidBbox,
+    /// The `bbox` member is no RFC 7946 section 5 bounding box.
+    #[error(transparent)]
+    InvalidBbox(#[from] BoundingBoxError),
     /// A compact `coordinates` member held a non-array where an array belongs.
     #[error("GeoJSON coordinates hold a non-array where {expected} belongs (at {at})")]
     NotAnArray {

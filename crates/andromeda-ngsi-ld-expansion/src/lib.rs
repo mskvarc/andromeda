@@ -43,6 +43,8 @@ mod expansion_fixture;
 #[cfg(test)]
 mod family_tests;
 #[cfg(test)]
+mod geometry_members_tests;
+#[cfg(test)]
 mod null_sentinel_tests;
 #[cfg(test)]
 mod reserved_name_tests;

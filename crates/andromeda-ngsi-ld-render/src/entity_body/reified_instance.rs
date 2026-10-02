@@ -55,7 +55,7 @@ impl<'a> ReifiedInstance<'a> {
                 bare(BareValue::Value(ValueBody(&property.value)))
             }
             Attribute::GeoProperty(geo_property) if geo_property.value_type.is_none() && carries_nothing(&geo_property.common) => {
-                bare(BareValue::Geometry(GeometryBody(geo_property.value.form())))
+                bare(BareValue::Geometry(GeometryBody(&geo_property.value)))
             }
             Attribute::Property(_)
             | Attribute::GeoProperty(_)

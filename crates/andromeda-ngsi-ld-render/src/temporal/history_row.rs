@@ -146,8 +146,7 @@ fn rendered_value(value: TemporalValue, attribute_type: AttributeType) -> Result
             | AttributeType::ListRelationship => literal(LiteralValue::String(text.into())),
         },
         TemporalValue::Boolean(flag) => literal(LiteralValue::Boolean(flag)),
-        // clone: the geometry is held behind an accessor; the instance owns its positions.
-        TemporalValue::Geometry(geometry) => WrittenValue::Geometry(GeoValue::Geometry(geometry.form().clone())),
+        TemporalValue::Geometry(geometry) => WrittenValue::Geometry(GeoValue::Geometry(geometry)),
         TemporalValue::Structured(structured) => structured.into_written(),
         TemporalValue::DateTime(instant) => WrittenValue::Value(NonEmpty::one(ExpandedValue::Literal(Literal::typed(
             LiteralValue::String(rendered_instant(instant).into()),

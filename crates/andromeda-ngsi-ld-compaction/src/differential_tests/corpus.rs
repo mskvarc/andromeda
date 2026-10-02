@@ -154,7 +154,9 @@ fn datasets_and_expiry() -> Value {
 }
 
 /// Every geometry type, in two and three dimensions, as the three entity
-/// geo-properties, an ordinary attribute, a sub-attribute and a string.
+/// geo-properties, an ordinary attribute, a sub-attribute and a string, and
+/// geometries carrying a `bbox` and foreign members (IETF RFC 7946 sections 5
+/// and 6.1) as a `GeoProperty` and as a Property value.
 fn geometries() -> Value {
     json!({
         "id": "urn:ngsi-ld:Area:geometries",
@@ -169,7 +171,9 @@ fn geometries() -> Value {
         "stops": {"type": "GeoProperty", "value": {"type": "MultiPoint", "coordinates": [[0.25, 0.5], [1.75, -2.125]]}, "valueType": "geojson:MultiPoint"},
         "path": {"type": "GeoProperty", "value": {"type": "LineString", "coordinates": [[-8.5, 41.2], [-8.6, 41.3]]},
             "origin": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [-8.5, 41.2]}}},
-        "written": {"type": "GeoProperty", "value": "{\"type\": \"Point\", \"coordinates\": [1, 2]}"}
+        "written": {"type": "GeoProperty", "value": "{\"type\": \"Point\", \"coordinates\": [1, 2]}"},
+        "parcel": {"type": "GeoProperty", "value": {"type": "Polygon", "coordinates": [[[0, 0], [4, 0], [4, 4], [0, 0]]], "bbox": [0, 0, 4, 4], "plotName": "plot 7", "survey": {"year": 2024, "marks": [1, 2]}}},
+        "marker": {"type": "Property", "value": {"type": "Point", "coordinates": [1, 1, 3], "bbox": [1, 1, 3, 1, 1, 3], "plotName": "corner"}}
     })
 }
 

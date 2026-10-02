@@ -19,7 +19,6 @@ use crate::{
     stored_instance_columns::{generated_instance_id, verbatim_instance_id},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_branch::schema_prefix;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
@@ -49,7 +48,7 @@ use serde_json::value::RawValue;
 use sqlx::{Executor, Postgres, Transaction};
 
 /// Number of columns written per staged history tuple.
-const STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT: i16 = 21;
+const STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT: i16 = 22;
 
 const CREATE_STAGE_ATTRIBUTE_HISTORY_SQL: &str = r"
 CREATE TEMP TABLE stage_attribute_history (
@@ -71,6 +70,7 @@ CREATE TEMP TABLE stage_attribute_history (
     value_number            text,
     value_string            text,
     value_geometry               bytea,
+    value_geometry_members  jsonb,
     value_object            jsonb,
     value_uri               text,
     metadata                jsonb
@@ -79,8 +79,8 @@ CREATE TEMP TABLE stage_attribute_history (
 
 const COPY_INTO_STAGE_SQL: &str = "COPY stage_attribute_history (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, \
      value_kind, observed_at, created_at, modified_at, deleted_at, value_date_time, generated_instance_id, unit_code_id, \
-     value_boolean, verbatim_instance_id, value_number, value_string, value_geometry, value_object, value_uri, metadata) \
-     FROM STDIN WITH (FORMAT binary)";
+     value_boolean, verbatim_instance_id, value_number, value_string, value_geometry, value_geometry_members, value_object, value_uri, \
+     metadata) FROM STDIN WITH (FORMAT binary)";
 
 /// Materialise the staged history rows into the target branch's
 /// `attribute_history`. The branch is selected by qualifying the target table
@@ -95,7 +95,7 @@ INSERT INTO {schema}attribute_history (
     recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
     observed_at, created_at, modified_at, deleted_at, value_date_time,
     generated_instance_id, unit_code_id, value_boolean, verbatim_instance_id,
-    value_number, value_string, value_geometry, value_object, value_uri, metadata
+    value_number, value_string, value_geometry, value_geometry_members, value_object, value_uri, metadata
 )
 SELECT
     s.recorded_at, s.write_id, s.stream_key, s.write_ordinal, s.attribute_kind, s.value_kind,
@@ -105,7 +105,7 @@ SELECT
     CASE WHEN s.value_geometry IS NOT NULL
          THEN ST_MakeValid(ST_GeomFromEWKB(s.value_geometry))
          ELSE NULL END,
-    s.value_object, s.value_uri, s.metadata
+    s.value_geometry_members, s.value_object, s.value_uri, s.metadata
 FROM stage_attribute_history s
 ON CONFLICT (recorded_at, write_id, write_ordinal) DO NOTHING
 "
@@ -173,7 +173,8 @@ pub(crate) fn encode_history_copy_stream(rows: &[AttributeHistoryRow]) -> Result
         write_text_opt(&mut buf, verbatim_instance_id(&row.instance))?;
         write_text_opt(&mut buf, numeric.as_deref())?;
         write_text_opt(&mut buf, row.value.string())?;
-        write_bytea_opt(&mut buf, geometry_bytes(row.value.geometry().map(Geometry::form))?.as_deref())?;
+        write_bytea_opt(&mut buf, geometry_bytes(row.value.geometry())?.as_deref())?;
+        write_stored_json(&mut buf, row.value.geometry_members())?;
         write_stored_json(&mut buf, row.value.object())?;
         write_text_opt(&mut buf, row.value.uri().map(Uri::as_str))?;
         write_stored_json(&mut buf, row.metadata.as_deref())?;

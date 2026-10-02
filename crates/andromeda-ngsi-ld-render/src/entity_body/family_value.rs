@@ -49,7 +49,7 @@ impl<'a> FamilyValue<'a> {
             Attribute::Property(property) => FamilyValue::Value(ValueBody(&property.value)),
             Attribute::Relationship(relationship) => FamilyValue::Targets(DecodedTargets::new(&relationship.object, decoding)),
             Attribute::VocabProperty(vocab_property) => FamilyValue::Vocab(&vocab_property.vocab),
-            Attribute::GeoProperty(geo_property) => FamilyValue::Geometry(GeometryBody(geo_property.value.form())),
+            Attribute::GeoProperty(geo_property) => FamilyValue::Geometry(GeometryBody(&geo_property.value)),
             Attribute::LanguageProperty(language_property) => FamilyValue::LanguageMap(&language_property.language_map),
             Attribute::JsonProperty(json_property) => FamilyValue::Json(&json_property.json),
             Attribute::ListProperty(list_property) => FamilyValue::ValueList(ValueListBody(&list_property.value_list)),
@@ -71,7 +71,7 @@ impl<'a> FamilyValue<'a> {
             Attribute::GeoProperty(geo_property) => geo_property
                 .previous_value
                 .as_ref()
-                .map(|previous| FamilyValue::Geometry(GeometryBody(previous.form()))),
+                .map(|previous| FamilyValue::Geometry(GeometryBody(previous))),
             Attribute::LanguageProperty(language_property) => language_property.previous_language_map.as_ref().map(FamilyValue::LanguageMap),
             Attribute::JsonProperty(json_property) => json_property.previous_json.as_ref().map(FamilyValue::Json),
             Attribute::ListProperty(list_property) => list_property
