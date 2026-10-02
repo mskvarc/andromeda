@@ -41,7 +41,7 @@ impl TemporalService {
     /// The measured body of [`TemporalService::create_or_update`].
     async fn create_or_update_inner(&self, target: &ContextTarget, payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
         let expansion = EntityExpansion::prepare(&self.engine, context).await?;
-        let evolution = WrittenEvolution::expand(&expansion, payload).await?;
+        let evolution = WrittenEvolution::expand(&expansion, payload, self.limits.payload_budget).await?;
         evolution.admit_budget(self.limits.payload_budget)?;
         let document = evolution.document();
         let entity_id = document
@@ -93,7 +93,7 @@ impl TemporalService {
         }
 
         let expansion = EntityExpansion::prepare(&self.engine, context).await?;
-        let evolution = WrittenEvolution::expand(&expansion, payload).await?;
+        let evolution = WrittenEvolution::expand(&expansion, payload, self.limits.payload_budget).await?;
         evolution.admit_budget(self.limits.payload_budget)?;
         // Clause 5.6.12 addresses the Temporal Evolution by the request path, and
         // clause 4.5.6 makes it the Entity with the types its evolution records:

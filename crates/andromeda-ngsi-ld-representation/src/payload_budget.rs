@@ -38,6 +38,17 @@ pub enum PayloadBudgetExceeded {
         /// The limit the payload exceeds.
         limit: JsonValueLimit,
     },
+    /// The observations of a temporal write's plural members (clause 4.5.9)
+    /// inherit more JSON values from the instances they are written under than
+    /// the entity limit admits. Every inherited value is a copy the write
+    /// would build, geometry positions and JSON literals included.
+    #[error(
+        "the observations of the temporal evolution inherit more than the {limit} JSON values this broker accepts in one entity from the attribute instances they are written under; restate fewer members beside them, or send them over several requests"
+    )]
+    InheritedObservationValues {
+        /// The limit the inherited values exceed.
+        limit: JsonValueLimit,
+    },
     /// A geometry of the payload holds more positions than the limit admits.
     #[error("{owner} holds more than the {limit} positions this broker accepts in one geometry; send a simplified geometry")]
     GeometryPositions {

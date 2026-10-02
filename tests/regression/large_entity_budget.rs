@@ -275,6 +275,74 @@ async fn regression_a_n12_every_temporal_write_of_a_geometry_over_the_budget_is_
     scope.finish().await.expect("cleanup");
 }
 
+/// The temporal text of a `speed` Property whose `calibration` sub-attribute
+/// holds 1,000 readings, over `observations` observations that restate none
+/// of it: each observation inherits 1,005 values (the copied instance, its
+/// `type`, and the sub-attribute's object, `type`, array and readings).
+fn speed_over_observations(observations: usize) -> String {
+    let readings = vec!["0"; 1_000].join(",");
+    let observed = vec![r#"{"value":1,"observedAt":"2026-01-01T00:00:00Z"}"#; observations].join(",");
+    format!(r#"{{"type":"Property","calibration":{{"type":"Property","value":[{readings}]}},"values":[{observed}]}}"#)
+}
+
+/// Clause 4.5.9: every observation of a plural member inherits the members of
+/// the instance it is written under. The unfold built those copies before any
+/// budget ran, so a body of a few megabytes -- a large sub-attribute over
+/// millions of empty observations -- exhausted the broker's memory. The copies
+/// are counted before any is made and refused with 413 past the entity value
+/// budget, and nothing is written; a write whose observations inherit less is
+/// recorded whole.
+#[tokio::test]
+async fn regression_r01_observations_inheriting_past_the_value_budget_are_413() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let entity_type = scope.entity_type("Probe");
+
+    // 1,000 observations inherit 1,005,000 values, past the 1,000,000 budget.
+    let refused_id = scope.id("Probe:inherited-refused");
+    let refused = send_json(
+        scope.client(),
+        Method::POST,
+        "/ngsi-ld/v1/temporal/entities",
+        format!(r#"{{"id":"{refused_id}","type":"{entity_type}","speed":{}}}"#, speed_over_observations(1_000)),
+    )
+    .await;
+    assert_problem(
+        &refused,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        REQUEST_ENTITY_TOO_LARGE,
+        &["inherit", &ENTITY_JSON_VALUES.to_string()],
+    );
+    let absent = scope
+        .client()
+        .raw(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{refused_id}"))
+        .send()
+        .await
+        .expect("retrieve request");
+    assert_eq!(absent.status, StatusCode::NOT_FOUND, "{:?}", absent.body);
+
+    let id = scope.id("Probe:inherited");
+    let created = send_json(
+        scope.client(),
+        Method::POST,
+        "/ngsi-ld/v1/temporal/entities",
+        format!(r#"{{"id":"{id}","type":"{entity_type}","speed":{}}}"#, speed_over_observations(10)),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    let history = scope
+        .client()
+        .raw(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{id}"))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .expect("retrieve request");
+    assert_eq!(history.status, StatusCode::OK, "{:?}", history.body);
+    let history = history.json_value().expect("a temporal entity");
+    let instances = history["speed"].as_array().expect("the speed history");
+    assert_eq!(instances.len(), 10, "every observation is recorded: {history}");
+    scope.finish().await.expect("cleanup");
+}
+
 #[tokio::test]
 async fn regression_a_n12_a_geometry_over_the_position_budget_is_413_in_either_encoding() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

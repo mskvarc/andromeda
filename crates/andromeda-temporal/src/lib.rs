@@ -36,6 +36,8 @@ pub mod outcome;
 mod pending_observation;
 /// Read overlay combining stored history with committed pending intents.
 pub mod pending_overlay;
+/// Unfolding the plural members of a written Temporal Evolution into the instances they stand for.
+mod plural_member_unfold;
 pub mod port;
 mod read;
 /// The non-local half of Linked Entity resolution for the temporal API.
