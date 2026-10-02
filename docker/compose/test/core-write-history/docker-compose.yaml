@@ -80,11 +80,15 @@ services:
       - "1102:1102"
 
   # The default, which records Core writes: the control every contrast is drawn against.
+  # The expiry sweep deletes as the broker that runs it, so only the not-recorded
+  # brokers sweep: with this one sweeping too, whichever broker won the race
+  # decided whether an expiry reached the Temporal Evolution.
   core-write-history-recorded:
     <<: *broker-base
     environment:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1103"
+      ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL: "24h"
       ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:core-write-history-recorded"
       ANDROMEDA__IDENTITY__SOURCE_ALIAS: "core-write-history-recorded"
     ports:

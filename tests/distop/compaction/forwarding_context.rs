@@ -42,10 +42,6 @@ const FORWARDED_BATCH_CREATE: &str = "/ngsi-ld/v1/entityOperations/create";
 /// (JSON-LD 1.1 section 6.1).
 const CONTEXT_RELATION: &str = "http://www.w3.org/ns/json-ld#context";
 
-/// The IRI of an attribute whose client term is `attrs`, the name of the
-/// attribute collection in a resource path.
-const ATTRS_IRI: &str = "https://example.org/vocab/attrs";
-
 /// A registration's configured `jsonldContext`: the client's IRIs under other
 /// terms, so a forwarded `velocity`/`Car` can only come from this document.
 fn configured_document() -> String {
@@ -694,28 +690,30 @@ async fn distop_forwarding_context_a_forwarded_update_result_is_read_back_in_ful
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An attribute whose term is `attrs` addresses `/entities/{id}/attrs/attrs`;
-/// only the attribute segment -- the one after the `attrs` collection -- is
-/// spelled in the registration's configured context, so the source receives
-/// `/attrs/flags` and never `/flags/flags` (clauses 4.3.6.6, 6.7.3.2).
+/// The attribute segment of a forwarded attribute path -- the one after the
+/// `attrs` collection -- is spelled in the registration's configured context
+/// and the collection is left as it is: `DELETE /attrs/spd` reaches the source
+/// as `/attrs/velocity` (clauses 4.3.6.6, 6.7.3.2). The collection name itself
+/// can never be an attribute's spelling here: `attrs` is a term of the core
+/// `@context`, which no user context redefines (clause 5.5.7).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
-async fn distop_forwarding_context_an_attribute_named_attrs_is_spelled_by_its_position() {
+async fn distop_forwarding_context_the_attribute_segment_is_spelled_in_the_configured_context() {
     let topology = topology::single().await.expect("single-broker topology");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Veh:forwarding-context-attrs-segment");
-    let forwarded_path = format!("{FORWARDED_ENTITIES}/{entity_id}/attrs/flags");
+    let forwarded_path = format!("{FORWARDED_ENTITIES}/{entity_id}/attrs/velocity");
     mock.set_stub(Method::DELETE, &forwarded_path, 204).await;
 
     let origin = start_origin().await;
-    let client_context = serve(&origin, &json!({ "@context": { "attrs": ATTRS_IRI, "Veh": VEHICLE_IRI } }).to_string()).await;
-    let configured_context = serve(&origin, &json!({ "@context": { "flags": ATTRS_IRI, "Car": VEHICLE_IRI } }).to_string()).await;
+    let client_context = serve(&origin, &aliased_document()).await;
+    let configured_context = serve(&origin, &configured_document()).await;
 
     let registration = CsrBuilder::new(&topology.id("registration:forwarding-context-attrs-segment"), &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
-        .property_names(&["attrs"])
+        .property_names(&["spd"])
         .operations(&["deleteAttrs", "retrieveEntity"])
         .context_source_info("jsonldContext", &configured_context)
         .context(registration_context(&client_context))
@@ -724,7 +722,7 @@ async fn distop_forwarding_context_an_attribute_named_attrs_is_spelled_by_its_po
 
     let response = front
         .client()
-        .raw(Method::DELETE, &format!("{FORWARDED_ENTITIES}/{entity_id}/attrs/attrs"))
+        .raw(Method::DELETE, &format!("{FORWARDED_ENTITIES}/{entity_id}/attrs/spd"))
         .header("Link", &context_link(&client_context))
         .send()
         .await

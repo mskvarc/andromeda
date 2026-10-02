@@ -44,7 +44,8 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_client::{response::TestResponse, test_client::TestClient};
-use andromeda_test_harness::environment::TestEnvironment;
+use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::{environment::TestEnvironment, tenant_scoped_environment::TenantScopedEnvironment};
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -266,6 +267,51 @@ async fn regression_hosted_context_a_relative_reference_is_resolved_and_counted(
         1,
         "a relative reference to a hosted context is resolved and its use counted exactly once"
     );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clauses 6.29.3.1 and 4.14: Add @context answers a tenant's client with the
+/// root-relative path of the entry it stored for that tenant, and a resource
+/// path names a resource of the tenant the request addresses. Echoed back as a
+/// request's `@context` in the same tenant, the path names that tenant's entry.
+/// Before, a root-relative path naming no `andromedaTenant` was read as the
+/// default tenant's, so the only tenant it worked in was the default one.
+#[tokio::test]
+async fn regression_hosted_context_a_relative_reference_names_the_requesting_tenants_entry() {
+    let scope = TenantScopedEnvironment::from_suite("regression").await.expect("private tenant environment");
+    let client = scope.client();
+    let seeded = client
+        .post_entity(&json!({"id": scope.id("Testing:tenant-seed"), "type": "Testing", "@context": CORE_CONTEXT}))
+        .with_ld_json()
+        .send()
+        .await
+        .expect("seed entity request");
+    assert_eq!(seeded.status, StatusCode::CREATED, "the seed brings the tenant into being: {:?}", seeded.body);
+    let id = create_hosted_context(client).await;
+
+    let relative = format!("/ngsi-ld/v1/jsonldContexts/{id}");
+    let entity_id = scope.id("Testing:tenant-relative-context-use");
+    let created = client
+        .post_entity(&json!({"id": entity_id, "type": "Testing", "A1": "a value", "@context": [relative]}))
+        .with_ld_json()
+        .send()
+        .await
+        .expect("create entity request");
+    assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
+
+    let stored = client
+        .get_entity(&entity_id, "", "application/json", None)
+        .await
+        .expect("retrieve entity request");
+    assert_eq!(stored.status, StatusCode::OK, "retrieve: {:?}", stored.body);
+    let stored = stored.json_value().expect("an entity body");
+    assert_eq!(
+        stored["urn:ngsi-ld:attributes:A1"]["value"],
+        json!("a value"),
+        "the attribute expanded through the tenant's stored @context: {stored}"
+    );
+    assert_eq!(hits(client, &id).await, 1, "the use is counted against the tenant's entry");
 
     scope.finish().await.expect("cleanup failed");
 }

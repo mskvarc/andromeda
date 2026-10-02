@@ -1,14 +1,14 @@
 //! Local scope: `local=true`, the type wildcard, and a `localOnly` subscription
 //! or registration keep an operation to directly-held data and off the registry
 //! (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.3, 5.7, 5.11). `T-MOCK` for
-//! no-forwarding checks, `T-PAIR` for the subscription, `T-LOCAL` for the
-//! snapshot probe.
+//! no-forwarding checks, `T-PAIR` for the subscription. Snapshot locality
+//! (clause 5.5.13) is asserted with the snapshot rows in `fw/snapshots.rs`.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
     entity::typed_vehicle,
     notification_adapter::NotificationAdapter,
-    oracle::{assert_status, json_body, location},
+    oracle::{assert_status, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
@@ -291,43 +291,5 @@ async fn distop_entity_local_scope_management_local_only_forwards_local_flag() {
     );
 
     mock.shutdown().await;
-    topology.finish().await.expect("topology cleanup");
-}
-
-/// A snapshot operation ignores `local=false` and stays local: the snapshot is
-/// created and remains retrievable under a snapshot-scoped operation (clause
-/// 5.16). Confirms REQ-FW-70.
-#[tokio::test]
-async fn distop_entity_local_scope_snapshot_op_ignores_local_false() {
-    let topology = topology::single().await.expect("single-broker topology");
-    let body = json!({ "type": "Snapshot", "snapshotLifetime": "PT1H", "snapshotQueries": [{ "type": "Query" }] });
-
-    let created = topology
-        .broker(BrokerRole::A)
-        .expect("topology broker A")
-        .client()
-        .raw(Method::POST, "/ngsi-ld/v1/snapshots")
-        .json(&body)
-        .send()
-        .await
-        .expect("create snapshot");
-    assert_status(&created, 201);
-    let snapshot_id = location(&created)
-        .rsplit('/')
-        .next()
-        .filter(|identifier| !identifier.is_empty())
-        .expect("Snapshot Location ends in an identifier")
-        .to_owned();
-
-    let retrieved = topology
-        .broker(BrokerRole::A)
-        .expect("topology broker A")
-        .client()
-        .raw(Method::GET, &format!("/ngsi-ld/v1/snapshots/{snapshot_id}?local=false"))
-        .send()
-        .await
-        .expect("retrieve snapshot");
-    assert_status(&retrieved, 200);
-
     topology.finish().await.expect("topology cleanup");
 }

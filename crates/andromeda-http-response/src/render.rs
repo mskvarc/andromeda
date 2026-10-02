@@ -16,7 +16,7 @@
 
 use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
 use andromeda_jsonld::{
-    compound_context_host::{CompoundContextHost, ContextHostingError},
+    compound_context_host::{CompoundContextHost, ContextHostingError, WrapperUse},
     presented_context::{ContextLinkTarget, PresentedContext},
 };
 use andromeda_ngsi_ld_lexicon::{spec_version::SpecVersion, temporal_format::TemporalFormat};
@@ -196,7 +196,7 @@ async fn response_context(context: PresentedContext, host: &dyn CompoundContextH
         ContextCarrier::Body => Ok(ResponseContext::Body(context.into_value())),
         ContextCarrier::Link => match context.link_target() {
             ContextLinkTarget::Reference(target) => Ok(ResponseContext::Link(target)),
-            ContextLinkTarget::Hosted(wrapped) => Ok(ResponseContext::Link(host.host(&wrapped).await?)),
+            ContextLinkTarget::Hosted(wrapped) => Ok(ResponseContext::Link(host.host(&wrapped, WrapperUse::Response).await?)),
         },
     }
 }
@@ -206,7 +206,7 @@ mod tests {
     use crate::render::{ContextCarrier, RenderingPreferences, response_context, start_rendering_core, start_rendering_partial_success};
     use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
     use andromeda_jsonld::{
-        compound_context_host::{CompoundContextHost, CompoundContextHostFuture, NoCompoundContextHost},
+        compound_context_host::{CompoundContextHost, CompoundContextHostFuture, NoCompoundContextHost, WrapperUse},
         context_spec::ContextSpec,
         presented_context::{NoLoadedContexts, PresentedContext},
     };
@@ -232,7 +232,7 @@ mod tests {
     }
 
     impl CompoundContextHost for RecordingHost {
-        fn host<'a>(&'a self, context: &'a Value) -> CompoundContextHostFuture<'a> {
+        fn host<'a>(&'a self, context: &'a Value, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
             Box::pin(async move {
                 self.hosted.lock().expect("the recording lock").push(context.clone()); // clone: the record keeps its own copy
                 Ok(IriBuf::new(WRAPPER_URL.to_owned()).expect("a valid URL"))

@@ -6,10 +6,18 @@
 //! access. Every expansion bumping a shared row would serialise the whole
 //! ingestion path on it, so hits accumulate here as per-URL atomics and a
 //! background task folds each cycle's deltas into one bulk update.
+//!
+//! A reader reports the stored count plus the pending one. A flush drains the
+//! pending counts before the stored row takes them, so a reader between the
+//! two would see neither; the flush therefore holds the counter's gate
+//! exclusively from the drain until the row has taken the deltas or they are
+//! back in the counter, and a reader holds it shared from reading the row until
+//! it has added the pending count.
 
 use dashmap::DashMap;
 use iri_rs::IriBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// One durable context access delta.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +33,9 @@ pub struct HitDelta {
 pub struct HitCounter {
     /// Counts accumulated since the last drain, one atomic per URL.
     pending: DashMap<IriBuf, AtomicU64>,
+    /// Keeps a reader's stored-plus-pending sum apart from a flush moving
+    /// counts from one to the other.
+    gate: RwLock<()>,
 }
 
 impl HitCounter {
@@ -60,6 +71,19 @@ impl HitCounter {
         self.pending.get(url).map_or(0, |entry| entry.value().load(Ordering::Relaxed))
     }
 
+    /// Hold flushes off while the stored count of a URL is read and its
+    /// pending count added to it, so the sum counts every access once.
+    pub async fn read_settled(&self) -> RwLockReadGuard<'_, ()> {
+        self.gate.read().await
+    }
+
+    /// Hold readers off while drained deltas move into the stored rows, so no
+    /// reader sees them in neither place; held until the store has taken them
+    /// or they were requeued.
+    pub async fn flush_exclusively(&self) -> RwLockWriteGuard<'_, ()> {
+        self.gate.write().await
+    }
+
     /// Remove every pending count and answer with the drained deltas.
     #[must_use]
     pub fn drain(&self) -> Vec<HitDelta> {
@@ -92,6 +116,32 @@ impl HitCounter {
 mod tests {
     use crate::hit_counter::{HitCounter, HitDelta};
     use iri_rs::IriBuf;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    /// How long a blocked acquisition is watched before it counts as blocked.
+    const BLOCKED: Duration = Duration::from_millis(50);
+
+    /// A reader adding the pending count to a stored one and a flush moving
+    /// counts from one to the other exclude each other, so no reader sees a
+    /// drained delta in neither place.
+    #[tokio::test]
+    async fn a_reader_and_a_flush_exclude_each_other() {
+        let counter = HitCounter::new();
+
+        let reading = counter.read_settled().await;
+        assert!(timeout(BLOCKED, counter.flush_exclusively()).await.is_err(), "a flush waits for the reader");
+        assert!(timeout(BLOCKED, counter.read_settled()).await.is_ok(), "readers share the gate");
+        drop(reading);
+
+        let flushing = counter.flush_exclusively().await;
+        assert!(timeout(BLOCKED, counter.read_settled()).await.is_err(), "a reader waits for the flush");
+        drop(flushing);
+        assert!(
+            timeout(BLOCKED, counter.read_settled()).await.is_ok(),
+            "the reader proceeds once the flush is done"
+        );
+    }
 
     #[test]
     fn counts_accumulate_per_url_and_a_drain_removes_their_entries() {

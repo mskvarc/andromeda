@@ -10,10 +10,13 @@
 //!
 //! The identifier is computed in process (RFC 8785, then a version 5 UUID), and
 //! the identifiers known to be stored are remembered for the span the broker
-//! trusts its own copy of a hosted document, so a request repeated a thousand
+//! trusts its own copy of a hosted document, so a response repeated a thousand
 //! times writes once. A wrapper deleted through clause 5.13.5 is forgotten at
 //! once in this process, and in any other at the latest one span later, after
-//! which it is stored again under the same identifier.
+//! which it is stored again under the same identifier. A wrapper a resource
+//! keeps naming -- a subscription's `jsonldContext` -- is never taken from the
+//! memo: its entry is confirmed in storage every time, because a URL that
+//! outlives the request must still be served when it is dereferenced.
 
 use crate::{
     error::ContextRegistryError,
@@ -22,6 +25,7 @@ use crate::{
     registry_invariant::RegistryInvariant,
     store::ContextRegistryStore,
 };
+use andromeda_jsonld::compound_context_host::WrapperUse;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use moka::sync::Cache;
 use serde_json::Value;
@@ -58,14 +62,16 @@ impl ImplicitContextHosting {
     }
 
     /// Store `document` as an `ImplicitlyCreated` `@context`, served under the
-    /// URL `locator` names, and answer the identifier it is stored under.
+    /// URL `locator` names, and answer the identifier it is stored under. A
+    /// [`WrapperUse::Response`] may be answered from the memo; a
+    /// [`WrapperUse::StoredReference`] always confirms the entry in storage.
     ///
     /// # Errors
     ///
     /// Returns [`ContextRegistryError::Persistence`] when the store cannot
     /// record or read the Context, and [`ContextRegistryError::Invariant`] when
     /// an identifier cannot be built or a freshly minted one is already held.
-    pub async fn host(&self, document: &Value, locator: &dyn HostedContextLocator) -> Result<JsonLdContextId, ContextRegistryError> {
+    pub async fn host(&self, document: &Value, locator: &dyn HostedContextLocator, usage: WrapperUse) -> Result<JsonLdContextId, ContextRegistryError> {
         let policy = InsertionPolicy::over(self.store.as_ref(), locator);
         let identity = ContentIdentity::of(document)?;
         // A document with no canonical form cannot be shared, so it is stored
@@ -73,8 +79,13 @@ impl ImplicitContextHosting {
         let ContentIdentity::Derived { identifier: ref derived, .. } = identity else {
             return policy.content_derived(document, &identity).await;
         };
-        if let Some(stored) = self.stored.get(derived) {
-            return Ok(stored);
+        match usage {
+            WrapperUse::Response => {
+                if let Some(stored) = self.stored.get(derived) {
+                    return Ok(stored);
+                }
+            }
+            WrapperUse::StoredReference => {}
         }
         let stored = policy.content_derived(document, &identity).await?;
         self.stored.insert(derived.clone(), stored.clone()); // clone: the memo keys on the derived identifier and keeps the one the caller is answered with
@@ -111,7 +122,7 @@ mod tests {
         store::{ContextRegistryFuture, ContextRegistryStore},
         stored_context::StoredContext,
     };
-    use andromeda_jsonld::context_cache::DownloadedContext;
+    use andromeda_jsonld::{compound_context_host::WrapperUse, context_cache::DownloadedContext};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
     use serde_json::{Value, json};
     use std::{
@@ -190,8 +201,8 @@ mod tests {
         let store = Arc::new(CountingStore::default());
         let hosting = ImplicitContextHosting::new(Arc::clone(&store) as Arc<dyn ContextRegistryStore>, Duration::from_secs(60));
 
-        let first = hosting.host(&wrapper(), &FixedRoot).await.expect("stored");
-        let second = hosting.host(&wrapper(), &FixedRoot).await.expect("remembered");
+        let first = hosting.host(&wrapper(), &FixedRoot, WrapperUse::Response).await.expect("stored");
+        let second = hosting.host(&wrapper(), &FixedRoot, WrapperUse::Response).await.expect("remembered");
 
         pretty_assertions::assert_eq!(first, second);
         pretty_assertions::assert_eq!(store.inserts(), 1);
@@ -202,12 +213,30 @@ mod tests {
         let store = Arc::new(CountingStore::default());
         let hosting = ImplicitContextHosting::new(Arc::clone(&store) as Arc<dyn ContextRegistryStore>, Duration::from_secs(60));
 
-        let identifier = hosting.host(&wrapper(), &FixedRoot).await.expect("stored");
+        let identifier = hosting.host(&wrapper(), &FixedRoot, WrapperUse::Response).await.expect("stored");
 
         pretty_assertions::assert_eq!(
             *store.inserts.lock().expect("the insert log"),
             vec![Url::parse(&format!("https://broker.example/{identifier}")).expect("a URL")]
         );
+    }
+
+    /// A wrapper a resource keeps naming is confirmed in storage even while it
+    /// is remembered: a deletion this process did not see -- through another
+    /// replica, or any other removal -- would otherwise leave a subscription
+    /// naming a URL nothing serves.
+    #[tokio::test]
+    async fn a_stored_reference_confirms_the_entry_even_while_it_is_remembered() {
+        let store = Arc::new(CountingStore::default());
+        let hosting = ImplicitContextHosting::new(Arc::clone(&store) as Arc<dyn ContextRegistryStore>, Duration::from_secs(60));
+
+        let remembered = hosting.host(&wrapper(), &FixedRoot, WrapperUse::Response).await.expect("stored");
+        let confirmed = hosting.host(&wrapper(), &FixedRoot, WrapperUse::StoredReference).await.expect("confirmed");
+        let again = hosting.host(&wrapper(), &FixedRoot, WrapperUse::Response).await.expect("remembered");
+
+        pretty_assertions::assert_eq!(remembered, confirmed);
+        pretty_assertions::assert_eq!(confirmed, again);
+        pretty_assertions::assert_eq!(store.inserts(), 2, "only the stored reference wrote past the memo");
     }
 
     /// Once the remembered span is over the document is stored again, so a
@@ -217,9 +246,9 @@ mod tests {
         let store = Arc::new(CountingStore::default());
         let hosting = ImplicitContextHosting::new(Arc::clone(&store) as Arc<dyn ContextRegistryStore>, Duration::from_millis(20));
 
-        let first = hosting.host(&wrapper(), &FixedRoot).await.expect("stored");
+        let first = hosting.host(&wrapper(), &FixedRoot, WrapperUse::Response).await.expect("stored");
         sleep(Duration::from_millis(60)).await;
-        let second = hosting.host(&wrapper(), &FixedRoot).await.expect("stored again");
+        let second = hosting.host(&wrapper(), &FixedRoot, WrapperUse::Response).await.expect("stored again");
 
         pretty_assertions::assert_eq!(first, second);
         pretty_assertions::assert_eq!(store.inserts(), 2);
@@ -230,9 +259,9 @@ mod tests {
         let store = Arc::new(CountingStore::default());
         let hosting = ImplicitContextHosting::new(Arc::clone(&store) as Arc<dyn ContextRegistryStore>, Duration::from_secs(60));
 
-        let identifier = hosting.host(&wrapper(), &FixedRoot).await.expect("stored");
+        let identifier = hosting.host(&wrapper(), &FixedRoot, WrapperUse::Response).await.expect("stored");
         hosting.forget(&Identifier::from(identifier)).expect("forgotten");
-        hosting.host(&wrapper(), &FixedRoot).await.expect("stored again");
+        hosting.host(&wrapper(), &FixedRoot, WrapperUse::Response).await.expect("stored again");
 
         pretty_assertions::assert_eq!(store.inserts(), 2);
     }

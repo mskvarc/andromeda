@@ -17,7 +17,13 @@
 //! which is not the `@context` applicable for the Subscription.
 
 use crate::{error::SubscriptionError, subscription_context::SubscriptionContext};
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, presented_context::ContextLinkTarget, request_context::RequestContext};
+use andromeda_jsonld::{
+    compound_context_host::WrapperUse,
+    context_spec::ContextSpec,
+    engine::processor::JsonLdEngine,
+    presented_context::ContextLinkTarget,
+    request_context::RequestContext,
+};
 use serde_json::Value;
 
 /// Initialise the `jsonldContext` member of a subscription payload from the
@@ -46,7 +52,7 @@ pub(crate) async fn initialize_notification_context(
     let presented = engine.presented_context(context).await?;
     let stored = match presented.link_target() {
         ContextLinkTarget::Reference(url) => url,
-        ContextLinkTarget::Hosted(value) => host.host(&value).await?,
+        ContextLinkTarget::Hosted(value) => host.host(&value, WrapperUse::StoredReference).await?,
     };
     if let Some(object) = payload.as_object_mut() {
         object.insert("jsonldContext".to_owned(), Value::String(stored.into_inner()));
@@ -66,7 +72,7 @@ const fn names_no_context(context: &ContextSpec) -> bool {
 mod tests {
     use crate::{error::SubscriptionError, notification_context::initialize_notification_context, subscription_context::SubscriptionContext};
     use andromeda_jsonld::{
-        compound_context_host::{CompoundContextHost, CompoundContextHostFuture, ContextHostingError, NoCompoundContextHost},
+        compound_context_host::{CompoundContextHost, CompoundContextHostFuture, ContextHostingError, NoCompoundContextHost, WrapperUse},
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
     };
@@ -84,7 +90,7 @@ mod tests {
     }
 
     impl CompoundContextHost for RecordingHost {
-        fn host<'a>(&'a self, context: &'a Value) -> CompoundContextHostFuture<'a> {
+        fn host<'a>(&'a self, context: &'a Value, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
             Box::pin(async move {
                 self.hosted.lock().expect("the recording lock").push(context.clone()); // clone: the record keeps its own copy
                 Ok(IriBuf::new(WRAPPER.to_owned()).expect("a valid URL"))

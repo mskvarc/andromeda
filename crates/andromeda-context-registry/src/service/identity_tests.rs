@@ -20,7 +20,7 @@ use crate::{
     store::{ContextRegistryFuture, ContextRegistryStore},
     stored_context::StoredContext,
 };
-use andromeda_jsonld::{context_cache::DownloadedContext, engine::processor::JsonLdEngine};
+use andromeda_jsonld::{compound_context_host::WrapperUse, context_cache::DownloadedContext, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use serde_json::{Value, json};
@@ -183,11 +183,11 @@ async fn equal_compound_contexts_share_one_implicit_entry() {
     let registry = service(&store);
 
     let first = registry
-        .create_implicitly(compound("https://e.org/a.jsonld", "https://e.org/b.jsonld"), &BrokerRoot)
+        .create_implicitly(compound("https://e.org/a.jsonld", "https://e.org/b.jsonld"), &BrokerRoot, WrapperUse::Response)
         .await
         .expect("hosted");
     let second = registry
-        .create_implicitly(compound("https://e.org/a.jsonld", "https://e.org/b.jsonld"), &BrokerRoot)
+        .create_implicitly(compound("https://e.org/a.jsonld", "https://e.org/b.jsonld"), &BrokerRoot, WrapperUse::Response)
         .await
         .expect("hosted");
 
@@ -205,8 +205,8 @@ async fn member_order_does_not_split_an_implicit_entry() {
     let forward: Value = serde_json::from_str(r#"{"@context": [{"a": "https://e.org/a", "b": "https://e.org/b"}, "https://e.org/c.jsonld"]}"#).expect("JSON");
     let backward: Value = serde_json::from_str(r#"{"@context":[{"b":"https://e.org/b","a":"https://e.org/a"},"https://e.org/c.jsonld"]}"#).expect("JSON");
 
-    let first = registry.create_implicitly(forward, &BrokerRoot).await.expect("hosted");
-    let second = registry.create_implicitly(backward, &BrokerRoot).await.expect("hosted");
+    let first = registry.create_implicitly(forward, &BrokerRoot, WrapperUse::Response).await.expect("hosted");
+    let second = registry.create_implicitly(backward, &BrokerRoot, WrapperUse::Response).await.expect("hosted");
 
     pretty_assertions::assert_eq!(first, second);
     pretty_assertions::assert_eq!(store.len(), 1);
@@ -218,11 +218,11 @@ async fn different_compound_contexts_are_different_implicit_entries() {
     let registry = service(&store);
 
     let first = registry
-        .create_implicitly(compound("https://e.org/a.jsonld", "https://e.org/b.jsonld"), &BrokerRoot)
+        .create_implicitly(compound("https://e.org/a.jsonld", "https://e.org/b.jsonld"), &BrokerRoot, WrapperUse::Response)
         .await
         .expect("hosted");
     let reordered = registry
-        .create_implicitly(compound("https://e.org/b.jsonld", "https://e.org/a.jsonld"), &BrokerRoot)
+        .create_implicitly(compound("https://e.org/b.jsonld", "https://e.org/a.jsonld"), &BrokerRoot, WrapperUse::Response)
         .await
         .expect("hosted");
 
@@ -239,7 +239,7 @@ async fn a_derived_identifier_held_by_another_kind_of_entry_falls_back_to_a_rand
     let registry = service(&store);
     let document = compound("https://e.org/a.jsonld", "https://e.org/b.jsonld");
     let derived = registry
-        .create_implicitly(document.clone(), &BrokerRoot) // clone: the same document is hosted again below.
+        .create_implicitly(document.clone(), &BrokerRoot, WrapperUse::Response) // clone: the same document is hosted again below.
         .await
         .expect("hosted");
     registry
@@ -249,7 +249,7 @@ async fn a_derived_identifier_held_by_another_kind_of_entry_falls_back_to_a_rand
     let hosted = json!({ "@context": { "Spot": "https://e.org/Spot" } });
     store.hold(&derived, ContextKind::Hosted, hosted.clone()); // clone: the held document is compared below.
 
-    let fallback = registry.create_implicitly(document, &BrokerRoot).await.expect("hosted");
+    let fallback = registry.create_implicitly(document, &BrokerRoot, WrapperUse::Response).await.expect("hosted");
 
     assert_ne!(fallback, derived);
     pretty_assertions::assert_eq!(uuid_version(&fallback), Some(Version::Random));
@@ -267,7 +267,7 @@ async fn a_derived_identifier_held_by_different_implicit_content_falls_back_to_a
     let registry = service(&store);
     let document = compound("https://e.org/a.jsonld", "https://e.org/b.jsonld");
     let derived = registry
-        .create_implicitly(document.clone(), &BrokerRoot) // clone: the same document is hosted again below.
+        .create_implicitly(document.clone(), &BrokerRoot, WrapperUse::Response) // clone: the same document is hosted again below.
         .await
         .expect("hosted");
     registry
@@ -280,7 +280,7 @@ async fn a_derived_identifier_held_by_different_implicit_content_falls_back_to_a
         compound("https://e.org/x.jsonld", "https://e.org/y.jsonld"),
     );
 
-    let fallback = registry.create_implicitly(document, &BrokerRoot).await.expect("hosted");
+    let fallback = registry.create_implicitly(document, &BrokerRoot, WrapperUse::Response).await.expect("hosted");
 
     assert_ne!(fallback, derived);
     pretty_assertions::assert_eq!(uuid_version(&fallback), Some(Version::Random));
@@ -294,7 +294,7 @@ async fn a_deleted_implicit_entry_comes_back_under_the_same_identifier() {
     let registry = service(&store);
     let document = compound("https://e.org/a.jsonld", "https://e.org/b.jsonld");
     let first = registry
-        .create_implicitly(document.clone(), &BrokerRoot) // clone: the same document is hosted again below.
+        .create_implicitly(document.clone(), &BrokerRoot, WrapperUse::Response) // clone: the same document is hosted again below.
         .await
         .expect("hosted");
     registry
@@ -302,7 +302,7 @@ async fn a_deleted_implicit_entry_comes_back_under_the_same_identifier() {
         .await
         .expect("deleted");
 
-    let again = registry.create_implicitly(document, &BrokerRoot).await.expect("hosted");
+    let again = registry.create_implicitly(document, &BrokerRoot, WrapperUse::Response).await.expect("hosted");
 
     pretty_assertions::assert_eq!(again, first);
 }
@@ -315,7 +315,7 @@ async fn a_document_with_no_canonical_form_takes_a_random_identifier() {
     let registry = service(&store);
     let document: Value = serde_json::from_str(r#"{"@context": [{"@version": 1e400}, "https://e.org/a.jsonld"]}"#).expect("JSON");
 
-    let identifier = registry.create_implicitly(document, &BrokerRoot).await.expect("hosted");
+    let identifier = registry.create_implicitly(document, &BrokerRoot, WrapperUse::Response).await.expect("hosted");
 
     pretty_assertions::assert_eq!(uuid_version(&identifier), Some(Version::Random));
 }
@@ -329,11 +329,11 @@ async fn a_compound_response_context_hosted_twice_is_one_implicit_entry() {
     let registry = service(&store);
 
     let first = registry
-        .create_implicitly(compound("https://e.org/a.jsonld", "https://e.org/b.jsonld"), &BrokerRoot)
+        .create_implicitly(compound("https://e.org/a.jsonld", "https://e.org/b.jsonld"), &BrokerRoot, WrapperUse::Response)
         .await
         .expect("hosted");
     let second = registry
-        .create_implicitly(compound("https://e.org/a.jsonld", "https://e.org/b.jsonld"), &BrokerRoot)
+        .create_implicitly(compound("https://e.org/a.jsonld", "https://e.org/b.jsonld"), &BrokerRoot, WrapperUse::Response)
         .await
         .expect("hosted");
 

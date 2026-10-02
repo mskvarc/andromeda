@@ -37,7 +37,6 @@ use http::Method;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use std::slice::from_ref;
 
 /// The problem type clause 5.5.7 gives a user `@context` declaring a scoped one.
 const BAD_REQUEST_DATA: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
@@ -86,13 +85,16 @@ async fn send_ld_json(client: &TestClient, method: Method, path: &str, body: &Va
         .expect("request")
 }
 
-/// Send one `application/json` body under the `Link` contexts named, in order.
-async fn send_json_with_link_contexts(client: &TestClient, method: Method, path: &str, body: &Value, contexts: &[String]) -> TestResponse {
-    let mut request = client.raw(method, path).header("content-type", "application/json");
-    for url in contexts {
-        request = request.header("link", context_link(url).as_str());
-    }
-    request.json(body).send().await.expect("request")
+/// Send one `application/json` body under the one `Link` context named.
+async fn send_json_with_link_context(client: &TestClient, method: Method, path: &str, body: &Value, context: &str) -> TestResponse {
+    client
+        .raw(method, path)
+        .header("content-type", "application/json")
+        .header("link", context_link(context).as_str())
+        .json(body)
+        .send()
+        .await
+        .expect("request")
 }
 
 /// Clause 5.5.7: an inline user `@context` in the request body that defines a
@@ -128,12 +130,12 @@ async fn regression_scoped_user_context_a_link_header_context_is_refused() {
     let plain = serve_context(&server, "link-plain", &json!({"@context": {"gear": "https://example.org/gear"}})).await;
 
     let refused_id = scope.id("Device:link-scoped");
-    let refused = send_json_with_link_contexts(
+    let refused = send_json_with_link_context(
         client,
         Method::POST,
         "/ngsi-ld/v1/entities",
         &json!({"id": refused_id, "type": "Device", "gear": {"type": "Property", "value": 3}}),
-        from_ref(&scoped),
+        &scoped,
     )
     .await;
     assert_scoped_context_refused(&refused, "a Link header context declaring a scoped @context");
@@ -141,12 +143,12 @@ async fn regression_scoped_user_context_a_link_header_context_is_refused() {
     // The control: the same shape of context without the scoped definition is
     // fetched, used, and the write succeeds.
     let admitted_id = scope.id("Device:link-plain");
-    let admitted = send_json_with_link_contexts(
+    let admitted = send_json_with_link_context(
         client,
         Method::POST,
         "/ngsi-ld/v1/entities",
         &json!({"id": admitted_id, "type": "Device", "gear": {"type": "Property", "value": 3}}),
-        from_ref(&plain),
+        &plain,
     )
     .await;
     assert_eq!(admitted.status, StatusCode::CREATED, "a plain Link header context is used: {:?}", admitted.body);
@@ -170,30 +172,34 @@ async fn regression_scoped_user_context_a_scoped_context_in_the_second_of_two_is
 
     let plain = serve_context(&server, "order-plain", &json!({"@context": {"axle": "https://example.org/axle"}})).await;
     let scoped = serve_context(&server, "order-scoped", &json!({"@context": {"gear": scoped_definition()}})).await;
+    // A request names at most one context Link (JSON-LD 1.1 section 6.1), so a
+    // set of two reaches the broker through one wrapper naming both (Annex C.8).
+    let plain_first = serve_context(&server, "order-plain-first", &json!({"@context": [plain, scoped]})).await;
+    let scoped_first = serve_context(&server, "order-scoped-first", &json!({"@context": [scoped, plain]})).await;
 
     let id = scope.id("Device:second-of-two");
-    let response = send_json_with_link_contexts(
+    let response = send_json_with_link_context(
         client,
         Method::POST,
         "/ngsi-ld/v1/entities",
         &json!({"id": id, "type": "Device", "gear": {"type": "Property", "value": 3}}),
-        &[plain.clone(), scoped.clone()],
+        &plain_first,
     )
     .await;
-    assert_scoped_context_refused(&response, "the scoped @context is the second of two Link contexts");
+    assert_scoped_context_refused(&response, "the scoped @context is the second of two linked contexts");
 
     // And the same set in the other order, so the assertion is about the set
     // rather than about one arrangement of it.
     let reversed_id = scope.id("Device:second-of-two-reversed");
-    let reversed = send_json_with_link_contexts(
+    let reversed = send_json_with_link_context(
         client,
         Method::POST,
         "/ngsi-ld/v1/entities",
         &json!({"id": reversed_id, "type": "Device", "gear": {"type": "Property", "value": 3}}),
-        &[scoped.clone(), plain.clone()],
+        &scoped_first,
     )
     .await;
-    assert_scoped_context_refused(&reversed, "the scoped @context is the first of two Link contexts");
+    assert_scoped_context_refused(&reversed, "the scoped @context is the first of two linked contexts");
 
     // The body form of the same set: an inline object beside a remote URL.
     let inline_id = scope.id("Device:second-of-two-inline");
@@ -211,7 +217,7 @@ async fn regression_scoped_user_context_a_scoped_context_in_the_second_of_two_is
     .await;
     assert_scoped_context_refused(&inline, "the scoped @context is the last element of a body @context array");
 
-    forget_cached(scope.database_pool(), &[plain, scoped]).await;
+    forget_cached(scope.database_pool(), &[plain, scoped, plain_first, scoped_first]).await;
     server.shutdown().await.expect("context server shuts down");
     scope.finish().await.expect("cleanup failed");
 }
@@ -236,12 +242,12 @@ async fn regression_scoped_user_context_a_nested_remote_reference_is_followed() 
     .await;
 
     let id = scope.id("Device:nested-reference");
-    let response = send_json_with_link_contexts(
+    let response = send_json_with_link_context(
         client,
         Method::POST,
         "/ngsi-ld/v1/entities",
         &json!({"id": id, "type": "Device", "axle": {"type": "Property", "value": 2}}),
-        from_ref(&suite),
+        &suite,
     )
     .await;
     assert_scoped_context_refused(&response, "a scoped @context reached through a nested remote reference");
@@ -440,11 +446,11 @@ async fn regression_scoped_user_context_a_get_retrieve_refuses_a_scoped_context(
     let created = client.post_entity(&seeded).with_ld_json().send().await.expect("create entity request");
     assert_eq!(created.status, StatusCode::CREATED, "seeding the target: {:?}", created.body);
 
-    let refused = send_json_with_link_contexts(client, Method::GET, &format!("/ngsi-ld/v1/entities/{id}"), &Value::Null, from_ref(&scoped)).await;
+    let refused = send_json_with_link_context(client, Method::GET, &format!("/ngsi-ld/v1/entities/{id}"), &Value::Null, &scoped).await;
     assert_scoped_context_refused(&refused, "retrieve entity under a scoped @context");
 
     // Control: the same read under a plain user context is answered.
-    let admitted = send_json_with_link_contexts(client, Method::GET, &format!("/ngsi-ld/v1/entities/{id}"), &Value::Null, from_ref(&plain)).await;
+    let admitted = send_json_with_link_context(client, Method::GET, &format!("/ngsi-ld/v1/entities/{id}"), &Value::Null, &plain).await;
     assert_eq!(admitted.status, StatusCode::OK, "retrieve under a plain context: {:?}", admitted.body);
 
     forget_cached(scope.database_pool(), &[scoped, plain]).await;
@@ -463,10 +469,10 @@ async fn regression_scoped_user_context_a_get_query_refuses_a_scoped_context() {
         .expect("context server starts");
     let (scoped, plain) = scoped_and_plain(&server, "get-query").await;
 
-    let refused = send_json_with_link_contexts(client, Method::GET, "/ngsi-ld/v1/entities?type=Device", &Value::Null, from_ref(&scoped)).await;
+    let refused = send_json_with_link_context(client, Method::GET, "/ngsi-ld/v1/entities?type=Device", &Value::Null, &scoped).await;
     assert_scoped_context_refused(&refused, "query entities under a scoped @context");
 
-    let admitted = send_json_with_link_contexts(client, Method::GET, "/ngsi-ld/v1/entities?type=Device", &Value::Null, from_ref(&plain)).await;
+    let admitted = send_json_with_link_context(client, Method::GET, "/ngsi-ld/v1/entities?type=Device", &Value::Null, &plain).await;
     assert_eq!(admitted.status, StatusCode::OK, "query under a plain context: {:?}", admitted.body);
 
     forget_cached(scope.database_pool(), &[scoped, plain]).await;
@@ -515,24 +521,10 @@ async fn regression_scoped_user_context_a_temporal_query_refuses_a_scoped_contex
     let (scoped, plain) = scoped_and_plain(&server, "temporal-query").await;
 
     let window = "type=Device&timerel=after&timeAt=2000-01-01T00:00:00Z";
-    let refused = send_json_with_link_contexts(
-        client,
-        Method::GET,
-        &format!("/ngsi-ld/v1/temporal/entities?{window}"),
-        &Value::Null,
-        from_ref(&scoped),
-    )
-    .await;
+    let refused = send_json_with_link_context(client, Method::GET, &format!("/ngsi-ld/v1/temporal/entities?{window}"), &Value::Null, &scoped).await;
     assert_scoped_context_refused(&refused, "temporal query under a scoped @context");
 
-    let admitted = send_json_with_link_contexts(
-        client,
-        Method::GET,
-        &format!("/ngsi-ld/v1/temporal/entities?{window}"),
-        &Value::Null,
-        from_ref(&plain),
-    )
-    .await;
+    let admitted = send_json_with_link_context(client, Method::GET, &format!("/ngsi-ld/v1/temporal/entities?{window}"), &Value::Null, &plain).await;
     assert_eq!(admitted.status, StatusCode::OK, "temporal query under a plain context: {:?}", admitted.body);
 
     forget_cached(scope.database_pool(), &[scoped, plain]).await;
@@ -712,7 +704,7 @@ async fn regression_scoped_user_context_an_ordinary_user_context_is_still_used()
     .await;
     assert_eq!(created.status, StatusCode::CREATED, "an ordinary user @context is used: {:?}", created.body);
 
-    let stored = send_json_with_link_contexts(client, Method::GET, &format!("/ngsi-ld/v1/entities/{id}"), &Value::Null, from_ref(&remote)).await;
+    let stored = send_json_with_link_context(client, Method::GET, &format!("/ngsi-ld/v1/entities/{id}"), &Value::Null, &remote).await;
     assert_eq!(stored.status, StatusCode::OK, "retrieving under the same context: {:?}", stored.body);
     let entity = stored.json_value().expect("an entity is JSON");
     assert_eq!(entity["axle"]["value"], json!(2), "the remote context's term compacts back: {entity}");

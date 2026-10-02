@@ -142,9 +142,13 @@ async fn context_source_info_forwarding_maps_reserved_and_custom_entries_to_http
         forwarded.headers.get("accept").and_then(|value| value.to_str().ok()),
         Some("application/ld+json")
     );
+    // Clause 6.3.19 sets `Content-Type` "whenever a payload body is present";
+    // a forwarded query is a body-less GET, so `contentType` adds no header.
+    assert_eq!(forwarded.method, Method::GET);
     assert_eq!(
-        forwarded.headers.get("content-type").and_then(|value| value.to_str().ok()),
-        Some("application/json")
+        forwarded.headers.get("content-type"),
+        None,
+        "a body-less forwarded request carries no Content-Type"
     );
     assert_eq!(forwarded.headers.get("x-custom-auth").and_then(|value| value.to_str().ok()), Some("token-abc"));
     let link = forwarded

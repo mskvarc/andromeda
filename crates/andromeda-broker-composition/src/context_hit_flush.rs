@@ -51,6 +51,7 @@ impl ContextHitFlushWorker {
 
 /// Drain once, atomically restoring the entire delta set on failure.
 async fn flush_once(counter: &HitCounter, store: &dyn ContextHitStore) {
+    let _readers_held_off = counter.flush_exclusively().await;
     let pending = counter.drain();
     if pending.is_empty() {
         return;
@@ -79,6 +80,7 @@ const FINAL_FLUSH_ATTEMPTS: u32 = 3;
 async fn flush_until_durable(counter: &HitCounter, store: &dyn ContextHitStore, interval: Duration) {
     let mut failures = 0_u32;
     while failures < FINAL_FLUSH_ATTEMPTS {
+        let readers_held_off = counter.flush_exclusively().await;
         let pending = counter.drain();
         if pending.is_empty() {
             return;
@@ -86,6 +88,8 @@ async fn flush_until_durable(counter: &HitCounter, store: &dyn ContextHitStore, 
         let count = pending.len();
         if let Err(error) = store.flush_hits(&pending).await {
             restore(counter, pending);
+            // The retry waits with readers let back in.
+            drop(readers_held_off);
             failures += 1;
             tracing::warn!(error = %error, count, attempt = failures, limit = FINAL_FLUSH_ATTEMPTS, event = "context_hit_final_flush_failed");
             if failures < FINAL_FLUSH_ATTEMPTS {

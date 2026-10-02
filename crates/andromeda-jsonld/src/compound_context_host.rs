@@ -22,18 +22,35 @@ use serde_json::Value;
 use std::{fmt::Debug, future::Future, pin::Pin};
 use thiserror::Error;
 
+/// What the URL of a hosted wrapper is used for, which decides whether an
+/// entry stored recently may be taken as still stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WrapperUse {
+    /// Named in the `Link` header of one response. An entry this process
+    /// stored recently is taken as still stored, so a request repeated a
+    /// thousand times writes once.
+    Response,
+    /// Kept by a resource that outlives the request -- a subscription's
+    /// `jsonldContext` (clause 5.8.1.4), dereferenced whenever it notifies. The
+    /// entry is confirmed in storage before the resource keeps its URL: a
+    /// clause 5.13.5 deletion through another replica, or any other removal
+    /// this process did not see, may have taken it since this process stored
+    /// it.
+    StoredReference,
+}
+
 /// The future a [`CompoundContextHost`] answers with.
 pub type CompoundContextHostFuture<'a> = Pin<Box<dyn Future<Output = Result<IriBuf, ContextHostingError>> + Send + 'a>>;
 
 /// Where a compound `@context` is stored so it can be served under one URL.
 pub trait CompoundContextHost: Debug + Send + Sync {
     /// Store the document `{"@context": context}` and answer the absolute URL
-    /// it is served under.
+    /// it is served under, for the `usage` the URL is put to.
     ///
     /// Hosting the same context twice answers the same URL whenever the
     /// implementation can share the entry, so a request repeated a thousand
     /// times names one stored document rather than a thousand.
-    fn host<'a>(&'a self, context: &'a Value) -> CompoundContextHostFuture<'a>;
+    fn host<'a>(&'a self, context: &'a Value, usage: WrapperUse) -> CompoundContextHostFuture<'a>;
 }
 
 /// A host that stores nothing.
@@ -45,7 +62,7 @@ pub trait CompoundContextHost: Debug + Send + Sync {
 pub struct NoCompoundContextHost;
 
 impl CompoundContextHost for NoCompoundContextHost {
-    fn host<'a>(&'a self, _context: &'a Value) -> CompoundContextHostFuture<'a> {
+    fn host<'a>(&'a self, _context: &'a Value, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
         Box::pin(async { Err(ContextHostingError::NoHost) })
     }
 }
@@ -73,13 +90,16 @@ pub enum ContextHostingError {
 
 #[cfg(test)]
 mod tests {
-    use crate::compound_context_host::{CompoundContextHost, ContextHostingError, NoCompoundContextHost};
+    use crate::compound_context_host::{CompoundContextHost, ContextHostingError, NoCompoundContextHost, WrapperUse};
     use serde_json::json;
 
     #[tokio::test]
     async fn a_host_that_stores_nothing_reports_that_no_host_is_attached() {
         let context = json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld"]);
 
-        assert!(matches!(NoCompoundContextHost.host(&context).await, Err(ContextHostingError::NoHost)));
+        assert!(matches!(
+            NoCompoundContextHost.host(&context, WrapperUse::Response).await,
+            Err(ContextHostingError::NoHost)
+        ));
     }
 }

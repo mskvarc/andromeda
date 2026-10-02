@@ -46,6 +46,7 @@ mod geojson_ring_structure;
 mod hosted_context_lifecycle;
 mod http_binding_details;
 mod http_precondition_details;
+mod implicit_context_replicas;
 mod inline_join_multi_target_relationship;
 mod invalid_parameter_values;
 mod large_entity_budget;

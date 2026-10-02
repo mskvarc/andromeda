@@ -10,10 +10,9 @@
 //! resolving only the v1.9 core `@context` exactly as Andromeda embeds it and
 //! the documents the test fetched itself.
 
-use crate::core_contexts::core;
+use crate::{context_origin::origin_reaching_client, core_contexts::core};
 use jsonld::{IriBuf, JsonLdProcessor, RemoteDocument};
 use jsonld_syntax::IntoJsonWithContext;
-use reqwest::Client;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use url::Url;
@@ -63,7 +62,7 @@ impl IndependentProcessor {
     /// references resolved against the document's URL). The v1.9 core
     /// `@context` is never fetched: the embedded copy stands for it.
     pub async fn fetch(mut self, url: &str) -> IndependentProcessor {
-        let client = Client::new();
+        let client = origin_reaching_client();
         let mut pending = vec![url.to_owned()];
         while let Some(next) = pending.pop() {
             let key = IriBuf::new(next.clone()).expect("a document URL is an IRI"); // clone: the pending entry is used below

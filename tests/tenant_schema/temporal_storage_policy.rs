@@ -10,6 +10,11 @@
 //! reconciliation of the same override must write nothing, and a hypertable
 //! that lost its columnstore must regain it on the next open. These run against
 //! the TSL edition of the image, which is the one with a columnstore.
+//!
+//! Each test works on a private tenant the broker opened once: the broker
+//! restates the configured policy every time it opens a tenant, and the
+//! default tenant is reopened whenever the tier's tenant churn evicts it, which
+//! overwrote an override between the test writing it and reading it back.
 
 use crate::SUITE;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
@@ -22,8 +27,11 @@ use andromeda_postgresql_temporal_store::{
     storage_policy::PolicyReconciliation,
 };
 use andromeda_temporal::storage_policy::TemporalStoragePolicy;
-use andromeda_test_harness::environment::TestEnvironment;
+use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use pretty_assertions::assert_eq;
+use reqwest::StatusCode;
+use serde_json::json;
 use serial_test::serial;
 use sqlx::PgPool;
 use std::{num::NonZeroU32, sync::Arc};
@@ -59,6 +67,25 @@ async fn columnstore_after_days(pool: &PgPool, hypertable: &str) -> f64 {
     .fetch_one(pool)
     .await
     .expect("the policy job must exist and be readable")
+}
+
+/// The database of a private tenant the broker has opened, and so reconciled,
+/// exactly once: the test sends it no further request, so no reopening
+/// restates the configured policy over what the test writes.
+async fn opened_tenant_pool(scope: &TenantScopedEnvironment) -> PgPool {
+    let created = scope
+        .client()
+        .post_entity(&json!({"id": scope.id("Sensor:storage-policy"), "type": "Sensor", "@context": CORE_CONTEXT}))
+        .send()
+        .await
+        .expect("create entity request");
+    assert_eq!(
+        created.status,
+        StatusCode::CREATED,
+        "the write brings the tenant into being: {:?}",
+        created.body
+    );
+    scope.tenant_database().await.expect("the tenant database exists once an entity was written")
 }
 
 /// A repository over the suite's tenant, with throwaway dictionary caches.
@@ -97,8 +124,9 @@ async fn columnstore_enabled(pool: &PgPool, hypertable: &str) -> bool {
 #[tokio::test]
 #[serial(temporal_storage_policy)]
 async fn tenant_schema_the_columnstore_is_enabled_by_the_reconciler_on_a_fresh_tenant() {
-    let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
-    let pool = scope.database_pool();
+    let scope = TenantScopedEnvironment::from_suite(SUITE).await.expect("private tenant environment");
+    let tenant_pool = opened_tenant_pool(&scope).await;
+    let pool = &tenant_pool;
 
     // The broker that opened this tenant reconciled against a configuration
     // without overrides, so whatever is stored is the default policy;
@@ -139,6 +167,7 @@ async fn tenant_schema_the_columnstore_is_enabled_by_the_reconciler_on_a_fresh_t
         );
     }
 
+    tenant_pool.close().await;
     scope.finish().await.expect("cleanup failed");
 }
 
@@ -148,8 +177,9 @@ async fn tenant_schema_the_columnstore_is_enabled_by_the_reconciler_on_a_fresh_t
 #[tokio::test]
 #[serial(temporal_storage_policy)]
 async fn an_override_moves_both_hypertables_once_and_the_defaults_move_them_back() {
-    let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
-    let pool = scope.database_pool();
+    let scope = TenantScopedEnvironment::from_suite(SUITE).await.expect("private tenant environment");
+    let tenant_pool = opened_tenant_pool(&scope).await;
+    let pool = &tenant_pool;
     let repository = repository(pool).await;
 
     let overridden = repository.reconcile_storage_policy(&policy(1, 3)).await.expect("the override reconciles");
@@ -202,6 +232,7 @@ async fn an_override_moves_both_hypertables_once_and_the_defaults_move_them_back
         );
     }
 
+    tenant_pool.close().await;
     scope.finish().await.expect("cleanup failed");
 }
 
@@ -212,8 +243,9 @@ async fn an_override_moves_both_hypertables_once_and_the_defaults_move_them_back
 #[tokio::test]
 #[serial(temporal_storage_policy)]
 async fn tenant_schema_a_hypertable_without_the_columnstore_is_enabled_on_the_next_open() {
-    let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
-    let pool = scope.database_pool();
+    let scope = TenantScopedEnvironment::from_suite(SUITE).await.expect("private tenant environment");
+    let tenant_pool = opened_tenant_pool(&scope).await;
+    let pool = &tenant_pool;
 
     for (hypertable, _) in HYPERTABLES {
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -269,5 +301,6 @@ async fn tenant_schema_a_hypertable_without_the_columnstore_is_enabled_on_the_ne
         .expect("the reconciliation runs");
     assert!(settled.is_unchanged(), "a second open writes nothing: {settled:?}");
 
+    tenant_pool.close().await;
     scope.finish().await.expect("cleanup failed");
 }

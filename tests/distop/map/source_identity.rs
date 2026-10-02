@@ -3,10 +3,11 @@
 //! negotiation. Local rows are `T-LOCAL`; the per-tenant row is `T-TENANT`.
 
 use crate::{
-    oracle::{assert_status, json_body},
+    oracle::{assert_problem_details, assert_status, json_body},
     topology::{self, BrokerRole},
 };
 use andromeda_test_client::tenant_name::TenantName;
+use andromeda_test_fixtures::problem_detail::INVALID_REQUEST;
 use axum::http::Method;
 use pretty_assertions::assert_eq;
 
@@ -52,10 +53,11 @@ async fn identity_per_tenant_alias_obtainable() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The identity endpoint takes no body or parameters, so extra query parameters
-/// are ignored (clause 5.15.1). Confirms REQ-MAP-159.
+/// The identity endpoint takes no input (clause 5.15.1.3), so a query parameter
+/// is one "incompatible with the operation", answered with `InvalidRequest`
+/// (clause 6.3.20). Confirms REQ-MAP-159.
 #[tokio::test]
-async fn identity_input_takes_no_body_or_params() {
+async fn identity_input_refuses_a_parameter_it_does_not_take() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
@@ -65,13 +67,9 @@ async fn identity_input_takes_no_body_or_params() {
         .header("Accept", "application/ld+json")
         .send()
         .await
-        .expect("source identity with ignored params");
-    assert_status(&response, 200);
-    assert_eq!(
-        json_body(&response)["type"].as_str(),
-        Some("ContextSourceIdentity"),
-        "extra parameters are ignored"
-    );
+        .expect("source identity with a parameter");
+    assert_status(&response, 400);
+    assert_problem_details(&response, INVALID_REQUEST);
     topology.finish().await.expect("topology cleanup");
 }
 

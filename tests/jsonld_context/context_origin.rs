@@ -21,7 +21,10 @@ use axum::{
         header::{CONTENT_TYPE, LOCATION},
     },
 };
+use reqwest::Client;
 use serde_json::Value;
+use std::net::{Ipv4Addr, SocketAddr};
+use url::Host;
 
 /// One response the origin answers a path with.
 pub struct OriginResponse {
@@ -58,6 +61,24 @@ impl OriginResponse {
         self.headers.push((name, value.into()));
         self
     }
+}
+
+/// A client the test process reaches its own origins with, by the URLs the
+/// broker is handed.
+///
+/// An origin's URLs name the host the broker reaches the test process by
+/// (`ANDROMEDA_TEST_CALLBACK_HOST`), which a containerized broker resolves and
+/// the test process itself may not resolve at all (`host.docker.internal` on
+/// the host). The origin listens on every interface, so that host is dialled
+/// on loopback.
+pub fn origin_reaching_client() -> Client {
+    let builder = Client::builder();
+    let builder = match MockServerConfig::from_environment().expect("valid callback configuration").visible_host() {
+        // The port is the URL's own: a DNS override carries none.
+        Host::Domain(name) => builder.resolve(name, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))),
+        Host::Ipv4(_) | Host::Ipv6(_) => builder,
+    };
+    builder.build().expect("the origin-reaching client builds")
 }
 
 /// An origin serving `@context` documents.

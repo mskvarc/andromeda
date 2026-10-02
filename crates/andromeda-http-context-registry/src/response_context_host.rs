@@ -7,7 +7,7 @@
 
 use crate::hosted_context_url::HostedContextUrls;
 use andromeda_context_registry::{error::ContextRegistryError, hosted_context_locator::HostedContextLocator, service::ContextRegistryService};
-use andromeda_jsonld::compound_context_host::{CompoundContextHost, CompoundContextHostFuture, ContextHostingError};
+use andromeda_jsonld::compound_context_host::{CompoundContextHost, CompoundContextHostFuture, ContextHostingError, WrapperUse};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use iri_rs::IriBuf;
 use serde_json::{Map, Value};
@@ -32,7 +32,7 @@ impl<'a> ResponseContextHost<'a> {
 }
 
 impl CompoundContextHost for ResponseContextHost<'_> {
-    fn host<'b>(&'b self, context: &'b Value) -> CompoundContextHostFuture<'b> {
+    fn host<'b>(&'b self, context: &'b Value, usage: WrapperUse) -> CompoundContextHostFuture<'b> {
         Box::pin(async move {
             // Refused before anything is stored: a wrapper stored without a URL
             // could be named by nothing.
@@ -43,7 +43,7 @@ impl CompoundContextHost for ResponseContextHost<'_> {
             document.insert("@context".to_owned(), context.clone()); // clone: the stored document owns the context the caller keeps rendering
             let identifier = self
                 .contexts
-                .create_implicitly(Value::Object(document), &urls)
+                .create_implicitly(Value::Object(document), &urls, usage)
                 .await
                 .map_err(|error| hosting_failure(&error))?;
             IriBuf::new(String::from(urls.serving_url(&identifier))).map_err(ContextHostingError::MintedUrlNotIri)

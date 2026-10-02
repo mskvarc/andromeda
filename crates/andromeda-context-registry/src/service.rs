@@ -19,9 +19,9 @@ use crate::{
     served_context::ServedContext,
     store::ContextRegistryStore,
 };
-use andromeda_jsonld::{context_subtree::context_subtree, engine::processor::JsonLdEngine};
+use andromeda_jsonld::{compound_context_host::WrapperUse, context_subtree::context_subtree, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
-use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
+use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -83,9 +83,9 @@ impl ContextRegistryService {
     /// content, and a different document is never served under a shared one
     /// (see [`InsertionPolicy::content_derived`]): a thousand subscriptions with
     /// the same `@context` array are served by one stored document, and a
-    /// document this process stored recently is not written again (see
-    /// [`ImplicitContextHosting`]). `locator` names the URL the entry is served
-    /// under.
+    /// document this process stored recently is not written again for a
+    /// response (see [`ImplicitContextHosting`]). `locator` names the URL the
+    /// entry is served under, and `usage` what that URL is kept for.
     ///
     /// # Errors
     ///
@@ -94,9 +94,14 @@ impl ContextRegistryService {
     /// [`ContextRegistryError::Persistence`] when the store cannot record or read
     /// the Context, and [`ContextRegistryError::Invariant`] when an identifier
     /// cannot be built or a freshly minted one is already held.
-    pub async fn create_implicitly(&self, payload: Value, locator: &dyn HostedContextLocator) -> Result<JsonLdContextId, ContextRegistryError> {
+    pub async fn create_implicitly(
+        &self,
+        payload: Value,
+        locator: &dyn HostedContextLocator,
+        usage: WrapperUse,
+    ) -> Result<JsonLdContextId, ContextRegistryError> {
         let document = hosted_context_subtree(payload)?;
-        self.hosting.host(&document, locator).await
+        self.hosting.host(&document, locator, usage).await
     }
 
     /// List available Contexts, optionally filtered by lifecycle kind.
@@ -110,6 +115,11 @@ impl ContextRegistryService {
     /// the assembled listing cannot be serialized.
     pub async fn list(&self, kind: Option<ContextKind>, detail_level: ContextDetailLevel) -> Result<Value, ContextRegistryError> {
         let include_core = kind.is_none() || kind == Some(ContextKind::ImplicitlyCreated);
+        let counter = self.engine.hit_counter();
+        let _flush_held_off = match (&counter, detail_level) {
+            (Some(counter), ContextDetailLevel::Full) => Some(counter.read_settled().await),
+            (Some(_) | None, ContextDetailLevel::Full | ContextDetailLevel::Summary) => None,
+        };
         let listed = self
             .store
             .list(ContextListQuery {
@@ -124,8 +134,10 @@ impl ContextRegistryService {
                 if include_core {
                     metadata.push(core_context::metadata(&core_context_identifier()?)?);
                 }
-                for entry in &mut metadata {
-                    self.add_pending_hits(entry);
+                if let Some(counter) = &counter {
+                    for entry in &mut metadata {
+                        fold_pending_hits(counter, entry);
+                    }
                 }
                 serialize(metadata)
             }
@@ -183,6 +195,11 @@ impl ContextRegistryService {
                 identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
             });
         }
+        let counter = self.engine.hit_counter();
+        let _flush_held_off = match (&counter, detail_level) {
+            (Some(counter), ContextDetailLevel::Full) => Some(counter.read_settled().await),
+            (Some(_) | None, ContextDetailLevel::Full | ContextDetailLevel::Summary) => None,
+        };
         let fetched = self.store.get(identifier, detail_level).await?.ok_or_else(|| ContextRegistryError::NotFound {
             identifier: ContextIdentifier::from(identifier.clone()), // clone: the error must own the identifier after this call returns.
         })?;
@@ -196,24 +213,15 @@ impl ContextRegistryService {
         }
         match fetched {
             FetchedContext::Detailed(mut metadata) => {
-                self.add_pending_hits(&mut metadata);
+                if let Some(counter) = &counter {
+                    fold_pending_hits(counter, &mut metadata);
+                }
                 serialize(*metadata).map(ServedContext::Metadata)
             }
             FetchedContext::Payload(document) => Ok(ServedContext::Stored {
                 document,
                 revalidation: self.engine.hosted_context_revalidation(),
             }),
-        }
-    }
-
-    /// Add the accesses this process has counted but not yet flushed.
-    ///
-    /// The fold itself lives in [`crate::pending_hits`], which keys on the raw
-    /// serving URL and carries the clause 5.13.3.5 reasoning; this only supplies
-    /// the process-wide counter when one is configured.
-    fn add_pending_hits(&self, metadata: &mut ContextMetadata) {
-        if let Some(counter) = self.engine.hit_counter() {
-            fold_pending_hits(&counter, metadata);
         }
     }
 
