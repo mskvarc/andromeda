@@ -6,7 +6,13 @@
 //! family's deletion encoding puts it on the right-hand side of the family's
 //! value member (clauses 4.5.2.2, 4.5.3.2, 4.5.18, 4.5.20.2, 4.5.24.2), and a
 //! list family's in a list holding it alone (clauses 4.5.21.2, 4.5.22.2), where
-//! a normalized `objectList` wraps it in `object` once more.
+//! a normalized `objectList` wraps it in `object` once more. A JSON literal of
+//! the Null string is the Null too: the stored document spells it as a value
+//! object, which reads back as the Null whatever its datatype.
+//!
+//! Anywhere else the Null is neither a deletion nor data (clause 4.5.0: "null
+//! cannot be used as a value in NGSI-LD"), so beside other values it is
+//! refused rather than stored as a value the stored document could not hold.
 
 use crate::expanded_tree::{ExpandedItem, ExpandedNode};
 use andromeda_ngsi_ld_entity::{document::value_carrier::ValueCarrier, ngsi_ld_null::is_ngsi_ld_null};
@@ -19,8 +25,16 @@ pub fn is_null(item: &ExpandedItem) -> bool {
     match item {
         ExpandedItem::Value(value) => value.as_str().is_some_and(is_ngsi_ld_null),
         ExpandedItem::Node(node) => node.is_reference() && node.id.as_deref().is_some_and(is_ngsi_ld_null),
+        ExpandedItem::Json(Value::String(text)) => is_ngsi_ld_null(text),
         ExpandedItem::Json(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_) => false,
     }
+}
+
+/// Whether one `objectList` item is the NGSI-LD Null, bare or wrapped in
+/// `object`.
+#[must_use]
+pub fn is_list_object_null(item: &ExpandedItem) -> bool {
+    is_null(item) || is_wrapped_null(item)
 }
 
 /// Whether a member's values are the NGSI-LD Null alone.
@@ -35,7 +49,7 @@ pub fn is_sole_null(items: &[ExpandedItem]) -> bool {
 pub fn is_deletion(carrier: ValueCarrier, items: &[ExpandedItem]) -> bool {
     match (carrier, items) {
         (ValueCarrier::ValueList | ValueCarrier::ObjectList, [ExpandedItem::List(members)]) => {
-            matches!(members.as_slice(), [member] if is_null(member) || is_wrapped_null(member))
+            matches!(members.as_slice(), [member] if is_list_object_null(member))
         }
         (ValueCarrier::Json, [ExpandedItem::Json(Value::String(text))]) => is_ngsi_ld_null(text),
         // Clause 4.5.18 spells the deletion `{"@none": "urn:ngsi-ld:null"}`:
@@ -92,6 +106,15 @@ mod tests {
             assert!(is_null(&reference(spelling)), "{spelling}");
         }
         assert!(!is_null(&text("urn:ngsi-ld:nil")));
+    }
+
+    /// The stored document spells a JSON literal as a value object, which the
+    /// stored-document decoder reads as the Null when it holds the Null string.
+    #[test]
+    fn a_json_literal_of_the_null_string_is_the_null() {
+        assert!(is_null(&ExpandedItem::Json(json!("urn:ngsi-ld:null"))));
+        assert!(!is_null(&ExpandedItem::Json(json!(["urn:ngsi-ld:null"]))));
+        assert!(!is_null(&ExpandedItem::Json(json!({"k": "urn:ngsi-ld:null"}))));
     }
 
     /// Clauses 4.5.21.2 and 4.5.22.2: a list family is deleted by a list

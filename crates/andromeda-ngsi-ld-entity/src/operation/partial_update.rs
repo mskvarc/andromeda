@@ -246,22 +246,6 @@ mod tests {
         );
     }
 
-    /// A value of more than one node is data rather than the "array with one
-    /// single NGSI-LD Null" clause 4.5.0 reserves, so it replaces the value.
-    #[test]
-    fn a_member_holding_more_than_one_node_is_data_even_when_one_is_the_sentinel() {
-        let written = WrittenValue::Value(NonEmpty::try_from_vec(vec![text("urn:ngsi-ld:null"), number(7)]).expect("two values"));
-        let instance = patched(&InstanceDocument::builder().value(ValueSlot::Set(written)).build());
-        pretty_assertions::assert_eq!(
-            instance.value(),
-            &FamilyValue::Property {
-                values: NonEmpty::try_from_vec(vec![text("urn:ngsi-ld:null"), number(7)]).expect("two values"),
-                unit_code: UnitCode::resolve("C62").ok(),
-                value_type: None,
-            }
-        );
-    }
-
     #[test]
     fn a_type_mismatch_in_a_partial_update_is_a_typed_error() {
         let mut target = entity(vec![(SPEED, instances(vec![(None, property(number(10)))]))]);

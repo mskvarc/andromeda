@@ -9,8 +9,8 @@ use crate::{
     assembly::{
         expanded_value::{expanded_values, literal},
         geometry_node::geometry_of,
-        member_value::{malformed, reference_id},
-        null_sentinel::{is_deletion, is_null},
+        member_value::{malformed, null_beside_data, reference_id},
+        null_sentinel::{is_deletion, is_list_object_null, is_null},
     },
     expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
 };
@@ -84,6 +84,12 @@ fn each<T>(items: Vec<ExpandedItem>, read: impl FnMut(ExpandedItem) -> Result<T,
     items.into_iter().map(read).collect()
 }
 
+/// Refuse an item that is the NGSI-LD Null: a member that is no deletion
+/// encoding holds data only.
+fn data_item(attribute: &AttributeName, item: &ExpandedItem) -> Result<(), EntityRefusal> {
+    if is_null(item) { Err(null_beside_data(attribute)) } else { Ok(()) }
+}
+
 /// The values, refused when there is none.
 fn non_empty<T>(attribute: &AttributeName, shape: MemberShape, values: Vec<T>) -> Result<NonEmpty<T>, EntityRefusal> {
     NonEmpty::try_from_vec(values).map_err(|_| malformed(attribute, shape))
@@ -123,6 +129,7 @@ fn geo_value(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<GeoV
 /// One `object` target: a node reference (the core context types `object`
 /// `@id`).
 fn object(attribute: &AttributeName, item: &ExpandedItem) -> Result<Uri, EntityRefusal> {
+    data_item(attribute, item)?;
     match item {
         ExpandedItem::Node(node) => reference_id(node)
             .and_then(|id| id.parse::<Uri>().ok())
@@ -134,6 +141,7 @@ fn object(attribute: &AttributeName, item: &ExpandedItem) -> Result<Uri, EntityR
 /// One `vocab` entry: a node reference (the core context types `vocab`
 /// `@vocab`).
 fn vocab(attribute: &AttributeName, item: &ExpandedItem) -> Result<NgsiLdReference, EntityRefusal> {
+    data_item(attribute, item)?;
     let ExpandedItem::Node(node) = item else {
         return Err(malformed(attribute, MemberShape::Vocab));
     };
@@ -147,6 +155,7 @@ fn vocab(attribute: &AttributeName, item: &ExpandedItem) -> Result<NgsiLdReferen
 
 /// One `json` value: a JSON literal (the core context types `json` `@json`).
 fn json(attribute: &AttributeName, item: ExpandedItem) -> Result<JsonLiteral, EntityRefusal> {
+    data_item(attribute, &item)?;
     match item {
         ExpandedItem::Json(value) => Ok(JsonLiteral::new(value)),
         ExpandedItem::Value(_) | ExpandedItem::Node(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_) => Err(malformed(attribute, MemberShape::Json)),
@@ -182,6 +191,9 @@ fn language_entry(attribute: &AttributeName, item: ExpandedItem) -> Result<Langu
 /// One `objectList` item: the bare target, or the target wrapped in `object`
 /// (clause 4.5.22).
 fn list_object(attribute: &AttributeName, item: &ExpandedItem) -> Result<ListObject, EntityRefusal> {
+    if is_list_object_null(item) {
+        return Err(null_beside_data(attribute));
+    }
     let target = |text: &str| text.parse::<Uri>().map_err(|_| malformed(attribute, MemberShape::ObjectList));
     match item {
         ExpandedItem::Node(node) if node.is_reference() => node

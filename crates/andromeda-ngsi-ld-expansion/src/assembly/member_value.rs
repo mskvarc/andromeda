@@ -31,6 +31,18 @@ pub fn malformed(attribute: &AttributeName, member: MemberShape) -> EntityRefusa
     }
 }
 
+/// The refusal of the NGSI-LD Null standing beside data in one member.
+///
+/// Clause 4.5.0 reserves the Null for deletion, alone or as "an array with one
+/// single NGSI-LD Null"; beside other values it neither deletes the member nor
+/// is data, since "null cannot be used as a value in NGSI-LD".
+#[must_use]
+pub fn null_beside_data(attribute: &AttributeName) -> EntityRefusal {
+    EntityRefusal::NullBesideData {
+        attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
+    }
+}
+
 /// The text of the one value object a member holds.
 fn single_text<'a>(items: &'a [ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<&'a str, EntityRefusal> {
     match items {

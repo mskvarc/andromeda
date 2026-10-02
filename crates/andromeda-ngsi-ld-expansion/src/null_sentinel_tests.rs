@@ -2,7 +2,7 @@
 //! write may carry it, through every write kind.
 
 use crate::{
-    expansion_fixture::{attribute, engine, entity, fragment, patch},
+    expansion_fixture::{attribute, decoded_both_ways, engine, entity, fragment, patch},
     normalization::Normalization,
 };
 use andromeda_ngsi_ld_entity::{
@@ -14,6 +14,7 @@ use andromeda_ngsi_ld_entity::{
         written_value::{ValueSlot, WrittenValue},
     },
     expanded_value::ExpandedValue,
+    refusal::EntityRefusal,
     value_mode::FragmentMember,
 };
 use serde_json::{Value, json};
@@ -187,6 +188,65 @@ async fn a_null_dataset_id_is_refused_both_ways() {
         .expect("expands")
         .refused();
         assert!(refusal.contains("datasetId"), "{refusal}");
+    }
+}
+
+/// One instance of each value member holding the Null beside data, at the
+/// top of the member and nested inside a structured value.
+fn nulls_beside_data(sentinel: &str) -> Vec<(&'static str, Value)> {
+    vec![
+        ("property", json!({"type": "Property", "value": ["a", sentinel]})),
+        ("relationship", json!({"type": "Relationship", "object": ["urn:ngsi-ld:Device:a", sentinel]})),
+        ("vocabProperty", json!({"type": "VocabProperty", "vocab": ["Thing", sentinel]})),
+        ("listProperty", json!({"type": "ListProperty", "valueList": ["a", sentinel]})),
+        (
+            "listRelationship",
+            json!({"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Device:a", sentinel]}),
+        ),
+        (
+            "wrappedListRelationship",
+            json!({"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Device:a"}, {"object": sentinel}]}),
+        ),
+        ("nestedArray", json!({"type": "Property", "value": {"tags": ["x", sentinel]}})),
+        ("nestedNode", json!({"type": "Property", "value": {"id": sentinel, "level": 1}})),
+    ]
+}
+
+/// Clause 4.5.0: the Null deletes only alone, and "null cannot be used as a
+/// value in NGSI-LD", so beside other values every write refuses it rather
+/// than storing a document the stored-document decoder refuses to read.
+#[tokio::test]
+async fn the_null_beside_data_is_refused_by_every_write_kind() {
+    let engine = engine();
+    for sentinel in SPELLINGS {
+        for (name, instance) in nulls_beside_data(sentinel) {
+            let body = json!({"id": "urn:ngsi-ld:Device:null", "type": "Device", name: instance});
+            let refusals = [
+                entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").refused(), // clone: the body is expanded four ways
+                patch(&engine, body.clone(), Normalization::MergeFragment).await.expect("expands").refused(), // clone: the body is expanded four ways
+                fragment(&engine, body, Normalization::Entity).await.expect("expands").refused(),
+                attribute(&engine, name, instance).await.expect("expands").refused(),
+            ];
+            for refusal in refusals {
+                assert!(refusal.contains("the NGSI-LD Null stands beside other values"), "{name} {sentinel}: {refusal}");
+            }
+        }
+    }
+}
+
+/// What the write path refuses as the Null beside data, the stored-document
+/// decoder of the entity crate refuses too: no written document holds a Null
+/// it cannot read back.
+#[tokio::test]
+async fn the_stored_document_decoder_refuses_what_the_write_refuses() {
+    let engine = engine();
+    for sentinel in SPELLINGS {
+        for (name, instance) in nulls_beside_data(sentinel) {
+            let body = json!({"id": "urn:ngsi-ld:Device:null", "type": "Device", name: instance});
+            let (decoded, canonical) = decoded_both_ways(&engine, body, Normalization::Entity).await.expect("expands");
+            assert!(matches!(decoded, Err(EntityRefusal::NullBesideData { .. })), "{name} {sentinel}: {decoded:?}");
+            assert!(canonical.is_err(), "{name} {sentinel}: {canonical:?}");
+        }
     }
 }
 

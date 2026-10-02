@@ -200,7 +200,7 @@ pub fn geometry_value_node<M: MemberMode>(attribute: &AttributeName, form: &Geom
     let type_name = type_iri.parse::<NgsiLdReference>().map_err(|_| malformed())?;
     let coordinates = properties::COORDINATES.as_str().parse::<AttributeName>().map_err(|_| malformed())?;
     let list = coordinate_list::<M>(form).ok_or_else(malformed)?;
-    let members = IndexMap::from_iter([(coordinates, M::member(vec![list], false))]);
+    let members = IndexMap::from_iter([(coordinates, M::values(vec![list]))]);
     Ok(ExpandedValue::Node(ValueNode::new(None, vec![type_name], members)))
 }
 

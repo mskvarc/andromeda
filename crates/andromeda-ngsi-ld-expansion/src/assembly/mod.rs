@@ -15,7 +15,7 @@ pub mod written_value;
 use crate::{
     assembly::{
         instance::instance_document,
-        member_value::malformed,
+        member_value::{malformed, null_beside_data},
         null_sentinel::{is_null, is_sole_null},
     },
     attribute_fragment::AttributeFragment,
@@ -111,9 +111,7 @@ pub fn attribute_member(name: &AttributeName, items: Vec<ExpandedItem>) -> Resul
         return Ok(AttributeMember::Remove);
     }
     if items.iter().any(is_null) {
-        return Err(EntityRefusal::NullBesideData {
-            attribute: Some(name.clone()), // clone: the refusal names the attribute the caller keeps
-        });
+        return Err(null_beside_data(name));
     }
     items
         .into_iter()

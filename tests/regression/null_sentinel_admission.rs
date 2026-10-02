@@ -14,7 +14,9 @@
 //! onto the default one); the batch operations ran no null validation at all,
 //! so a payload `POST /entities` refused was created verbatim by
 //! `POST /entityOperations/create`; and a null nested inside a Property value
-//! object was accepted on every write path rather than on merge alone.
+//! object was accepted on every write path rather than on merge alone; and a
+//! Null standing beside data in one member was stored as a value the broker
+//! then failed to read back.
 //!
 //! Naming convention: `regression_<finding>_<scenario>`.
 
@@ -674,6 +676,81 @@ async fn regression_null_sentinel_batch_upsert_replace_mode_still_refuses_the_se
         .expect("batch upsert request");
     assert_batch_refused_every_entity(&response, 1, "clause 5.6.18.4 does not support NGSI-LD Nulls");
     assert_none_stored(client, &[id], "a refused upsert stores nothing").await;
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// The members that hold the Null beside data: neither the deletion encoding
+/// of clause 4.5.0 ("an array with one single NGSI-LD Null") nor data, since
+/// "null cannot be used as a value in NGSI-LD". The broker created such an
+/// entity with 201 and then could not read it back: every retrieval answered
+/// an internal error, because the stored-document decoder refuses the Null
+/// beside data.
+fn nodes_holding_the_null_beside_data() -> [(&'static str, Value); 5] {
+    [
+        ("tags", json!({"type": "Property", "value": ["a", NULL_URI]})),
+        ("owners", json!({"type": "Relationship", "object": ["urn:ngsi-ld:Person:a", NULL_URI]})),
+        ("labels", json!({"type": "ListProperty", "valueList": ["a", NULL_URI]})),
+        ("rooms", json!({"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Room:a", NULL_URI]})),
+        ("address", json!({"type": "Property", "value": {"lines": ["Pariser Platz", NULL_URI]}})),
+    ]
+}
+
+/// Clause 5.5.4 refuses the Null wherever no deletion is meant, with
+/// `BadRequestData`; beside data no write means a deletion, so creation through
+/// the Core and the Temporal API refuses it and stores nothing.
+#[tokio::test]
+async fn regression_null_sentinel_beside_data_is_refused_on_create() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+
+    for (attribute, node) in nodes_holding_the_null_beside_data() {
+        let id = scope.id(&format!("Building:beside-data-{attribute}"));
+        let created = client
+            .post_entity(&building_with(&id, attribute, &node))
+            .send()
+            .await
+            .expect("create entity request");
+        assert_bad_request_data(&created, &format!("create, {attribute}"));
+
+        let temporal = json!({"id": id, "type": "Building", attribute: [node], "@context": [CORE_CONTEXT]});
+        let created = client.create_temporal_entity(&temporal).await.expect("create temporal entity request");
+        assert_bad_request_data(&created, &format!("temporal create, {attribute}"));
+
+        assert_none_stored(client, &[id], &format!("a refused create of {attribute} stores nothing")).await;
+    }
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.12 gives a merge the Null as the whole value of a member at any
+/// depth, never beside data. A merge carrying it beside data is refused, and
+/// the entity it was aimed at stays readable and unchanged.
+#[tokio::test]
+async fn regression_null_sentinel_beside_data_is_refused_by_merge_and_update() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:beside-data-merge");
+
+    create_entity(client, &building_with(&id, "address", &address_node())).await;
+
+    for (attribute, node) in nodes_holding_the_null_beside_data() {
+        let fragment = building_with(&id, attribute, &node);
+        let merged = client.merge_entity(&id, &fragment, None).await.expect("merge entity request");
+        assert_bad_request_data(&merged, &format!("merge, {attribute}"));
+
+        let update = json!({attribute: node, "@context": [CORE_CONTEXT]});
+        let updated = client.update_entity_attrs(&id, &update).await.expect("update attributes request");
+        assert_bad_request_data(&updated, &format!("update, {attribute}"));
+    }
+
+    let stored = stored_entity(client, &id).await;
+    assert_eq!(stored["address"], address_node(), "no refused write may reach the store: {stored}");
+    for (attribute, _) in nodes_holding_the_null_beside_data() {
+        if attribute != "address" {
+            assert!(stored.get(attribute).is_none(), "the refused writes must not create {attribute}: {stored}");
+        }
+    }
 
     scope.finish().await.expect("cleanup failed");
 }
