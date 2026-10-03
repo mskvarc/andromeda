@@ -18,7 +18,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::document_census::admit_instance_document;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::{
-    admission::attribute_nesting_admission::admit_instance_nesting,
+    admission::{attribute_nesting_admission::admit_instance_nesting, null_sentinel_admission::NullSentinelAdmission},
     document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument},
 };
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
@@ -37,8 +37,9 @@ impl TemporalService {
     /// the attribute name does not expand to a valid one, the Fragment does
     /// not carry exactly one instance of the target attribute, or the
     /// replacement puts a `unitCode` on an attribute family clause 4.5.2
-    /// defines without one or carries a geometry clause 4.7 gives no reading
-    /// of; [`TemporalError::JsonLd`] when the Fragment cannot be expanded
+    /// defines without one, carries a geometry clause 4.7 gives no reading
+    /// of, or holds the NGSI-LD Null under a key of a Property value (clause
+    /// 5.5.4); [`TemporalError::JsonLd`] when the Fragment cannot be expanded
     /// against `context`; and [`TemporalError::Persistence`] when the
     /// delivery barrier cannot drain the entity's pending history or the
     /// update cannot be applied.
@@ -96,6 +97,9 @@ impl TemporalService {
         admit_instance_document(self.limits.payload_budget, &attr_iri, &replacement)?;
         admit_instance_nesting(self.limits.payload_budget.attribute_nesting, &attr_iri, &replacement)?;
         admit_instance_unit_code(&attr_iri, &replacement)?;
+        // Clause 5.5.4: the temporal evolution is excepted from the second
+        // NGSI-LD Null prohibition, never from the third.
+        replacement.admit_null_placements(&attr_iri, NullSentinelAdmission::TemporalEvolution)?;
         // Clause 5.6.14 replaces the instance with the one the Fragment
         // carries, so a replacement recording no value replaces it with none.
         let observation = ObservedInstance::read(replacement)?.ok_or_else(|| TemporalValidationReason::ReplacementRecordsNoValue {

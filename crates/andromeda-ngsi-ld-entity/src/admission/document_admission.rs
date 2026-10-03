@@ -8,6 +8,11 @@
 //! clause 4.5.5.1, the value member a declared family requires (clause
 //! 5.2.5), the members a family never carries (clauses 4.5.2.2 to 4.5.24.2),
 //! and where the operation admits the NGSI-LD Null.
+//!
+//! The NGSI-LD Null placements are also held on their own, for a write whose
+//! envelope rules are not the Core API's: a Temporal Evolution records a
+//! deleted instance but may no more nest the Null under a key than a Core
+//! write outside a merge.
 
 use crate::{
     admission::null_sentinel_admission::NullSentinelAdmission,
@@ -54,17 +59,33 @@ impl EntityDocument {
         for (name, member) in self.attributes() {
             member.instances().iter().try_for_each(|instance| admit_family_members(Some(name), instance))?;
         }
+        self.admit_null_placements(admission)?;
+        for (name, member) in self.attributes() {
+            member.instances().iter().try_for_each(|instance| admit_geometry(name, instance))?;
+        }
+        Ok(())
+    }
+
+    /// Hold the NGSI-LD Null placements of the document, and of nothing
+    /// else, to the clause 5.5.4 prohibitions `admission` is not exempt from.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityRefusal::EntityExpiresAt`] or [`EntityRefusal::ScopeNull`]
+    /// for an entity member deleted outside a fragment,
+    /// [`EntityRefusal::ReservedNullValue`] for an attribute, instance or
+    /// sub-attribute deleted outside a fragment, and
+    /// [`EntityRefusal::NestedNullValue`] for the Null under a key of a Property
+    /// value outside a merge fragment.
+    pub fn admit_null_placements(&self, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
         if admission.deletion_admission() == MemberAdmission::Forbidden && self.expires_at().is_some_and(Slot::is_remove) {
             return Err(EntityRefusal::EntityExpiresAt);
         }
         for (name, member) in self.attributes() {
-            admit_null_placements(name, member, admission)?;
+            admit_member_nulls(name, member, admission)?;
         }
         if admission.deletion_admission() == MemberAdmission::Forbidden && self.scope().is_some_and(Slot::is_remove) {
             return Err(EntityRefusal::ScopeNull);
-        }
-        for (name, member) in self.attributes() {
-            member.instances().iter().try_for_each(|instance| admit_geometry(name, instance))?;
         }
         Ok(())
     }
@@ -84,8 +105,22 @@ impl InstanceDocument {
             member.instances().iter().try_for_each(|instance| admit_envelope(name, instance))?;
         }
         admit_family_members(None, self)?;
-        admit_instance_nulls(attribute, self, admission)?;
+        self.admit_null_placements(attribute, admission)?;
         admit_geometry(attribute, self)
+    }
+
+    /// Hold the NGSI-LD Null placements of the bare attribute fragment written
+    /// for `attribute`, and of nothing else, to the clause 5.5.4 prohibitions
+    /// `admission` is not exempt from.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityRefusal::ReservedNullValue`] for the instance or a
+    /// sub-attribute deleted outside a fragment, and
+    /// [`EntityRefusal::NestedNullValue`] for the Null under a key of a Property
+    /// value outside a merge fragment.
+    pub fn admit_null_placements(&self, attribute: &AttributeName, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
+        admit_instance_nulls(attribute, self, admission)
     }
 }
 
@@ -184,7 +219,7 @@ fn admit_family_members(attribute: Option<&AttributeName>, instance: &InstanceDo
 
 /// The NGSI-LD Null placements of one attribute member and everything below
 /// it.
-fn admit_null_placements(name: &AttributeName, member: &AttributeMember, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
+fn admit_member_nulls(name: &AttributeName, member: &AttributeMember, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
     match member {
         AttributeMember::Remove if admission.deletion_admission() == MemberAdmission::Forbidden => {
             Err(EntityRefusal::ReservedNullValue { attribute: name.clone() })
@@ -205,7 +240,7 @@ fn admit_instance_nulls(name: &AttributeName, instance: &InstanceDocument, admis
     instance
         .sub_attributes()
         .iter()
-        .try_for_each(|(sub_name, member)| admit_null_placements(sub_name, member, admission))
+        .try_for_each(|(sub_name, member)| admit_member_nulls(sub_name, member, admission))
 }
 
 /// Whether a written instance deletes itself or one of its members: the first
@@ -224,9 +259,9 @@ fn deletes_a_member(instance: &InstanceDocument) -> bool {
         || instance.object_types().is_some_and(Slot::is_remove)
 }
 
-/// Whether the object on the right-hand side of a Property `value`, or the
-/// JSON of a `JsonProperty`, holds the NGSI-LD Null under one of its keys: the
-/// third prohibition of clause 5.5.4.
+/// Whether the object on the right-hand side of a Property `value`, a JSON
+/// literal anywhere inside it, or the JSON of a `JsonProperty`, holds the
+/// NGSI-LD Null under one of its keys: the third prohibition of clause 5.5.4.
 fn nests_a_deletion(instance: &InstanceDocument) -> bool {
     match instance.value() {
         ValueSlot::Set(WrittenValue::Value(values)) => values.iter().any(value_nests_a_deletion),
@@ -245,9 +280,15 @@ fn nests_a_deletion(instance: &InstanceDocument) -> bool {
 }
 
 /// Whether a member deletion stands anywhere inside `value`.
+///
+/// A JSON literal (a `@json`-typed value, or a member a context coerces to
+/// `@json`) is a JSON object on the right-hand side of the value as much as a
+/// structured node is, so the Null under one of its keys is the same
+/// prohibition (clause 5.5.4).
 fn value_nests_a_deletion(value: &ExpandedValue<Fragment>) -> bool {
     match value {
-        ExpandedValue::Literal(_) | ExpandedValue::Json(_) => false,
+        ExpandedValue::Literal(_) => false,
+        ExpandedValue::Json(json) => json.carries_null_sentinel_under_a_key(),
         ExpandedValue::List(items) => items.iter().any(value_nests_a_deletion),
         ExpandedValue::Node(node) => node.members().values().any(|member| match member {
             FragmentMember::Remove => true,

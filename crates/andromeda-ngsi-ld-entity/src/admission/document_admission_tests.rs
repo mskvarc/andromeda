@@ -10,10 +10,19 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::{Value, json};
 
 /// Every admission, so a case can state what each one does with a payload.
-const ADMISSIONS: [NullSentinelAdmission; 3] = [
+const ADMISSIONS: [NullSentinelAdmission; 4] = [
     NullSentinelAdmission::Refused,
     NullSentinelAdmission::PartialUpdateFragment,
     NullSentinelAdmission::MergeFragment,
+    NullSentinelAdmission::TemporalEvolution,
+];
+
+/// Every admission but the merge's, which alone is exempt from the third
+/// prohibition of clause 5.5.4.
+const OUTSIDE_A_MERGE: [NullSentinelAdmission; 3] = [
+    NullSentinelAdmission::Refused,
+    NullSentinelAdmission::PartialUpdateFragment,
+    NullSentinelAdmission::TemporalEvolution,
 ];
 
 /// One expanded entity carrying the attribute member `member`.
@@ -355,6 +364,105 @@ fn a_null_under_a_key_of_a_json_property_is_refused_outside_a_merge() {
         json!([{"@type": [AttributeType::JsonProperty.iri().as_str()], properties::JSON.as_str(): [{"@type": "@json", "@value": {"a": "urn:ngsi-ld:null"}}]}]);
     admit(&entity_with(&member), NullSentinelAdmission::PartialUpdateFragment).expect_err("a partial update is bound by the nested prohibition");
     admit(&entity_with(&member), NullSentinelAdmission::MergeFragment).expect("a merge deletes the key");
+}
+
+/// A Property whose value is the JSON literal `literal`.
+fn json_literal_property(literal: &Value) -> Value {
+    json!([{"@type": [AttributeType::Property.iri().as_str()], properties::VALUE.as_str(): [{"@type": "@json", "@value": literal}]}])
+}
+
+/// Assert `document` is refused for the third prohibition of clause 5.5.4
+/// outside a merge, and admitted by a merge fragment.
+fn assert_nested_null_refused_outside_a_merge(document: &Value) {
+    for admission in OUTSIDE_A_MERGE {
+        let error = admit(document, admission).expect_err("only a merge fragment may nest the sentinel under a key");
+        assert!(matches!(error, EntityRefusal::NestedNullValue { .. }), "{admission:?}: {error:?}");
+    }
+    admit(document, NullSentinelAdmission::MergeFragment).expect("a merge deletes the key (clause 5.5.12, IETF RFC 7396)");
+}
+
+/// Clause 5.5.4 third prohibition on a JSON literal written as the value of a
+/// Property (`{"@type": "@json", "@value": ..}`): the literal is the JSON
+/// object on the right-hand side of the value.
+#[test]
+fn a_null_under_a_key_of_a_json_literal_property_value_is_refused_outside_a_merge() {
+    assert_nested_null_refused_outside_a_merge(&entity_with(&json_literal_property(&json!({"a": 1, "b": "urn:ngsi-ld:null"}))));
+}
+
+/// The same for a JSON literal a context coerces a key of the value object to,
+/// at any depth of that literal.
+#[test]
+fn a_null_under_a_key_of_a_json_literal_inside_a_value_object_is_refused_outside_a_merge() {
+    let member = json!([{
+        "@type": [AttributeType::Property.iri().as_str()],
+        properties::VALUE.as_str(): [{"https://example.org/settings": [{"@type": "@json", "@value": {"k": {"b": "urn:ngsi-ld:null"}}}]}]
+    }]);
+    assert_nested_null_refused_outside_a_merge(&entity_with(&member));
+}
+
+/// Only the value of a key is the third prohibition: the sentinel as an item
+/// of a bare JSON array, and a JSON `null` under a key, are data.
+#[test]
+fn a_json_literal_holding_the_null_only_as_a_bare_array_item_or_beside_a_json_null_is_data() {
+    for literal in [json!(["urn:ngsi-ld:null"]), json!({"a": null})] {
+        for admission in ADMISSIONS {
+            admit(&entity_with(&json_literal_property(&literal)), admission).expect("no key holds the sentinel");
+        }
+    }
+}
+
+/// Clause 5.5.4 excepts the temporal evolution from the second prohibition
+/// only: a deleted instance is recorded, the sentinel under a key is refused.
+#[test]
+fn a_temporal_evolution_admits_a_deleted_instance_and_refuses_a_nested_null() {
+    let deleted = json!([{"@type": [AttributeType::Property.iri().as_str()], properties::VALUE.as_str(): [{"@value": "urn:ngsi-ld:null"}]}]);
+    admit(&entity_with(&deleted), NullSentinelAdmission::TemporalEvolution).expect("the temporal evolution represents a deletion so");
+    let nested = [
+        json!([{
+            "@type": [AttributeType::Property.iri().as_str()],
+            properties::VALUE.as_str(): [{"https://example.org/country": [{"@value": "urn:ngsi-ld:null"}]}]
+        }]),
+        json!([{"@type": [AttributeType::JsonProperty.iri().as_str()], properties::JSON.as_str(): [{"@type": "@json", "@value": {"a": "urn:ngsi-ld:null"}}]}]),
+    ];
+    for member in nested {
+        let error = admit(&entity_with(&member), NullSentinelAdmission::TemporalEvolution).expect_err("no temporal exception to the third prohibition");
+        assert!(matches!(error, EntityRefusal::NestedNullValue { .. }), "{member}: {error:?}");
+    }
+}
+
+/// Clauses 5.6.4 and 5.6.19 take a bare attribute fragment: a JSON literal
+/// holding the sentinel under a key is refused by both.
+#[test]
+fn an_attribute_fragment_json_literal_holding_a_null_under_a_key_is_refused_outside_a_merge() {
+    let fragment = json_literal_property(&json!({"b": "urn:ngsi-ld:null"}));
+    for admission in [NullSentinelAdmission::Refused, NullSentinelAdmission::PartialUpdateFragment] {
+        let error = admit_fragment(&fragment, admission).expect_err("only a merge fragment may nest the sentinel under a key");
+        assert!(matches!(error, EntityRefusal::NestedNullValue { .. }), "{admission:?}: {error:?}");
+    }
+}
+
+/// The Null placements run on their own without the envelope rules: an
+/// instance without the value its family requires is no Null placement.
+#[test]
+fn the_null_placements_alone_skip_the_envelope_rules() {
+    let valueless = entity_with_instance(&json!({"@type": [AttributeType::Property.iri().as_str()]}));
+    let document = EntityDocument::from_slice(&serde_json::to_vec(&valueless).expect("JSON")).expect("a document");
+    document
+        .admit_null_placements(NullSentinelAdmission::TemporalEvolution)
+        .expect("no NGSI-LD Null stands in the document");
+    let nested = entity_with(&json_literal_property(&json!({"b": "urn:ngsi-ld:null"})));
+    let document = EntityDocument::from_slice(&serde_json::to_vec(&nested).expect("JSON")).expect("a document");
+    let error = document
+        .admit_null_placements(NullSentinelAdmission::TemporalEvolution)
+        .expect_err("the third prohibition");
+    assert!(matches!(error, EntityRefusal::NestedNullValue { .. }), "{error:?}");
+    let attribute: AttributeName = "https://example.org/member".parse().expect("a name");
+    let fragment = json_literal_property(&json!({"b": "urn:ngsi-ld:null"}));
+    let instance = InstanceDocument::from_slice(&attribute, &serde_json::to_vec(&fragment).expect("JSON")).expect("an instance");
+    let error = instance
+        .admit_null_placements(&attribute, NullSentinelAdmission::TemporalEvolution)
+        .expect_err("the third prohibition");
+    assert!(matches!(error, EntityRefusal::NestedNullValue { .. }), "{error:?}");
 }
 
 /// Clauses 5.5.8 and 5.5.12: a `datasetId` cannot be deleted by the sentinel.

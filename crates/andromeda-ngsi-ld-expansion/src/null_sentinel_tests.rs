@@ -94,6 +94,26 @@ async fn every_deletion_encoding_reads_as_the_removal_of_its_value() {
     }
 }
 
+/// Clause 5.6.20.4 runs the Merge Entity of clause 5.6.17 on whole entities:
+/// rewritten as a merge fragment, an entity's bare `urn:ngsi-ld:null` member
+/// is the removal of the member on both expansion paths, where the entity
+/// rewrite reads it as a deletion of the default instance's value.
+#[tokio::test]
+async fn a_merge_fragment_entity_keeps_a_first_level_null_member_as_the_deletion_of_the_member() {
+    let engine = engine();
+    let body = json!({"id": "urn:ngsi-ld:Vehicle:null", "type": "Vehicle", "speed": "urn:ngsi-ld:null"});
+    let merged = entity(&engine, body.clone(), Normalization::MergeFragment) // clone: the body is expanded twice
+        .await
+        .expect("expands")
+        .agreed();
+    pretty_assertions::assert_eq!(merged.attributes()[term("speed").as_str()], AttributeMember::Remove);
+    let rewritten = entity(&engine, body, Normalization::Entity).await.expect("expands").agreed();
+    let instances = rewritten.attributes()[term("speed").as_str()].instances();
+    pretty_assertions::assert_eq!(instances.len(), 1);
+    pretty_assertions::assert_eq!(instances[0].value(), &ValueSlot::Remove(ValueCarrier::Value));
+    assert!(instances[0].dataset_id().is_none(), "the default instance");
+}
+
 /// Clause 5.5.12: a merge member that is `urn:ngsi-ld:null` removes the whole
 /// member; any other write, and the IRI spelling the merge rewrite does not
 /// keep, read it as a concise Property value deleting its value.

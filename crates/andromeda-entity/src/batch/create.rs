@@ -42,7 +42,7 @@ impl EntityService {
         // Clause 5.6.7.4 runs the behaviour of Create Entity for each item, and
         // clause 5.5.4 excepts only the fragments of a partial update or a
         // merge from its NGSI-LD Null prohibitions.
-        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Create.null_sentinel_admission()).await;
+        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Create).await;
 
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });

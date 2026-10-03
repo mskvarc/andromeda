@@ -167,9 +167,7 @@ impl EntityService {
         // "each member of the Fragment, whose value is an NGSI-LD Null,
         // contained by the target", and a target that does not exist contains
         // none of them.
-        let (prepared, mut chunk_errors) = self
-            .prepare_admitted_chunk(chunk, BatchWrite::Upsert(UpsertPolicy::Update).null_sentinel_admission())
-            .await;
+        let (prepared, mut chunk_errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Upsert(UpsertPolicy::Update)).await;
         errors.append(&mut chunk_errors);
         let rewrite = UpdateRewrite {
             service: self,

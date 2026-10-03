@@ -154,7 +154,7 @@ impl EntityService {
         // because clause 5.6.2's NGSI-LD Null support is a statement about the
         // Update Attributes operation and its Entity Fragment, not about a
         // whole Entity submitted to a batch.
-        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Update.null_sentinel_admission()).await;
+        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Update).await;
         let rewrite = UpdateRewrite {
             service: self,
             target: placement.target(),

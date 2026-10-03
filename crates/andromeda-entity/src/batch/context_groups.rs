@@ -13,9 +13,10 @@ use crate::{
     EntityService,
     batch::prepare::{PendingEntity, PreparationOutcome},
     error::EntityError,
+    write_admission::BatchWrite,
 };
 use andromeda_jsonld::batch_contexts::{BatchContext, ContextGroups};
-use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument};
+use andromeda_ngsi_ld_entity::document::EntityDocument;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 
@@ -40,16 +41,16 @@ pub(super) struct PreparedBatch {
 }
 
 impl EntityService {
-    /// Prepare every group under its own context, answering one slot per
-    /// position below `slot_count`.
+    /// Prepare every group under its own context for the batch operation
+    /// `write`, answering one slot per position below `slot_count`.
     ///
     /// Each entry's `idx` is its position in the whole batch, so the groups'
     /// slots interleave back into submission order and the failures come back
     /// in that order too, each against its own entity's identifier. A position
     /// no entry names stays empty.
-    pub(super) async fn prepare_grouped(&self, slot_count: usize, groups: ContextGroups<PendingEntity>, admission: NullSentinelAdmission) -> PreparedBatch {
+    pub(super) async fn prepare_grouped(&self, slot_count: usize, groups: ContextGroups<PendingEntity>, write: BatchWrite) -> PreparedBatch {
         let execution = self.batch_execution(slot_count);
-        let screening = self.screening(admission);
+        let screening = self.screening(write);
         let mut outcomes: Vec<Option<(PreparationOutcome, BatchContext)>> = (0..slot_count).map(|_| None).collect();
         for (context, entries) in groups {
             for (idx, preparation) in self.prepare_group(entries, context.spec(), execution, screening).await {

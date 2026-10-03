@@ -96,9 +96,7 @@ impl EntityService {
         // Entity of clause 5.6.18 -- whose clause 5.6.18.4 states outright that
         // NGSI-LD Nulls are not supported. Clause 5.5.4 excepts only partial
         // update and merge fragments, and a replacement is neither.
-        let (prepared, mut chunk_errors) = self
-            .prepare_admitted_chunk(chunk, BatchWrite::Upsert(UpsertPolicy::Replace).null_sentinel_admission())
-            .await;
+        let (prepared, mut chunk_errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Upsert(UpsertPolicy::Replace)).await;
         errors.append(&mut chunk_errors);
         let rewrite = ReplaceRewrite {
             service: self,

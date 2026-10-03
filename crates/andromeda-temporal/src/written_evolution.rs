@@ -22,7 +22,7 @@ use crate::{
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_entity::document_census::admit_entity_document;
 use andromeda_ngsi_ld_entity::{
-    admission::attribute_nesting_admission::admit_document_nesting,
+    admission::{attribute_nesting_admission::admit_document_nesting, null_sentinel_admission::NullSentinelAdmission},
     document::{EntityDocument, EntityDocumentParts, attribute_member::AttributeMember},
     refusal::EntityRefusal,
 };
@@ -55,17 +55,23 @@ impl WrittenEvolution {
     /// Expand the compact Temporal Evolution `payload` under `expansion`, its
     /// plural members unfolded within `budget`.
     ///
+    /// Clause 5.5.4 excepts the temporal evolution from its second NGSI-LD
+    /// Null prohibition, so a deleted instance is written as one, but not from
+    /// the third: no Property value written here holds the Null under a key.
+    ///
     /// # Errors
     ///
     /// Returns [`TemporalError::PayloadBudget`] when the observations of its
     /// plural members inherit more values than `budget` admits,
     /// [`TemporalError::JsonLd`] when the context does not resolve or the
     /// processor refuses the payload, and [`TemporalError::Validation`] when
-    /// the payload is no Temporal Evolution the model admits or puts a
-    /// `unitCode` on a family defined without one.
+    /// the payload is no Temporal Evolution the model admits, puts a
+    /// `unitCode` on a family defined without one, or holds the NGSI-LD Null
+    /// under a key of a Property value.
     pub(crate) async fn expand(expansion: &EntityExpansion<'_>, payload: Value, budget: EntityPayloadBudget) -> Result<WrittenEvolution, TemporalError> {
         let EvolutionDocuments { document, reified_scope } = read_evolution_document(expansion, payload, budget).await?;
         admit_document_unit_codes(&document)?;
+        document.admit_null_placements(NullSentinelAdmission::TemporalEvolution)?;
         Ok(WrittenEvolution::new(Arc::new(document), reified_scope.map(Arc::new)))
     }
 
@@ -209,11 +215,18 @@ fn take_reified_scope(payload: &mut Value) -> Option<Vec<Value>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::written_evolution::{WrittenEvolution, take_reified_scope};
-    use andromeda_ngsi_ld_entity::document::EntityDocument;
+    use crate::{
+        error::TemporalError,
+        temporal_validation_reason::TemporalValidationReason,
+        written_evolution::{WrittenEvolution, take_reified_scope},
+    };
+    use andromeda_entity::config::EntityConfig;
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_entity::{document::EntityDocument, refusal::EntityRefusal};
+    use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use indexmap::IndexMap;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::sync::Arc;
 
     fn identifier(raw: &str) -> Identifier {
@@ -265,8 +278,6 @@ mod tests {
     /// naming the attribute.
     #[test]
     fn an_evolution_is_admitted_at_the_nesting_limit_and_refused_one_level_past_it() {
-        use crate::error::TemporalError;
-        use andromeda_entity::config::EntityConfig;
         use andromeda_test_fixtures::nesting_fixture::{NESTED_ATTRIBUTE, NestingShape, nested_instance, stored_entity};
 
         let evolution = |levels| {
@@ -281,5 +292,54 @@ mod tests {
             panic!("refused for its nesting: {refused}");
         };
         pretty_assertions::assert_eq!(exceeded.attribute.as_str(), NESTED_ATTRIBUTE);
+    }
+
+    /// Expand `payload` as a client's Temporal Evolution, against the core
+    /// context and a `settings` term coerced to `@json`.
+    async fn expanded(payload: Value) -> Result<WrittenEvolution, TemporalError> {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("build engine");
+        let context = ContextSpec::from_body(json!({"settings": {"@id": "https://example.org/settings", "@type": "@json"}}));
+        let expansion = EntityExpansion::prepare(&engine, &context).await.expect("the context resolves");
+        WrittenEvolution::expand(&expansion, payload, EntityConfig::default().payload_budget()).await
+    }
+
+    /// One observation of `config` written as `instance`, observed once.
+    fn evolution_of(instance: &Value) -> Value {
+        let mut observed = instance.clone(); // clone: the case keeps its written form for the failure message
+        observed["observedAt"] = json!("2024-01-01T00:00:00Z");
+        json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "config": [observed]})
+    }
+
+    /// Clause 5.5.4 excepts the temporal evolution from the second NGSI-LD
+    /// Null prohibition only: the Null under a key of a structured value, of a
+    /// JSON literal in a value, and of a `JsonProperty` is refused.
+    #[tokio::test]
+    async fn a_temporal_evolution_refuses_a_null_under_a_key_of_a_property_value() {
+        for instance in [
+            json!({"type": "Property", "value": {"street": "x", "country": "urn:ngsi-ld:null"}}),
+            json!({"type": "Property", "value": {"settings": {"a": 1, "b": "urn:ngsi-ld:null"}}}),
+            json!({"type": "Property", "value": {"@type": "@json", "@value": {"b": "urn:ngsi-ld:null"}}}),
+            json!({"type": "JsonProperty", "json": {"b": "urn:ngsi-ld:null"}}),
+        ] {
+            let refused = expanded(evolution_of(&instance))
+                .await
+                .expect_err("the third prohibition has no temporal exception");
+            assert!(
+                matches!(
+                    refused,
+                    TemporalError::Validation(TemporalValidationReason::Representation(EntityRefusal::NestedNullValue { .. }))
+                ),
+                "{instance}: {refused:?}"
+            );
+        }
+    }
+
+    /// The deleted instance clause 5.5.4 lets a temporal evolution represent
+    /// is still written.
+    #[tokio::test]
+    async fn a_temporal_evolution_admits_a_deleted_instance() {
+        expanded(evolution_of(&json!({"type": "Property", "value": "urn:ngsi-ld:null"})))
+            .await
+            .expect("a deleted instance is the temporal representation of a deletion");
     }
 }

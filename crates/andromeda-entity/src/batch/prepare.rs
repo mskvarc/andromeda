@@ -16,16 +16,11 @@ use crate::{
     entity_invariant::EntityInvariant,
     error::EntityError,
     port::blocking_executor::BlockingTask,
-    write_admission::admit_written_entity,
+    write_admission::{BatchWrite, admit_written_entity},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::expansion_context::ExpansionContext};
-use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument, entity_state::EntityState};
-use andromeda_ngsi_ld_expansion::{
-    entity_expansion::EntityExpansion,
-    normalization::Normalization,
-    typed_expander::TypedExpander,
-    typed_expansion::TypedExpansion,
-};
+use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, typed_expander::TypedExpander, typed_expansion::TypedExpansion};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
@@ -92,13 +87,14 @@ enum WalkOutcome {
     Declined(Box<PendingEntity>),
 }
 
-/// The screening every expanded entity of one batch write passes.
+/// The expansion and screening every entity of one batch write goes through.
 #[derive(Clone, Copy)]
 pub(super) struct Screening {
     /// The payload budget the expanded document is counted against.
     pub(super) budget: EntityPayloadBudget,
-    /// What the write admits of the NGSI-LD Null.
-    pub(super) admission: NullSentinelAdmission,
+    /// The batch operation, which decides both the concise rewrite before
+    /// expansion and what the write admits of the NGSI-LD Null.
+    pub(super) write: BatchWrite,
 }
 
 /// One share of a batch's typed walk, run on a blocking worker.
@@ -132,9 +128,10 @@ impl BlockingTask for WalkTask {
 
 /// Expand one entity by the typed walk and screen what it expanded to.
 ///
-/// Every batch write expands its entities in the normalized form clause
-/// 5.6.7.4 and its siblings write them in, so the concise rewrite is the
-/// entity one.
+/// The concise rewrite is the batch operation's own: a batch merge runs the
+/// Merge Entity of clause 5.6.17 per entity (clause 5.6.20.4), so it keeps a
+/// first-level NGSI-LD Null member as the deletion of that member, which every
+/// other batch write reads as a concise value.
 fn walk(entry: PendingEntity, context: &ExpansionContext, screening: Screening) -> WalkOutcome {
     let PendingEntity { idx, entity } = entry;
     // Clause 6.3.2: a geometry past the budget is refused before the walk
@@ -145,7 +142,7 @@ fn walk(entry: PendingEntity, context: &ExpansionContext, screening: Screening) 
             result: Box::new(Err(Box::new((entity.id, EntityError::from(exceeded))))),
         };
     }
-    match TypedExpander::new(context).entity(&entity, Normalization::Entity) {
+    match TypedExpander::new(context).entity(&entity, screening.write.normalization()) {
         Ok(TypedExpansion::Expanded(document)) => WalkOutcome::Done {
             idx,
             result: Box::new(screened(entity, document, screening)),
@@ -166,7 +163,7 @@ fn walk(entry: PendingEntity, context: &ExpansionContext, screening: Screening) 
 /// attributes itself to this one entity, so the multi-status answer of clause
 /// 5.6.7 reports it without failing its siblings.
 fn screened(entity: Entity, document: EntityDocument, screening: Screening) -> PreparationOutcome {
-    match admit_written_entity(screening.budget, &document, screening.admission) {
+    match admit_written_entity(screening.budget, &document, screening.write.null_sentinel_admission()) {
         Ok(()) => Ok((entity, document)),
         Err(error) => Err(Box::new((entity.id, error))),
     }
@@ -177,12 +174,12 @@ impl EntityService {
         decide_batch_execution(len, self.batch_execution.prepare_blocking_threshold, self.batch_execution.chunk_concurrency)
     }
 
-    /// The screening a batch write admitting the NGSI-LD Null as `admission`
-    /// puts every expanded entity through.
-    pub(super) const fn screening(&self, admission: NullSentinelAdmission) -> Screening {
+    /// The expansion and screening the batch operation `write` puts every
+    /// entity through.
+    pub(super) const fn screening(&self, write: BatchWrite) -> Screening {
         Screening {
             budget: self.payload_budget,
-            admission,
+            write,
         }
     }
 
@@ -288,12 +285,13 @@ impl EntityService {
     }
 
     /// Expand the entities the typed walk declined with the JSON-LD processor,
-    /// starting from the group's processed context, and screen them.
+    /// starting from the group's processed context, under the same concise
+    /// rewrite the walk applies, and screen them.
     async fn expand_declined(&self, declined: Vec<PendingEntity>, context: Arc<ExpansionContext>, screening: Screening) -> Vec<(usize, PreparationOutcome)> {
         let expansion = EntityExpansion::from_context(&self.engine, context);
         let mut prepared = Vec::with_capacity(declined.len());
         for PendingEntity { idx, entity } in declined {
-            let result = match expansion.entity(&entity, Normalization::Entity).await {
+            let result = match expansion.entity(&entity, screening.write.normalization()).await {
                 Ok(document) => screened(entity, document, screening),
                 Err(error) => Err(Box::new((entity.id, EntityError::from(error)))),
             };
@@ -306,14 +304,17 @@ impl EntityService {
 #[cfg(test)]
 mod tests {
     use crate::{
+        EntityService,
         batch::{
+            UpsertPolicy,
             execution::BatchExecution,
             prepare::{PendingEntity, PreparationOutcome},
         },
         notification_recording_harness::recording_service,
+        write_admission::BatchWrite,
     };
     use andromeda_jsonld::context_spec::ContextSpec;
-    use andromeda_ngsi_ld_entity::admission::null_sentinel_admission::NullSentinelAdmission;
+    use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, written_value::ValueSlot};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use serde_json::{Value, json};
 
@@ -349,7 +350,7 @@ mod tests {
                 entries,
                 &ContextSpec::core_only(),
                 BatchExecution::Inline,
-                service.screening(NullSentinelAdmission::Refused),
+                service.screening(BatchWrite::Create),
             )
             .await;
         prepared.sort_by_key(|(idx, _)| *idx);
@@ -373,12 +374,7 @@ mod tests {
         }));
 
         let prepared = service
-            .prepare_group(
-                vec![vehicle(0)],
-                &context,
-                BatchExecution::Inline,
-                service.screening(NullSentinelAdmission::Refused),
-            )
+            .prepare_group(vec![vehicle(0)], &context, BatchExecution::Inline, service.screening(BatchWrite::Create))
             .await;
 
         let [(0, preparation)] = prepared.as_slice() else {
@@ -405,7 +401,7 @@ mod tests {
                 entries,
                 &ContextSpec::core_only(),
                 BatchExecution::Inline,
-                service.screening(NullSentinelAdmission::Refused),
+                service.screening(BatchWrite::Create),
             )
             .await;
         prepared.sort_by_key(|(idx, _)| *idx);
@@ -416,5 +412,66 @@ mod tests {
         pretty_assertions::assert_eq!(failure.0.as_str(), "urn:ngsi-ld:Vehicle:0");
         assert!(failure.1.is_validation(), "{}", failure.1);
         assert!(prepared[1].1.is_ok());
+    }
+
+    /// The core context, which the typed walk models, and a type-scoped one,
+    /// which it declines and the JSON-LD processor expands.
+    fn both_expansion_paths() -> [(&'static str, ContextSpec); 2] {
+        [
+            ("typed walk", ContextSpec::core_only()),
+            (
+                "processor",
+                ContextSpec::from_body(json!({
+                    "Vehicle": {"@id": "https://example.org/Vehicle", "@context": {"brand": "https://typed.example.org/brand"}}
+                })),
+            ),
+        ]
+    }
+
+    /// The document `write` prepares for a Vehicle whose `speed` is written as
+    /// the bare NGSI-LD Null, under `context`.
+    async fn prepared_null_speed(service: &EntityService, write: BatchWrite, context: &ContextSpec) -> EntityDocument {
+        let entry = pending(0, json!({"id": "urn:ngsi-ld:Vehicle:0", "type": "Vehicle", "speed": "urn:ngsi-ld:null"}));
+        let mut prepared = service
+            .prepare_group(vec![entry], context, BatchExecution::Inline, service.screening(write))
+            .await;
+        let Some((0, Ok((_, document)))) = prepared.pop() else {
+            panic!("the entity is prepared");
+        };
+        assert!(prepared.is_empty(), "one entity was submitted");
+        document
+    }
+
+    const SPEED_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/speed";
+
+    /// Clause 5.6.20.4 runs the Merge Entity of clause 5.6.17 per entity, and
+    /// clause 5.5.12 removes "the target member" a fragment sets to the
+    /// NGSI-LD Null: the bare Null is the deletion of the whole member, on the
+    /// typed walk and on the processor fallback alike.
+    #[tokio::test]
+    async fn a_batch_merge_reads_a_first_level_null_member_as_the_deletion_of_the_member_on_both_paths() {
+        let (service, _recorded) = recording_service().await;
+        for (path, context) in both_expansion_paths() {
+            let document = prepared_null_speed(&service, BatchWrite::Merge, &context).await;
+            pretty_assertions::assert_eq!(document.attributes().get(SPEED_IRI), Some(&AttributeMember::Remove), "{path}");
+        }
+    }
+
+    /// Clause 5.6.8.4 runs the update of clause 5.6.2 in update mode, which
+    /// reads the same member as a concise Property whose value is the Null:
+    /// the deletion of the default instance alone.
+    #[tokio::test]
+    async fn a_batch_upsert_in_update_mode_reads_a_first_level_null_as_a_default_instance_deletion() {
+        let (service, _recorded) = recording_service().await;
+        for (path, context) in both_expansion_paths() {
+            let document = prepared_null_speed(&service, BatchWrite::Upsert(UpsertPolicy::Update), &context).await;
+            let Some(AttributeMember::Instances(instances)) = document.attributes().get(SPEED_IRI) else {
+                panic!("{path}: one written instance");
+            };
+            assert!(
+                matches!(instances.as_slice(), [instance] if matches!(instance.value(), ValueSlot::Remove(_)) && instance.dataset_id().is_none()),
+                "{path}: {instances:?}"
+            );
+        }
     }
 }

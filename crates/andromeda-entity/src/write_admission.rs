@@ -156,6 +156,21 @@ impl BatchWrite {
             BatchWrite::Merge => NullSentinelAdmission::MergeFragment,
         }
     }
+
+    /// The concise rewrite every entity of this operation goes through before
+    /// it is expanded.
+    ///
+    /// Clause 5.6.20.4 runs the Merge Entity of clause 5.6.17 for each entity,
+    /// so a batch merge keeps a first-level NGSI-LD Null member as the deletion
+    /// of that member (clause 5.5.12) exactly as
+    /// [`EntityWrite::normalization`] does for a single merge; every other
+    /// batch operation reads it as a concise value.
+    pub(crate) const fn normalization(self) -> Normalization {
+        match self {
+            BatchWrite::Create | BatchWrite::Update | BatchWrite::Upsert(_) => Normalization::Entity,
+            BatchWrite::Merge => Normalization::MergeFragment,
+        }
+    }
 }
 
 /// Screen one written entity document under clause 5.5.4, the payload budget
@@ -326,6 +341,7 @@ mod tests {
         admission::null_sentinel_admission::NullSentinelAdmission,
         document::{EntityDocument, instance_document::InstanceDocument},
     };
+    use andromeda_ngsi_ld_expansion::normalization::Normalization;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
     use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity};
     use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
@@ -418,6 +434,22 @@ mod tests {
         pretty_assertions::assert_eq!(BatchWrite::Create.null_sentinel_admission(), NullSentinelAdmission::Refused);
         pretty_assertions::assert_eq!(BatchWrite::Update.null_sentinel_admission(), NullSentinelAdmission::Refused);
         pretty_assertions::assert_eq!(BatchWrite::Merge.null_sentinel_admission(), NullSentinelAdmission::MergeFragment);
+    }
+
+    /// Clause 5.6.20.4 runs clause 5.6.17 per entity, so a batch merge rewrites
+    /// its entities as Merge Entity rewrites its fragment, and only it does.
+    #[test]
+    fn a_batch_merge_rewrites_its_entities_as_merge_fragments() {
+        for (write, normalization) in [
+            (BatchWrite::Create, Normalization::Entity),
+            (BatchWrite::Update, Normalization::Entity),
+            (BatchWrite::Upsert(UpsertPolicy::Replace), Normalization::Entity),
+            (BatchWrite::Upsert(UpsertPolicy::Update), Normalization::Entity),
+            (BatchWrite::Merge, Normalization::MergeFragment),
+        ] {
+            pretty_assertions::assert_eq!(write.normalization(), normalization, "{write:?}");
+        }
+        pretty_assertions::assert_eq!(BatchWrite::Merge.normalization(), EntityWrite::MergeEntity.normalization());
     }
 
     /// The one admission runs every rule: the same payload is refused for its

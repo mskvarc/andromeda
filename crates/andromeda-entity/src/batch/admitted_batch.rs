@@ -17,10 +17,11 @@ use crate::{
         prepare::{PendingEntity, PreparedEntity},
     },
     error::EntityError,
+    write_admission::BatchWrite,
     write_kind::BatchWriteKind,
 };
 use andromeda_jsonld::batch_contexts::{BatchContext, ContextGroups};
-use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument};
+use andromeda_ngsi_ld_entity::document::EntityDocument;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity};
 
@@ -151,7 +152,7 @@ impl EntityService {
         for (idx, SubmittedEntity { entity, context }) in submitted.into_iter().enumerate() {
             groups.push(&context, PendingEntity { idx, entity });
         }
-        let PreparedBatch { slots, errors } = self.prepare_grouped(slot_count, groups, kind.write().null_sentinel_admission()).await;
+        let PreparedBatch { slots, errors } = self.prepare_grouped(slot_count, groups, kind.write()).await;
         let mut admitted = slots
             .into_iter()
             .flatten()
@@ -171,13 +172,13 @@ impl EntityService {
     /// order.
     ///
     /// An entity the forwarding phase left untouched is written as the
-    /// admission prepared it; a narrowed one is prepared again under
-    /// `admission`, against the context it was submitted with, and a failure
-    /// of that is reported against its identifier.
+    /// admission prepared it; a narrowed one is prepared again for the batch
+    /// operation `write`, against the context it was submitted with, and a
+    /// failure of that is reported against its identifier.
     pub(super) async fn prepare_admitted_chunk(
         &self,
         chunk: Vec<AdmittedBatchEntity>,
-        admission: NullSentinelAdmission,
+        write: BatchWrite,
     ) -> (Vec<PreparedEntity>, Vec<(Identifier, EntityError)>) {
         let mut slots: Vec<Option<PreparedEntity>> = Vec::with_capacity(chunk.len());
         let mut groups = ContextGroups::default();
@@ -198,7 +199,7 @@ impl EntityService {
         if narrowed == 0 {
             return (slots.into_iter().flatten().collect(), Vec::new());
         }
-        let PreparedBatch { slots: fresh, errors } = self.prepare_grouped(narrowed, groups, admission).await;
+        let PreparedBatch { slots: fresh, errors } = self.prepare_grouped(narrowed, groups, write).await;
         let mut fresh = fresh.into_iter();
         let prepared = slots
             .into_iter()
@@ -233,7 +234,7 @@ mod tests {
         batch_contexts::{BatchContext, BatchContexts},
         context_spec::ContextSpec,
     };
-    use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument};
+    use andromeda_ngsi_ld_entity::document::EntityDocument;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
@@ -339,7 +340,7 @@ mod tests {
     async fn a_chunk_is_prepared_in_submission_order_with_the_narrowed_entity_reduced_to_what_remains() {
         let (service, admitted) = narrowed_batch().await;
         let (_, entities) = admitted.into_parts();
-        let (prepared, errors) = service.prepare_admitted_chunk(entities, BatchWrite::Create.null_sentinel_admission()).await;
+        let (prepared, errors) = service.prepare_admitted_chunk(entities, BatchWrite::Create).await;
         assert!(errors.is_empty(), "{errors:?}");
         pretty_assertions::assert_eq!(
             prepared_iris(&prepared),
@@ -354,8 +355,8 @@ mod tests {
     /// A narrowed entity is screened again when it is prepared again, and a
     /// failure is reported against its own identifier while the rest of the
     /// chunk is written. The update mode of an upsert admits an NGSI-LD Null
-    /// value; preparing the remainder under the refusing admission of a
-    /// creation shows the remainder is screened in its own right.
+    /// value; preparing the remainder as a creation, which refuses it, shows
+    /// the remainder is screened in its own right.
     #[tokio::test]
     async fn a_narrowed_entity_that_fails_its_preparation_is_reported_against_its_identifier() {
         let (service, _recorded) = recording_service().await;
@@ -375,7 +376,7 @@ mod tests {
             }
         });
         let (_, entities) = admitted.into_parts();
-        let (prepared, errors) = service.prepare_admitted_chunk(entities, NullSentinelAdmission::Refused).await;
+        let (prepared, errors) = service.prepare_admitted_chunk(entities, BatchWrite::Create).await;
         pretty_assertions::assert_eq!(
             prepared.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:2"]
@@ -467,7 +468,7 @@ mod tests {
         });
 
         let (_, entities) = admitted.into_parts();
-        let (prepared, errors) = service.prepare_admitted_chunk(entities, BatchWrite::Create.null_sentinel_admission()).await;
+        let (prepared, errors) = service.prepare_admitted_chunk(entities, BatchWrite::Create).await;
 
         assert!(errors.is_empty(), "{errors:?}");
         pretty_assertions::assert_eq!(
