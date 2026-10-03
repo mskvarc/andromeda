@@ -33,8 +33,9 @@ impl EntityState {
     /// Fragment" (clause 5.6.3.4). Under [`OverwritePolicy::Preserve`] the
     /// instances the entity holds are kept and only the others are appended,
     /// and only "the Scopes in the Fragment that are not part of the value of
-    /// scope of the target Entity" are appended. The fragment's types are not
-    /// merged: clause 5.6.3 appends attributes only.
+    /// scope of the target Entity" are appended. Under either policy the
+    /// fragment's types the entity lacks are added (clause 5.6.3.4: "add them
+    /// to the list of Entity Type names of the target Entity").
     ///
     /// Returns the members with at least one instance not appended because
     /// [`OverwritePolicy::Preserve`] kept the held one, which decides between
@@ -45,6 +46,8 @@ impl EntityState {
     /// Returns [`MutationError::Refused`] when a written instance cannot
     /// become state.
     pub fn append_attributes<'a>(&mut self, fragment: &'a EntityDocument, overwrite: OverwritePolicy) -> Result<Vec<MemberName<'a>>, MutationError> {
+        // clone: the entity owns the types it gains.
+        self.types_mut().extend(fragment.types().iter().cloned());
         let mut not_appended = Vec::new();
         if let Some(scope) = fragment.scope() {
             match overwrite {
@@ -116,14 +119,16 @@ impl EntityState {
 mod tests {
     use crate::{
         document::{EntityDocument, attribute_member::AttributeMember, slot::Slot},
+        entity_state::EntityState,
+        entity_types::EntityTypes,
         operation::{
             selection::OverwritePolicy,
-            speed_entity::{SPEED, date_time, entity, fragment, instances, number, property, property_document, values},
+            speed_entity::{SPEED, date_time, entity, fragment, instances, name, number, property, property_document, values},
         },
         reads::member_name::MemberName,
         scopes::Scopes,
     };
-    use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::path::ScopePath};
     use indexmap::IndexMap;
 
     fn scope(paths: &[&str]) -> Scopes {
@@ -132,6 +137,53 @@ mod tests {
 
     fn scope_fragment(paths: &[&str]) -> EntityDocument {
         EntityDocument::new(None, Vec::new(), Some(Slot::Set(scope(paths))), None, IndexMap::new())
+    }
+
+    fn type_name(raw: &str) -> EntityTypeName {
+        raw.parse().expect("a valid type")
+    }
+
+    /// An entity typed `A` and a fragment typed `[A, B]` writing `speed`.
+    fn typed_append(overwrite: OverwritePolicy) -> EntityState {
+        let mut target = entity(vec![(SPEED, instances(vec![(None, property(number(10)))]))]);
+        *target.types_mut() = EntityTypes::one(type_name("https://example.com/A"));
+        let fragment = EntityDocument::new(
+            None,
+            vec![type_name("https://example.com/A"), type_name("https://example.com/B")],
+            None,
+            None,
+            IndexMap::from([(name(SPEED), AttributeMember::Instances(vec![property_document(number(20), None)]))]),
+        );
+        target.append_attributes(&fragment, overwrite).expect("append succeeds");
+        target
+    }
+
+    /// Clause 5.6.3.4: "If type is included in the Fragment and it includes
+    /// Entity Type names that are not yet in the target Entity, add them to
+    /// the list of Entity Type names of the target Entity", with overwrite
+    /// allowed.
+    #[test]
+    fn append_with_overwrite_adds_the_types_the_target_lacks_without_duplicating_one() {
+        let target = typed_append(OverwritePolicy::Overwrite);
+
+        pretty_assertions::assert_eq!(
+            target.types().as_slice(),
+            &[type_name("https://example.com/A"), type_name("https://example.com/B")]
+        );
+        pretty_assertions::assert_eq!(values(&target, SPEED), vec![20]);
+    }
+
+    /// Clause 5.6.3.4 adds the types under `noOverwrite` too: the type rule
+    /// stands beside the attribute rules, not under the overwrite branch.
+    #[test]
+    fn append_with_preserve_adds_the_types_the_target_lacks_even_when_every_attribute_is_kept() {
+        let target = typed_append(OverwritePolicy::Preserve);
+
+        pretty_assertions::assert_eq!(
+            target.types().as_slice(),
+            &[type_name("https://example.com/A"), type_name("https://example.com/B")]
+        );
+        pretty_assertions::assert_eq!(values(&target, SPEED), vec![10]);
     }
 
     #[test]
