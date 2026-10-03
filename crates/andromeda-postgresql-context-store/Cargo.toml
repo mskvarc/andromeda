@@ -68,15 +68,15 @@ sha2 = "0.11.0"
 sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = { version = "1.53.1", features = ["sync", "time"] }
+tokio = { version = "1.53.2", features = ["sync", "time"] }
 toml = "1.1.6"
 toml-comment = "0.3.0"
 tracing = "0.1.44"
 url = { version = "2.5.8", features = ["serde"] }
 url-macro = "0.2.5"
-uuid = { version = "1.26.1", features = ["v4"] }
+uuid = { version = "1.27.0", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
-tokio = { version = "1.53.1", features = ["full"] }
+tokio = { version = "1.53.2", features = ["full"] }

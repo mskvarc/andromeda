@@ -34,5 +34,5 @@ andromeda-architecture-checks.workspace = true
 andromeda-test-allocator.workspace = true
 pretty_assertions = "1.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread"] }
 url = "2.5.8"

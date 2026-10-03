@@ -33,14 +33,14 @@ secrecy = "0.10.3"
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = { version = "1.53.1", features = ["macros", "net", "rt", "sync", "time"] }
+tokio = { version = "1.53.2", features = ["macros", "net", "rt", "sync", "time"] }
 tokio-util = "0.7.19"
 tracing = "0.1.44"
 typed-builder = "0.23.2"
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.26.1", features = ["fast-rng", "v4"] }
+uuid = { version = "1.27.0", features = ["fast-rng", "v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
-tokio = { version = "1.53.1", features = ["io-util", "macros", "rt-multi-thread"] }
+tokio = { version = "1.53.2", features = ["io-util", "macros", "rt-multi-thread"] }

@@ -48,9 +48,9 @@ thiserror = "2.0.21"
 toml = "1.1.6"
 toml-comment = "0.3.0"
 tracing = "0.1.44"
-uuid = { version = "1.26.1", features = ["serde", "v4"] }
+uuid = { version = "1.27.0", features = ["serde", "v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
-tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tokio = { version = "1.53.2", features = ["macros", "rt"] }

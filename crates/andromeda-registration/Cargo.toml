@@ -33,4 +33,4 @@ typed-builder = "0.23.2"
 andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 pretty_assertions = "1.4.1"
-tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tokio = { version = "1.53.2", features = ["macros", "rt"] }

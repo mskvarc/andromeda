@@ -32,7 +32,7 @@ serde_path_to_error = "0.1.20"
 serde_urlencoded = "0.7.1"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = { version = "1.53.1", features = ["rt", "sync"] }
+tokio = { version = "1.53.2", features = ["rt", "sync"] }
 tracing = "0.1.44"
 url = "2.5.8"
 
@@ -41,5 +41,5 @@ andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-test-allocator.workspace = true
 pretty_assertions = "1.4.1"
-tokio = { version = "1.53.1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1.53.2", features = ["macros", "rt", "rt-multi-thread"] }
 tower = { version = "0.5.3", features = ["util"] }

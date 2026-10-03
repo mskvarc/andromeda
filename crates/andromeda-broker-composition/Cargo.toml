@@ -81,7 +81,7 @@ shadow-rs = "2.0.0"
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = { version = "1.53.1", features = ["full"] }
+tokio = { version = "1.53.2", features = ["full"] }
 tokio-util = { version = "0.7.19", features = ["rt"] }
 toml = "1.1.6"
 toml-comment = "0.3.0"
@@ -91,7 +91,7 @@ tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.26.1", features = ["fast-rng", "serde", "v4"] }
+uuid = { version = "1.27.0", features = ["fast-rng", "serde", "v4"] }
 
 [build-dependencies]
 shadow-rs = "2.0.0"
@@ -101,4 +101,4 @@ andromeda-architecture-checks.workspace = true
 http = "1.5.0"
 pretty_assertions = "1.4.1"
 serial_test = "4.0.1"
-tokio = { version = "1.53.1", features = ["full", "test-util"] }
+tokio = { version = "1.53.2", features = ["full", "test-util"] }

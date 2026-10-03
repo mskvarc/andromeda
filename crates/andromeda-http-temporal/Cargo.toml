@@ -42,5 +42,5 @@ andromeda-ngsi-ld-geometry.workspace = true
 andromeda-persistence-failure.workspace = true
 pretty_assertions = "1.4.1"
 serde_urlencoded = "0.7.1"
-tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tokio = { version = "1.53.2", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }

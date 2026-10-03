@@ -33,4 +33,4 @@ thiserror = "2.0.21"
 andromeda-architecture-checks.workspace = true
 andromeda-test-allocator.workspace = true
 pretty_assertions = "1.4.1"
-uuid = "1.26.1"
+uuid = "1.27.0"
