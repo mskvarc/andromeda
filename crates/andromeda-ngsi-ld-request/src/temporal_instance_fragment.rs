@@ -18,11 +18,8 @@
 //! Whether the one Attribute is the one the request targets needs term
 //! expansion and is decided where the target Attribute is resolved.
 
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    identifier::{Identifier, IdentifierParseError},
-    reference::NgsiLdReferenceError,
-};
+use crate::fragment_entity_id::{FragmentEntityIdError, admit_fragment_entity_id};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReferenceError};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -69,24 +66,10 @@ pub enum TemporalInstanceFragmentError {
         /// The Attribute as written.
         attribute: AttributeName,
     },
-    /// The Fragment's `id` is not a string.
-    #[error("the EntityTemporal Fragment 'id' must be a string")]
-    EntityIdNotAString,
-    /// The Fragment's `id` is not an identifier.
-    #[error("the EntityTemporal Fragment 'id' is not an identifier: {source}")]
-    EntityId {
-        /// Why it is not an identifier.
-        #[source]
-        source: IdentifierParseError,
-    },
-    /// The Fragment's `id` names another Entity than the request targets.
-    #[error("the EntityTemporal Fragment 'id' {written} is not the target entity {target}")]
-    OtherEntity {
-        /// The `id` the Fragment carries.
-        written: Box<Identifier>,
-        /// The Entity the request targets.
-        target: Box<Identifier>,
-    },
+    /// The Fragment's `id` does not name the Entity the request targets
+    /// (clause 5.4).
+    #[error(transparent)]
+    EntityId(#[from] FragmentEntityIdError),
 }
 
 /// Check that `body` is the clause 5.6.14.3 `EntityTemporal` Fragment for a
@@ -102,9 +85,7 @@ pub fn admit_temporal_instance_fragment(body: &Value, target: &Identifier) -> Re
     let Value::Object(members) = body else {
         return Err(TemporalInstanceFragmentError::NotAnObject);
     };
-    if let Some(written) = members.get("id").or_else(|| members.get("@id")) {
-        admit_entity_id(written, target)?;
-    }
+    admit_fragment_entity_id(members, target)?;
     let mut attributes = members.iter().filter(|(name, _)| !NON_ATTRIBUTE_MEMBERS.contains(&name.as_str()));
     let (name, value) = match (attributes.next(), attributes.next()) {
         (Some(only), None) => only,
@@ -129,23 +110,12 @@ pub fn admit_temporal_instance_fragment(body: &Value, target: &Identifier) -> Re
     Ok(())
 }
 
-/// Check the Fragment's `id` against the Entity the request targets.
-fn admit_entity_id(written: &Value, target: &Identifier) -> Result<(), TemporalInstanceFragmentError> {
-    let raw = written.as_str().ok_or(TemporalInstanceFragmentError::EntityIdNotAString)?;
-    let written = raw.parse::<Identifier>().map_err(|source| TemporalInstanceFragmentError::EntityId { source })?;
-    if written == *target {
-        return Ok(());
-    }
-    Err(TemporalInstanceFragmentError::OtherEntity {
-        written: Box::new(written),
-        // clone: the error owns the target it names
-        target: Box::new(target.clone()),
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::temporal_instance_fragment::{TemporalInstanceFragmentError, admit_temporal_instance_fragment};
+    use crate::{
+        fragment_entity_id::FragmentEntityIdError,
+        temporal_instance_fragment::{TemporalInstanceFragmentError, admit_temporal_instance_fragment},
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
@@ -241,11 +211,11 @@ mod tests {
     fn an_id_naming_another_entity_is_refused() {
         assert!(matches!(
             refusal(&json!({"id": "urn:ngsi-ld:Vehicle:2", "speed": [instance()]})),
-            TemporalInstanceFragmentError::OtherEntity { .. }
+            TemporalInstanceFragmentError::EntityId(FragmentEntityIdError::OtherEntity { .. })
         ));
         assert_eq!(
             refusal(&json!({"id": 7, "speed": [instance()]})),
-            TemporalInstanceFragmentError::EntityIdNotAString
+            TemporalInstanceFragmentError::EntityId(FragmentEntityIdError::NotAString)
         );
     }
 }

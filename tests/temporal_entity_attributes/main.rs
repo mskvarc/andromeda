@@ -13,6 +13,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod add;
+mod add_fragment_entity_id;
 mod delete;
 mod delete_instance;
 mod partial_update;

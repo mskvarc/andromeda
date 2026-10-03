@@ -20,6 +20,12 @@
 //! about one operation, so an instance modified through clause 5.6.14 is held
 //! to it too.
 //!
+//! A Fragment addressed by a request path is also held to clause 5.4: its
+//! `id`, which the path makes optional, "shall be equal to the id of the target
+//! (mutated) NGSI-LD element". Clauses 5.6.12 and 5.6.14 both take such a
+//! Fragment, and a mismatch is refused here so that no Context Source receives
+//! a Fragment for another Entity.
+//!
 //! Clause 5.5.7's two prohibitions on the user `@context` are screened here for
 //! the same reason and at the same point: a `@context` embedded below the
 //! document's top level is decidable on the payload, and whether the request's
@@ -53,7 +59,7 @@ use andromeda_ngsi_ld_representation::{
     attribute_type_validation::validate_fragment_attribute_types,
     embedded_context_admission::reject_embedded_contexts_in_fragment,
 };
-use andromeda_ngsi_ld_request::temporal_instance_fragment::admit_temporal_instance_fragment;
+use andromeda_ngsi_ld_request::{fragment_entity_id::admit_fragment_entity_id, temporal_instance_fragment::admit_temporal_instance_fragment};
 use axum::http::Uri as HttpUri;
 use serde_json::Value;
 use std::fmt::Display;
@@ -71,6 +77,29 @@ pub(crate) async fn admit_written_evolution(engine: &JsonLdEngine, payload: &Val
     admit_request_context(engine, context, instance).await?;
     validate_fragment_attribute_types(payload).map_err(|error| bad_request_data(&error, instance))?;
     reject_embedded_contexts_in_fragment(payload).map_err(|error| bad_request_data(&error, instance))
+}
+
+/// Screen the `EntityTemporal` Fragment a clause 5.6.12 addition to `entity`
+/// carries: its `id`, when present, first, then the same checks as any written
+/// `EntityTemporal` payload.
+///
+/// # Errors
+///
+/// Answers `BadRequestData` for a Fragment whose `id` is not `entity` (clause
+/// 5.4), and otherwise on the same terms as [`admit_written_evolution`].
+pub(crate) async fn admit_added_attributes(
+    engine: &JsonLdEngine,
+    entity: &Identifier,
+    payload: &Value,
+    context: &ContextSpec,
+    instance: &HttpUri,
+) -> Result<(), ProblemResponse> {
+    // A payload that is no JSON object names no `id`; the checks below and the
+    // expansion refuse it on their own terms.
+    if let Value::Object(members) = payload {
+        admit_fragment_entity_id(members, entity).map_err(|error| bad_request_data(&error, instance))?;
+    }
+    admit_written_evolution(engine, payload, context, instance).await
 }
 
 /// Screen the `EntityTemporal` Fragment a clause 5.6.14 modification of `entity`
@@ -102,10 +131,11 @@ fn bad_request_data<E: Display>(error: &E, instance: &HttpUri) -> ProblemRespons
 
 #[cfg(test)]
 mod tests {
-    use crate::written_evolution_admission::{admit_written_evolution, admit_written_instance};
+    use crate::written_evolution_admission::{admit_added_attributes, admit_written_evolution, admit_written_instance};
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use axum::http::Uri as HttpUri;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use axum::http::{StatusCode, Uri as HttpUri};
     use serde_json::{Value, json};
 
     fn instance() -> HttpUri {
@@ -195,6 +225,51 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    /// The clause 5.6.12.3 Fragment adding a `speed` instance, carrying `id`
+    /// when one is given.
+    fn added_attributes(id: Option<&str>) -> Value {
+        let mut payload = json!({
+            "type": "Vehicle",
+            "speed": [{"type": "Property", "value": 10, "observedAt": "2024-01-01T00:00:00Z"}]
+        });
+        if let (Some(id), Some(members)) = (id, payload.as_object_mut()) {
+            members.insert("id".to_owned(), json!(id));
+        }
+        payload
+    }
+
+    /// Clause 5.4: a Fragment's `id` "shall be equal to the id of the target
+    /// (mutated) NGSI-LD element"; one naming another Entity is data clause
+    /// 5.5.4 answers with `BadRequestData`, before anything is forwarded.
+    #[tokio::test]
+    async fn added_attributes_naming_another_entity_are_refused() {
+        let refusal = admit_added_attributes(
+            &engine(),
+            &entity(),
+            &added_attributes(Some("urn:ngsi-ld:Vehicle:2")),
+            &ContextSpec::none(),
+            &instance(),
+        )
+        .await
+        .expect_err("a Fragment naming another Entity is refused");
+        pretty_assertions::assert_eq!(refusal.problem().error_type(), NgsiLdErrorType::BadRequestData);
+        pretty_assertions::assert_eq!(refusal.problem().status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    /// Clause 5.4: a Fragment naming its target, or naming none where the
+    /// request path does, is admitted.
+    #[tokio::test]
+    async fn added_attributes_naming_the_target_or_no_id_are_admitted() {
+        for id in [Some("urn:ngsi-ld:Vehicle:1"), None] {
+            assert!(
+                admit_added_attributes(&engine(), &entity(), &added_attributes(id), &ContextSpec::none(), &instance())
+                    .await
+                    .is_ok(),
+                "{id:?}"
+            );
+        }
     }
 
     /// Clause 5.5.4's second bullet excepts "the representation of deleted

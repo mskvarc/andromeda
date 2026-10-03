@@ -91,18 +91,23 @@ impl WrittenEvolution {
     }
 
     /// The evolution addressed to `entity_id`, of the `recorded_types` its
-    /// Temporal Evolution records, where the written fragment names neither
-    /// (clause 5.6.12 addresses the evolution by the request path).
+    /// Temporal Evolution records where the written fragment names none.
+    ///
+    /// Clause 5.6.12.3 names the target by the request path, and clause 5.4
+    /// requires a Fragment's `id` to be equal to it, so the path's identifier
+    /// is the evolution's whatever the fragment wrote: an `id` naming the
+    /// same Entity in another spelling, or one the admission let through,
+    /// never becomes the identifier of an Entity stored under the path.
     pub(crate) fn addressed_to(self, entity_id: &Identifier, recorded_types: Vec<EntityTypeName>) -> WrittenEvolution {
         let WrittenEvolution { document, reified_scope } = self;
         let EntityDocumentParts {
-            id,
+            id: _,
             types,
             scope,
             expires_at,
             attributes,
         } = Arc::unwrap_or_clone(document).into_parts();
-        let id = id.or_else(|| Some(entity_id.clone())); // clone: the document owns the identifier the request path names
+        let id = Some(entity_id.clone()); // clone: the document owns the identifier the request path names
         let types = if types.is_empty() { recorded_types } else { types };
         WrittenEvolution::new(Arc::new(EntityDocument::new(id, types, scope, expires_at, attributes)), reified_scope)
     }
@@ -163,8 +168,40 @@ fn take_reified_scope(payload: &mut Value) -> Option<Vec<Value>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::written_evolution::take_reified_scope;
+    use crate::written_evolution::{WrittenEvolution, take_reified_scope};
+    use andromeda_ngsi_ld_entity::document::EntityDocument;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use indexmap::IndexMap;
     use serde_json::json;
+    use std::sync::Arc;
+
+    fn identifier(raw: &str) -> Identifier {
+        raw.parse().expect("valid identifier")
+    }
+
+    /// The evolution a Fragment naming `id` writes, holding no instance.
+    fn written(id: Option<Identifier>) -> WrittenEvolution {
+        WrittenEvolution::new(Arc::new(EntityDocument::new(id, Vec::new(), None, None, IndexMap::new())), None)
+    }
+
+    /// Clause 5.6.12.3: the request path names the target Temporal Evolution
+    /// when the Fragment names none.
+    #[test]
+    fn the_path_names_the_evolution_the_fragment_names_none() {
+        let path = identifier("urn:ngsi-ld:Vehicle:1");
+        let addressed = written(None).addressed_to(&path, Vec::new());
+        pretty_assertions::assert_eq!(addressed.document().id(), Some(&path));
+    }
+
+    /// Clauses 5.4 and 5.6.12.3: the target is the path's, whatever the
+    /// Fragment names, so a written `id` can never become the identifier of
+    /// an Entity stored under the path.
+    #[test]
+    fn the_path_names_the_evolution_whatever_the_fragment_names() {
+        let path = identifier("urn:ngsi-ld:Vehicle:1");
+        let addressed = written(Some(identifier("urn:ngsi-ld:Vehicle:2"))).addressed_to(&path, Vec::new());
+        pretty_assertions::assert_eq!(addressed.document().id(), Some(&path));
+    }
 
     /// Clause 4.5.6: a reified Scope is taken out to be dated; a Scope written
     /// as paths stays in the entity.

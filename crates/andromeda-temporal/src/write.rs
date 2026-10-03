@@ -97,8 +97,8 @@ impl TemporalService {
         evolution.admit_budget(self.limits.payload_budget)?;
         // Clause 5.6.12 addresses the Temporal Evolution by the request path, and
         // clause 4.5.6 makes it the Entity with the types its evolution records:
-        // the fragment names neither, yet the instances it adds may have to
-        // bring current state back into being.
+        // the fragment need name neither, yet the instances it adds may have to
+        // bring current state back into being under the path's identifier.
         let recorded_types = self
             .reader
             .entity_types(target, from_ref(entity_id))

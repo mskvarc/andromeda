@@ -27,7 +27,7 @@ use crate::{
         provision_response,
         strip_attributes_from_value,
     },
-    written_evolution_admission::admit_written_evolution,
+    written_evolution_admission::admit_added_attributes,
 };
 use andromeda_http_extraction::context_target;
 
@@ -46,8 +46,8 @@ pub async fn add_attrs(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     // Clause 5.6.12.4 runs the clause 5.5.4 validation before the forwarding
-    // phase.
-    admit_written_evolution(service.engine(), &payload, &context, &uri).await?;
+    // phase, the Fragment's `id` included (clause 5.4).
+    admit_added_attributes(service.engine(), &id, &payload, &context, &uri).await?;
 
     if params.local.unwrap_or(false) {
         service.add_attrs(&target, &id, payload, &context).await.with_instance(&uri)?;

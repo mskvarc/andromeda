@@ -30,6 +30,7 @@ pub mod empty;
 pub mod entity;
 pub mod entity_operations;
 pub mod error;
+pub mod fragment_entity_id;
 pub mod join_traversal;
 pub mod jsonld_context;
 pub mod language_filter;
