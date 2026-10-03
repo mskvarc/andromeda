@@ -507,3 +507,95 @@ fn a_string_geometry_is_admitted_only_when_it_parses_into_a_geometry_object() {
     assert!(!error.to_string().contains("<secret>"), "{error}");
     admit(&geo("urn:ngsi-ld:null"), NullSentinelAdmission::PartialUpdateFragment).expect("the NGSI-LD Null is no string geometry but a deletion");
 }
+
+/// One expanded Property instance holding `value`, optionally naming a
+/// `datasetId`.
+fn property_instance(value: i64, dataset_id: Option<&str>) -> Value {
+    let mut instance = json!({"@type": [AttributeType::Property.iri().as_str()], properties::VALUE.as_str(): [{"@value": value}]});
+    if let Some(dataset_id) = dataset_id {
+        instance[properties::DATASET_ID.as_str()] = json!([{"@id": dataset_id}]);
+    }
+    instance
+}
+
+/// `instance` carrying the sub-attribute `sub_attribute` with `instances`.
+fn with_sub_attribute(mut instance: Value, sub_attribute: &str, instances: Vec<Value>) -> Value {
+    instance[sub_attribute] = Value::Array(instances);
+    instance
+}
+
+/// Clause 4.5.5.1 identifies the instances of a sub-attribute by `datasetId`
+/// as it does an attribute's, so two sharing one are refused at any depth.
+#[test]
+fn a_repeated_sub_attribute_dataset_id_is_refused_at_any_depth() {
+    let instance = with_sub_attribute(
+        property_instance(20, None),
+        "https://example.org/accuracy",
+        vec![
+            property_instance(1, Some("urn:ngsi-ld:Dataset:A")),
+            property_instance(2, Some("urn:ngsi-ld:Dataset:A")),
+        ],
+    );
+    let error = admit(&entity_with_instance(&instance), NullSentinelAdmission::MergeFragment).expect_err("one instance per datasetId");
+    assert!(
+        matches!(&error, EntityRefusal::RepeatedInstance { attribute, dataset_id }
+            if attribute.as_str() == "https://example.org/accuracy" && dataset_id.as_str() == "urn:ngsi-ld:Dataset:A"),
+        "{error:?}"
+    );
+}
+
+/// Clause 4.5.5.1: "There can only be one default Attribute instance for an
+/// Attribute with a given Attribute name in any request", whatever the depth.
+#[test]
+fn a_repeated_default_sub_sub_attribute_is_refused() {
+    let accuracy = with_sub_attribute(
+        property_instance(1, None),
+        "https://example.org/method",
+        vec![property_instance(1, None), property_instance(2, None)],
+    );
+    let instance = with_sub_attribute(property_instance(20, None), "https://example.org/accuracy", vec![accuracy]);
+    for admission in ADMISSIONS {
+        let error = admit(&entity_with_instance(&instance), admission).expect_err("one default instance per sub-attribute name");
+        assert!(
+            matches!(&error, EntityRefusal::MultipleDefaultInstances { attribute } if attribute.as_str() == "https://example.org/method"),
+            "{admission:?}: {error:?}"
+        );
+    }
+}
+
+/// Clause 4.5.5.1: a default instance beside named ones is no repetition.
+#[test]
+fn distinct_sub_attribute_dataset_ids_are_admitted() {
+    let instance = with_sub_attribute(
+        property_instance(20, None),
+        "https://example.org/accuracy",
+        vec![
+            property_instance(1, Some("urn:ngsi-ld:Dataset:A")),
+            property_instance(2, Some("urn:ngsi-ld:Dataset:B")),
+            property_instance(3, None),
+        ],
+    );
+    for admission in ADMISSIONS {
+        admit(&entity_with_instance(&instance), admission).expect("distinct sub-attribute instance identities are well formed");
+    }
+}
+
+/// The bare attribute fragment of clause 5.6.4 is held to clause 4.5.5.1 at
+/// every depth below it.
+#[test]
+fn a_partial_update_fragment_with_a_repeated_nested_dataset_id_is_refused() {
+    let accuracy = with_sub_attribute(
+        property_instance(1, None),
+        "https://example.org/method",
+        vec![
+            property_instance(1, Some("urn:ngsi-ld:Dataset:A")),
+            property_instance(2, Some("urn:ngsi-ld:Dataset:A")),
+        ],
+    );
+    let fragment = json!([with_sub_attribute(property_instance(20, None), "https://example.org/accuracy", vec![accuracy])]);
+    let error = admit_fragment(&fragment, NullSentinelAdmission::PartialUpdateFragment).expect_err("one instance per datasetId");
+    assert!(
+        matches!(&error, EntityRefusal::RepeatedInstance { attribute, .. } if attribute.as_str() == "https://example.org/method"),
+        "{error:?}"
+    );
+}

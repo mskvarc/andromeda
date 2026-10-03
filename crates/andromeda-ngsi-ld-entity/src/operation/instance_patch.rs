@@ -9,6 +9,9 @@
 //! arbitrary depth (clause 5.5.12). A partial attribute update replaces each
 //! member it names wholesale and deletes each member it sets to the NGSI-LD
 //! Null (clause 5.5.8), and may never change the family (clause 5.6.4.4).
+//! The sub-attributes of a merged instance are merged instance by instance in
+//! turn, and those of a partially updated one are replaced instance by
+//! instance, each matched by its `datasetId` (clauses 4.5.5.1, 5.5.8, 5.5.12).
 
 use crate::{
     date_time_text::DateTimeText,
@@ -18,7 +21,7 @@ use crate::{
     operation::{
         family_write::{ValueDepth, apply_companion_members, fresh_family_value, write_family_value},
         mutation_error::MutationError,
-        sub_attribute_patch::{SubAttributeDepth, new_sub_attributes, patch_sub_attributes},
+        sub_attribute_patch::{new_sub_attributes, patch_sub_attributes},
     },
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
@@ -127,8 +130,8 @@ pub(crate) fn patch_instance(
                 instance_type: held.family(),
             });
         }
-        InstancePatchDepth::DeepMerge => (ValueDepth::Merge, SubAttributeDepth::Merge),
-        InstancePatchDepth::PartialUpdate => (ValueDepth::Replace, SubAttributeDepth::Replace),
+        InstancePatchDepth::DeepMerge => (ValueDepth::Merge, InstancePatchDepth::DeepMerge),
+        InstancePatchDepth::PartialUpdate => (ValueDepth::Replace, InstancePatchDepth::ReplaceInstance),
     };
     match document.value() {
         ValueSlot::Set(written) => write_family_value(attribute, held.value_mut(), written, value_depth)?,

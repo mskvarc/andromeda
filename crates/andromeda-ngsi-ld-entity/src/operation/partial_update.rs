@@ -20,7 +20,9 @@ impl EntityState {
     /// specified datasetId if present", otherwise the default instance, as
     /// [`addressed_dataset`] resolves it. Each member the fragment names
     /// replaces the stored one wholesale, a member set to the NGSI-LD Null is
-    /// deleted, and an omitted member survives (clause 5.5.8). A fragment that
+    /// deleted, and an omitted member survives (clause 5.5.8); a sub-attribute
+    /// is replaced instance by instance, each written instance replacing only
+    /// the one with its `datasetId` or added beside the others. A fragment that
     /// is its family's deletion encoding deletes the instance, which clause
     /// 5.5.8 hands to clause 5.6.5: the attribute goes with its last instance.
     ///
@@ -81,16 +83,19 @@ mod tests {
         operation::{
             mutation_error::MutationError,
             speed_entity::{
+                ACCURACY,
                 SPEED,
                 dataset,
                 date_time,
                 entity,
+                instance_rows,
                 instances,
                 integer_of,
                 name,
                 number,
                 property,
                 property_document,
+                row,
                 text,
                 values,
                 with_three_instances,
@@ -195,6 +200,31 @@ mod tests {
         let instance = patched(&InstanceDocument::builder().sub_attributes(sub_attributes).build());
         assert!(!instance.sub_attributes().contains(WEATHER));
         pretty_assertions::assert_eq!(instance.value().unit_code(), UnitCode::resolve("C62").ok());
+    }
+
+    /// Clause 5.5.8: a sub-attribute member "is only replaced if the
+    /// datasetId is the same, otherwise the member of the Fragment is added as
+    /// a new instance to the target".
+    #[test]
+    fn a_partial_update_adds_a_sub_attribute_instance_with_another_dataset_id() {
+        let mut held = property(number(10));
+        held.sub_attributes_mut()
+            .insert(name(ACCURACY), instances(vec![(Some("urn:ngsi-ld:Dataset:A"), property(number(1)))]));
+        let mut target = entity(vec![(SPEED, instances(vec![(None, held)]))]);
+        let mut fragment = property_document(number(20), None);
+        fragment.sub_attributes_mut().insert(
+            name(ACCURACY),
+            AttributeMember::Instances(vec![property_document(number(2), Some("urn:ngsi-ld:Dataset:B"))]),
+        );
+
+        target.partial_update_attribute(&name(SPEED), None, &fragment).expect("the patch applies");
+
+        let instance = target.attributes().get(SPEED).and_then(|held| held.get(None)).expect("the instance");
+        pretty_assertions::assert_eq!(integer_of(instance), Some(20));
+        pretty_assertions::assert_eq!(
+            instance_rows(instance.sub_attributes(), ACCURACY),
+            vec![row(Some("urn:ngsi-ld:Dataset:A"), 1), row(Some("urn:ngsi-ld:Dataset:B"), 2)]
+        );
     }
 
     /// Clause 5.6.4.4: "it is not allowed to change the type of an

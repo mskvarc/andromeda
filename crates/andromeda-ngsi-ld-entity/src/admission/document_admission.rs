@@ -41,11 +41,15 @@ impl EntityDocument {
     /// # Errors
     ///
     /// Returns the [`EntityRefusal`] of the first rule the document breaks, in
-    /// the order the attribute envelopes, the family members, the NGSI-LD Null
-    /// placements, the scope and the geometries are checked.
+    /// the order the attribute envelopes, the sub-attribute instance
+    /// identities, the family members, the NGSI-LD Null placements, the scope
+    /// and the geometries are checked.
     pub fn admit(&self, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
         for (name, member) in self.attributes() {
             admit_envelopes(name, member)?;
+        }
+        for member in self.attributes().values() {
+            member.instances().iter().try_for_each(admit_sub_attribute_identities)?;
         }
         for (name, member) in self.attributes() {
             member.instances().iter().try_for_each(|instance| admit_family_members(Some(name), instance))?;
@@ -75,8 +79,9 @@ impl InstanceDocument {
     ///
     /// Returns the [`EntityRefusal`] of the first rule the fragment breaks.
     pub fn admit_fragment(&self, attribute: &AttributeName, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
+        admit_sub_attribute_identities(self)?;
         for (name, member) in self.sub_attributes() {
-            admit_envelopes(name, member)?;
+            member.instances().iter().try_for_each(|instance| admit_envelope(name, instance))?;
         }
         admit_family_members(None, self)?;
         admit_instance_nulls(attribute, self, admission)?;
@@ -90,19 +95,40 @@ impl InstanceDocument {
 /// 4.5.20, 4.5.24).
 fn admit_envelopes(name: &AttributeName, member: &AttributeMember) -> Result<(), EntityRefusal> {
     let instances = member.instances();
-    let mut seen: HashSet<Option<&Identifier>> = HashSet::with_capacity(instances.len());
-    for instance in instances {
-        if !seen.insert(instance.dataset_id()) {
-            return Err(match instance.dataset_id() {
-                Some(dataset_id) => EntityRefusal::RepeatedInstance {
-                    attribute: name.clone(),
-                    dataset_id: dataset_id.clone(),
-                },
-                None => EntityRefusal::MultipleDefaultInstances { attribute: name.clone() },
-            });
-        }
-    }
+    admit_distinct_identities(name, instances)?;
     instances.iter().try_for_each(|instance| admit_envelope(name, instance))
+}
+
+/// The written instances of the attribute `name` name distinct instances: no
+/// two share a `datasetId` and at most one is the default instance (clause
+/// 4.5.5.1). Every write lands its instances one by one on the held instance
+/// with the same identity, so a repeated identity would silently land twice.
+fn admit_distinct_identities(name: &AttributeName, instances: &[InstanceDocument]) -> Result<(), EntityRefusal> {
+    let mut seen: HashSet<Option<&Identifier>> = HashSet::with_capacity(instances.len());
+    instances.iter().try_for_each(|instance| {
+        if seen.insert(instance.dataset_id()) {
+            return Ok(());
+        }
+        // clone: the refusal outlives the borrowed request.
+        Err(match instance.dataset_id() {
+            Some(dataset_id) => EntityRefusal::RepeatedInstance {
+                attribute: name.clone(),
+                dataset_id: dataset_id.clone(),
+            },
+            None => EntityRefusal::MultipleDefaultInstances { attribute: name.clone() },
+        })
+    })
+}
+
+/// Clause 4.5.5.1 at every depth below `instance`: a sub-attribute is an
+/// attribute of its instance (clause 4.5.2.2), so the instances of each of
+/// its sub-attributes, and of theirs, name distinct instances too.
+fn admit_sub_attribute_identities(instance: &InstanceDocument) -> Result<(), EntityRefusal> {
+    instance.sub_attributes().iter().try_for_each(|(name, member)| {
+        let instances = member.instances();
+        admit_distinct_identities(name, instances)?;
+        instances.iter().try_for_each(admit_sub_attribute_identities)
+    })
 }
 
 /// The envelope rules of one instance.

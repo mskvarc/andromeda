@@ -94,6 +94,7 @@ mod scope_merge_replacement;
 mod scope_null_sentinel;
 mod scoped_user_context;
 mod store_unavailable_answers;
+mod sub_attribute_dataset_merge;
 mod subscription_endpoint_members;
 mod subscription_expiry_notifications;
 mod subscription_filter_encoding;

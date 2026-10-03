@@ -86,12 +86,14 @@ mod tests {
         operation::{
             mutation_error::MutationError,
             speed_entity::{
+                ACCURACY,
                 SPEED,
                 dataset,
                 dataset_ids,
                 date_time,
                 entity,
                 fragment,
+                instance_rows,
                 instances,
                 integer_of,
                 name,
@@ -100,6 +102,7 @@ mod tests {
                 property,
                 property_deletion,
                 property_document,
+                row,
                 text,
                 values,
             },
@@ -571,6 +574,31 @@ mod tests {
             .merge(&speed(vec![property_document(number(20), Some("urn:ngsi-ld:Dataset:B"))]), None)
             .expect("merge succeeds");
         pretty_assertions::assert_eq!(values(&target, SPEED), vec![10, 20]);
+    }
+
+    /// Clause 5.5.12 merges "up to an arbitrary depth", so a sub-attribute of
+    /// a merged instance lands by `datasetId` as the attribute does (clause
+    /// 5.6.17.4): the written instance B is added beside the held A.
+    #[test]
+    fn merge_lands_a_sub_attribute_by_dataset_id_inside_a_merged_attribute() {
+        let mut held = property(number(10));
+        held.sub_attributes_mut()
+            .insert(name(ACCURACY), instances(vec![(Some("urn:ngsi-ld:Dataset:A"), property(number(1)))]));
+        let mut target = entity(vec![(SPEED, instances(vec![(None, held)]))]);
+        let mut written = property_document(number(20), None);
+        written.sub_attributes_mut().insert(
+            name(ACCURACY),
+            AttributeMember::Instances(vec![property_document(number(2), Some("urn:ngsi-ld:Dataset:B"))]),
+        );
+
+        target.merge(&speed(vec![written]), None).expect("merge succeeds");
+
+        pretty_assertions::assert_eq!(values(&target, SPEED), vec![20]);
+        let instance = target.attributes().get(SPEED).and_then(|held| held.get(None)).expect("the instance");
+        pretty_assertions::assert_eq!(
+            instance_rows(instance.sub_attributes(), ACCURACY),
+            vec![row(Some("urn:ngsi-ld:Dataset:A"), 1), row(Some("urn:ngsi-ld:Dataset:B"), 2)]
+        );
     }
 
     /// Clause 5.5.12: the merge never touches the instance identity, so the

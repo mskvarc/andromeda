@@ -164,6 +164,28 @@ pub(crate) fn integer_of(instance: &Instance) -> Option<i64> {
     }
 }
 
+/// The sub-attribute the sub-attribute write tests land.
+pub(crate) const ACCURACY: &str = "https://example.org/accuracy";
+
+/// The `(datasetId, integer)` of every instance of `attribute` among
+/// `attributes`, in stored order.
+pub(crate) fn instance_rows(attributes: &Attributes, attribute: &str) -> Vec<(Option<String>, Option<i64>)> {
+    attributes
+        .get(attribute)
+        .map(|instances| {
+            instances
+                .iter()
+                .map(|(dataset_id, instance)| (dataset_id.map(ToString::to_string), integer_of(instance)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// One expected row of [`instance_rows`].
+pub(crate) fn row(dataset_id: Option<&str>, value: i64) -> (Option<String>, Option<i64>) {
+    (dataset_id.map(str::to_owned), Some(value))
+}
+
 /// The `datasetId`s of the instances of `attribute`, in stored order.
 pub(crate) fn dataset_ids(entity: &EntityState, attribute: &str) -> Vec<Option<String>> {
     entity
